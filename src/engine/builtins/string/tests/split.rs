@@ -12,7 +12,7 @@ fn string_split_is_a_pinned_generic_autoinit_between_search_and_substring() {
     assert!(!descriptor.cproto.default_is_constructor());
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let search_key = runtime.intern_property_key("search").unwrap();
     let split_key = runtime.intern_property_key("split").unwrap();
@@ -77,7 +77,7 @@ fn string_split_is_a_pinned_generic_autoinit_between_search_and_substring() {
 #[test]
 fn string_split_preserves_limits_boundaries_and_utf16_code_units() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -131,7 +131,7 @@ fn string_split_preserves_limits_boundaries_and_utf16_code_units() {
 #[test]
 fn string_split_preserves_delegation_conversion_order_and_abrupt_completion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -218,7 +218,7 @@ fn string_split_preserves_delegation_conversion_order_and_abrupt_completion() {
 #[test]
 fn string_split_result_and_native_errors_use_the_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
     let prototype = defining.string_prototype().unwrap();
     let split_key = runtime.intern_property_key("split").unwrap();
     let Value::Object(split_object) = defining.get_property(&prototype, &split_key).unwrap() else {
@@ -230,7 +230,7 @@ fn string_split_result_and_native_errors_use_the_defining_realm() {
         panic!("defining TypeError.prototype was not an object");
     };
 
-    let mut caller = runtime.new_context();
+    let mut caller = runtime.new_context().expect("create context");
     let result = caller
         .call(
             &split,
@@ -262,7 +262,7 @@ fn string_split_result_and_native_errors_use_the_defining_realm() {
 #[test]
 fn string_split_output_index_overflow_is_checked_before_array_mutation() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = runtime.new_array(context.realm).unwrap();
     let mut length = u32::MAX;
 

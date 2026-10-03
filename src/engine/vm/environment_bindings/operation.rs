@@ -101,36 +101,40 @@ impl EnvironmentStep {
         object: ObjectRef,
         key: PropertyKey,
         with: bool,
-    ) -> Self {
-        Self::request_has(
-            object.clone(),
-            key.clone(),
-            EnvironmentResume(Box::new(EnvironmentResumeState {
-                pending_effect: EnvironmentStepPending::default(),
-                realm,
-                phase: Phase::Binding { object, key, with },
-            })),
-        )
+    ) -> Result<Self, crate::engine::api::RuntimeError> {
+        Ok({
+            Self::request_has(
+                object.try_clone()?,
+                key.try_clone()?,
+                EnvironmentResume(Box::new(EnvironmentResumeState {
+                    pending_effect: EnvironmentStepPending::default(),
+                    realm,
+                    phase: Phase::Binding { object, key, with },
+                })),
+            )
+        })
     }
     pub(in crate::engine::vm) fn get(
         realm: ContextId,
         object: ObjectRef,
         key: PropertyKey,
         strict: bool,
-    ) -> Self {
-        Self::request_has(
-            object.clone(),
-            key.clone(),
-            EnvironmentResume(Box::new(EnvironmentResumeState {
-                pending_effect: EnvironmentStepPending::default(),
-                realm,
-                phase: Phase::Get {
-                    object,
-                    key,
-                    strict,
-                },
-            })),
-        )
+    ) -> Result<Self, crate::engine::api::RuntimeError> {
+        Ok({
+            Self::request_has(
+                object.try_clone()?,
+                key.try_clone()?,
+                EnvironmentResume(Box::new(EnvironmentResumeState {
+                    pending_effect: EnvironmentStepPending::default(),
+                    realm,
+                    phase: Phase::Get {
+                        object,
+                        key,
+                        strict,
+                    },
+                })),
+            )
+        })
     }
     pub(in crate::engine::vm) fn put(
         realm: ContextId,
@@ -139,22 +143,26 @@ impl EnvironmentStep {
         value: JsValue,
         strict: bool,
         reference: bool,
-    ) -> Self {
-        Self::request_has(
-            object.clone(),
-            key.clone(),
-            EnvironmentResume(Box::new(EnvironmentResumeState {
-                pending_effect: EnvironmentStepPending::default(),
-                realm,
-                phase: Phase::Put {
-                    object,
-                    key,
-                    value,
-                    strict,
-                    reference,
-                },
-            })),
-        )
+    ) -> Result<Self, RuntimeError> {
+        // Register the incoming value before either fallible retain. The
+        // resume owns its error cleanup as well as its eventual continuation.
+        let resume = EnvironmentResume(Box::new(EnvironmentResumeState {
+            pending_effect: EnvironmentStepPending::default(),
+            realm,
+            phase: Phase::Put {
+                object,
+                key,
+                value,
+                strict,
+                reference,
+            },
+        }));
+        let Phase::Put { object, key, .. } = &resume.0.phase else {
+            unreachable!()
+        };
+        let requested_object = object.try_clone()?;
+        let requested_key = key.try_clone()?;
+        Ok(Self::request_has(requested_object, requested_key, resume))
     }
     pub(in crate::engine::vm) fn set(
         realm: ContextId,
@@ -162,47 +170,58 @@ impl EnvironmentStep {
         key: PropertyKey,
         value: JsValue,
         strict: bool,
-    ) -> Self {
-        Self::request_set(
+    ) -> Result<Self, RuntimeError> {
+        let requested_key = match key.try_clone() {
+            Ok(key) => key,
+            Err(error) => {
+                let _ = object.runtime().release_jsvalue(value);
+                return Err(error);
+            }
+        };
+        Ok(Self::request_set(
             object,
-            key.clone(),
+            requested_key,
             value,
             EnvironmentResume(Box::new(EnvironmentResumeState {
                 pending_effect: EnvironmentStepPending::default(),
                 realm,
                 phase: Phase::Set { key, strict },
             })),
-        )
+        ))
     }
     pub(in crate::engine::vm) fn reference(
         realm: ContextId,
         object: ObjectRef,
         key: PropertyKey,
-    ) -> Self {
-        Self::request_has(
-            object.clone(),
-            key,
-            EnvironmentResume(Box::new(EnvironmentResumeState {
-                pending_effect: EnvironmentStepPending::default(),
-                realm,
-                phase: Phase::Reference { object },
-            })),
-        )
+    ) -> Result<Self, crate::engine::api::RuntimeError> {
+        Ok({
+            Self::request_has(
+                object.try_clone()?,
+                key,
+                EnvironmentResume(Box::new(EnvironmentResumeState {
+                    pending_effect: EnvironmentStepPending::default(),
+                    realm,
+                    phase: Phase::Reference { object },
+                })),
+            )
+        })
     }
     pub(in crate::engine::vm) fn delete_global(
         realm: ContextId,
         object: ObjectRef,
         key: PropertyKey,
-    ) -> Self {
-        Self::request_has(
-            object.clone(),
-            key.clone(),
-            EnvironmentResume(Box::new(EnvironmentResumeState {
-                pending_effect: EnvironmentStepPending::default(),
-                realm,
-                phase: Phase::DeleteGlobal { object, key },
-            })),
-        )
+    ) -> Result<Self, crate::engine::api::RuntimeError> {
+        Ok({
+            Self::request_has(
+                object.try_clone()?,
+                key.try_clone()?,
+                EnvironmentResume(Box::new(EnvironmentResumeState {
+                    pending_effect: EnvironmentStepPending::default(),
+                    realm,
+                    phase: Phase::DeleteGlobal { object, key },
+                })),
+            )
+        })
     }
     pub(in crate::engine::vm) fn delete(
         realm: ContextId,
@@ -248,7 +267,7 @@ impl EnvironmentResume {
                         JsValue::Object(id)
                     },
                     object,
-                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Unscopables)),
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Unscopables)?),
                     EnvironmentResume(Box::new(EnvironmentResumeState {
                         pending_effect: EnvironmentStepPending::default(),
                         realm,
@@ -325,13 +344,13 @@ impl EnvironmentResume {
                             JsValue::Undefined,
                         )));
                     }
-                    Ok(EnvironmentStep::set(
+                    EnvironmentStep::set(
                         realm,
                         object,
                         key,
                         value.take().expect("environment RHS"),
                         strict,
-                    ))
+                    )
                 })();
                 if let Some(value) = value {
                     let _ = runtime.release_jsvalue(value);
@@ -380,7 +399,7 @@ impl EnvironmentResume {
                     let owner = ObjectRef::from_owned_handle(runtime.clone(), object);
                     EnvironmentStep::request_read(
                         runtime,
-                        JsValue::Object(owner.clone().into_handle()),
+                        JsValue::Object(owner.try_clone()?.into_handle()),
                         owner,
                         key,
                         EnvironmentResume(Box::new(EnvironmentResumeState {

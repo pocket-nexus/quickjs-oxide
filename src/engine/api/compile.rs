@@ -62,7 +62,7 @@ impl Runtime {
         compile: impl FnOnce(DebugInfoMode) -> Result<UnlinkedFunction, Error>,
     ) -> Result<Compilation, RuntimeError> {
         self.0.state.borrow().heap.context(realm)?;
-        let debug_info = self.debug_info_mode();
+        let debug_info = self.debug_info_mode()?;
         let function = match compile(debug_info) {
             Ok(function) => function,
             Err(error) => {

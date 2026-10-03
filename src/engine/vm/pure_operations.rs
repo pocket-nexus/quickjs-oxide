@@ -246,7 +246,6 @@ pub(super) enum PureOperation {
     IsNull,
     TypeOfIsUndefined,
     TypeOfIsFunction,
-    Branch { target: u32, when: bool },
 }
 
 pub(super) fn step(
@@ -364,7 +363,7 @@ fn perform(
                 .cold
                 .function
                 .closures()
-                .get(usize::from(index))
+                .get(runtime, usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
             runtime
                 .write_var_ref(&root, value)
@@ -377,9 +376,9 @@ fn perform(
                 .cold
                 .function
                 .closures()
-                .get(usize::from(index))
+                .get(runtime, usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?
-                .clone();
+                .try_clone()?;
             if derived {
                 let descriptor = frame
                     .executable
@@ -420,16 +419,6 @@ fn perform(
                     ));
                 }
             }
-        }
-        P::Branch { target, when } => {
-            let value = slots.pop(&mut frame.window)?;
-            let truthy = runtime
-                .value_to_boolean_jsvalue(&value)
-                .map_err(runtime_error_to_vm_error)?;
-            runtime
-                .release_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
-            return Ok((truthy == when).then_some(target as usize));
         }
         P::TypeOf
         | P::IsUndefinedOrNull

@@ -208,7 +208,7 @@ impl Runtime {
                 realm,
                 object,
                 &key,
-                JsValue::Object(object.clone().into_handle()),
+                JsValue::Object(object.try_clone()?.into_handle()),
             )? {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => {

@@ -378,8 +378,8 @@ fn regexp_compile_mutation_order_matches_pinned_quickjs() {
 fn regexp_compile_intrinsic_uses_defining_realm_and_accepts_foreign_brands() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let compile = eval_callable(
         &runtime,
@@ -412,13 +412,13 @@ fn regexp_compile_intrinsic_uses_defining_realm_and_accepts_foreign_brands() {
     let result = caller
         .call(
             &compile,
-            Value::Object(foreign_regexp.clone()),
+            Value::Object(foreign_regexp.try_clone().expect("duplicate root")),
             &[string_value("new")],
         )
         .expect("defining-realm compile on a caller RegExp");
     assert_eq!(
         result,
-        Value::Object(foreign_regexp.clone()),
+        Value::Object(foreign_regexp.try_clone().expect("duplicate root")),
         "RegExp compile did not return the foreign receiver",
     );
     assert_eq!(
@@ -455,7 +455,7 @@ fn regexp_compile_intrinsic_uses_defining_realm_and_accepts_foreign_brands() {
     assert_eq!(
         caller.call(
             &compile,
-            Value::Object(stable.clone()),
+            Value::Object(stable.try_clone().expect("duplicate root")),
             &[Value::Object(throwing_pattern)],
         ),
         Err(RuntimeError::Exception),
@@ -478,7 +478,7 @@ fn regexp_compile_intrinsic_uses_defining_realm_and_accepts_foreign_brands() {
     assert_eq!(
         caller.call(
             &compile,
-            Value::Object(stable.clone()),
+            Value::Object(stable.try_clone().expect("duplicate root")),
             &[string_value("[")],
         ),
         Err(RuntimeError::Exception),

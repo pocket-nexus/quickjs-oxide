@@ -55,7 +55,7 @@ fn native_error_sidecar_survives_atom_and_parser_materializers() {
     }
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let spelling = JsString::try_from_utf16(
         vec![u16::from(b'A'); 55]
             .into_iter()
@@ -147,7 +147,7 @@ fn atom_named_vm_and_global_errors_use_the_runtime_atom_table() {
     }
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let name = JsString::try_from_utf16(
         vec![u16::from(b'A'); 55]
             .into_iter()
@@ -202,8 +202,8 @@ fn atom_named_vm_and_global_errors_use_the_runtime_atom_table() {
 #[test]
 fn error_constructor_fallback_uses_explicit_new_target_realm() {
     let runtime = Runtime::new();
-    let mut constructor_context = runtime.new_context();
-    let mut target_context = runtime.new_context();
+    let mut constructor_context = runtime.new_context().expect("create context");
+    let mut target_context = runtime.new_context().expect("create context");
     let type_error = global_callable(&runtime, &mut constructor_context, "TypeError");
     let target_type_error = global_callable(&runtime, &mut target_context, "TypeError");
     let aggregate_error = global_callable(&runtime, &mut constructor_context, "AggregateError");
@@ -295,8 +295,8 @@ fn error_constructor_fallback_uses_explicit_new_target_realm() {
 #[test]
 fn error_constructor_preserves_getter_throw_and_defining_realm_conversion_error() {
     let runtime = Runtime::new();
-    let mut defining_context = runtime.new_context();
-    let mut caller_context = runtime.new_context();
+    let mut defining_context = runtime.new_context().expect("create context");
+    let mut caller_context = runtime.new_context().expect("create context");
     let error = global_callable(&runtime, &mut defining_context, "Error");
     let type_error = global_callable(&runtime, &mut defining_context, "TypeError");
     let prototype_key = runtime.intern_property_key("prototype").unwrap();

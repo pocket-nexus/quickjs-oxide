@@ -152,7 +152,7 @@ fn string_utf16_prefix_matches_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let prototype = context.string_prototype().unwrap();
     let object_prototype = context.object_prototype().unwrap();
@@ -236,7 +236,7 @@ fn rust_observations() -> Vec<String> {
     ] {
         let values = indices
             .iter()
-            .cloned()
+            .map(|value| value.try_clone().expect("duplicate root"))
             .map(|index| {
                 render(
                     context
@@ -398,8 +398,11 @@ fn rust_observations() -> Vec<String> {
     let concatenated = context
         .call(
             &concat,
-            Value::Object(concat_receiver.clone()),
-            &[Value::Object(arg_a.clone()), Value::Object(arg_b)],
+            Value::Object(concat_receiver.try_clone().expect("duplicate root")),
+            &[
+                Value::Object(arg_a.try_clone().expect("duplicate root")),
+                Value::Object(arg_b),
+            ],
         )
         .unwrap();
     let success_log = expect_string(global_value(&runtime, &mut context, &global, "concatLog"));
@@ -476,8 +479,8 @@ fn rust_observations() -> Vec<String> {
     let Value::Bool(well_boolean) = context
         .call(
             &is_well_formed,
-            Value::Object(well_receiver.clone()),
-            &[Value::Object(ignored.clone())],
+            Value::Object(well_receiver.try_clone().expect("duplicate root")),
+            &[Value::Object(ignored.try_clone().expect("duplicate root"))],
         )
         .unwrap()
     else {
@@ -553,8 +556,8 @@ fn rust_observations() -> Vec<String> {
 fn string_utf16_prefix_cross_realm_and_error_realms_match_quickjs() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_prototype = first.string_prototype().unwrap();
     let at = property_callable(&runtime, &mut first, &first_prototype, "at");
     assert_eq!(
@@ -611,23 +614,30 @@ fn string_utf16_prefix_method_retains_then_releases_its_realm_graph() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let method = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let prototype = context.string_prototype().unwrap();
         property_callable(&runtime, &mut context, &prototype, "at")
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(method);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn define_to_primitive(runtime: &Runtime, object: &ObjectRef, callable: CallableRef) {
     define_data_key(
         runtime,
         object,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(callable.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(callable.as_object().try_clone().expect("duplicate root")),
     );
 }
 
@@ -643,7 +653,7 @@ fn define_method(
         runtime,
         object,
         name,
-        Value::Object(callable.as_object().clone()),
+        Value::Object(callable.as_object().try_clone().expect("duplicate root")),
     );
 }
 

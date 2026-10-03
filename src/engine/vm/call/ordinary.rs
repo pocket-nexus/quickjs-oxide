@@ -3,7 +3,6 @@ use crate::engine::{
     api::{Error, runtime::Runtime, runtime_error::RuntimeError},
     code::{
         function::metadata::FunctionKind,
-        rooted::FunctionBytecodeRef,
         runtime::{OrdinaryAuthentication, PublishedFunctionSnapshot},
     },
     heap::{FunctionBytecodeId, ObjectId, ObjectPayload, VarRefId},
@@ -18,30 +17,27 @@ use crate::engine::value::Value;
 // Only this module can authenticate or construct this witness.
 pub(in crate::engine::vm) struct OrdinaryCall {
     function: ObjectId,
-    // Callback preparation may outlive its source root. Direct slot calls keep
-    // the source operand alive until installation transfers that same edge.
+    // Callback preparation may outlive its source root.
+    // Direct slot calls keep the source operand until its edge is transferred.
     owner: Option<ObjectRef>,
     executable: PublishedFunctionSnapshot,
     closure: std::rc::Rc<[VarRefId]>,
 }
 // Selection may read metadata but does not publish a frame or consume operands.
 // Any malformed metadata error is returned only after the original domain check.
-pub(in crate::engine::vm) struct OrdinarySelection<'a> {
+pub(in crate::engine::vm) struct OrdinarySelection {
     function: ObjectId,
     bytecode: FunctionBytecodeId,
     authentication: Option<OrdinaryAuthentication>,
-    closure: std::cell::Ref<'a, std::rc::Rc<[VarRefId]>>,
+    closure: std::rc::Rc<[VarRefId]>,
 }
 // Only DirectSelection can create this proof: payload metadata and borrowed
 // slot/owner originate from the same heap lookup. Promotion cannot accept a caller's
 // detached metadata or an unrelated object.
-pub(in crate::engine::vm) struct NativeSelection<'a> {
+pub(crate) struct NativeSelection<'a> {
     runtime: &'a Runtime,
     function: ObjectId,
-    target: crate::engine::builtins::native::NativeFunctionId,
-    defining_realm: crate::engine::heap::ContextId,
-    min_readable_args: u8,
-    operation: crate::engine::builtins::continuation::NativeOperation,
+    data: crate::engine::builtins::native::NativeFunctionData,
 }
 impl<'a> NativeSelection<'a> {
     pub(in crate::engine::vm) fn into_parts(
@@ -57,16 +53,27 @@ impl<'a> NativeSelection<'a> {
         (
             self.runtime,
             self.function,
-            self.target,
-            self.defining_realm,
-            self.min_readable_args,
-            self.operation,
+            self.data.target,
+            self.data.realm.expect("selected native realm"),
+            self.data.min_readable_args,
+            self.data.operation().expect("selected native operation"),
         )
+    }
+
+    /// Transfer the same selected payload without another lookup or owner.
+    pub(crate) fn into_linked_parts(
+        self,
+    ) -> (
+        u64,
+        ObjectId,
+        crate::engine::builtins::native::NativeFunctionData,
+    ) {
+        (self.runtime.domain_id(), self.function, self.data)
     }
 }
 
 pub(in crate::engine::vm) enum DirectSelection<'a> {
-    Ordinary(OrdinarySelection<'a>),
+    Ordinary(OrdinarySelection),
     Native(NativeSelection<'a>),
     General,
 }
@@ -103,87 +110,72 @@ impl<'a> DirectSelection<'a> {
         Self::select_id(runtime, *function)
     }
     fn select_id(runtime: &'a Runtime, function: ObjectId) -> Result<Self, RuntimeError> {
-        let mut selected_bytecode = None;
-        let mut selected_authentication = None;
-        let mut native = None;
-        let mut failure = None;
-        let closure = std::cell::Ref::filter_map(runtime.0.state.borrow(), |state| {
-            let selected = (|| {
-                let object = state.heap.object(function)?;
-                if let ObjectPayload::NativeFunction { data, .. } = &object.payload {
-                    // Unregistered native kinds retain the checked general
-                    // entry, including its original preparation/error order.
-                    if let Some(operation) = data.operation() {
-                        let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
-                            "native function was called before its defining realm was attached",
-                        ))?;
-                        state.heap.context(defining_realm)?;
-                        native = Some(NativeSelection {
-                            runtime,
-                            function,
-                            target: data.target,
-                            defining_realm,
-                            min_readable_args: data.min_readable_args,
-                            operation,
-                        });
-                    }
-                    return Ok(None);
-                }
-                let ObjectPayload::BytecodeFunction {
-                    bytecode,
-                    closure_slots,
-                    authentication,
-                    ..
-                } = &object.payload
-                else {
-                    return Ok(None);
-                };
-                let cached = authentication.borrow();
-                if let Some(facts) = cached
-                    .as_ref()
-                    .filter(|facts| facts.publish_generation == bytecode.publish_generation())
-                {
-                    if closure_slots.len() != facts.closure_count {
-                        return Err(RuntimeError::Invariant(
-                            "function object closure slot count does not match bytecode metadata",
-                        ));
-                    }
-                    selected_authentication = Some(facts.clone());
-                } else {
-                    let data = state.heap.function_bytecode(*bytecode)?;
-                    if data.metadata.function_kind != FunctionKind::Normal {
-                        return Ok(None);
-                    }
-                    if closure_slots.len() != usize::from(data.metadata.closure_count) {
-                        return Err(RuntimeError::Invariant(
-                            "function object closure slot count does not match bytecode metadata",
-                        ));
-                    }
-                }
-                selected_bytecode = Some(*bytecode);
-                Ok(Some(closure_slots))
-            })();
-            match selected {
-                Ok(closure) => closure,
-                Err(error) => {
-                    failure = Some(error);
-                    None
-                }
-            }
-        });
-        match closure {
-            Ok(closure) => Ok(Self::Ordinary(OrdinarySelection {
+        Self::select_in_state(runtime, &runtime.0.state.borrow(), function)
+    }
+
+    pub(in crate::engine::vm) fn select_in_state(
+        runtime: &'a Runtime,
+        state: &crate::engine::heap::runtime::RuntimeState,
+        function: ObjectId,
+    ) -> Result<Self, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "direct_callee_payload_selection",
+        );
+        let object = state.heap.object(function)?;
+        if let ObjectPayload::NativeFunction { data, .. } = &object.payload {
+            // Unregistered native kinds retain the checked general entry.
+            let Some(_) = data.operation() else {
+                return Ok(Self::General);
+            };
+            let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
+                "native function was called before its defining realm was attached",
+            ))?;
+            state.heap.context(defining_realm)?;
+            return Ok(Self::Native(NativeSelection {
+                runtime,
                 function,
-                authentication: selected_authentication,
-                bytecode: selected_bytecode
-                    .ok_or(RuntimeError::Invariant("ordinary selection lost bytecode"))?,
-                closure,
-            })),
-            Err(_) => match failure {
-                Some(error) => Err(error),
-                None => Ok(native.map(Self::Native).unwrap_or(Self::General)),
-            },
+                data: *data,
+            }));
         }
+        let ObjectPayload::BytecodeFunction {
+            bytecode,
+            closure_slots,
+            authentication,
+            ..
+        } = &object.payload
+        else {
+            return Ok(Self::General);
+        };
+        let cached = authentication.borrow();
+        let authentication = if let Some(facts) = cached
+            .as_ref()
+            .filter(|facts| facts.publish_generation == bytecode.publish_generation())
+        {
+            if closure_slots.len() != facts.closure_count {
+                return Err(RuntimeError::Invariant(
+                    "function object closure slot count does not match bytecode metadata",
+                ));
+            }
+            Some(facts.clone())
+        } else {
+            let data = state.heap.function_bytecode(*bytecode)?;
+            if data.metadata.function_kind != FunctionKind::Normal {
+                return Ok(Self::General);
+            }
+            if closure_slots.len() != usize::from(data.metadata.closure_count) {
+                return Err(RuntimeError::Invariant(
+                    "function object closure slot count does not match bytecode metadata",
+                ));
+            }
+            None
+        };
+        Ok(Self::Ordinary(OrdinarySelection {
+            function,
+            authentication,
+            bytecode: *bytecode,
+            closure: std::rc::Rc::clone(closure_slots),
+        }))
     }
 }
 
@@ -216,19 +208,48 @@ impl OrdinaryCall {
     /// therefore require no outgoing argument allocation.
     pub(in crate::engine::vm) fn prepare_callback(
         self,
+        runtime: &Runtime,
         storage: &mut crate::engine::vm::frame::CallStorage,
         receiver: crate::engine::value::JsValue,
         arguments: Vec<crate::engine::value::JsValue>,
         caller_realm: crate::engine::heap::ContextId,
         return_to: crate::engine::vm::frame::ReturnTarget,
     ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
+        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
+        let entry =
+            self.prepare_input(runtime, storage, input, arguments, caller_realm, return_to)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "property_callback_lazy_install",
+        );
+        Ok(entry)
+    }
+
+    fn prepare_input(
+        self,
+        runtime: &Runtime,
+        storage: &mut crate::engine::vm::frame::CallStorage,
+        input: crate::engine::vm::CallInput,
+        arguments: Vec<JsValue>,
+        caller_realm: crate::engine::heap::ContextId,
+        return_to: crate::engine::vm::frame::ReturnTarget,
+    ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
         use crate::engine::vm::{
             frame::{FrameCold, FrameEntry},
-            stack::FrameStorage,
+            stack::{FrameStorage, FrameStorageGuard},
         };
+        let mut input = crate::engine::vm::protocol::CallInputGuard::new(runtime, input);
+        let mut frame_storage = FrameStorageGuard::new(
+            runtime,
+            FrameStorage {
+                original_arguments: arguments,
+                parameters: Vec::new(),
+                locals: Vec::new(),
+                operands: Vec::new(),
+            },
+        );
+        let function = self.owner.expect("selected ordinary call owns its callee");
         storage.reserve()?;
-        let function = self.owner.expect("callback authentication owns its callee");
-        let callback_runtime = function.runtime().clone();
         let (flags, flag_bytes) = if self.executable.has_captured_locals {
             storage.capture_flags(self.executable.local_definitions.len())?
         } else {
@@ -238,25 +259,20 @@ impl OrdinaryCall {
             rare: std::cell::OnceCell::new(),
             return_to: Some(return_to),
             entry_guard: None,
-            function: FrameFunction::shared(function, self.closure).into(),
-            reusable_captured_locals: flags,
-            input: crate::engine::vm::CallInput::new(
-                &callback_runtime,
-                receiver,
-                crate::engine::value::JsValue::Undefined,
-                None,
+            function: FrameFunction::shared(
+                runtime,
+                function.into_execution_handle(),
+                self.closure,
             )
             .into(),
+            reusable_captured_locals: flags,
+            input: input.take().into(),
         });
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "property_callback_lazy_install",
-        );
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_call_storage(
             frame_bytes,
             flag_bytes,
-            arguments.capacity() * size_of::<JsValue>(),
+            frame_storage.storage_mut().original_arguments.capacity() * size_of::<JsValue>(),
         );
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
@@ -268,12 +284,7 @@ impl OrdinaryCall {
             initialize_bindings: true,
             executable: self.executable,
             cold,
-            storage: FrameStorage {
-                original_arguments: arguments,
-                parameters: Vec::new(),
-                locals: Vec::new(),
-                operands: Vec::new(),
-            },
+            storage: frame_storage.take(),
         })
     }
 
@@ -286,94 +297,25 @@ impl OrdinaryCall {
         tail: bool,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<(), Error> {
-        #[cfg(feature = "profiling")]
-        let _timer =
-            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
-        use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
-        #[cfg(feature = "profiling")]
-        {
-            let count = checked.count();
-            let method = checked.method();
-            use crate::engine::api::profiling::record_owned_execution_event as record;
-            record(if method {
-                "ordinary_install.method"
-            } else {
-                "ordinary_install.function"
-            });
-            record(match count {
-                0 => "ordinary_install.args0",
-                1 => "ordinary_install.args1",
-                2 => "ordinary_install.args2",
-                3 => "ordinary_install.args3",
-                _ => "ordinary_install.args4plus",
-            });
-        }
-        let depth = execution.frames.depth() + 1;
-        execution.call_storage.reserve_depth(depth)?;
-        let frame = execution.frames.current_mut(parent)?;
-        let caller_realm = frame.executable.realm;
-        // The private continuation comes from the instruction that produced
-        // this Call. No caller instruction or slot changed during preflight.
-        let resume = fallthrough.index();
-        let (flags, flag_bytes) = if self.executable.has_captured_locals {
-            execution
-                .call_storage
-                .capture_flags(self.executable.local_definitions.len())?
-        } else {
-            (Vec::new(), 0)
-        };
-        let prepared = execution.frames.prepare_push()?;
-        let mut prepared = prepared;
-        let frame = prepared.current_mut(parent)?;
-        let installed = {
-            #[cfg(feature = "profiling")]
-            let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
-                "ordinary.install.slots.sampled",
-            );
-            execution.slots.push_ordinary_frame(
-                runtime,
-                &self.executable.frame_layout(),
-                &mut frame.window,
-                checked,
-                self.function,
-                self.executable.observes_arguments,
-            )?
-        };
-        frame.resume_pc = resume;
-        let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(ReturnTarget {
-            value_use: ReturnValue::Push,
-            owner: ReturnOwner::Frame(parent),
-            tail,
-            operation: None,
-        });
-        cold.entry_guard = None;
-        cold.function = FrameFunction::shared(installed.function, self.closure).into();
-        cold.reusable_captured_locals = flags;
-        cold.input = installed.input.into();
-        cold.executable = self.executable.into();
-        cold.window = installed.window.into();
-        prepared.install(Frame {
-            property_generation: 0,
-            iterator_generation: 0,
-            caller_realm,
-            active_frame: crate::engine::vm::frames::ActiveFrameToken::unmaterialized(),
+        let _unwind = runtime.unwind_guard();
+        let mut state = runtime.0.state.borrow_mut();
+        let mut execution = crate::engine::vm::stack::FrameExecution::admit(execution, parent)?;
+        execution.install_ordinary(runtime, &mut state, self, checked, tail, fallthrough)
+    }
 
-            fault_pc: 0,
-            resume_pc: 0,
-            cold,
-        });
-        #[cfg(feature = "profiling")]
-        {
-            crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
-        }
-        #[cfg(not(feature = "profiling"))]
-        let _ = (frame_bytes, flag_bytes);
-        Ok(())
+    /// Consume facts whose callee edge remains in the admitted caller slot.
+    pub(in crate::engine::vm) fn into_slot_parts(
+        self,
+    ) -> (ObjectId, PublishedFunctionSnapshot, std::rc::Rc<[VarRefId]>) {
+        debug_assert!(
+            self.owner.is_none(),
+            "slot installation transfers its source owner"
+        );
+        (self.function, self.executable, self.closure)
     }
 }
 
-impl OrdinarySelection<'_> {
+impl OrdinarySelection {
     pub(in crate::engine::vm) fn authenticate(
         self,
         runtime: &Runtime,
@@ -394,46 +336,54 @@ impl OrdinarySelection<'_> {
         runtime: &Runtime,
         retain_owner: bool,
     ) -> Result<OrdinaryCall, RuntimeError> {
-        // Domain/slot validation has succeeded. Only now promote the selected
-        // shared environment and owner, after ending the read-only heap borrow.
-        let closure = std::rc::Rc::clone(&self.closure);
-        drop(self.closure);
-        let owner = retain_owner
-            .then(|| ObjectRef::from_borrowed_handle(runtime.clone(), self.function))
+        let mut call = self.authenticate_slot_in_state(runtime, &runtime.0.state.borrow())?;
+        call.owner = retain_owner
+            .then(|| ObjectRef::from_borrowed_handle(runtime.clone(), call.function))
             .transpose()?;
-        let function = self.function;
-        let executable = if let Some(facts) = self.authentication {
+        Ok(call)
+    }
+
+    /// The original callee operand pins the selected payload and publication
+    /// until installation transfers that same edge into the new frame.
+    pub(in crate::engine::vm) fn authenticate_slot_in_state(
+        self,
+        runtime: &Runtime,
+        state: &crate::engine::heap::runtime::RuntimeState,
+    ) -> Result<OrdinaryCall, RuntimeError> {
+        let facts = if let Some(facts) = self.authentication {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
                 "ordinary_call_auth_cache_hit",
             );
-            PublishedFunctionSnapshot::from_authentication(runtime, self.bytecode, facts)
+            facts
         } else {
-            let bytecode =
-                FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), self.bytecode)?;
-            let snapshot = runtime.snapshot_function_bytecode_owned(bytecode)?;
-            let facts = snapshot.authentication(closure.len());
-            {
-                let state = runtime.0.state.borrow();
-                let object = state.heap.object(function)?;
-                let ObjectPayload::BytecodeFunction { authentication, .. } = &object.payload else {
-                    return Err(RuntimeError::Invariant(
-                        "selected ordinary function changed kind",
-                    ));
-                };
-                *authentication.borrow_mut() = Some(facts.clone());
-            }
+            let facts = state
+                .authenticate_ordinary_bytecode(self.bytecode, self.closure.len())?
+                .ok_or(RuntimeError::Invariant(
+                    "selected ordinary function changed kind",
+                ))?;
+            let object = state.heap.object(self.function)?;
+            let ObjectPayload::BytecodeFunction { authentication, .. } = &object.payload else {
+                return Err(RuntimeError::Invariant(
+                    "selected ordinary function changed kind",
+                ));
+            };
+            *authentication.borrow_mut() = Some(facts.clone());
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
                 "ordinary_call_authenticated",
             );
-            PublishedFunctionSnapshot::from_authentication(runtime, self.bytecode, facts)
+            facts
         };
         Ok(OrdinaryCall {
-            closure,
-            function,
-            owner,
-            executable,
+            function: self.function,
+            owner: None,
+            closure: self.closure,
+            executable: PublishedFunctionSnapshot::from_authentication_in_domain(
+                runtime.domain_id(),
+                self.bytecode,
+                facts,
+            ),
         })
     }
 }
@@ -445,7 +395,7 @@ mod direct_selection_tests {
     #[test]
     fn method_receiver_survives_nested_return_and_caught_throw() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval("(function(){var token={};var receiver={mark:41,m:function(arg){var saved=this;try{arg.fail()}catch(error){if(error!==token)return -1}return saved===receiver?this.mark+arg.bump():-2}};var arg={fail:function(){throw token},bump:function(){return 1}};return receiver.m(arg)})()")
             .unwrap();
@@ -456,7 +406,7 @@ mod direct_selection_tests {
     #[test]
     fn method_receiver_general_and_native_fallback_stay_callable() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "(function(){var o={m:Math.max};return o.m(41,42)===42?42:0})()",
             "(function(){var o={x:42,m:new Proxy(function(){return this.x},{})};return o.m()})()",
@@ -469,7 +419,7 @@ mod direct_selection_tests {
     #[test]
     fn authentication_cache_is_rootless_and_rejects_a_different_publication() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let first = context.eval("(function(){ return 11 })").unwrap();
         let second = context.eval("(function(){ return 22 })").unwrap();
         let selected = OrdinaryCall::authenticate(&runtime, &first)
@@ -543,7 +493,7 @@ mod direct_selection_tests {
     fn heap_authentication_cache_does_not_retain_runtime() {
         let weak = {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let value = context.eval("(function(){ return 1 })").unwrap();
             drop(OrdinaryCall::authenticate(&runtime, &value).unwrap());
             std::rc::Rc::downgrade(&runtime.0)
@@ -554,7 +504,7 @@ mod direct_selection_tests {
     #[test]
     fn direct_selection_borrows_owners_and_preserves_general_fallback() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for (source, kind) in [
             ("(function(x){return x})", 0),
             ("Math.min", 1),

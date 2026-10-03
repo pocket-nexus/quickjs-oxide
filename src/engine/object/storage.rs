@@ -111,57 +111,32 @@ impl Runtime {
         Ok(self.0.state.borrow().heap.object(*id)?.is_html_dda)
     }
 
-    /// Apply ECMAScript `ToBoolean`, including QuickJS's Annex B falsy
-    /// `is_HTMLDDA` object exception, to an internal value.
     pub(crate) fn value_to_boolean_jsvalue(&self, value: &JsValue) -> Result<bool, RuntimeError> {
         match value {
-            JsValue::Object(id) => Ok(!self.0.state.borrow().heap.object(*id)?.is_html_dda),
-            JsValue::String(id) => Ok(!self.0.state.borrow().heap.string(*id)?.is_empty()),
-            JsValue::BigInt(id) => Ok(!self.0.state.borrow().heap.bigint(*id)?.is_zero()),
+            JsValue::Object(_) | JsValue::String(_) | JsValue::BigInt(_) => {
+                self.0.state.borrow().value_to_boolean_jsvalue(value)
+            }
             _ => Ok(value.to_boolean_primitive()),
         }
     }
 
-    /// Strict equality over internal values: handle identity is the fast path;
-    /// string and BigInt handles fall back to arena content comparison.
     pub(crate) fn strict_equal_jsvalue(
         &self,
         left: &JsValue,
         right: &JsValue,
     ) -> Result<bool, RuntimeError> {
-        Ok(match (left, right) {
-            (JsValue::Undefined, JsValue::Undefined) | (JsValue::Null, JsValue::Null) => true,
-            (JsValue::Bool(left), JsValue::Bool(right)) => left == right,
-            (JsValue::Int(left), JsValue::Int(right)) => left == right,
-            (JsValue::Symbol(left), JsValue::Symbol(right)) => left == right,
-            (JsValue::Object(left), JsValue::Object(right)) => left == right,
-            (JsValue::String(left), JsValue::String(right)) => {
-                if left == right {
-                    true
-                } else {
-                    let state = self.0.state.borrow();
-                    state.heap.string(*left)? == state.heap.string(*right)?
-                }
-            }
-            (JsValue::ShortBigInt(left), JsValue::ShortBigInt(right)) => left == right,
-            (JsValue::ShortBigInt(value), JsValue::BigInt(id))
-            | (JsValue::BigInt(id), JsValue::ShortBigInt(value)) => {
-                self.0.state.borrow().heap.bigint(*id)?
-                    == &crate::engine::value::bigint::JsBigInt::from(*value)
-            }
-            (JsValue::BigInt(left), JsValue::BigInt(right)) => {
-                if left == right {
-                    true
-                } else {
-                    let state = self.0.state.borrow();
-                    state.heap.bigint(*left)? == state.heap.bigint(*right)?
-                }
-            }
-            (left, right) => match (left.as_number(), right.as_number()) {
-                (Some(left), Some(right)) => left == right,
-                _ => false,
-            },
-        })
+        let needs_heap = match (left, right) {
+            (JsValue::String(left), JsValue::String(right)) => left != right,
+            (JsValue::BigInt(left), JsValue::BigInt(right)) => left != right,
+            (JsValue::ShortBigInt(_), JsValue::BigInt(_))
+            | (JsValue::BigInt(_), JsValue::ShortBigInt(_)) => true,
+            _ => false,
+        };
+        if needs_heap {
+            self.0.state.borrow().strict_equal_jsvalue(left, right)
+        } else {
+            Ok(strict_equal_immediate(left, right))
+        }
     }
 
     /// Mirror `JS_SetIsHTMLDDA` for a runtime-owned object.
@@ -657,7 +632,7 @@ mod selected_append_tests {
     #[test]
     fn canonical_append_preserves_symbols_accessors_self_edges_and_cache_updates() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"(function () {
@@ -693,7 +668,7 @@ mod selected_append_tests {
     #[test]
     fn canonical_append_rolls_back_new_symbol_owner_on_bad_successor() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let crate::engine::value::Value::Object(owner) =
             context.eval("({old: Symbol('owned')})").unwrap()
         else {
@@ -772,5 +747,123 @@ mod selected_append_tests {
         );
         assert!(state.heap.shape(shape).unwrap().entries().is_empty());
         assert!(state.shape_is_canonical(shape));
+    }
+}
+
+fn strict_equal_immediate(left: &JsValue, right: &JsValue) -> bool {
+    match (left, right) {
+        (JsValue::Undefined, JsValue::Undefined) | (JsValue::Null, JsValue::Null) => true,
+        (JsValue::Bool(left), JsValue::Bool(right)) => left == right,
+        (JsValue::Symbol(left), JsValue::Symbol(right)) => left == right,
+        (JsValue::Object(left), JsValue::Object(right)) => left == right,
+        (JsValue::String(left), JsValue::String(right)) => left == right,
+        (JsValue::BigInt(left), JsValue::BigInt(right)) => left == right,
+        (JsValue::ShortBigInt(left), JsValue::ShortBigInt(right)) => left == right,
+        (left, right) => match (left.as_number(), right.as_number()) {
+            (Some(left), Some(right)) => left == right,
+            _ => false,
+        },
+    }
+}
+
+#[cfg(test)]
+mod direct_state_value_tests {
+    use super::*;
+    use crate::engine::value::{JsString, bigint::JsBigInt};
+
+    #[test]
+    fn direct_state_boolean_and_comparison_use_checked_leaf_content() {
+        let runtime = Runtime::new();
+        let left = runtime
+            .into_jsvalue(Value::String(JsString::from_static("same content")))
+            .unwrap();
+        let right = runtime
+            .into_jsvalue(Value::String(JsString::from_static("same content")))
+            .unwrap();
+        let empty = runtime
+            .into_jsvalue(Value::String(JsString::from_static("")))
+            .unwrap();
+        let bigint = JsBigInt::parse_js_string("170141183460469231731687303715884105729").unwrap();
+        let big_left = runtime.into_jsvalue(Value::BigInt(bigint.clone())).unwrap();
+        let big_right = runtime.into_jsvalue(Value::BigInt(bigint)).unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        assert!(state.value_to_boolean_jsvalue(&left).unwrap());
+        assert!(!state.value_to_boolean_jsvalue(&empty).unwrap());
+        assert!(
+            !state
+                .value_to_boolean_jsvalue(&JsValue::ShortBigInt(0))
+                .unwrap()
+        );
+        assert!(state.strict_equal_jsvalue(&left, &right).unwrap());
+        assert!(!state.strict_equal_jsvalue(&left, &empty).unwrap());
+        assert!(state.strict_equal_jsvalue(&big_left, &big_right).unwrap());
+        assert!(
+            !state
+                .strict_equal_jsvalue(&big_left, &JsValue::ShortBigInt(1))
+                .unwrap()
+        );
+        assert!(
+            state
+                .strict_equal_jsvalue(&JsValue::Int(0), &JsValue::Float(-0.0))
+                .unwrap()
+        );
+        assert!(
+            !state
+                .strict_equal_jsvalue(&JsValue::Float(f64::NAN), &JsValue::Float(f64::NAN))
+                .unwrap()
+        );
+        let JsValue::String(stale) = left else {
+            panic!("string")
+        };
+        state.release_jsvalue(JsValue::String(stale)).unwrap();
+        assert!(
+            state
+                .value_to_boolean_jsvalue(&JsValue::String(stale))
+                .is_err()
+        );
+        assert!(
+            state
+                .strict_equal_jsvalue(&JsValue::String(stale), &right)
+                .is_err()
+        );
+        for owner in [right, empty, big_left, big_right] {
+            state.release_jsvalue(owner).unwrap();
+        }
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+}
+
+impl RuntimeState {
+    /// Apply ECMAScript `ToBoolean`, including QuickJS's Annex B falsy
+    /// `is_HTMLDDA` object exception, under the current state access.
+    pub(crate) fn value_to_boolean_jsvalue(&self, value: &JsValue) -> Result<bool, RuntimeError> {
+        match value {
+            JsValue::Object(id) => Ok(!self.heap.object(*id)?.is_html_dda),
+            JsValue::String(id) => Ok(!self.heap.string(*id)?.is_empty()),
+            JsValue::BigInt(id) => Ok(!self.heap.bigint(*id)?.is_zero()),
+            _ => Ok(value.to_boolean_primitive()),
+        }
+    }
+
+    /// Preserve handle identity shortcuts and compare separate String or
+    /// BigInt handles through checked arena content.
+    pub(crate) fn strict_equal_jsvalue(
+        &self,
+        left: &JsValue,
+        right: &JsValue,
+    ) -> Result<bool, RuntimeError> {
+        Ok(match (left, right) {
+            (JsValue::String(left), JsValue::String(right)) if left != right => {
+                self.heap.string(*left)? == self.heap.string(*right)?
+            }
+            (JsValue::BigInt(left), JsValue::BigInt(right)) if left != right => {
+                self.heap.bigint(*left)? == self.heap.bigint(*right)?
+            }
+            (JsValue::ShortBigInt(value), JsValue::BigInt(id))
+            | (JsValue::BigInt(id), JsValue::ShortBigInt(value)) => {
+                self.heap.bigint(*id)? == &crate::engine::value::bigint::JsBigInt::from(*value)
+            }
+            _ => strict_equal_immediate(left, right),
+        })
     }
 }

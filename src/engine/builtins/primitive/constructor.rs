@@ -339,7 +339,7 @@ mod local_completion_tests {
     #[test]
     fn primitive_constructor_finishes_without_a_conversion_request() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let invocation = NativeInvocation::Construct {
             new_target: JsValue::Undefined,
         };
@@ -365,7 +365,7 @@ mod local_completion_tests {
     #[test]
     fn local_constructor_conversion_keeps_symbol_and_new_target_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let trace='', symbol=Symbol('x'), caught=false;
             const value={toString(){trace+='v';return 'x';}};

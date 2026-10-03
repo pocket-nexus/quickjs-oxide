@@ -428,7 +428,7 @@ fn object_from_entries_autoinit_can_be_deleted_before_materialization() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = global_callable(&runtime, &mut context, "Object");
     let key = runtime.intern_property_key("fromEntries").unwrap();
     let deleted = runtime
@@ -456,8 +456,8 @@ fn object_from_entries_autoinit_can_be_deleted_before_materialization() {
 fn object_from_entries_uses_defining_realm_and_preserves_user_throws() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_object = global_callable(&runtime, &mut defining, "Object");
     let from_entries = property_callable(
         &runtime,
@@ -470,7 +470,7 @@ fn object_from_entries_uses_defining_realm_and_preserves_user_throws() {
     let pair = caller
         .new_array_from_values(vec![
             Value::String(JsString::try_from_utf8("value").unwrap()),
-            Value::Object(payload.clone()),
+            Value::Object(payload.try_clone().expect("duplicate root")),
         ])
         .unwrap();
     let entries = caller
@@ -505,7 +505,7 @@ fn object_from_entries_uses_defining_realm_and_preserves_user_throws() {
     let native_error = take_exception_object(&mut caller);
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "native iterable rejection did not use the defining realm",
     );
 
@@ -528,7 +528,7 @@ fn object_from_entries_uses_defining_realm_and_preserves_user_throws() {
             .set_property(
                 &caller.global_object().unwrap(),
                 &sentinel_key,
-                Value::Object(sentinel.clone()),
+                Value::Object(sentinel.try_clone().expect("duplicate root")),
             )
             .unwrap()
     );
@@ -575,8 +575,8 @@ fn object_from_entries_method_and_result_retain_then_release_their_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (from_entries, result) = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_object = global_callable(&runtime, &mut first, "Object");
         let second_object = global_callable(&runtime, &mut second, "Object");
         let first_method = property_callable(
@@ -620,19 +620,25 @@ fn object_from_entries_method_and_result_retain_then_release_their_realm() {
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(from_entries);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(result);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [

@@ -206,7 +206,7 @@ fn derived_class_observation_matches_pinned_quickjs() {
 fn rust_observation() -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let diagnostic_probe = [
         "try { ",
         PROBE,

@@ -38,7 +38,7 @@ impl SpeciesStep {
             NativeConversion::Throw(value) => Ok(Self::Complete(Completion::Throw(value))),
             NativeConversion::Value(false) => allocate(runtime, realm, length),
             NativeConversion::Value(true) => Ok(Self::Read {
-                object: source.clone(),
+                object: source.try_clone()?,
                 key: runtime
                     .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
                 resume: SpeciesResume {
@@ -94,7 +94,7 @@ impl SpeciesResume {
                 self.phase = Phase::Species;
                 return Ok(SpeciesStep::Read {
                     object,
-                    key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
+                    key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)?),
                     resume: self,
                 });
             }
@@ -133,7 +133,7 @@ pub(crate) fn finish(
                 return runtime.construct_internal_jsvalue(
                     realm,
                     &target,
-                    crate::engine::vm::call::ConstructNewTarget::Validated(target.clone()),
+                    crate::engine::vm::call::ConstructNewTarget::Validated(target.try_clone()?),
                     arguments,
                 );
             }

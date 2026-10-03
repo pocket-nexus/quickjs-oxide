@@ -125,15 +125,15 @@ impl TagSetterStep {
                 "Cannot assign to read only property",
             )));
         }
-        let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         Ok({
-            let __pending_field_object = receiver.clone();
-            let __pending_field_key = key.clone();
+            let __pending_field_object = receiver.try_clone()?;
+            let __pending_field_key = key.try_clone()?;
             let __pending_field_resume = TagSetterResume(Box::new(TagSetterResumeState {
                 pending_effect: TagSetterStepPending::default(),
                 realm,
                 runtime: runtime.clone(),
-                receiver: receiver.clone(),
+                receiver: receiver.try_clone()?,
                 key,
                 value: runtime.dup_jsvalue(value)?,
             }));
@@ -153,8 +153,8 @@ impl TagSetterResume {
         match reply {
             NativeConversion::Throw(value) => Ok(TagSetterStep::Complete(Completion::Throw(value))),
             NativeConversion::Value(true) => Ok({
-                let __pending_field_object = self.0.receiver.clone();
-                let __pending_field_key = self.0.key.clone();
+                let __pending_field_object = self.0.receiver.try_clone()?;
+                let __pending_field_key = self.0.key.try_clone()?;
                 let __pending_field_value = self.0.runtime.dup_jsvalue(&self.0.value)?;
                 let __pending_field_resume = self;
                 TagSetterStep::request_set(
@@ -165,8 +165,8 @@ impl TagSetterResume {
                 )
             }),
             NativeConversion::Value(false) => Ok({
-                let __pending_field_object = self.0.receiver.clone();
-                let __pending_field_key = self.0.key.clone();
+                let __pending_field_object = self.0.receiver.try_clone()?;
+                let __pending_field_key = self.0.key.try_clone()?;
                 let __pending_field_descriptor = OwnedPropertyDescriptor::data(
                     &self.0.runtime,
                     self.0.runtime.dup_jsvalue(&self.0.value)?,
@@ -260,7 +260,7 @@ pub(crate) fn finish_tag(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?,
                 )?
             }

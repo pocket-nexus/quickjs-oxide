@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn context_invokes_getters_and_setters_with_the_original_receiver() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = runtime.new_object(None).unwrap();
     let child = runtime.new_object(Some(&prototype)).unwrap();
     let explicit_receiver = runtime.new_object(None).unwrap();
@@ -34,14 +34,14 @@ fn context_invokes_getters_and_setters_with_the_original_receiver() {
     );
     assert_eq!(
         context.get_property(&child, &getter_key).unwrap(),
-        Value::Object(child.clone())
+        Value::Object(child.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         context
             .get_property_with_receiver(
                 &prototype,
                 &getter_key,
-                Value::Object(explicit_receiver.clone())
+                Value::Object(explicit_receiver.try_clone().expect("duplicate root"))
             )
             .unwrap(),
         Value::Object(explicit_receiver)
@@ -155,7 +155,7 @@ fn context_invokes_getters_and_setters_with_the_original_receiver() {
 #[test]
 fn prepared_getter_action_keeps_callable_alive_after_property_deletion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = runtime.new_object(None).unwrap();
     let key = runtime.intern_property_key("x").unwrap();
     let getter = bytecode_callable(
@@ -200,7 +200,7 @@ fn prepared_getter_action_keeps_callable_alive_after_property_deletion() {
 #[test]
 fn prepared_setter_action_roots_callable_receiver_and_argument() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = runtime.new_object(None).unwrap();
     let argument = runtime.new_object(None).unwrap();
     let key = runtime.intern_property_key("x").unwrap();
@@ -231,7 +231,11 @@ fn prepared_setter_action_roots_callable_receiver_and_argument() {
     );
 
     let action = runtime
-        .prepare_set_property(&object, &key, Value::Object(argument.clone()))
+        .prepare_set_property(
+            &object,
+            &key,
+            Value::Object(argument.try_clone().expect("duplicate root")),
+        )
         .unwrap();
     assert!(runtime.delete_property(&object, &key).unwrap());
     drop(argument);

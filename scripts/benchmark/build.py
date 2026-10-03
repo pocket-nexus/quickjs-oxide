@@ -68,7 +68,8 @@ def observed_rustc(stderr):
             else:
                 continue
             key, separator, value = option.partition("=")
-            if separator and key in ("lto", "codegen-units", "opt-level", "panic", "target-cpu", "target-feature"):
+            if separator and key in ("lto", "codegen-units", "opt-level", "panic", "target-cpu", "target-feature",
+                                     "profile-generate", "profile-use"):
                 codegen[key] = value
         invocations.append({"command": match[1], "crate": crate, "codegen": codegen, "target": target})
     return invocations
@@ -93,6 +94,10 @@ def main():
     selected.add_argument("--plain-only", action="store_true")
     selected.add_argument("--profile-only", action="store_true")
     parser.add_argument("--jobs", type=int, default=2)
+    parser.add_argument("--explicit-target", help="explicit Cargo target; keeps host build scripts uninstrumented")
+    parser.add_argument("--optimization", choices=("none", "profile-generate", "profile-use"), default="none")
+    parser.add_argument("--profile-data", type=Path, help="new raw directory or merged profdata, according to optimization")
+    parser.add_argument("--training-receipt", type=Path, help="verified training chain for profile-use")
     args = parser.parse_args()
     if args.jobs < 1 or args.plain_target.resolve() == args.profile_target.resolve():
         parser.error("jobs must be positive; build directories must differ")
@@ -106,9 +111,36 @@ def main():
         parser.error("commit source changes before measuring; build provenance requires a clean worktree")
     revision = source["commit"]["stdout"]
     tooling_files = {"build.py": Path(__file__), "run.py": Path(__file__).with_name("run.py")}
+    if args.optimization != "none":
+        tooling_files["pgo_validation.py"] = Path(__file__).with_name("pgo_validation.py")
     tooling_bytes = {name: path.read_bytes() for name, path in tooling_files.items()}
     tooling_repository = git_metadata(ROOT)
     env = {**os.environ, "QUICKJS_OXIDE_BUILD_COMMIT": revision}
+    profile_input_identity = None
+    base_flags = (env["CARGO_ENCODED_RUSTFLAGS"].split("\x1f") if "CARGO_ENCODED_RUSTFLAGS" in env
+                  else shlex.split(env.get("RUSTFLAGS", "")))
+    if any("profile-generate" in flag or "profile-use" in flag for flag in base_flags):
+        parser.error("PGO must use explicit optimization options, not inherited flags")
+    if args.optimization != "none":
+        if not args.plain_only or not args.explicit_target or args.profile_data is None:
+            parser.error("PGO requires --plain-only, --explicit-target and --profile-data")
+        if args.optimization == "profile-generate":
+            if args.training_receipt:
+                parser.error("profile-generate does not consume a training receipt")
+            args.profile_data.resolve().mkdir(parents=True, exist_ok=False)
+        else:
+            if args.training_receipt is None:
+                parser.error("profile-use requires --training-receipt")
+            from pgo_validation import verify_training
+            verify_training(args.training_receipt, args.profile_data, source)
+            profile_input_identity = (digest(args.profile_data), digest(args.training_receipt))
+        env.pop("RUSTFLAGS", None)
+        env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join([*base_flags, f"-C{args.optimization}={args.profile_data.resolve()}"])
+    elif args.profile_data or args.training_receipt:
+        parser.error("profile data requires an explicit PGO optimization")
+    elif args.explicit_target:
+        env.pop("RUSTFLAGS", None)
+        env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(base_flags)
     rustc = command_output(["rustc", "-vV"], repo_path)
     cargo = command_output(["cargo", "-V"], repo_path)
     if rustc["exit_code"] or cargo["exit_code"]:
@@ -123,7 +155,7 @@ def main():
     for name, target, enabled in selected_builds:
         features = ["--features", ",".join(enabled)] if enabled else []
         target = target.resolve()
-        target_triple = env.get("CARGO_BUILD_TARGET")
+        target_triple = args.explicit_target or env.get("CARGO_BUILD_TARGET")
         artifact_dir = target / target_triple / "release" if target_triple else target / "release"
         artifact_dir.mkdir(parents=True, exist_ok=True)
         binary = artifact_dir / ("qjs.exe" if os.name == "nt" else "qjs")
@@ -136,6 +168,8 @@ def main():
             tooling_snapshots[filename] = {"path": str(snapshot), "sha256": digest(snapshot)}
         command = ["cargo", "build", "--locked", "--release", "--verbose", "-p", "quickjs-oxide-cli",
                    "--no-default-features", "--target-dir", str(target), "--jobs", str(args.jobs), *features]
+        if args.explicit_target:
+            command += ["--target", args.explicit_target]
         with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
             result = subprocess.run(command, cwd=repo_path, env=env, stdout=stdout, stderr=stderr, check=False)
         if result.returncode:
@@ -144,10 +178,18 @@ def main():
             raise RuntimeError("benchmark tooling changed during build; logs kept, receipt rejected")
         if git_metadata(repo_path) != source:
             raise RuntimeError("source worktree changed during build; logs kept, receipt rejected")
+        if profile_input_identity is not None and profile_input_identity != (digest(args.profile_data), digest(args.training_receipt)):
+            raise RuntimeError("PGO data or training receipt changed during build; logs kept, receipt rejected")
         rustc_invocations = observed_rustc(stderr_path.read_text(errors="replace"))
         invocation = next((row for row in rustc_invocations if row["crate"] == "qjs"), None)
         manifest = {
-            "schema": "oxide-build-v2", "mode": name, "vm_configuration": "stack-vm", "features": enabled,
+            "schema": "oxide-build-v2", "mode": name if args.optimization == "none" else args.optimization,
+            "optimization": {"kind": args.optimization,
+                             "data": str(args.profile_data.resolve()) if args.profile_data else None,
+                             "data_sha256": digest(args.profile_data) if args.optimization == "profile-use" else None,
+                             "training_receipt": {"path": str(args.training_receipt.resolve()),
+                                                  "sha256": digest(args.training_receipt)} if args.training_receipt else None},
+            "vm_configuration": "stack-vm", "features": enabled,
             "commit": revision, "source": source, "binary_sha256": digest(binary),
             "tooling": {"repository": tooling_repository, "snapshots": tooling_snapshots},
             "command": command, "cwd": str(repo_path), "exit_code": result.returncode,

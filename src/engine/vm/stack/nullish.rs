@@ -1,67 +1,5 @@
-//! Nullish equality admitted before consuming either operand. Object release
-//! must be nonfinal, and the canonical temporary must not overflow or drain.
-use super::{Error, FrameSlots, JsValue, Runtime, runtime_error_to_vm_error};
-
-impl FrameSlots<'_> {
-    pub(in crate::engine::vm) fn nullish_equality(
-        &mut self,
-        runtime: &Runtime,
-    ) -> Result<Option<bool>, Error> {
-        let equal = {
-            // A malformed stack declines untouched: the outer operation owns
-            // the right-before-left pop and error ordering.
-            let (Ok(left), Ok(right)) = (self.peek(1), self.peek(0)) else {
-                return Ok(None);
-            };
-            let other = if matches!(left, JsValue::Null | JsValue::Undefined) {
-                right
-            } else if matches!(right, JsValue::Null | JsValue::Undefined) {
-                left
-            } else {
-                return Ok(None);
-            };
-            match other {
-                JsValue::Null | JsValue::Undefined => true,
-                JsValue::Object(id) => {
-                    if runtime.0.deferred_references.has_pending() {
-                        return Ok(None);
-                    }
-                    let Ok(state) = runtime.0.state.try_borrow() else {
-                        return Ok(None);
-                    };
-                    if state.heap.has_pending_zero_cleanup() {
-                        return Ok(None);
-                    }
-                    let Ok(count) = state.heap.object_strong_count(*id) else {
-                        return Ok(None);
-                    };
-                    if !(2..u32::MAX - 1).contains(&count) {
-                        return Ok(None);
-                    }
-                    // The checked count lookup authenticated the generation;
-                    // preserve the same checked object access as the slow path.
-                    state
-                        .heap
-                        .object(*id)
-                        .map_err(|error| Error::internal(error.to_string()))?
-                        .is_html_dda
-                }
-                _ => return Ok(None),
-            }
-        };
-        let right = self.pop().expect("admitted right operand");
-        let left = self.pop().expect("admitted left operand");
-        // At most one object, with count >= 2. Neither release can allocate,
-        // execute code, or observe a frame. Evaluate both before propagating.
-        let left = runtime.release_jsvalue(left);
-        let right = runtime.release_jsvalue(right);
-        left.map_err(runtime_error_to_vm_error)?;
-        right.map_err(runtime_error_to_vm_error)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("nullish_comparison.local");
-        Ok(Some(equal))
-    }
-}
+//! Nullish comparison ownership and HTMLDDA behavior.
+use super::{JsValue, Runtime};
 
 #[cfg(test)]
 mod tests {
@@ -70,7 +8,7 @@ mod tests {
     use crate::engine::{code::runtime::PublishedFunctionSnapshot, heap::RawId, value::Value};
 
     fn frame(runtime: &Runtime, values: Vec<JsValue>) -> (SlotStore, FrameWindow) {
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
         executable.metadata.max_stack = 2;
         let mut store = SlotStore::new(20);
@@ -114,7 +52,10 @@ mod tests {
                         store
                             .borrow_frame_slots(&mut window)
                             .unwrap()
-                            .nullish_equality(&runtime)
+                            .nullish_equality_in_state(
+                                &mut runtime.0.state.borrow_mut(),
+                                &runtime.0.poisoned
+                            )
                             .unwrap(),
                         Some(dda)
                     );
@@ -136,8 +77,8 @@ mod tests {
     }
 
     #[test]
-    fn nullish_slot_declines_final_saturated_and_pending_owners_untouched() {
-        for count in [1, u32::MAX - 1, u32::MAX] {
+    fn nullish_slot_declines_saturated_owners_and_preserves_external_cleanup() {
+        for count in [u32::MAX - 1, u32::MAX] {
             let runtime = Runtime::new();
             let id = runtime.new_object(None).unwrap().into_handle();
             let (mut store, mut window) = frame(&runtime, vec![JsValue::Object(id), JsValue::Null]);
@@ -151,7 +92,10 @@ mod tests {
                 store
                     .borrow_frame_slots(&mut window)
                     .unwrap()
-                    .nullish_equality(&runtime)
+                    .nullish_equality_in_state(
+                        &mut runtime.0.state.borrow_mut(),
+                        &runtime.0.poisoned
+                    )
                     .unwrap(),
                 None
             );
@@ -189,11 +133,11 @@ mod tests {
             store
                 .borrow_frame_slots(&mut window)
                 .unwrap()
-                .nullish_equality(&runtime)
+                .nullish_equality_in_state(&mut runtime.0.state.borrow_mut(), &runtime.0.poisoned)
                 .unwrap(),
-            None
+            Some(false)
         );
-        assert_eq!(window.depth, 2);
+        assert_eq!(window.depth, 0);
         assert!(runtime.0.deferred_references.has_pending());
         store.clear_frame(&runtime, window).unwrap();
     }
@@ -201,7 +145,7 @@ mod tests {
     #[test]
     fn nullish_value_branch_proxy_and_conversion_paths_agree() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(() => {
             let calls = 0;
             let obj = {valueOf() { calls++; return 1; }};

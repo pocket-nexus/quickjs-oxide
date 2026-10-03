@@ -8,12 +8,16 @@
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 mod buffers;
+#[cfg(feature = "profiling")]
+mod core;
 pub use buffers::CallBufferCost;
 pub(crate) use buffers::{
     record_call_buffer_capacity, record_call_buffer_initialized,
     record_call_buffer_js_value_copies, record_call_buffer_moves, record_call_buffer_observed,
     record_call_buffer_share, record_call_raw_buffer_copies,
 };
+#[cfg(feature = "profiling")]
+pub(crate) use core::{CoreExecutionScope, record_runtime_event};
 mod phases;
 pub(crate) use phases::{CompilePhase, PhaseTimer, VmCallSample};
 mod sites;
@@ -24,7 +28,7 @@ pub use sites::{
 #[cfg(feature = "profiling")]
 pub(crate) use sites::{
     record_callsite_callee, record_execution_dispatch, record_execution_outcome,
-    record_execution_static, record_numeric_rejection_visit,
+    record_execution_static_in_state, record_numeric_rejection_visit,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -336,16 +340,33 @@ pub(crate) fn record_owned_instruction(operand_depth: usize) {
 }
 
 pub(crate) enum OwnedStorageEvent {
-    SlotCapacity { before: usize, after: usize },
-    FrameCapacity { before: usize, after: usize },
+    SlotCapacity {
+        before: usize,
+        after: usize,
+    },
+    FrameCapacity {
+        before: usize,
+        after: usize,
+    },
     FramePush(usize),
     Initialize(usize),
-    NoneInitialization { count: usize, high_water: usize },
-    Occupancy { reserved: usize, live: usize },
+    NoneInitialization {
+        count: usize,
+        high_water: usize,
+    },
+    Occupancy {
+        reserved: usize,
+        live: usize,
+    },
     Move(usize),
     Clear(usize),
-    Copy { heap_root: bool },
-    HotRelease { heap_root: bool },
+    Copy {
+        heap_root: bool,
+    },
+    #[cfg(test)]
+    HotRelease {
+        heap_root: bool,
+    },
 }
 
 pub(crate) fn record_owned_execution_layout<T>(name: &'static str) {
@@ -413,6 +434,7 @@ pub(crate) fn record_owned_storage(event: OwnedStorageEvent) {
             cost.value_copies = cost.value_copies.saturating_add(1);
             cost.copied_heap_roots = cost.copied_heap_roots.saturating_add(u64::from(heap_root));
         }
+        #[cfg(test)]
         OwnedStorageEvent::HotRelease { heap_root } => {
             cost.hot_value_releases = cost.hot_value_releases.saturating_add(1);
             cost.hot_heap_root_releases = cost
@@ -430,7 +452,7 @@ mod tests {
     #[test]
     fn real_compile_and_execution_are_counted_and_nested_scopes_are_isolated() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let outer = CostProfile::start();
         assert_eq!(
             context.eval("(function(x){return x+1;})(41)").unwrap(),
@@ -462,7 +484,7 @@ mod tests {
     #[test]
     fn parse_failure_and_unwinding_release_the_collection_scope() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let outer = CostProfile::start();
         assert!(context.eval("let = ;").is_err());
         let failed = outer.snapshot();
@@ -481,7 +503,7 @@ mod tests {
     #[test]
     fn call_preparation_distinguishes_padding_copies_and_owned_storage() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(function) = context.eval("(function(a,b){return a})").unwrap() else {
             panic!("expected function")
         };
@@ -489,13 +511,16 @@ mod tests {
         let marker = runtime.new_object(None).unwrap();
         for values in [
             vec![],
-            vec![Value::Object(marker.clone())],
+            vec![Value::Object(marker.try_clone().expect("duplicate root"))],
             vec![Value::Int(1), Value::Int(2), Value::Int(3)],
         ] {
             let profile = CostProfile::start();
             assert_eq!(
                 context.call(&callable, Value::Undefined, &values).unwrap(),
-                values.first().cloned().unwrap_or(Value::Undefined)
+                values
+                    .first()
+                    .map(|value| value.try_clone().expect("duplicate root"))
+                    .unwrap_or(Value::Undefined)
             );
             let cost = profile.snapshot().call_preparation;
             assert_eq!(cost.frames_prepared, 1);
@@ -522,7 +547,7 @@ mod tests {
     #[test]
     fn throwing_body_still_counts_a_prepared_frame() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(function) = context.eval("(function f(){if(f)throw 42})").unwrap() else {
             panic!("expected function")
         };
@@ -547,7 +572,7 @@ mod disassembly_tests {
     #[test]
     fn optional_disassembly_captures_only_subsequent_final_code() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         drop(context.eval("0").unwrap());
         let before = profile.snapshot();

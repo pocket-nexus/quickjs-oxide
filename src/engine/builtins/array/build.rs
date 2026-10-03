@@ -257,7 +257,7 @@ impl BuildStep {
         resume.0.mode = Mode::Acquire(runtime.dup_jsvalue(items)?);
         Ok(Self::request_read(
             runtime.dup_jsvalue(items)?,
-            PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
+            PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
             resume,
         ))
     }
@@ -287,7 +287,9 @@ impl BuildResume {
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
             .result
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("Array builder result missing"))
     }
     fn construct(
@@ -364,8 +366,8 @@ impl BuildResume {
                 next: Some(next),
                 ..
             } => {
-                let callable = next.clone();
-                let receiver = JsValue::Object(iterator.clone().into_handle());
+                let callable = next.try_clone()?;
+                let receiver = JsValue::Object(iterator.try_clone()?.into_handle());
                 self.0.phase = Phase::NextCall;
                 // Array.from uses ordinary Call, not JS_IteratorNext2's raw
                 // cproto fast path; parse its actual object result afterwards.
@@ -377,7 +379,7 @@ impl BuildResume {
                 ))
             }
             Mode::ArrayLike { source, length } if self.0.index < *length => {
-                let receiver = JsValue::Object(source.clone().into_handle());
+                let receiver = JsValue::Object(source.try_clone()?.into_handle());
                 self.0.phase = Phase::Value;
                 Ok(BuildStep::request_read(
                     receiver,
@@ -406,7 +408,13 @@ impl BuildResume {
         ))
     }
     fn map(mut self, runtime: &Runtime, value: JsValue) -> Result<BuildStep, RuntimeError> {
-        if let Some(callable) = self.0.mapfn.clone() {
+        if let Some(callable) = self
+            .0
+            .mapfn
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
+        {
             self.0.phase = Phase::Map;
             let receiver = match runtime.dup_jsvalue(&self.0.map_this) {
                 Ok(receiver) => receiver,
@@ -525,7 +533,7 @@ impl BuildResume {
                         NativeConversion::Throw(value) => return self.abrupt(runtime, value),
                     };
                     self.0.mode = Mode::ArrayLike {
-                        source: source.clone(),
+                        source: source.try_clone()?,
                         length: 0,
                     };
                     self.0.phase = Phase::Length;
@@ -581,7 +589,7 @@ impl BuildResume {
                 self.0.result = Some(ObjectRef::from_owned_handle(runtime.clone(), result));
                 if let Mode::Iterable { items, method, .. } = &self.0.mode {
                     let receiver = runtime.dup_jsvalue(items)?;
-                    let callable = method.clone();
+                    let callable = method.try_clone()?;
                     self.0.phase = Phase::Iterator;
                     return Ok(BuildStep::request_call(
                         callable,
@@ -609,7 +617,7 @@ impl BuildResume {
                 else {
                     return Err(RuntimeError::Invariant("Array.from iterator mode missing"));
                 };
-                *target = Some(iterator.clone());
+                *target = Some(iterator.try_clone()?);
                 self.0.phase = Phase::NextMethod;
                 Ok(BuildStep::request_read(
                     JsValue::Object(iterator.into_handle()),
@@ -763,13 +771,14 @@ pub(crate) fn finish(
             }
             BuildStep::Construct { mut resume } => {
                 let target = resume.take_construct_target();
+                let new_target = target.try_clone()?;
                 let arguments = resume.take_construct_arguments();
                 resume.resume(
                     runtime,
                     runtime.construct_internal_jsvalue(
                         realm,
                         &target,
-                        crate::engine::vm::call::ConstructNewTarget::Validated(target.clone()),
+                        crate::engine::vm::call::ConstructNewTarget::Validated(new_target),
                         arguments,
                     )?,
                 )?
@@ -804,7 +813,7 @@ pub(crate) fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?;
                     resume.set(runtime, key, reply)?
                 }

@@ -287,8 +287,8 @@ fn array_copy_within_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_copy_within_boxing_native_errors_and_user_throws_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_boolean_prototype = eval_object(
         &mut defining,
@@ -316,7 +316,7 @@ fn array_copy_within_boxing_native_errors_and_user_throws_use_pinned_realms() {
     let Value::Object(result) = caller
         .call(
             &method,
-            Value::Object(receiver.clone()),
+            Value::Object(receiver.try_clone().expect("duplicate root")),
             &[Value::Int(0), Value::Int(1)],
         )
         .expect("cross-realm Array.copyWithin call")
@@ -362,7 +362,7 @@ fn array_copy_within_boxing_native_errors_and_user_throws_use_pinned_realms() {
     let set_error = take_exception_object(&mut caller, "Array.copyWithin Set TypeError");
     assert_eq!(
         runtime.get_prototype_of(&set_error).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "Array.copyWithin Set TypeError did not use the method defining realm",
     );
 
@@ -418,7 +418,7 @@ fn array_copy_within_boxing_native_errors_and_user_throws_use_pinned_realms() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

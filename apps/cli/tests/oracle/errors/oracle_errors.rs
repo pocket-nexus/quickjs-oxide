@@ -43,7 +43,7 @@ fn error_intrinsic_slice_matches_quickjs_oracle() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let error = global_callable(&runtime, &mut context, "Error");
     let type_error = global_callable(&runtime, &mut context, "TypeError");
     let prototype = runtime.intern_property_key("prototype").unwrap();
@@ -77,10 +77,11 @@ fn rust_observations() -> Vec<String> {
         runtime.get_prototype_of(error.as_object()).unwrap()
             == Some(context.function_prototype().unwrap()),
         runtime.get_prototype_of(type_error.as_object()).unwrap()
-            == Some(error.as_object().clone()),
+            == Some(error.as_object().try_clone().expect("duplicate root")),
         runtime.get_prototype_of(&error_prototype).unwrap()
             == Some(context.object_prototype().unwrap()),
-        runtime.get_prototype_of(&type_error_prototype).unwrap() == Some(error_prototype.clone()),
+        runtime.get_prototype_of(&type_error_prototype).unwrap()
+            == Some(error_prototype.try_clone().expect("duplicate root")),
     ];
     let metadata = [
         primitive_data_value(&runtime, error.as_object(), &length),
@@ -169,11 +170,17 @@ fn rust_observations() -> Vec<String> {
             .unwrap()
     );
 
-    let empty_is_error = call_bool(&mut context, &is_error, &[Value::Object(empty.clone())]);
+    let empty_is_error = call_bool(
+        &mut context,
+        &is_error,
+        &[Value::Object(empty.try_clone().expect("duplicate root"))],
+    );
     let prototype_is_error = call_bool(
         &mut context,
         &is_error,
-        &[Value::Object(error_prototype.clone())],
+        &[Value::Object(
+            error_prototype.try_clone().expect("duplicate root"),
+        )],
     );
     let spoof_is_error = call_bool(&mut context, &is_error, &[Value::Object(spoof)]);
     let cause_descriptor = runtime.get_own_property(&caused, &cause).unwrap().unwrap();
@@ -223,7 +230,9 @@ fn rust_observations() -> Vec<String> {
     };
     let tagged_message_input = context.new_object().unwrap();
     let to_string_tag = PropertyKey::from(
-        runtime.well_known_symbol(quickjs_oxide::engine::api::WellKnownSymbol::ToStringTag),
+        runtime
+            .well_known_symbol(quickjs_oxide::engine::api::WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
     );
     define_data(
         &mut context,
@@ -264,7 +273,8 @@ fn rust_observations() -> Vec<String> {
         ),
         format!(
             "instances={}|{}|{}|{}",
-            runtime.get_prototype_of(&empty).unwrap() == Some(error_prototype.clone()),
+            runtime.get_prototype_of(&empty).unwrap()
+                == Some(error_prototype.try_clone().expect("duplicate root")),
             runtime.get_prototype_of(&typed).unwrap() == Some(type_error_prototype),
             runtime.has_own_property(&empty, &message).unwrap(),
             empty_is_error

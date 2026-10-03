@@ -5,6 +5,9 @@ use super::*;
 impl Context {
     /// Return this realm's `%Object.prototype%` root.
     pub fn object_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -21,6 +24,9 @@ impl Context {
 
     /// Return this realm's genuine empty `%Array.prototype%` root.
     pub fn array_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -37,6 +43,9 @@ impl Context {
 
     /// Return this realm's `%Function.prototype%` root.
     pub fn function_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -54,6 +63,9 @@ impl Context {
     /// Return this realm's `%IteratorPrototype%` root beneath the public
     /// `Iterator`, Iterator Helpers, and `Iterator.concat` intrinsic graph.
     pub fn iterator_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -70,6 +82,9 @@ impl Context {
 
     /// Return this realm's `%StringIteratorPrototype%` root.
     pub fn string_iterator_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -86,36 +101,54 @@ impl Context {
 
     /// Return this realm's boxed-+0 `%Number.prototype%` root.
     pub fn number_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::Number)
     }
 
     /// Return this realm's boxed-false `%Boolean.prototype%` root.
     pub fn boolean_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::Boolean)
     }
 
     /// Return this realm's branded-empty partial `%String.prototype%` root.
     pub fn string_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::String)
     }
 
     /// Return this realm's ordinary `%Symbol.prototype%` root.
     pub fn symbol_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::Symbol)
     }
 
     /// Return this realm's ordinary `%BigInt.prototype%` root.
     pub fn bigint_prototype(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::BigInt)
     }
 
     /// Return this realm's `%Function%` constructor root.
     pub fn function_constructor(&self) -> Result<CallableRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -132,6 +165,9 @@ impl Context {
 
     /// Return this realm's global object root.
     pub fn global_object(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -148,6 +184,9 @@ impl Context {
 
     /// Return the null-prototype object used for global lexical bindings.
     pub fn global_var_object(&self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0

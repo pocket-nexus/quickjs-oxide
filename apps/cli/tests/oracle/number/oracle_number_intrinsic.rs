@@ -478,7 +478,7 @@ fn number_native_error_stacks_match_pinned_quickjs() {
 fn rust_observations() -> Option<Vec<String>> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
@@ -534,8 +534,17 @@ fn rust_observations() -> Option<Vec<String>> {
     define_data_key(
         &runtime,
         &numeric_object,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(numeric_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            numeric_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -571,7 +580,11 @@ fn rust_observations() -> Option<Vec<String>> {
         ),
         call_one(&mut context, &number, Value::BigInt(JsBigInt::zero())),
         call_one(&mut context, &number, Value::BigInt(big_rounded.clone())),
-        call_one(&mut context, &number, Value::Object(numeric_object.clone())),
+        call_one(
+            &mut context,
+            &number,
+            Value::Object(numeric_object.try_clone().expect("duplicate root")),
+        ),
         context.get_property(&global, &conversion_log).unwrap(),
     ];
     let mut observations = vec![format!(
@@ -582,7 +595,9 @@ fn rust_observations() -> Option<Vec<String>> {
             &mut context,
             &number,
             Value::Undefined,
-            &[Value::Symbol(number_symbol.clone())],
+            &[Value::Symbol(
+                number_symbol.try_clone().expect("duplicate root")
+            )],
         )
     )];
 
@@ -623,12 +638,20 @@ fn rust_observations() -> Option<Vec<String>> {
             .to_string(),
         plain_value(
             context
-                .call(&object_to_string, Value::Object(boxed_zero.clone()), &[])
+                .call(
+                    &object_to_string,
+                    Value::Object(boxed_zero.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         ),
         plain_value(
             context
-                .call(&value_of, Value::Object(boxed_zero.clone()), &[])
+                .call(
+                    &value_of,
+                    Value::Object(boxed_zero.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         ),
         runtime
@@ -665,7 +688,7 @@ fn rust_observations() -> Option<Vec<String>> {
         &runtime,
         &global,
         "boxedSeven",
-        Value::Object(boxed_seven.clone()),
+        Value::Object(boxed_seven.try_clone().expect("duplicate root")),
     );
     let coercion_sources = [
         "Number(boxedSeven)",
@@ -683,7 +706,7 @@ fn rust_observations() -> Option<Vec<String>> {
     coercion.push(
         matches!(
             context
-                .call(&object_value_of, Value::Object(boxed_seven.clone()), &[])
+                .call(&object_value_of, Value::Object(boxed_seven.try_clone().expect("duplicate root")), &[])
                 .unwrap(),
             Value::Object(object) if object == boxed_seven
         )
@@ -730,7 +753,11 @@ fn rust_observations() -> Option<Vec<String>> {
             .join("|")
     ));
     let number_prototype_value = context
-        .call(&value_of, Value::Object(number_prototype.clone()), &[])
+        .call(
+            &value_of,
+            Value::Object(number_prototype.try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap();
     observations.push(format!(
         "graph=function|{}|{}|{}|{}|{}|{}|{}|{}",
@@ -755,7 +782,7 @@ fn rust_observations() -> Option<Vec<String>> {
             context
                 .call(
                     &object_to_string,
-                    Value::Object(number_prototype.clone()),
+                    Value::Object(number_prototype.try_clone().expect("duplicate root")),
                     &[],
                 )
                 .unwrap(),
@@ -821,8 +848,17 @@ fn rust_observations() -> Option<Vec<String>> {
     define_data_key(
         &runtime,
         &predicate_bomb,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(predicate_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            predicate_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -911,7 +947,7 @@ fn rust_observations() -> Option<Vec<String>> {
         call_one(
             &mut context,
             &is_integer,
-            Value::Object(predicate_bomb.clone()),
+            Value::Object(predicate_bomb.try_clone().expect("duplicate root")),
         ),
         call_one(
             &mut context,
@@ -1327,35 +1363,35 @@ fn rust_observations() -> Option<Vec<String>> {
             &runtime,
             &mut context,
             &value_of,
-            brand_receiver.clone(),
+            brand_receiver.try_clone().expect("duplicate root"),
             &[],
         ),
         observe_call_args(
             &runtime,
             &mut context,
             &to_string,
-            brand_receiver.clone(),
+            brand_receiver.try_clone().expect("duplicate root"),
             &[],
         ),
         observe_call_args(
             &runtime,
             &mut context,
             &to_locale_string,
-            brand_receiver.clone(),
+            brand_receiver.try_clone().expect("duplicate root"),
             &[],
         ),
         observe_call_args(
             &runtime,
             &mut context,
             &to_fixed,
-            brand_receiver.clone(),
+            brand_receiver.try_clone().expect("duplicate root"),
             &[],
         ),
         observe_call_args(
             &runtime,
             &mut context,
             &to_exponential,
-            brand_receiver.clone(),
+            brand_receiver.try_clone().expect("duplicate root"),
             &[],
         ),
         observe_call_args(&runtime, &mut context, &to_precision, brand_receiver, &[]),
@@ -1384,8 +1420,17 @@ fn rust_observations() -> Option<Vec<String>> {
     define_data_key(
         &runtime,
         &format_argument,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(format_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            format_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -1395,25 +1440,33 @@ fn rust_observations() -> Option<Vec<String>> {
             &mut context,
             &to_string,
             Value::Int(10),
-            &[Value::Object(format_argument.clone())],
+            &[Value::Object(
+                format_argument.try_clone().expect("duplicate root"),
+            )],
         ),
         call_with(
             &mut context,
             &to_fixed,
             Value::Float(1.25),
-            &[Value::Object(format_argument.clone())],
+            &[Value::Object(
+                format_argument.try_clone().expect("duplicate root"),
+            )],
         ),
         call_with(
             &mut context,
             &to_exponential,
             Value::Float(1.25),
-            &[Value::Object(format_argument.clone())],
+            &[Value::Object(
+                format_argument.try_clone().expect("duplicate root"),
+            )],
         ),
         call_with(
             &mut context,
             &to_precision,
             Value::Float(1.25),
-            &[Value::Object(format_argument.clone())],
+            &[Value::Object(
+                format_argument.try_clone().expect("duplicate root"),
+            )],
         ),
     ];
     let converted_format_log = context.get_property(&global, &format_log).unwrap();
@@ -1431,7 +1484,9 @@ fn rust_observations() -> Option<Vec<String>> {
         &mut context,
         &to_fixed,
         Value::String(JsString::try_from_utf8("1").unwrap()),
-        &[Value::Object(format_argument.clone())],
+        &[Value::Object(
+            format_argument.try_clone().expect("duplicate root"),
+        )],
     );
     let bad_this_log = context.get_property(&global, &format_log).unwrap();
     assert!(
@@ -1476,7 +1531,11 @@ fn rust_observations() -> Option<Vec<String>> {
             .to_string(),
         plain_value(
             context
-                .call(&value_of, Value::Object(object_box_a.clone()), &[])
+                .call(
+                    &value_of,
+                    Value::Object(object_box_a.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         ),
         (object_box_a == object_box_b).to_string(),
@@ -1504,7 +1563,12 @@ fn rust_observations() -> Option<Vec<String>> {
         &runtime,
         &number_prototype,
         "__strictMethod",
-        Value::Object(direct_strict_method.as_object().clone()),
+        Value::Object(
+            direct_strict_method
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -1513,7 +1577,12 @@ fn rust_observations() -> Option<Vec<String>> {
         &runtime,
         &number_prototype,
         "__sloppyMethod",
-        Value::Object(direct_sloppy_method.as_object().clone()),
+        Value::Object(
+            direct_sloppy_method
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -1533,7 +1602,11 @@ fn rust_observations() -> Option<Vec<String>> {
         object_has_prototype(&runtime, &direct_sloppy_this_a, &number_prototype).to_string(),
         plain_value(
             context
-                .call(&value_of, direct_sloppy_this_a.clone(), &[])
+                .call(
+                    &value_of,
+                    direct_sloppy_this_a.try_clone().expect("duplicate root"),
+                    &[],
+                )
                 .unwrap(),
         ),
         plain_value(direct_sloppy_result_b),
@@ -1725,19 +1798,27 @@ fn rust_observations() -> Option<Vec<String>> {
     ];
     observations.push(format!("writes={}", writes.join("|")));
 
-    let to_string_tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let to_string_tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     let tag_before = [
         plain_value(context.call(&object_to_string, Value::Int(3), &[]).unwrap()),
         plain_value(
             context
-                .call(&object_to_string, Value::Object(boxed_seven.clone()), &[])
+                .call(
+                    &object_to_string,
+                    Value::Object(boxed_seven.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         ),
         plain_value(
             context
                 .call(
                     &object_to_string,
-                    Value::Object(number_prototype.clone()),
+                    Value::Object(number_prototype.try_clone().expect("duplicate root")),
                     &[],
                 )
                 .unwrap(),
@@ -1773,7 +1854,12 @@ fn rust_observations() -> Option<Vec<String>> {
         &runtime,
         &global,
         "localeMethod",
-        Value::Object(locale_method.as_object().clone()),
+        Value::Object(
+            locale_method
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let locale_getter = eval_callable(
         &runtime,
@@ -1812,13 +1898,17 @@ fn rust_observations() -> Option<Vec<String>> {
     observations.push(format!("custom-object-methods={}", custom.join("|")));
 
     let boxed_custom_tag = context
-        .call(&object_to_string, Value::Object(boxed_seven.clone()), &[])
+        .call(
+            &object_to_string,
+            Value::Object(boxed_seven.try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap();
     let boxed_tag_this = global_value(&runtime, &mut context, &global, "tagThis");
     let prototype_custom_tag = context
         .call(
             &object_to_string,
-            Value::Object(number_prototype.clone()),
+            Value::Object(number_prototype.try_clone().expect("duplicate root")),
             &[],
         )
         .unwrap();
@@ -1849,7 +1939,11 @@ fn rust_observations() -> Option<Vec<String>> {
             .unwrap()
     );
     let own_tag = context
-        .call(&object_to_string, Value::Object(boxed_seven.clone()), &[])
+        .call(
+            &object_to_string,
+            Value::Object(boxed_seven.try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap();
     let tag_own = [
         plain_value(own_tag),
@@ -1860,7 +1954,11 @@ fn rust_observations() -> Option<Vec<String>> {
         .to_string(),
         plain_value(
             context
-                .call(&value_of, Value::Object(boxed_seven.clone()), &[])
+                .call(
+                    &value_of,
+                    Value::Object(boxed_seven.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         ),
     ];
@@ -1879,7 +1977,11 @@ fn rust_observations() -> Option<Vec<String>> {
         plain_value(context.call(&object_to_string, Value::Int(3), &[]).unwrap()),
         plain_value(
             context
-                .call(&object_to_string, Value::Object(boxed_seven.clone()), &[])
+                .call(
+                    &object_to_string,
+                    Value::Object(boxed_seven.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         ),
     ];
@@ -1899,7 +2001,7 @@ fn rust_observations() -> Option<Vec<String>> {
         &runtime,
         &number_prototype,
         "toString",
-        Value::Object(to_string.as_object().clone()),
+        Value::Object(to_string.as_object().try_clone().expect("duplicate root")),
         true,
         false,
         true,
@@ -1949,7 +2051,12 @@ fn rust_observations() -> Option<Vec<String>> {
             .set_property(
                 &global,
                 &runtime.intern_property_key("parseInt").unwrap(),
-                Value::Object(replacement_parse_int.as_object().clone()),
+                Value::Object(
+                    replacement_parse_int
+                        .as_object()
+                        .try_clone()
+                        .expect("duplicate root")
+                ),
             )
             .unwrap()
     );
@@ -1958,7 +2065,12 @@ fn rust_observations() -> Option<Vec<String>> {
             .set_property(
                 &global,
                 &runtime.intern_property_key("parseFloat").unwrap(),
-                Value::Object(replacement_parse_float.as_object().clone()),
+                Value::Object(
+                    replacement_parse_float
+                        .as_object()
+                        .try_clone()
+                        .expect("duplicate root")
+                ),
             )
             .unwrap()
     );
@@ -2319,7 +2431,7 @@ fn number_bits(value: Value) -> String {
 fn join_values(values: &[Value]) -> String {
     values
         .iter()
-        .cloned()
+        .map(|value| value.try_clone().expect("duplicate root"))
         .map(plain_value)
         .collect::<Vec<_>>()
         .join("|")

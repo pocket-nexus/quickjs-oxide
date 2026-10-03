@@ -31,10 +31,12 @@ fn module_loader_exception_values_are_not_wrapped_and_resolution_retries() {
 fn dynamic_import_preserves_module_loader_exception_identity() {
     let runtime = Runtime::new();
     let reason = runtime.new_object(None).unwrap();
-    let (loader, _, loads) =
-        AbruptModuleLoader::new(AbruptLoaderPhase::Load, Value::Object(reason.clone()));
+    let (loader, _, loads) = AbruptModuleLoader::new(
+        AbruptLoaderPhase::Load,
+        Value::Object(reason.try_clone().expect("duplicate root")),
+    );
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let promise = eval_dynamic_import(&mut context, "import('./dependency.js')", "pkg/entry.js");
 
     assert_eq!(
@@ -49,8 +51,8 @@ fn dynamic_import_preserves_module_loader_exception_identity() {
         Value::Object(reason)
     );
     assert_eq!(loads.borrow().as_slice(), ["pkg/dependency.js"]);
-    assert!(!context.has_exception());
-    assert!(!runtime.is_job_pending());
+    assert!(!context.has_exception().expect("runtime state"));
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
@@ -59,10 +61,10 @@ fn dynamic_import_attribute_checker_preserves_exception_identity() {
     let reason = runtime.new_object(None).unwrap();
     let (loader, _, loads) = AbruptModuleLoader::new(
         AbruptLoaderPhase::CheckAttributes,
-        Value::Object(reason.clone()),
+        Value::Object(reason.try_clone().expect("duplicate root")),
     );
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let promise = eval_dynamic_import(
         &mut context,
         "import('./dependency.js', { with: { type: 'javascript' } })",
@@ -76,8 +78,8 @@ fn dynamic_import_attribute_checker_preserves_exception_identity() {
         Value::Object(reason)
     );
     assert!(loads.borrow().is_empty());
-    assert!(!context.has_exception());
-    assert!(!runtime.is_job_pending());
+    assert!(!context.has_exception().expect("runtime state"));
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
@@ -91,7 +93,7 @@ fn foreign_runtime_module_loader_exceptions_are_rejected_before_publication() {
         let foreign = Runtime::new().new_object(None).unwrap();
         let (loader, _, _) = AbruptModuleLoader::new(phase, Value::Object(foreign));
         let _registration = runtime.set_module_loader(loader);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = if phase == AbruptLoaderPhase::CheckAttributes {
             "import './dependency.js' with { type: 'javascript' };"
         } else {
@@ -102,7 +104,7 @@ fn foreign_runtime_module_loader_exceptions_are_rejected_before_publication() {
             context.compile_module_with_filename(source, "pkg/entry.js"),
             Err(RuntimeError::WrongRuntime("module loader exception"))
         ));
-        assert!(!context.has_exception());
+        assert!(!context.has_exception().expect("runtime state"));
     }
 }
 
@@ -113,12 +115,12 @@ fn dependency_attribute_exception_rolls_back_the_resolution_graph_for_retry() {
     let failing = Rc::new(Cell::new(true));
     let loads = Rc::new(RefCell::new(Vec::new()));
     let loader = DependencyAttributeAbruptLoader {
-        exception: Value::Object(reason.clone()),
+        exception: Value::Object(reason.try_clone().expect("duplicate root")),
         failing: failing.clone(),
         loads: loads.clone(),
     };
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = "import './dependency.js'; globalThis.__dependencyAbruptRetry = 42;";
 
     assert!(matches!(

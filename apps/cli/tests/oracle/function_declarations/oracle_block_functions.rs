@@ -147,7 +147,7 @@ fn block_function_values_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -166,7 +166,7 @@ fn block_function_errors_match_pinned_quickjs() {
     for &(description, source) in ERROR_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -190,7 +190,7 @@ fn escaped_block_lexical_after_failed_initializer_matches_pinned_quickjs() {
     ];
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let rust = sources
         .iter()
         .map(|source| observe_rust_eval(&runtime, &mut context, source, description))
@@ -217,7 +217,7 @@ fn program_annex_then_lexical_state_matches_pinned_quickjs() {
     ];
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let rust = sources
         .iter()
         .map(|source| observe_rust_eval(&runtime, &mut context, source, description))
@@ -261,8 +261,8 @@ fn block_function_cross_realm_regression() {
     // API exposes the same operation directly, so this remains unconditional.
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     drop(defining.eval("globalThis.realmTag='A'").unwrap());
     drop(caller.eval("globalThis.realmTag='B'").unwrap());
 
@@ -290,11 +290,11 @@ fn block_function_cross_realm_regression() {
     for function in [&outer, &inner] {
         assert_eq!(
             runtime.get_prototype_of(function).unwrap(),
-            Some(prototype_a.clone())
+            Some(prototype_a.try_clone().expect("duplicate root"))
         );
         assert_ne!(
             runtime.get_prototype_of(function).unwrap(),
-            Some(prototype_b.clone())
+            Some(prototype_b.try_clone().expect("duplicate root"))
         );
         let callable = runtime.as_callable(function).unwrap().unwrap();
         assert_eq!(

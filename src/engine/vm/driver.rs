@@ -1,7 +1,7 @@
 //! Own frames and advance ordinary bytecode calls without native recursion.
 
 mod cold;
-mod ordinary;
+pub(super) mod ordinary;
 mod ready;
 
 use crate::engine::api::error::Error;
@@ -14,32 +14,46 @@ use crate::engine::vm::BytecodePc;
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
-use crate::engine::vm::execute::{VmAction, execute_frame};
+use crate::engine::vm::execute::VmAction;
+#[cfg(all(test, feature = "profiling"))]
+use crate::engine::vm::execute::execute_frame;
 use crate::engine::vm::execution::{ExecutionLimits, RunningExecution};
 use crate::engine::vm::frame::{Frame, FrameEntry, FrameId, ReturnTarget};
+use crate::engine::vm::stack::FrameStorage;
 
 pub(super) fn push_frame(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     entry: FrameEntry,
 ) -> Result<FrameId, Error> {
+    let mut entry = super::frame::FrameEntryGuard::new(runtime, entry);
     execution
         .call_storage
         .reserve_depth(execution.frames.depth() + 1)?;
     let prepared = execution.frames.prepare_push()?;
-    let runtime = entry.cold.function.runtime();
+    let storage = std::mem::replace(
+        &mut entry.storage,
+        FrameStorage {
+            original_arguments: Vec::new(),
+            parameters: Vec::new(),
+            locals: Vec::new(),
+            operands: Vec::new(),
+        },
+    );
     let window = if entry.initialize_bindings {
         execution.slots.push_initialized_frame(
             runtime,
             &entry.executable.frame_layout(),
-            entry.storage,
-            &entry.cold.function,
+            storage,
+            entry.cold.function.object_id(),
             entry.executable.metadata.function_name_local,
         )?
     } else {
         execution
             .slots
-            .push_frame(runtime, &entry.executable.frame_layout(), entry.storage)?
+            .push_frame(runtime, &entry.executable.frame_layout(), storage)?
     };
+    let entry = entry.take();
     let mut cold = entry.cold;
     cold.executable = entry.executable.into();
     cold.window = window.into();
@@ -55,12 +69,14 @@ pub(super) fn push_frame(
 }
 
 fn push_direct_call_frame(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     parent: FrameId,
     entry: FrameEntry,
     count: usize,
     method: bool,
 ) -> Result<FrameId, Error> {
+    let mut entry = super::frame::FrameEntryGuard::new(runtime, entry);
     if !entry.initialize_bindings || !entry.storage.original_arguments.is_empty() {
         return Err(Error::internal(
             "direct call received materialized arguments",
@@ -72,17 +88,17 @@ fn push_direct_call_frame(
     let mut prepared = execution.frames.prepare_push()?;
     let frame = prepared.current_mut(parent)?;
     let resume = frame.next_pc()?;
-    let runtime = frame.cold.function.runtime().clone();
     let window = execution.slots.push_call_frame(
-        &runtime,
+        runtime,
         &entry.executable.frame_layout(),
         &mut frame.window,
         count,
         method,
-        &entry.cold.function,
+        entry.cold.function.object_id(),
         entry.executable.metadata.function_name_local,
     )?;
     frame.resume_pc = resume;
+    let entry = entry.take();
     let mut cold = entry.cold;
     cold.executable = entry.executable.into();
     cold.window = window.into();
@@ -319,7 +335,7 @@ pub(super) fn enter_call(
                     runtime,
                     execution,
                     id,
-                    callable.as_object().clone(),
+                    callable.as_object().try_clone()?,
                     bound_receiver.unwrap_or(receiver),
                     bound_arguments.unwrap_or(arguments),
                     tail,
@@ -452,7 +468,7 @@ pub(super) fn enter_call(
             },
         };
         let entry = request.prepare(runtime, &mut execution.call_storage)?;
-        push_direct_call_frame(execution, id, entry, count, method)?;
+        push_direct_call_frame(runtime, execution, id, entry, count, method)?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(observed_depth);
         return Ok(CallStep::Entered);
@@ -507,7 +523,7 @@ pub(super) fn enter_call(
     };
     frame.resume_pc = frame.next_pc()?;
     let entry = request.prepare(runtime, &mut execution.call_storage)?;
-    push_frame(execution, entry)?;
+    push_frame(runtime, execution, entry)?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(observed_depth);
     Ok(CallStep::Entered)
@@ -518,8 +534,9 @@ pub(super) fn execute(
     entry: FrameEntry,
     limits: ExecutionLimits,
 ) -> Result<RunningExit, Error> {
+    let mut entry = super::frame::FrameEntryGuard::new(&runtime, entry);
     let mut execution = RunningExecution::new(&runtime, limits)?;
-    push_frame(&mut execution, entry)?;
+    push_frame(&runtime, &mut execution, entry.take())?;
     run_frames(&runtime, execution)
 }
 
@@ -636,8 +653,9 @@ impl RunningExit {
 /// Install an authenticated dormant frame and inject abrupt resumption into
 /// the same unwinder used by ordinary child-frame throws.
 pub(super) fn resume(runtime: Runtime, entry: FrameEntry, pc: usize) -> Result<RunningExit, Error> {
+    let mut entry = super::frame::FrameEntryGuard::new(&runtime, entry);
     let mut execution = RunningExecution::new(&runtime, ExecutionLimits::for_runtime(&runtime))?;
-    let id = push_frame(&mut execution, entry)?;
+    let id = push_frame(&runtime, &mut execution, entry.take())?;
     let frame = execution.frames.current_mut(id)?;
     frame.set_resume_pc(pc)?;
     run_frames_with_state(&runtime, execution, None, None, 0)
@@ -656,6 +674,8 @@ fn run_frames_with_state(
     mut conversion: Option<super::conversion_driver::ConversionTask>,
     mut next_operation: u64,
 ) -> Result<RunningExit, Error> {
+    #[cfg(feature = "profiling")]
+    let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
     loop {
         if let Some(result) = execution.root_descriptor.take() {
             if execution.frames.current_id().is_some()
@@ -833,7 +853,8 @@ fn run_frames_with_state(
             }
         }
         if let VmAction::Suspend(kind) = exit {
-            let suspension = super::suspend::OwnedSuspension::detach(&mut execution, id, kind)?;
+            let suspension =
+                super::suspend::OwnedSuspension::detach(runtime, &mut execution, id, kind)?;
             if let Some(target) = suspension.return_to {
                 let outcome = Box::new(suspension)
                     .freeze(runtime.clone())
@@ -921,7 +942,10 @@ fn run_frames_with_state(
         }
         if let Some(super::frame::OperationTarget::Eval(arguments)) = target.operation {
             let parent = execution.frames.current_mut(target.frame()?)?;
-            parent.cold.release_eval_arguments();
+            parent
+                .cold
+                .release_eval_arguments(&mut runtime.0.state.borrow_mut())
+                .map_err(runtime_error_to_vm_error)?;
             for _ in 0..=arguments {
                 let discarded = execution.slots.pop(&mut parent.window)?;
                 runtime
@@ -989,7 +1013,7 @@ mod tests {
     #[test]
     fn same_frame_property_completion_keeps_getters_proxy_traps_and_error_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let costs = CostProfile::start();
         let result = context
             .eval(
@@ -1021,7 +1045,7 @@ mod tests {
     #[test]
     fn same_frame_write_rejection_is_a_throw_not_a_completed_instruction() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(function(){'use strict';let events='';
@@ -1042,7 +1066,7 @@ mod tests {
     #[test]
     fn single_execution_stream_preserves_conversion_and_throw_finally() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(function(){let events=''; let text='a';
@@ -1064,7 +1088,7 @@ mod tests {
     #[test]
     fn resident_primitive_add_does_not_consume_conversion_identity() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let entry = entry(
             &runtime,
             &mut context,
@@ -1072,7 +1096,7 @@ mod tests {
             Vec::new(),
         );
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         let mut identity = u64::MAX;
         let result = super::ready::run(&runtime, &mut execution, id, &mut identity).unwrap();
         assert!(matches!(
@@ -1130,7 +1154,7 @@ mod tests {
         callable: crate::engine::object::CallableRef,
         arguments: Vec<Value>,
     ) -> FrameEntry {
-        let function = callable.as_object().clone();
+        let function = callable.as_object().try_clone().expect("duplicate root");
         let CallableExecution::Bytecode {
             bytecode,
             closure_slots,
@@ -1138,7 +1162,7 @@ mod tests {
         else {
             panic!("expected bytecode");
         };
-        let prepared = runtime
+        let mut prepared = runtime
             .prepare_bytecode_frame(
                 &callable,
                 Value::Undefined,
@@ -1158,11 +1182,12 @@ mod tests {
             cold: crate::engine::vm::frame::ColdFrame::new(FrameCold {
                 rare: std::cell::OnceCell::new(),
                 return_to: None,
-                entry_guard: Some(prepared.active_frame),
+                entry_guard: Some(prepared.active_frame.into_internal()),
                 function: crate::engine::vm::closure::FrameFunction::new(function, closure_slots)
+                    .unwrap()
                     .into(),
                 reusable_captured_locals: vec![false; locals],
-                input: (prepared.input).into(),
+                input: prepared.input.take().into(),
             }),
             storage: FrameStorage {
                 original_arguments: arguments
@@ -1199,7 +1224,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(&runtime, &mut context, source, Vec::new());
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -1241,7 +1266,7 @@ mod tests {
             ("(function(){return function(){x=42};let x})()", true),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let closure = context.eval(source).unwrap();
             let entry = entry(
                 &runtime,
@@ -1298,7 +1323,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let throwing = context.eval("(function(){throw 40})").unwrap();
             let entry = entry(&runtime, &mut context, source, vec![throwing]);
             let profile = CostProfile::start();
@@ -1322,7 +1347,7 @@ mod tests {
             "(function(){var f,g,i=41;while(i<43){let x=i;if(i===41)f=function(){return x};else g=function(){return x};i=i+1}return function(){return f()+g()-41}})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let call_entry = entry(&runtime, &mut context, source, vec![Value::Int(42)]);
             let profile = CostProfile::start();
             let completion =
@@ -1358,7 +1383,7 @@ mod tests {
             "(function(){var i=0,f;while(i<2){try{let x=40+i;if(i===0)f=function(){return x};i=i+1;throw 0}catch(e){}}return f()+1})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(&runtime, &mut context, source, vec![Value::Int(40)]);
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -1401,7 +1426,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(&runtime, &mut context, source, arguments);
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -1461,7 +1486,7 @@ mod tests {
             ("(function(f){try{return f()}catch(e){return e}})", vec![]),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let arguments = if source.contains("try{") {
                 vec![context.eval("(function(a=b,b=42){return a})").unwrap()]
             } else {
@@ -1524,7 +1549,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(&runtime, &mut context, source, vec![]);
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -1544,7 +1569,7 @@ mod tests {
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let entry = entry(
             &runtime,
             &mut context,
@@ -1562,7 +1587,7 @@ mod tests {
     #[test]
     fn private_field_initialization_uses_fresh_identity_in_published_frames() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let mut names = Vec::new();
         for _ in 0..2 {
             let entry = entry(
@@ -1585,11 +1610,11 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             let VmAction::PrivateInitialize { index, kind } =
-                execute_frame(&mut execution, id).unwrap()
+                execute_frame(&runtime, &mut execution, id).unwrap()
             else {
                 panic!("expected private initialization boundary")
             };
@@ -1632,7 +1657,7 @@ mod tests {
     #[test]
     fn private_field_reads_writes_and_membership_use_owned_frames() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let instance = context.eval("new (class {#x=40;#f=function(){return this};bump(){this.#x=this.#x+2;return this.#x}has(o){return #x in o}read(o){return o.#x}call(){return this.#f()}})").unwrap();
         let foreign = context.eval("({})").unwrap();
         for (source, argument, expected) in [
@@ -1643,25 +1668,25 @@ mod tests {
             ),
             (
                 "(function(o,x){return o.has(x)})",
-                instance.clone(),
+                instance.try_clone().expect("duplicate root"),
                 Value::Bool(true),
             ),
             (
                 "(function(o,x){return o.has(x)})",
-                foreign.clone(),
+                foreign.try_clone().expect("duplicate root"),
                 Value::Bool(false),
             ),
             (
                 "(function(o,x){return o.call()})",
                 Value::Undefined,
-                instance.clone(),
+                instance.try_clone().expect("duplicate root"),
             ),
         ] {
             let entry = entry(
                 &runtime,
                 &mut context,
                 source,
-                vec![instance.clone(), argument],
+                vec![instance.try_clone().expect("duplicate root"), argument],
             );
             let profile = CostProfile::start();
             let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -1700,14 +1725,14 @@ mod tests {
     #[test]
     fn private_methods_preserve_identity_receiver_brand_and_readonly() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let instance = context.eval("new (class {#m(){return this}call(){return this.#m()}get(){return this.#m}has(x){return #m in x}read(x){return x.#m}write(){this.#m=1}})").unwrap();
         let foreign = context.eval("({})").unwrap();
         for (source, argument, expected) in [
             (
                 "(function(o,x){return o.call()})",
                 Value::Undefined,
-                instance.clone(),
+                instance.try_clone().expect("duplicate root"),
             ),
             (
                 "(function(o,x){return o.get()===o.get()})",
@@ -1716,12 +1741,12 @@ mod tests {
             ),
             (
                 "(function(o,x){return o.has(x)})",
-                instance.clone(),
+                instance.try_clone().expect("duplicate root"),
                 Value::Bool(true),
             ),
             (
                 "(function(o,x){return o.has(x)})",
-                foreign.clone(),
+                foreign.try_clone().expect("duplicate root"),
                 Value::Bool(false),
             ),
         ] {
@@ -1729,7 +1754,7 @@ mod tests {
                 &runtime,
                 &mut context,
                 source,
-                vec![instance.clone(), argument],
+                vec![instance.try_clone().expect("duplicate root"), argument],
             );
             let profile = CostProfile::start();
             let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -1747,7 +1772,10 @@ mod tests {
                 &runtime,
                 &mut context,
                 source,
-                vec![instance.clone(), foreign.clone()],
+                vec![
+                    instance.try_clone().expect("duplicate root"),
+                    foreign.try_clone().expect("duplicate root"),
+                ],
             );
             let profile = CostProfile::start();
             let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -1773,7 +1801,7 @@ mod tests {
     #[test]
     fn private_accessors_use_child_frames_and_discard_setter_returns() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let instance = context.eval("new (class {#x=40;get #value(){return this.#x}set #value(v){this.#x=v;return this}run(){try{this.#value=this.#value+2}catch(e){throw e}return this.#value}})").unwrap();
         let call_entry = entry(
             &runtime,
@@ -1815,7 +1843,7 @@ mod tests {
     #[test]
     fn private_getter_returned_function_keeps_receiver_and_runs_once() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let instance = context.eval("new (class {#count=0;get #fn(){this.#count=this.#count+1;return function(){return this}}run(){return this.#fn()}count(){return this.#count}})").unwrap();
         let call_entry = entry(
             &runtime,
@@ -1852,7 +1880,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let constructor = context.eval(source).unwrap();
             let entry = entry(&runtime, &mut context, wrapper, vec![constructor]);
             let profile = CostProfile::start();
@@ -1876,7 +1904,7 @@ mod tests {
             "(function(){try{class C extends 1 {}}catch(e){return e}})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(&runtime, &mut context, source, vec![]);
             let profile = CostProfile::start();
             let Completion::Return(value) =
@@ -1915,7 +1943,7 @@ mod tests {
             "(function(){class C {#x=42;get x(){return this.#x}set x(v){this.#x=v}}return new C().x})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(&runtime, &mut context, source, vec![]);
             let profile = CostProfile::start();
             let Completion::Return(value) =
@@ -1939,7 +1967,7 @@ mod tests {
             "(function(){try{class C {x=(function(){throw 42})()}return new C()}catch(e){return e}})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(&runtime, &mut context, source, vec![]);
             let profile = CostProfile::start();
             let Completion::Return(value) =
@@ -1961,7 +1989,7 @@ mod tests {
             "(function(k,count){class C {get [k](){return 41}set x(v){throw 99}}return new C().x+count()})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(pair) = context.eval("(function(){var n=0;return {key:{toString:function(){n=n+1;return 'x'},valueOf:function(){throw 99}},count:function(){return n}}})()").unwrap()
             else {panic!("expected key setup")};
             let key = context
@@ -2004,13 +2032,13 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let key = context.eval(key_source).unwrap();
             let expected_key = if matches!(key, Value::Object(_)) {
                 None
             } else {
                 let NativeConversion::Value(key) = runtime
-                    .native_to_property_key(context.realm, key.clone())
+                    .native_to_property_key(context.realm, key.try_clone().expect("duplicate root"))
                     .unwrap()
                 else {
                     panic!("expected primitive key")
@@ -2051,10 +2079,10 @@ mod tests {
             ("'x'", "keep", "function keep(){}"),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let key = context.eval(key_source).unwrap();
             let NativeConversion::Value(property) = runtime
-                .native_to_property_key(context.realm, key.clone())
+                .native_to_property_key(context.realm, key.try_clone().expect("duplicate root"))
                 .unwrap()
             else {
                 panic!("expected canonical key")
@@ -2097,7 +2125,7 @@ mod tests {
             Value::Undefined,
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let nullish = matches!(value, Value::Null | Value::Undefined);
             let entry = entry(
                 &runtime,
@@ -2141,7 +2169,7 @@ mod tests {
     #[test]
     fn variable_environment_creation_uses_authenticated_null_prototype() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let entry = entry(
             &runtime,
             &mut context,
@@ -2161,12 +2189,12 @@ mod tests {
             })
             .unwrap();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
         frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
         let op = super::super::environment_driver::Operation::CreateVariable;
         assert_eq!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Environment(op)
         );
         let before = execution.frames.current_mut(id).unwrap().fault_pc;
@@ -2206,7 +2234,7 @@ mod tests {
             ("({})", "(function(o){let x=42;with(o){return x}})"),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(&runtime, &mut context, source, vec![object]);
             let profile = CostProfile::start();
@@ -2242,7 +2270,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(&runtime, &mut context, source, vec![object]);
             let profile = CostProfile::start();
@@ -2288,7 +2316,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(pair) = context.eval(setup).unwrap() else {
                 panic!("expected setup pair")
             };
@@ -2331,7 +2359,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callee = context.eval(callee).unwrap();
             let entry = entry(&runtime, &mut context, source, vec![callee]);
             let profile = CostProfile::start();
@@ -2354,7 +2382,7 @@ mod tests {
             "(function(){let log='';let f=Function({toString(){log+='p';return 'x'}},{toString(){log+='b';return 'return x+2'}});return f(40)===42&&log==='pb'?42:0})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(&runtime, &mut context, source, vec![]);
             let profile = CostProfile::start();
             let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -2369,7 +2397,7 @@ mod tests {
     #[test]
     fn selected_native_callback_reentry_preserves_captured_bindings() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let array = context
             .eval("(function(){let xs=[10,20,12];xs.f=Array.prototype.map;return xs})()")
             .unwrap();
@@ -2392,7 +2420,7 @@ mod tests {
     #[test]
     fn named_array_prototype_reads_reach_owned_methods() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("Object.defineProperty(Array.prototype,'owned',{value:function(){return 42},configurable:true})").unwrap());
         let array = context.eval("[]").unwrap();
         let entry = entry(
@@ -2420,7 +2448,7 @@ mod tests {
             "x=40;x=x+2;x",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let profile = CostProfile::start();
             assert_eq!(context.eval(source).unwrap(), Value::Int(42), "{source}");
             let _costs = profile.snapshot();
@@ -2456,7 +2484,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             if context.eval(setup).is_err() {
                 context.take_exception().unwrap();
             }
@@ -2501,7 +2529,7 @@ mod tests {
     fn global_property_setters_run_once_without_getter_reads() {
         for inherited in [false, true] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let target = if inherited {
                 "Object.getPrototypeOf(globalThis)"
             } else {
@@ -2545,7 +2573,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             if context.eval(setup).is_err() {
                 context.take_exception().unwrap();
             }
@@ -2591,7 +2619,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callee = context.eval(callee).unwrap();
             let entry = entry(&runtime, &mut context, source, vec![callee]);
             let profile = CostProfile::start();
@@ -2623,7 +2651,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callee = context.eval(callee).unwrap();
             let args = context.eval(arguments).unwrap();
             let entry = entry(
@@ -2652,7 +2680,7 @@ mod tests {
         ] {
             use crate::engine::code::bytecode::{ApplyKind, Instruction};
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let constructor = context.eval("(function(value){return value})").unwrap();
             let new_target = context.eval(new_target_source).unwrap();
             let Value::Object(carrier) = context.eval("[{}]").unwrap() else {
@@ -2683,10 +2711,14 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
-            for value in [constructor, new_target, Value::Object(carrier.clone())] {
+            for value in [
+                constructor,
+                new_target,
+                Value::Object(carrier.try_clone().expect("duplicate root")),
+            ] {
                 execution
                     .slots
                     .push(&mut frame.window, runtime.into_jsvalue(value).unwrap())
@@ -2694,7 +2726,7 @@ mod tests {
             }
             let profile = CostProfile::start();
             assert!(matches!(
-                execute_frame(&mut execution, id).unwrap(),
+                execute_frame(&runtime, &mut execution, id).unwrap(),
                 VmAction::Apply(ApplyKind::Construct)
             ));
             assert!(matches!(
@@ -2788,7 +2820,7 @@ mod tests {
             ("(()=>42)", "undefined", false, None, None),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let function = context.eval(function).unwrap();
             let array = context.eval(array).unwrap();
             let source = if construct {
@@ -2811,7 +2843,7 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             for value in [function, Value::Undefined, array] {
@@ -2876,7 +2908,7 @@ mod tests {
             "(function(xs){let [a,b]=xs;return a+b})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let xs = context.eval("[40,2]").unwrap();
             let entry = entry(&runtime, &mut context, source, vec![xs]);
             let profile = CostProfile::start();
@@ -2893,7 +2925,7 @@ mod tests {
     #[test]
     fn for_of_callback_order_uses_one_iterator_get_and_cached_next() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let xs = context.eval(r#"(function(){let trace='',n=0;globalThis.readTrace=function(){return trace};return {
             get [Symbol.iterator](){trace=trace+'i';return function(){trace=trace+'c';return {
                 get next(){trace=trace+'n';return function(){trace=trace+'s';n=n+1;return {
@@ -2983,7 +3015,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let setup = r#"(function(){let trace='';globalThis.readTrace=function(){return trace};
                 let iter={NEXT,get return(){trace=trace+'r';return function(){trace=trace+'c';CLOSE}}};
                 return {[Symbol.iterator](){trace=trace+'i';return iter}};
@@ -3042,7 +3074,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(pair) = context.eval(r#"(function(){let trace='';globalThis.readTrace=function(){return trace};return [
                 {[Symbol.iterator](){trace=trace+'x';return {next(){return {done:false,value:40}},return(){trace=trace+'o';return 0}}}},
                 {[Symbol.iterator](){trace=trace+'y';return {next(){return {done:false,value:2}},return(){trace=trace+'i';return {}}}}}
@@ -3096,7 +3128,7 @@ mod tests {
             ("(function(xs){return [...xs]})", "[]", "[]"),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let argument = context.eval(argument).unwrap();
             let Value::Object(expected) = context.eval(expected).unwrap() else {
                 panic!("expected array")
@@ -3125,7 +3157,7 @@ mod tests {
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let entry = entry(
             &runtime,
             &mut context,
@@ -3143,7 +3175,7 @@ mod tests {
     #[test]
     fn append_callbacks_preserve_lookup_order_cache_next_and_skip_done_value() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let iterable = context.eval(r#"(function(){let trace='',n=0;globalThis.readTrace=function(){return trace};return {
                 get [Symbol.iterator](){trace=trace+'i';return function(){trace=trace+'c';return {
                     get next(){trace=trace+'n';return function(){trace=trace+'s';n=n+1;
@@ -3209,7 +3241,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let setup = format!(
                 "(function(){{let trace='';globalThis.readTrace=function(){{return trace}};let iter={{{next},{close}}};return {{get [Symbol.iterator](){{trace=trace+'i';return function(){{trace=trace+'c';return iter}}}}}}}})()"
             );
@@ -3242,7 +3274,7 @@ mod tests {
     #[test]
     fn append_reuses_bounded_frame_storage_across_many_iterator_calls() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let iterable = context
             .eval(
                 r#"(function(){let n=0;return {
@@ -3290,7 +3322,7 @@ mod tests {
     fn append_checkpoint_closes_failed_writes_and_wraps_its_u32_index() {
         for fail in [false, true] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let target = context
                 .eval(if fail {
                     "Object.preventExtensions([])"
@@ -3321,7 +3353,7 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
@@ -3388,7 +3420,7 @@ mod tests {
     #[test]
     fn array_element_checkpoint_defines_own_properties_without_setters() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context
             .eval("Object.defineProperty(Array.prototype,'1',{set(){throw 99},configurable:true})")
             .unwrap());
@@ -3412,7 +3444,7 @@ mod tests {
             })
             .unwrap();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
         // Start at the published element write; Append itself is not exercised here.
         frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
@@ -3420,7 +3452,9 @@ mod tests {
             .slots
             .push(
                 &mut frame.window,
-                runtime.into_jsvalue(array.clone()).unwrap(),
+                runtime
+                    .into_jsvalue(array.try_clone().expect("duplicate root"))
+                    .unwrap(),
             )
             .unwrap();
         execution
@@ -3439,7 +3473,7 @@ mod tests {
             .unwrap();
         let profile = CostProfile::start();
         assert!(matches!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Environment(super::super::environment_driver::Operation::DefineArrayElement)
         ));
         assert!(matches!(
@@ -3522,8 +3556,8 @@ mod tests {
     #[test]
     fn array_literals_preserve_values_and_callee_realm_without_setters() {
         let runtime = Runtime::new();
-        let mut caller = runtime.new_context();
-        let mut callee = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
+        let mut callee = runtime.new_context().expect("create context");
         drop(callee
             .eval("Object.defineProperty(Array.prototype,'0',{set(){throw 99},configurable:true})")
             .unwrap());
@@ -3559,7 +3593,7 @@ mod tests {
             );
             assert_eq!(
                 runtime.get_prototype_of(&array).unwrap().map(Value::Object),
-                Some(prototype.clone())
+                Some(prototype.try_clone().expect("duplicate root"))
             );
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -3581,14 +3615,14 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callee = context.eval(callee_source).unwrap();
             let array = context.eval(array_source).unwrap();
             let entry = entry(
                 &runtime,
                 &mut context,
                 "(function(){'use strict';return eval(...[])})",
-                vec![callee.clone()],
+                vec![callee.try_clone().expect("duplicate root")],
             );
             let pc = entry
                 .executable
@@ -3623,7 +3657,7 @@ mod tests {
             };
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
@@ -3634,12 +3668,15 @@ mod tests {
                 .slots
                 .push(
                     &mut frame.window,
-                    runtime.into_jsvalue(array.clone()).unwrap(),
+                    runtime
+                        .into_jsvalue(array.try_clone().expect("duplicate root"))
+                        .unwrap(),
                 )
                 .unwrap();
             let profile = CostProfile::start();
             if let Some(extra) = retained {
-                let VmAction::ApplyEval(environment) = execute_frame(&mut execution, id).unwrap()
+                let VmAction::ApplyEval(environment) =
+                    execute_frame(&runtime, &mut execution, id).unwrap()
                 else {
                     panic!("expected ApplyEval")
                 };
@@ -3711,7 +3748,7 @@ mod tests {
     #[test]
     fn direct_eval_keeps_boxed_this_identity_in_bound_callers() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let bound = context
             .eval("(function(){return eval('this')===this?42:0}).bind(7)")
             .unwrap();
@@ -3773,7 +3810,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(&runtime, &mut context, source, vec![]);
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -3852,7 +3889,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(context.eval(setup).unwrap());
             let object = context.eval("({})").unwrap();
             let entry = entry(&runtime, &mut context, source, vec![object]);
@@ -3915,7 +3952,7 @@ mod tests {
             ("delete globalThis.x", false),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(context.eval(setup).unwrap());
             let entry = entry(
                 &runtime,
@@ -3937,12 +3974,12 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             let VmAction::Environment(
                 op @ super::super::environment_driver::Operation::GlobalReference(_),
-            ) = execute_frame(&mut execution, id).unwrap()
+            ) = execute_frame(&runtime, &mut execution, id).unwrap()
             else {
                 panic!("expected global reference")
             };
@@ -3981,7 +4018,7 @@ mod tests {
             (true, false, None, Some("x is not initialized")),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(context.eval("globalThis.x=1").unwrap());
             let object = context.eval("({})").unwrap();
             let source = if expected_error.is_some() {
@@ -4060,7 +4097,7 @@ mod tests {
             (Some(Value::Int(42)), true, Some("'x' is not defined")),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             context
                 .create_global_lexical_for_test("x", false, initial)
                 .unwrap();
@@ -4073,7 +4110,7 @@ mod tests {
                 &runtime,
                 &mut context,
                 "(function(o){with(o){x+=(function(){return 1})()}})",
-                vec![Value::Object(object.clone())],
+                vec![Value::Object(object.try_clone().expect("duplicate root"))],
             );
             let pc = entry
                 .executable
@@ -4090,23 +4127,25 @@ mod tests {
                 .expect("expected published reference read");
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             let base = if unresolved {
                 Value::Undefined
             } else {
-                Value::Object(object.clone())
+                Value::Object(object.try_clone().expect("duplicate root"))
             };
             execution
                 .slots
                 .push(
                     &mut frame.window,
-                    runtime.into_jsvalue(base.clone()).unwrap(),
+                    runtime
+                        .into_jsvalue(base.try_clone().expect("duplicate root"))
+                        .unwrap(),
                 )
                 .unwrap();
             let VmAction::Environment(op @ Operation::ReadReference { .. }) =
-                execute_frame(&mut execution, id).unwrap()
+                execute_frame(&runtime, &mut execution, id).unwrap()
             else {
                 panic!("expected reference read")
             };
@@ -4180,9 +4219,15 @@ mod tests {
             (false, None, false, Some("x is not initialized")),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             context
-                .create_global_lexical_for_test("x", is_const, initial.clone())
+                .create_global_lexical_for_test(
+                    "x",
+                    is_const,
+                    initial
+                        .as_ref()
+                        .map(|value| value.try_clone().expect("duplicate root")),
+                )
                 .unwrap();
             let object = context.global_var_object().unwrap();
             let key = runtime
@@ -4197,7 +4242,7 @@ mod tests {
                 } else {
                     "(function(o){with(o){x=(function(){return 42})()}})"
                 },
-                vec![Value::Object(object.clone())],
+                vec![Value::Object(object.try_clone().expect("duplicate root"))],
             );
             let (pc, name) = entry
                 .executable
@@ -4214,14 +4259,16 @@ mod tests {
                 .expect("expected published reference write");
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
                 .slots
                 .push(
                     &mut frame.window,
-                    runtime.into_jsvalue(Value::Object(object.clone())).unwrap(),
+                    runtime
+                        .into_jsvalue(Value::Object(object.try_clone().expect("duplicate root")))
+                        .unwrap(),
                 )
                 .unwrap();
             execution
@@ -4238,7 +4285,7 @@ mod tests {
                 check_presence: true,
             };
             assert_eq!(
-                execute_frame(&mut execution, id).unwrap(),
+                execute_frame(&runtime, &mut execution, id).unwrap(),
                 VmAction::Environment(op)
             );
             let result = super::super::environment_driver::step(
@@ -4349,7 +4396,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -4448,7 +4495,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let eval_context = EvalCompileContext::direct(
                 false,
                 vec![EvalRootBinding {
@@ -4540,7 +4587,7 @@ mod tests {
             ("({})", false, false),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(object) = context.eval(setup).unwrap() else {
                 panic!("expected delete target")
             };
@@ -4548,7 +4595,7 @@ mod tests {
                 &runtime,
                 &mut context,
                 "(function(o){let x=41;with(o){return delete x}})",
-                vec![Value::Object(object.clone())],
+                vec![Value::Object(object.try_clone().expect("duplicate root"))],
             );
             let profile = CostProfile::start();
             let Completion::Return(value) =
@@ -4578,7 +4625,7 @@ mod tests {
             ("function(){n=n+1;return 1}", true),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let parent = context.eval(&format!("(function(){{var n=0,prototype={{}};var B=(function(){{}}).bind(null);Object.defineProperty(B,'prototype',{{get:{getter}}});return [B,function(){{return n}}]}})()")).unwrap();
             let Value::Object(pair) = parent else {
                 panic!("expected parent pair")
@@ -4644,7 +4691,7 @@ mod tests {
         use crate::engine::heap::BytecodeConstant;
 
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let entry = entry(
             &runtime,
             &mut context,
@@ -4715,7 +4762,7 @@ mod tests {
             .position(|op| matches!(op, Instruction::InstallClassInstanceInitializer))
             .unwrap();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let parent = push_frame(&mut execution, entry).unwrap();
+        let parent = push_frame(&runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(parent).unwrap();
         frame.resume_pc = frame.executable.exec.exec_pc(install_pc as u32).unwrap() as usize;
         execution
@@ -4738,7 +4785,7 @@ mod tests {
             .unwrap();
         let profile = CostProfile::start();
         assert_eq!(
-            execute_frame(&mut execution, parent).unwrap(),
+            execute_frame(&runtime, &mut execution, parent).unwrap(),
             VmAction::ClassInitializer(InitializerKind::Install)
         );
         assert!(matches!(
@@ -4773,11 +4820,13 @@ mod tests {
             .slots
             .push(
                 &mut frame.window,
-                runtime.into_jsvalue(static_initializer.clone()).unwrap(),
+                runtime
+                    .into_jsvalue(static_initializer.try_clone().expect("duplicate root"))
+                    .unwrap(),
             )
             .unwrap();
         assert_eq!(
-            execute_frame(&mut execution, parent).unwrap(),
+            execute_frame(&runtime, &mut execution, parent).unwrap(),
             VmAction::ClassInitializer(InitializerKind::Static)
         );
         assert!(matches!(
@@ -4786,13 +4835,14 @@ mod tests {
         ));
         let child = execution.frames.current_id().unwrap();
         assert_ne!(child, parent);
-        let VmAction::InstantiateClosure(index) = execute_frame(&mut execution, child).unwrap()
+        let VmAction::InstantiateClosure(index) =
+            execute_frame(&runtime, &mut execution, child).unwrap()
         else {
             panic!("expected static block closure")
         };
         super::super::closure_driver::instantiate(&runtime, &mut execution, child, index).unwrap();
         assert_eq!(
-            execute_frame(&mut execution, child).unwrap(),
+            execute_frame(&runtime, &mut execution, child).unwrap(),
             VmAction::ClassInitializer(InitializerKind::Block)
         );
         assert!(matches!(
@@ -4802,7 +4852,7 @@ mod tests {
         let block = execution.frames.current_id().unwrap();
         assert_ne!(block, child);
         assert_eq!(
-            execute_frame(&mut execution, block).unwrap(),
+            execute_frame(&runtime, &mut execution, block).unwrap(),
             VmAction::Throw
         );
         let frame = execution.frames.current_mut(block).unwrap();
@@ -4831,7 +4881,7 @@ mod tests {
     #[test]
     fn logical_limit_returns_a_throw_and_unwinds_every_active_frame() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let entry = entry(
             &runtime,
             &mut context,
@@ -4871,7 +4921,7 @@ mod tests {
     #[test]
     fn nested_bound_calls_keep_argument_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callee = context
             .eval("(function(a,b,c){return a*100+b*10+c}).bind(1000,1).bind(9000,2)")
             .unwrap();
@@ -4904,7 +4954,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callee = context.eval(source).unwrap();
             let argument = if depth == 1 { 67 } else { 3 };
             let entry = entry(
@@ -4942,7 +4992,7 @@ mod tests {
             (true, false, "not an object"),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(
                 &runtime,
                 &mut context,
@@ -4951,7 +5001,7 @@ mod tests {
             );
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             execution
                 .slots
@@ -5044,7 +5094,7 @@ mod tests {
             ("[]", "Math.abs.bind(null)", "x", None, 0),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(context.eval("var hits=0").unwrap());
             let target = context.eval(target_source).unwrap();
             let function = context.eval(function_source).unwrap();
@@ -5056,7 +5106,7 @@ mod tests {
                     context.realm,
                     &old_target,
                     &runtime.intern_property_key(key).unwrap(),
-                    function.clone(),
+                    function.try_clone().expect("duplicate root"),
                     crate::engine::code::bytecode::DefineMethodKind::Method,
                     true,
                 )
@@ -5081,14 +5131,16 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
                 .slots
                 .push(
                     &mut frame.window,
-                    runtime.into_jsvalue(target.clone()).unwrap(),
+                    runtime
+                        .into_jsvalue(target.try_clone().expect("duplicate root"))
+                        .unwrap(),
                 )
                 .unwrap();
             execution
@@ -5106,7 +5158,9 @@ mod tests {
                 .slots
                 .push(
                     &mut frame.window,
-                    runtime.into_jsvalue(function.clone()).unwrap(),
+                    runtime
+                        .into_jsvalue(function.try_clone().expect("duplicate root"))
+                        .unwrap(),
                 )
                 .unwrap();
             let profile = CostProfile::start();
@@ -5133,7 +5187,7 @@ mod tests {
             } else {
                 assert_eq!(
                     completion,
-                    Completion::Return(target.clone()),
+                    Completion::Return(target.try_clone().expect("duplicate root")),
                     "{target_source}"
                 );
             }
@@ -5160,7 +5214,7 @@ mod tests {
     #[test]
     fn boxed_this_identity_survives_owned_frames() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callee = context
             .eval("(function(){return this === ([] instanceof Array,this)}).bind(3)")
             .unwrap();
@@ -5187,7 +5241,7 @@ mod tests {
             "new Map()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(&format!(
                 "var hits=0;var object={expression};object.marker=42;Object.defineProperty(object,'x',{{get:function(){{hits++;return this.marker}}}});object"
             )).unwrap();
@@ -5245,7 +5299,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(&runtime, &mut context, source, vec![object]);
             let profile = CostProfile::start();
@@ -5265,7 +5319,7 @@ mod tests {
         let _profile = CostProfile::start();
         let (weak, pending) = {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callee = Value::Object(
                 runtime
                     .new_bound_native_function(
@@ -5276,7 +5330,8 @@ mod tests {
                     )
                     .unwrap()
                     .as_object()
-                    .clone(),
+                    .try_clone()
+                    .expect("duplicate root"),
             );
             let callback = context.eval("(function(){throw 42})").unwrap();
             let entry = entry(
@@ -5287,13 +5342,13 @@ mod tests {
             );
             let weak = std::rc::Rc::downgrade(&runtime.0);
             let mut pending = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let parent = push_frame(&mut pending, entry).unwrap();
+            let parent = push_frame(&runtime, &mut pending, entry).unwrap();
             let VmAction::Call {
                 arguments,
                 method,
                 tail,
                 ..
-            } = execute_frame(&mut pending, parent).unwrap()
+            } = execute_frame(&runtime, &mut pending, parent).unwrap()
             else {
                 panic!("expected native probe call");
             };
@@ -5315,7 +5370,7 @@ mod tests {
     #[test]
     fn computed_update_retains_the_original_key_across_owned_getter_and_setter() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object = context.eval("var key='x',hits=0,written=0;({get x(){hits++;key='y';return 40},set x(v){written=v},set y(v){throw 99}})").unwrap();
         let entry = entry(
             &runtime,
@@ -5350,7 +5405,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let key = context
                 .eval("var hits=0;({toString(){hits++;throw 99}})")
                 .unwrap();
@@ -5387,7 +5442,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(context.eval(setup).unwrap());
             let target = context.eval("target").unwrap();
             let key = context.eval("key").unwrap();
@@ -5415,7 +5470,7 @@ mod tests {
     #[test]
     fn converted_property_keys_keep_the_evaluated_base_and_throw_identity() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let key = context.eval("var current={x:42};var replacement={x:99};({toString(){current=replacement;return 'x'}})").unwrap();
         let initial_entry = entry(
             &runtime,
@@ -5462,7 +5517,7 @@ mod tests {
             "Object.defineProperty({},'x',{get:Number.prototype.valueOf.bind(42)})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let key = context
                 .eval("var keys=0,traps=0;({toString(){keys++;return 'x'}})")
                 .unwrap();
@@ -5505,7 +5560,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let proxy = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -5575,7 +5630,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -5620,7 +5675,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -5661,7 +5716,7 @@ mod tests {
             "var hits=0;var token={};new Proxy({},new Proxy({},{get(){hits++;throw token}}))",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let proxy = context.eval(setup).unwrap();
             let token = context.eval("token").unwrap();
             let entry = entry(
@@ -5700,8 +5755,8 @@ mod tests {
             ("{get:undefined,configurable:false}", "42", true),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
-            let mut foreign = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
+            let mut foreign = runtime.new_context().expect("create context");
             let proxy = foreign.eval(&format!("new Proxy(Object.defineProperty({{}},'x',{descriptor}),{{get(){{return {result}}}}})")).unwrap();
             let expected = foreign.eval(result).unwrap();
             let type_error = context.eval("TypeError.prototype").unwrap();
@@ -5785,7 +5840,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let proxy = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -5819,8 +5874,8 @@ mod tests {
             ("set", Some("invalid setter")),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
-            let mut foreign = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
+            let mut foreign = runtime.new_context().expect("create context");
             let proxy = foreign.eval(&format!("var hits=0,token={{}};var d={{get {field}(){{hits++;throw token}}}};var target=new Proxy({{}},{{getOwnPropertyDescriptor(){{return d}}}});new Proxy(target,{{get(){{return 42}}}})")).unwrap();
             let token = foreign.eval("token").unwrap();
             let error_prototype = context.eval("TypeError.prototype").unwrap();
@@ -5871,7 +5926,7 @@ mod tests {
     #[test]
     fn proxy_descriptor_checks_extensibility_before_touching_the_result() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let proxy = context.eval("var reads=0,extensibility=0,token={};var d={get value(){reads++;return 42}};var inner=new Proxy({}, {isExtensible(){extensibility++;throw token}});var target=new Proxy(inner,{getOwnPropertyDescriptor(){return d}});new Proxy(target,{get(){return 42}})").unwrap();
         let token = context.eval("token").unwrap();
         let entry = entry(
@@ -5911,7 +5966,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(context.eval(setup).unwrap());
             let entry = entry(&runtime, &mut context, source, vec![input]);
             let _profile = CostProfile::start();
@@ -5923,7 +5978,7 @@ mod tests {
             assert_eq!(value, expected);
         }
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let entry = entry(
             &runtime,
             &mut context,
@@ -5943,7 +5998,7 @@ mod tests {
     fn object_key_updates_keep_one_conversion_across_owned_getter_and_setter() {
         for selected in ["0", "Symbol.iterator"] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(context.eval(&format!("var keys=0,getters=0,written=0;var selected={selected};var target={{}};Object.defineProperty(target,selected,{{get:function(){{getters++;return 41}},set:function(v){{written=v}}}});var key={{toString(){{keys++;return selected}}}};")).unwrap());
             let target = context.eval("target").unwrap();
             let key = context.eval("key").unwrap();
@@ -5970,8 +6025,8 @@ mod tests {
     #[test]
     fn object_key_conversion_failure_uses_the_reading_realm() {
         let runtime = Runtime::new();
-        let mut caller = runtime.new_context();
-        let mut foreign = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
+        let mut foreign = runtime.new_context().expect("create context");
         let Value::Object(expected) = caller.eval("TypeError.prototype").unwrap() else {
             panic!("missing error prototype");
         };
@@ -6010,7 +6065,7 @@ mod tests {
     #[test]
     fn owned_reference_write_rechecks_typed_array_prototype_presence_after_rhs() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = context.eval("(function(o){with(o){return function(){'use strict';NaN=(delete o.NaN,0)}}})(Object.defineProperty(Object.create(new Int32Array(1)),'NaN',{value:100,configurable:true}))").unwrap();
         let entry = entry(
             &runtime,
@@ -6108,7 +6163,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -6161,14 +6216,14 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(object) = context.eval(setup).unwrap() else {
                 panic!("expected Proxy")
             };
             let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let profile = CostProfile::start();
             let result = match super::super::proxy_get_driver::start_boolean(
                 &runtime,
@@ -6285,7 +6340,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -6617,7 +6672,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -6641,7 +6696,7 @@ mod tests {
     fn owned_native_enumeration_uses_vm_limits_without_native_family_charges() {
         for (frames, depth) in [(256, 64), (32, 64)] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(
                 &runtime,
                 &mut context,
@@ -6672,7 +6727,7 @@ mod tests {
     #[test]
     fn owned_native_prototype_recursion_uses_existing_frame_budget_and_recovers() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object = context.eval("var calls=0;var p=new Proxy({}, {getPrototypeOf(){calls++;return Object.getPrototypeOf(p)}});p").unwrap();
         let entry = entry(
             &runtime,
@@ -6706,8 +6761,8 @@ mod tests {
     #[test]
     fn owned_native_prototype_error_uses_defining_realm_and_keeps_native_stack() {
         let runtime = Runtime::new();
-        let mut caller = runtime.new_context();
-        let mut defining = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
+        let mut defining = runtime.new_context().expect("create context");
         let function = defining.eval("Object.getPrototypeOf").unwrap();
         let prototype = defining.eval("TypeError.prototype").unwrap();
         let object = caller
@@ -6750,7 +6805,7 @@ mod tests {
     fn owned_native_prototype_pending_call_keeps_extra_arguments_until_abandonment() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("Object.getPrototypeOf").unwrap())
             .unwrap();
@@ -6761,7 +6816,7 @@ mod tests {
         let extra_id = extra.object_id();
         let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         assert!(matches!(
             super::super::proxy_get_driver::start_callback_call(
                 &runtime,
@@ -6883,7 +6938,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(object) = context.eval(setup).unwrap() else {
                 panic!("expected Proxy")
             };
@@ -6891,7 +6946,7 @@ mod tests {
             let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let profile = CostProfile::start();
             let result = match super::super::proxy_get_driver::start_prototype(
                 &runtime,
@@ -6943,7 +6998,7 @@ mod tests {
         for setting in [false, true] {
             for stage in ["method", "trap", "extensible", "prototype"] {
                 let runtime = Runtime::new();
-                let mut context = runtime.new_context();
+                let mut context = runtime.new_context().expect("create context");
                 let name = if setting {
                     "setPrototypeOf"
                 } else {
@@ -6987,7 +7042,7 @@ mod tests {
                 let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
                 let mut execution =
                     RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-                let id = push_frame(&mut execution, entry).unwrap();
+                let id = push_frame(&runtime, &mut execution, entry).unwrap();
                 let profile = CostProfile::start();
                 let result = match super::super::proxy_get_driver::start_prototype(
                     &runtime,
@@ -7042,7 +7097,7 @@ mod tests {
     fn super_lookup_keeps_frozen_base_independent_of_getter_receiver() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(base) = context
             .eval("Object.defineProperty({},'x',{get:function(){return 42}})")
             .unwrap()
@@ -7054,7 +7109,7 @@ mod tests {
         let receiver_id = receiver.object_id();
         let entry = entry(&runtime, &mut context, "(function(){return 42})", vec![]);
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         assert!(matches!(
             super::super::proxy_get_driver::start_owned_read(
                 &runtime,
@@ -7157,7 +7212,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -7191,7 +7246,7 @@ mod tests {
     fn cold_operand_release_preserves_surviving_roots_and_commits_once() {
         for keep_top in [false, true] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let entry = entry(
                 &runtime,
                 &mut context,
@@ -7200,7 +7255,7 @@ mod tests {
             );
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let released = runtime.new_object(None).unwrap();
             let released_id = released.object_id();
             let frame = execution.frames.current_mut(id).unwrap();
@@ -7356,7 +7411,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -7451,7 +7506,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -7520,7 +7575,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -7573,7 +7628,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -7631,7 +7686,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(setup).unwrap();
             let entry = entry(
                 &runtime,
@@ -7656,7 +7711,7 @@ mod tests {
     #[test]
     fn ordinary_getter_resumes_in_the_same_execution() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object = context
             .eval("Object.create({get x(){return this.y}}, {y:{value:41}})")
             .unwrap();
@@ -7676,7 +7731,7 @@ mod tests {
     #[test]
     fn getter_method_call_keeps_the_original_receiver() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object = context
             .eval("({y:52, fn:function(){return this.y}, get m(){return this.fn}})")
             .unwrap();
@@ -7696,7 +7751,7 @@ mod tests {
     #[test]
     fn plus_conversion_getter_and_nested_value_of_use_explicit_replies() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object = context.eval("({get valueOf(){return this.method}, method:function(){return +this.inner}, inner:{valueOf:function(){return 41}}})").unwrap();
         let entry = entry(
             &runtime,
@@ -7737,7 +7792,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let object = context.eval(source).unwrap();
             let entry = entry(
                 &runtime,
@@ -7768,7 +7823,7 @@ mod tests {
     #[test]
     fn plus_conversion_preserves_callback_numeric_tags_and_bigint_diagnostic() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(factory) = context
             .eval("(function(v){return {valueOf:function(){return v}}})")
             .unwrap()
@@ -7822,7 +7877,7 @@ mod tests {
     #[test]
     fn conversion_child_handoff_does_not_repeat_getter_or_method() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object = context
             .eval("var hits=0; ({get valueOf(){hits++;return function(){hits++;return 5}}})")
             .unwrap();
@@ -7845,7 +7900,7 @@ mod tests {
             "({valueOf:function(){hits++;throw token}})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let token = context.eval("var hits=0; var token={}; token").unwrap();
             let object = context.eval(source).unwrap();
             let entry = entry(
@@ -7867,7 +7922,7 @@ mod tests {
     #[test]
     fn addition_keeps_evaluated_left_when_right_reassigns_parameter() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object = context.eval("({valueOf:function(){return 40}})").unwrap();
         let entry = entry(
             &runtime,
@@ -7884,7 +7939,7 @@ mod tests {
     #[test]
     fn addition_reads_right_conversion_after_left_callback() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let right = context
             .eval("var log='';var right={valueOf:function(){return 2}};right")
             .unwrap();
@@ -7907,15 +7962,15 @@ mod tests {
     #[test]
     fn constructor_primitive_and_object_returns_use_explicit_child_frames() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let constructor = context.eval("(function C(x){return x})").unwrap();
         for argument in [Value::Int(7), context.eval("({marker:42})").unwrap()] {
-            let expected = argument.clone();
+            let expected = argument.try_clone().expect("duplicate root");
             let entry = entry(
                 &runtime,
                 &mut context,
                 "(function root(C,x){return new C(x)})",
-                vec![constructor.clone(), argument],
+                vec![constructor.try_clone().expect("duplicate root"), argument],
             );
             let profile = CostProfile::start();
             let result = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -7933,7 +7988,7 @@ mod tests {
     #[test]
     fn bound_constructor_retargets_new_target_to_original_function() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let original = context
             .eval("var C=function(){return new.target};C")
             .unwrap();
@@ -7957,7 +8012,7 @@ mod tests {
     #[test]
     fn derived_return_without_super_preserves_object_and_rejects_primitives() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let constructor = context
             .eval("(class D extends null {constructor(x){return x}})")
             .unwrap();
@@ -7966,12 +8021,12 @@ mod tests {
             (Value::Undefined, Some("ReferenceError")),
             (Value::Int(1), Some("TypeError")),
         ] {
-            let expected = value.clone();
+            let expected = value.try_clone().expect("duplicate root");
             let entry = entry(
                 &runtime,
                 &mut context,
                 "(function root(C,x){return new C(x)})",
-                vec![constructor.clone(), value],
+                vec![constructor.try_clone().expect("duplicate root"), value],
             );
             let profile = CostProfile::start();
             let completion = execute(runtime.clone(), entry, ExecutionLimits::default()).unwrap();
@@ -8014,7 +8069,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let constructor = context.eval(source).unwrap();
             let entry = entry(
                 &runtime,
@@ -8054,7 +8109,7 @@ mod tests {
     #[test]
     fn default_derived_forwards_actual_arguments_and_live_super_new_target() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let constructor = context
             .eval("var D=class extends (function B(a,b,c){return c}) {}; D")
             .unwrap();
@@ -8063,7 +8118,10 @@ mod tests {
             &runtime,
             &mut context,
             "(function root(C,x){return new C(1,2,x)})",
-            vec![constructor.clone(), marker.clone()],
+            vec![
+                constructor.try_clone().expect("duplicate root"),
+                marker.try_clone().expect("duplicate root"),
+            ],
         );
         let profile = CostProfile::start();
         let result = execute(runtime.clone(), call_entry, ExecutionLimits::default()).unwrap();
@@ -8082,7 +8140,7 @@ mod tests {
             &runtime,
             &mut context,
             "(function root(C){return new C()})",
-            vec![constructor.clone()],
+            vec![constructor.try_clone().expect("duplicate root")],
         );
         let profile = CostProfile::start();
         let result = execute(runtime.clone(), call_entry, ExecutionLimits::default()).unwrap();
@@ -8101,7 +8159,7 @@ mod tests {
             ("(function(x,y){return x<y?x:y})", false),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callee = context.eval(callee_source).unwrap();
             let entry = entry(
                 &runtime,
@@ -8167,7 +8225,7 @@ mod tests {
     fn assert_selected_native_metadata_error(foreign_argument: bool, missing_receiver: bool) {
         let runtime = Runtime::new();
         let foreign = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callee = context.eval("Math.min").unwrap();
         let Value::Object(function) = &callee else {
             panic!("native")
@@ -8214,13 +8272,33 @@ mod tests {
         let result = if missing_receiver {
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let frame = push_frame(&mut execution, entry).unwrap();
-            let VmAction::Call {
-                arguments, tail, ..
-            } = execute_frame(&mut execution, frame).unwrap()
-            else {
-                panic!("call")
+            let frame = push_frame(&runtime, &mut execution, entry).unwrap();
+            // Enter the published call directly with its verified operands;
+            // the continuous executor now consumes ordinary Call actions.
+            let current = execution.frames.current_mut(frame).unwrap();
+            let mut pc = 0;
+            let (arguments, tail) = loop {
+                let decoded = current.executable.exec.decode_published(pc).unwrap();
+                if matches!(
+                    decoded.opcode,
+                    crate::engine::code::exec_opcode::Opcode::Call
+                        | crate::engine::code::exec_opcode::Opcode::TailCall
+                ) {
+                    break (
+                        decoded.operand(0) as u16,
+                        decoded.opcode == crate::engine::code::exec_opcode::Opcode::TailCall,
+                    );
+                }
+                pc = decoded.next_pc;
             };
+            current.fault_pc = pc as usize;
+            current.resume_pc = pc as usize;
+            let callee = runtime.dup_jsvalue(&JsValue::Object(object_id)).unwrap();
+            execution.slots.push(&mut current.window, callee).unwrap();
+            execution
+                .slots
+                .push(&mut current.window, JsValue::Int(42))
+                .unwrap();
             // The actual call has [callee, argument], so requesting a method
             // receiver must fail the unchanged leading range check first.
             super::ordinary::enter(&runtime, &mut execution, frame, arguments, true, tail)
@@ -8251,14 +8329,14 @@ mod tests {
     fn direct_child_call_preserves_foreign_argument_rejection() {
         let runtime = Runtime::new();
         let foreign = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callee = context.eval("(function ignore(x){return 1})").unwrap();
         let object = foreign.new_object(None).unwrap();
         let callable = runtime.callable_from_value(callee).unwrap();
         let result = context.call(
             &callable,
             Value::Undefined,
-            &[Value::Object(object.clone())],
+            &[Value::Object(object.try_clone().expect("duplicate root"))],
         );
         let Err(error) = result else {
             panic!("expected domain rejection, got {result:?}");
@@ -8298,7 +8376,7 @@ mod tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(
                 context
                     .eval("var trace='',traps=0,marker={};var target={};")
@@ -8328,13 +8406,17 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             // Supply a raw object key at this accepted instruction, without the
             // compiler's preceding ToPropKey. The following Drop must still
             // consume the retained key, then Return must receive the base.
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
-            for value in [object.clone(), key, Value::Int(40)] {
+            for value in [
+                object.try_clone().expect("duplicate root"),
+                key,
+                Value::Int(40),
+            ] {
                 execution
                     .slots
                     .push(&mut frame.window, runtime.into_jsvalue(value).unwrap())

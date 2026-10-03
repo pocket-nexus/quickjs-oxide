@@ -29,9 +29,12 @@ pub(crate) fn call(
         runtime.clone(),
         realm,
         RootOperation::Call {
-            callable: callable.clone(),
+            callable: callable.try_clone()?,
             receiver,
-            arguments: arguments.to_vec(),
+            arguments: arguments
+                .iter()
+                .map(Value::try_clone)
+                .collect::<Result<_, _>>()?,
         },
     )
     .map_err(RuntimeError::Engine)
@@ -89,8 +92,8 @@ pub(crate) fn get(
         runtime.clone(),
         realm,
         RootOperation::Get {
-            object: object.clone(),
-            key: key.clone(),
+            object: object.try_clone()?,
+            key: key.try_clone()?,
             receiver,
         },
     )
@@ -108,8 +111,8 @@ pub(crate) fn own(
         runtime.clone(),
         realm,
         RootOperation::Own {
-            object: object.clone(),
-            key: key.clone(),
+            object: object.try_clone()?,
+            key: key.try_clone()?,
         },
     )
     .map_err(RuntimeError::Engine)
@@ -130,9 +133,9 @@ pub(crate) fn define(
             runtime.clone(),
             realm,
             RootOperation::Define {
-                object: object.clone(),
-                key: key.clone(),
-                descriptor: descriptor.clone(),
+                object: object.try_clone()?,
+                key: key.try_clone()?,
+                descriptor: descriptor.try_clone()?,
             },
         )
         .map_err(RuntimeError::Engine)?,
@@ -155,8 +158,8 @@ pub(crate) fn set(
             runtime.clone(),
             realm,
             RootOperation::Set {
-                object: object.clone(),
-                key: key.clone(),
+                object: object.try_clone()?,
+                key: key.try_clone()?,
                 value,
                 receiver,
             },
@@ -189,7 +192,7 @@ mod tests {
     #[test]
     fn context_property_roots_keep_typed_descriptors_across_proxy_callbacks_and_gc() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         context.install_test262_host().unwrap();
         let Value::Object(proxy) = context
             .eval(
@@ -209,7 +212,9 @@ mod tests {
             .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
             .unwrap();
         let descriptor = OrdinaryPropertyDescriptor {
-            value: DescriptorField::Present(Value::Object(value.clone())),
+            value: DescriptorField::Present(Value::Object(
+                value.try_clone().expect("duplicate root"),
+            )),
             writable: DescriptorField::Present(true),
             enumerable: DescriptorField::Present(true),
             configurable: DescriptorField::Present(true),
@@ -223,7 +228,7 @@ mod tests {
         );
         assert_eq!(
             context.get_property(&proxy, &key).unwrap(),
-            Value::Object(value.clone())
+            Value::Object(value.try_clone().expect("duplicate root"))
         );
         let own = context.get_own_property(&proxy, &key).unwrap().unwrap();
         assert!(
@@ -238,7 +243,7 @@ mod tests {
     #[test]
     fn context_native_call_and_proxy_construct_share_owned_callback_execution() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         context.install_test262_host().unwrap();
         let Value::Object(map) = context.eval("Array.prototype.map").unwrap() else {
             panic!("expected map")
@@ -276,7 +281,7 @@ mod tests {
     #[test]
     fn template_value_constants_keep_identity_and_roots_through_owned_entry_and_gc() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         context.install_test262_host().unwrap();
         let site = {
             let Value::Object(site) = context.eval("(function(){function tag(t){$262.gc();return t}return function(){return tag`alive${42}raw`}})()").unwrap() else {

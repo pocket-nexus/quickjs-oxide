@@ -220,7 +220,7 @@ fn case(kind: &DynamicKind, detail: &str, body: &str, expected: &str) -> Case {
 fn dynamic_function_wtf8_source_matches_expected_semantics() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let mut failures = Vec::new();
     for case in cases() {
         let actual = observe_oxide(&runtime, &mut context, &case.source, &case.description);
@@ -250,7 +250,7 @@ fn dynamic_function_wtf8_source_matches_pinned_quickjs() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let mut failures = Vec::new();
     for case in cases() {
         let oxide = observe_oxide(&runtime, &mut context, &case.source, &case.description);

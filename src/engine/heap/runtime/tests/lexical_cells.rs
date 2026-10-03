@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn published_lexical_locals_use_named_tdz_errors_and_checked_mutation() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let lexical = |code, is_const, max_stack| {
         UnlinkedFunction::fixture(
             code,
@@ -101,7 +101,7 @@ fn published_lexical_locals_use_named_tdz_errors_and_checked_mutation() {
 #[test]
 fn caught_throw_reuses_captured_lexical_without_close_local() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let child = UnlinkedFunction::fixture_with_closure_variables(
         vec![Instruction::GetVarRefCheck(0), Instruction::Return],
         vec![
@@ -189,7 +189,7 @@ fn caught_throw_reuses_captured_lexical_without_close_local() {
 #[test]
 fn finally_overridden_return_reuses_captured_lexical_without_close_local() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = concat!(
         "(function(){var f,g,i=0;while(i<2){i++;try{{let x=i;",
         "if(i===1)f=function(){return x};else g=function(){return x};",
@@ -205,8 +205,8 @@ fn finally_overridden_return_reuses_captured_lexical_without_close_local() {
 #[test]
 fn close_local_detaches_a_captured_uninitialized_lexical_lifetime() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let baseline_atoms = runtime.test_atom_count();
+    let mut context = runtime.new_context().expect("create context");
+    let baseline_atoms = runtime.test_atom_count().expect("atom count");
     let child = UnlinkedFunction::fixture_with_closure_variables(
         vec![Instruction::GetVarRefCheck(0), Instruction::Return],
         vec![
@@ -258,7 +258,7 @@ fn close_local_detaches_a_captured_uninitialized_lexical_lifetime() {
     let parent = runtime
         .publish_unlinked_function(context.realm, parent)
         .unwrap();
-    assert!(runtime.test_atom_count() > baseline_atoms);
+    assert!(runtime.test_atom_count().expect("atom count") > baseline_atoms);
     let parent_callable = runtime
         .new_bytecode_closure(context.realm, &parent)
         .unwrap();
@@ -280,13 +280,16 @@ fn close_local_detaches_a_captured_uninitialized_lexical_lifetime() {
     );
     drop(child_callable);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.test_atom_count(), baseline_atoms);
+    assert_eq!(
+        runtime.test_atom_count().expect("atom count"),
+        baseline_atoms
+    );
 }
 
 #[test]
 fn lexical_scope_entry_rejects_an_initialized_capture_without_close_local() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let child = UnlinkedFunction::fixture_with_closure_variables(
         vec![Instruction::Undefined, Instruction::Return],
         vec![
@@ -357,7 +360,7 @@ fn lexical_scope_entry_rejects_an_initialized_capture_without_close_local() {
 #[test]
 fn close_local_exposes_direct_and_fresh_captured_plain_put_values() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let child = UnlinkedFunction::fixture_with_closure_variables(
         vec![Instruction::GetVarRefCheck(0), Instruction::Return],
         vec![
@@ -443,7 +446,7 @@ fn close_local_exposes_direct_and_fresh_captured_plain_put_values() {
 #[test]
 fn escaped_uninitialized_lexical_cell_keeps_its_named_tdz() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let child = UnlinkedFunction::fixture_with_closure_variables(
         vec![Instruction::GetVarRefCheck(0), Instruction::Return],
         vec![
@@ -506,7 +509,7 @@ fn escaped_uninitialized_lexical_cell_keeps_its_named_tdz() {
 #[test]
 fn named_ordinary_definitions_capture_through_unnamed_descriptors() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let child = UnlinkedFunction::fixture_with_closure_variables(
         vec![Instruction::GetVarRef(0), Instruction::Return],
         Vec::new(),
@@ -562,7 +565,7 @@ fn named_ordinary_definitions_capture_through_unnamed_descriptors() {
 #[test]
 fn put_var_init_initializes_a_const_global_lexical_once() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     context
         .create_global_lexical_for_test("initializedLexical", true, None)
         .unwrap();

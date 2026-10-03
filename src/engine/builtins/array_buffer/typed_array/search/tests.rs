@@ -15,7 +15,7 @@ fn assert_script(context: &mut Context, source: &str) {
 #[test]
 fn at_and_search_methods_match_typed_numeric_comparison_rules() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -115,7 +115,7 @@ fn at_and_search_methods_match_typed_numeric_comparison_rules() {
 #[test]
 fn index_coercion_observes_quickjs_resize_and_detach_boundaries() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,

@@ -924,7 +924,7 @@ impl PendingIteratorState {
                     runtime
                         .dup_jsvalue(&self.iterable)
                         .map_err(runtime_error_to_vm_error)?,
-                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::AsyncIterator)),
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::AsyncIterator)?),
                 ))
             }
             Stage::Start => {
@@ -937,7 +937,7 @@ impl PendingIteratorState {
                     runtime
                         .dup_jsvalue(&self.iterable)
                         .map_err(runtime_error_to_vm_error)?,
-                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
                 ))
             }
             Stage::Probe => {
@@ -960,7 +960,7 @@ impl PendingIteratorState {
                     runtime
                         .dup_jsvalue(&self.iterable)
                         .map_err(runtime_error_to_vm_error)?,
-                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
                 ))
             }
             Stage::Method => {
@@ -1146,7 +1146,7 @@ fn one_resident_owner_per_iterator_operation_and_none_for_disabled_close() {
     use crate::engine::api::profiling::CostProfile;
     for count in [0, 4] {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("function collect(n){let i=0;let it={ [Symbol.iterator](){return this},next(){return {get value(){return i},get done(){return i++>=n}}}}; let total=0;for(let x of it)total+=x;return total}").unwrap());
         let profile = CostProfile::start();
         assert_eq!(
@@ -1173,7 +1173,7 @@ mod resident_next_tests {
     #[test]
     fn synchronous_array_next_keeps_live_cursor_and_captured_method() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -1196,7 +1196,7 @@ mod resident_next_tests {
     #[test]
     fn selected_array_next_getter_is_not_replayed_and_close_policy_is_kept() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let reads=0, closes=0; const marker={}, a=[1], it=a.values();
             Object.defineProperty(a,'0',{get(){reads++;throw marker;}});
@@ -1215,7 +1215,7 @@ mod resident_next_tests {
     #[test]
     fn resident_non_array_iterator_preserves_getters_close_and_nested_calls() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -1247,7 +1247,7 @@ mod resident_next_tests {
     #[test]
     fn array_destructuring_keeps_elision_rest_and_early_close() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let count=0, closed=0;
             function make(){let n=0;return {[Symbol.iterator](){return this;},next(){count++;return {value:++n,done:n>4};},return(){closed++;return {};}};}

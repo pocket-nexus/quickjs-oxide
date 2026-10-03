@@ -202,13 +202,13 @@ fn boolean_intrinsic_matches_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let boolean_prototype = context.boolean_prototype().unwrap();
     let boolean = property_callable(&runtime, &mut context, &global, "Boolean");
-    let boolean_object = boolean.as_object().clone();
+    let boolean_object = boolean.as_object().try_clone().expect("duplicate root");
     let boolean_to_string =
         property_callable(&runtime, &mut context, &boolean_prototype, "toString");
     let boolean_value_of = property_callable(&runtime, &mut context, &boolean_prototype, "valueOf");
@@ -224,12 +224,21 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         r#"(function() { bombHit = true; throw "coerced"; })"#,
     );
-    let to_primitive = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
     define_data_key(
         &runtime,
         &bomb,
         &to_primitive,
-        Value::Object(bomb_coercion.as_object().clone()),
+        Value::Object(
+            bomb_coercion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -293,7 +302,11 @@ fn rust_observations() -> Vec<String> {
             .call(&boolean, Value::Undefined, &[Value::Symbol(symbol)])
             .unwrap(),
         context
-            .call(&boolean, Value::Undefined, &[Value::Object(bomb.clone())])
+            .call(
+                &boolean,
+                Value::Undefined,
+                &[Value::Object(bomb.try_clone().expect("duplicate root"))],
+            )
             .unwrap(),
         context.get_property(&global, &bomb_hit).unwrap(),
     ];
@@ -319,19 +332,23 @@ fn rust_observations() -> Vec<String> {
             .is_some_and(|prototype| prototype == boolean_prototype),
         plain_value(
             context
-                .call(&object_to_string, Value::Object(boxed_false.clone()), &[],)
+                .call(
+                    &object_to_string,
+                    Value::Object(boxed_false.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap()
         ),
         plain_value(unbox_boolean(
             &mut context,
             &boolean_value_of,
-            Value::Object(boxed_false.clone()),
+            Value::Object(boxed_false.try_clone().expect("duplicate root")),
         )),
         runtime.own_property_keys(&boxed_false).unwrap().len(),
         plain_value(unbox_boolean(
             &mut context,
             &boolean_value_of,
-            Value::Object(boxed_true.clone()),
+            Value::Object(boxed_true.try_clone().expect("duplicate root")),
         )),
         plain_value(unbox_boolean(
             &mut context,
@@ -345,13 +362,13 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &global,
         "boxedFalse",
-        Value::Object(boxed_false.clone()),
+        Value::Object(boxed_false.try_clone().expect("duplicate root")),
     );
     define_global(
         &runtime,
         &global,
         "boxedTrue",
-        Value::Object(boxed_true.clone()),
+        Value::Object(boxed_true.try_clone().expect("duplicate root")),
     );
     let coercion_sources = [
         "Boolean(boxedFalse)",
@@ -371,7 +388,7 @@ fn rust_observations() -> Vec<String> {
             context
                 .call(
                     &object_value_of,
-                    Value::Object(boxed_false.clone()),
+                    Value::Object(boxed_false.try_clone().expect("duplicate root")),
                     &[],
                 )
                 .unwrap(),
@@ -388,21 +405,21 @@ fn rust_observations() -> Vec<String> {
         context
             .call(
                 &boolean_value_of,
-                Value::Object(boolean_prototype.clone()),
+                Value::Object(boolean_prototype.try_clone().expect("duplicate root")),
                 &[],
             )
             .unwrap(),
         context
             .call(
                 &boolean_to_string,
-                Value::Object(boolean_prototype.clone()),
+                Value::Object(boolean_prototype.try_clone().expect("duplicate root")),
                 &[],
             )
             .unwrap(),
         context
             .call(
                 &object_to_string,
-                Value::Object(boolean_prototype.clone()),
+                Value::Object(boolean_prototype.try_clone().expect("duplicate root")),
                 &[],
             )
             .unwrap(),
@@ -497,7 +514,7 @@ fn rust_observations() -> Vec<String> {
         plain_value(unbox_boolean(
             &mut context,
             &boolean_value_of,
-            Value::Object(object_box_a.clone()),
+            Value::Object(object_box_a.try_clone().expect("duplicate root")),
         )),
         (object_box_a == object_box_b).to_string(),
         plain_value(
@@ -716,7 +733,11 @@ fn rust_observations() -> Vec<String> {
     define_accessor_key(
         &runtime,
         &boolean_prototype,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag)),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToStringTag)
+                .expect("well-known symbol"),
+        ),
         Some(tag_getter),
         None,
     );
@@ -729,7 +750,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &global,
         "localeMethod",
-        Value::Object(locale_method.as_object().clone()),
+        Value::Object(
+            locale_method
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let locale_getter = eval_callable(
         &runtime,
@@ -983,7 +1009,7 @@ fn error_text(runtime: &Runtime, context: &mut Context, error: &ObjectRef, name:
 fn join_values(values: &[Value]) -> String {
     values
         .iter()
-        .cloned()
+        .map(|value| value.try_clone().expect("duplicate root"))
         .map(plain_value)
         .collect::<Vec<_>>()
         .join("|")

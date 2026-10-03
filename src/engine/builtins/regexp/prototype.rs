@@ -409,11 +409,11 @@ impl RegExpPresentationStep {
             )
         };
         Ok(Self::Read {
-            object: object.clone(),
+            object: object.try_clone()?,
             key: runtime.intern_property_key(name)?,
             resume: RegExpPresentationResume(Box::new(RegExpPresentationResumeState {
                 realm,
-                object: object.clone(),
+                object: object.try_clone()?,
                 phase,
             })),
         })
@@ -466,7 +466,7 @@ impl RegExpPresentationResume {
                 output.push_js_string(&source)?;
                 output.push_utf8("/")?;
                 Ok(RegExpPresentationStep::Read {
-                    object: self.0.object.clone(),
+                    object: self.0.object.try_clone()?,
                     key: runtime.intern_property_key("flags")?,
                     resume: {
                         let updated_0 = PresentationPhase::Flags(output);
@@ -506,7 +506,7 @@ impl RegExpPresentationResume {
                     )));
                 }
                 Ok(RegExpPresentationStep::Read {
-                    object: self.0.object.clone(),
+                    object: self.0.object.try_clone()?,
                     key: runtime.intern_property_key(FLAG_PROPERTIES[index].0)?,
                     resume: {
                         let updated_0 = PresentationPhase::Flag { index, output };

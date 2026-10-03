@@ -91,7 +91,10 @@ impl Runtime {
             0,
             0,
         )?;
-        let iterator_tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let iterator_tag = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::ToStringTag)
+                .expect("well-known symbol"),
+        );
         if !self.define_own_property(
             &regexp_string_iterator_prototype,
             &iterator_tag,
@@ -158,7 +161,10 @@ impl Runtime {
                 min_readable_args,
             )?;
         }
-        let replace_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Replace));
+        let replace_key = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::Replace)
+                .expect("well-known symbol"),
+        );
         self.define_native_builtin_auto_init_with_key(
             &regexp_prototype,
             realm,
@@ -169,7 +175,10 @@ impl Runtime {
             2,
             PropertyFlags::data(true, false, true),
         )?;
-        let match_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Match));
+        let match_key = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::Match)
+                .expect("well-known symbol"),
+        );
         self.define_native_builtin_auto_init_with_key(
             &regexp_prototype,
             realm,
@@ -180,7 +189,10 @@ impl Runtime {
             1,
             PropertyFlags::data(true, false, true),
         )?;
-        let match_all_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::MatchAll));
+        let match_all_key = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::MatchAll)
+                .expect("well-known symbol"),
+        );
         self.define_native_builtin_auto_init_with_key(
             &regexp_prototype,
             realm,
@@ -191,7 +203,10 @@ impl Runtime {
             1,
             PropertyFlags::data(true, false, true),
         )?;
-        let search = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Search));
+        let search = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::Search)
+                .expect("well-known symbol"),
+        );
         self.define_native_builtin_auto_init_with_key(
             &regexp_prototype,
             realm,
@@ -202,7 +217,10 @@ impl Runtime {
             1,
             PropertyFlags::data(true, false, true),
         )?;
-        let split = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Split));
+        let split = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::Split)
+                .expect("well-known symbol"),
+        );
         self.define_native_builtin_auto_init_with_key(
             &regexp_prototype,
             realm,
@@ -241,7 +259,10 @@ impl Runtime {
             "get [Symbol.species]",
             0,
         )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species));
+        let species = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::Species)
+                .expect("well-known symbol"),
+        );
         if !self.define_own_property(
             constructor.as_object(),
             &species,
@@ -263,7 +284,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "RegExp",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;

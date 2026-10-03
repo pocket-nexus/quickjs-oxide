@@ -11,18 +11,22 @@ use crate::engine::{heap::ContextId, value::Value};
 // These count this cursor's successful logical clone sites, not all runtime
 // retains/releases and not bytes moved by the compiler.
 #[inline]
-fn clone_copy_object(value: &ObjectRef) -> ObjectRef {
-    let copy = value.clone();
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("copy_owner_clone.ObjectRef");
-    copy
+fn clone_copy_object(value: &ObjectRef) -> Result<ObjectRef, crate::engine::api::RuntimeError> {
+    Ok({
+        let copy = value.try_clone()?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("copy_owner_clone.ObjectRef");
+        copy
+    })
 }
 #[inline]
-fn clone_copy_key(value: &PropertyKey) -> PropertyKey {
-    let copy = value.clone();
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("copy_owner_clone.PropertyKey");
-    copy
+fn clone_copy_key(value: &PropertyKey) -> Result<PropertyKey, crate::engine::api::RuntimeError> {
+    Ok({
+        let copy = value.try_clone()?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("copy_owner_clone.PropertyKey");
+        copy
+    })
 }
 
 pub(crate) enum CopyStep {
@@ -138,7 +142,7 @@ impl CopyStep {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("copy_cursor_created");
         Ok(Self::Keys {
-            object: clone_copy_object(&resume.source),
+            object: clone_copy_object(&resume.source)?,
             resume,
         })
     }
@@ -233,7 +237,7 @@ impl CopyResume {
                         continue;
                     }
                     read => {
-                        self.0.key = Some(clone_copy_key(&key));
+                        self.0.key = Some(clone_copy_key(&key)?);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
                             "copy_selected_read_publish",
@@ -246,16 +250,16 @@ impl CopyResume {
                     }
                 }
             }
-            self.0.key = Some(clone_copy_key(&key));
+            self.0.key = Some(clone_copy_key(&key)?);
             return Ok(if self.0.snapshot {
                 CopyStep::Read {
-                    object: clone_copy_object(&self.0.source),
+                    object: clone_copy_object(&self.0.source)?,
                     key,
                     resume: self,
                 }
             } else {
                 CopyStep::Enumerable {
-                    object: clone_copy_object(&self.0.source),
+                    object: clone_copy_object(&self.0.source)?,
                     key,
                     resume: self,
                 }
@@ -290,13 +294,13 @@ impl CopyResume {
             NativeConversion::Throw(value) => Ok(CopyStep::Complete(Completion::Throw(value))),
             NativeConversion::Value(false) => self.next(runtime),
             NativeConversion::Value(true) => Ok(CopyStep::Read {
-                object: clone_copy_object(&self.0.source),
+                object: clone_copy_object(&self.0.source)?,
                 key: clone_copy_key(
                     self.0
                         .key
                         .as_ref()
                         .ok_or(RuntimeError::Invariant("Object copy key missing"))?,
-                ),
+                )?,
                 resume: self,
             }),
         }
@@ -368,7 +372,7 @@ mod recovery_tests {
     #[test]
     fn recovery_copy_start_is_validation_only_and_local_advance_keeps_selected_getter() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let target = runtime.new_object(None).unwrap();
         let source = context
             .eval("globalThis.copyTrace=0;({a:1,get b(){copyTrace++;return 2}})")
@@ -376,7 +380,13 @@ mod recovery_tests {
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         let source = runtime.into_jsvalue(source).unwrap();
-        let step = CopyStep::start(&runtime, target.clone(), &source, None).unwrap();
+        let step = CopyStep::start(
+            &runtime,
+            target.try_clone().expect("duplicate root"),
+            &source,
+            None,
+        )
+        .unwrap();
         runtime.release_jsvalue(source).unwrap();
         assert!(runtime.own_property_keys(&target).unwrap().is_empty());
         let step = step.advance_without_callback(&runtime).unwrap();
@@ -419,7 +429,7 @@ mod recovery_tests {
     #[test]
     fn recovery_copy_keeps_snapshot_live_reads_and_one_getter_execution() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"(()=>{
@@ -438,7 +448,7 @@ mod recovery_tests {
     #[test]
     fn recovery_copy_retains_proxy_order_and_partial_exception_identity() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context.eval(r#"(()=>{
             let log=[], token={}, source=new Proxy({a:1,b:2},{
                 ownKeys(o){log.push('keys');return ['a','b']},

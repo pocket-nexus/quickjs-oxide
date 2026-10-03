@@ -210,7 +210,7 @@ impl Runtime {
         &self,
         prototype: &ObjectRef,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Error prototype"));
         }
@@ -236,7 +236,7 @@ impl Runtime {
     /// Return whether `object` carries the native Error class tag. Prototype
     /// spoofing alone does not make an object an Error.
     pub fn is_error_object(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }

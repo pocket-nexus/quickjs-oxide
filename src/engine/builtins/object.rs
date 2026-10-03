@@ -396,7 +396,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Object",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;

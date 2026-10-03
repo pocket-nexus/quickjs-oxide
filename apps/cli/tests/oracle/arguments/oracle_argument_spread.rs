@@ -388,7 +388,7 @@ fn argument_spread_matches_pinned_expectations() {
     for case in CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let actual = observe_rust(&runtime, &mut context, case.source, case.description);
         if actual != case.expected {
             failures.push(format!(
@@ -439,7 +439,7 @@ fn argument_spread_matches_pinned_quickjs() {
     for case in CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
         let quickjs = observe_oracle(&oracle, case.source, case.description);
         if oxide != quickjs {
@@ -465,7 +465,7 @@ fn argument_spread_runtime_argument_limit_matches_pinned_quickjs() {
     for case in BOUNDARY_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
         if oxide != case.expected {
             failures.push(format!(

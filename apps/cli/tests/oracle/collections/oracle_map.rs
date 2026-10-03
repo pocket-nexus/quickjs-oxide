@@ -525,8 +525,8 @@ fn map_brand_errors_match_pinned_quickjs() {
 fn map_constructor_and_native_errors_use_exact_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let defining_constructor = global_callable(&runtime, &mut defining, "Map");
     let defining_map_prototype =
@@ -551,7 +551,7 @@ fn map_constructor_and_native_errors_use_exact_realms() {
     );
     assert_eq!(
         runtime.get_prototype_of(&foreign_map).unwrap(),
-        Some(defining_map_prototype.clone()),
+        Some(defining_map_prototype.try_clone().expect("duplicate root")),
         "Map construction did not use the foreign constructor prototype",
     );
 
@@ -601,7 +601,7 @@ fn compare_groups(groups: &[&str]) {
     for case in CASES.iter().filter(|case| groups.contains(&case.group)) {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let actual = rust_observation(&runtime, &mut context, case);
         let expected = oracle_observation(&oracle, case);
         if actual != expected {

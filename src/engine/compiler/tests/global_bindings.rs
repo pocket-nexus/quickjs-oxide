@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn global_cell_execution_observes_updates_and_property_fallback_once() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval("var changingCell=1; function readChanging(){return changingCell} readChanging()")
@@ -37,7 +37,7 @@ fn global_cell_execution_observes_updates_and_property_fallback_once() {
 fn global_cell_failed_retain_unwinds_and_allows_later_execution() {
     use crate::engine::heap::RawId;
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(object) = context
         .eval("var saturatedCell={}; function readSaturated(){return saturatedCell} saturatedCell")
         .unwrap()
@@ -98,8 +98,8 @@ fn detached_vm_rejects_runtime_global_execution_explicitly() {
 #[test]
 fn runtime_global_get_and_direct_typeof_use_the_bytecode_realm() {
     let runtime = Runtime::new();
-    let mut defining_context = runtime.new_context();
-    let mut caller_context = runtime.new_context();
+    let mut defining_context = runtime.new_context().expect("create context");
+    let mut caller_context = runtime.new_context().expect("create context");
     let answer = runtime.intern_property_key("answer").unwrap();
     let marker = runtime.intern_property_key("marker").unwrap();
     let descriptor = |value| OrdinaryPropertyDescriptor {
@@ -149,7 +149,9 @@ fn runtime_global_get_and_direct_typeof_use_the_bytecode_realm() {
             .define_own_property(
                 &defining_context.global_object().unwrap(),
                 &marker,
-                &descriptor(Value::Object(marker_object.clone())),
+                &descriptor(Value::Object(
+                    marker_object.try_clone().expect("duplicate root")
+                )),
             )
             .unwrap()
     );
@@ -184,7 +186,7 @@ fn runtime_global_get_and_direct_typeof_use_the_bytecode_realm() {
 #[test]
 fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let descriptor = |value, writable| OrdinaryPropertyDescriptor {
         value: DescriptorField::Present(value),
@@ -364,7 +366,7 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
     );
     assert_eq!(
         context.eval("getterTarget").unwrap(),
-        Value::Object(global.clone())
+        Value::Object(global.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         context.eval("typeof getterTarget").unwrap(),
@@ -415,7 +417,7 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
 #[test]
 fn global_lexical_tdz_const_shadow_and_initialization_share_the_resolved_cell() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let shadowed = runtime.intern_property_key("shadowed").unwrap();
     assert!(
@@ -631,8 +633,8 @@ fn unresolved_name_compiles_to_one_global_then_parent_global_relays() {
 #[test]
 fn late_global_property_delete_reconnect_and_cross_realm_use_the_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let Value::Object(reader) = defining
         .eval("(function() { return lateRealmValue; })")
         .unwrap()

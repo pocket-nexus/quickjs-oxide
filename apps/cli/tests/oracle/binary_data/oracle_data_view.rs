@@ -438,7 +438,7 @@ fn observed_source(source: &str) -> String {
 fn oxide_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(&observed_source(case.source)) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),
         Ok(value) => panic!(

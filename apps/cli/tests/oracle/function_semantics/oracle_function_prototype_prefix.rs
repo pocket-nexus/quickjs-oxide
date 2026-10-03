@@ -150,7 +150,7 @@ fn function_prototype_prefix_matches_quickjs_oracle() {
 fn generator_callables_do_not_receive_the_ordinary_sloppy_restricted_property_exception() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let restricted = ["caller", "arguments"].map(|name| {
         let key = runtime.intern_property_key(name).unwrap();
@@ -185,7 +185,7 @@ fn generator_callables_do_not_receive_the_ordinary_sloppy_restricted_property_ex
                     &runtime,
                     &mut context,
                     get,
-                    Value::Object(generator.as_object().clone()),
+                    Value::Object(generator.as_object().try_clone().expect("duplicate root")),
                     &[],
                 ),
                 "throw:TypeError|invalid property access",
@@ -196,7 +196,7 @@ fn generator_callables_do_not_receive_the_ordinary_sloppy_restricted_property_ex
                     &runtime,
                     &mut context,
                     set,
-                    Value::Object(generator.as_object().clone()),
+                    Value::Object(generator.as_object().try_clone().expect("duplicate root")),
                     &[Value::Int(1)],
                 ),
                 "throw:TypeError|invalid property access",
@@ -235,7 +235,7 @@ fn lazy_function_prototype_defines_match_quickjs_oracle() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
 
     let prefix = runtime
@@ -313,21 +313,21 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         &caller_get,
-        Value::Object(sloppy.as_object().clone()),
+        Value::Object(sloppy.as_object().try_clone().expect("duplicate root")),
         &[],
     );
     let legacy_strict = observe_call(
         &runtime,
         &mut context,
         &caller_get,
-        Value::Object(strict.as_object().clone()),
+        Value::Object(strict.as_object().try_clone().expect("duplicate root")),
         &[],
     );
     let legacy_set = observe_call(
         &runtime,
         &mut context,
         &caller_set,
-        Value::Object(sloppy.as_object().clone()),
+        Value::Object(sloppy.as_object().try_clone().expect("duplicate root")),
         &[Value::Int(1)],
     );
     let syntax_generator = function(&runtime, &mut context, "(function* syntaxGenerator(){})");
@@ -340,14 +340,24 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         &caller_get,
-        Value::Object(syntax_generator.as_object().clone()),
+        Value::Object(
+            syntax_generator
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         &[],
     );
     let legacy_generator_dynamic = observe_call(
         &runtime,
         &mut context,
         &caller_get,
-        Value::Object(dynamic_generator.as_object().clone()),
+        Value::Object(
+            dynamic_generator
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         &[],
     );
 
@@ -382,34 +392,37 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         &call,
-        Value::Object(one.as_object().clone()),
+        Value::Object(one.as_object().try_clone().expect("duplicate root")),
         &[],
     );
     let call_this = observe_call(
         &runtime,
         &mut context,
         &call,
-        Value::Object(strict_this.as_object().clone()),
+        Value::Object(strict_this.as_object().try_clone().expect("duplicate root")),
         &[Value::Int(17)],
     );
     let call_args = observe_call(
         &runtime,
         &mut context,
         &call,
-        Value::Object(add.as_object().clone()),
+        Value::Object(add.as_object().try_clone().expect("duplicate root")),
         &[Value::Int(99), Value::Int(20), Value::Int(22)],
     );
     let call_throw = observe_call(
         &runtime,
         &mut context,
         &call,
-        Value::Object(fail.as_object().clone()),
+        Value::Object(fail.as_object().try_clone().expect("duplicate root")),
         &[],
     );
     let call_noncallable = observe_call(&runtime, &mut context, &call, Value::Int(1), &[]);
 
-    let has_instance_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     let (
         Value::Object(has_instance_object),
         has_instance_writable,
@@ -436,7 +449,7 @@ fn rust_observations() -> Vec<String> {
             .define_own_property(
                 &poison_target,
                 &prototype_key,
-                &getter_descriptor(prototype_getter.clone()),
+                &getter_descriptor(prototype_getter.try_clone().expect("duplicate root")),
             )
             .unwrap()
     );
@@ -462,7 +475,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         &has_instance,
-        Value::Object(function_prototype.clone()),
+        Value::Object(function_prototype.try_clone().expect("duplicate root")),
         &[Value::Int(1)],
     );
     assert!(
@@ -486,14 +499,24 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         &has_instance,
-        Value::Object(instance_target.as_object().clone()),
+        Value::Object(
+            instance_target
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         &[Value::Object(positive_candidate)],
     );
     let has_false = observe_call(
         &runtime,
         &mut context,
         &has_instance,
-        Value::Object(instance_target.as_object().clone()),
+        Value::Object(
+            instance_target
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         &[Value::Object(negative_candidate)],
     );
 
@@ -508,7 +531,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         &has_instance,
-        Value::Object(bad_prototype.as_object().clone()),
+        Value::Object(
+            bad_prototype
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         &[Value::Object(bad_candidate)],
     );
 
@@ -581,7 +609,7 @@ fn rust_lazy_define_observations() -> Vec<String> {
 fn rust_call_data_define(label: &str, descriptor: OrdinaryPropertyDescriptor) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let call_key = runtime.intern_property_key("call").unwrap();
 
@@ -604,7 +632,7 @@ fn rust_call_data_define(label: &str, descriptor: OrdinaryPropertyDescriptor) ->
         &runtime,
         &mut context,
         &call,
-        Value::Object(one.as_object().clone()),
+        Value::Object(one.as_object().try_clone().expect("duplicate root")),
         &[Value::Undefined, Value::Int(7)],
     );
 
@@ -620,7 +648,7 @@ fn rust_call_data_define(label: &str, descriptor: OrdinaryPropertyDescriptor) ->
 fn rust_call_accessor_define() -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let call_key = runtime.intern_property_key("call").unwrap();
     let getter = function(
@@ -671,10 +699,13 @@ fn rust_call_accessor_define() -> String {
 fn rust_has_instance_configurable_rejection() -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
-    let has_instance_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
 
     // Public integration APIs can observe the pre-materialization rejection
     // and the eventual descriptor, but not the internal AutoInit slot kind.

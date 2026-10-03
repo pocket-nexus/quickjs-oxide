@@ -11,7 +11,7 @@ use crate::engine::{
 };
 
 fn executable(runtime: &Runtime, atom: crate::engine::atom::Atom) -> PublishedFunctionSnapshot {
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
     executable.closure_variables = vec![ClosureVariable {
         source: ClosureSource::Global,
@@ -24,10 +24,25 @@ fn executable(runtime: &Runtime, atom: crate::engine::atom::Atom) -> PublishedFu
     executable
 }
 
+fn try_read_global_cell(
+    runtime: &Runtime,
+    executable: &PublishedFunctionSnapshot,
+    roots: &ClosureSlots,
+    index: u16,
+) -> Result<Option<JsValue>, Error> {
+    try_read_global_cell_in_state(
+        runtime,
+        &mut runtime.0.state.borrow_mut(),
+        executable,
+        roots,
+        index,
+    )
+}
+
 #[test]
 fn global_cell_reads_current_value_and_keeps_output_alive_after_overwrite() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let roots = ClosureSlots::from(vec![runtime.new_uninitialized_var_ref().unwrap()]);
@@ -48,13 +63,13 @@ fn global_cell_reads_current_value_and_keeps_output_alive_after_overwrite() {
         let original = runtime.into_jsvalue(public).unwrap();
         let expected = runtime.dup_jsvalue(&original).unwrap();
         runtime
-            .write_var_ref(&roots.get(0).unwrap(), original)
+            .write_var_ref(&roots.get(&runtime, 0).unwrap(), original)
             .unwrap();
         let output = try_read_global_cell(&runtime, &executable, &roots, 0)
             .unwrap()
             .unwrap();
         runtime
-            .write_var_ref(&roots.get(0).unwrap(), JsValue::Int(19))
+            .write_var_ref(&roots.get(&runtime, 0).unwrap(), JsValue::Int(19))
             .unwrap();
         if let (JsValue::Float(a), JsValue::Float(b)) = (&output, &expected) {
             assert_eq!(a.to_bits(), b.to_bits());
@@ -72,40 +87,48 @@ fn global_cell_reads_current_value_and_keeps_output_alive_after_overwrite() {
 }
 
 #[test]
-fn global_cell_misses_leave_uninitialized_and_pending_cleanup_untouched() {
+fn global_cell_read_preserves_uninitialized_cells_and_external_cleanup_queue() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let roots = ClosureSlots::from(vec![runtime.new_uninitialized_var_ref().unwrap()]);
-    assert!(
-        try_read_global_cell(&runtime, &executable, &roots, 0)
-            .unwrap()
-            .is_none()
-    );
+    {
+        let mut state = runtime.0.state.borrow_mut();
+        assert!(
+            try_read_global_cell_in_state(&runtime, &mut state, &executable, &roots, 0)
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            state
+                .heap
+                .var_ref(roots.get(&runtime, 0).unwrap().id())
+                .unwrap()
+                .value,
+            crate::engine::heap::RawValue::Uninitialized
+        ));
+    }
     runtime
-        .write_var_ref(&roots.get(0).unwrap(), JsValue::Int(42))
+        .write_var_ref(&roots.get(&runtime, 0).unwrap(), JsValue::Int(42))
         .unwrap();
-    let state = runtime.0.state.borrow_mut();
-    assert!(
-        try_read_global_cell(&runtime, &executable, &roots, 0)
-            .unwrap()
-            .is_none()
-    );
-    drop(state);
     let garbage = context.new_object().unwrap();
-    let state = runtime.0.state.borrow_mut();
-    drop(garbage);
-    assert!(runtime.0.deferred_references.has_pending());
-    drop(state);
-    assert!(
-        try_read_global_cell(&runtime, &executable, &roots, 0)
-            .unwrap()
-            .is_none()
-    );
-    assert!(runtime.0.deferred_references.has_pending());
+    let garbage_id = garbage.object_id();
+    {
+        let mut state = runtime.0.state.borrow_mut();
+        drop(garbage);
+        assert!(runtime.0.deferred_references.has_pending());
+        assert_eq!(
+            try_read_global_cell_in_state(&runtime, &mut state, &executable, &roots, 0).unwrap(),
+            Some(JsValue::Int(42))
+        );
+        assert!(runtime.0.deferred_references.has_pending());
+        assert!(state.heap.object(garbage_id).is_ok());
+    }
+    runtime.drain_deferred_references().unwrap();
+    assert!(runtime.0.state.borrow().heap.object(garbage_id).is_err());
     runtime
-        .write_var_ref(&roots.get(0).unwrap(), JsValue::Int(43))
+        .write_var_ref(&roots.get(&runtime, 0).unwrap(), JsValue::Int(43))
         .unwrap();
     assert_eq!(
         try_read_global_cell(&runtime, &executable, &roots, 0).unwrap(),
@@ -116,7 +139,7 @@ fn global_cell_misses_leave_uninitialized_and_pending_cleanup_untouched() {
 #[test]
 fn global_cell_checked_retain_preserves_overflow_and_immortal_transition() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let object = context.new_object().unwrap();
@@ -209,9 +232,9 @@ fn global_cell_rejects_foreign_closure_roots() {
 }
 
 #[test]
-fn global_cell_pending_zero_cleanup_misses_without_drain() {
+fn global_cell_read_preserves_pending_zero_cleanup() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let roots = ClosureSlots::from(vec![
@@ -229,12 +252,14 @@ fn global_cell_pending_zero_cleanup_misses_without_drain() {
         .unwrap();
     assert!(!runtime.0.deferred_references.has_pending());
     assert!(runtime.0.state.borrow().heap.has_pending_zero_cleanup());
-    assert!(
-        try_read_global_cell(&runtime, &executable, &roots, 0)
-            .unwrap()
-            .is_none()
-    );
-    assert!(runtime.0.state.borrow().heap.has_pending_zero_cleanup());
+    {
+        let mut state = runtime.0.state.borrow_mut();
+        assert_eq!(
+            try_read_global_cell_in_state(&runtime, &mut state, &executable, &roots, 0).unwrap(),
+            Some(JsValue::Int(42))
+        );
+        assert!(state.heap.has_pending_zero_cleanup());
+    }
     runtime.run_gc().unwrap();
     assert_eq!(
         try_read_global_cell(&runtime, &executable, &roots, 0).unwrap(),

@@ -20,7 +20,12 @@ fn runtime_compiler_executes_anonymous_iife_parameters_and_direct_call() {
     assert_eq!(function.metadata().constructor_kind, ConstructorKind::Base);
 
     let runtime = Runtime::new();
-    let Value::Object(function) = runtime.new_context().eval("(function() {})").unwrap() else {
+    let Value::Object(function) = runtime
+        .new_context()
+        .expect("create context")
+        .eval("(function() {})")
+        .unwrap()
+    else {
         panic!("function expression did not produce an object");
     };
     assert!(runtime.is_constructor(&function).unwrap());
@@ -29,7 +34,7 @@ fn runtime_compiler_executes_anonymous_iife_parameters_and_direct_call() {
 #[test]
 fn compiler_lowers_spread_calls_to_quickjs_apply_abis() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let root = context
         .compile("f(1,...xs,3); obj.m(...xs); eval(...xs); new C(...xs)")
         .unwrap();

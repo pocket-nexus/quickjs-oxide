@@ -1132,7 +1132,7 @@ fn proxy_oracle_vectors_self_check() {
 fn proxy_forwarding_and_generic_consumers_have_rust_only_regressions() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for (description, expected) in [
         (
             "empty-handler forwarding retains pinned finite stack overflow behavior",
@@ -1205,8 +1205,8 @@ fn proxy_reentrancy_matches_pinned_quickjs() {
 fn proxy_native_and_user_errors_use_their_exact_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_type_error = eval_object(
         &mut defining,
         "TypeError.prototype",
@@ -1240,7 +1240,7 @@ fn proxy_native_and_user_errors_use_their_exact_realms() {
     let invariant_error = take_exception_object(&mut caller, "foreign Proxy invariant TypeError");
     assert_eq!(
         runtime.get_prototype_of(&invariant_error).unwrap(),
-        Some(caller_type_error.clone()),
+        Some(caller_type_error.try_clone().expect("duplicate root")),
         "Proxy's internal invariant TypeError did not use the active caller realm",
     );
 
@@ -1263,7 +1263,7 @@ fn proxy_native_and_user_errors_use_their_exact_realms() {
     let revoked_error = take_exception_object(&mut caller, "foreign revoked Proxy TypeError");
     assert_eq!(
         runtime.get_prototype_of(&revoked_error).unwrap(),
-        Some(caller_type_error.clone()),
+        Some(caller_type_error.try_clone().expect("duplicate root")),
         "revoked Proxy TypeError did not use the active caller realm",
     );
 
@@ -1313,7 +1313,7 @@ fn proxy_native_and_user_errors_use_their_exact_realms() {
 fn proxy_hidden_edges_survive_gc_and_revocation_is_safe_across_collection() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let record = eval_object(
         &mut context,
         r#"(function(){
@@ -1390,7 +1390,7 @@ fn compare_groups(groups: &[&str]) {
         for &(description, source) in cases {
             let runtime =
                 Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let oxide = observe_rust(&runtime, &mut context, source, description);
             let quickjs = observe_oracle(&oracle, source, description);
             if oxide != quickjs {

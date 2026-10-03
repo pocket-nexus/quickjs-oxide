@@ -73,7 +73,7 @@ impl ArgumentsStep {
             return Ok(Self::Complete(result));
         }
         Ok(Self::Read {
-            object: carrier.clone(),
+            object: carrier.try_clone()?,
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             resume: ArgumentsResume(Box::new(ArgumentsResumeState {
                 realm,
@@ -184,7 +184,7 @@ impl ArgumentsResume {
         self.0.phase = Phase::Item { length, values };
         let key = runtime.property_key_for_index(index as u64)?;
         Ok(ArgumentsStep::Read {
-            object: self.0.carrier.clone(),
+            object: self.0.carrier.try_clone()?,
             key,
             resume: self,
         })

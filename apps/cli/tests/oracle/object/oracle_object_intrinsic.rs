@@ -507,7 +507,7 @@ fn object_descriptor_conversion_matches_pinned_quickjs() {
 fn object_define_properties_pins_quickjs_proxy_batch_order_without_an_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         observe_rust_eval(
             &runtime,
@@ -558,8 +558,8 @@ fn object_oracle_vectors_execute_on_pinned_quickjs() {
 fn object_constructor_custom_new_target_and_cross_realm_fallback_are_pinned() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let constructor = global_callable(&runtime, &mut defining, "Object");
     let defining_object_prototype = defining.object_prototype().unwrap();
     let caller_object_prototype = caller.object_prototype().unwrap();
@@ -610,7 +610,7 @@ fn object_constructor_custom_new_target_and_cross_realm_fallback_are_pinned() {
             .set_property(
                 target.as_object(),
                 &prototype_key,
-                Value::Object(custom_prototype.clone()),
+                Value::Object(custom_prototype.try_clone().expect("duplicate root")),
             )
             .unwrap()
     );
@@ -651,7 +651,11 @@ fn object_constructor_custom_new_target_and_cross_realm_fallback_are_pinned() {
     );
     let sample = caller.new_object().unwrap();
     let Value::Object(name_array) = caller
-        .call(&names, Value::Undefined, &[Value::Object(sample.clone())])
+        .call(
+            &names,
+            Value::Undefined,
+            &[Value::Object(sample.try_clone().expect("duplicate root"))],
+        )
         .expect("cross-realm Object.getOwnPropertyNames")
     else {
         panic!("Object.getOwnPropertyNames did not return an Array");
@@ -672,7 +676,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
         let expected = observe_array_completion(&oracle, source, description);
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             expected,
@@ -752,13 +756,15 @@ fn array_value_text(
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let object_key = runtime.intern_property_key("Object").unwrap();
     let global_descriptor = data_descriptor(&runtime, &global, &object_key);
-    let Value::Object(constructor_object) = global_descriptor.0.clone() else {
+    let Value::Object(constructor_object) =
+        global_descriptor.0.try_clone().expect("duplicate root")
+    else {
         panic!("global Object descriptor did not contain an object");
     };
     let constructor = runtime

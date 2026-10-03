@@ -294,7 +294,7 @@ fn annex_b_statement_values_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -313,7 +313,7 @@ fn annex_b_statement_errors_match_pinned_quickjs() {
     for &(description, source) in ERROR_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -336,7 +336,7 @@ fn program_label_annex_global_state_matches_pinned_quickjs() {
     ];
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let rust = sources
         .iter()
         .map(|source| observe_rust_eval(&runtime, &mut context, source, description))
@@ -361,7 +361,7 @@ fn program_label_invokes_existing_global_setter_twice() {
     ];
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval("Function.labelSetterHits=0;Function.labelSetterValue=0")
@@ -448,7 +448,7 @@ fn with_annex_boundaries_match_pinned_quickjs() {
         );
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let rust = observe_rust_eval(&runtime, &mut context, source, description);
         assert_eq!(
             rust, quickjs,
@@ -463,8 +463,8 @@ fn program_label_cross_realm_regression() {
     // API exposes the same operation directly, so this remains unconditional.
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     drop(defining.eval("globalThis.realmTag='A'").unwrap());
     drop(caller.eval("globalThis.realmTag='B'").unwrap());
 

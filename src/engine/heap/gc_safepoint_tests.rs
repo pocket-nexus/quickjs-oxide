@@ -7,8 +7,11 @@ fn pressure(runtime: &Runtime) {
 #[test]
 fn automatic_cycle_gc_bounds_unreachable_loops_and_keeps_active_roots() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    assert_eq!(runtime.gc_policy(), GcPolicy::Automatic);
+    let mut context = runtime.new_context().expect("create context");
+    assert_eq!(
+        runtime.gc_policy().expect("runtime state"),
+        GcPolicy::Automatic
+    );
     pressure(&runtime);
     assert_eq!(
         context
@@ -22,14 +25,17 @@ fn automatic_cycle_gc_bounds_unreachable_loops_and_keeps_active_roots() {
             .unwrap(),
         Value::Int(42)
     );
-    assert!(runtime.heap_counts().object_nodes < super::gc_pressure::MIN_GC_HEADROOM + 1024);
+    assert!(
+        runtime.heap_counts().expect("runtime state").object_nodes
+            < super::gc_pressure::MIN_GC_HEADROOM + 1024
+    );
     assert!(!runtime.0.gc_pressure.collecting.get());
 }
 
 #[test]
 fn automatic_cycle_gc_keeps_weak_targets_until_outer_turn_and_queues_cleanup() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     runtime
         .with_execution_turn(|| {
             pressure(&runtime);
@@ -70,9 +76,9 @@ fn automatic_cycle_gc_keeps_weak_targets_until_outer_turn_and_queues_cleanup() {
     // deletion. A target first killed by trial deletion is delivered on the
     // next collection, just as with explicit GC before this change.
     runtime.run_gc().unwrap();
-    assert!(runtime.is_job_pending());
+    assert!(runtime.is_job_pending().expect("runtime state"));
     let mut jobs = 0;
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         jobs += 1;
         assert!(jobs < 10);
         runtime.execute_pending_job().unwrap();
@@ -83,7 +89,7 @@ fn automatic_cycle_gc_keeps_weak_targets_until_outer_turn_and_queues_cleanup() {
 #[test]
 fn automatic_cycle_gc_keeps_suspended_and_pending_reaction_roots() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(
@@ -118,17 +124,21 @@ fn automatic_cycle_gc_keeps_suspended_and_pending_reaction_roots() {
 #[test]
 fn automatic_cycle_gc_defers_borrows_reentry_and_manual_policy() {
     let runtime = Runtime::new();
-    let _context = runtime.new_context();
+    let _context = runtime.new_context().expect("create context");
     runtime.0.gc_pressure.remaining.set(0);
     {
         let _borrow = runtime.0.state.borrow();
         runtime.collect_if_requested().unwrap();
         assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
     }
-    runtime.set_gc_policy(GcPolicy::Manual);
+    runtime
+        .set_gc_policy(GcPolicy::Manual)
+        .expect("set GC policy");
     runtime.collect_if_requested().unwrap();
     assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
-    runtime.set_gc_policy(GcPolicy::Automatic);
+    runtime
+        .set_gc_policy(GcPolicy::Automatic)
+        .expect("set GC policy");
     runtime.0.gc_pressure.collecting.set(true);
     runtime.collect_if_requested().unwrap();
     assert!(runtime.run_gc().is_err());
@@ -158,7 +168,7 @@ fn automatic_cycle_gc_defers_unwinding_without_repeating_vm_checkpoints() {
     }
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let progressed = Cell::new(false);
     runtime.0.gc_pressure.remaining.set(0);
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -170,18 +180,20 @@ fn automatic_cycle_gc_defers_unwinding_without_repeating_vm_checkpoints() {
     }));
     assert!(result.is_err());
     assert!(
-        progressed.get(),
-        "automatic GC must defer VM checkpoints while unwinding"
+        !progressed.get(),
+        "entry during unwind must reject state access"
     );
-    assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
-    runtime.collect_if_requested().unwrap();
-    assert!(runtime.0.gc_pressure.remaining.get() > 0);
+    assert!(runtime.is_poisoned());
+    assert!(matches!(
+        runtime.run_gc(),
+        Err(crate::engine::api::RuntimeError::Poisoned)
+    ));
 }
 
 #[test]
 fn automatic_cycle_gc_traces_ephemeron_chains_and_preserves_owned_value_edges() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(
@@ -250,12 +262,13 @@ fn automatic_cycle_gc_runs_inside_long_allocating_turns() {
     ];
     for source in sources {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         runtime
             .with_execution_turn(|| {
                 drop(context.eval(source)?);
                 assert!(
-                    runtime.heap_counts().object_nodes < super::gc_pressure::MIN_GC_HEADROOM + 1024,
+                    runtime.heap_counts().expect("runtime state").object_nodes
+                        < super::gc_pressure::MIN_GC_HEADROOM + 1024,
                     "{source}"
                 );
                 Ok(())

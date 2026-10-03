@@ -3,12 +3,12 @@ use super::*;
 #[test]
 fn direct_eval_identity_is_realm_local_and_independent_of_the_global_property() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_eval = global_callable(&runtime, &mut first, "eval");
     let second_eval = global_callable(&runtime, &mut second, "eval");
-    let first_value = Value::Object(first_eval.as_object().clone());
-    let second_value = Value::Object(second_eval.as_object().clone());
+    let first_value = Value::Object(first_eval.as_object().try_clone().expect("duplicate root"));
+    let second_value = Value::Object(second_eval.as_object().try_clone().expect("duplicate root"));
 
     assert!(runtime.is_original_eval(first.realm, &first_value).unwrap());
     assert!(
@@ -29,12 +29,17 @@ fn direct_eval_identity_is_realm_local_and_independent_of_the_global_property() 
     );
 
     let foreign_runtime = Runtime::new();
-    let mut foreign_context = foreign_runtime.new_context();
+    let mut foreign_context = foreign_runtime.new_context().expect("create context");
     let foreign_eval = global_callable(&foreign_runtime, &mut foreign_context, "eval");
     assert_eq!(
         runtime.is_original_eval(
             first.realm,
-            &Value::Object(foreign_eval.as_object().clone())
+            &Value::Object(
+                foreign_eval
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root")
+            )
         ),
         Err(RuntimeError::WrongRuntime("eval function"))
     );
@@ -58,7 +63,7 @@ fn direct_eval_identity_is_realm_local_and_independent_of_the_global_property() 
         !runtime
             .is_original_eval(
                 second.realm,
-                &Value::Object(replacement.as_object().clone())
+                &Value::Object(replacement.as_object().try_clone().expect("duplicate root"))
             )
             .unwrap()
     );

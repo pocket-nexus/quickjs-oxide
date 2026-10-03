@@ -218,7 +218,7 @@ mod tests {
         else {
             panic!("bytecode");
         };
-        let prepared = runtime
+        let mut prepared = runtime
             .prepare_bytecode_frame(&callable, Value::Undefined, Value::Undefined, &[], bytecode)
             .unwrap();
         let active_frame = if materialized {
@@ -226,7 +226,7 @@ mod tests {
         } else {
             ActiveFrameToken::unmaterialized()
         };
-        let entry_guard = materialized.then_some(prepared.active_frame);
+        let entry_guard = materialized.then(|| prepared.active_frame.into_internal());
         let locals = prepared.locals.len();
         let entry = FrameEntry {
             initialize_bindings: false,
@@ -240,9 +240,10 @@ mod tests {
                 return_to: None,
                 entry_guard,
                 function: crate::engine::vm::closure::FrameFunction::new(function, closure_slots)
+                    .unwrap()
                     .into(),
                 reusable_captured_locals: vec![false; locals],
-                input: prepared.input.into(),
+                input: prepared.input.take().into(),
             }),
             storage: FrameStorage {
                 original_arguments: vec![],
@@ -252,7 +253,7 @@ mod tests {
             },
         };
         let mut execution = RunningExecution::new(runtime, ExecutionLimits::default()).unwrap();
-        let id = crate::engine::vm::driver::push_frame(&mut execution, entry).unwrap();
+        let id = crate::engine::vm::driver::push_frame(runtime, &mut execution, entry).unwrap();
         (execution, id)
     }
 
@@ -282,9 +283,10 @@ mod tests {
     #[test]
     fn numeric_action_carries_the_originating_decoded_boundary() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (mut execution, id) = fixture(&runtime, &mut context);
-        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        let VmAction::Numeric { kind, fallthrough } =
+            execute_frame(&runtime, &mut execution, id).unwrap()
         else {
             panic!("non-Number multiplication must exit as a numeric action");
         };
@@ -321,7 +323,7 @@ mod tests {
         use crate::engine::code::exec_opcode::Opcode;
 
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (mut execution, id) = fixture_source(
             &runtime,
             &mut context,
@@ -338,7 +340,8 @@ mod tests {
         push(&mut execution, id, JsValue::Undefined);
         push(&mut execution, id, JsValue::Int(2));
         execution.frames.current_mut(id).unwrap().resume_pc = compare_pc as usize;
-        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        let VmAction::Numeric { kind, fallthrough } =
+            execute_frame(&runtime, &mut execution, id).unwrap()
         else {
             panic!("non-Number comparison must exit as a numeric action");
         };
@@ -356,7 +359,7 @@ mod tests {
         use crate::engine::code::exec_opcode::Opcode;
 
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = "function compare(o,y){if(o.x<y)return 1;return 2} \
                       compare({x:'1'},'2')===1 && compare({x:'3'},'2')===2";
         let root = context.compile(source).unwrap();
@@ -383,7 +386,7 @@ mod tests {
     #[test]
     fn primitive_and_deferred_numeric_throws_keep_the_originating_source_line() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let direct = "function fail(){\n return Symbol()-1;\n}\ntry{fail()}catch(e){e instanceof TypeError && e.stack.includes('at fail (c1-direct.js:2:')}";
         assert_eq!(
             context.eval_with_filename(direct, "c1-direct.js").unwrap(),
@@ -400,11 +403,11 @@ mod tests {
     }
 
     #[test]
-    fn materialization_retry_reexecutes_the_current_operation() {
+    fn object_truthiness_releases_the_owner_without_materializing() {
         use crate::engine::code::exec_opcode::Opcode;
 
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (mut execution, id) = fixture_source_with_activation(
             &runtime,
             &mut context,
@@ -423,18 +426,16 @@ mod tests {
         push(&mut execution, id, JsValue::Object(object.into_handle()));
         execution.frames.current_mut(id).unwrap().resume_pc = not_pc as usize;
         assert_eq!(
-            execute_frame(&mut execution, id).unwrap(),
-            VmAction::Materialize
-        );
-        let frame = execution.frames.current_mut(id).unwrap();
-        assert_eq!(
-            (frame.fault_pc, frame.resume_pc),
-            (not_pc as usize, not_pc as usize)
-        );
-        execution.frames.materialize(&runtime).unwrap();
-        assert_eq!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Complete
+        );
+        assert!(
+            !execution
+                .frames
+                .current_mut(id)
+                .unwrap()
+                .active_frame
+                .is_materialized()
         );
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(execution.slots.depth(&frame.window), 0);
@@ -444,7 +445,7 @@ mod tests {
     #[test]
     fn direct_post_increment_preserves_pc_after_partial_output_failure() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (mut execution, id) = fixture(&runtime, &mut context);
         loop {
             let frame = execution.frames.current_mut(id).unwrap();
@@ -487,7 +488,7 @@ mod tests {
         use crate::engine::code::exec_opcode::Opcode;
 
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (mut execution, id) =
             fixture_source(&runtime, &mut context, "(function(value){return value++})");
         let post_inc_pc = {
@@ -512,7 +513,8 @@ mod tests {
         drop(execution.slots.pop(&mut frame.window).unwrap());
         push(&mut execution, id, JsValue::Bool(true));
         execution.frames.current_mut(id).unwrap().resume_pc = post_inc_pc as usize;
-        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        let VmAction::Numeric { kind, fallthrough } =
+            execute_frame(&runtime, &mut execution, id).unwrap()
         else {
             panic!("non-Number PostInc must produce a numeric action");
         };
@@ -535,7 +537,7 @@ mod tests {
         use crate::engine::code::exec_opcode::Opcode;
 
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = "function subtract(a,b){return a-b}; subtract('123.5',2)";
         let root = context.compile(source).unwrap();
         let child = runtime.test_child_function_bytecode(&root, 0).unwrap();
@@ -569,7 +571,7 @@ mod tests {
     #[test]
     fn primitive_numeric_domains_complete_at_the_carried_boundary() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
@@ -601,7 +603,7 @@ mod tests {
     #[test]
     fn number_only_arithmetic_needs_no_numeric_action() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
@@ -625,7 +627,7 @@ mod tests {
     #[test]
     fn object_numeric_decline_keeps_throw_identity_and_conversion_count() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
@@ -654,7 +656,7 @@ mod tests {
     #[test]
     fn primitive_transaction_preserves_partial_numeric_input_and_output_errors() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (mut execution, id) = fixture(&runtime, &mut context);
         push(&mut execution, id, JsValue::Int(7));
         let fallthrough = decoded_fallthrough(&mut execution, id);
@@ -714,7 +716,7 @@ mod tests {
     #[test]
     fn primitive_transaction_identity_domain_and_wait_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (mut execution, id) = fixture(&runtime, &mut context);
         execution
             .frames
@@ -803,7 +805,7 @@ mod tests {
     #[test]
     fn primitive_transaction_parsing_and_string_store_keep_shared_semantics() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let cases=['','  \t\n',' 1.25e2 ','0x10','0b101','0o17','Infinity','-Infinity','-0','bad','\ud800'];
             for(let s of cases) {
@@ -826,7 +828,7 @@ mod tests {
     #[test]
     fn copy_transaction_exhausted_wait_restores_source_without_replaying_selected_getter() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = context
             .eval("globalThis.copyCalls=0;({a:1,get b(){copyCalls++;return 2}})")
             .unwrap();
@@ -840,12 +842,14 @@ mod tests {
         push(
             &mut execution,
             id,
-            JsValue::Object(target.clone().into_handle()),
+            JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
         );
         push(
             &mut execution,
             id,
-            runtime.into_jsvalue(source.clone()).unwrap(),
+            runtime
+                .into_jsvalue(source.try_clone().expect("duplicate root"))
+                .unwrap(),
         );
         let result = crate::engine::vm::proxy_get_driver::start_object_copy(
             &runtime,
@@ -888,7 +892,7 @@ mod tests {
     #[test]
     fn copy_transaction_sync_exhaustion_and_failure_keep_input_commit_boundary() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for fail in [false, true] {
             let source = context.eval("({a:1})").unwrap();
             let target = context
@@ -934,7 +938,7 @@ mod tests {
     #[test]
     fn primitive_numeric_completion_keeps_bigint_operators_and_two_update_results() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
@@ -974,7 +978,7 @@ mod tests {
     #[test]
     fn object_numeric_fallback_keeps_conversion_order_throw_identity_and_finally() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

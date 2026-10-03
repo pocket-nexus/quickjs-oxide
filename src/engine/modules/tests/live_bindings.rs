@@ -26,7 +26,7 @@ fn module_loader_cache_cycles_and_live_cells_follow_quickjs_order() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let entry = context
         .compile_module_with_filename(
             r#"
@@ -68,7 +68,7 @@ fn default_import_clauses_share_the_exporters_live_cell() {
         "#,
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -111,7 +111,7 @@ fn default_import_clauses_share_the_exporters_live_cell() {
 #[test]
 fn default_function_declarations_are_hoisted_named_and_live_through_self_imports() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let anonymous = context
         .compile_module_with_filename(
             r#"
@@ -159,7 +159,7 @@ fn default_function_declarations_are_hoisted_named_and_live_through_self_imports
 #[test]
 fn anonymous_default_generator_and_async_declarations_receive_the_default_name() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let generator = context
         .compile_module_with_filename(
             r#"
@@ -210,7 +210,7 @@ fn anonymous_default_generator_and_async_declarations_receive_the_default_name()
 #[test]
 fn default_class_declarations_keep_tdz_and_name_before_static_initializers() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let anonymous = context
         .compile_module_with_filename(
             r#"
@@ -277,7 +277,7 @@ fn imported_mutable_cell_has_an_immutable_importer_view() {
         "export let value = 1; export function update() { value = 42; }",
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -319,7 +319,7 @@ fn import_declaration_collisions_match_pinned_quickjs_single_slot_semantics() {
         ("pkg/destructure-object.js", "export let value = 7;"),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -413,7 +413,7 @@ fn normal_calls_keep_import_views_readonly_in_the_owned_driver() {
         "export let value=1; export function update(){value=42}",
     )]);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"

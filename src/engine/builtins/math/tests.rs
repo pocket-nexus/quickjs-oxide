@@ -237,8 +237,8 @@ fn random_fraction_uses_exactly_the_high_52_bits() {
 #[test]
 fn global_math_is_realm_aware_and_materializes_only_on_get() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
     let key = runtime
@@ -320,7 +320,7 @@ fn global_math_is_realm_aware_and_materializes_only_on_get() {
 #[test]
 fn deleting_lazy_global_math_releases_its_realm_edge_without_materializing() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Math)

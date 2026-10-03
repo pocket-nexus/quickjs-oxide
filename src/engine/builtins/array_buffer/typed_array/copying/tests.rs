@@ -25,7 +25,7 @@ fn eval_object(context: &mut Context, source: &str, description: &str) -> Object
 #[test]
 fn with_and_to_reversed_publish_quickjs_copying_surface() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -93,7 +93,7 @@ fn with_and_to_reversed_publish_quickjs_copying_surface() {
 #[test]
 fn with_matches_quickjs_coercion_resize_and_raw_copy_contracts() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -229,7 +229,7 @@ fn with_matches_quickjs_coercion_resize_and_raw_copy_contracts() {
 #[test]
 fn to_reversed_preserves_raw_words_and_rejects_invalid_views() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -289,8 +289,8 @@ fn to_reversed_preserves_raw_words_and_rejects_invalid_views() {
 #[test]
 fn copying_methods_use_the_method_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_uint8 = eval_object(
         &mut defining,
         "Uint8Array.prototype",
@@ -332,7 +332,7 @@ fn copying_methods_use_the_method_defining_realm() {
     let Value::Object(with_result) = caller
         .call(
             &with,
-            Value::Object(source.clone()),
+            Value::Object(source.try_clone().expect("duplicate root")),
             &[Value::Int(0), Value::Int(9)],
         )
         .expect("cross-realm with")
@@ -341,7 +341,7 @@ fn copying_methods_use_the_method_defining_realm() {
     };
     assert_eq!(
         runtime.get_prototype_of(&with_result).unwrap(),
-        Some(defining_uint8.clone()),
+        Some(defining_uint8.try_clone().expect("duplicate root")),
         "with did not use the method defining realm",
     );
     let buffer_key = runtime
@@ -352,12 +352,12 @@ fn copying_methods_use_the_method_defining_realm() {
     };
     assert_eq!(
         runtime.get_prototype_of(&with_buffer).unwrap(),
-        Some(defining_array_buffer.clone()),
+        Some(defining_array_buffer.try_clone().expect("duplicate root")),
         "with result buffer did not use the method defining realm",
     );
     assert_ne!(
         runtime.get_prototype_of(&with_buffer).unwrap(),
-        Some(caller_array_buffer.clone()),
+        Some(caller_array_buffer.try_clone().expect("duplicate root")),
         "with result buffer unexpectedly used the caller realm",
     );
     let Value::Object(reversed_result) = caller

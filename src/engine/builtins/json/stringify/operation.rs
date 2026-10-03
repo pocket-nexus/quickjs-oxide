@@ -193,7 +193,7 @@ impl StringifyStep {
                     let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
                     return state.read(
                         runtime,
-                        object.clone(),
+                        object.try_clone()?,
                         "length",
                         Phase::ListLength(object),
                     );
@@ -233,7 +233,7 @@ impl StringifyResumeState {
         }
         let key = runtime.intern_property_key(&list.index.to_string())?;
         Ok(StringifyStep::request_read(
-            runtime.into_jsvalue(Value::Object(list.object.clone()))?,
+            runtime.into_jsvalue(Value::Object(list.object.try_clone()?))?,
             key,
             {
                 let phase = Phase::ListItem(list);
@@ -351,7 +351,9 @@ impl StringifyResumeState {
             Ok(StringifyStep::request_read(
                 runtime.dup_jsvalue(&self.current)?,
                 self.to_json_key
-                    .clone()
+                    .as_ref()
+                    .map(|value| value.try_clone())
+                    .transpose()?
                     .ok_or(RuntimeError::Invariant("JSON stringify lost toJSON key"))?,
                 {
                     let phase = Phase::ToJson(check);
@@ -383,8 +385,8 @@ impl StringifyResumeState {
             arguments.push(runtime.into_jsvalue(Value::String(check.key.clone()))?);
             arguments.push(runtime.dup_jsvalue(&self.current)?);
             return Ok(StringifyStep::request_call(
-                callable.clone(),
-                JsValue::Object(check.holder.clone().into_handle()),
+                callable.try_clone()?,
+                JsValue::Object(check.holder.try_clone()?.into_handle()),
                 arguments,
                 {
                     let phase = Phase::Replacer(check);
@@ -586,14 +588,14 @@ impl StringifyResumeState {
                     let name = index.to_string();
                     let key = runtime.intern_property_key(&name)?;
                     let destination = Destination::Array(Task::ArrayElement {
-                        array: array.clone(),
+                        array: array.try_clone()?,
                         index: index + 1,
                         length,
                         indent,
                         next_indent,
                     });
                     return Ok(StringifyStep::request_read(
-                        runtime.into_jsvalue(Value::Object(array.clone()))?,
+                        runtime.into_jsvalue(Value::Object(array.try_clone()?))?,
                         key,
                         {
                             let phase = Phase::ReadCheck {
@@ -626,7 +628,7 @@ impl StringifyResumeState {
                     };
                     let key = runtime.intern_property_key_js_string(&name)?;
                     let destination = Destination::Object(Task::ObjectProperty {
-                        object: object.clone(),
+                        object: object.try_clone()?,
                         keys,
                         index: index + 1,
                         has_content,
@@ -634,7 +636,7 @@ impl StringifyResumeState {
                         next_indent,
                     });
                     return Ok(StringifyStep::request_read(
-                        runtime.into_jsvalue(Value::Object(object.clone()))?,
+                        runtime.into_jsvalue(Value::Object(object.try_clone()?))?,
                         key,
                         {
                             let phase = Phase::ReadCheck {
@@ -671,9 +673,9 @@ impl StringifyResumeState {
             ));
         }
         let next_indent = indent.try_concat(&self.gap)?;
-        self.stack.push(object.clone());
+        self.stack.push(object.try_clone()?);
         let start = ObjectStart {
-            object: object.clone(),
+            object: object.try_clone()?,
             indent,
             next_indent,
         };
@@ -712,8 +714,8 @@ impl StringifyResumeState {
                 continue;
             }
             return Ok(StringifyStep::request_enumerable(
-                start.object.clone(),
-                key.clone(),
+                start.object.try_clone()?,
+                key.try_clone()?,
                 {
                     let phase = Phase::Enumerable {
                         start,
@@ -1058,7 +1060,7 @@ mod ownership_tests {
     fn pending_to_json_keeps_ancestors_detached_value_and_replacer_until_abandonment() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let root = context.eval("({x:{}})").unwrap();
         let replacer = context.eval("(function(k,v){return v})").unwrap();
         let to_json = context.eval("(function(){return 1})").unwrap();

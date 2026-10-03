@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn call_frame_loads_arguments_and_moves_values_through_locals() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function = UnlinkedFunction::fixture(
         vec![
             Instruction::GetArg(0),
@@ -44,7 +44,7 @@ fn call_frame_loads_arguments_and_moves_values_through_locals() {
 #[test]
 fn runtime_typeof_distinguishes_callable_and_ordinary_objects() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function = UnlinkedFunction::fixture(
         vec![
             Instruction::GetArg(0),
@@ -72,7 +72,9 @@ fn runtime_typeof_distinguishes_callable_and_ordinary_objects() {
             .call(
                 &callable,
                 Value::Undefined,
-                &[Value::Object(callable.as_object().clone())],
+                &[Value::Object(
+                    callable.as_object().try_clone().expect("duplicate root"),
+                )],
             )
             .unwrap(),
     );
@@ -82,7 +84,9 @@ fn runtime_typeof_distinguishes_callable_and_ordinary_objects() {
             .call(
                 &callable,
                 Value::Undefined,
-                &[Value::Object(callable.as_object().clone())],
+                &[Value::Object(
+                    callable.as_object().try_clone().expect("duplicate root"),
+                )],
             )
             .unwrap(),
     );
@@ -108,7 +112,7 @@ fn runtime_typeof_distinguishes_callable_and_ordinary_objects() {
 #[test]
 fn fclosure_call_and_call_method_follow_quickjs_stack_layout() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let add_one = UnlinkedFunction::fixture(
         vec![
             Instruction::GetArg(0),
@@ -182,7 +186,11 @@ fn fclosure_call_and_call_method_follow_quickjs_stack_layout() {
     let receiver = runtime.new_object(None).unwrap();
     assert_eq!(
         context
-            .call(&method_caller, Value::Object(receiver.clone()), &[])
+            .call(
+                &method_caller,
+                Value::Object(receiver.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
         Value::Object(receiver)
     );
@@ -191,7 +199,7 @@ fn fclosure_call_and_call_method_follow_quickjs_stack_layout() {
 #[test]
 fn nested_call_propagates_throw_without_publishing_it_early() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let throwing = UnlinkedFunction::fixture(
         vec![Instruction::PushI32(9), Instruction::Throw],
         Vec::new(),
@@ -231,7 +239,7 @@ fn nested_call_propagates_throw_without_publishing_it_early() {
 #[test]
 fn published_tail_call_uses_backtrace_and_current_activation_catch_semantics() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let wrapper = UnlinkedFunction::fixture(
         vec![Instruction::GetArg(0), Instruction::TailCall(0)],
@@ -277,7 +285,7 @@ fn published_tail_call_uses_backtrace_and_current_activation_catch_semantics() {
     let stack = own_stack_string(&runtime, &error).to_utf8_lossy();
     assert!(stack.contains("tail-target.js:"), "{stack}");
     assert!(stack.contains("tail-wrapper.js:3:5"), "{stack}");
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 
     let throwing = UnlinkedFunction::fixture(
         vec![Instruction::PushI32(17), Instruction::Throw],
@@ -313,13 +321,13 @@ fn published_tail_call_uses_backtrace_and_current_activation_catch_semantics() {
         context.call(&catcher, Value::Undefined, &[]).unwrap(),
         Value::Int(17)
     );
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
 fn push_this_applies_strict_and_sloppy_callee_realm_rules() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let code = vec![Instruction::PushThis, Instruction::Return];
 

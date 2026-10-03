@@ -3,6 +3,7 @@
 
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
+use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::value::JsValue;
 use crate::engine::vm::frame::FrameStore;
 use crate::engine::vm::stack::SlotStore;
@@ -37,7 +38,7 @@ impl ExecutionLimits {
     /// slot budget keeps its default; the native host-stack budget is separate.
     pub(super) fn for_runtime(runtime: &Runtime) -> Self {
         Self {
-            frames: runtime.recursion_limit(),
+            frames: runtime.0.recursion_limit.get(),
             ..Self::default()
         }
     }
@@ -87,10 +88,16 @@ fn active_execution(domain: u64) -> Option<u64> {
 #[must_use]
 pub(crate) struct HostBoundaryGuard {
     boundary: HostBoundary,
+    #[cfg(feature = "profiling")]
+    _origin: crate::engine::api::profiling::CoreExecutionScope,
+    runtime: std::rc::Weak<crate::engine::heap::runtime::RuntimeInner>,
 }
 
 impl HostBoundaryGuard {
     pub(crate) fn enter(runtime: &Runtime) -> Result<Self, Error> {
+        runtime
+            .check_poison()
+            .map_err(super::exception::runtime_error_to_vm_error)?;
         let domain = runtime.domain_id();
         let boundary = HostBoundary {
             domain,
@@ -112,10 +119,20 @@ impl HostBoundaryGuard {
             boundaries.push(boundary);
             Ok(())
         })?;
-        Ok(Self { boundary })
+        Ok(Self {
+            boundary,
+            runtime: std::rc::Rc::downgrade(&runtime.0),
+            #[cfg(feature = "profiling")]
+            _origin: crate::engine::api::profiling::CoreExecutionScope::outside(),
+        })
     }
 
     pub(crate) fn finish(self, runtime: &Runtime) -> Result<(), Error> {
+        // A host may have caught an inner panic. Never resume its suspended
+        // parent against state quarantined by the child.
+        runtime
+            .check_poison()
+            .map_err(super::exception::runtime_error_to_vm_error)?;
         let boundary = self.boundary;
         if runtime.domain_id() != boundary.domain {
             return Err(Error::internal("host boundary belongs to another runtime"));
@@ -156,6 +173,9 @@ impl HostBoundaryGuard {
 
 impl Drop for HostBoundaryGuard {
     fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.upgrade().map(Runtime) {
+            runtime.skip_cleanup();
+        }
         HOST_BOUNDARIES.with(|boundaries| {
             let mut boundaries = boundaries.borrow_mut();
             if let Some(index) = boundaries.iter().rposition(|boundary| {
@@ -232,6 +252,8 @@ pub(super) struct RunningExecution {
     pub call_storage: super::frame::CallStorage,
     /// Cold completion owns its payload before the active window is cleared.
     pub pending: Option<JsValue>,
+    /// Forwarded return/throw remains reachable throughout fallible retirement.
+    pub pending_completion: Option<super::Completion>,
     /// Retained GetField2 result's classification, consumed by the immediate Call.
     pub selected_native: Option<crate::engine::object::LinkedNativeSelection>,
     /// A selected static read crossing into the existing getter/query driver.
@@ -251,17 +273,39 @@ impl Drop for RunningExecution {
             // The runtime (and its whole heap) died first; no edge release can
             // observe anything. Discard the storage without accounting.
             self.pending = None;
+            self.pending_completion = None;
             self.selected_named_read = None;
             self.slots = SlotStore::new(0);
             return;
         };
+        runtime.unregister_raw_execution_owner();
+        if runtime.skip_cleanup() {
+            self.pending = None;
+            self.pending_completion = None;
+            self.selected_named_read = None;
+            self.slots = SlotStore::new(0);
+            return;
+        }
+        let _unwind = runtime.unwind_guard();
         if let Some(pending) = self.pending.take() {
-            // Teardown cannot report errors; invariant violations surface at
-            // the deferred-drain boundary like every trusted release.
-            let _ = runtime.release_jsvalue(pending);
+            if runtime.release_jsvalue(pending).is_err() || runtime.is_poisoned() {
+                runtime.0.poisoned.set(true);
+                return;
+            }
+        }
+        if let Some(super::Completion::Return(value) | super::Completion::Throw(value)) =
+            self.pending_completion.take()
+        {
+            if runtime.release_jsvalue(value).is_err() || runtime.is_poisoned() {
+                runtime.0.poisoned.set(true);
+                return;
+            }
         }
         if let Some(selected) = self.selected_named_read.take() {
             selected.release(&runtime);
+            if runtime.is_poisoned() {
+                return;
+            }
         }
         while let Some(mut frame) = self.frames.pop_current() {
             // Clear this child's captures and operands while its activation
@@ -271,31 +315,73 @@ impl Drop for RunningExecution {
                 .clear_frame(&runtime, frame.window.take())
                 .is_err()
             {
-                // A failed legacy handoff may have detached its Frame before
-                // an allocation failure. Release any remaining arena owners
-                // before unwinding parent native activations; never panic here.
-                self.slots = SlotStore::new(0);
+                // Window and edge validation failures invalidate further
+                // cleanup; keep the poisoned runtime quarantined.
+                runtime.0.poisoned.set(true);
+                return;
             }
-            drop(frame.cold);
+            if self
+                .call_storage
+                .recycle_legacy(&runtime, frame.cold)
+                .is_err()
+                || runtime.is_poisoned()
+            {
+                runtime.0.poisoned.set(true);
+                return;
+            }
         }
         drop(self.root_query.take());
+    }
+}
+
+impl Runtime {
+    /// One weak registration per execution record, never per frame or value.
+    /// The header count lets teardown distinguish legitimate detached edges
+    /// from leaks when the runtime dies before its execution record.
+    pub(in crate::engine::vm) fn register_raw_execution_owner(
+        &self,
+    ) -> Result<std::rc::Weak<crate::engine::heap::runtime::RuntimeInner>, RuntimeError> {
+        self.check_poison()?;
+        let count =
+            self.0
+                .raw_execution_owners
+                .get()
+                .checked_add(1)
+                .ok_or(RuntimeError::Invariant(
+                    "raw execution owner count exhausted",
+                ))?;
+        self.0.raw_execution_owners.set(count);
+        Ok(std::rc::Rc::downgrade(&self.0))
+    }
+
+    pub(in crate::engine::vm) fn unregister_raw_execution_owner(&self) {
+        if let Some(count) = self.0.raw_execution_owners.get().checked_sub(1) {
+            self.0.raw_execution_owners.set(count);
+        } else {
+            // Teardown cannot report an invariant failure or unwind again.
+            self.0.poisoned.set(true);
+        }
     }
 }
 
 impl RunningExecution {
     pub(super) fn new(runtime: &Runtime, limits: ExecutionLimits) -> Result<Self, Error> {
         let guard = ExecutionGuard::enter(runtime)?;
+        let weak = runtime
+            .register_raw_execution_owner()
+            .map_err(super::exception::runtime_error_to_vm_error)?;
         Ok(Self {
             frames: FrameStore::new(guard.registration.id, limits.frames),
             slots: SlotStore::new(limits.slots),
             query_storage: super::proxy_get_driver::QueryStorage::default(),
             call_storage: super::frame::CallStorage::default(),
             pending: None,
+            pending_completion: None,
             selected_native: None,
             selected_named_read: None,
             root_query: None,
             root_descriptor: None,
-            runtime: std::rc::Rc::downgrade(&runtime.0),
+            runtime: weak,
             _guard: guard,
         })
     }
@@ -455,7 +541,7 @@ mod tests {
                 outcome,
                 calls: calls.clone(),
             });
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let trigger = context.eval("Promise.reject.bind(Promise)").unwrap();
             let Value::Object(function) = context
                 .eval(
@@ -477,32 +563,34 @@ mod tests {
             // The existing rejection-tracker ABI is the synchronous host
             // trigger. Module compilation then enters the guarded loader;
             // dynamic import itself would defer loading to a later job.
-            let host_context = RefCell::new(context.clone());
+            let host_context = RefCell::new(context.try_clone().expect("duplicate root"));
             struct ClearTracker(Runtime);
             impl Drop for ClearTracker {
                 fn drop(&mut self) {
-                    self.0.clear_host_promise_rejection_tracker();
+                    let _ = self.0.clear_host_promise_rejection_tracker();
                 }
             }
             let tracker_guard = ClearTracker(runtime.clone());
-            runtime.set_host_promise_rejection_tracker(move |event| {
-                if event.is_handled() {
-                    return;
-                }
-                let mut context = host_context.borrow_mut();
-                let result = context
-                    .compile_module_with_filename("import './owned-host.js';", "host-entry.js");
-                match outcome {
-                    Outcome::Return => {
-                        result.unwrap();
+            runtime
+                .set_host_promise_rejection_tracker(move |event| {
+                    if event.is_handled() {
+                        return;
                     }
-                    Outcome::Reject => {
-                        assert!(result.is_err());
-                        assert_eq!(context.take_exception().unwrap(), Some(Value::Int(99)));
+                    let mut context = host_context.borrow_mut();
+                    let result = context
+                        .compile_module_with_filename("import './owned-host.js';", "host-entry.js");
+                    match outcome {
+                        Outcome::Return => {
+                            result.unwrap();
+                        }
+                        Outcome::Reject => {
+                            assert!(result.is_err());
+                            assert_eq!(context.take_exception().unwrap(), Some(Value::Int(99)));
+                        }
+                        Outcome::Panic => unreachable!("loader should have panicked"),
                     }
-                    Outcome::Panic => unreachable!("loader should have panicked"),
-                }
-            });
+                })
+                .expect("configure test runtime");
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 context.call(&callable, Value::Undefined, &[trigger])
             }));
@@ -520,10 +608,144 @@ mod tests {
             assert_eq!(calls.get(), 1);
             assert!(ACTIVE_EXECUTIONS.with(|active| active.borrow().is_empty()));
             assert!(HOST_BOUNDARIES.with(|boundaries| boundaries.borrow().is_empty()));
+            if matches!(outcome, Outcome::Panic) {
+                assert!(runtime.is_poisoned());
+                assert!(matches!(
+                    context.eval("42"),
+                    Err(crate::engine::api::RuntimeError::Poisoned)
+                ));
+                continue;
+            }
+            assert!(!runtime.is_poisoned());
             assert!(runtime.0.state.borrow().active_frames.is_empty());
             assert_eq!(runtime.0.module_host_callback_depth.get(), 0);
             assert_eq!(context.eval("reenter()").unwrap(), Value::Int(41));
             assert_eq!(context.eval("6*7").unwrap(), Value::Int(42));
         }
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm"), panic = "unwind"))]
+mod cleanup_poison_tests {
+    use super::{ExecutionLimits, RunningExecution};
+    use crate::engine::{
+        api::{Runtime, RuntimeError},
+        code::runtime::PublishedFunctionSnapshot,
+        value::JsValue,
+        vm::{
+            CallInput, Completion,
+            closure::FrameFunction,
+            frame::{ColdFrame, FrameCold, FrameEntry},
+            frames::ActiveFrameToken,
+            property_driver::{OwnedGetterSelection, SelectedNamedRead},
+            stack::FrameStorage,
+        },
+    };
+
+    #[test]
+    fn failed_execution_owner_release_stops_before_frame_cleanup() {
+        for case in ["pending", "completion", "selected-getter"] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "engine::vm::execution::cleanup_poison_tests::cleanup_child",
+                    "--nocapture",
+                ])
+                .env("QJS_CLEANUP_POISON_CHILD", case)
+                // Exercise the release-build path without a diagnostic panic.
+                // The child alone gets this setting; parallel tests are isolated.
+                .env("QJS_TEARDOWN_PROBE", "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "cleanup subprocess {case}: {status}");
+        }
+    }
+
+    #[test]
+    fn cleanup_child() {
+        let Ok(case) = std::env::var("QJS_CLEANUP_POISON_CHILD") else {
+            return;
+        };
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let frame_owner = runtime.new_object(None).unwrap().into_handle();
+        let function = runtime.new_object(None).unwrap();
+        let function_id = function.object_id();
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm_id());
+        executable.metadata.max_stack = 1;
+        let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+        crate::engine::vm::driver::push_frame(
+            &runtime,
+            &mut execution,
+            FrameEntry {
+                initialize_bindings: false,
+                property_generation: 0,
+                iterator_generation: 0,
+                caller_realm: context.realm_id(),
+                active_frame: ActiveFrameToken::unmaterialized(),
+                executable,
+                cold: ColdFrame::new(FrameCold {
+                    rare: Default::default(),
+                    return_to: None,
+                    entry_guard: None,
+                    function: FrameFunction::new(function, Default::default())
+                        .unwrap()
+                        .into(),
+                    reusable_captured_locals: Vec::new(),
+                    input: CallInput::new(&runtime, JsValue::Undefined, JsValue::Undefined, None)
+                        .into(),
+                }),
+                storage: FrameStorage {
+                    original_arguments: Vec::new(),
+                    parameters: Vec::new(),
+                    locals: Vec::new(),
+                    operands: vec![JsValue::Object(frame_owner)],
+                },
+            },
+        )
+        .unwrap();
+        let stale = runtime.new_object(None).unwrap().into_handle();
+        match case.as_str() {
+            "pending" => execution.pending = Some(JsValue::Object(stale)),
+            "completion" => {
+                execution.pending_completion = Some(Completion::Throw(JsValue::Object(stale)));
+            }
+            "selected-getter" => {
+                let mut state = runtime.0.state.borrow_mut();
+                let selected = OwnedGetterSelection::prepare(
+                    &mut state,
+                    &runtime.0.poisoned,
+                    &JsValue::Object(frame_owner),
+                    stale,
+                )
+                .unwrap();
+                execution.selected_named_read = Some(SelectedNamedRead::Getter(selected));
+                // Remove the original edge, leaving the selected getter edge.
+                state.release_jsvalue(JsValue::Object(stale)).unwrap();
+            }
+            _ => panic!("unknown cleanup subprocess"),
+        }
+        // Corrupt only the owner being released first. All later owners remain
+        // valid; cleanup must stop instead of touching them after quarantine.
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .release_jsvalue(JsValue::Object(stale))
+            .unwrap();
+        drop(execution);
+        assert!(runtime.is_poisoned());
+        let state = runtime.0.state.borrow();
+        assert_eq!(state.heap.object_strong_count(function_id), Ok(1));
+        assert_eq!(
+            state.heap.object_strong_count(frame_owner),
+            Ok(if case == "selected-getter" { 2 } else { 1 })
+        );
+        drop(state);
+        assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+        assert_eq!(runtime.0.raw_execution_owners.get(), 0);
+        drop(context);
+        drop(runtime);
+        assert!(super::ACTIVE_EXECUTIONS.with(|active| active.borrow().is_empty()));
     }
 }

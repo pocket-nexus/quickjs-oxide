@@ -16,7 +16,6 @@ pub(crate) enum NumericRegionMiss {
     ReceiverNotObject,
     ReceiverUnavailable,
     ReceiverNotArray,
-    HeapBorrowUnavailable,
     OwnElementNotNumber,
     MissingOwnElement,
     UnsupportedMaterializedOwnElement,
@@ -25,7 +24,6 @@ pub(crate) enum NumericRegionMiss {
     ArrayShapeUnavailable,
     OwnElementNotWritable,
     PropertyGenerationOverflow,
-    FrameNotMaterialized,
 }
 
 #[cfg(feature = "profiling")]
@@ -45,7 +43,6 @@ impl NumericRegionMiss {
             Self::ReceiverNotObject => "receiver_not_object",
             Self::ReceiverUnavailable => "receiver_unavailable",
             Self::ReceiverNotArray => "receiver_not_array",
-            Self::HeapBorrowUnavailable => "heap_borrow_unavailable",
             Self::OwnElementNotNumber => "own_element_not_number",
             Self::MissingOwnElement => "missing_own_element",
             Self::UnsupportedMaterializedOwnElement => "unsupported_materialized_own_element",
@@ -54,7 +51,6 @@ impl NumericRegionMiss {
             Self::ArrayShapeUnavailable => "array_shape_unavailable",
             Self::OwnElementNotWritable => "own_element_not_writable",
             Self::PropertyGenerationOverflow => "property_generation_overflow",
-            Self::FrameNotMaterialized => "frame_not_materialized",
         }
     }
 }

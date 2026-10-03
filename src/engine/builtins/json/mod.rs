@@ -70,7 +70,10 @@ impl Runtime {
             )?;
         }
 
-        let to_string_tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let to_string_tag = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::ToStringTag)
+                .expect("well-known symbol"),
+        );
         if !self.define_own_property(
             &json,
             &to_string_tag,

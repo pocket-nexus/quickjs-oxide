@@ -1398,8 +1398,8 @@ fn eval_labelled_functions_keep_lexical_and_annex_b_closures_distinct() {
 fn foreign_realm_eval_callable_preserves_non_string_identity() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let eval = global_eval(&runtime, &mut defining);
 
     assert_eq!(
@@ -1413,7 +1413,7 @@ fn foreign_realm_eval_callable_preserves_non_string_identity() {
         .call(
             &eval,
             Value::Object(caller_global),
-            &[Value::Object(ordinary.clone())],
+            &[Value::Object(ordinary.try_clone().expect("duplicate root"))],
         )
         .unwrap()
     else {
@@ -1425,7 +1425,13 @@ fn foreign_realm_eval_callable_preserves_non_string_identity() {
         panic!("String construction did not return an object");
     };
     let Value::Object(returned) = caller
-        .call(&eval, Value::Null, &[Value::Object(boxed_string.clone())])
+        .call(
+            &eval,
+            Value::Null,
+            &[Value::Object(
+                boxed_string.try_clone().expect("duplicate root"),
+            )],
+        )
         .unwrap()
     else {
         panic!("foreign eval did not return the String object");
@@ -1436,7 +1442,11 @@ fn foreign_realm_eval_callable_preserves_non_string_identity() {
         .new_symbol(Some(JsString::try_from_utf8("foreign eval").unwrap()))
         .unwrap();
     let Value::Symbol(returned) = caller
-        .call(&eval, Value::Bool(true), &[Value::Symbol(symbol.clone())])
+        .call(
+            &eval,
+            Value::Bool(true),
+            &[Value::Symbol(symbol.try_clone().expect("duplicate root"))],
+        )
         .unwrap()
     else {
         panic!("foreign eval did not return the Symbol");
@@ -1486,13 +1496,13 @@ fn syntactic_eval_replacements_take_the_complete_ordinary_call_path() {
     ] {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(source).unwrap(), expected, "source: {source}");
     }
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -1512,7 +1522,7 @@ fn syntactic_eval_replacements_take_the_complete_ordinary_call_path() {
 fn primitive_string_eval_executes_indirect_and_direct_completion_values() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let eval = global_eval(&runtime, &mut context);
 
     assert_eq!(
@@ -1617,7 +1627,7 @@ fn eval_lexicals_are_ephemeral_but_returned_closures_retain_them() {
     ] {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context.eval(source).unwrap(),
             string_value("42|undefined|undefined"),
@@ -1635,8 +1645,10 @@ fn returned_eval_closure_retains_caller_lexical_in_every_debug_mode() {
     ] {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        runtime.set_debug_info_mode(debug_info);
-        let mut context = runtime.new_context();
+        runtime
+            .set_debug_info_mode(debug_info)
+            .expect("set runtime configuration");
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -1658,7 +1670,7 @@ fn returned_eval_closure_retains_caller_lexical_in_every_debug_mode() {
 fn eval_syntax_errors_are_catchable_and_direct_eval_inherits_strictness() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -1737,8 +1749,8 @@ fn nested_direct_eval_environment_relay_matches_pinned_quickjs() {
 fn foreign_realm_primitive_string_eval_uses_its_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     drop(defining.eval("globalThis.evalRealmMarker = 42").unwrap());
     drop(caller.eval("globalThis.evalRealmMarker = 7").unwrap());
 
@@ -1808,7 +1820,7 @@ fn rust_observations() -> Vec<String> {
 fn rust_value(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::String(value) = context.eval(source).unwrap() else {
         panic!("eval oracle probe did not return a String");
     };

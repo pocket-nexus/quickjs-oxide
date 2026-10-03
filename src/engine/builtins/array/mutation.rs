@@ -496,7 +496,7 @@ impl MutationResume {
                 use crate::engine::value::conversion::number::NumberStep;
                 action = match action {
                     MutationAction::Read(key) => {
-                        let receiver = Value::Object(self.0.object.clone());
+                        let receiver = Value::Object(self.0.object.try_clone()?);
                         match runtime.prepare_ordinary_read_borrowed(
                             &self.0.object,
                             &key,
@@ -528,7 +528,7 @@ impl MutationResume {
                             self.0.realm,
                             &key,
                             value,
-                            JsValue::Object(self.0.object.clone().into_handle()),
+                            JsValue::Object(self.0.object.try_clone()?.into_handle()),
                             |step| pending = Some(step),
                         )?;
                         let step = match selected {
@@ -579,7 +579,7 @@ impl MutationResume {
         Ok(match action {
             MutationAction::Complete(result) => MutationStep::Complete(result),
             MutationAction::Read(key) => {
-                MutationStep::request_read(self.0.object.clone(), key, self)
+                MutationStep::request_read(self.0.object.try_clone()?, key, self)
             }
             MutationAction::Number(value) => MutationStep::request_number(value, self),
             MutationAction::Copy {
@@ -587,14 +587,19 @@ impl MutationResume {
                 from,
                 count,
                 backwards,
-            } => {
-                MutationStep::request_copy(self.0.object.clone(), to, from, count, backwards, self)
-            }
+            } => MutationStep::request_copy(
+                self.0.object.try_clone()?,
+                to,
+                from,
+                count,
+                backwards,
+                self,
+            ),
             MutationAction::Set { key, value } => {
-                MutationStep::request_set(self.0.object.clone(), key, value, self)
+                MutationStep::request_set(self.0.object.try_clone()?, key, value, self)
             }
             MutationAction::Delete(key) => {
-                MutationStep::request_delete(self.0.object.clone(), key, self)
+                MutationStep::request_delete(self.0.object.try_clone()?, key, self)
             }
         })
     }
@@ -713,7 +718,7 @@ pub(crate) fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }
@@ -737,7 +742,7 @@ mod tests {
     #[test]
     fn local_mutation_keeps_selected_setter_and_proxy_once() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let trace='', stored;
             const proto={set 0(value){trace+='s';stored=value;}};
@@ -756,7 +761,7 @@ mod tests {
     #[test]
     fn local_mutation_keeps_partial_effects_on_rejected_length_or_delete() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             const a=[1,2];Object.defineProperty(a,'1',{configurable:false});
             let rejected=false;try{a.pop();}catch(e){rejected=e instanceof TypeError;}
@@ -773,7 +778,7 @@ mod tests {
     #[test]
     fn push_inline_argument_uses_actual_count_and_retains_immediate_payload() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         for value in [
@@ -785,7 +790,9 @@ mod tests {
         ] {
             let array = runtime.new_array(context.realm).unwrap();
             let invocation = NativeInvocation::Call {
-                this_value: runtime.unroot_value(&Value::Object(array.clone())).unwrap(),
+                this_value: runtime
+                    .unroot_value(&Value::Object(array.try_clone().expect("duplicate root")))
+                    .unwrap(),
             };
             let arguments = NativeArguments {
                 actual_arg_count: 1,
@@ -852,7 +859,7 @@ mod tests {
     #[test]
     fn push_inline_argument_preserves_observable_mutation_steps() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context.eval(r#"(function () {
             var trace = '', stored;
             var target = {

@@ -11,7 +11,7 @@ fn attribute_check_samples_the_current_loader_for_each_clause() {
     ]);
     loader.clear_runtime_on_first_check = Some(runtime.clone());
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert!(matches!(
         context.compile_module_with_filename(
             r#"
@@ -49,7 +49,7 @@ fn attribute_check_replacement_is_visible_to_the_next_clause_and_resolution() {
         checks: initial_checks.clone(),
     };
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -82,7 +82,7 @@ fn loader_boundary_preserves_distinct_lone_surrogate_specifiers() {
         (vec![0xd801], "export const value = 2;"),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -104,7 +104,7 @@ fn loader_error_preserves_lone_surrogate_module_name() {
     let runtime = Runtime::new();
     let (loader, loads) = Utf16RecordingModuleLoader::new([]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename(r#"import "\ud800";"#, "entry.js"),
@@ -128,7 +128,7 @@ fn loader_boundary_retains_quickjs_c_string_nul_truncation() {
         "export const value = 21;",
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -181,7 +181,7 @@ fn nested_request_samples_loader_after_parent_load_clears_it() {
         cleared: Cell::new(false),
     };
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert!(matches!(
         context.compile_module_with_filename(
             "import { answer } from './a.js'; globalThis.__loaderSnapshot = answer;",
@@ -211,7 +211,7 @@ fn load_samples_replacement_installed_by_normalize() {
         loads: initial_loads.clone(),
     };
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { value } from './value.js'; globalThis.__normalizeReplacement = value;",
@@ -230,7 +230,7 @@ fn load_samples_replacement_installed_by_normalize() {
 fn loader_panic_rolls_back_the_active_resolution_transaction() {
     let runtime = Runtime::new();
     let panicking_registration = runtime.set_module_loader(PanickingModuleLoader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let stack_top_sentinel = Some(0x5a5a_usize);
     runtime.0.host_stack_top.set(stack_top_sentinel);
 
@@ -244,25 +244,14 @@ fn loader_panic_rolls_back_the_active_resolution_transaction() {
     assert_eq!(runtime.0.module_host_callback_depth.get(), 0);
     assert_eq!(runtime.0.host_stack_top.get(), stack_top_sentinel);
     drop(panicking_registration);
-    runtime.clear_module_loader();
-
-    context
-        .compile_module_with_filename("export const value = 42;", "pkg/shared.js")
-        .unwrap();
-    let importer = context
-        .compile_module_with_filename(
-            "import { value } from './shared.js'; globalThis.__panicRollback = value;",
-            "pkg/importer.js",
-        )
-        .unwrap();
-    drop(context.execute_module(&importer).unwrap());
-    assert_script_true(&mut context, "__panicRollback === 42");
+    assert!(runtime.is_poisoned());
+    assert!(matches!(context.eval("42"), Err(RuntimeError::Poisoned)));
 }
 
 #[test]
 fn host_panic_poisons_every_active_module_evaluation() {
     let runtime = Runtime::new_with_host_services(PanickingClockHost);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module(
             "globalThis.__beforeClockPanic = true; Date.now(); globalThis.__afterClockPanic = true;",
@@ -274,16 +263,8 @@ fn host_panic_poisons_every_active_module_evaluation() {
         let _ = context.execute_module(&module);
     }));
     assert!(panic.is_err());
-    assert_eq!(
-        context.execute_module(&module),
-        Err(RuntimeError::Invariant(
-            "module evaluation previously failed inside the engine"
-        ))
-    );
-    assert_script_true(
-        &mut context,
-        "__beforeClockPanic === true && typeof __afterClockPanic === 'undefined'",
-    );
+    assert!(runtime.is_poisoned());
+    assert_eq!(context.execute_module(&module), Err(RuntimeError::Poisoned));
 }
 
 #[test]
@@ -293,7 +274,7 @@ fn module_callbacks_receive_the_exact_initiating_context() {
     let _registration = runtime.set_module_loader(ContextRecordingModuleLoader {
         callbacks: callbacks.clone(),
     });
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let expected_id = context.id();
     let expected_realm = context.realm_id();
 
@@ -318,12 +299,12 @@ fn module_callbacks_receive_the_exact_initiating_context() {
 #[test]
 fn loader_accepts_a_compiled_module_from_the_initiating_context() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let dependency = context
         .compile_module_with_filename("export const answer = 42;", "pkg/compiled-dependency.js")
         .unwrap();
     let _registration = runtime.set_module_loader(CompiledModuleLoader {
-        module: dependency.clone(),
+        module: dependency.try_clone().expect("duplicate root"),
     });
 
     let entry = context
@@ -346,9 +327,10 @@ fn compiled_loader_result_rejects_foreign_runtime_and_context() {
     let foreign_runtime = Runtime::new();
     let foreign_module = foreign_runtime
         .new_context()
+        .expect("create context")
         .compile_module("export const answer = 1;")
         .unwrap();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let _registration = runtime.set_module_loader(CompiledModuleLoader {
         module: foreign_module,
     });
@@ -358,9 +340,10 @@ fn compiled_loader_result_rejects_foreign_runtime_and_context() {
     ));
 
     drop(_registration);
-    runtime.clear_module_loader();
+    let _ = runtime.clear_module_loader();
     let other_module = runtime
         .new_context()
+        .expect("create context")
         .compile_module("export const answer = 2;")
         .unwrap();
     let _registration = runtime.set_module_loader(CompiledModuleLoader {
@@ -380,7 +363,7 @@ fn loader_dependency_with_top_level_await_evaluates_asynchronously() {
         "await 1; globalThis.__loadedTlaDependency = 42;",
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let module = context
         .compile_module_with_filename("import './dependency.js';", "pkg/entry.js")

@@ -75,7 +75,7 @@ fn atom_cases() -> Vec<Vec<u16>> {
 fn rust_observations(cases: &[Vec<u16>]) -> Vec<Observation> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let function_key = runtime.intern_property_key("Function").unwrap();
     let Value::Object(function) = context.get_property(&global, &function_key).unwrap() else {

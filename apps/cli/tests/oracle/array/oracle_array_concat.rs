@@ -395,8 +395,8 @@ fn array_concat_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_concat_species_boxing_results_and_errors_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_string_prototype = defining.string_prototype().unwrap();
     let defining_type_error = eval_object(
@@ -421,7 +421,11 @@ fn array_concat_species_boxing_results_and_errors_use_pinned_realms() {
     };
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "cross-realm default Array constructor was not replaced by the method realm Array",
     );
 
@@ -463,7 +467,7 @@ fn array_concat_species_boxing_results_and_errors_use_pinned_realms() {
     };
     assert_eq!(
         runtime.get_prototype_of(&custom_result).unwrap(),
-        Some(caller_object_prototype.clone()),
+        Some(caller_object_prototype.try_clone().expect("duplicate root")),
         "Array.concat moved a custom species result into the method realm",
     );
     assert_eq!(
@@ -482,8 +486,8 @@ fn array_concat_species_boxing_results_and_errors_use_pinned_realms() {
     let Value::Object(identity_result) = caller
         .call(
             &concat,
-            Value::Object(empty.clone()),
-            &[Value::Object(argument.clone())],
+            Value::Object(empty.try_clone().expect("duplicate root")),
+            &[Value::Object(argument.try_clone().expect("duplicate root"))],
         )
         .expect("cross-realm object argument concat")
     else {
@@ -537,7 +541,7 @@ fn array_concat_species_boxing_results_and_errors_use_pinned_realms() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

@@ -465,7 +465,12 @@ impl Runtime {
             | JsValue::Bool(_)
             | JsValue::Int(_)
             | JsValue::Float(_)
-            | JsValue::ShortBigInt(_) => Ok(()),
+            | JsValue::ShortBigInt(_) => {
+                // Scalars own no edges, but an unwind still quarantines the
+                // runtime even when no handle release supplies admission.
+                self.skip_cleanup();
+                Ok(())
+            }
             JsValue::Object(id) => {
                 self.release_object_handle(id);
                 Ok(())
@@ -492,6 +497,26 @@ mod tests {
     use crate::engine::atom::Atom;
     use crate::engine::heap::HeapNodeKind;
     use crate::engine::value::JsString;
+
+    #[test]
+    #[cfg(panic = "unwind")]
+    fn scalar_release_during_unwind_quarantines_the_runtime() {
+        struct ReleaseScalar<'a>(&'a Runtime);
+        impl Drop for ReleaseScalar<'_> {
+            fn drop(&mut self) {
+                self.0.release_jsvalue(JsValue::Int(1)).unwrap();
+            }
+        }
+
+        let runtime = Runtime::new();
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _scalar = ReleaseScalar(&runtime);
+            panic!("injected unwind before scalar release");
+        }));
+        assert!(failed.is_err());
+        assert!(runtime.is_poisoned());
+        assert_eq!(runtime.heap_counts(), Err(RuntimeError::Poisoned));
+    }
 
     #[test]
     fn scalars_round_trip_without_heap_edges() {
@@ -569,7 +594,7 @@ mod tests {
         runtime.release_jsvalue(dup).unwrap();
         runtime.release_jsvalue(internal).unwrap();
         drop(root);
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         // The last owned edge is gone: the node was finalized and its slot
         // reclaimed, so the identity now reads as stale.
         assert!(
@@ -609,7 +634,7 @@ mod tests {
         );
 
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         // The transferred edge was the only one; the node is reclaimed.
         assert!(
             runtime
@@ -641,7 +666,7 @@ mod tests {
     #[test]
     fn string_payloads_allocate_one_node_per_conversion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context.eval("'hello arena'").unwrap();
         let Value::String(string) = &value else {
             panic!("eval must produce a string");
@@ -662,20 +687,22 @@ mod tests {
         assert!(reread.same_representation(string));
 
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         assert!(runtime.0.state.borrow().heap.string(id).is_err());
     }
 
     #[test]
     fn bigint_payloads_allocate_one_node_per_conversion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context.eval("123456789012345678901234567890n").unwrap();
         let Value::BigInt(bigint) = &value else {
             panic!("eval must produce a bigint");
         };
 
-        let internal = runtime.into_jsvalue(value.clone()).unwrap();
+        let internal = runtime
+            .into_jsvalue(value.try_clone().expect("duplicate root"))
+            .unwrap();
         let JsValue::BigInt(id) = internal else {
             panic!("conversion must produce a bigint handle");
         };
@@ -684,7 +711,7 @@ mod tests {
         let rooted = runtime.root_value(&internal).unwrap();
         assert_eq!(&rooted, &value);
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         assert!(runtime.0.state.borrow().heap.bigint(id).is_err());
     }
 
@@ -729,7 +756,7 @@ mod tests {
 
         runtime.release_jsvalue(dup).unwrap();
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         let retained = runtime
             .0
             .state
@@ -783,7 +810,7 @@ mod tests {
         };
         assert!(runtime.0.state.borrow().heap.string(id).is_ok());
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         assert!(runtime.0.state.borrow().heap.string(id).is_err());
     }
 
@@ -798,7 +825,7 @@ mod tests {
             runtime.release_jsvalue(internal).unwrap();
             assert!(runtime.0.deferred_references.has_pending());
         }
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         assert!(!runtime.0.deferred_references.has_pending());
     }
 

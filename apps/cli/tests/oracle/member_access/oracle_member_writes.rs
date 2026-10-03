@@ -411,7 +411,7 @@ fn source_member_assignment_and_delete_match_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     define_global(
         &runtime,
         &mut context,
@@ -439,7 +439,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "identifierGlobal",
-        Value::Object(global.clone()),
+        Value::Object(global.try_clone().expect("duplicate root")),
     );
     let identifier_getter = function(
         &runtime,
@@ -490,7 +490,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "target",
-        Value::Object(target.clone()),
+        Value::Object(target.try_clone().expect("duplicate root")),
     );
     let setter = function(
         &runtime,
@@ -533,12 +533,16 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         "(function(hint){ log = log + 'k(' + hint + ')'; return 'member'; })",
     );
-    let to_primitive = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
     define_data(
         &mut context,
         &key,
         &to_primitive,
-        Value::Object(converter.as_object().clone()),
+        Value::Object(converter.as_object().try_clone().expect("duplicate root")),
         true,
         true,
     );
@@ -553,7 +557,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &compound_key,
         &to_primitive,
-        Value::Object(compound_converter.as_object().clone()),
+        Value::Object(
+            compound_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -573,7 +582,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &throwing_key,
         &to_primitive,
-        Value::Object(throwing_key_converter.as_object().clone()),
+        Value::Object(
+            throwing_key_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -611,7 +625,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &symbol_key_object,
         &to_primitive,
-        Value::Object(symbol_converter.as_object().clone()),
+        Value::Object(
+            symbol_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -633,7 +652,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         power_left.as_object(),
         &value_of,
-        Value::Object(power_left_converter.as_object().clone()),
+        Value::Object(
+            power_left_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -641,7 +665,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "powerLeft",
-        Value::Object(power_left.as_object().clone()),
+        Value::Object(power_left.as_object().try_clone().expect("duplicate root")),
     );
     let power_right = function(&runtime, &mut context, "(function(){})");
     let power_right_converter = function(
@@ -653,7 +677,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         power_right.as_object(),
         &value_of,
-        Value::Object(power_right_converter.as_object().clone()),
+        Value::Object(
+            power_right_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -661,7 +690,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "powerRight",
-        Value::Object(power_right.as_object().clone()),
+        Value::Object(power_right.as_object().try_clone().expect("duplicate root")),
     );
     define_global(
         &runtime,
@@ -678,7 +707,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "powerThrow",
-        Value::Object(power_throw.as_object().clone()),
+        Value::Object(power_throw.as_object().try_clone().expect("duplicate root")),
     );
     let power_phase_left = function(&runtime, &mut context, "(function(){})");
     let power_phase_left_converter = function(
@@ -690,7 +719,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         power_phase_left.as_object(),
         &value_of,
-        Value::Object(power_phase_left_converter.as_object().clone()),
+        Value::Object(
+            power_phase_left_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -698,7 +732,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "powerPhaseLeft",
-        Value::Object(power_phase_left.as_object().clone()),
+        Value::Object(
+            power_phase_left
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let power_phase_right = function(&runtime, &mut context, "(function(){})");
     let power_phase_right_converter = function(
@@ -710,7 +749,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         power_phase_right.as_object(),
         &value_of,
-        Value::Object(power_phase_right_converter.as_object().clone()),
+        Value::Object(
+            power_phase_right_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -718,7 +762,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "powerPhaseRight",
-        Value::Object(power_phase_right.as_object().clone()),
+        Value::Object(
+            power_phase_right
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let power_failure_getter = function(
         &runtime,
@@ -757,13 +806,13 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "powerOuter",
-        Value::Object(power_outer.clone()),
+        Value::Object(power_outer.try_clone().expect("duplicate root")),
     );
     define_global(
         &runtime,
         &mut context,
         "powerInner",
-        Value::Object(power_inner.clone()),
+        Value::Object(power_inner.try_clone().expect("duplicate root")),
     );
     let power_value = runtime.intern_property_key("value").unwrap();
     let power_outer_getter = function(
@@ -847,7 +896,7 @@ fn rust_observations() -> Vec<String> {
             &runtime,
             &mut context,
             name,
-            Value::Object(value.as_object().clone()),
+            Value::Object(value.as_object().try_clone().expect("duplicate root")),
         );
     }
 
@@ -1285,7 +1334,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &coercion_bomb,
         &to_primitive,
-        Value::Object(coercion_bomb_converter.as_object().clone()),
+        Value::Object(
+            coercion_bomb_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -1293,7 +1347,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "coercionBomb",
-        Value::Object(coercion_bomb.clone()),
+        Value::Object(coercion_bomb.try_clone().expect("duplicate root")),
     );
     set_global(
         &runtime,
@@ -1306,7 +1360,8 @@ fn rust_observations() -> Vec<String> {
     output.push(format!(
         "binary-nullish-object={}|{}",
         show(Value::Bool(
-            binary_nullish_object == Value::Object(coercion_bomb.clone())
+            binary_nullish_object
+                == Value::Object(coercion_bomb.try_clone().expect("duplicate root"))
         )),
         string_global(&runtime, &mut context, "log")
     ));
@@ -1314,7 +1369,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "oldValue",
-        Value::Object(coercion_bomb.clone()),
+        Value::Object(coercion_bomb.try_clone().expect("duplicate root")),
     );
     set_global(
         &runtime,
@@ -1345,7 +1400,7 @@ fn rust_observations() -> Vec<String> {
             &runtime,
             &mut context,
             "oldValue",
-            Value::Object(coercion_bomb.clone()),
+            Value::Object(coercion_bomb.try_clone().expect("duplicate root")),
         );
         set_global(
             &runtime,
@@ -1357,7 +1412,9 @@ fn rust_observations() -> Vec<String> {
         runtime.run_gc().unwrap();
         output.push(format!(
             "{label}={}|{}",
-            show(Value::Bool(result == Value::Object(coercion_bomb.clone()))),
+            show(Value::Bool(
+                result == Value::Object(coercion_bomb.try_clone().expect("duplicate root"))
+            )),
             string_global(&runtime, &mut context, "log")
         ));
     }
@@ -1472,7 +1529,7 @@ fn rust_observations() -> Vec<String> {
         let Value::Object(result) = context.eval(source).unwrap() else {
             panic!("identifier name probe did not produce a function");
         };
-        let result_value = Value::Object(result.clone());
+        let result_value = Value::Object(result.try_clone().expect("duplicate root"));
         output.push(format!(
             "{label}={}|{}|{}",
             show(context.get_property(&result, &name).unwrap()),
@@ -1828,7 +1885,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "symbol",
-        Value::Symbol(symbol.clone()),
+        Value::Symbol(symbol.try_clone().expect("duplicate root")),
     );
     define_global(
         &runtime,
@@ -1879,7 +1936,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "sealed",
-        Value::Object(sealed.clone()),
+        Value::Object(sealed.try_clone().expect("duplicate root")),
     );
     let sealed_sloppy = context.eval("sealed.x = 4").unwrap();
     let x = runtime.intern_property_key("x").unwrap();

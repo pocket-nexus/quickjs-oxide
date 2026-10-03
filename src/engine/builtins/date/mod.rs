@@ -47,7 +47,7 @@ impl Runtime {
             )?;
         }
 
-        let to_primitive = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToPrimitive));
+        let to_primitive = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToPrimitive)?);
         let to_primitive_kind = DateNativeKind::ToPrimitive;
         self.define_native_builtin_auto_init_with_key(
             date_prototype,
@@ -227,7 +227,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Date",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -308,7 +308,7 @@ mod tests {
             timezone_queries: timezone_queries.clone(),
             random_seed_calls: random_seed_calls.clone(),
         });
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
 
         assert_eq!(context.eval("Date.now()").unwrap(), Value::Int(42));
         assert_eq!(
@@ -328,6 +328,7 @@ mod tests {
         });
         let same_random = same_seed_runtime
             .new_context()
+            .expect("create context")
             .eval("Math.random()")
             .unwrap();
         assert_eq!(first_random, same_random);
@@ -341,6 +342,7 @@ mod tests {
         });
         let different_random = different_seed_runtime
             .new_context()
+            .expect("create context")
             .eval("Math.random()")
             .unwrap();
         assert_ne!(first_random, different_random);

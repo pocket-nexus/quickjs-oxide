@@ -143,7 +143,11 @@ impl FlattenStep {
             resume.0.mapper_this = runtime.dup_jsvalue(value)?;
         }
         let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-        Ok(Self::request_read(resume.0.source.clone(), key, resume))
+        Ok(Self::request_read(
+            resume.0.source.try_clone()?,
+            key,
+            resume,
+        ))
     }
     #[allow(clippy::too_many_arguments)]
     #[cfg(test)]
@@ -223,7 +227,7 @@ impl FlattenResume {
                             .mapper
                             .as_ref()
                             .ok_or(RuntimeError::Invariant("flatten mapper missing"))?
-                            .clone(),
+                            .try_clone()?,
                     );
                     self.0.pending_effect.call_receiver =
                         Some(runtime.dup_jsvalue(&self.0.mapper_this)?);
@@ -234,7 +238,7 @@ impl FlattenResume {
                             self.0.source_index as f64,
                         )
                         .into(),
-                        JsValue::Object(self.0.source.clone().into_handle()),
+                        JsValue::Object(self.0.source.try_clone()?.into_handle()),
                     ]);
                     return Ok(FlattenStep::Call { resume: self });
                 }
@@ -318,7 +322,10 @@ impl FlattenResume {
     }
     fn species(mut self) -> Result<FlattenStep, RuntimeError> {
         self.0.phase = Phase::Species;
-        Ok(FlattenStep::request_species(self.0.source.clone(), self))
+        Ok(FlattenStep::request_species(
+            self.0.source.try_clone()?,
+            self,
+        ))
     }
     fn overflow(&self, runtime: &Runtime) -> Result<FlattenStep, RuntimeError> {
         Ok(FlattenStep::Complete(Completion::Throw(
@@ -334,7 +341,7 @@ impl FlattenResume {
             return self.overflow(runtime);
         }
         self.0.frames.push(ArrayFlattenFrame {
-            source: self.0.source.clone(),
+            source: self.0.source.try_clone()?,
             length: self.0.source_length,
             next_index: 0,
             depth: self.0.depth,
@@ -365,13 +372,13 @@ impl FlattenResume {
                 self.0.frames.pop();
                 continue;
             }
-            self.0.source = frame.source.clone();
+            self.0.source = frame.source.try_clone()?;
             self.0.source_index = frame.next_index;
             frame.next_index += 1;
             self.0.depth = frame.depth;
             self.0.phase = Phase::Has;
             return Ok(FlattenStep::request_has(
-                self.0.source.clone(),
+                self.0.source.try_clone()?,
                 runtime.property_key_for_index(self.0.source_index)?,
                 self,
             ));
@@ -401,7 +408,7 @@ impl FlattenResume {
         }
         self.0.phase = Phase::Read;
         Ok(FlattenStep::request_read(
-            self.0.source.clone(),
+            self.0.source.try_clone()?,
             runtime.property_key_for_index(self.0.source_index)?,
             self,
         ))
@@ -451,7 +458,9 @@ impl FlattenResume {
         Ok(FlattenStep::request_define(
             self.0
                 .target
-                .clone()
+                .as_ref()
+                .map(|value| value.try_clone())
+                .transpose()?
                 .ok_or(RuntimeError::Invariant("flatten target missing"))?,
             runtime.property_key_for_index(self.0.target_index)?,
             descriptor,

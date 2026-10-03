@@ -141,7 +141,7 @@ impl BufferSliceResume {
         let count = u32::try_from((end - start).max(0))
             .map_err(|_| RuntimeError::Invariant("validated Buffer slice length overflowed u32"))?;
         Ok(BufferSliceStep::Read {
-            object: self.0.source.clone(),
+            object: self.0.source.try_clone()?,
             key: runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
             resume: {
@@ -181,14 +181,14 @@ impl BufferSliceResume {
         Ok(BufferSliceStep::Complete(match self.0.kind {
             BufferSliceKind::Array => runtime.finish_array_buffer_slice(
                 self.0.realm,
-                self.0.source.clone(),
+                self.0.source.try_clone()?,
                 target,
                 start,
                 count,
             )?,
             BufferSliceKind::Shared => runtime.finish_shared_array_buffer_slice(
                 self.0.realm,
-                self.0.source.clone(),
+                self.0.source.try_clone()?,
                 target,
                 start,
                 count,
@@ -254,7 +254,7 @@ impl BufferSliceResume {
                 let object = ObjectRef::from_owned_handle(runtime.clone(), id);
                 Ok(BufferSliceStep::Read {
                     object,
-                    key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
+                    key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)?),
                     resume: {
                         let updated_0 = Phase::Species { start, count };
                         self.0.phase = updated_0;
@@ -350,7 +350,7 @@ pub(in crate::engine::builtins) fn finish(
                     realm,
                     &object,
                     &key,
-                    JsValue::Object(object.clone().into_handle()),
+                    JsValue::Object(object.try_clone()?.into_handle()),
                 )?,
             )?,
             BufferSliceStep::Construct {
@@ -362,7 +362,9 @@ pub(in crate::engine::builtins) fn finish(
                 runtime.construct_internal_jsvalue(
                     realm,
                     &constructor,
-                    crate::engine::vm::call::ConstructNewTarget::Validated(constructor.clone()),
+                    crate::engine::vm::call::ConstructNewTarget::Validated(
+                        constructor.try_clone()?,
+                    ),
                     arguments,
                 )?,
             )?,

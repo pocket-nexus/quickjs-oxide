@@ -128,7 +128,7 @@ fn method(
             drop(resume);
             match target {
                 None => ProxySetStep::request_set(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     key,
                     inputs.value.take().expect("Set value"),
                     inputs.receiver.take().expect("Set receiver"),
@@ -142,7 +142,7 @@ fn method(
                     let key_value = runtime.property_key_value(&key)?;
                     inputs
                         .arguments
-                        .push(JsValue::Object(rooted.target.clone().into_handle()));
+                        .push(JsValue::Object(rooted.target.try_clone()?.into_handle()));
                     inputs.arguments.push(runtime.into_jsvalue(key_value)?);
                     inputs
                         .arguments
@@ -151,7 +151,7 @@ fn method(
                         .arguments
                         .push(inputs.receiver.take().expect("Set receiver"));
                     let arguments = std::mem::take(&mut inputs.arguments);
-                    let call_receiver = JsValue::Object(rooted.handler.clone().into_handle());
+                    let call_receiver = JsValue::Object(rooted.handler.try_clone()?.into_handle());
                     ProxySetStep::request_call(
                         target,
                         call_receiver,
@@ -208,7 +208,7 @@ impl ProxySetResume {
                     )));
                 }
                 Ok(ProxySetStep::request_descriptor(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     key,
                     Self(Box::new(ProxySetResumeState {
                         pending_effect: ProxySetStepPending::new(runtime.clone()),

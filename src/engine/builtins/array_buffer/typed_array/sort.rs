@@ -571,7 +571,7 @@ impl TypedSortResume {
                     );
                     self.0.phase = TypedSortPhase::Call;
                     return Ok(TypedSortStep::Call {
-                        callable: self.0.comparator.clone(),
+                        callable: self.0.comparator.try_clone()?,
                         arguments: vec![
                             runtime.into_jsvalue(left_value)?,
                             runtime.into_jsvalue(right_value)?,

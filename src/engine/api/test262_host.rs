@@ -77,7 +77,7 @@ impl Runtime {
         self.define_test262_host_property(
             &object_262,
             "detachArrayBuffer",
-            Value::Object(detach_array_buffer.as_object().clone()),
+            Value::Object(detach_array_buffer.as_object().try_clone()?),
         )?;
 
         let eval_script = self.new_native_builtin(
@@ -91,7 +91,7 @@ impl Runtime {
         self.define_test262_host_property(
             &object_262,
             "evalScript",
-            Value::Object(eval_script.as_object().clone()),
+            Value::Object(eval_script.as_object().try_clone()?),
         )?;
 
         let code_point_range = self.new_native_builtin(
@@ -105,7 +105,7 @@ impl Runtime {
         self.define_test262_host_property(
             &object_262,
             "codePointRange",
-            Value::Object(code_point_range.as_object().clone()),
+            Value::Object(code_point_range.as_object().try_clone()?),
         )?;
 
         // Pinned QuickJS installs `agent` at this exact point: after
@@ -118,7 +118,7 @@ impl Runtime {
         self.define_test262_host_property(
             &object_262,
             "global",
-            Value::Object(global_object.clone()),
+            Value::Object(global_object.try_clone()?),
         )?;
 
         let create_realm = self.new_native_builtin(
@@ -132,7 +132,7 @@ impl Runtime {
         self.define_test262_host_property(
             &object_262,
             "createRealm",
-            Value::Object(create_realm.as_object().clone()),
+            Value::Object(create_realm.as_object().try_clone()?),
         )?;
 
         let is_html_dda = self.new_native_builtin(
@@ -147,7 +147,7 @@ impl Runtime {
         self.define_test262_host_property(
             &object_262,
             "IsHTMLDDA",
-            Value::Object(is_html_dda.as_object().clone()),
+            Value::Object(is_html_dda.as_object().try_clone()?),
         )?;
 
         let gc = self.new_native_builtin(
@@ -161,13 +161,13 @@ impl Runtime {
         self.define_test262_host_property(
             &object_262,
             "gc",
-            Value::Object(gc.as_object().clone()),
+            Value::Object(gc.as_object().try_clone()?),
         )?;
 
         self.define_test262_host_property(
             &global_object,
             "$262",
-            Value::Object(object_262.clone()),
+            Value::Object(object_262.try_clone()?),
         )?;
         Ok(object_262)
     }
@@ -210,7 +210,7 @@ impl Runtime {
                 "Test262 createRealm received a constructor invocation",
             ));
         };
-        let mut child = self.new_context();
+        let mut child = self.new_context()?;
         let object_262 = child.install_test262_host()?;
         drop(child);
         Ok(Completion::Return(
@@ -241,6 +241,9 @@ impl Context {
     /// recursively installs the same surface in a fresh context belonging to
     /// this [`Runtime`].
     pub fn install_test262_host(&mut self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime.install_test262_host_in_realm(self.realm)
     }
 }

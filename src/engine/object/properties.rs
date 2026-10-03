@@ -19,7 +19,7 @@ use crate::engine::object::operations::PropertyGetAction;
 
 use crate::engine::object::operations::{
     ArrayLengthConversion, ArrayOwnKey, PropertyDefineOutcome, PropertySetAction,
-    PropertySetRejection, PropertySnapshot, complete_to_validation_record,
+    PropertySetRejection, PropertySnapshot, ValidationValue, complete_to_validation_record,
     descriptor_to_validation_record, validation_record_to_complete,
 };
 use crate::engine::object::property::{
@@ -230,7 +230,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         self.get_own_property_in_operation(object, key)
     }
@@ -451,7 +451,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Option<JsString>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         raw_string_property_one_level(&self.0.state.borrow(), object.object_id(), key.atom())
     }
@@ -498,7 +498,7 @@ impl Runtime {
                     self.define_function_data_property(
                         &prototype,
                         "constructor",
-                        Value::Object(object.clone()),
+                        Value::Object(object.try_clone()?),
                         true,
                         true,
                     )?;
@@ -528,7 +528,7 @@ impl Runtime {
                         name,
                         i32::from(length),
                     )?;
-                    Value::Object(callable.as_object().clone())
+                    Value::Object(callable.as_object().try_clone()?)
                 }
                 AutoInitProperty::String { value, .. } => {
                     Value::String(JsString::from_static(value))
@@ -590,7 +590,11 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<PropertyGetAction, RuntimeError> {
-        self.prepare_get_property_with_receiver(object, key, Value::Object(object.clone()))
+        self.prepare_get_property_with_receiver(
+            object,
+            key,
+            Value::Object(object.try_clone().expect("duplicate root")),
+        )
     }
 
     #[cfg(test)]
@@ -612,10 +616,10 @@ impl Runtime {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<Option<PropertyGetAction>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         self.validate_value_domain(&receiver, "property receiver")?;
-        let mut cursor = Some(object.clone());
+        let mut cursor = Some(object.try_clone()?);
         while let Some(current) = cursor {
             if let Some(property) = self.get_own_property(&current, key)? {
                 return match property {
@@ -690,6 +694,7 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<bool, RuntimeError> {
+        let _operation = self.operation()?;
         match self.define_own_property_in_realm(None, object, key, descriptor)? {
             PropertyDefineOutcome::Defined(defined) => Ok(defined),
             PropertyDefineOutcome::Throw(value) => {
@@ -708,7 +713,7 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<PropertyDefineOutcome, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         self.validate_descriptor_domains(descriptor)?;
         if let Some(defined) = self.try_define_ordinary_value(object, key, descriptor)? {
@@ -783,8 +788,8 @@ impl Runtime {
                 self.is_extensible(object)?,
                 &descriptor,
                 Some(&current),
-                &Value::Undefined,
-                Value::same_value,
+                &ValidationValue::Undefined,
+                ValidationValue::same_value,
             ) {
                 Ok(_) => Ok(true),
                 Err(PropertyDefinitionError::InvalidDescriptor) => {
@@ -865,8 +870,8 @@ impl Runtime {
             self.is_extensible(object)?,
             &descriptor,
             current_record.as_ref(),
-            &Value::Undefined,
-            Value::same_value,
+            &ValidationValue::Undefined,
+            ValidationValue::same_value,
         ) {
             Ok(complete) => complete,
             Err(PropertyDefinitionError::InvalidDescriptor) => {
@@ -960,7 +965,7 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &super::OwnedPropertyDescriptor,
     ) -> Result<PropertyDefineOutcome, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         if let Some(defined) = self.try_define_owned_property(object, key, descriptor)? {
             return Ok(PropertyDefineOutcome::Defined(defined));
@@ -998,7 +1003,7 @@ impl Runtime {
                 return self.apply_array_length_descriptor(
                     object,
                     key,
-                    &descriptor.attributes_public(),
+                    &descriptor.attributes_public()?,
                     length,
                 );
             }
@@ -1758,7 +1763,7 @@ impl Runtime {
         // Conversion may execute JavaScript and mutate this same Array. Match
         // QuickJS by reloading the length slot only after conversion returns.
         let (old_length, old_writable) = self.array_length_state(object)?;
-        let mut canonical = descriptor.clone();
+        let mut canonical = descriptor.try_clone()?;
         canonical.value = DescriptorField::Present(Self::array_length_value(new_length));
         if new_length >= old_length || !old_writable {
             return self
@@ -1782,8 +1787,8 @@ impl Runtime {
             self.is_extensible(object)?,
             &descriptor_record,
             Some(&current_record),
-            &Value::Undefined,
-            Value::same_value,
+            &ValidationValue::Undefined,
+            ValidationValue::same_value,
         ) {
             Ok(_) => {}
             Err(PropertyDefinitionError::InvalidDescriptor) => {
@@ -1970,7 +1975,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<bool, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         if let Some(flags) = self.ordinary_property_flags(object, key)? {
             return Ok(flags.is_some());
@@ -2045,7 +2050,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<bool, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         if self.typed_array_is_object(object)?
             && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
@@ -2247,7 +2252,7 @@ impl Runtime {
 
     /// Return a rooted own-key snapshot in ECMAScript order.
     pub fn own_property_keys(&self, object: &ObjectRef) -> Result<Vec<PropertyKey>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
@@ -2328,7 +2333,7 @@ impl Runtime {
 
     /// Return the ordinary object's prototype as a new root.
     pub fn get_prototype_of(&self, object: &ObjectRef) -> Result<Option<ObjectRef>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
@@ -2350,7 +2355,7 @@ impl Runtime {
         object: &ObjectRef,
         prototype: Option<&ObjectRef>,
     ) -> Result<bool, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
@@ -2392,7 +2397,7 @@ impl Runtime {
 
     /// Return the ordinary object's extensibility bit.
     pub fn is_extensible(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
@@ -2407,7 +2412,7 @@ impl Runtime {
 
     /// Make the ordinary object non-extensible.
     pub fn prevent_extensions(&self, object: &ObjectRef) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }

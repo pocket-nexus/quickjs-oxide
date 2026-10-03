@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn reduced_group_by_element_limit_checks_before_next_and_preserves_throw() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let iterable = eval_object(
         &mut context,
         r#"(function(){
@@ -82,7 +82,7 @@ fn reduced_group_by_element_limit_checks_before_next_and_preserves_throw() {
 #[test]
 fn object_keys_family_autoinit_preserves_pinned_metadata() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
@@ -123,7 +123,7 @@ fn object_keys_family_autoinit_preserves_pinned_metadata() {
 #[test]
 fn object_extensibility_autoinit_preserves_pinned_metadata() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
@@ -166,7 +166,7 @@ fn object_extensibility_autoinit_preserves_pinned_metadata() {
 #[test]
 fn object_extensibility_preserves_primitives_and_updates_only_the_object_bit() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .eval(
             r#"(function(){
@@ -217,7 +217,7 @@ fn object_extensibility_preserves_primitives_and_updates_only_the_object_bit() {
 #[test]
 fn object_descriptor_statics_autoinit_preserve_pinned_metadata() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
@@ -271,7 +271,7 @@ fn object_descriptor_statics_autoinit_preserve_pinned_metadata() {
 #[test]
 fn object_is_autoinit_and_same_value_semantics_match_pinned_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
@@ -335,7 +335,7 @@ fn object_is_autoinit_and_same_value_semantics_match_pinned_quickjs() {
 #[test]
 fn object_assign_autoinit_and_ordinary_snapshot_semantics_match_pinned_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
@@ -438,7 +438,7 @@ fn object_assign_autoinit_and_ordinary_snapshot_semantics_match_pinned_quickjs()
 #[test]
 fn object_assign_proxy_rechecks_each_descriptor_before_get() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .eval(
             r#"(function(){
@@ -477,7 +477,7 @@ fn object_assign_proxy_rechecks_each_descriptor_before_get() {
 #[test]
 fn object_from_entries_autoinit_preserves_pinned_metadata() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
@@ -514,7 +514,7 @@ fn object_from_entries_autoinit_preserves_pinned_metadata() {
 #[test]
 fn object_has_own_autoinit_preserves_pinned_metadata_and_presence_is_non_materializing() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
@@ -588,7 +588,7 @@ fn recursive_object_has_own_key_conversion_is_guarded_and_runtime_recovers() {
         .stack_size(2 * 1024 * 1024)
         .spawn(|| {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(
                 context
                     .eval(
@@ -634,7 +634,7 @@ fn recursive_object_has_own_key_conversion_is_guarded_and_runtime_recovers() {
 #[test]
 fn object_from_entries_orders_entry_reads_and_closes_preserving_the_original_throw() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .eval(
             r#"(function(){
@@ -704,7 +704,7 @@ fn object_from_entries_orders_entry_reads_and_closes_preserving_the_original_thr
 #[test]
 fn object_integrity_autoinit_materializes_and_tightens_in_pinned_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
@@ -797,7 +797,7 @@ fn object_integrity_autoinit_materializes_and_tightens_in_pinned_order() {
 #[test]
 fn object_is_sealed_scans_descriptors_before_extensibility_and_short_circuits_autoinit() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object_constructor = eval_object(&mut context, "Object");
     let is_sealed = eval_object(&mut context, "Object.isSealed");
     let is_sealed = runtime.as_callable(&is_sealed).unwrap().unwrap();
@@ -842,7 +842,9 @@ fn object_is_sealed_scans_descriptors_before_extensibility_and_short_circuits_au
             .call(
                 &is_sealed,
                 Value::Undefined,
-                &[Value::Object(object_constructor.clone())],
+                &[Value::Object(
+                    object_constructor.try_clone().expect("duplicate root")
+                )],
             )
             .unwrap(),
         Value::Bool(false),
@@ -878,7 +880,7 @@ fn object_is_sealed_scans_descriptors_before_extensibility_and_short_circuits_au
 #[test]
 fn object_integrity_preserves_descriptor_values_and_covers_array_string_and_symbol_keys() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .eval(
             r#"(function(){
@@ -950,7 +952,7 @@ fn object_integrity_preserves_descriptor_values_and_covers_array_string_and_symb
 #[test]
 fn recursive_object_assign_callbacks_are_catchable_before_host_stack_exhaustion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(
@@ -1026,7 +1028,7 @@ fn recursive_object_assign_callbacks_are_catchable_before_host_stack_exhaustion(
 #[test]
 fn object_descriptor_statics_publish_complete_fields_without_calling_accessors() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .eval(
             r#"(function(){
@@ -1066,7 +1068,7 @@ fn object_descriptor_statics_publish_complete_fields_without_calling_accessors()
 #[test]
 fn recursive_object_descriptor_key_coercion_is_catchable_before_host_stack_exhaustion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(
@@ -1170,7 +1172,7 @@ fn recursive_object_descriptor_key_coercion_is_catchable_before_host_stack_exhau
 #[test]
 fn object_keys_descriptor_recheck_materializes_non_enumerable_autoinits() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Object)
@@ -1229,7 +1231,7 @@ fn object_keys_descriptor_recheck_materializes_non_enumerable_autoinits() {
 #[test]
 fn object_keys_family_filters_orders_and_boxes_string_code_units() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .eval(
             r#"(function(){
@@ -1268,7 +1270,7 @@ fn object_keys_family_filters_orders_and_boxes_string_code_units() {
 #[test]
 fn object_values_and_entries_recheck_descriptors_before_get() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .eval(
             r#"(function(){
@@ -1322,12 +1324,12 @@ fn object_values_and_entries_recheck_descriptors_before_get() {
 #[test]
 fn borrowed_object_entries_uses_its_defining_realm_for_arrays_and_errors() {
     let runtime = Runtime::new();
-    let mut defining_context = runtime.new_context();
+    let mut defining_context = runtime.new_context().expect("create context");
     let method = eval_object(&mut defining_context, "Object.entries");
     let method = runtime.as_callable(&method).unwrap().unwrap();
     let defining_array_prototype = defining_context.array_prototype().unwrap();
     let defining_type_error_prototype = eval_object(&mut defining_context, "TypeError.prototype");
-    let mut caller_context = runtime.new_context();
+    let mut caller_context = runtime.new_context().expect("create context");
 
     let completion = runtime
         .call_internal(
@@ -1345,7 +1347,11 @@ fn borrowed_object_entries_uses_its_defining_realm_for_arrays_and_errors() {
     };
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
     );
     let zero = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
@@ -1385,7 +1391,7 @@ fn borrowed_object_entries_uses_its_defining_realm_for_arrays_and_errors() {
 #[test]
 fn recursive_object_keys_family_ceiling_protects_the_heaviest_measured_path() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(
@@ -1478,7 +1484,7 @@ fn string_property(
 
 fn recursive_group_by_uses_default_logical_budget_and_recovers() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let value = context
         .eval(
             r#"(function(){
@@ -1509,7 +1515,7 @@ fn recursive_group_by_uses_default_logical_budget_and_recovers() {
 
 fn recursive_from_entries_uses_default_logical_budget_closes_and_recovers() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let value = context
         .eval(
             r#"(function(){

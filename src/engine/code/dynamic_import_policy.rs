@@ -22,6 +22,7 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<bool, RuntimeError> {
+        let _operation = self.operation()?;
         self.dynamic_import_bytecode_tree_contains(function)
     }
 
@@ -76,8 +77,10 @@ impl Runtime {
     /// runtime starts enabled so ordinary feature-enabled embedders retain the
     /// same JavaScript semantics as default builds.
     #[cfg(feature = "test262-host")]
-    pub fn set_dynamic_import_bytecode_allowed(&self, allowed: bool) {
+    pub fn set_dynamic_import_bytecode_allowed(&self, allowed: bool) -> Result<(), RuntimeError> {
+        self.check_poison()?;
         self.0.dynamic_import_bytecode_allowed.set(allowed);
+        Ok(())
     }
 
     /// Run one host operation with a temporary dynamic-import bytecode policy.
@@ -89,8 +92,9 @@ impl Runtime {
     pub fn with_dynamic_import_bytecode_allowed<T>(
         &self,
         allowed: bool,
-        operation: impl FnOnce() -> T,
-    ) -> T {
+        operation: impl FnOnce() -> Result<T, RuntimeError>,
+    ) -> Result<T, RuntimeError> {
+        let _operation = self.operation()?;
         struct RestoreDynamicImportPolicy<'a> {
             policy: &'a Cell<bool>,
             previous: bool,
@@ -107,7 +111,9 @@ impl Runtime {
             policy: &self.0.dynamic_import_bytecode_allowed,
             previous,
         };
-        operation()
+        let result = operation();
+        self.check_poison()?;
+        result
     }
 
     #[cfg(feature = "test262-host")]

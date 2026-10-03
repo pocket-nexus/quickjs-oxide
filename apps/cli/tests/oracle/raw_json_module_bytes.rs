@@ -354,7 +354,7 @@ fn oxide_observation(case: &Case) -> RawModuleObservation {
         source: case.authored.to_vec(),
         grammar: case.grammar,
     });
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .compile_module_with_filename(
             raw_json_module_source(case.grammar.is_extended()),

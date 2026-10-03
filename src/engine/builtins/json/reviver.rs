@@ -199,8 +199,8 @@ impl ParseResumeState {
             )));
         }
         self.frames.push(Node {
-            holder: holder.clone(),
-            key: key.clone(),
+            holder: holder.try_clone()?,
+            key: key.try_clone()?,
             record,
             value: JsValue::Undefined,
             context: None,
@@ -245,7 +245,7 @@ impl ParseResumeState {
             let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object)?;
             return self.enter(runtime, object, key, record);
         }
-        let receiver = runtime.into_jsvalue(Value::Object(node.holder.clone()))?;
+        let receiver = runtime.into_jsvalue(Value::Object(node.holder.try_clone()?))?;
         // End the state borrow before the conversion: `into_jsvalue` allocates
         // a string node and must re-borrow the runtime state.
         let name = runtime
@@ -257,7 +257,9 @@ impl ParseResumeState {
         let name = runtime.into_jsvalue(Value::String(name))?;
         let context = node
             .context
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("JSON reviver lost its context"))?;
         let mut arguments = Vec::new();
         if arguments.try_reserve_exact(3).is_err() {
@@ -274,7 +276,9 @@ impl ParseResumeState {
         arguments.push(runtime.into_jsvalue(Value::Object(context))?);
         let callable = self
             .reviver
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("JSON reviver lost its callback"))?;
         Ok(ParseStep::request_call(callable, receiver, arguments, {
             let phase = Phase::Revived;
@@ -307,7 +311,7 @@ impl ParseResumeState {
             };
             return Ok(ParseStep::request_enumerable(
                 ObjectRef::from_borrowed_handle(runtime.clone(), *object)?,
-                key.clone(),
+                key.try_clone()?,
                 {
                     let phase = Phase::Enumerable {
                         keys,
@@ -468,7 +472,12 @@ impl ParseResume {
                         .as_ref()
                         .and_then(|record| record.primitive_span())
                     {
-                        let context = node.context.clone().unwrap();
+                        let context = node
+                            .context
+                            .as_ref()
+                            .map(|value| value.try_clone())
+                            .transpose()?
+                            .unwrap();
                         let source = runtime
                             .into_jsvalue(Value::String(self.0.source.sub_string(start, end)))?;
                         let key = runtime
@@ -716,7 +725,7 @@ mod ownership_tests {
     fn parse_record_keeps_deleted_prior_children_until_callback_abandonment() {
         let runtime = Runtime::new();
         let weak = Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callback = context.eval("(function(k,v){return v})").unwrap();
         let Value::Object(callback_object) = &callback else {
             panic!("expected callback");

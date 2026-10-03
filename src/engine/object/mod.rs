@@ -16,6 +16,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use crate::engine::api::runtime::Runtime;
+use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomError};
 use crate::engine::heap::{HeapError, ObjectId};
 use crate::engine::value::Value;
@@ -36,7 +37,12 @@ impl ObjectRef {
     /// Allocation and raw-to-root promotion use this path after establishing
     /// that `id` is live in `runtime`; it deliberately does not retain again.
     #[must_use]
-    pub(crate) const fn from_owned_handle(runtime: Runtime, id: ObjectId) -> Self {
+    pub(crate) fn from_owned_handle(runtime: Runtime, id: ObjectId) -> Self {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.object_root.adopt",
+            "core.object_root.adopt",
+        );
         Self {
             runtime: Some(runtime),
             id,
@@ -45,6 +51,11 @@ impl ObjectRef {
 
     /// Promote a borrowed raw heap edge to a public owning root.
     pub(crate) fn from_borrowed_handle(runtime: Runtime, id: ObjectId) -> Result<Self, HeapError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.object_root.promote",
+            "core.object_root.promote",
+        );
         runtime.retain_object_handle(id)?;
         Ok(Self {
             runtime: Some(runtime),
@@ -53,8 +64,21 @@ impl ObjectRef {
     }
 
     /// Duplicate this root without turning a runtime invariant failure into a
-    /// panic.  The public [`Clone`] implementation delegates to this method.
-    pub(crate) fn try_clone(&self) -> Result<Self, HeapError> {
+    /// panic. Poisoned runtimes reject duplication before touching state.
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        self.runtime().check_poison()?;
+        // Checked retention and Rc cloning do not unwind; diagnostics can.
+        #[cfg(any(debug_assertions, feature = "profiling"))]
+        let _unwind = self.runtime().unwind_guard();
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.object_root.clone",
+            "core.object_root.clone",
+        );
         self.runtime().retain_object_handle(self.id)?;
         Ok(Self {
             runtime: Some(self.runtime().clone()),
@@ -92,6 +116,13 @@ impl ObjectRef {
         self.id
     }
 
+    /// Move the admitted edge into execution storage. The caller's Runtime
+    /// access outlives this transfer; cleanup is its explicit responsibility.
+    pub(crate) fn into_execution_handle(mut self) -> ObjectId {
+        drop(self.runtime.take());
+        self.id
+    }
+
     /// Consume this root and transfer its owned reference to the caller.
     ///
     /// The existing edge moves without changing its reference count. Taking
@@ -103,6 +134,10 @@ impl ObjectRef {
     #[must_use]
     pub(crate) fn into_handle(mut self) -> ObjectId {
         let runtime = self.runtime();
+        if runtime.skip_cleanup() {
+            drop(self.runtime.take());
+            return self.id;
+        }
         let cleanup_pending = runtime.0.deferred_references.has_pending()
             || runtime
                 .0
@@ -117,14 +152,6 @@ impl ObjectRef {
         }
         drop(self.runtime.take());
         self.id
-    }
-}
-
-impl Clone for ObjectRef {
-    fn clone(&self) -> Self {
-        self.try_clone().unwrap_or_else(|_| {
-            panic!("attempted to clone a stale object root or overflow its reference count")
-        })
     }
 }
 
@@ -191,8 +218,22 @@ impl AtomOwner {
         })
     }
 
-    fn try_clone(&self) -> Result<Self, AtomError> {
-        self.runtime().retain_atom_handle(self.atom)?;
+    fn try_clone(&self) -> Result<Self, RuntimeError> {
+        self.runtime().check_poison()?;
+        // Checked retention and Rc cloning do not unwind; diagnostics can.
+        #[cfg(any(debug_assertions, feature = "profiling"))]
+        let _unwind = self.runtime().unwind_guard();
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.atom_root.clone",
+            "core.atom_root.clone",
+        );
+        {
+            let state = self.runtime().0.state.try_borrow().map_err(|_| {
+                RuntimeError::Invariant("atom root retained during a runtime state borrow")
+            })?;
+            state.atoms.retain_shared(self.atom)?;
+        }
         Ok(Self {
             runtime: Some(self.runtime().clone()),
             atom: self.atom,
@@ -237,14 +278,6 @@ impl AtomOwner {
     }
 }
 
-impl Clone for AtomOwner {
-    fn clone(&self) -> Self {
-        self.try_clone().unwrap_or_else(|_| {
-            panic!("attempted to clone a stale atom root or overflow its reference count")
-        })
-    }
-}
-
 impl Drop for AtomOwner {
     fn drop(&mut self) {
         if let Some(runtime) = self.runtime.as_ref() {
@@ -284,7 +317,7 @@ impl fmt::Debug for AtomOwner {
 /// [`PropertyKey`], [`SymbolRef`], or [`Value`].  Private names are compiler-
 /// authenticated runtime metadata, not ECMAScript values which embedders can
 /// observe or manufacture.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PrivateNameRef(AtomOwner);
 
 impl PrivateNameRef {
@@ -318,10 +351,19 @@ impl PrivateNameRef {
 /// tables which happen to allocate the same numeric atom ID remain distinct.
 /// Construction is restricted to runtime code which has validated that the
 /// atom is a string or symbol property key.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct PropertyKey(AtomOwner);
 
 impl PropertyKey {
+    /// Duplicate this owning root, rejecting quarantined runtime state.
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        self.0.try_clone().map(Self)
+    }
+
     /// Consume one already-owned, kind-validated atom reference.
     #[must_use]
     pub(crate) const fn from_owned_atom(runtime: Runtime, atom: Atom) -> Self {
@@ -423,12 +465,21 @@ impl WellKnownSymbol {
 /// A runtime-owned ECMAScript Symbol primitive identity.
 ///
 /// Unlike a raw atom, this type can only be constructed after the runtime has
-/// verified a symbol atom kind.  Clone and drop retain/release through the
+/// verified a symbol atom kind.  `try_clone` and drop retain/release through the
 /// embedded `AtomOwner`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct SymbolRef(AtomOwner);
 
 impl SymbolRef {
+    /// Duplicate this owning root, rejecting quarantined runtime state.
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        self.0.try_clone().map(Self)
+    }
+
     /// Consume one already-owned, symbol-kind-validated atom reference.
     #[must_use]
     pub(crate) const fn from_owned_atom(runtime: Runtime, atom: Atom) -> Self {
@@ -484,9 +535,10 @@ impl From<SymbolRef> for PropertyKey {
     }
 }
 
-impl From<&SymbolRef> for PropertyKey {
-    fn from(symbol: &SymbolRef) -> Self {
-        Self(symbol.0.clone())
+impl TryFrom<&SymbolRef> for PropertyKey {
+    type Error = RuntimeError;
+    fn try_from(symbol: &SymbolRef) -> Result<Self, Self::Error> {
+        symbol.0.try_clone().map(Self)
     }
 }
 
@@ -496,10 +548,19 @@ impl From<&SymbolRef> for PropertyKey {
 /// Runtime code must check the object's internal call method before using the
 /// crate-private constructor.  Consequently an accessor can contain only
 /// `undefined` or a genuinely callable root.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct CallableRef(ObjectRef);
 
 impl CallableRef {
+    /// Duplicate this owning root, rejecting quarantined runtime state.
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        self.0.try_clone().map(Self)
+    }
+
     /// Wrap an object after runtime code has validated its `[[Call]]` method.
     #[must_use]
     pub(crate) const fn from_validated_object(object: ObjectRef) -> Self {
@@ -550,6 +611,16 @@ pub enum DescriptorField<T> {
 }
 
 impl<T> DescriptorField<T> {
+    pub fn try_map<U, E>(
+        &self,
+        map: impl FnOnce(&T) -> Result<U, E>,
+    ) -> Result<DescriptorField<U>, E> {
+        match self {
+            Self::Absent => Ok(DescriptorField::Absent),
+            Self::Present(value) => map(value).map(DescriptorField::Present),
+        }
+    }
+
     #[must_use]
     pub const fn is_absent(&self) -> bool {
         matches!(self, Self::Absent)
@@ -599,13 +670,24 @@ impl<T> From<Option<T>> for DescriptorField<T> {
 /// A non-callable JavaScript value cannot inhabit this type.  Conversion from
 /// a general [`Value`] therefore belongs at the Context/runtime boundary where
 /// callability can be checked and a TypeError can be raised.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum AccessorValue {
     Undefined,
     Callable(CallableRef),
 }
 
 impl AccessorValue {
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        match self {
+            Self::Undefined => Ok(Self::Undefined),
+            Self::Callable(value) => value.try_clone().map(Self::Callable),
+        }
+    }
+
     #[must_use]
     pub const fn as_callable(&self) -> Option<&CallableRef> {
         match self {
@@ -622,7 +704,7 @@ impl AccessorValue {
 /// parallel data or accessor payload slot.  A descriptor may temporarily carry
 /// both data and accessor fields so `ToPropertyDescriptor` can reject it, but a
 /// present accessor field itself is always either `undefined` or callable.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct OrdinaryPropertyDescriptor {
     pub value: DescriptorField<Value>,
     pub writable: DescriptorField<bool>,
@@ -633,6 +715,21 @@ pub struct OrdinaryPropertyDescriptor {
 }
 
 impl OrdinaryPropertyDescriptor {
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            value: self.value.try_map(Value::try_clone)?,
+            writable: self.writable,
+            get: self.get.try_map(AccessorValue::try_clone)?,
+            set: self.set.try_map(AccessorValue::try_clone)?,
+            enumerable: self.enumerable,
+            configurable: self.configurable,
+        })
+    }
+
     /// Construct an empty generic descriptor.
     #[must_use]
     pub const fn new() -> Self {
@@ -687,7 +784,7 @@ impl Default for OrdinaryPropertyDescriptor {
 /// A fully materialized ordinary property descriptor returned by
 /// `[[GetOwnProperty]]` and used to bridge validation to physical shape/slot
 /// storage.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum CompleteOrdinaryPropertyDescriptor {
     Data {
         value: Value,
@@ -704,6 +801,37 @@ pub enum CompleteOrdinaryPropertyDescriptor {
 }
 
 impl CompleteOrdinaryPropertyDescriptor {
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        Ok(match self {
+            Self::Data {
+                value,
+                writable,
+                enumerable,
+                configurable,
+            } => Self::Data {
+                value: value.try_clone()?,
+                writable: *writable,
+                enumerable: *enumerable,
+                configurable: *configurable,
+            },
+            Self::Accessor {
+                get,
+                set,
+                enumerable,
+                configurable,
+            } => Self::Accessor {
+                get: get.as_ref().map(CallableRef::try_clone).transpose()?,
+                set: set.as_ref().map(CallableRef::try_clone).transpose()?,
+                enumerable: *enumerable,
+                configurable: *configurable,
+            },
+        })
+    }
+
     #[must_use]
     pub const fn enumerable(&self) -> bool {
         match self {
@@ -723,6 +851,59 @@ impl CompleteOrdinaryPropertyDescriptor {
 mod tests {
     use super::{AccessorValue, DescriptorField, OrdinaryPropertyDescriptor};
     use crate::engine::value::Value;
+
+    #[test]
+    fn atom_root_clone_borrow_conflict_preserves_count_and_runtime_reuse() {
+        use crate::engine::api::{Runtime, RuntimeError};
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let runtime = Runtime::new();
+        let key = runtime
+            .intern_property_key("checked atom root clone")
+            .unwrap();
+        let atom = key.atom();
+        let state = runtime.0.state.borrow_mut();
+        let before = state.atoms.resolve(atom).unwrap().ref_count;
+        let clone = catch_unwind(AssertUnwindSafe(|| key.try_clone()));
+        let after = state.atoms.resolve(atom).unwrap().ref_count;
+        drop(state);
+
+        assert!(matches!(
+            clone,
+            Ok(Err(RuntimeError::Invariant(
+                "atom root retained during a runtime state borrow"
+            )))
+        ));
+        assert_eq!(before, Some(1));
+        assert_eq!(after, before);
+        assert!(!runtime.is_poisoned());
+
+        let duplicate = key.try_clone().unwrap();
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .atoms
+                .resolve(atom)
+                .unwrap()
+                .ref_count,
+            Some(2)
+        );
+        drop(duplicate);
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .atoms
+                .resolve(atom)
+                .unwrap()
+                .ref_count,
+            before
+        );
+        assert!(!runtime.is_poisoned());
+    }
 
     #[test]
     fn consuming_roots_transfers_edges_without_queueing_releases() {

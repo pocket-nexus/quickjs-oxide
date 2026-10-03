@@ -32,7 +32,7 @@ impl Runtime {
         &self,
         description: JsString,
     ) -> Result<PrivateNameRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let atom = self
             .0
             .state
@@ -52,7 +52,7 @@ impl Runtime {
         name: &PrivateNameRef,
         value: JsValue,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let result = (|| {
             self.validate_private_receiver(receiver, name)?;
             let raw = value.as_raw();
@@ -137,7 +137,7 @@ impl Runtime {
         receiver: &ObjectRef,
         name: &PrivateNameRef,
     ) -> Result<JsValue, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_private_receiver(receiver, name)?;
         let raw = {
             let state = self.0.state.borrow();
@@ -184,7 +184,7 @@ impl Runtime {
         name: &PrivateNameRef,
         value: JsValue,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let result = (|| {
             self.validate_private_receiver(receiver, name)?;
             let raw = value.as_raw();
@@ -244,7 +244,7 @@ impl Runtime {
         receiver: &ObjectRef,
         name: &PrivateNameRef,
     ) -> Result<bool, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_private_receiver(receiver, name)?;
         let state = self.0.state.borrow();
         let object = state.heap.object(receiver.object_id())?;
@@ -262,7 +262,7 @@ impl Runtime {
         &self,
         name: &PrivateNameRef,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_private_name(name)?;
         let atom = name.atom();
         let mut state = self.0.state.borrow_mut();
@@ -293,7 +293,7 @@ impl Runtime {
         &self,
         index: AtomIdx,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let atom = self.0.state.borrow().atoms.brand(index)?;
         if self.0.state.borrow().atoms.kind(atom)? != AtomKind::Private {
             return Err(RuntimeError::Invariant(
@@ -326,7 +326,7 @@ impl Runtime {
         root: &impl crate::engine::heap::roots::VarRefHandle,
         name: &PrivateNameRef,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-name closure variable"));
         }
@@ -372,7 +372,7 @@ impl Runtime {
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
     ) -> Result<PrivateNameRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-name closure variable"));
         }
@@ -418,7 +418,7 @@ impl Runtime {
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
     ) -> Result<AtomIdx, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-name closure variable"));
         }
@@ -478,7 +478,7 @@ impl Runtime {
         callable: &CallableRef,
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !Self::is_private_callable_kind(kind) {
             return Err(RuntimeError::Invariant(
                 "private-callable VarRef received a non-callable binding kind",
@@ -512,7 +512,7 @@ impl Runtime {
         callable_id: ObjectId,
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !Self::is_private_callable_kind(kind) {
             return Err(RuntimeError::Invariant(
                 "private-callable VarRef received a non-callable binding kind",
@@ -547,7 +547,7 @@ impl Runtime {
         callable: &CallableRef,
         kind: ClosureVariableKind,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "private-callable closure variable",
@@ -591,7 +591,7 @@ impl Runtime {
         root: &impl crate::engine::heap::roots::VarRefHandle,
         kind: ClosureVariableKind,
     ) -> Result<CallableRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "private-callable closure variable",
@@ -643,7 +643,7 @@ impl Runtime {
         root: &impl crate::engine::heap::roots::VarRefHandle,
         kind: ClosureVariableKind,
     ) -> Result<ObjectId, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "private-callable closure variable",
@@ -718,7 +718,7 @@ impl Runtime {
         &self,
         home_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !home_object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "private-method brand HomeObject",
@@ -757,7 +757,7 @@ impl Runtime {
         home_object: &ObjectRef,
         receiver: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !home_object.belongs_to(self) || !receiver.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-method brand object"));
         }
@@ -814,7 +814,7 @@ impl Runtime {
         receiver: &ObjectRef,
         kind: ClosureVariableKind,
     ) -> Result<bool, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !receiver.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-method brand receiver"));
         }
@@ -836,7 +836,7 @@ impl Runtime {
         method: &CallableRef,
         kind: ClosureVariableKind,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.private_method_brand_atom(method, kind).map(|_| ())
     }
 
@@ -1019,7 +1019,7 @@ mod tests {
         runtime: &Runtime,
         function_kind: FunctionKind,
     ) -> (CallableRef, ObjectRef) {
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let code = if matches!(
             function_kind,
             FunctionKind::Generator | FunctionKind::AsyncGenerator
@@ -1176,8 +1176,8 @@ mod tests {
     #[test]
     fn private_shape_and_var_ref_edges_keep_atoms_alive_without_public_values() {
         let runtime = Runtime::new();
-        let baseline_atoms = runtime.test_atom_count();
-        let baseline_var_refs = runtime.heap_counts().var_ref_nodes;
+        let baseline_atoms = runtime.test_atom_count().expect("atom count");
+        let baseline_var_refs = runtime.heap_counts().expect("runtime state").var_ref_nodes;
         let name = private_name(&runtime, "#lifetime");
         assert_eq!(private_atom_ref_count(&runtime, &name), 1);
         let object = runtime.new_object(None).unwrap();
@@ -1189,8 +1189,14 @@ mod tests {
         assert_eq!(private_atom_ref_count(&runtime, &name), 3);
         drop(name);
 
-        assert_eq!(runtime.test_atom_count(), baseline_atoms + 1);
-        assert_eq!(runtime.heap_counts().var_ref_nodes, baseline_var_refs + 1);
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms + 1
+        );
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").var_ref_nodes,
+            baseline_var_refs + 1
+        );
         let rooted_again = runtime.private_name_from_raw_var_ref(&captured).unwrap();
         assert_eq!(private_atom_ref_count(&runtime, &rooted_again), 3);
         assert!(
@@ -1207,10 +1213,19 @@ mod tests {
 
         drop(rooted_again);
         drop(captured);
-        assert_eq!(runtime.heap_counts().var_ref_nodes, baseline_var_refs);
-        assert_eq!(runtime.test_atom_count(), baseline_atoms + 1);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").var_ref_nodes,
+            baseline_var_refs
+        );
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms + 1
+        );
         drop(object);
-        assert_eq!(runtime.test_atom_count(), baseline_atoms);
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms
+        );
     }
 
     #[test]
@@ -1456,8 +1471,8 @@ mod tests {
     #[test]
     fn gc_reclaims_private_shape_atoms_and_private_value_cycles() {
         let runtime = Runtime::new();
-        let baseline_atoms = runtime.test_atom_count();
-        let baseline_objects = runtime.heap_counts().object_nodes;
+        let baseline_atoms = runtime.test_atom_count().expect("atom count");
+        let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
         let name = private_name(&runtime, "#self");
         let object = runtime.new_object(None).unwrap();
         runtime
@@ -1465,26 +1480,38 @@ mod tests {
                 &object,
                 &name,
                 runtime
-                    .unroot_value(&Value::Object(object.clone()))
+                    .unroot_value(&Value::Object(object.try_clone().expect("duplicate root")))
                     .unwrap(),
             )
             .unwrap();
 
         drop(name);
         drop(object);
-        assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 1);
-        assert_eq!(runtime.test_atom_count(), baseline_atoms + 1);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").object_nodes,
+            baseline_objects + 1
+        );
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms + 1
+        );
 
         let stats = runtime.run_gc().unwrap();
         assert_eq!(stats.cleanup.finalized_objects, 1);
-        assert_eq!(runtime.heap_counts().object_nodes, baseline_objects);
-        assert_eq!(runtime.test_atom_count(), baseline_atoms);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").object_nodes,
+            baseline_objects
+        );
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms
+        );
     }
 
     #[test]
     fn compiled_private_fields_cover_instance_static_and_reference_operations() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1522,7 +1549,7 @@ mod tests {
     #[test]
     fn compiled_private_names_relay_through_nested_functions_eval_and_fresh_classes() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1563,7 +1590,7 @@ mod tests {
     #[test]
     fn compiled_forward_private_name_reads_match_quickjs_initialization_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1602,7 +1629,7 @@ mod tests {
     #[test]
     fn abrupt_class_scope_reentry_reuses_captured_private_method_cell() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1648,7 +1675,7 @@ mod tests {
     #[test]
     fn private_method_get_checks_brand_home_before_primitive_receiver() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1675,7 +1702,7 @@ mod tests {
     #[test]
     fn uninitialized_private_in_preserves_quickjs_internal_tag_atom() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1700,7 +1727,7 @@ mod tests {
     #[test]
     fn private_accessor_cells_survive_direct_eval_and_closure_capture() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r##"

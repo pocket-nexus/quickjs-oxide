@@ -11,7 +11,7 @@ fn quickjs_argument_slot_limit_uses_catchable_internal_error() {
     assert_eq!(error.message(), "too many arguments");
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.compile(&source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("argument overflow must materialize InternalError");
@@ -39,7 +39,7 @@ fn quickjs_call_argument_boundary_materializes_stack_overflow() {
     assert_eq!(error.message(), "stack overflow");
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.compile(&source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("bytecode stack overflow must materialize InternalError");

@@ -129,7 +129,7 @@ impl Runtime {
         self.define_function_data_property(
             constructor.as_object(),
             "prototype",
-            Value::Object(iterator_prototype.clone()),
+            Value::Object(iterator_prototype.try_clone()?),
             false,
             false,
         )?;
@@ -151,7 +151,7 @@ impl Runtime {
             &constructor_key,
             &OrdinaryPropertyDescriptor {
                 get: DescriptorField::Present(AccessorValue::Callable(
-                    constructor_accessor.clone(),
+                    constructor_accessor.try_clone()?,
                 )),
                 set: DescriptorField::Present(AccessorValue::Callable(constructor_accessor)),
                 enumerable: DescriptorField::Present(false),
@@ -164,7 +164,7 @@ impl Runtime {
             ));
         }
 
-        let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
+        let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
         self.define_native_builtin_auto_init_with_key(
             iterator_prototype,
             realm,
@@ -194,7 +194,7 @@ impl Runtime {
             "set [Symbol.toStringTag]",
             1,
         )?;
-        let tag_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let tag_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             iterator_prototype,
             &tag_key,
@@ -261,7 +261,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Iterator",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -282,7 +282,7 @@ impl Runtime {
         object: &ObjectRef,
         value: &'static str,
     ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             object,
             &key,
@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(quickjs_to_int64_free(f64::MAX), 0);
 
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -677,7 +677,7 @@ mod tests {
     #[test]
     fn flat_map_inner_normal_close_error_replaces_the_step_error() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -756,8 +756,8 @@ mod tests {
     #[test]
     fn every_realms_native_iterator_constructor_is_abstract_new_target() {
         let runtime = Runtime::new();
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let foreign_iterator = second.eval("Iterator").unwrap();
         let foreign_bound_iterator = second.eval("Iterator.bind(null)").unwrap();
         let foreign_iterator_constructor_accessor = second
@@ -827,7 +827,7 @@ mod tests {
     #[test]
     fn iterator_hidden_edges_survive_gc_and_unrooted_cycles_collect() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

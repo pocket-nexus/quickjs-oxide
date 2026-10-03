@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn ordinary_function_object_properties_match_quickjs_descriptors() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(function) = context.eval("(function(a, b) {})").unwrap() else {
         panic!("function expression did not produce an object");
     };
@@ -16,7 +16,11 @@ fn ordinary_function_object_properties_match_quickjs_descriptors() {
 
     assert_eq!(
         runtime.own_property_keys(&function).unwrap(),
-        vec![length.clone(), name.clone(), prototype_key.clone()]
+        vec![
+            length.try_clone().expect("duplicate root"),
+            name.try_clone().expect("duplicate root"),
+            prototype_key.try_clone().expect("duplicate root")
+        ]
     );
 
     let CompleteOrdinaryPropertyDescriptor::Data {
@@ -55,7 +59,7 @@ fn ordinary_function_object_properties_match_quickjs_descriptors() {
     };
     assert_eq!(
         context.get_property(&prototype, &constructor).unwrap(),
-        Value::Object(function.clone())
+        Value::Object(function.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         runtime.get_prototype_of(&prototype).unwrap().unwrap(),
@@ -70,26 +74,39 @@ fn ordinary_function_object_properties_match_quickjs_descriptors() {
 #[test]
 fn function_prototype_autoinit_preserves_keys_without_eager_object_cycle() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let baseline_objects = runtime.heap_counts().object_nodes;
+    let mut context = runtime.new_context().expect("create context");
+    let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
     let Value::Object(unread) = context.eval("(0, function(){})").unwrap() else {
         panic!("function expression did not produce an object");
     };
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects + 1
+    );
     drop(unread);
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects
+    );
 
     let Value::Object(function) = context.eval("(0, function(){})").unwrap() else {
         panic!("function expression did not produce an object");
     };
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects + 1
+    );
 
     let length = runtime.intern_property_key("length").unwrap();
     let name = runtime.intern_property_key("name").unwrap();
     let prototype_key = runtime.intern_property_key("prototype").unwrap();
     assert_eq!(
         runtime.own_property_keys(&function).unwrap(),
-        vec![length, name, prototype_key.clone()]
+        vec![
+            length,
+            name,
+            prototype_key.try_clone().expect("duplicate root")
+        ]
     );
     assert!(runtime.has_own_property(&function, &prototype_key).unwrap());
     assert!(!runtime.delete_property(&function, &prototype_key).unwrap());
@@ -105,7 +122,10 @@ fn function_prototype_autoinit_preserves_keys_without_eager_object_cycle() {
             )
             .unwrap()
     );
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects + 1
+    );
 
     let CompleteOrdinaryPropertyDescriptor::Data {
         value: Value::Object(prototype),
@@ -119,7 +139,10 @@ fn function_prototype_autoinit_preserves_keys_without_eager_object_cycle() {
     else {
         panic!("prototype autoinit produced the wrong descriptor");
     };
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects + 2
+    );
     let CompleteOrdinaryPropertyDescriptor::Data {
         value: Value::Object(second),
         ..
@@ -136,14 +159,17 @@ fn function_prototype_autoinit_preserves_keys_without_eager_object_cycle() {
     drop(prototype);
     drop(function);
     assert!(runtime.run_gc().unwrap().cleanup.finalized_objects >= 2);
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects
+    );
 }
 
 #[test]
 fn compatible_define_materializes_function_prototype_but_value_override_releases_it() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let baseline_objects = runtime.heap_counts().object_nodes;
+    let mut context = runtime.new_context().expect("create context");
+    let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
     let prototype_key = runtime.intern_property_key("prototype").unwrap();
 
     let Value::Object(empty_define) = context.eval("(0, function(){})").unwrap() else {
@@ -158,10 +184,16 @@ fn compatible_define_materializes_function_prototype_but_value_override_releases
             )
             .unwrap()
     );
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects + 2
+    );
     drop(empty_define);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects
+    );
 
     let Value::Object(value_define) = context.eval("(0, function(){})").unwrap() else {
         panic!("function expression did not produce an object");
@@ -178,7 +210,10 @@ fn compatible_define_materializes_function_prototype_but_value_override_releases
             )
             .unwrap()
     );
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects + 1
+    );
     assert!(matches!(
         runtime
             .get_own_property(&value_define, &prototype_key)
@@ -198,7 +233,7 @@ fn autoinit_define_checks_lazy_flags_before_materializing_and_retries() {
     let runtime = Runtime::new();
     let call_key = runtime.intern_property_key("call").unwrap();
 
-    let configurable_context = runtime.new_context();
+    let configurable_context = runtime.new_context().expect("create context");
     let configurable_fp = configurable_context.function_prototype().unwrap();
     assert!(
         runtime
@@ -234,7 +269,7 @@ fn autoinit_define_checks_lazy_flags_before_materializing_and_retries() {
         })
     ));
 
-    let enumerable_context = runtime.new_context();
+    let enumerable_context = runtime.new_context().expect("create context");
     let enumerable_fp = enumerable_context.function_prototype().unwrap();
     assert!(
         runtime
@@ -258,7 +293,7 @@ fn autoinit_define_checks_lazy_flags_before_materializing_and_retries() {
         })
     ));
 
-    let mut accessor_context = runtime.new_context();
+    let mut accessor_context = runtime.new_context().expect("create context");
     let accessor_fp = accessor_context.function_prototype().unwrap();
     let Value::Object(getter) = accessor_context
         .eval("(function replacementCall(){ return 7; })")
@@ -273,7 +308,9 @@ fn autoinit_define_checks_lazy_flags_before_materializing_and_retries() {
                 &accessor_fp,
                 &call_key,
                 &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(AccessorValue::Callable(getter.clone())),
+                    get: DescriptorField::Present(AccessorValue::Callable(
+                        getter.try_clone().expect("duplicate root")
+                    )),
                     ..OrdinaryPropertyDescriptor::new()
                 },
             )
@@ -295,10 +332,13 @@ fn autoinit_define_checks_lazy_flags_before_materializing_and_retries() {
         Value::Int(7)
     );
 
-    let has_instance_context = runtime.new_context();
+    let has_instance_context = runtime.new_context().expect("create context");
     let has_instance_fp = has_instance_context.function_prototype().unwrap();
-    let has_instance_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     assert!(
         runtime
             .is_auto_init_own_property(&has_instance_fp, &has_instance_key)
@@ -326,7 +366,7 @@ fn autoinit_define_checks_lazy_flags_before_materializing_and_retries() {
 #[test]
 fn failed_autoinit_commits_undefined_and_releases_initializer_realm() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = context.new_object().unwrap();
     let key = runtime.intern_property_key("failureProbe").unwrap();
     let before = runtime
@@ -377,8 +417,8 @@ fn failed_autoinit_commits_undefined_and_releases_initializer_realm() {
 #[test]
 fn function_prototype_autoinit_owns_and_uses_closure_creation_realm() {
     let runtime = Runtime::new();
-    let compiler_context = runtime.new_context();
-    let creation_context = runtime.new_context();
+    let compiler_context = runtime.new_context().expect("create context");
+    let creation_context = runtime.new_context().expect("create context");
     let creation_realm = creation_context.realm;
     let function = runtime
         .publish_unlinked_function(
@@ -455,10 +495,12 @@ fn function_prototype_autoinit_owns_and_uses_closure_creation_realm() {
 #[test]
 fn function_prototype_is_callable_non_constructable_and_has_no_prototype_property() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let callable = runtime
-        .callable_from_value(Value::Object(function_prototype.clone()))
+        .callable_from_value(Value::Object(
+            function_prototype.try_clone().expect("duplicate root"),
+        ))
         .unwrap();
     assert_eq!(
         context
@@ -487,13 +529,17 @@ fn function_prototype_is_callable_non_constructable_and_has_no_prototype_propert
     let line_number = runtime.intern_property_key("lineNumber").unwrap();
     let column_number = runtime.intern_property_key("columnNumber").unwrap();
     let constructor = runtime.intern_property_key("constructor").unwrap();
-    let has_instance = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     let prototype = runtime.intern_property_key("prototype").unwrap();
     assert_eq!(
         runtime.own_property_keys(&function_prototype).unwrap(),
         vec![
-            length.clone(),
-            name.clone(),
+            length.try_clone().expect("duplicate root"),
+            name.try_clone().expect("duplicate root"),
             caller,
             arguments,
             call,
@@ -542,8 +588,8 @@ fn function_prototype_is_callable_non_constructable_and_has_no_prototype_propert
 #[test]
 fn strict_function_name_write_throws_a_type_error_from_the_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining_context = runtime.new_context();
-    let mut caller_context = runtime.new_context();
+    let mut defining_context = runtime.new_context().expect("create context");
+    let mut caller_context = runtime.new_context().expect("create context");
     let defining_type_error = global_callable(&runtime, &mut defining_context, "TypeError");
     let caller_type_error = global_callable(&runtime, &mut caller_context, "TypeError");
     let prototype_key = runtime.intern_property_key("prototype").unwrap();

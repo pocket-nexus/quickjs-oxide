@@ -232,8 +232,8 @@ fn typed_array_iterators_match_pinned_quickjs() {
 fn typed_array_entries_pair_and_errors_use_the_builtin_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_array_iterator_prototype = eval_object(
         &mut defining,
@@ -280,12 +280,16 @@ fn typed_array_entries_pair_and_errors_use_the_builtin_defining_realm() {
     let pair = object_property(&runtime, &mut caller, &result, "value");
     assert_eq!(
         runtime.get_prototype_of(&pair).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "TypedArray entries pair did not use the builtin defining realm Array",
     );
     assert_ne!(
         runtime.get_prototype_of(&pair).unwrap(),
-        Some(caller_array_prototype.clone()),
+        Some(caller_array_prototype.try_clone().expect("duplicate root")),
         "TypedArray entries pair leaked into the caller realm",
     );
 
@@ -347,7 +351,7 @@ fn typed_array_entries_pair_and_errors_use_the_builtin_defining_realm() {
 fn oxide_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(case.source) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),
         Ok(value) => panic!(

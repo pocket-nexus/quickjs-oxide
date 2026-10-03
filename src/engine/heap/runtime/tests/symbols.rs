@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn symbol_intrinsic_graph_registry_brand_and_wrapper_match_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let constructor = global_callable(&runtime, &mut context, "Symbol");
     let prototype = context.symbol_prototype().unwrap();
 
@@ -61,8 +61,11 @@ fn symbol_intrinsic_graph_registry_brand_and_wrapper_match_quickjs() {
         ]
     );
 
-    let to_primitive_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
     assert!(matches!(
         runtime
             .get_own_property(&prototype, &to_primitive_key)
@@ -157,7 +160,9 @@ fn symbol_intrinsic_graph_registry_brand_and_wrapper_match_quickjs() {
             .call(
                 &key_for,
                 Value::Undefined,
-                &[Value::Symbol(no_description.clone())],
+                &[Value::Symbol(
+                    no_description.try_clone().expect("duplicate root")
+                )],
             )
             .unwrap(),
         Value::Undefined
@@ -188,7 +193,7 @@ fn symbol_intrinsic_graph_registry_brand_and_wrapper_match_quickjs() {
                 writable: false,
                 enumerable: false,
                 configurable: false,
-            }) if value == runtime.well_known_symbol(symbol)
+            }) if value == runtime.well_known_symbol(symbol).expect("well-known symbol")
         ));
     }
 
@@ -196,21 +201,33 @@ fn symbol_intrinsic_graph_registry_brand_and_wrapper_match_quickjs() {
     let value_of = property_callable(&runtime, &mut context, &prototype, "valueOf");
     assert_eq!(
         context
-            .call(&to_string, Value::Symbol(empty_description.clone()), &[],)
+            .call(
+                &to_string,
+                Value::Symbol(empty_description.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::String(JsString::from_static("Symbol()"))
     );
     assert_eq!(
         context
-            .call(&value_of, Value::Symbol(no_description.clone()), &[],)
+            .call(
+                &value_of,
+                Value::Symbol(no_description.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
-        Value::Symbol(no_description.clone())
+        Value::Symbol(no_description.try_clone().expect("duplicate root"))
     );
 
     let object_prototype = context.object_prototype().unwrap();
     let object_value_of = property_callable(&runtime, &mut context, &object_prototype, "valueOf");
     let Value::Object(wrapper) = context
-        .call(&object_value_of, Value::Symbol(no_description.clone()), &[])
+        .call(
+            &object_value_of,
+            Value::Symbol(no_description.try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap()
     else {
         panic!("Object.prototype.valueOf did not box a Symbol primitive");
@@ -252,7 +269,7 @@ fn symbol_intrinsic_graph_registry_brand_and_wrapper_match_quickjs() {
 fn symbol_wrapper_owns_its_atom_and_realm_until_final_collection() {
     let runtime = Runtime::new();
     let (atom, wrapper) = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object_prototype = context.object_prototype().unwrap();
         let object_value_of =
             property_callable(&runtime, &mut context, &object_prototype, "valueOf");
@@ -271,7 +288,7 @@ fn symbol_wrapper_owns_its_atom_and_realm_until_final_collection() {
 
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         1,
         "the live wrapper must retain its Symbol prototype realm graph"
     );
@@ -290,7 +307,7 @@ fn symbol_wrapper_owns_its_atom_and_realm_until_final_collection() {
 
     drop(wrapper);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
     assert!(
         runtime.0.state.borrow().atoms.resolve(atom).is_err(),
         "the final wrapper release must return its symbol atom ownership"
@@ -301,12 +318,19 @@ fn symbol_wrapper_owns_its_atom_and_realm_until_final_collection() {
 fn symbols_are_runtime_owned_and_distinct_from_registry_entries() {
     let runtime = Runtime::new();
     let name = JsString::from_static("Symbol.iterator");
-    let unique = runtime.well_known_symbol(WellKnownSymbol::Iterator);
-    let repeated = runtime.well_known_symbol(WellKnownSymbol::Iterator);
+    let unique = runtime
+        .well_known_symbol(WellKnownSymbol::Iterator)
+        .expect("well-known symbol");
+    let repeated = runtime
+        .well_known_symbol(WellKnownSymbol::Iterator)
+        .expect("well-known symbol");
     let registry = runtime.symbol_for(&name).unwrap();
     assert_eq!(unique, repeated);
     assert_ne!(unique, registry);
-    assert_ne!(PropertyKey::from(&unique), PropertyKey::from(&registry));
+    assert_ne!(
+        PropertyKey::try_from(&unique).expect("symbol key"),
+        PropertyKey::try_from(&registry).expect("symbol key")
+    );
     assert_eq!(runtime.symbol_key_for(&unique).unwrap(), None);
     assert_eq!(runtime.symbol_key_for(&registry).unwrap(), Some(name));
 }

@@ -77,7 +77,7 @@ pub(super) fn prototype(
                     *step =
                         ProxyPrototypeStep::start(runtime, realm, object, ProxyPrototypeKind::Get)
                             .map_err(runtime_error_to_vm_error)?
-                            .into();
+                            .try_into()?;
                 } else {
                     let result = runtime
                         .get_prototype_of(&object)
@@ -130,7 +130,7 @@ pub(super) fn prototype(
                         ProxyPrototypeKind::Set(prototype),
                     )
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 } else {
                     let result = runtime
                         .set_prototype_of(&object, prototype.as_ref())
@@ -205,7 +205,7 @@ pub(super) fn attributes(
                         ProxyBooleanKind::Delete(key),
                     )
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 } else {
                     let result = runtime
                         .delete_property(&object, &key)
@@ -253,7 +253,7 @@ pub(super) fn attributes(
                         ProxyBooleanKind::PreventExtensions,
                     )
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 } else {
                     let result = runtime
                         .internal_prevent_extensions(realm, &object)
@@ -287,7 +287,7 @@ pub(super) fn attributes(
                         ProxyBooleanKind::Extensible,
                     )
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                     continue;
                 }
                 let result = runtime
@@ -331,7 +331,7 @@ pub(super) fn get(
                     .push(resume.take().expect("selected Step field"));
                 *step = DescriptorStep::start_jsvalue(runtime, realm, value)
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 continue;
             }
             Step::Converted(result) => {
@@ -390,7 +390,7 @@ pub(super) fn get(
                             ProxyBooleanKind::Has(key),
                         )
                         .map_err(runtime_error_to_vm_error)?
-                        .into();
+                        .try_into()?;
                     }
                 }
                 continue;
@@ -477,7 +477,7 @@ pub(super) fn get(
                             runtime, realm, object, key, receiver, arguments,
                         )
                         .map_err(runtime_error_to_vm_error)?
-                        .into();
+                        .try_into()?;
                         continue;
                     }
                 }
@@ -519,7 +519,7 @@ pub(super) fn get(
                         .push(resume.take().expect("selected Step field"));
                     *step = ProxyOwnStep::start(runtime, realm, object, key)
                         .map_err(runtime_error_to_vm_error)?
-                        .into();
+                        .try_into()?;
                     continue;
                 }
                 let descriptor = runtime

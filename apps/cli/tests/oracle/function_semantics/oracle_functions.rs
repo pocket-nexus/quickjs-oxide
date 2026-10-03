@@ -84,7 +84,7 @@ fn ordinary_function_object_kernel_matches_quickjs_oracle() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(function) = context.eval("(0, function(a, b) {})").unwrap() else {
         panic!("function expression did not produce an object");
     };
@@ -140,8 +140,8 @@ fn rust_observations() -> Vec<String> {
     else {
         panic!("unexpected prototype descriptor");
     };
-    let constructor_matches =
-        context.get_property(&prototype, &constructor).unwrap() == Value::Object(function.clone());
+    let constructor_matches = context.get_property(&prototype, &constructor).unwrap()
+        == Value::Object(function.try_clone().expect("duplicate root"));
     let prototype_chain_matches = runtime.get_prototype_of(&prototype).unwrap().unwrap()
         == context.object_prototype().unwrap();
     let CompleteOrdinaryPropertyDescriptor::Data {
@@ -310,7 +310,7 @@ fn rust_observations() -> Vec<String> {
     let named_prototype_constructor = context
         .get_property(&named_prototype, &constructor)
         .unwrap()
-        == Value::Object(named_meta.clone());
+        == Value::Object(named_meta.try_clone().expect("duplicate root"));
     let named_keys = runtime
         .own_property_keys(&named_meta)
         .unwrap()
@@ -349,7 +349,7 @@ fn rust_observations() -> Vec<String> {
     let lazy_compatible_define = context
         .get_property(&compatible_prototype, &constructor)
         .unwrap()
-        == Value::Object(compatible.clone());
+        == Value::Object(compatible.try_clone().expect("duplicate root"));
 
     let Value::Object(incompatible) = context.eval("(0, function(){})").unwrap() else {
         panic!("incompatible lazy function probe did not produce an object");
@@ -380,7 +380,7 @@ fn rust_observations() -> Vec<String> {
     let explicit_new_target = context
         .construct_with_new_target(&explicit_f, &explicit_g, &[])
         .unwrap()
-        == Value::Object(explicit_g_object.clone());
+        == Value::Object(explicit_g_object.try_clone().expect("duplicate root"));
     assert!(
         runtime
             .define_own_property(
@@ -408,8 +408,8 @@ fn rust_observations() -> Vec<String> {
     let Value::Object(base_instance) = context.construct(&callable, &[]).unwrap() else {
         panic!("ordinary constructor did not produce an object");
     };
-    let construct_prototype_matches =
-        runtime.get_prototype_of(&base_instance).unwrap() == Some(prototype.clone());
+    let construct_prototype_matches = runtime.get_prototype_of(&base_instance).unwrap()
+        == Some(prototype.try_clone().expect("duplicate root"));
     let construct_result_primitive_fallback = eval_boolean(
         &mut context,
         "(function(){ var F=function(){return 1}; return typeof new F() === 'object'; })()",

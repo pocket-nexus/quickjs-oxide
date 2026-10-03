@@ -3,8 +3,8 @@ use super::*;
 #[test]
 fn boolean_wrappers_lookup_and_new_target_use_the_required_realms() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_constructor = global_callable(&runtime, &mut first, "Boolean");
     let second_constructor = global_callable(&runtime, &mut second, "Boolean");
     let first_prototype = first.boolean_prototype().unwrap();
@@ -20,7 +20,7 @@ fn boolean_wrappers_lookup_and_new_target_use_the_required_realms() {
     };
     assert_eq!(
         runtime.get_prototype_of(&method_wrapper).unwrap(),
-        Some(first_prototype.clone())
+        Some(first_prototype.try_clone().expect("duplicate root"))
     );
 
     let Value::Object(cross_wrapper) = second
@@ -35,12 +35,16 @@ fn boolean_wrappers_lookup_and_new_target_use_the_required_realms() {
     };
     assert_eq!(
         runtime.get_prototype_of(&cross_wrapper).unwrap(),
-        Some(second_prototype.clone())
+        Some(second_prototype.try_clone().expect("duplicate root"))
     );
     let second_value_of = property_callable(&runtime, &mut second, &second_prototype, "valueOf");
     assert_eq!(
         first
-            .call(&second_value_of, Value::Object(cross_wrapper.clone()), &[],)
+            .call(
+                &second_value_of,
+                Value::Object(cross_wrapper.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::Bool(true)
     );
@@ -105,7 +109,12 @@ fn boolean_wrappers_lookup_and_new_target_use_the_required_realms() {
             .define_own_property(
                 new_target.as_object(),
                 &prototype_key,
-                &data_descriptor(Value::Object(custom_prototype.clone()), true, false, true,),
+                &data_descriptor(
+                    Value::Object(custom_prototype.try_clone().expect("duplicate root")),
+                    true,
+                    false,
+                    true,
+                ),
             )
             .unwrap()
     );
@@ -139,7 +148,7 @@ fn boolean_wrappers_lookup_and_new_target_use_the_required_realms() {
     };
     assert_eq!(
         runtime.get_prototype_of(&fallback_wrapper).unwrap(),
-        Some(second_prototype.clone())
+        Some(second_prototype.try_clone().expect("duplicate root"))
     );
     let throwing_getter = bytecode_callable(
         &runtime,
@@ -193,7 +202,7 @@ fn boolean_wrappers_lookup_and_new_target_use_the_required_realms() {
 #[test]
 fn boolean_primitive_accessors_writes_and_delete_preserve_raw_receiver_semantics() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.boolean_prototype().unwrap();
     let value_of = property_callable(&runtime, &mut context, &prototype, "valueOf");
     let strict_getter = bytecode_callable(
@@ -363,7 +372,7 @@ fn boolean_primitive_accessors_writes_and_delete_preserve_raw_receiver_semantics
 #[test]
 fn object_prototype_boolean_methods_box_only_the_quickjs_paths() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object_prototype = context.object_prototype().unwrap();
     let boolean_prototype = context.boolean_prototype().unwrap();
     let object_to_string = property_callable(&runtime, &mut context, &object_prototype, "toString");
@@ -399,7 +408,7 @@ fn object_prototype_boolean_methods_box_only_the_quickjs_paths() {
     assert_ne!(first_wrapper, second_wrapper);
     assert_eq!(
         runtime.get_prototype_of(&first_wrapper).unwrap(),
-        Some(boolean_prototype.clone())
+        Some(boolean_prototype.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         context
@@ -425,7 +434,11 @@ fn object_prototype_boolean_methods_box_only_the_quickjs_paths() {
         panic!("@@toStringTag probe did not produce a function");
     };
     let tag_getter = runtime.as_callable(&tag_getter).unwrap().unwrap();
-    let to_string_tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let to_string_tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     assert!(
         context
             .define_own_property(
@@ -476,7 +489,12 @@ fn object_prototype_boolean_methods_box_only_the_quickjs_paths() {
                 &context.global_object().unwrap(),
                 &locale_method_key,
                 &data_descriptor(
-                    Value::Object(locale_method.as_object().clone()),
+                    Value::Object(
+                        locale_method
+                            .as_object()
+                            .try_clone()
+                            .expect("duplicate root")
+                    ),
                     true,
                     true,
                     true,
@@ -523,7 +541,7 @@ fn object_prototype_boolean_methods_box_only_the_quickjs_paths() {
 fn boolean_wrapper_keeps_its_realm_graph_alive_until_collection() {
     let runtime = Runtime::new();
     let wrapper = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let constructor = global_callable(&runtime, &mut context, "Boolean");
         let Value::Object(wrapper) = context
             .construct(&constructor, &[Value::Bool(true)])
@@ -534,8 +552,11 @@ fn boolean_wrapper_keeps_its_realm_graph_alive_until_collection() {
         wrapper
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(wrapper);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }

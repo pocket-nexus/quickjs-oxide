@@ -1048,7 +1048,7 @@ impl Uint8CodecStep {
         }));
         if let Some(object) = &resume.options {
             Ok(Self::Read {
-                object: object.clone(),
+                object: object.try_clone()?,
                 key: runtime.intern_property_key("alphabet")?,
                 resume,
             })
@@ -1092,7 +1092,9 @@ impl Uint8CodecResume {
                 object: self
                     .0
                     .options
-                    .clone()
+                    .as_ref()
+                    .map(|value| value.try_clone())
+                    .transpose()?
                     .ok_or(RuntimeError::Invariant("Uint8 codec lost options"))?,
                 key: runtime.intern_property_key(name)?,
                 resume: self,
@@ -1157,7 +1159,7 @@ fn codec_finish(
                     realm,
                     &object,
                     &key,
-                    JsValue::Object(object.clone().into_handle()),
+                    JsValue::Object(object.try_clone()?.into_handle()),
                 )?,
             )?,
         };

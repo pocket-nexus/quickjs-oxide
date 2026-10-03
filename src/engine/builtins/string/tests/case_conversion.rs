@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn string_case_family_is_ordered_autoinit_and_has_distinct_stable_functions() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let keys = STRING_CASE_ENTRIES.map(|(name, selector)| {
         (
@@ -19,7 +19,11 @@ fn string_case_family_is_ordered_autoinit_and_has_distinct_stable_functions() {
         )
     });
     let value_of = runtime.intern_property_key("valueOf").unwrap();
-    let iterator = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+    let iterator = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Iterator)
+            .expect("well-known symbol"),
+    );
     {
         let state = runtime.0.state.borrow();
         let object = state.heap.object(prototype.object_id()).unwrap();
@@ -110,7 +114,7 @@ fn string_case_family_is_ordered_autoinit_and_has_distinct_stable_functions() {
 #[test]
 fn string_case_methods_coerce_only_the_receiver_and_ignore_every_argument() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -159,7 +163,7 @@ fn string_case_methods_coerce_only_the_receiver_and_ignore_every_argument() {
 #[test]
 fn string_case_expansion_limit_uses_internal_error_and_accepts_exact_boundary() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(error) = thrown(
         &runtime,
         runtime
@@ -212,8 +216,8 @@ fn string_case_expansion_limit_uses_internal_error_and_accepts_exact_boundary() 
 #[test]
 fn string_case_oom_and_type_errors_use_the_defining_realm_and_recover() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let prototype = defining.string_prototype().unwrap();
     let key = runtime.intern_property_key("toLowerCase").unwrap();
     let Value::Object(function_object) = defining.get_property(&prototype, &key).unwrap() else {

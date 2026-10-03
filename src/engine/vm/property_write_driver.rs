@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn borrowed_set_vm_keeps_selected_callbacks_and_strict_rejection() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn borrowed_set_vm_preserves_typed_conversion_reentry_and_throw() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

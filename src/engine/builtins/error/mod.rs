@@ -68,7 +68,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Error",
-            Value::Object(error_constructor.as_object().clone()),
+            Value::Object(error_constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -94,7 +94,7 @@ impl Runtime {
             self.define_function_data_property(
                 global_object,
                 kind.name(),
-                Value::Object(constructor.as_object().clone()),
+                Value::Object(constructor.as_object().try_clone()?),
                 true,
                 true,
             )?;

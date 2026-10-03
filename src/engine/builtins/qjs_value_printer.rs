@@ -106,6 +106,7 @@ impl Runtime {
     /// formatter, while uncaught String exceptions intentionally enter it and
     /// are quoted just like upstream.
     pub fn qjs_print_value_bytes(&self, value: &Value) -> Result<Vec<u8>, RuntimeError> {
+        let _operation = self.operation()?;
         let mut output = Vec::new();
         self.print_value_rooted_into_bytes(value, &mut output)?;
         Ok(output)

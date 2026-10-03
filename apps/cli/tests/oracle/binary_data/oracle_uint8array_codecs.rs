@@ -565,8 +565,8 @@ fn uint8array_codecs_match_pinned_quickjs() {
 fn uint8array_codec_results_and_errors_use_the_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let defining_constructor = eval_object(&mut defining, "Uint8Array", "defining Uint8Array");
     let defining_prototype = eval_object(
@@ -615,7 +615,7 @@ fn uint8array_codec_results_and_errors_use_the_defining_realm() {
     };
     assert_eq!(
         runtime.get_prototype_of(&decoded).unwrap(),
-        Some(defining_prototype.clone()),
+        Some(defining_prototype.try_clone().expect("duplicate root")),
         "Uint8Array.fromBase64 result did not use the method defining realm",
     );
     assert_eq!(int_property(&runtime, &mut caller, &decoded, "0"), 1);
@@ -627,7 +627,11 @@ fn uint8array_codec_results_and_errors_use_the_defining_realm() {
         "caller Uint8Array receiver",
     );
     let Value::String(hex) = caller
-        .call(&to_hex, Value::Object(receiver.clone()), &[])
+        .call(
+            &to_hex,
+            Value::Object(receiver.try_clone().expect("duplicate root")),
+            &[],
+        )
         .expect("cross-realm Uint8Array.prototype.toHex")
     else {
         panic!("cross-realm Uint8Array.prototype.toHex was not a string");
@@ -638,7 +642,7 @@ fn uint8array_codec_results_and_errors_use_the_defining_realm() {
     let Value::Object(record) = caller
         .call(
             &set_from_base64,
-            Value::Object(receiver.clone()),
+            Value::Object(receiver.try_clone().expect("duplicate root")),
             &[set_input],
         )
         .expect("cross-realm Uint8Array.prototype.setFromBase64")
@@ -707,7 +711,7 @@ fn observed_source(source: &str) -> String {
 fn oxide_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(&observed_source(case.source)) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),
         Ok(value) => panic!(

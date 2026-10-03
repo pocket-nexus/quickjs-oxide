@@ -38,7 +38,7 @@ impl Runtime {
         let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
             crate::engine::api::profiling::CompilePhase::Publish,
         );
-        let _operation = self.operation();
+        let _operation = self.operation()?;
 
         let mut frames = vec![PublishFrame::new(function)];
         self.ensure_dynamic_import_bytecode_allowed(&frames[0].code)?;
@@ -421,6 +421,7 @@ impl Runtime {
         function: &FunctionBytecodeRef,
         pc: Option<usize>,
     ) -> Result<Option<(JsString, LineColumn)>, RuntimeError> {
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -442,6 +443,7 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<Option<Vec<u8>>, RuntimeError> {
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -460,6 +462,7 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<Vec<crate::engine::code::bytecode::Instruction>, RuntimeError> {
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -494,6 +497,7 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<Option<JsString>, RuntimeError> {
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -512,6 +516,7 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<Option<(usize, Option<u32>)>, RuntimeError> {
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -530,8 +535,9 @@ impl Runtime {
     }
 
     #[cfg(test)]
-    pub fn test_atom_count(&self) -> usize {
-        self.0.state.borrow().atoms.len()
+    pub fn test_atom_count(&self) -> Result<usize, RuntimeError> {
+        self.check_poison()?;
+        Ok(self.0.state.borrow().atoms.len())
     }
 
     #[cfg(test)]
@@ -540,6 +546,7 @@ impl Runtime {
         function: &FunctionBytecodeRef,
         constant_index: usize,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }

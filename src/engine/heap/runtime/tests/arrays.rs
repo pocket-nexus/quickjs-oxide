@@ -3,8 +3,8 @@ use super::*;
 #[test]
 fn array_class_roots_length_layout_values_and_realm_prototype() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_prototype = first.array_prototype().unwrap();
     let second_prototype = second.array_prototype().unwrap();
     assert_ne!(first_prototype, second_prototype);
@@ -70,7 +70,7 @@ fn array_class_roots_length_layout_values_and_realm_prototype() {
     }
 
     let other_runtime = Runtime::new();
-    let mut other_context = other_runtime.new_context();
+    let mut other_context = other_runtime.new_context().expect("create context");
     let wrong_runtime_value = other_context.new_object().unwrap();
     assert!(matches!(
         first.new_array_from_values(vec![Value::Object(wrong_runtime_value)]),
@@ -81,7 +81,7 @@ fn array_class_roots_length_layout_values_and_realm_prototype() {
 #[test]
 fn array_dense_tail_delete_and_interior_delete_match_quickjs_conversion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array = context
         .new_array_from_values(vec![Value::Int(10), Value::Int(20), Value::Int(30)])
         .unwrap();
@@ -119,7 +119,7 @@ fn array_dense_tail_delete_and_interior_delete_match_quickjs_conversion() {
 #[test]
 fn array_indices_grow_length_and_obey_readonly_and_extensible_state() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array = context.new_array().unwrap();
     let length = runtime.intern_property_key("length").unwrap();
     let five = runtime.intern_property_key("5").unwrap();
@@ -199,7 +199,7 @@ fn array_indices_grow_length_and_obey_readonly_and_extensible_state() {
 #[test]
 fn array_length_shrink_deletes_descending_and_rolls_back_at_fixed_index() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array = context
         .new_array_from_values((0..5).map(Value::Int).collect())
         .unwrap();
@@ -252,7 +252,7 @@ fn array_length_shrink_deletes_descending_and_rolls_back_at_fixed_index() {
 #[test]
 fn array_assignment_rejections_keep_quickjs_length_diagnostics() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let length = runtime.intern_property_key("length").unwrap();
 
@@ -327,7 +327,7 @@ fn array_assignment_rejections_keep_quickjs_length_diagnostics() {
 #[test]
 fn array_join_separator_overflow_still_gets_nullish_slots_and_later_throw_wins() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(source) = context
         .eval(
             r#"(function(){
@@ -375,7 +375,7 @@ fn array_join_separator_overflow_still_gets_nullish_slots_and_later_throw_wins()
 #[test]
 fn array_locale_separator_overflow_invokes_method_but_skips_result_to_string() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(source) = context
         .eval(
             r#"(function(){
@@ -422,7 +422,7 @@ fn array_locale_separator_overflow_invokes_method_but_skips_result_to_string() {
 #[test]
 fn array_locale_method_throw_replaces_pending_separator_overflow() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(source) = context
         .eval(
             r#"(function(){
@@ -456,8 +456,8 @@ fn array_locale_method_throw_replaces_pending_separator_overflow() {
 #[test]
 fn array_length_uses_quickjs_double_conversion_and_caller_realm_errors() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let array = first.new_array_from_values(vec![Value::Int(1)]).unwrap();
     let length = runtime.intern_property_key("length").unwrap();
     let value = caller
@@ -468,7 +468,7 @@ fn array_length_uses_quickjs_double_conversion_and_caller_realm_errors() {
             &array,
             &length,
             &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(value.clone()),
+                value: DescriptorField::Present(value.try_clone().expect("duplicate root")),
                 ..OrdinaryPropertyDescriptor::new()
             },
         ),
@@ -537,15 +537,18 @@ fn array_length_uses_quickjs_double_conversion_and_caller_realm_errors() {
 #[test]
 fn array_slots_and_realm_roots_survive_gc_then_collect() {
     let runtime = Runtime::new();
-    let baseline_atoms = runtime.test_atom_count();
+    let baseline_atoms = runtime.test_atom_count().expect("atom count");
     let (array, zero, one) = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let element = context.new_object().unwrap();
         let symbol = runtime
             .new_symbol(Some(JsString::from_static("dense")))
             .unwrap();
         let array = context
-            .new_array_from_values(vec![Value::Object(element.clone()), Value::Symbol(symbol)])
+            .new_array_from_values(vec![
+                Value::Object(element.try_clone().expect("duplicate root")),
+                Value::Symbol(symbol),
+            ])
             .unwrap();
         let zero = runtime.intern_property_key("0").unwrap();
         let one = runtime.intern_property_key("1").unwrap();
@@ -565,7 +568,10 @@ fn array_slots_and_realm_roots_survive_gc_then_collect() {
         (array, zero, one)
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     assert!(matches!(
         get_property(&runtime, &array, &zero).unwrap(),
         Value::Object(_)
@@ -578,31 +584,38 @@ fn array_slots_and_realm_roots_survive_gc_then_collect() {
     drop(zero);
     drop(one);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
-    assert_eq!(runtime.test_atom_count(), baseline_atoms);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
+    assert_eq!(
+        runtime.test_atom_count().expect("atom count"),
+        baseline_atoms
+    );
 }
 
 #[test]
 fn array_dense_self_cycle_is_visible_to_cycle_collection() {
     let runtime = Runtime::new();
     {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let array = context.new_array().unwrap();
         let zero = runtime.intern_property_key("0").unwrap();
         assert!(
             context
-                .set_property(&array, &zero, Value::Object(array.clone()))
+                .set_property(
+                    &array,
+                    &zero,
+                    Value::Object(array.try_clone().expect("duplicate root"))
+                )
                 .unwrap()
         );
     }
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]
 fn array_of_uses_set_for_a_custom_result_length() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context.new_object().unwrap();
     let length = runtime.intern_property_key("length").unwrap();
     let setter = eval_callable(
@@ -631,7 +644,12 @@ fn array_of_uses_set_for_a_custom_result_length() {
             .define_own_property(
                 &global,
                 &result_key,
-                &data_descriptor(Value::Object(result.clone()), true, true, true),
+                &data_descriptor(
+                    Value::Object(result.try_clone().expect("duplicate root")),
+                    true,
+                    true,
+                    true
+                ),
             )
             .unwrap()
     );
@@ -646,11 +664,11 @@ fn array_of_uses_set_for_a_custom_result_length() {
         context
             .call(
                 &of,
-                Value::Object(constructor.as_object().clone()),
+                Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
                 &[Value::Int(11), Value::Int(22)],
             )
             .unwrap(),
-        Value::Object(result.clone())
+        Value::Object(result.try_clone().expect("duplicate root"))
     );
 
     for (name, expected) in [("0", 11), ("1", 22), ("seen", 2)] {
@@ -669,7 +687,7 @@ fn array_of_uses_set_for_a_custom_result_length() {
 #[test]
 fn array_of_create_data_property_reports_the_quickjs_rejection() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let array = global_callable(&runtime, &mut context, "Array");
     let of = property_callable(&runtime, &mut context, array.as_object(), "of");
@@ -694,7 +712,12 @@ fn array_of_create_data_property_reports_the_quickjs_rejection() {
     assert_eq!(
         context.call(
             &of,
-            Value::Object(blocked_constructor.as_object().clone()),
+            Value::Object(
+                blocked_constructor
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root")
+            ),
             &[Value::Int(1)],
         ),
         Err(RuntimeError::Exception)
@@ -736,7 +759,12 @@ fn array_of_create_data_property_reports_the_quickjs_rejection() {
     assert_eq!(
         context.call(
             &of,
-            Value::Object(frozen_constructor.as_object().clone()),
+            Value::Object(
+                frozen_constructor
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root")
+            ),
             &[Value::Int(1)],
         ),
         Err(RuntimeError::Exception)
@@ -750,7 +778,7 @@ fn array_of_create_data_property_reports_the_quickjs_rejection() {
 #[test]
 fn array_constructor_sets_through_inherited_indices_like_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.array_prototype().unwrap();
     let zero = runtime.intern_property_key("0").unwrap();
     let setter = eval_callable(

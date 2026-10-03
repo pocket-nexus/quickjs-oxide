@@ -207,7 +207,7 @@ impl PredicateResume {
             }
         };
         let resume = {
-            let updated_0 = Phase::Own(key.clone());
+            let updated_0 = Phase::Own(key.try_clone()?);
             self.0.phase = updated_0;
             self
         };
@@ -369,7 +369,7 @@ impl PredicateResume {
                 PredicateStep::Complete(Completion::Return(JsValue::Undefined))
             }
             NativeConversion::Value(Some(object)) => {
-                PredicateStep::request_descriptor(object.clone(), key.clone(), {
+                PredicateStep::request_descriptor(object.try_clone()?, key.try_clone()?, {
                     let updated_0 = JsValue::Object(object.into_handle());
                     let updated_1 = Phase::Own(key);
                     runtime.release_jsvalue(std::mem::replace(&mut self.0.receiver, updated_0))?;

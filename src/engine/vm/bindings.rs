@@ -7,6 +7,7 @@
 
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
+use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::AtomIdx;
 use crate::engine::code::function::metadata::{ClosureVariable, ClosureVariableKind};
 use crate::engine::heap::roots::{VarRefRoot, VarRefView};
@@ -70,6 +71,60 @@ pub(in crate::engine::vm) fn release_frame_binding(
     }
 }
 
+/// Release a binding while the execution core already owns state access.
+/// Captured cells, private atoms and private callables carry the same one-edge
+/// obligation as direct values; none needs a temporary public root.
+pub(in crate::engine::vm) fn release_frame_binding_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    binding: FrameBinding,
+) -> Result<(), RuntimeError> {
+    match binding {
+        FrameBinding::Direct(value) => state.release_jsvalue(value),
+        FrameBinding::Private(index) => state.release_atom_index(index),
+        FrameBinding::PrivateCallable(object) => state.release_object_handle(object),
+        FrameBinding::Captured(var_ref) => state.release_var_ref_handle(var_ref),
+        FrameBinding::Uninitialized => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod direct_state_release_tests {
+    use super::*;
+    use crate::engine::heap::VarRefData;
+
+    #[test]
+    fn captured_and_private_bindings_release_their_edges_directly() {
+        let runtime = Runtime::new();
+        let value_id = runtime.new_object(None).unwrap().into_handle();
+        let callable_id = runtime.new_object(None).unwrap().into_handle();
+        let symbol = runtime.new_symbol(None).unwrap();
+        let atom = symbol.atom();
+        let mut state = runtime.0.state.borrow_mut();
+        let index = state.atoms.unbrand(atom).unwrap();
+        state.atoms.retain_index(index).unwrap();
+        let cell = state
+            .heap
+            .allocate_var_ref_owned(VarRefData::captured(
+                RawValue::Object(value_id),
+                false,
+                false,
+                ClosureVariableKind::Normal,
+            ))
+            .unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::Captured(cell)).unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::PrivateCallable(callable_id))
+            .unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::Private(index)).unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::Direct(JsValue::Int(1))).unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::Uninitialized).unwrap();
+        assert!(state.heap.var_ref(cell).is_err());
+        assert!(state.heap.object(value_id).is_err());
+        assert!(state.heap.object(callable_id).is_err());
+        assert_eq!(state.atoms.resolve(atom).unwrap().ref_count, Some(1));
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+}
+
 /// QuickJS keeps access flags on each closure descriptor rather than on the
 /// shared VarRef. Its ordinary direct-eval prepass may therefore expose one
 /// FunctionName cell through a mutable Normal descriptor. A module import is
@@ -113,6 +168,37 @@ pub(in crate::engine::vm) fn read_frame_binding(
             .read_var_ref(&VarRefView::from_frame(runtime, *var_ref))
             .map_err(|error| Error::internal(error.to_string())),
     }
+}
+
+/// The caller's frame or closure owns this cell throughout the short read.
+#[inline]
+pub(in crate::engine::vm) fn try_read_captured_immediate_in_state(
+    state: &crate::engine::heap::runtime::RuntimeState,
+    id: VarRefId,
+) -> Option<JsValue> {
+    let cell = state.heap.var_ref(id).ok()?;
+    if cell.kind.is_private() {
+        return None;
+    }
+    if !matches!(
+        cell.value,
+        RawValue::Undefined
+            | RawValue::Null
+            | RawValue::Bool(_)
+            | RawValue::Int(_)
+            | RawValue::Float(_)
+            | RawValue::ShortBigInt(_)
+    ) {
+        return None;
+    }
+    let count = state.heap.var_ref_strong_count(id).ok()?;
+    if count == 0 || count >= u32::MAX - 1 {
+        return None;
+    }
+    let value = JsValue::from_raw(cell.value.clone())?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("captured_scalar.read");
+    Some(value)
 }
 
 /// Publish a freshly created shared cell as both the frame binding and the
@@ -222,7 +308,7 @@ pub(in crate::engine::vm) fn reuse_frame_capture(
     runtime
         .validate_var_ref_metadata(root, descriptor)
         .map_err(|error| Error::internal(error.to_string()))?;
-    Ok(root.to_root())
+    Ok(root.to_root()?)
 }
 
 pub(in crate::engine::vm) fn close_frame_binding(
@@ -738,7 +824,7 @@ mod binding_value_tests {
     #[test]
     fn owned_cell_reads_keep_global_and_captured_function_identity() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(
             context
                 .eval("let ownedCellGlobal = function() { return 7; };")
@@ -765,7 +851,7 @@ mod binding_value_tests {
     #[test]
     fn immediate_cell_writes_preserve_assignment_results_and_error_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let x=1; function read(){return x;} function set(v){return x=v;}
             if(set(2)!==2 || read()!==2)return false;
@@ -797,7 +883,7 @@ mod binding_value_tests {
     #[test]
     fn owned_cell_writes_preserve_global_and_captured_values() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("let profileWriteGlobal=1;").unwrap());
         drop(
             context
@@ -816,7 +902,7 @@ mod binding_value_tests {
     #[test]
     fn captured_reads_observe_callbacks_eval_arguments_and_tdz() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let value=1;
             function read(){return value;}
@@ -851,7 +937,7 @@ mod binding_value_tests {
     #[test]
     fn captured_reads_preserve_global_and_closure_values() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("let immediateProfileGlobal=7;").unwrap());
         assert_eq!(
             context.eval("immediateProfileGlobal").unwrap(),

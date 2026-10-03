@@ -58,7 +58,7 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         let async_iterator_prototype = self.new_object(Some(object_prototype))?;
         let async_iterator_key =
-            PropertyKey::from(self.well_known_symbol(WellKnownSymbol::AsyncIterator));
+            PropertyKey::from(self.well_known_symbol(WellKnownSymbol::AsyncIterator)?);
         self.define_native_builtin_auto_init_with_key(
             &async_iterator_prototype,
             realm,
@@ -134,28 +134,28 @@ impl Runtime {
         self.define_function_data_property(
             constructor.as_object(),
             "prototype",
-            Value::Object(async_generator_function_prototype.clone()),
+            Value::Object(async_generator_function_prototype.try_clone()?),
             false,
             false,
         )?;
         self.define_function_data_property(
             &async_generator_function_prototype,
             "constructor",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             false,
             true,
         )?;
         self.define_function_data_property(
             &async_generator_function_prototype,
             "prototype",
-            Value::Object(async_generator_prototype.clone()),
+            Value::Object(async_generator_prototype.try_clone()?),
             false,
             true,
         )?;
         self.define_function_data_property(
             &async_generator_prototype,
             "constructor",
-            Value::Object(async_generator_function_prototype.clone()),
+            Value::Object(async_generator_function_prototype.try_clone()?),
             false,
             true,
         )?;

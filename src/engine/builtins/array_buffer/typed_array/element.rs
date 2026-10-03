@@ -47,7 +47,7 @@ impl ElementStep {
             runtime,
             realm,
             element,
-            PrimitiveResume::start(runtime, realm, value, ToPrimitiveHint::Number),
+            PrimitiveResume::start(runtime, realm, value, ToPrimitiveHint::Number)?,
         )
     }
     pub(crate) fn finish_sync(

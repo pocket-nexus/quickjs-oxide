@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn primitive_set_keeps_invalid_index_conversion_and_receiver_rules() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -266,7 +266,7 @@ mod tests {
     fn small_primitive_selection_matches_owned_wrapper_for_receiver_and_key_rules() {
         for wrapper in [false, true] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             for (key, input, same_receiver, expected) in [
                 ("0", "257", true, "stored"),
                 ("-0", "Symbol()", true, "throw"),
@@ -280,7 +280,7 @@ mod tests {
                     panic!("expected typed array");
                 };
                 let receiver = if same_receiver {
-                    Value::Object(object.clone())
+                    Value::Object(object.try_clone().expect("duplicate root"))
                 } else {
                     Value::Object(runtime.new_object(None).unwrap())
                 };
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn small_primitive_result_keeps_detached_conversion_and_rejects_object_inputs() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(buffer) = context.eval("globalThis.b=new ArrayBuffer(1); b").unwrap()
         else {
             panic!("expected buffer");
@@ -341,7 +341,7 @@ mod tests {
         };
         context.detach_array_buffer(&Value::Object(buffer)).unwrap();
         let key = runtime.intern_property_key("0").unwrap();
-        let receiver = JsValue::Object(object.clone().into_handle());
+        let receiver = JsValue::Object(object.try_clone().expect("duplicate root").into_handle());
         assert!(matches!(
             runtime
                 .try_typed_array_set_primitive(
@@ -415,7 +415,7 @@ mod tests {
         for define in [false, true] {
             let runtime = Runtime::new();
             let weak = std::rc::Rc::downgrade(&runtime.0);
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(view) = context.eval("new Uint8Array(1)").unwrap() else {
                 panic!("expected view")
             };

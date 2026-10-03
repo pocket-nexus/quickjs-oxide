@@ -296,8 +296,8 @@ fn try_catch_cross_realm_regression() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let caught_error = defining.compile("try{null.realmFault}catch(e){e}").unwrap();
     let Value::Object(caught_error) = caller.execute(&caught_error).unwrap() else {
@@ -354,7 +354,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),

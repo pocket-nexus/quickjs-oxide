@@ -425,7 +425,7 @@ fn reflect_property_operations_match_pinned_quickjs() {
 fn reflect_exposes_all_thirteen_nonconstructable_methods() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let reflect = reflect_object(&runtime, &mut context);
     for &(name, expected_length) in METHODS {
         let callable = property_callable(&runtime, &mut context, &reflect, name);
@@ -455,8 +455,8 @@ fn reflect_exposes_all_thirteen_nonconstructable_methods() {
 fn reflect_cross_realm_results_native_errors_and_user_errors_use_exact_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let reflect = reflect_object(&runtime, &mut defining);
     let descriptor_method = property_callable(
         &runtime,
@@ -488,7 +488,7 @@ fn reflect_cross_realm_results_native_errors_and_user_errors_use_exact_realms() 
                 &descriptor_method,
                 Value::Undefined,
                 &[
-                    Value::Object(target.clone()),
+                    Value::Object(target.try_clone().expect("duplicate root")),
                     Value::String(JsString::try_from_utf8("answer").unwrap()),
                 ],
             )
@@ -506,7 +506,7 @@ fn reflect_cross_realm_results_native_errors_and_user_errors_use_exact_realms() 
             .call(
                 &own_keys,
                 Value::Undefined,
-                &[Value::Object(target.clone())],
+                &[Value::Object(target.try_clone().expect("duplicate root"))],
             )
             .unwrap(),
         "cross-realm Reflect.ownKeys result",
@@ -555,7 +555,7 @@ fn reflect_cross_realm_results_native_errors_and_user_errors_use_exact_realms() 
     let user_error = take_exception_object(&mut caller, "caller property-key TypeError");
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
-        Some(caller_type_error.clone()),
+        Some(caller_type_error.try_clone().expect("duplicate root")),
         "Reflect.get replaced a user-thrown caller-realm error",
     );
 
@@ -576,7 +576,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),

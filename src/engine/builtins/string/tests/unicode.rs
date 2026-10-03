@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn string_normalize_matches_quickjs_forms_and_coercion_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     for (source, expected) in [
         (
@@ -65,7 +65,7 @@ fn string_normalize_matches_quickjs_forms_and_coercion_order() {
 #[test]
 fn string_locale_compare_matches_quickjs_normalized_code_point_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     for (source, expected) in [
         (r#""a".localeCompare("c")"#, -2),
@@ -96,7 +96,7 @@ fn string_locale_compare_matches_quickjs_normalized_code_point_order() {
 #[test]
 fn string_locale_compare_coerces_only_receiver_then_that() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -160,8 +160,8 @@ fn string_locale_compare_coerces_only_receiver_then_that() {
 #[test]
 fn string_locale_compare_errors_preserve_quickjs_realm_boundaries() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let prototype = defining.string_prototype().unwrap();
     let key = runtime.intern_property_key("localeCompare").unwrap();
     let Value::Object(function_object) = defining.get_property(&prototype, &key).unwrap() else {
@@ -201,7 +201,7 @@ fn string_locale_compare_errors_preserve_quickjs_realm_boundaries() {
         };
         assert_eq!(
             runtime.get_prototype_of(&error).unwrap(),
-            Some(defining_type_error.clone()),
+            Some(defining_type_error.try_clone().expect("duplicate root")),
             "{label} used the caller realm",
         );
     }
@@ -242,7 +242,7 @@ fn string_locale_compare_errors_preserve_quickjs_realm_boundaries() {
 #[test]
 fn string_locale_compare_and_normalize_share_native_stack_budget() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -276,8 +276,8 @@ fn string_locale_compare_and_normalize_share_native_stack_budget() {
 #[test]
 fn string_normalize_limit_and_oom_use_internal_error_and_recover() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let arguments = NativeArguments {
         actual_arg_count: 1,
@@ -383,8 +383,8 @@ fn string_normalize_limit_and_oom_use_internal_error_and_recover() {
 #[test]
 fn string_normalize_errors_preserve_quickjs_realm_boundaries() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let prototype = defining.string_prototype().unwrap();
     let key = runtime.intern_property_key("normalize").unwrap();
     let Value::Object(function_object) = defining.get_property(&prototype, &key).unwrap() else {
@@ -411,7 +411,7 @@ fn string_normalize_errors_preserve_quickjs_realm_boundaries() {
         (
             Value::Null,
             Vec::new(),
-            defining_type_error.clone(),
+            defining_type_error.try_clone().expect("duplicate root"),
             "null receiver",
         ),
         (

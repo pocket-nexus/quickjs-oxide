@@ -128,7 +128,7 @@ fn method(
             drop(resume);
             match target {
                 None => ProxyGetStep::request_read(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     key,
                     inputs.receiver.take().expect("proxy get receiver"),
                     ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
@@ -140,11 +140,11 @@ fn method(
                 Some(target) => {
                     let key_value = runtime.into_jsvalue(runtime.property_key_value(&key)?)?;
                     inputs.arguments.extend([
-                        JsValue::Object(rooted.target.clone().into_handle()),
+                        JsValue::Object(rooted.target.try_clone()?.into_handle()),
                         key_value,
                         inputs.receiver.take().expect("proxy get receiver"),
                     ]);
-                    let receiver = JsValue::Object(rooted.handler.clone().into_handle());
+                    let receiver = JsValue::Object(rooted.handler.try_clone()?.into_handle());
                     let arguments = std::mem::take(&mut inputs.arguments);
                     ProxyGetStep::request_call(
                         target,
@@ -214,7 +214,7 @@ impl ProxyGetResume {
                     let mut pending = ProxyGetStepPending::new(runtime.clone());
                     pending.invariant_result = Some(value);
                     return Ok(ProxyGetStep::request_descriptor(
-                        rooted.target.clone(),
+                        rooted.target.try_clone()?,
                         key,
                         Self(super::reuse::PooledBox::new(ProxyGetResumeState {
                             pending_effect: pending,
@@ -468,7 +468,7 @@ mod tests {
     fn abandoned_proxy_method_releases_roots_and_depth_guard() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let target = runtime.new_object(None).unwrap();
         let handler = runtime.new_object(None).unwrap();
         let target_id = target.object_id();
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn mismatched_proxy_reply_rejects_and_releases_the_method_guard() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let NativeConversion::Value(proxy) = runtime
             .new_proxy(
                 context.realm,

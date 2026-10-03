@@ -3,11 +3,15 @@ use super::*;
 #[test]
 fn iterator_to_string_tag_accessor_matches_quickjs_metadata_and_setter_semantics() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let iterator_prototype = first.iterator_prototype().unwrap();
     let function_prototype = first.function_prototype().unwrap();
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     let CompleteOrdinaryPropertyDescriptor::Accessor {
         get: Some(getter),
         set: Some(setter),
@@ -43,7 +47,7 @@ fn iterator_to_string_tag_accessor_matches_quickjs_metadata_and_setter_semantics
         assert_eq!(runtime.callable_realm(callable).unwrap(), first.realm);
         assert_eq!(
             runtime.get_prototype_of(callable.as_object()).unwrap(),
-            Some(function_prototype.clone())
+            Some(function_prototype.try_clone().expect("duplicate root"))
         );
         assert!(!runtime.is_constructor(callable.as_object()).unwrap());
         assert_eq!(
@@ -122,7 +126,7 @@ fn iterator_to_string_tag_accessor_matches_quickjs_metadata_and_setter_semantics
             .get_own_property(&iterator_constructor, &prototype)
             .unwrap(),
         Some(CompleteOrdinaryPropertyDescriptor::Data {
-            value: Value::Object(iterator_prototype.clone()),
+            value: Value::Object(iterator_prototype.try_clone().expect("duplicate root")),
             writable: false,
             enumerable: false,
             configurable: false,
@@ -169,7 +173,7 @@ fn iterator_to_string_tag_accessor_matches_quickjs_metadata_and_setter_semantics
         first
             .call(
                 &setter,
-                Value::Object(existing.clone()),
+                Value::Object(existing.try_clone().expect("duplicate root")),
                 &[Value::String(JsString::from_static("new"))],
             )
             .unwrap(),
@@ -300,12 +304,20 @@ fn iterator_to_string_tag_accessor_matches_quickjs_metadata_and_setter_semantics
 #[test]
 fn string_iterator_inherits_iterator_tag_after_own_tag_is_deleted() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let string_prototype = context.string_prototype().unwrap();
     let string_iterator_prototype = context.string_iterator_prototype().unwrap();
     let iterator_prototype = context.iterator_prototype().unwrap();
-    let iterator = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let iterator = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Iterator)
+            .expect("well-known symbol"),
+    );
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     assert_eq!(
         own_key_names(&runtime, &iterator_prototype),
         [
@@ -342,7 +354,7 @@ fn string_iterator_inherits_iterator_tag_after_own_tag_is_deleted() {
         context
             .call(
                 &object_to_string,
-                Value::Object(string_iterator.clone()),
+                Value::Object(string_iterator.try_clone().expect("duplicate root")),
                 &[],
             )
             .unwrap(),
@@ -369,7 +381,7 @@ fn string_iterator_inherits_iterator_tag_after_own_tag_is_deleted() {
 #[test]
 fn iterator_from_wraps_a_string_when_its_iterator_method_is_missing() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .eval(
             r#"
@@ -437,7 +449,7 @@ fn iterator_from_wraps_a_string_when_its_iterator_method_is_missing() {
 #[test]
 fn iterator_close_preserves_pending_throw_and_checks_normal_result_brand() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(r#"
         (function() {
             let calls=0, marker={};
@@ -461,8 +473,12 @@ fn iterator_close_preserves_pending_throw_and_checks_normal_result_brand() {
 #[test]
 fn native_iterator_next_wraps_public_calls_but_for_of_consumes_raw_outcomes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let iterator_key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+    let mut context = runtime.new_context().expect("create context");
+    let iterator_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Iterator)
+            .expect("well-known symbol"),
+    );
     let string_prototype = context.string_prototype().unwrap();
     let Value::Object(iterator_method) = context
         .get_property(&string_prototype, &iterator_key)
@@ -594,9 +610,13 @@ fn native_iterator_next_wraps_public_calls_but_for_of_consumes_raw_outcomes() {
 #[test]
 fn native_iterator_next_raw_dispatch_keeps_the_outer_operation_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
-    let iterator_key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
+    let iterator_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Iterator)
+            .expect("well-known symbol"),
+    );
     let next_key = runtime.intern_property_key("next").unwrap();
     let string_prototype = defining.string_prototype().unwrap();
     let Value::Object(iterator_method) = defining
@@ -631,9 +651,12 @@ fn native_iterator_next_raw_dispatch_keeps_the_outer_operation_realm() {
     for (key, value) in [
         (
             &foreign_iterator_key,
-            Value::Object(foreign_iterator.clone()),
+            Value::Object(foreign_iterator.try_clone().expect("duplicate root")),
         ),
-        (&foreign_next_key, Value::Object(foreign_next.clone())),
+        (
+            &foreign_next_key,
+            Value::Object(foreign_next.try_clone().expect("duplicate root")),
+        ),
     ] {
         assert!(
             caller

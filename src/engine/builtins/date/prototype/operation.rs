@@ -141,7 +141,7 @@ impl DatePrototypeStep {
                 )));
             };
             return Ok(Self::OrdinaryPrimitive {
-                object: object.clone(),
+                object: object.try_clone()?,
                 hint,
             });
         }
@@ -154,7 +154,7 @@ impl DatePrototypeStep {
                     }
                 };
             return Ok(Self::Primitive {
-                value: JsValue::Object(object.clone().into_handle()),
+                value: JsValue::Object(object.try_clone()?.into_handle()),
                 hint: ToPrimitiveHint::Number,
                 resume: DatePrototypeResume(Box::new(DatePrototypeResumeState {
                     realm,
@@ -202,7 +202,7 @@ impl DatePrototypeStep {
         };
         let mut resume = DatePrototypeResume(Box::new(DatePrototypeResumeState {
             realm,
-            object: object.clone(),
+            object: object.try_clone()?,
             phase,
             arguments: std::collections::VecDeque::new(),
             reply: JsValue::Undefined,
@@ -316,7 +316,7 @@ impl DatePrototypeResume {
                 }
                 self.0.phase = Phase::JsonMethod;
                 Ok(DatePrototypeStep::Read {
-                    object: self.0.object.clone(),
+                    object: self.0.object.try_clone()?,
                     key: runtime.pinned_property_key(
                         crate::engine::atom::pinned::PinnedAtom::ToISOString,
                     )?,
@@ -339,7 +339,7 @@ impl DatePrototypeResume {
                 };
                 Ok(DatePrototypeStep::Call {
                     callable,
-                    receiver: JsValue::Object(self.0.object.clone().into_handle()),
+                    receiver: JsValue::Object(self.0.object.try_clone()?.into_handle()),
                 })
             }
             _ => Err(RuntimeError::Invariant(

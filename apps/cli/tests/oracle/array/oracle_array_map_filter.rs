@@ -415,8 +415,8 @@ fn array_map_filter_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_string_prototype = defining.string_prototype().unwrap();
     let defining_type_error = eval_object(
@@ -443,8 +443,10 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
     let Value::Object(mapped) = caller
         .call(
             &map,
-            Value::Object(source.clone()),
-            &[Value::Object(identity.as_object().clone())],
+            Value::Object(source.try_clone().expect("duplicate root")),
+            &[Value::Object(
+                identity.as_object().try_clone().expect("duplicate root"),
+            )],
         )
         .expect("cross-realm default Array.map")
     else {
@@ -452,7 +454,11 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
     };
     assert_eq!(
         runtime.get_prototype_of(&mapped).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "cross-realm default Array constructor was not replaced by the method realm Array",
     );
 
@@ -466,7 +472,9 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
         .call(
             &filter,
             Value::Object(source),
-            &[Value::Object(always.as_object().clone())],
+            &[Value::Object(
+                always.as_object().try_clone().expect("duplicate root"),
+            )],
         )
         .expect("cross-realm default Array.filter")
     else {
@@ -483,7 +491,9 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
             .call(
                 &map,
                 Value::String(JsString::try_from_utf8("a").unwrap()),
-                &[Value::Object(identity.as_object().clone())],
+                &[Value::Object(
+                    identity.as_object().try_clone().expect("duplicate root"),
+                )],
             )
             .expect("cross-realm primitive Array.map"),
     );
@@ -510,7 +520,12 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
         .call(
             &map,
             Value::Object(one),
-            &[Value::Object(object_callback.as_object().clone())],
+            &[Value::Object(
+                object_callback
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root"),
+            )],
         )
         .expect("cross-realm object-valued Array.map")
     else {
@@ -522,7 +537,7 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
     };
     assert_eq!(
         runtime.get_prototype_of(&callback_result).unwrap(),
-        Some(caller_object_prototype.clone()),
+        Some(caller_object_prototype.try_clone().expect("duplicate root")),
         "Array.map moved a callback result into the method defining realm",
     );
     let custom_source = eval_object(
@@ -534,7 +549,9 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
         .call(
             &map,
             Value::Object(custom_source),
-            &[Value::Object(identity.as_object().clone())],
+            &[Value::Object(
+                identity.as_object().try_clone().expect("duplicate root"),
+            )],
         )
         .expect("cross-realm custom species Array.map")
     else {
@@ -560,7 +577,9 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
         caller.call(
             &map,
             Value::Object(bad),
-            &[Value::Object(identity.as_object().clone())],
+            &[Value::Object(
+                identity.as_object().try_clone().expect("duplicate root")
+            )],
         ),
         Err(RuntimeError::Exception),
     ));
@@ -582,7 +601,9 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
         caller.call(
             &map,
             Value::Object(throwing_source),
-            &[Value::Object(throwing.as_object().clone())],
+            &[Value::Object(
+                throwing.as_object().try_clone().expect("duplicate root")
+            )],
         ),
         Err(RuntimeError::Exception),
     ));
@@ -597,7 +618,7 @@ fn array_map_filter_species_boxing_results_and_errors_use_pinned_realms() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

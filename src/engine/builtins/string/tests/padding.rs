@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn string_pad_preserves_pinned_values_conversion_order_and_early_returns() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -82,7 +82,7 @@ fn string_pad_preserves_pinned_values_conversion_order_and_early_returns() {
 #[test]
 fn string_pad_small_limit_preserves_filler_order_and_range_error_kind() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let filler = context
         .eval(
             r#"(function(){
@@ -178,8 +178,8 @@ fn string_pad_small_limit_preserves_filler_order_and_range_error_kind() {
 #[test]
 fn string_pad_reservation_oom_uses_defining_realm_and_runtime_recovers() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let prototype = defining.string_prototype().unwrap();
     let pad_end_key = runtime.intern_property_key("padEnd").unwrap();
     let Value::Object(pad_end_object) = defining.get_property(&prototype, &pad_end_key).unwrap()

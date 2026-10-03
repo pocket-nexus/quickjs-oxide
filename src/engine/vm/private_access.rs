@@ -104,7 +104,7 @@ pub(super) fn step(
                     .cold
                     .function
                     .closures()
-                    .get(usize::from(index))
+                    .get(runtime, usize::from(index))
                     .ok_or_else(|| Error::internal("private closure slot is out of bounds"))?,
             ),
         };
@@ -174,7 +174,7 @@ pub(super) fn step(
                 }
                 execution.slots.push(
                     &mut frame.window,
-                    JsValue::Object(method.as_object().clone().into_handle()),
+                    JsValue::Object(method.as_object().try_clone()?.into_handle()),
                 )?;
             }
             return Ok(());
@@ -296,7 +296,7 @@ fn enter_accessor(
                 .cold
                 .function
                 .closures()
-                .get(usize::from(index))
+                .get(runtime, usize::from(index))
                 .ok_or_else(|| Error::internal("private closure slot is out of bounds"))?,
         ),
     };

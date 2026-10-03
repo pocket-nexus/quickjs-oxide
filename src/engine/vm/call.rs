@@ -1,4 +1,5 @@
 pub(super) mod ordinary;
+pub(crate) use ordinary::NativeSelection;
 
 mod protocol;
 
@@ -34,7 +35,7 @@ impl Runtime {
         &self,
         callable: &CallableRef,
     ) -> Result<CallableExecution, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !callable.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("callable"));
         }
@@ -175,7 +176,7 @@ impl Runtime {
         };
         let bytecode = FunctionBytecodeRef::from_borrowed_handle(self.clone(), bytecode)?;
         let closure_slots =
-            super::closure::ClosureSlots::shared(callable.as_object().clone(), closure_slots);
+            super::closure::ClosureSlots::shared(callable.as_object().try_clone()?, closure_slots);
         Ok(CallableExecution::Bytecode {
             bytecode,
             closure_slots,
@@ -190,7 +191,7 @@ impl Runtime {
         &self,
         callable: &CallableRef,
     ) -> Result<Option<(NativeFunctionId, ContextId, u8)>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !callable.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("native callable"));
         }
@@ -432,8 +433,8 @@ impl Runtime {
                 )?,
             ));
         }
-        let constructor = ConstructorRef::from_validated_callable(constructor);
-        let new_target = ConstructorRef::from_validated_callable(new_target);
+        let constructor = ConstructorRef::from_validated_callable(constructor)?;
+        let new_target = ConstructorRef::from_validated_callable(new_target)?;
         Ok(NativeConversion::Value((constructor, new_target)))
     }
 
@@ -448,7 +449,7 @@ impl Runtime {
         self.construct_internal_with_new_target(
             caller_realm,
             constructor,
-            ConstructNewTarget::Validated(new_target.clone()),
+            ConstructNewTarget::Validated(new_target.try_clone().expect("duplicate root")),
             arguments,
         )
     }
@@ -522,7 +523,7 @@ impl Runtime {
                             .as_mut()
                             .expect("new target")
                             .retarget_bound_identity(self, &constructor, &target)?;
-                        constructor = ConstructorRef::from_validated_callable(&target);
+                        constructor = ConstructorRef::from_validated_callable(&target)?;
                     }
                     classification => {
                         return Ok(NativeConversion::Value(NormalizedConstructor {
@@ -577,16 +578,23 @@ impl Runtime {
         new_target: ConstructNewTarget,
         arguments: Vec<JsValue>,
     ) -> Result<Completion, RuntimeError> {
+        let constructor = match constructor.try_clone() {
+            Ok(constructor) => constructor,
+            Err(error) => {
+                if let ConstructNewTarget::Raw(value) = new_target {
+                    let _ = self.release_jsvalue(value);
+                }
+                for value in arguments {
+                    let _ = self.release_jsvalue(value);
+                }
+                return Err(error);
+            }
+        };
         let NormalizedConstructor {
             target,
             new_target,
             arguments,
-        } = match self.normalize_constructor(
-            caller_realm,
-            constructor.clone(),
-            new_target,
-            arguments,
-        )? {
+        } = match self.normalize_constructor(caller_realm, constructor, new_target, arguments)? {
             NativeConversion::Value(result) => result,
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(value));
@@ -1053,16 +1061,21 @@ pub(crate) enum CallableExecution {
 /// QuickJS keeps `[[Call]]` and `[[Construct]]` independent: in particular a
 /// Proxy may carry only the latter and still dispatch its `construct` trap.
 /// Keep that capability private instead of weakening public `CallableRef`.
-#[derive(Clone)]
 pub(crate) struct ConstructorRef(ObjectRef);
 
 impl ConstructorRef {
+    pub(crate) fn try_clone(&self) -> Result<Self, RuntimeError> {
+        self.0.try_clone().map(Self)
+    }
+
     pub(crate) fn from_validated_object(object: ObjectRef) -> Self {
         Self(object)
     }
 
-    pub(crate) fn from_validated_callable(callable: &CallableRef) -> Self {
-        Self(callable.as_object().clone())
+    pub(crate) fn from_validated_callable(
+        callable: &CallableRef,
+    ) -> Result<Self, crate::engine::api::RuntimeError> {
+        Ok(Self(callable.as_object().try_clone()?))
     }
 
     pub(crate) fn as_object(&self) -> &ObjectRef {
@@ -1167,12 +1180,12 @@ impl ConstructNewTarget {
         }
         match self {
             Self::Validated(constructor) => {
-                *constructor = ConstructorRef::from_validated_callable(target);
+                *constructor = ConstructorRef::from_validated_callable(target)?;
             }
             Self::Raw(value) => {
                 let previous = std::mem::replace(
                     value,
-                    JsValue::Object(target.as_object().clone().into_handle()),
+                    JsValue::Object(target.as_object().try_clone()?.into_handle()),
                 );
                 runtime.release_jsvalue(previous)?;
             }

@@ -10,7 +10,7 @@ use super::*;
 #[test]
 fn code_point_range_context_api_preserves_quickjs_native_contract() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let helper = context.new_code_point_range_function().unwrap();
 
     assert_eq!(

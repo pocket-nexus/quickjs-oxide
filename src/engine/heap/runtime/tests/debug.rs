@@ -3,8 +3,8 @@ use super::*;
 #[test]
 fn function_debug_accessors_match_quickjs_descriptors_realms_and_receivers() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let function_prototype = first.function_prototype().unwrap();
     let prototype_key = runtime.intern_property_key("prototype").unwrap();
     let length_key = runtime.intern_property_key("length").unwrap();
@@ -46,7 +46,7 @@ fn function_debug_accessors_match_quickjs_descriptors_realms_and_receivers() {
         };
         assert_eq!(
             runtime.get_prototype_of(getter.as_object()).unwrap(),
-            Some(function_prototype.clone())
+            Some(function_prototype.try_clone().expect("duplicate root"))
         );
         assert_eq!(runtime.callable_realm(&getter).unwrap(), first.realm);
         assert!(!runtime.is_constructor(getter.as_object()).unwrap());
@@ -115,7 +115,7 @@ fn function_debug_accessors_match_quickjs_descriptors_realms_and_receivers() {
             first
                 .call(
                     &getters[index].1,
-                    Value::Object(function.clone()),
+                    Value::Object(function.try_clone().expect("duplicate root")),
                     &[Value::Int(1), Value::Int(2)],
                 )
                 .unwrap(),
@@ -131,7 +131,11 @@ fn function_debug_accessors_match_quickjs_descriptors_realms_and_receivers() {
     };
     let bind = runtime.as_callable(&bind_object).unwrap().unwrap();
     let Value::Object(bound) = first
-        .call(&bind, Value::Object(function.clone()), &[Value::Null])
+        .call(
+            &bind,
+            Value::Object(function.try_clone().expect("duplicate root")),
+            &[Value::Null],
+        )
         .unwrap()
     else {
         panic!("bind did not return an object");
@@ -142,10 +146,10 @@ fn function_debug_accessors_match_quickjs_descriptors_realms_and_receivers() {
             Value::Undefined,
             Value::Null,
             Value::Int(1),
-            Value::Object(ordinary.clone()),
-            Value::Object(function_prototype.clone()),
-            Value::Object(bound.clone()),
-            Value::Object(getter.as_object().clone()),
+            Value::Object(ordinary.try_clone().expect("duplicate root")),
+            Value::Object(function_prototype.try_clone().expect("duplicate root")),
+            Value::Object(bound.try_clone().expect("duplicate root")),
+            Value::Object(getter.as_object().try_clone().expect("duplicate root")),
         ] {
             assert_eq!(first.call(getter, receiver, &[]).unwrap(), Value::Undefined);
         }
@@ -171,7 +175,7 @@ fn function_debug_accessors_match_quickjs_descriptors_realms_and_receivers() {
 #[test]
 fn runtime_debug_info_mode_matches_quickjs_strip_source_and_strip_debug() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let keys = ["fileName", "lineNumber", "columnNumber"]
         .map(|name| runtime.intern_property_key(name).unwrap());
@@ -188,15 +192,24 @@ fn runtime_debug_info_mode_matches_quickjs_strip_source_and_strip_debug() {
     let Value::Object(full) = context.eval_with_filename(expression, "full.js").unwrap() else {
         panic!("full debug compile did not return a function");
     };
-    assert_eq!(runtime.debug_info_mode(), DebugInfoMode::Full);
+    assert_eq!(
+        runtime.debug_info_mode().expect("runtime configuration"),
+        DebugInfoMode::Full
+    );
     assert_eq!(
         context
-            .call(&to_string, Value::Object(full.clone()), &[])
+            .call(
+                &to_string,
+                Value::Object(full.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
         Value::String(JsString::from_static("function stripped() {}"))
     );
 
-    runtime.set_debug_info_mode(DebugInfoMode::StripSource);
+    runtime
+        .set_debug_info_mode(DebugInfoMode::StripSource)
+        .expect("set runtime configuration");
     let Value::Object(source_stripped) = context
         .eval_with_filename(expression, "source-stripped.js")
         .unwrap()
@@ -222,7 +235,9 @@ fn runtime_debug_info_mode_matches_quickjs_strip_source_and_strip_debug() {
         ))
     );
 
-    runtime.set_debug_info_mode(DebugInfoMode::StripDebug);
+    runtime
+        .set_debug_info_mode(DebugInfoMode::StripDebug)
+        .expect("set runtime configuration");
     let Value::Object(debug_stripped) = context
         .eval_with_filename(expression, "debug-stripped.js")
         .unwrap()
@@ -254,7 +269,7 @@ fn runtime_debug_info_mode_matches_quickjs_strip_source_and_strip_debug() {
 #[test]
 fn function_debug_position_distinguishes_missing_debug_from_missing_pc_table() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let keys = ["fileName", "lineNumber", "columnNumber"]
         .map(|name| runtime.intern_property_key(name).unwrap());
 
@@ -311,7 +326,7 @@ fn function_debug_position_distinguishes_missing_debug_from_missing_pc_table() {
 #[test]
 fn publication_accepts_arbitrary_debug_source_bytes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source =
         b"function f(){/*\x80Q*/\0\xef\xbb\xbf\xed\xa0\xbd\xed\xb8\x80\xed\xa0\x80\xff}".to_vec();
     let function = runtime
@@ -336,7 +351,11 @@ fn publication_accepts_arbitrary_debug_source_bytes() {
     let function_prototype = context.function_prototype().unwrap();
     let to_string = property_callable(&runtime, &mut context, &function_prototype, "toString");
     let actual = context
-        .call(&to_string, Value::Object(callable.as_object().clone()), &[])
+        .call(
+            &to_string,
+            Value::Object(callable.as_object().try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap();
     let expected = JsString::try_from_bytes(&source).unwrap();
     assert_eq!(actual, Value::String(expected.clone()));
@@ -350,8 +369,11 @@ fn publication_accepts_arbitrary_debug_source_bytes() {
 #[test]
 fn publication_rejects_malformed_debug_pc_order_range_and_position() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
-    let baseline = runtime.heap_counts().function_bytecode_nodes;
+    let context = runtime.new_context().expect("create context");
+    let baseline = runtime
+        .heap_counts()
+        .expect("runtime state")
+        .function_bytecode_nodes;
 
     let malformed = [
         UnlinkedFunctionDebug {
@@ -396,7 +418,10 @@ fn publication_rejects_malformed_debug_pc_order_range_and_position() {
                 .is_err()
         );
         assert_eq!(
-            runtime.heap_counts().function_bytecode_nodes,
+            runtime
+                .heap_counts()
+                .expect("runtime state")
+                .function_bytecode_nodes,
             baseline,
             "malformed debug metadata changed the heap"
         );
@@ -406,7 +431,7 @@ fn publication_rejects_malformed_debug_pc_order_range_and_position() {
 #[test]
 fn publication_keeps_duplicate_last_and_unreachable_pc_metadata() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let duplicate = debug_draft(UnlinkedFunctionDebug {
         filename: JsString::from_static("duplicate.js"),
         pc2line: Some(Pc2LineTable::new(
@@ -475,12 +500,15 @@ fn publication_keeps_duplicate_last_and_unreachable_pc_metadata() {
 #[test]
 fn publication_rollback_releases_the_new_debug_filename_atom() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let stale_realm = context.realm;
     drop(context);
     runtime.run_gc().unwrap();
-    let baseline_atoms = runtime.test_atom_count();
-    let baseline_bytecode = runtime.heap_counts().function_bytecode_nodes;
+    let baseline_atoms = runtime.test_atom_count().expect("atom count");
+    let baseline_bytecode = runtime
+        .heap_counts()
+        .expect("runtime state")
+        .function_bytecode_nodes;
 
     let function = debug_draft(UnlinkedFunctionDebug {
         filename: JsString::from_static("rollback-debug-filename.js"),
@@ -492,9 +520,15 @@ fn publication_rollback_releases_the_new_debug_filename_atom() {
             .publish_unlinked_function(stale_realm, function)
             .is_err()
     );
-    assert_eq!(runtime.test_atom_count(), baseline_atoms);
     assert_eq!(
-        runtime.heap_counts().function_bytecode_nodes,
+        runtime.test_atom_count().expect("atom count"),
+        baseline_atoms
+    );
+    assert_eq!(
+        runtime
+            .heap_counts()
+            .expect("runtime state")
+            .function_bytecode_nodes,
         baseline_bytecode
     );
 }

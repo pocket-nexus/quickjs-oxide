@@ -179,7 +179,7 @@ pub(super) fn converted(
         if kind == Kind::Call {
             let frame = execution.frames.current_mut(id)?;
             execution.slots.push(&mut frame.window, receiver)?;
-            let getter_receiver = JsValue::Object(object.clone().into_handle());
+            let getter_receiver = JsValue::Object(object.try_clone()?.into_handle());
             return super::proxy_get_driver::start_owned_read(
                 runtime,
                 execution,

@@ -486,8 +486,8 @@ fn string_trim_recursion_is_catchable_shared_and_recovers() {
 fn string_trim_defining_realms_user_throw_identity_and_caller_construct_error_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
     let trim = property_callable(&runtime, &mut defining, &defining_prototype, "trim");
     let trim_end = property_callable(&runtime, &mut defining, &defining_prototype, "trimEnd");
@@ -527,7 +527,7 @@ fn string_trim_defining_realms_user_throw_identity_and_caller_construct_error_ar
         &runtime,
         &caller.global_object().unwrap(),
         "trimSentinel",
-        Value::Object(sentinel.clone()),
+        Value::Object(sentinel.try_clone().expect("duplicate root")),
     );
     let throwing_receiver = caller
         .eval(
@@ -566,8 +566,8 @@ fn string_trim_callables_aliases_are_per_realm_distinct_and_collectable() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let retained = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_prototype = first.string_prototype().unwrap();
         let second_prototype = second.string_prototype().unwrap();
         let first_trim = property_callable(&runtime, &mut first, &first_prototype, "trim");
@@ -599,18 +599,21 @@ fn string_trim_callables_aliases_are_per_realm_distinct_and_collectable() {
         (first_trim, first_end, first_start)
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(retained);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]
 fn string_trim_stack_overflow_uses_the_caller_realm_and_recovers() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
     let trim = property_callable(&runtime, &mut defining, &defining_prototype, "trim");
     let defining_internal_error = intrinsic_prototype(&runtime, &mut defining, "InternalError");
@@ -621,7 +624,7 @@ fn string_trim_stack_overflow_uses_the_caller_realm_and_recovers() {
         &runtime,
         &caller.global_object().unwrap(),
         "foreignTrim",
-        Value::Object(trim.as_object().clone()),
+        Value::Object(trim.as_object().try_clone().expect("duplicate root")),
     );
     let Value::Object(error) = caller
         .eval(

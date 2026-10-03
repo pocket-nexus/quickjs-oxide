@@ -21,8 +21,8 @@ fn json_native_cproto_matches_pinned_function_table() {
 #[test]
 fn global_json_is_realm_aware_lazy_and_reserves_the_pinned_table_order() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
     let key = runtime
@@ -91,7 +91,7 @@ fn global_json_is_realm_aware_lazy_and_reserves_the_pinned_table_order() {
 #[test]
 fn deleting_lazy_global_json_releases_its_realm_edge() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Json)
@@ -121,7 +121,7 @@ fn deleting_lazy_global_json_releases_its_realm_edge() {
 #[test]
 fn json_module_parser_returns_the_strict_json_value() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = JsString::from_static("{\"answer\":42}");
     let filename = JsString::from_static("answer.json");
     let NativeConversion::Value(crate::engine::value::JsValue::Object(value)) = runtime
@@ -143,7 +143,7 @@ fn json_module_parser_returns_the_strict_json_value() {
 #[test]
 fn quickjs_extended_json_module_parser_is_host_selected_and_keeps_strict_json_strict() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = JsString::try_from_utf8(
         "/* leading */\n{\n\
          // comment\n\
@@ -259,7 +259,7 @@ fn json_module_parser_reports_pinned_quickjs_token_locations() {
 #[test]
 fn json_parse_prepends_pinned_input_location_to_the_active_backtrace() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = context
         .eval_with_filename(
             r#"
@@ -391,7 +391,7 @@ fn assert_json_module_syntax_location_with_mode(
     extended: bool,
 ) {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = JsString::try_from_utf8(source).unwrap();
     let filename = JsString::from_static("fixtures/value.json");
     let parsed = if extended {

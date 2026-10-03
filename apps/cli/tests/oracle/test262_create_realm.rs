@@ -27,7 +27,7 @@ fn text(value: Value) -> String {
 fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let installed = context
         .install_test262_host()
         .expect("install Test262 host surface");
@@ -39,7 +39,7 @@ fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
     assert_eq!(format!("{transcript}\n"), QUICKJS_2026_06_04);
 
     assert!(
-        runtime.is_job_pending(),
+        runtime.is_job_pending().expect("runtime state"),
         "evalScript must not drain a child realm's Promise jobs"
     );
     let first = runtime
@@ -53,7 +53,7 @@ fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
     };
     assert_ne!(job_realm, context.realm_id());
     let mut remaining_jobs = 0usize;
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         remaining_jobs += 1;
         assert!(
             remaining_jobs <= 64,
@@ -73,23 +73,29 @@ fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
 fn returned_child_host_retains_and_then_releases_its_realm_cycle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let parent_262 = context
         .install_test262_host()
         .expect("install parent Test262 host surface");
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 
     let child_262 = eval(&mut context, "$262.createRealm()");
     let Value::Object(child_262) = child_262 else {
         panic!("createRealm did not return the child $262 object");
     };
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         2,
         "dropping createRealm's temporary Context must leave the returned realm alive"
     );
     runtime.run_gc().expect("collect while child is exported");
-    assert_eq!(runtime.heap_counts().context_nodes, 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        2
+    );
 
     let eval_script_key = runtime
         .intern_property_key("evalScript")
@@ -109,7 +115,10 @@ fn returned_child_host_retains_and_then_releases_its_realm_cycle() {
     runtime
         .run_gc()
         .expect("collect while only child callable is exported");
-    assert_eq!(runtime.heap_counts().context_nodes, 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        2
+    );
     assert_eq!(
         context
             .call(
@@ -128,7 +137,10 @@ fn returned_child_host_retains_and_then_releases_its_realm_cycle() {
     runtime
         .run_gc()
         .expect("collect unreachable child realm cycle");
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 
     let child_262 = eval(&mut context, "$262.createRealm()");
     let Value::Object(child_262) = child_262 else {
@@ -152,7 +164,10 @@ fn returned_child_host_retains_and_then_releases_its_realm_cycle() {
     runtime
         .run_gc()
         .expect("collect while only child IsHTMLDDA is exported");
-    assert_eq!(runtime.heap_counts().context_nodes, 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        2
+    );
     assert_eq!(
         context
             .call(&is_html_dda, Value::Undefined, &[])
@@ -163,10 +178,16 @@ fn returned_child_host_retains_and_then_releases_its_realm_cycle() {
     runtime
         .run_gc()
         .expect("collect IsHTMLDDA-retained child realm cycle");
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 
     drop(parent_262);
     drop(context);
     runtime.run_gc().expect("collect parent realm cycle");
-    assert_eq!(runtime.heap_counts().context_nodes, 0);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        0
+    );
 }

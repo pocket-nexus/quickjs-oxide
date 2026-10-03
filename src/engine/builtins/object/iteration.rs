@@ -226,7 +226,7 @@ impl IterationStep {
         }));
         Ok(Self::request_read(
             runtime.dup_jsvalue(iterable)?,
-            PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
+            PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
             resume,
         ))
     }
@@ -235,13 +235,20 @@ impl IterationResume {
     fn iterator(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
             .iterator
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("Object iterator not acquired"))
     }
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
-        self.0.result.clone().ok_or(RuntimeError::Invariant(
-            "Object iterator result not allocated",
-        ))
+        self.0
+            .result
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
+            .ok_or(RuntimeError::Invariant(
+                "Object iterator result not allocated",
+            ))
     }
     fn abrupt(mut self, value: JsValue) -> IterationStep {
         let close = matches!(self.0.kind, IterationKind::Entries)
@@ -307,7 +314,7 @@ impl IterationResume {
                     return Ok(self.abrupt(value));
                 };
                 let item = ObjectRef::from_owned_handle(runtime.clone(), item);
-                self.0.phase = Phase::EntryKey(item.clone());
+                self.0.phase = Phase::EntryKey(item.try_clone()?);
                 Ok(IterationStep::request_read(
                     JsValue::Object(item.into_handle()),
                     runtime
@@ -320,7 +327,9 @@ impl IterationResume {
                 let callable = self
                     .0
                     .callback
-                    .clone()
+                    .as_ref()
+                    .map(|value| value.try_clone())
+                    .transpose()?
                     .ok_or(RuntimeError::Invariant("groupBy callback missing"))?;
                 let receiver =
                     JsValue::Object(runtime.global_object_for_realm(self.0.realm)?.into_handle());
@@ -395,7 +404,7 @@ impl IterationResume {
                     )));
                 };
                 let iterator = ObjectRef::from_owned_handle(runtime.clone(), id);
-                self.0.iterator = Some(iterator.clone());
+                self.0.iterator = Some(iterator.try_clone()?);
                 self.0.phase = Phase::NextMethod;
                 let key =
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
@@ -475,7 +484,7 @@ impl IterationResume {
                             runtime.set_map_record(
                                 &groups,
                                 key,
-                                JsValue::Object(group.clone().into_handle()),
+                                JsValue::Object(group.try_clone()?.into_handle()),
                             )?;
                             group
                         }
@@ -491,7 +500,7 @@ impl IterationResume {
                 let group = match value {
                     JsValue::Undefined => {
                         let group = runtime.new_array(self.0.realm)?;
-                        self.0.phase = Phase::GroupDefined(group.clone());
+                        self.0.phase = Phase::GroupDefined(group.try_clone()?);
                         let result = self.result()?;
                         return Ok(IterationStep::request_define(
                             result,
@@ -552,7 +561,7 @@ impl IterationResume {
         };
         match self.0.kind {
             IterationKind::Entries => {
-                self.0.phase = Phase::EntryDefined(key.clone());
+                self.0.phase = Phase::EntryDefined(key.try_clone()?);
                 Ok(IterationStep::request_define(
                     self.result()?,
                     key,
@@ -561,7 +570,7 @@ impl IterationResume {
                 ))
             }
             IterationKind::Group => {
-                self.0.phase = Phase::Group(key.clone());
+                self.0.phase = Phase::Group(key.try_clone()?);
                 Ok(IterationStep::request_read(
                     JsValue::Object(self.result()?.into_handle()),
                     key,
@@ -709,7 +718,7 @@ mod tests {
     #[test]
     fn from_entries_unpublished_result_is_owned_until_abandonment() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let iterable = runtime.new_object(None).unwrap();
         let iterable_id = iterable.object_id();
         let arguments = NativeArguments {

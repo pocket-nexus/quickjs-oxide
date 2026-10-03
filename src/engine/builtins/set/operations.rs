@@ -173,7 +173,7 @@ impl SetStep {
             runtime: runtime.clone(),
             realm,
             kind,
-            set: set.clone(),
+            set: set.try_clone()?,
             target,
             size: 0,
             has: None,
@@ -205,7 +205,9 @@ impl SetResume {
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
             .result
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("Set operation result missing"))
     }
     /// Borrowed identity of the resident result owner for record mutations.
@@ -263,7 +265,9 @@ impl SetResume {
         Ok(SetStep::request_call(
             self.0
                 .keys
-                .clone()
+                .as_ref()
+                .map(|value| value.try_clone())
+                .transpose()?
                 .ok_or(RuntimeError::Invariant("Set operation keys missing"))?,
             runtime.dup_jsvalue(&self.0.target)?,
             Vec::new(),
@@ -299,7 +303,9 @@ impl SetResume {
         Ok(SetStep::request_call(
             self.0
                 .has
-                .clone()
+                .as_ref()
+                .map(|value| value.try_clone())
+                .transpose()?
                 .ok_or(RuntimeError::Invariant("Set operation has missing"))?,
             runtime.dup_jsvalue(&self.0.target)?,
             arguments,

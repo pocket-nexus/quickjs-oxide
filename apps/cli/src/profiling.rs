@@ -168,7 +168,14 @@ mod enabled {
             if !self.dump {
                 return;
             }
-            let snapshot = runtime.memory_snapshot();
+            let snapshot = match runtime.memory_snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    self.failed.set(true);
+                    let _ = writeln!(io::stderr(), "qjs: profiling report incomplete: {error}");
+                    return;
+                }
+            };
             self.write(|out| {
                 if self.json { write_memory_json(out, &snapshot, phase) }
                 else {
@@ -196,7 +203,14 @@ mod enabled {
                 let start = Instant::now();
                 let runtime = Runtime::new_with_host_services(host);
                 let created_runtime = Instant::now();
-                let context = runtime.new_context();
+                let context = match runtime.new_context() {
+                    Ok(context) => context,
+                    Err(error) => {
+                        self.failed.set(true);
+                        let _ = writeln!(io::stderr(), "qjs: lifecycle context failed: {error}");
+                        return;
+                    }
+                };
                 let created_context = Instant::now();
                 drop(context);
                 let dropped_context = Instant::now();

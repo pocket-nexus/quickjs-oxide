@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn string_trim_preserves_whitespace_sides_utf16_rope_identity_and_argument_ignorance() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -131,8 +131,8 @@ fn string_trim_preserves_whitespace_sides_utf16_rope_identity_and_argument_ignor
 #[test]
 fn string_trim_throws_in_defining_realm_preserves_user_throw_and_recovers_from_oom() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let prototype = defining.string_prototype().unwrap();
     let trim_key = runtime.intern_property_key("trim").unwrap();
     let Value::Object(trim_object) = defining.get_property(&prototype, &trim_key).unwrap() else {

@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn dependency_free_top_level_await_fulfills_the_evaluation_promise() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(context.eval("globalThis.__tlaLog = []").unwrap());
     let module = context
         .compile_module(
@@ -42,13 +42,13 @@ fn dependency_free_top_level_await_fulfills_the_evaluation_promise() {
 
     let cached = module_evaluation_promise(&mut context, &module);
     assert_eq!(cached.object_id(), promise.object_id());
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn async_dependency_does_not_block_a_sibling_but_delays_its_parent() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(context.eval("globalThis.__tlaOrder = []").unwrap());
     let (loader, _, _) = MapModuleLoader::new([
         (
@@ -101,13 +101,13 @@ fn async_dependency_does_not_block_a_sibling_but_delays_its_parent() {
         &mut context,
         "globalThis.__tlaOrder.join(',') === 'async:start,sibling,async:end,parent:42:false'",
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn async_dependency_rejection_preserves_identity_and_skips_the_parent_body() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let reason = context
         .eval("globalThis.__tlaReason = {}; globalThis.__tlaReason")
         .unwrap();
@@ -154,13 +154,13 @@ fn async_dependency_rejection_preserves_identity_and_skips_the_parent_body() {
         runtime.root_raw_value(cached.result.clone()).unwrap(),
         reason
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn shared_async_dependency_rejects_evaluation_promises_in_forward_parent_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let reason = context
         .eval(
             r#"
@@ -206,22 +206,27 @@ fn shared_async_dependency_rejects_evaluation_promises_in_forward_parent_order()
     let second_was_pending = Rc::new(Cell::new(false));
     let captured_second_was_pending = second_was_pending.clone();
     let observing_runtime = runtime.clone();
-    runtime.set_host_promise_rejection_tracker(move |event| {
-        if !event.is_handled() && event.promise().object_id() == first_promise_id {
-            captured_second_was_pending.set(matches!(
-                observing_runtime
-                    .module_record(second_raw)
-                    .expect("reentrant rejection tracker lost the second parent")
-                    .evaluation,
-                ModuleEvaluationState::EvaluatingAsync
+    runtime
+        .set_host_promise_rejection_tracker(move |event| {
+            if !event.is_handled() && event.promise().object_id() == first_promise_id {
+                captured_second_was_pending.set(matches!(
+                    observing_runtime
+                        .module_record(second_raw)
+                        .expect("reentrant rejection tracker lost the second parent")
+                        .evaluation,
+                    ModuleEvaluationState::EvaluatingAsync
+                ));
+            }
+            captured.borrow_mut().push((
+                event.is_handled(),
+                event.promise().object_id(),
+                event
+                    .reason()
+                    .try_clone()
+                    .expect("duplicate rejection reason"),
             ));
-        }
-        captured.borrow_mut().push((
-            event.is_handled(),
-            event.promise().object_id(),
-            event.reason().clone(),
-        ));
-    });
+        })
+        .expect("configure test runtime");
 
     drop(
         context
@@ -245,7 +250,11 @@ fn shared_async_dependency_rejects_evaluation_promises_in_forward_parent_order()
     assert_eq!(
         events.borrow().as_slice(),
         &[
-            (false, first_promise.object_id(), reason.clone()),
+            (
+                false,
+                first_promise.object_id(),
+                reason.try_clone().expect("duplicate root")
+            ),
             (false, second_promise.object_id(), reason),
         ]
     );
@@ -253,14 +262,14 @@ fn shared_async_dependency_rejects_evaluation_promises_in_forward_parent_order()
         second_was_pending.get(),
         "first rejection tracker callback observed the later parent already errored"
     );
-    runtime.clear_host_promise_rejection_tracker();
-    assert!(!runtime.is_job_pending());
+    let _ = runtime.clear_host_promise_rejection_tracker();
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
     let runtime = Runtime::new();
-    let mut first_context = runtime.new_context();
+    let mut first_context = runtime.new_context().expect("create context");
     drop(
         first_context
             .eval(
@@ -297,7 +306,7 @@ fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
         )
         .unwrap();
     let first_realm = first_context.realm;
-    let mut second_context = runtime.new_context();
+    let mut second_context = runtime.new_context().expect("create context");
     let parent_promise = module_evaluation_promise(&mut second_context, &parent);
     let async_parent_promise = module_evaluation_promise(&mut second_context, &async_parent);
     assert_eq!(
@@ -343,13 +352,19 @@ fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
 
     let events = Rc::new(RefCell::new(Vec::new()));
     let captured = events.clone();
-    runtime.set_host_promise_rejection_tracker(move |event| {
-        if !event.is_handled() {
-            captured
-                .borrow_mut()
-                .push((event.context(), event.reason().clone()));
-        }
-    });
+    runtime
+        .set_host_promise_rejection_tracker(move |event| {
+            if !event.is_handled() {
+                captured.borrow_mut().push((
+                    event.context(),
+                    event
+                        .reason()
+                        .try_clone()
+                        .expect("duplicate rejection reason"),
+                ));
+            }
+        })
+        .expect("configure test runtime");
     drop(
         first_context
             .eval("globalThis.__releaseCrossRealmGate()")
@@ -380,14 +395,14 @@ fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
         &mut second_context,
         "globalThis.__crossRealmSpecies.length === 0",
     );
-    runtime.clear_host_promise_rejection_tracker();
-    assert!(!runtime.is_job_pending());
+    let _ = runtime.clear_host_promise_rejection_tracker();
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn late_tla_fulfillment_does_not_overwrite_a_cached_sibling_rejection() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let reason = context
         .eval(
             r#"
@@ -429,8 +444,8 @@ fn late_tla_fulfillment_does_not_overwrite_a_cached_sibling_rejection() {
         )
         .unwrap();
     let dependencies = runtime.module_dependencies(&module).unwrap();
-    let waiting = dependencies[0].clone();
-    let throwing = dependencies[1].clone();
+    let waiting = dependencies[0].try_clone().expect("duplicate root");
+    let throwing = dependencies[1].try_clone().expect("duplicate root");
 
     let promise = module_evaluation_promise(&mut context, &module);
     let initial = promise_snapshot(&runtime, &promise);
@@ -483,13 +498,13 @@ fn late_tla_fulfillment_does_not_overwrite_a_cached_sibling_rejection() {
         runtime.root_raw_value(cached.result.clone()).unwrap(),
         reason
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn top_level_await_inside_a_cycle_unblocks_the_cycle_before_its_outer_parent() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(context.eval("globalThis.__tlaCycleOrder = []").unwrap());
     let (loader, _, _) = MapModuleLoader::new([
         (
@@ -562,5 +577,5 @@ fn top_level_await_inside_a_cycle_unblocks_the_cycle_before_its_outer_parent() {
             ModuleEvaluationState::Evaluated
         ));
     }
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }

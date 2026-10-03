@@ -132,7 +132,7 @@ fn string_escape_diagnostics_match_pinned_quickjs() {
 fn rust_observation(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context.eval(source),
         Err(RuntimeError::Exception),

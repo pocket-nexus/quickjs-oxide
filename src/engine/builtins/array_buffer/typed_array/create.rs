@@ -398,7 +398,7 @@ impl TypedCreateResume {
             let key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
             Ok(TypedCreateStep::request_read(
-                JsValue::Object(source.clone().into_handle()),
+                JsValue::Object(source.try_clone()?.into_handle()),
                 key,
                 Self(Box::new(TypedCreateResumeState {
                     pending_effect: TypedCreateStepPending::new(runtime.clone()),
@@ -734,14 +734,14 @@ impl Population {
     fn next(self, runtime: &Runtime, realm: ContextId) -> Result<TypedCreateStep, RuntimeError> {
         if self.index == self.length {
             return Ok(TypedCreateStep::Complete(Completion::Return(
-                JsValue::Object(self.target.clone().into_handle()),
+                JsValue::Object(self.target.try_clone()?.into_handle()),
             )));
         }
         match &self.source {
             Input::Object(source) => {
                 let key = runtime.property_key_for_index(self.index)?;
                 Ok(TypedCreateStep::request_read(
-                    JsValue::Object(source.clone().into_handle()),
+                    JsValue::Object(source.try_clone()?.into_handle()),
                     key,
                     TypedCreateResume(Box::new(TypedCreateResumeState {
                         pending_effect: TypedCreateStepPending::new(runtime.clone()),
@@ -784,7 +784,7 @@ impl Population {
                 crate::engine::value::number::operations::Number::compact(self.index as f64).into(),
             );
             Ok(TypedCreateStep::request_call(
-                DirectCallTarget::Callable(mapper.clone()),
+                DirectCallTarget::Callable(mapper.try_clone()?),
                 receiver,
                 arguments,
                 TypedCreateResume(Box::new(TypedCreateResumeState {
@@ -1188,7 +1188,7 @@ mod tests {
     fn materialized_factory_values_survive_processed_writes_and_abandonment() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(target) = context.eval("new Uint8Array(2)").unwrap() else {
             panic!("expected view");
         };

@@ -573,8 +573,8 @@ fn string_includes_recursion_is_catchable_and_runtime_recovers() {
 fn string_includes_defining_realms_and_user_throw_identity_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
     let includes = property_callable(&runtime, &mut defining, &defining_prototype, "includes");
     let starts_with = property_callable(&runtime, &mut defining, &defining_prototype, "startsWith");
@@ -610,7 +610,11 @@ fn string_includes_defining_realms_and_user_throw_identity_are_exact() {
     define_data_key(
         &runtime,
         &regexp_like,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match)),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::Match)
+                .expect("well-known symbol"),
+        ),
         Value::Bool(true),
     );
     assert_native_type_error(
@@ -643,7 +647,7 @@ fn string_includes_defining_realms_and_user_throw_identity_are_exact() {
             .set_property(
                 &caller.global_object().unwrap(),
                 &sentinel_key,
-                Value::Object(sentinel.clone()),
+                Value::Object(sentinel.try_clone().expect("duplicate root")),
             )
             .unwrap()
     );
@@ -656,7 +660,11 @@ fn string_includes_defining_realms_and_user_throw_identity_are_exact() {
     define_accessor_key(
         &runtime,
         &search,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match)),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::Match)
+                .expect("well-known symbol"),
+        ),
         Some(throwing_getter),
     );
     assert_eq!(
@@ -691,8 +699,8 @@ fn string_includes_callables_are_per_realm_and_collectable() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let retained = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_prototype = first.string_prototype().unwrap();
         let second_prototype = second.string_prototype().unwrap();
         let first_method = property_callable(&runtime, &mut first, &first_prototype, "includes");
@@ -707,10 +715,13 @@ fn string_includes_callables_are_per_realm_and_collectable() {
         first_method
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(retained);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn intrinsic_prototype(

@@ -116,7 +116,7 @@ impl AggregateStep {
         let receiver = runtime.dup_jsvalue(&resume.0.iterable)?;
         Ok(Self::Read {
             receiver,
-            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
+            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
             resume,
         })
     }
@@ -171,7 +171,7 @@ impl AggregateResume {
                 let iterator = ObjectRef::from_owned_handle(runtime.clone(), iterator);
                 let iterable = std::mem::replace(&mut self.0.iterable, JsValue::Undefined);
                 runtime.release_jsvalue(iterable)?;
-                self.0.iterator = Some(iterator.clone());
+                self.0.iterator = Some(iterator.try_clone()?);
                 self.0.phase = Phase::NextMethod;
                 let key =
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
@@ -200,14 +200,22 @@ impl AggregateResume {
             iterator: self
                 .0
                 .iterator
-                .clone()
+                .as_ref()
+                .map(|value| value.try_clone())
+                .transpose()?
                 .ok_or(RuntimeError::Invariant("AggregateError iterator missing"))?,
             next: runtime.dup_jsvalue(&self.0.next)?,
             resume: self,
         })
     }
     fn close(self, runtime: &Runtime, value: JsValue) -> Result<AggregateStep, RuntimeError> {
-        let Some(iterator) = self.0.iterator.clone() else {
+        let Some(iterator) = self
+            .0
+            .iterator
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
+        else {
             runtime.release_jsvalue(value)?;
             return Err(RuntimeError::Invariant("AggregateError iterator missing"));
         };
@@ -235,7 +243,9 @@ impl AggregateResume {
                 let result = self
                     .0
                     .result
-                    .clone()
+                    .as_ref()
+                    .map(|value| value.try_clone())
+                    .transpose()?
                     .ok_or(RuntimeError::Invariant("AggregateError result missing"))?;
                 return Ok(AggregateStep::Complete(Completion::Return(
                     JsValue::Object(result.into_handle()),

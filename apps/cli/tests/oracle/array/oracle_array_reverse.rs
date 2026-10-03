@@ -331,8 +331,8 @@ fn array_reverse_prototype_order_metadata_and_constructability_match_pinned_quic
 fn array_reverse_boxing_results_native_errors_and_user_throws_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let caller_array_prototype = caller.array_prototype().unwrap();
     let defining_number_prototype = eval_object(
@@ -389,7 +389,11 @@ fn array_reverse_boxing_results_native_errors_and_user_throws_use_pinned_realms(
     };
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "Array.toReversed result did not use the native defining realm",
     );
     assert_ne!(
@@ -443,7 +447,7 @@ fn array_reverse_boxing_results_native_errors_and_user_throws_use_pinned_realms(
     let user_error = take_exception_object(&mut caller, "Array.reverse user getter TypeError");
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
-        Some(caller_type_error.clone()),
+        Some(caller_type_error.try_clone().expect("duplicate root")),
         "Array.reverse replaced a user getter throw with a defining-realm error",
     );
 
@@ -467,7 +471,7 @@ fn array_reverse_boxing_results_native_errors_and_user_throws_use_pinned_realms(
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

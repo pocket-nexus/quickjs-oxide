@@ -131,7 +131,7 @@ fn method(runtime: &Runtime, realm: ContextId, step: MethodStep) -> Result<KeysS
             drop(resume);
             match target {
                 None => KeysStep::request_keys(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     KeysResume(Box::new(KeysResumeState {
                         pending_effect: KeysStepPending::new(runtime.clone()),
                         realm,
@@ -140,8 +140,8 @@ fn method(runtime: &Runtime, realm: ContextId, step: MethodStep) -> Result<KeysS
                 ),
                 Some(target) => KeysStep::request_call(
                     target,
-                    runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?,
-                    vec![runtime.into_jsvalue(Value::Object(rooted.target.clone()))?],
+                    runtime.into_jsvalue(Value::Object(rooted.handler.try_clone()?))?,
+                    vec![runtime.into_jsvalue(Value::Object(rooted.target.try_clone()?))?],
                     KeysResume(Box::new(KeysResumeState {
                         pending_effect: KeysStepPending::new(runtime.clone()),
                         realm,
@@ -199,7 +199,7 @@ fn items(
         unreachable!()
     };
     runtime.release_jsvalue(list)?;
-    let object = rooted.target.clone();
+    let object = rooted.target.try_clone()?;
     resume.0.phase = Phase::Extensible {
         rooted,
         keys,
@@ -217,8 +217,8 @@ fn check_next(
             return Ok(KeysStep::Complete(runtime.proxy_revoked_throw(realm)?));
         }
         return Ok(KeysStep::request_descriptor(
-            state.rooted.target.clone(),
-            key.clone(),
+            state.rooted.target.try_clone()?,
+            key.try_clone()?,
             KeysResume(Box::new(KeysResumeState {
                 pending_effect: KeysStepPending::new(runtime.clone()),
                 realm,
@@ -396,7 +396,7 @@ impl KeysResume {
             ));
         }
         Ok(KeysStep::request_keys(
-            rooted.target.clone(),
+            rooted.target.try_clone()?,
             Self(Box::new(KeysResumeState {
                 pending_effect: KeysStepPending::new(runtime.clone()),
                 realm: self.0.realm,
@@ -729,7 +729,7 @@ mod tests {
         for after_list in [false, true] {
             let runtime = Runtime::new();
             let weak = std::rc::Rc::downgrade(&runtime.0);
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
                 panic!("expected proxy")
             };

@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn test262_gc_host_is_quickjs_shaped_reentrant_and_preserves_active_roots() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let gc = context.new_test262_gc_function().unwrap();
 
     assert_eq!(
@@ -41,7 +41,7 @@ fn test262_gc_host_is_quickjs_shaped_reentrant_and_preserves_active_roots() {
     ));
 
     runtime.run_gc().unwrap();
-    let baseline_objects = runtime.heap_counts().object_nodes;
+    let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
     let cycle = context.new_object().unwrap();
     let self_key = runtime.intern_property_key("self").unwrap();
     assert!(
@@ -49,26 +49,37 @@ fn test262_gc_host_is_quickjs_shaped_reentrant_and_preserves_active_roots() {
             .define_own_property(
                 &cycle,
                 &self_key,
-                &data_descriptor(Value::Object(cycle.clone()), true, true, true),
+                &data_descriptor(
+                    Value::Object(cycle.try_clone().expect("duplicate root")),
+                    true,
+                    true,
+                    true
+                ),
             )
             .unwrap()
     );
     drop(self_key);
     drop(cycle);
     let live_argument = context.new_object().unwrap();
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects + 2
+    );
     assert_eq!(
         context
             .call(
                 &gc,
-                Value::Object(live_argument.clone()),
-                &[Value::Object(live_argument.clone()), Value::Int(42)],
+                Value::Object(live_argument.try_clone().expect("duplicate root")),
+                &[
+                    Value::Object(live_argument.try_clone().expect("duplicate root")),
+                    Value::Int(42)
+                ],
             )
             .unwrap(),
         Value::Undefined
     );
     assert_eq!(
-        runtime.heap_counts().object_nodes,
+        runtime.heap_counts().expect("runtime state").object_nodes,
         baseline_objects + 1,
         "the native host hook did not run cycle collection"
     );
@@ -80,7 +91,12 @@ fn test262_gc_host_is_quickjs_shaped_reentrant_and_preserves_active_roots() {
             .define_own_property(
                 &global,
                 &host_gc,
-                &data_descriptor(Value::Object(gc.as_object().clone()), true, true, true),
+                &data_descriptor(
+                    Value::Object(gc.as_object().try_clone().expect("duplicate root")),
+                    true,
+                    true,
+                    true
+                ),
             )
             .unwrap()
     );

@@ -36,6 +36,7 @@ mod edges;
 mod gc;
 use edges::Edges;
 
+#[cfg(any(test, feature = "profiling"))]
 mod slot_ownership;
 #[cfg(test)]
 use gc::object_atoms;
@@ -49,6 +50,7 @@ use gc::{
     raw_value_matches_weak_key, shape_edges, var_ref_edges,
 };
 
+#[cfg(any(test, feature = "profiling"))]
 pub(crate) use slot_ownership::SlotReleaseReadiness;
 mod collection_index;
 mod collection_records;

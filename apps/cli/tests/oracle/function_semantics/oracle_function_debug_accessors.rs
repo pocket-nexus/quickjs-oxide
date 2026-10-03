@@ -127,8 +127,10 @@ fn function_debug_accessors_and_strip_modes_match_quickjs_oracle() {
 fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    runtime.set_debug_info_mode(mode);
-    let mut context = runtime.new_context();
+    runtime
+        .set_debug_info_mode(mode)
+        .expect("set runtime configuration");
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [
         "length",
@@ -144,7 +146,11 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
         "columnNumber",
         "Symbol(Symbol.hasInstance)",
     ];
-    let has_instance = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     let key_names = runtime
         .own_property_keys(&function_prototype)
         .unwrap()
@@ -210,7 +216,11 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
             .collect::<Vec<_>>()
             .join(",");
         let Value::String(getter_source) = context
-            .call(&to_string, Value::Object(getter.as_object().clone()), &[])
+            .call(
+                &to_string,
+                Value::Object(getter.as_object().try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap()
         else {
             panic!("getter toString was not a string");
@@ -228,7 +238,7 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
             bit(name_enumerable),
             bit(name_configurable),
             runtime.get_prototype_of(getter.as_object()).unwrap()
-                == Some(function_prototype.clone()),
+                == Some(function_prototype.try_clone().expect("duplicate root")),
             runtime.is_constructor(getter.as_object()).unwrap(),
             hex(&getter_source),
         ));
@@ -244,9 +254,21 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
     let primary = eval_function(&mut context, "\n  (function named(){})");
     output.push(format!(
         "primary={}|{}|{}",
-        call_text(&mut context, &getters[0].1, Value::Object(primary.clone())),
-        call_text(&mut context, &getters[1].1, Value::Object(primary.clone())),
-        call_text(&mut context, &getters[2].1, Value::Object(primary.clone())),
+        call_text(
+            &mut context,
+            &getters[0].1,
+            Value::Object(primary.try_clone().expect("duplicate root"))
+        ),
+        call_text(
+            &mut context,
+            &getters[1].1,
+            Value::Object(primary.try_clone().expect("duplicate root"))
+        ),
+        call_text(
+            &mut context,
+            &getters[2].1,
+            Value::Object(primary.try_clone().expect("duplicate root"))
+        ),
     ));
     output.push(format!(
         "primary-direct={}|{}|{}",
@@ -349,14 +371,20 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
         Value::Object(ordinary),
         Value::Object(function_prototype),
         Value::Object(bound),
-        Value::Object(getters[0].1.as_object().clone()),
+        Value::Object(
+            getters[0]
+                .1
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     ];
     let invalid = getters
         .iter()
         .map(|(_, getter)| {
             invalid_receivers
                 .iter()
-                .cloned()
+                .map(|value| value.try_clone().expect("duplicate root"))
                 .map(|receiver| {
                     let value = context
                         .call(getter, receiver, &[Value::Int(1), Value::Int(2)])
@@ -423,7 +451,11 @@ fn function_source_hex(
     function: &ObjectRef,
 ) -> String {
     let Value::String(source) = context
-        .call(to_string, Value::Object(function.clone()), &[])
+        .call(
+            to_string,
+            Value::Object(function.try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap()
     else {
         panic!("Function.prototype.toString did not return a string");

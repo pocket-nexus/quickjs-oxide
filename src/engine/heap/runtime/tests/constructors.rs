@@ -3,8 +3,8 @@ use super::*;
 #[test]
 fn base_construct_uses_explicit_new_target_prototype_and_realm_fallback() {
     let runtime = Runtime::new();
-    let mut constructor_context = runtime.new_context();
-    let mut target_context = runtime.new_context();
+    let mut constructor_context = runtime.new_context().expect("create context");
+    let mut target_context = runtime.new_context().expect("create context");
 
     let Value::Object(constructor_object) = constructor_context
         .eval("(0, function(){ return 1; })")
@@ -26,7 +26,9 @@ fn base_construct_uses_explicit_new_target_prototype_and_realm_fallback() {
                 &target_object,
                 &prototype_key,
                 &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Value::Object(explicit_prototype.clone())),
+                    value: DescriptorField::Present(Value::Object(
+                        explicit_prototype.try_clone().expect("duplicate root")
+                    )),
                     ..OrdinaryPropertyDescriptor::new()
                 },
             )
@@ -74,7 +76,7 @@ fn base_construct_uses_explicit_new_target_prototype_and_realm_fallback() {
 #[test]
 fn new_target_prototype_getter_throw_short_circuits_constructor_body() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(constructor_object) = context
         .eval("(0, function(){ return function(){}; })")
         .unwrap()
@@ -121,7 +123,7 @@ fn new_target_prototype_getter_throw_short_circuits_constructor_body() {
 #[test]
 fn construct_rejects_non_constructor_callable_with_caller_realm_type_error() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let callable = runtime.as_callable(&function_prototype).unwrap().unwrap();
 

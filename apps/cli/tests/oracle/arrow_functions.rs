@@ -490,7 +490,7 @@ fn arrow_function_semantics_match_pinned_quickjs() {
 fn rust_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let value = context.eval(case.source).unwrap_or_else(|error| {
         panic!(
             "Rust rejected ArrowFunction probe {} / {} ({:?}): {error}",

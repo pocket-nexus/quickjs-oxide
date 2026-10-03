@@ -15,6 +15,7 @@ use crate::engine::vm::exception::runtime_error_to_vm_error;
 use std::ops::Range;
 use std::rc::Rc;
 mod call;
+mod construct;
 
 pub(in crate::engine::vm) struct SlotStore {
     // Initialized high-water backing. Inactive slots are always None; only
@@ -92,6 +93,7 @@ pub(in crate::engine::vm) struct FrameStorage {
 /// Error and abandonment paths call this before dropping the storage so no
 /// internal `JsValue`/`FrameBinding` edge survives without its owner. Releases
 /// are defer-safe and nothrow, and never run JavaScript.
+#[cfg(test)]
 pub(in crate::engine::vm) fn release_frame_storage(runtime: &Runtime, storage: FrameStorage) {
     for value in storage.original_arguments {
         let _ = runtime.release_jsvalue(value);
@@ -105,6 +107,22 @@ pub(in crate::engine::vm) fn release_frame_storage(runtime: &Runtime, storage: F
     for value in storage.operands {
         let _ = runtime.release_jsvalue(value);
     }
+}
+
+pub(in crate::engine::vm) fn release_frame_storage_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    storage: FrameStorage,
+) -> Result<(), crate::engine::api::runtime_error::RuntimeError> {
+    for value in storage.original_arguments {
+        state.release_jsvalue(value)?;
+    }
+    for binding in storage.parameters.into_iter().chain(storage.locals) {
+        super::bindings::release_frame_binding_in_state(state, binding)?;
+    }
+    for value in storage.operands {
+        state.release_jsvalue(value)?;
+    }
+    Ok(())
 }
 
 /// Best-effort rollback release for a frame push which failed after taking
@@ -188,15 +206,15 @@ pub(in crate::engine::vm) fn release_unconverted_frame_storage(
 /// Owns a `FrameStorage` across fallible migration and releases every still
 /// owned edge if the migration is abandoned. `take` hands the storage back for
 /// the success path, after which this guard performs no release.
-pub(in crate::engine::vm) struct FrameStorageGuard {
-    runtime: Runtime,
+pub(in crate::engine::vm) struct FrameStorageGuard<'a> {
+    runtime: &'a Runtime,
     storage: Option<FrameStorage>,
 }
 
-impl FrameStorageGuard {
-    pub(in crate::engine::vm) fn new(runtime: &Runtime, storage: FrameStorage) -> Self {
+impl<'a> FrameStorageGuard<'a> {
+    pub(in crate::engine::vm) fn new(runtime: &'a Runtime, storage: FrameStorage) -> Self {
         Self {
-            runtime: runtime.clone(),
+            runtime,
             storage: Some(storage),
         }
     }
@@ -214,23 +232,81 @@ impl FrameStorageGuard {
     }
 }
 
-impl Drop for FrameStorageGuard {
+impl Drop for FrameStorageGuard<'_> {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
         if let Some(storage) = self.storage.take() {
-            release_frame_storage(&self.runtime, storage);
+            if release_frame_storage_in_state(&mut self.runtime.0.state.borrow_mut(), storage)
+                .is_err()
+            {
+                self.runtime.0.poisoned.set(true);
+            }
         }
     }
 }
 
+/// Temporary frame storage inside a state-held execution segment. Reborrowing
+/// parts() permits computation without relinquishing the cleanup capability.
+#[must_use]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(in crate::engine::vm) struct StateFrameStorageGuard<'a> {
+    state: &'a mut crate::engine::heap::runtime::RuntimeState,
+    poisoned: &'a std::cell::Cell<bool>,
+    storage: Option<FrameStorage>,
+}
+#[cfg_attr(not(test), allow(dead_code))]
+impl<'a> StateFrameStorageGuard<'a> {
+    pub(in crate::engine::vm) fn new(
+        state: &'a mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &'a std::cell::Cell<bool>,
+        storage: FrameStorage,
+    ) -> Self {
+        Self {
+            state,
+            poisoned,
+            storage: Some(storage),
+        }
+    }
+    pub(in crate::engine::vm) fn parts(
+        &mut self,
+    ) -> (
+        &mut crate::engine::heap::runtime::RuntimeState,
+        &mut Option<FrameStorage>,
+    ) {
+        (self.state, &mut self.storage)
+    }
+}
+impl Drop for StateFrameStorageGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.poisoned.set(true);
+        }
+        if self.poisoned.get() {
+            return;
+        }
+        let _unwind = crate::engine::api::runtime::RuntimeUnwindGuard::from_flag(self.poisoned);
+        if let Some(storage) = self.storage.take() {
+            if release_frame_storage_in_state(self.state, storage).is_err() {
+                self.poisoned.set(true);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod nullish;
 mod number;
+mod state;
 mod transfer;
 mod window;
+pub(in crate::engine::vm) use state::copy_value_in_state;
 pub(in crate::engine::vm) use transfer::StoreProgress;
 
 pub(in crate::engine::vm) enum PropertyReadProgress {
     Completed,
-    NeedsObservation,
     Driver,
     Selected(crate::engine::heap::ObjectId),
 }
@@ -242,77 +318,11 @@ pub(in crate::engine::vm) struct NamedReadOperation {
     pub keep_receiver: bool,
 }
 pub(in crate::engine::vm) use window::{
-    CheckedOrdinaryCallOperands, DirectSlot, FrameSlots, FrameTransaction, LinkedReadCompletion,
+    CheckedOrdinaryCallOperands, DirectSlot, FrameExecution, FrameSlots, FrameTransaction,
+    FrameTurn, LinkedReadCompletion,
 };
 
 impl SlotStore {
-    /// Commit a retained IC result only after output capacity and the receiver
-    /// release proof have succeeded. Failure leaves the canonical operands.
-    // The slot window, immutable site facts and selected native output are disjoint borrowed inputs to one transaction.
-    #[allow(clippy::too_many_arguments)]
-    fn property_ic_read_current(
-        &mut self,
-        window: &mut FrameWindow,
-        runtime: &Runtime,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        operation: NamedReadOperation,
-        native: &mut Option<crate::engine::object::LinkedNativeSelection>,
-    ) -> Result<PropertyReadProgress, Error> {
-        let output_index = if operation.keep_receiver {
-            // Canonical get can have effects before an output-capacity error;
-            // declining here preserves that order without promoting a root.
-            let Ok(index) = self.operand_push_index(window) else {
-                return Ok(PropertyReadProgress::Driver);
-            };
-            Some(index)
-        } else {
-            None
-        };
-        let base = self.peek_current(window, 0)?;
-        let mut miss = crate::engine::object::NamedSelectionMiss::ContinueLookup;
-        // Consume the selected owned value directly. The cold miss outcome
-        // carries no value, avoiding a second large data/result transport.
-        let value = match runtime.select_linked_data_into(
-            base,
-            executable,
-            operation.site,
-            operation.key_index,
-            operation.keep_receiver,
-            native,
-            &mut miss,
-        ) {
-            Some(value) => value,
-            None => match miss {
-                crate::engine::object::NamedSelectionMiss::CompleteAbsent => JsValue::Undefined,
-                crate::engine::object::NamedSelectionMiss::Accessor(getter) => {
-                    return Ok(PropertyReadProgress::Selected(getter));
-                }
-                crate::engine::object::NamedSelectionMiss::ContinueLookup => {
-                    return Ok(PropertyReadProgress::Driver);
-                }
-                crate::engine::object::NamedSelectionMiss::NeedsObservation => {
-                    return Ok(PropertyReadProgress::NeedsObservation);
-                }
-            },
-        };
-        if let Some(index) = output_index {
-            self.install_operand(window, index, value);
-        } else {
-            let index = window.operands().start + window.depth - 1;
-            let base = self.slots[index].replace(FrameBinding::Direct(value));
-            // No reentry or cleanup queue mutation intervenes between the
-            // runtime proof and this non-final receiver release.
-            if let Some(FrameBinding::Direct(old)) = base {
-                runtime
-                    .release_jsvalue(old)
-                    .map_err(runtime_error_to_vm_error)?;
-            }
-            #[cfg(feature = "profiling")]
-            record_owned_storage(Cost::Move(2));
-        }
-        Ok(PropertyReadProgress::Completed)
-    }
-
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
         Self {
             slots: Vec::new(),
@@ -505,7 +515,7 @@ impl SlotStore {
         runtime: &Runtime,
         layout: &FrameLayout<'_>,
         storage: FrameStorage,
-        function: &crate::engine::object::ObjectRef,
+        function: crate::engine::heap::ObjectId,
         function_name: Option<u16>,
     ) -> Result<FrameWindow, Error> {
         self.push_frame_storage(
@@ -528,7 +538,7 @@ impl SlotStore {
         parent: &mut FrameWindow,
         count: usize,
         method: bool,
-        function: &crate::engine::object::ObjectRef,
+        function: crate::engine::heap::ObjectId,
         function_name: Option<u16>,
     ) -> Result<FrameWindow, Error> {
         self.check_current(parent)?;
@@ -559,7 +569,7 @@ impl SlotStore {
         runtime: &Runtime,
         layout: &FrameLayout<'_>,
         mut storage: FrameStorage,
-        initialize: Option<(&crate::engine::object::ObjectRef, Option<u16>)>,
+        initialize: Option<(crate::engine::heap::ObjectId, Option<u16>)>,
         source: Option<(&mut FrameWindow, usize, bool)>,
     ) -> Result<FrameWindow, Error> {
         let fresh = initialize.is_some();
@@ -686,7 +696,7 @@ impl SlotStore {
                 self.slots[index] = Some(FrameBinding::Direct(JsValue::Undefined));
             }
             for (index, definition) in layout.locals().iter().enumerate() {
-                let binding = match super::call::prepare::initial_local_binding(
+                let binding = match super::call::prepare::initial_local_binding_id(
                     runtime,
                     definition.is_lexical,
                     function_name == Some(index as u16),
@@ -995,79 +1005,6 @@ impl SlotStore {
         Ok(Some(decision))
     }
 
-    fn array_immediate_read_current(
-        &mut self,
-        window: &mut FrameWindow,
-        runtime: &Runtime,
-    ) -> Result<bool, Error> {
-        let offset = window
-            .depth
-            .checked_sub(2)
-            .ok_or_else(Self::operand_stack_underflow)?;
-        let index = window.operands().start + offset;
-        let [
-            Some(FrameBinding::Direct(base)),
-            Some(FrameBinding::Direct(key)),
-        ] = &self.slots[index..index + 2]
-        else {
-            return Err(Self::operand_slot_not_a_value());
-        };
-        let index_key = match key {
-            JsValue::Int(key) if *key >= 0 => *key as u32,
-            JsValue::String(id) => {
-                // Shared payload storage only proves the spelling survives its
-                // own release; it does not prove the arena slot can retire
-                // without allocating. The slot readiness proof is the sole
-                // gate for consuming the key owner below. The spelling is
-                // cloned out before the slot owners are consumed.
-                if !matches!(
-                    runtime.slot_value_release_readiness_jsvalue(key),
-                    Ok(crate::engine::heap::SlotReleaseReadiness::Ready)
-                ) {
-                    return Ok(false);
-                }
-                let text = runtime.0.state.borrow().heap.string_fast(*id).clone();
-                let Some(index) = crate::engine::atom::AtomTable::canonical_array_index(&text)
-                else {
-                    return Ok(false);
-                };
-                index
-            }
-            _ => return Ok(false),
-        };
-        let Some(value) = runtime.try_array_immediate_read(base, index_key) else {
-            return Ok(false);
-        };
-        // The scalar result owns no heap edge. Preflight proved that releasing
-        // the base cannot drain; no ownership decrease intervened since then.
-        // Both inputs were authenticated Direct bindings. Numeric keys are
-        // edge-free; string keys still surrender their genuine arena owner.
-        let Some(FrameBinding::Direct(key)) = self.slots[index + 1].take() else {
-            unreachable!("array leaf authenticated its key slot")
-        };
-        let Some(FrameBinding::Direct(base)) =
-            self.slots[index].replace(FrameBinding::Direct(value))
-        else {
-            unreachable!("array leaf authenticated its base slot")
-        };
-        window.depth -= 1;
-        runtime
-            .release_jsvalue(key)
-            .map_err(super::exception::runtime_error_to_vm_error)?;
-        runtime
-            .release_jsvalue(base)
-            .map_err(super::exception::runtime_error_to_vm_error)?;
-        #[cfg(feature = "profiling")]
-        {
-            self.live_slots -= 1;
-            record_owned_storage(Cost::Move(3));
-            crate::engine::api::profiling::record_owned_execution_event(
-                "array_immediate_read_in_run",
-            );
-        }
-        Ok(true)
-    }
-
     #[cfg(test)]
     fn ordinary_field_immediate_read_current(
         &mut self,
@@ -1228,24 +1165,12 @@ impl SlotStore {
         source_from_top: usize,
         destination_from_top: usize,
     ) -> Result<(), Error> {
-        self.check_current(window)?;
-        self.insert_copy_current(runtime, window, source_from_top, destination_from_top)
-    }
-
-    fn insert_copy_current(
-        &mut self,
-        runtime: &Runtime,
-        window: &mut FrameWindow,
-        source_from_top: usize,
-        destination_from_top: usize,
-    ) -> Result<(), Error> {
-        self.peek_current(window, source_from_top)?;
-        if destination_from_top > window.depth || window.depth >= window.operands().len() {
-            return Err(Error::internal("owned insertion exceeds verified capacity"));
-        }
-        let copied = copy_value(runtime, self.peek_current(window, source_from_top)?)?;
-        self.push_current(window, copied)?;
-        self.rotate_operands_current(window, 0, destination_from_top + 1, false)
+        let mut transaction = self.frame_transaction(window)?;
+        transaction.slots().insert_copy_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            source_from_top,
+            destination_from_top,
+        )
     }
 
     /// Retain a sequence into reserved slots. If a retain fails, the committed
@@ -1259,31 +1184,10 @@ impl SlotStore {
         window: &mut FrameWindow,
         count: usize,
     ) -> Result<(), Error> {
-        self.check_current(window)?;
-        self.duplicate_operands_current(runtime, window, count)
-    }
-
-    fn duplicate_operands_current(
-        &mut self,
-        runtime: &Runtime,
-        window: &mut FrameWindow,
-        count: usize,
-    ) -> Result<(), Error> {
-        let source = count
-            .checked_sub(1)
-            .ok_or_else(|| Error::internal("empty owned operand duplication"))?;
-        self.peek_current(window, source)?;
-        if count > window.operands().len() - window.depth {
-            return Err(Error::internal(
-                "owned duplication exceeds verified capacity",
-            ));
-        }
-        for _ in 0..count {
-            // As depth grows, this fixed offset visits the next original slot.
-            let copied = copy_value(runtime, self.peek_current(window, source)?)?;
-            self.push_current(window, copied)?;
-        }
-        Ok(())
+        let mut transaction = self.frame_transaction(window)?;
+        transaction
+            .slots()
+            .duplicate_operands_in_state(&mut runtime.0.state.borrow_mut(), count)
     }
 
     /// Logical pop removes ownership immediately. No dead value survives above sp.
@@ -1530,6 +1434,7 @@ impl SlotStore {
 
     /// One-way temporary migration handoff. No serialization or extra retain:
     /// the caller receives the very owners which occupied this window.
+    #[cfg(test)]
     pub(in crate::engine::vm) fn take_frame(
         &mut self,
         runtime: &Runtime,
@@ -1538,6 +1443,17 @@ impl SlotStore {
         self.check_current(&window)?;
         let taken = self.take_frame_owners(runtime, &window)?;
         self.complete_take_frame(window, taken)
+    }
+
+    /// Reservation failure keeps the window reachable from its running frame.
+    pub(in crate::engine::vm) fn take_frame_resident(
+        &mut self,
+        runtime: &Runtime,
+        window: &mut super::frame::Resident<FrameWindow>,
+    ) -> Result<FrameStorage, Error> {
+        self.check_current(window)?;
+        let taken = self.take_frame_owners(runtime, window)?;
+        self.complete_take_frame(window.take(), taken)
     }
 
     fn take_frame_owners(
@@ -1647,52 +1563,18 @@ impl SlotStore {
         Ok(taken)
     }
 
-    /// The driver must keep the completion/pending result owned before
-    /// clearing. Every released binding's edges are surrendered through the
-    /// runtime's deferred-release path.
+    /// Outside-state wrapper; running retirement calls the shared kernel.
     pub(in crate::engine::vm) fn clear_frame(
         &mut self,
         runtime: &Runtime,
         window: FrameWindow,
     ) -> Result<(), Error> {
-        self.check_current(&window)?;
-        #[cfg(feature = "profiling")]
-        {
-            let cleared = self.slots[window.whole()]
-                .iter()
-                .filter(|slot| slot.is_some())
-                .count();
-            self.live_slots -= cleared;
-            record_owned_storage(Cost::Clear(cleared));
-        }
-        // Vec::truncate previously lowered logical length before dropping the
-        // suffix. Preserve that authority boundary and ascending owner order.
-        self.active_end = window.whole().start;
-        for index in window.whole().start..window.operands().start + window.depth {
-            if let Some(binding) = self.slots[index].take() {
-                // These direct values carry no owner. Most ordinary calls
-                // clear several Undefined/Number parameter and local slots;
-                // entering the generic release path for each is unnecessary.
-                // Every edge-bearing or captured binding still releases in
-                // its original ascending slot order.
-                if !matches!(
-                    &binding,
-                    FrameBinding::Direct(
-                        JsValue::Undefined
-                            | JsValue::Null
-                            | JsValue::Bool(_)
-                            | JsValue::Int(_)
-                            | JsValue::Float(_)
-                            | JsValue::ShortBigInt(_)
-                    )
-                ) {
-                    release_binding(runtime, binding)?;
-                }
-            }
-        }
-        debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
-        self.windows.pop();
-        Ok(())
+        let _unwind = runtime.unwind_guard();
+        self.clear_frame_owned_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            window,
+        )
     }
 }
 
@@ -1777,7 +1659,7 @@ mod tests {
     fn owned_property_ic_capacity_preflight_and_receiver_forms_preserve_owners() {
         use crate::engine::code::bytecode::Instruction;
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("(function(o){return o.x})").unwrap())
             .unwrap();
@@ -1807,13 +1689,27 @@ mod tests {
         };
         let mut native = None;
         let base_internal = runtime.unroot_value(&base).unwrap();
-        assert!(
-            runtime
-                .try_property_ic_read_owned(&base_internal, &code, pc, key, true, &mut native)
-                .unwrap()
-                .is_none()
-        );
-        runtime.release_jsvalue(base_internal).unwrap();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            let value = state
+                .select_linked_data_into(
+                    runtime.domain_id(),
+                    &base_internal,
+                    &code,
+                    pc,
+                    key,
+                    true,
+                    &mut native,
+                    &mut crate::engine::object::NamedSelectionMiss::ContinueLookup,
+                )
+                .expect("select field");
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, value)
+                .unwrap();
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, base_internal)
+                .unwrap();
+        }
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 1;
         let mut slots = SlotStore::new(2);
@@ -1821,7 +1717,10 @@ mod tests {
             .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         slots
-            .push(&mut window, into_internal(&runtime, base.clone()))
+            .push(
+                &mut window,
+                into_internal(&runtime, base.try_clone().expect("duplicate root")),
+            )
             .unwrap();
         let count = runtime
             .0
@@ -1884,7 +1783,10 @@ mod tests {
             .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
         slots
-            .push(&mut window, into_internal(&runtime, base.clone()))
+            .push(
+                &mut window,
+                into_internal(&runtime, base.try_clone().expect("duplicate root")),
+            )
             .unwrap();
         assert!(matches!(
             slots
@@ -1908,8 +1810,8 @@ mod tests {
         assert_eq!(to_public(&runtime, slots.peek(&window, 1).unwrap()), base);
         slots.clear_frame(&runtime, window).unwrap();
 
-        // A consumed last-owner receiver cannot be released inside the local
-        // read. Observation must leave its operand and depth intact.
+        // The consumed final receiver is released under the same state access;
+        // its result is installed before heap cleanup.
         owner.metadata.max_stack = 1;
         let mut window = slots
             .push_frame(&runtime, &owner.frame_layout(), empty_storage())
@@ -1934,20 +1836,11 @@ mod tests {
                     &mut native,
                 )
                 .unwrap(),
-            super::PropertyReadProgress::NeedsObservation
+            super::PropertyReadProgress::Completed
         ));
         assert_eq!(window.depth, 1);
-        assert!(matches!(slots.peek(&window, 0), Ok(JsValue::Object(id)) if *id == lone_id));
-        assert_eq!(
-            runtime
-                .0
-                .state
-                .borrow()
-                .heap
-                .object_strong_count(lone_id)
-                .unwrap(),
-            1
-        );
+        assert_eq!(slots.peek(&window, 0).unwrap(), &JsValue::Int(1));
+        assert!(runtime.0.state.borrow().heap.object(lone_id).is_err());
         slots.clear_frame(&runtime, window).unwrap();
     }
 
@@ -1975,7 +1868,7 @@ mod tests {
     #[test]
     fn frame_clear_releases_edges_interleaved_with_direct_scalars() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let first = runtime.new_object(None).unwrap();
         let first_id = first.object_id();
         let second = runtime.new_object(None).unwrap();
@@ -2005,7 +1898,7 @@ mod tests {
     #[test]
     fn native_argument_transaction_preserves_order_and_surviving_owners() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 6;
         let mut slots = SlotStore::new(6);
@@ -2017,10 +1910,10 @@ mod tests {
         let callable = context.eval("Math.min").unwrap();
         for value in [
             Value::Int(99),
-            receiver.clone(),
+            receiver.try_clone().expect("duplicate root"),
             callable,
             Value::Int(1),
-            argument.clone(),
+            argument.try_clone().expect("duplicate root"),
             Value::Int(3),
         ] {
             slots
@@ -2055,7 +1948,7 @@ mod tests {
     #[test]
     fn validated_native_transfer_moves_callee_owner_and_keeps_deferred_drain() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 4;
         let mut slots = SlotStore::new(4);
@@ -2147,7 +2040,7 @@ mod tests {
     fn ordinary_field_leaf_declines_without_consuming_stack_inputs() {
         use crate::engine::code::bytecode::Instruction;
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("(function(o,v){o.x=v;return o.x})").unwrap())
             .unwrap();
@@ -2172,7 +2065,7 @@ mod tests {
             "Object.create({x:42})",
         ] {
             let base = context.eval(source).unwrap();
-            let _retained = base.clone();
+            let _retained = base.try_clone().expect("duplicate root");
             let Value::Object(root) = &base else {
                 unreachable!()
             };
@@ -2210,7 +2103,7 @@ mod tests {
         // enforces receiver/left-to-right slot presence.
         for removed_index in [0, 2, 3] {
             let runtime = Runtime::new();
-            let context = runtime.new_context();
+            let context = runtime.new_context().expect("create context");
             let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
             owner.metadata.max_stack = 4;
             let mut slots = SlotStore::new(4);
@@ -2248,7 +2141,7 @@ mod tests {
     #[test]
     fn call_domain_validation_borrows_values_without_heap_borrow_or_owner_changes() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 3;
         let mut slots = SlotStore::new(3);
@@ -2288,7 +2181,7 @@ mod tests {
     #[test]
     fn call_domain_validation_rejects_foreign_and_stale_windows_without_consuming_inputs() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 2;
         let mut slots = SlotStore::new(4);
@@ -2344,9 +2237,9 @@ mod tests {
             ("1e0", true, false),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let base = context.eval("[42]").unwrap();
-            let keep_base = base.clone();
+            let keep_base = base.try_clone().expect("duplicate root");
             let key = crate::engine::value::JsString::try_from_utf8(text).unwrap();
             let keep_key = retained.then(|| key.clone());
             let mut code = PublishedFunctionSnapshot::empty_for_test(context.realm);
@@ -2413,9 +2306,9 @@ mod tests {
             ("[,]", Value::Int(0), false),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let base = context.eval(source).unwrap();
-            let _retained = (!single_root).then(|| base.clone());
+            let _retained = (!single_root).then(|| base.try_clone().expect("duplicate root"));
             let Value::Object(root) = &base else {
                 unreachable!()
             };
@@ -2426,34 +2319,44 @@ mod tests {
             let mut window = slots
                 .push_frame(&runtime, &owner.frame_layout(), empty_storage())
                 .unwrap();
-            for value in [Value::Int(99), base, key.clone()] {
+            for value in [
+                Value::Int(99),
+                base,
+                key.try_clone().expect("duplicate root"),
+            ] {
                 slots
                     .push(&mut window, into_internal(&runtime, value))
                     .unwrap();
             }
-            assert!(
-                !slots
-                    .borrow_frame_slots(&mut window)
-                    .unwrap()
-                    .array_immediate_read(&runtime)
-                    .unwrap(),
-                "{source}"
-            );
-            assert_eq!(window.depth, 3);
-            assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), key);
-            assert!(
-                matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
-            );
-            assert_eq!(
-                to_public(&runtime, slots.peek(&window, 2).unwrap()),
-                Value::Int(99)
-            );
+            let completed = slots
+                .borrow_frame_slots(&mut window)
+                .unwrap()
+                .array_immediate_read(&runtime)
+                .unwrap();
+            if single_root {
+                assert!(completed, "{source}");
+                assert_eq!(window.depth, 2);
+                assert_eq!(slots.peek(&window, 0).unwrap(), &JsValue::Int(42));
+                assert!(runtime.0.state.borrow().heap.object(id).is_err());
+                assert_eq!(slots.peek(&window, 1).unwrap(), &JsValue::Int(99));
+            } else {
+                assert!(!completed, "{source}");
+                assert_eq!(window.depth, 3);
+                assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), key);
+                assert!(
+                    matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
+                );
+                assert_eq!(
+                    to_public(&runtime, slots.peek(&window, 2).unwrap()),
+                    Value::Int(99)
+                );
+            }
             slots.clear_frame(&runtime, window).unwrap();
         }
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let base = context.eval("[42]").unwrap();
-        let retained = base.clone();
+        let retained = base.try_clone().expect("duplicate root");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 3;
         let mut slots = SlotStore::new(3);
@@ -2468,25 +2371,8 @@ mod tests {
         let queued = runtime.new_object(None).unwrap();
         {
             let _borrow = runtime.0.state.borrow();
-            assert!(
-                !slots
-                    .borrow_frame_slots(&mut window)
-                    .unwrap()
-                    .array_immediate_read(&runtime)
-                    .unwrap()
-            );
             drop(queued);
         }
-        assert!(
-            !slots
-                .borrow_frame_slots(&mut window)
-                .unwrap()
-                .array_immediate_read(&runtime)
-                .unwrap()
-        );
-        assert_eq!(window.depth, 3);
-        assert!(runtime.0.deferred_references.has_pending());
-        runtime.drain_deferred_references().unwrap();
         assert!(
             slots
                 .borrow_frame_slots(&mut window)
@@ -2494,6 +2380,9 @@ mod tests {
                 .array_immediate_read(&runtime)
                 .unwrap()
         );
+        assert_eq!(window.depth, 2);
+        assert!(runtime.0.deferred_references.has_pending());
+        runtime.drain_deferred_references().unwrap();
         assert_eq!(window.depth, 2);
         assert_eq!(
             take_public(&runtime, slots.pop(&mut window).unwrap()),
@@ -2508,7 +2397,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_read_leaf_preserves_declined_inputs_and_release_guards() {
+    fn typed_read_leaf_preserves_invalid_inputs_and_external_cleanup() {
         for (source, single_root) in [
             ("new Uint8Array([42])", true),
             ("new Uint8Array(0)", false),
@@ -2524,9 +2413,9 @@ mod tests {
             ("new BigInt64Array([42n])", false),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let base = context.eval(source).unwrap();
-            let _retained = (!single_root).then(|| base.clone());
+            let _retained = (!single_root).then(|| base.try_clone().expect("duplicate root"));
             let Value::Object(root) = &base else {
                 unreachable!()
             };
@@ -2542,28 +2431,33 @@ mod tests {
                     .push(&mut window, into_internal(&runtime, value))
                     .unwrap();
             }
-            assert!(
-                !slots
-                    .borrow_frame_slots(&mut window)
-                    .unwrap()
-                    .array_immediate_read(&runtime)
-                    .unwrap(),
-                "{source}"
-            );
-            assert_eq!(window.depth, 2);
-            assert_eq!(
-                to_public(&runtime, slots.peek(&window, 0).unwrap()),
-                Value::Int(0)
-            );
-            assert!(
-                matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
-            );
+            let completed = slots
+                .borrow_frame_slots(&mut window)
+                .unwrap()
+                .array_immediate_read(&runtime)
+                .unwrap();
+            if single_root {
+                assert!(completed, "{source}");
+                assert_eq!(window.depth, 1);
+                assert_eq!(slots.peek(&window, 0).unwrap(), &JsValue::Int(42));
+                assert!(runtime.0.state.borrow().heap.object(id).is_err());
+            } else {
+                assert!(!completed, "{source}");
+                assert_eq!(window.depth, 2);
+                assert_eq!(
+                    to_public(&runtime, slots.peek(&window, 0).unwrap()),
+                    Value::Int(0)
+                );
+                assert!(
+                    matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
+                );
+            }
             slots.clear_frame(&runtime, window).unwrap();
         }
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let base = context.eval("new Int32Array([42])").unwrap();
-        let _retained = base.clone();
+        let _retained = base.try_clone().expect("duplicate root");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 2;
         let mut slots = SlotStore::new(2);
@@ -2578,25 +2472,8 @@ mod tests {
         let queued = runtime.new_object(None).unwrap();
         {
             let _borrow = runtime.0.state.borrow();
-            assert!(
-                !slots
-                    .borrow_frame_slots(&mut window)
-                    .unwrap()
-                    .array_immediate_read(&runtime)
-                    .unwrap()
-            );
             drop(queued);
         }
-        assert!(
-            !slots
-                .borrow_frame_slots(&mut window)
-                .unwrap()
-                .array_immediate_read(&runtime)
-                .unwrap()
-        );
-        assert_eq!(window.depth, 2);
-        assert!(runtime.0.deferred_references.has_pending());
-        runtime.drain_deferred_references().unwrap();
         assert!(
             slots
                 .borrow_frame_slots(&mut window)
@@ -2604,6 +2481,9 @@ mod tests {
                 .array_immediate_read(&runtime)
                 .unwrap()
         );
+        assert_eq!(window.depth, 1);
+        assert!(runtime.0.deferred_references.has_pending());
+        runtime.drain_deferred_references().unwrap();
         assert_eq!(window.depth, 1);
         assert_eq!(
             take_public(&runtime, slots.pop(&mut window).unwrap()),
@@ -2616,7 +2496,7 @@ mod tests {
     fn compact_window_boundaries_keep_adjacent_regions_and_parent_authority() {
         use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut caller = PublishedFunctionSnapshot::empty_for_test(context.realm);
         caller.metadata.max_stack = 1;
         let mut callee = PublishedFunctionSnapshot::empty_for_test(context.realm);
@@ -2705,7 +2585,7 @@ mod tests {
     #[test]
     fn compact_empty_windows_share_boundaries_but_not_identity() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         let mut slots = SlotStore::new(0);
         let parent = slots
@@ -2733,7 +2613,7 @@ mod tests {
     #[test]
     fn outgoing_tail_transfer_is_atomic_and_restores_the_caller_prefix() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut caller = PublishedFunctionSnapshot::empty_for_test(context.realm);
         caller.metadata.max_stack = 5;
         let mut callee = PublishedFunctionSnapshot::empty_for_test(context.realm);
@@ -2746,10 +2626,10 @@ mod tests {
             .unwrap();
         for value in [
             Value::Int(99),
-            Value::Object(marker.clone()),
-            Value::Object(function.clone()),
+            Value::Object(marker.try_clone().expect("duplicate root")),
+            Value::Object(function.try_clone().expect("duplicate root")),
             Value::Int(7),
-            Value::Object(marker.clone()),
+            Value::Object(marker.try_clone().expect("duplicate root")),
         ] {
             slots
                 .push(&mut parent, into_internal(&runtime, value))
@@ -2768,7 +2648,7 @@ mod tests {
                         &mut parent,
                         2,
                         true,
-                        &function,
+                        function.object_id(),
                         None
                     )
                     .is_err()
@@ -2789,7 +2669,7 @@ mod tests {
                 &mut parent,
                 2,
                 true,
-                &function,
+                function.object_id(),
                 None,
             )
             .unwrap();
@@ -2822,7 +2702,7 @@ mod tests {
     #[test]
     fn direct_initialization_preserves_snapshot_padding_and_transactional_failure() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.argument_count = 3;
         let function = runtime.new_object(None).unwrap();
@@ -2831,7 +2711,7 @@ mod tests {
         let source = || FrameStorage {
             original_arguments: vec![
                 JsValue::Int(7),
-                JsValue::Object(object.clone().into_handle()),
+                JsValue::Object(object.try_clone().expect("duplicate root").into_handle()),
             ],
             parameters: Vec::new(),
             locals: Vec::new(),
@@ -2849,7 +2729,7 @@ mod tests {
                         &runtime,
                         &owner.frame_layout(),
                         storage,
-                        &function,
+                        function.object_id(),
                         None
                     )
                     .is_err()
@@ -2859,7 +2739,13 @@ mod tests {
             assert!(slots.windows.is_empty());
         }
         let window = slots
-            .push_initialized_frame(&runtime, &owner.frame_layout(), source(), &function, None)
+            .push_initialized_frame(
+                &runtime,
+                &owner.frame_layout(),
+                source(),
+                function.object_id(),
+                None,
+            )
             .unwrap();
         assert_eq!(slots.binding_counts(&window).unwrap(), (0, 3));
         assert!(matches!(
@@ -2885,7 +2771,7 @@ mod tests {
     #[test]
     fn initialized_high_water_reuses_mixed_depth_three_windows_without_roots() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let marker = runtime.new_object(None).unwrap();
         let marker_id = marker.object_id();
         let mut slots = SlotStore::new(16);
@@ -2903,7 +2789,10 @@ mod tests {
                 slots
                     .push(
                         &mut window,
-                        into_internal(&runtime, Value::Object(marker.clone())),
+                        into_internal(
+                            &runtime,
+                            Value::Object(marker.try_clone().expect("duplicate root")),
+                        ),
                     )
                     .unwrap();
                 windows.push(window);
@@ -2916,7 +2805,7 @@ mod tests {
                 if let Some(parent) = windows.last() {
                     assert_eq!(
                         to_public(&runtime, slots.peek(parent, 0).unwrap()),
-                        Value::Object(marker.clone())
+                        Value::Object(marker.try_clone().expect("duplicate root"))
                     );
                 }
             }
@@ -2945,7 +2834,7 @@ mod tests {
     #[test]
     fn initialized_suffix_rolls_back_after_a_successful_object_copy() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.argument_count = 3;
         let function = runtime.new_object(None).unwrap();
@@ -2964,7 +2853,7 @@ mod tests {
         {
             let storage = FrameStorage {
                 original_arguments: vec![
-                    JsValue::Object(first.clone().into_handle()),
+                    JsValue::Object(first.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Object(blocked_handle),
                 ],
                 ..empty_storage()
@@ -2975,7 +2864,7 @@ mod tests {
                         &runtime,
                         &owner.frame_layout(),
                         storage,
-                        &function,
+                        function.object_id(),
                         None
                     )
                     .is_err()
@@ -2992,7 +2881,7 @@ mod tests {
                 &runtime,
                 &owner.frame_layout(),
                 empty_storage(),
-                &function,
+                function.object_id(),
                 None,
             )
             .unwrap();
@@ -3003,7 +2892,7 @@ mod tests {
     #[test]
     fn initialized_backing_preserves_take_frame_suspension_handoff_ownership() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.argument_count = 2;
         owner.metadata.max_stack = 5;
@@ -3081,7 +2970,7 @@ mod tests {
     #[test]
     fn numeric_replacement_is_transactional_and_clears_the_dead_owner() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 2;
         let mut slots = SlotStore::new(8);
@@ -3146,7 +3035,7 @@ mod tests {
     #[test]
     fn parent_window_survives_growth_and_last_result_outlives_clear() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 1;
         let mut slots = SlotStore::new(8192);
@@ -3183,7 +3072,7 @@ mod tests {
     #[test]
     fn permutations_move_owners_and_failed_insertion_preserves_the_window() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 6;
         let mut slots = SlotStore::new(6);
@@ -3243,7 +3132,7 @@ mod tests {
     #[test]
     fn duplicate_sequence_keeps_order_and_independent_object_owners() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 6;
         let mut slots = SlotStore::new(6);
@@ -3280,7 +3169,7 @@ mod tests {
     #[test]
     fn failed_sequence_retain_leaves_committed_prefix_for_driver_cleanup() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 6;
         let mut slots = SlotStore::new(6);
@@ -3299,7 +3188,7 @@ mod tests {
             "retained prefix",
         ));
         for value in [
-            into_internal(&runtime, text.clone()),
+            into_internal(&runtime, text.try_clone().expect("duplicate root")),
             JsValue::Object(stale_handle),
             into_internal(&runtime, Value::Int(9)),
         ] {
@@ -3323,7 +3212,7 @@ mod tests {
     #[cfg(feature = "profiling")]
     fn cost_collection_distinguishes_reuse_from_initialization_and_live_peaks() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 2;
         let mut slots = SlotStore::new(8);
@@ -3366,7 +3255,7 @@ mod tests {
     #[cfg(feature = "profiling")]
     fn late_profile_observes_initialized_backing_without_counting_prior_writes() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 5;
         let mut slots = SlotStore::new(8);
@@ -3392,7 +3281,7 @@ mod tests {
     #[test]
     fn original_arguments_do_not_alias_writable_parameters() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.argument_count = 2;
         let mut slots = SlotStore::new(32);
@@ -3429,7 +3318,7 @@ mod tests {
     #[test]
     fn distinct_arenas_reject_matching_numeric_window_ids() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 1;
         let mut first = SlotStore::new(4);
@@ -3461,7 +3350,7 @@ mod tests {
     #[test]
     fn failed_capacity_and_shape_checks_do_not_change_live_windows() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 1;
         let mut slots = SlotStore::new(1);
@@ -3506,5 +3395,39 @@ mod tests {
             .unwrap();
         assert_eq!(slots.depth(&reused), 0);
         assert!(slots.slots.iter().all(Option::is_none));
+    }
+}
+
+#[cfg(test)]
+mod state_storage_ownership_tests {
+    use super::{FrameStorage, StateFrameStorageGuard};
+    use crate::engine::{api::Runtime, value::JsValue, vm::bindings::FrameBinding};
+
+    #[test]
+    fn state_storage_guard_releases_aliases_without_reborrowing_runtime() {
+        let runtime = Runtime::new();
+        let id = runtime.new_object(None).unwrap().into_handle();
+        runtime.retain_object_handle(id).unwrap();
+        runtime.retain_object_handle(id).unwrap();
+        let before = std::rc::Rc::strong_count(&runtime.0);
+        let mut state = runtime.0.state.borrow_mut();
+        {
+            let mut guard = StateFrameStorageGuard::new(
+                &mut state,
+                &runtime.0.poisoned,
+                FrameStorage {
+                    original_arguments: vec![JsValue::Object(id)],
+                    parameters: vec![FrameBinding::Direct(JsValue::Object(id))],
+                    locals: Vec::new(),
+                    operands: vec![JsValue::Object(id)],
+                },
+            );
+            let (state, storage) = guard.parts();
+            assert_eq!(state.heap.object_strong_count(id), Ok(3));
+            assert_eq!(storage.as_ref().unwrap().operands.len(), 1);
+            assert_eq!(std::rc::Rc::strong_count(&runtime.0), before);
+        }
+        assert!(state.heap.object(id).is_err());
+        assert!(!runtime.0.poisoned.get());
     }
 }

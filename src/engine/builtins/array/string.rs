@@ -143,7 +143,8 @@ impl ArrayStringStep {
                 index: 0,
                 element: JsValue::Undefined,
             }));
-            let receiver = JsValue::Object(__pending_field_resume.0.object.clone().into_handle());
+            let receiver =
+                JsValue::Object(__pending_field_resume.0.object.try_clone()?.into_handle());
             Self::request_read(receiver, __pending_field_key, __pending_field_resume)
         })
     }
@@ -234,7 +235,7 @@ impl ArrayStringResume {
                     Ok({
                         let __pending_field_callable = callable;
                         let __pending_field_receiver =
-                            JsValue::Object(self.0.object.clone().into_handle());
+                            JsValue::Object(self.0.object.try_clone()?.into_handle());
                         let __pending_field_resume = self;
                         ArrayStringStep::request_call(
                             __pending_field_callable,
@@ -244,7 +245,7 @@ impl ArrayStringResume {
                     })
                 } else {
                     Ok(ArrayStringStep::ObjectTag {
-                        receiver: JsValue::Object(self.0.object.clone().into_handle()),
+                        receiver: JsValue::Object(self.0.object.try_clone()?.into_handle()),
                     })
                 }
             }
@@ -342,7 +343,8 @@ impl ArrayStringResume {
         }
         self.0.phase = Phase::Element;
         Ok({
-            let __pending_field_receiver = JsValue::Object(self.0.object.clone().into_handle());
+            let __pending_field_receiver =
+                JsValue::Object(self.0.object.try_clone()?.into_handle());
             let __pending_field_key =
                 runtime.property_key_for_index(u64::from(self.0.index as u32))?;
             let __pending_field_resume = self;

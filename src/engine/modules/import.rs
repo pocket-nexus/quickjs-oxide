@@ -112,7 +112,7 @@ impl ImportResume {
     ) -> Result<ImportStep, RuntimeError> {
         self.phase = Phase::Reject;
         Ok(ImportStep::Call {
-            callable: self.capability.reject.clone(),
+            callable: self.capability.reject.try_clone()?,
             reason,
             resume: self,
         })
@@ -142,7 +142,7 @@ impl ImportResume {
             attributes,
         )?;
         Ok(ImportStep::Complete(Completion::Return(JsValue::Object(
-            self.capability.promise.clone().into_handle(),
+            self.capability.promise.try_clone()?.into_handle(),
         ))))
     }
     pub(crate) fn resume(
@@ -155,7 +155,7 @@ impl ImportResume {
                 Completion::Return(value) => {
                     runtime.release_jsvalue(value)?;
                     Ok(ImportStep::Complete(Completion::Return(JsValue::Object(
-                        self.capability.promise.clone().into_handle(),
+                        self.capability.promise.try_clone()?.into_handle(),
                     ))))
                 }
                 Completion::Throw(value) => {
@@ -203,7 +203,7 @@ impl ImportResume {
                     return self.type_error(runtime, "options.with must be an object");
                 };
                 let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
-                self.attributes = Some(object.clone());
+                self.attributes = Some(object.try_clone()?);
                 self.phase = Phase::Descriptors;
                 Ok(ImportStep::Keys {
                     object,
@@ -272,19 +272,24 @@ impl ImportResume {
             ));
         }
         if enumerable {
-            self.enumerable.push(self.keys[self.index].clone());
+            self.enumerable.push(self.keys[self.index].try_clone()?);
         }
         self.index += 1;
         self.next_descriptor(runtime)
     }
     fn next_descriptor(mut self: Box<Self>, runtime: &Runtime) -> Result<ImportStep, RuntimeError> {
-        if let Some(key) = self.keys.get(self.index).cloned() {
+        if let Some(key) = self
+            .keys
+            .get(self.index)
+            .map(PropertyKey::try_clone)
+            .transpose()?
+        {
             return Ok(ImportStep::Enumerable {
                 object: self
                     .attributes
                     .as_ref()
                     .ok_or(RuntimeError::Invariant("dynamic import lost attributes"))?
-                    .clone(),
+                    .try_clone()?,
                 key,
                 resume: self,
             });
@@ -294,7 +299,12 @@ impl ImportResume {
         self.next_value(runtime)
     }
     fn next_value(mut self: Box<Self>, runtime: &Runtime) -> Result<ImportStep, RuntimeError> {
-        if let Some(key) = self.enumerable.get(self.index).cloned() {
+        if let Some(key) = self
+            .enumerable
+            .get(self.index)
+            .map(PropertyKey::try_clone)
+            .transpose()?
+        {
             // Observe key conversion before Get, as in the original algorithm.
             self.pending_name = Some(runtime.property_key_to_js_string(&key)?);
             return Ok(ImportStep::Read {
@@ -302,7 +312,7 @@ impl ImportResume {
                     .attributes
                     .as_ref()
                     .ok_or(RuntimeError::Invariant("dynamic import lost attributes"))?
-                    .clone(),
+                    .try_clone()?,
                 key,
                 resume: self,
             });

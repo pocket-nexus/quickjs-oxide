@@ -4,7 +4,7 @@ use std::cell::RefCell;
 #[test]
 fn dynamic_import_load_job_samples_the_current_loader() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (first_loader, first_loads, _) =
         MapModuleLoader::new([("sampled.js", "export const source = 1;")]);
     let _first_registration = runtime.set_module_loader(first_loader);
@@ -35,7 +35,7 @@ fn dynamic_import_load_job_samples_the_current_loader() {
 #[test]
 fn dynamic_import_load_samples_replacement_installed_by_normalize() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (replacement, replacement_loads, _) =
         MapModuleLoader::new([("pkg/value.js", "export const value = 42;")]);
     let initial_normalizations = Rc::new(RefCell::new(Vec::new()));
@@ -66,7 +66,7 @@ fn dynamic_import_resolution_failure_retries_the_acyclic_source_graph() {
     #[cfg(feature = "profiling")]
     let profile = crate::engine::api::profiling::CostProfile::start();
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (loader, loads, _) = MapModuleLoader::new([("pkg/a.js", "import './missing.js';")]);
     let _loader_registration = runtime.set_module_loader(loader);
 
@@ -77,7 +77,7 @@ fn dynamic_import_resolution_failure_retries_the_acyclic_source_graph() {
             promise_snapshot(&runtime, &promise).state,
             PromiseState::Rejected
         );
-        assert!(!runtime.is_job_pending());
+        assert!(!runtime.is_job_pending().expect("runtime state"));
     }
 
     assert_eq!(
@@ -93,7 +93,7 @@ fn dynamic_import_resolution_failure_retries_the_acyclic_source_graph() {
 #[test]
 fn dynamic_import_reuses_cycle_root_rejection_promise_and_tracker_history() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (loader, loads, _) = MapModuleLoader::new([
         ("cycle-a.js", "import 'cycle-b.js'; export const a = 1;"),
         ("cycle-b.js", "import 'cycle-a.js'; throw 42;"),
@@ -101,13 +101,18 @@ fn dynamic_import_reuses_cycle_root_rejection_promise_and_tracker_history() {
     let _registration = runtime.set_module_loader(loader);
     let events = Rc::new(RefCell::new(Vec::new()));
     let captured = events.clone();
-    runtime.set_host_promise_rejection_tracker(move |event| {
-        captured.borrow_mut().push((
-            event.is_handled(),
-            event.promise().object_id(),
-            event.reason().clone(),
-        ));
-    });
+    runtime
+        .set_host_promise_rejection_tracker(move |event| {
+            captured.borrow_mut().push((
+                event.is_handled(),
+                event.promise().object_id(),
+                event
+                    .reason()
+                    .try_clone()
+                    .expect("duplicate rejection reason"),
+            ));
+        })
+        .expect("configure test runtime");
 
     let first = eval_dynamic_import(
         &mut context,
@@ -136,7 +141,7 @@ fn dynamic_import_reuses_cycle_root_rejection_promise_and_tracker_history() {
         runtime.execute_pending_job().unwrap().executed(),
         "first catch reaction was missing"
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 
     let (cycle_a, cycle_b, root_promise) = {
         let state = runtime.0.state.borrow();
@@ -174,7 +179,7 @@ fn dynamic_import_reuses_cycle_root_rejection_promise_and_tracker_history() {
         promise_snapshot(&runtime, &second).state,
         PromiseState::Rejected
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
     assert_eq!(
         events.borrow().len(),
         3,
@@ -199,7 +204,7 @@ fn dynamic_import_successful_cycle_reuses_one_evaluation_promise() {
     #[cfg(feature = "profiling")]
     let profile = crate::engine::api::profiling::CostProfile::start();
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (loader, loads, _) = MapModuleLoader::new([
         (
             "ok-cycle-a.js",
@@ -267,7 +272,7 @@ fn dynamic_import_successful_cycle_reuses_one_evaluation_promise() {
 #[test]
 fn static_and_dynamic_entrypoints_share_the_cached_evaluation_promise() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let static_module = context
         .compile_module_with_filename("export const value = 42;", "pkg/static.js")
         .unwrap();
@@ -335,19 +340,24 @@ fn static_and_dynamic_entrypoints_share_the_cached_evaluation_promise() {
 #[test]
 fn static_throw_then_cached_dynamic_import_preserves_both_promise_histories() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let reason = context
         .eval("globalThis.__sharedModuleReason = {}; __sharedModuleReason")
         .unwrap();
     let events = Rc::new(RefCell::new(Vec::new()));
     let captured = events.clone();
-    runtime.set_host_promise_rejection_tracker(move |event| {
-        captured.borrow_mut().push((
-            event.is_handled(),
-            event.promise().object_id(),
-            event.reason().clone(),
-        ));
-    });
+    runtime
+        .set_host_promise_rejection_tracker(move |event| {
+            captured.borrow_mut().push((
+                event.is_handled(),
+                event.promise().object_id(),
+                event
+                    .reason()
+                    .try_clone()
+                    .expect("duplicate rejection reason"),
+            ));
+        })
+        .expect("configure test runtime");
 
     let module = context
         .compile_module_with_filename(
@@ -396,6 +406,6 @@ fn static_throw_then_cached_dynamic_import_preserves_both_promise_histories() {
         promise_snapshot(&runtime, &imported).state,
         PromiseState::Rejected
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
     assert_eq!(events.borrow().len(), 3);
 }

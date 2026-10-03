@@ -12,7 +12,8 @@ use crate::engine::heap::roots::VarRefRoot;
 
 use crate::engine::heap::{ContextId, ObjectData, ObjectPayload, PropertySlot, RawValue};
 use crate::engine::object::operations::{
-    complete_to_validation_record, descriptor_to_validation_record, validation_record_to_complete,
+    ValidationValue, complete_to_validation_record, descriptor_to_validation_record,
+    validation_record_to_complete,
 };
 use crate::engine::object::property::{
     PropertyDefinitionError, validate_and_apply_property_descriptor,
@@ -22,7 +23,7 @@ use crate::engine::object::{
     CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
     WellKnownSymbol,
 };
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 
 /// Keys remain rooted until the complete layout has retained its atoms.
 /// This concrete builder keeps metadata and slots parallel in one operation.
@@ -193,7 +194,7 @@ impl Runtime {
             )
         };
         layout.push(callee, flags, slot);
-        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
+        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
         layout.push(
             iterator,
             PropertyFlags::data(true, false, true),
@@ -289,8 +290,8 @@ impl Runtime {
             self.is_extensible(object)?,
             &descriptor_record,
             Some(&current_record),
-            &Value::Undefined,
-            Value::same_value,
+            &ValidationValue::Undefined,
+            ValidationValue::same_value,
         ) {
             Ok(complete) => validation_record_to_complete(complete)?,
             Err(PropertyDefinitionError::InvalidDescriptor) => {
@@ -469,6 +470,7 @@ impl Runtime {
 mod tests {
     use crate::engine::code::function::metadata::ClosureVariableKind;
     use crate::engine::object::DescriptorField;
+    use crate::engine::value::Value;
 
     use super::*;
 
@@ -490,7 +492,7 @@ mod tests {
     #[test]
     fn unmapped_arguments_use_exact_values_realm_roots_and_quickjs_descriptors() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let array_prototype = context.array_prototype().unwrap();
         let values_key = runtime.intern_property_key("values").unwrap();
         let original_values = context.get_property(&array_prototype, &values_key).unwrap();
@@ -552,7 +554,11 @@ mod tests {
         assert!(!enumerable);
         assert!(!configurable);
 
-        let iterator = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+        let iterator = PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::Iterator)
+                .expect("well-known symbol"),
+        );
         assert_eq!(
             data_descriptor(runtime.get_own_property(&arguments, &iterator).unwrap()),
             (original_values, true, false, true)
@@ -572,8 +578,8 @@ mod tests {
     #[test]
     fn arguments_intrinsic_properties_are_cached_per_realm() {
         let runtime = Runtime::new();
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let values = runtime.intern_property_key("values").unwrap();
         let first_values = first
             .get_property(&first.array_prototype().unwrap(), &values)
@@ -589,7 +595,11 @@ mod tests {
         let second_arguments = runtime
             .new_unmapped_arguments_object(second.realm, Vec::new())
             .unwrap();
-        let iterator = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+        let iterator = PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::Iterator)
+                .expect("well-known symbol"),
+        );
         assert_eq!(
             data_descriptor(
                 runtime
@@ -631,13 +641,17 @@ mod tests {
     #[test]
     fn mapped_arguments_keep_aliases_until_delete_accessor_or_read_only_transition() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callee = context.function_prototype().unwrap();
         let root = runtime
             .new_var_ref(JsValue::Int(1), false, false, ClosureVariableKind::Normal)
             .unwrap();
         let arguments = runtime
-            .new_mapped_arguments_object(context.realm, &callee, vec![root.clone()])
+            .new_mapped_arguments_object(
+                context.realm,
+                &callee,
+                vec![root.try_clone().expect("duplicate root")],
+            )
             .unwrap();
         let zero = runtime.intern_property_key("0").unwrap();
 
@@ -709,7 +723,7 @@ mod tests {
     #[test]
     fn arguments_delete_updates_fast_state_and_never_reconnects_a_mapping() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callee = context.function_prototype().unwrap();
         let first = runtime
             .new_var_ref(JsValue::Int(1), false, false, ClosureVariableKind::Normal)
@@ -721,7 +735,10 @@ mod tests {
             .new_mapped_arguments_object(
                 context.realm,
                 &callee,
-                vec![first.clone(), second.clone()],
+                vec![
+                    first.try_clone().expect("duplicate root"),
+                    second.try_clone().expect("duplicate root"),
+                ],
             )
             .unwrap();
         let one = runtime.intern_property_key("1").unwrap();
@@ -732,7 +749,10 @@ mod tests {
             .new_mapped_arguments_object(
                 context.realm,
                 &callee,
-                vec![first.clone(), second.clone()],
+                vec![
+                    first.try_clone().expect("duplicate root"),
+                    second.try_clone().expect("duplicate root"),
+                ],
             )
             .unwrap();
         let zero = runtime.intern_property_key("0").unwrap();

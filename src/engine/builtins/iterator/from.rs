@@ -90,7 +90,7 @@ impl FromStep {
             iterator: Some(runtime.dup_jsvalue(input)?),
             next: None,
         }));
-        let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+        let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?);
         let receiver = runtime.dup_jsvalue(resume.iterator.as_ref().expect("iterator input"))?;
         resume.pending_effect.read_receiver = Some(receiver);
         resume.pending_effect.read_key = Some(key);

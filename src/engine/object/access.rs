@@ -72,7 +72,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Completion, RuntimeError> {
-        self.internal_get(realm, object, key, Value::Object(object.clone()))
+        self.internal_get(realm, object, key, Value::Object(object.try_clone()?))
     }
 
     fn prepare_string_property_read(
@@ -240,7 +240,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<bool, RuntimeError> {
-        let mut cursor = Some(object.clone());
+        let mut cursor = Some(object.try_clone()?);
         while let Some(current) = cursor {
             if self.has_own_property(&current, key)? {
                 return Ok(true);

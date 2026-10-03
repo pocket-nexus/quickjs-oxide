@@ -12,7 +12,7 @@ fn deep_star_resolution_uses_an_explicit_frame_stack() {
             let _loader_registration = runtime.set_module_loader(StarChainModuleLoader {
                 module_count: MODULE_COUNT,
             });
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let module = context
                 .compile_module_with_filename(
                     "import * as ns from 's0'; globalThis.__deepStarAnswer = ns.answer;",
@@ -39,7 +39,7 @@ fn deep_cyclic_graph_uses_explicit_resolve_link_and_evaluation_stacks() {
             let _loader_registration = runtime.set_module_loader(CyclicChainModuleLoader {
                 module_count: MODULE_COUNT,
             });
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let module = context
                 .compile_module_with_filename(
                     "import 'm0'; globalThis.__deepModuleEntry = true;",
@@ -69,7 +69,7 @@ fn dependency_evaluation_exception_is_cached_on_every_active_ancestor() {
         "#,
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import './abrupt.js'; globalThis.__ancestorRan = true;",
@@ -110,7 +110,7 @@ fn cyclic_evaluation_exception_is_cached_on_the_complete_active_scc() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import './a.js'; globalThis.__cycleEntryRan = true;",
@@ -146,7 +146,7 @@ fn context_module_cache_is_oldest_first_and_loader_cache_is_per_context() {
     let (loader, loads, _) = MapModuleLoader::new([("pkg/loaded.js", "export const loaded = 42;")]);
     let _loader_registration = runtime.set_module_loader(loader);
 
-    let mut first_context = runtime.new_context();
+    let mut first_context = runtime.new_context().expect("create context");
     first_context
         .compile_module_with_filename("export const value = 1;", "pkg/shared.js")
         .unwrap();
@@ -170,7 +170,7 @@ fn context_module_cache_is_oldest_first_and_loader_cache_is_per_context() {
         .unwrap();
     drop(first_context.execute_module(&first_loaded).unwrap());
 
-    let mut second_context = runtime.new_context();
+    let mut second_context = runtime.new_context().expect("create context");
     let second_loaded = second_context
         .compile_module_with_filename(
             "import { loaded } from './loaded.js'; globalThis.__loaded = loaded;",
@@ -191,7 +191,7 @@ fn first_execute_context_owns_globals_for_the_complete_module_graph() {
         "globalThis.__graphDependencyRealm = __realmMarker; export const value = 42;",
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut compilation_context = runtime.new_context();
+    let mut compilation_context = runtime.new_context().expect("create context");
     drop(
         compilation_context
             .eval("globalThis.__realmMarker = 1")
@@ -204,7 +204,7 @@ fn first_execute_context_owns_globals_for_the_complete_module_graph() {
         )
         .unwrap();
 
-    let mut execution_context = runtime.new_context();
+    let mut execution_context = runtime.new_context().expect("create context");
     drop(
         execution_context
             .eval("globalThis.__realmMarker = 2")
@@ -224,7 +224,7 @@ fn first_execute_context_owns_globals_for_the_complete_module_graph() {
 #[test]
 fn module_cells_use_the_link_context_while_bytecode_keeps_its_compile_realm() {
     let runtime = Runtime::new();
-    let mut compilation_context = runtime.new_context();
+    let mut compilation_context = runtime.new_context().expect("create context");
     let compilation_object_prototype = compilation_context.eval("Object.prototype").unwrap();
     let compilation_function_prototype = compilation_context.eval("Function.prototype").unwrap();
     let compilation_array_prototype = compilation_context.eval("Array.prototype").unwrap();
@@ -240,7 +240,7 @@ fn module_cells_use_the_link_context_while_bytecode_keeps_its_compile_realm() {
         )
         .unwrap();
 
-    let mut link_context = runtime.new_context();
+    let mut link_context = runtime.new_context().expect("create context");
     let link_object_prototype = link_context.eval("Object.prototype").unwrap();
     let link_function_prototype = link_context.eval("Function.prototype").unwrap();
     let link_array_prototype = link_context.eval("Array.prototype").unwrap();

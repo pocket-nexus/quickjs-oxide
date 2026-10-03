@@ -151,8 +151,8 @@ impl Search {
         }
         let rooted = runtime.root_proxy_snapshot(proxy.as_object(), data)?;
         Ok(ProxyConstructStep::request_read(
-            rooted.handler.clone(),
-            self.key.clone(),
+            rooted.handler.try_clone()?,
+            self.key.try_clone()?,
             ProxyConstructResume(Box::new(ProxyConstructResumeState {
                 pending_effect: ProxyConstructStepPending::new(runtime.clone()),
                 phase: Phase::Method {
@@ -191,7 +191,7 @@ impl ProxyConstructResume {
         };
         // Validate the immediate target after Get(trap), even for missing traps.
         let target = match runtime
-            .constructor_from_value(search.realm, Value::Object(rooted.target.clone()))
+            .constructor_from_value(search.realm, Value::Object(rooted.target.try_clone()?))
         {
             Ok(NativeConversion::Value(target)) => target,
             Err(error) => {
@@ -248,9 +248,9 @@ impl ProxyConstructResume {
         };
         Ok(ProxyConstructStep::request_call(
             method,
-            runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?,
+            runtime.into_jsvalue(Value::Object(rooted.handler.try_clone()?))?,
             [
-                runtime.into_jsvalue(Value::Object(rooted.target.clone()))?,
+                runtime.into_jsvalue(Value::Object(rooted.target.try_clone()?))?,
                 JsValue::Object(array.into_handle()),
                 runtime.dup_jsvalue(&search.new_target.value())?,
             ]
@@ -281,7 +281,12 @@ pub(super) fn finish(
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.internal_get(realm, &object, &key, Value::Object(object.clone()))?,
+                    runtime.internal_get(
+                        realm,
+                        &object,
+                        &key,
+                        Value::Object(object.try_clone()?),
+                    )?,
                 )?
             }
             ProxyConstructStep::Call { mut resume } => {

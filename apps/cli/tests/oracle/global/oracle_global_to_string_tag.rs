@@ -153,8 +153,8 @@ fn global_to_string_tag_matches_pinned_quickjs() {
 fn object_to_string_cross_realm_uses_receiver_tag_and_method_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
     let first_object_prototype = first.object_prototype().unwrap();
@@ -163,7 +163,11 @@ fn object_to_string_cross_realm_uses_receiver_tag_and_method_defining_realm() {
         property_callable(&runtime, &mut first, &first_object_prototype, "toString");
     let second_to_string =
         property_callable(&runtime, &mut second, &second_object_prototype, "toString");
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
 
     define_data_key(
         &mut first,
@@ -185,14 +189,22 @@ fn object_to_string_cross_realm_uses_receiver_tag_and_method_defining_realm() {
     );
     assert_eq!(
         second
-            .call(&first_to_string, Value::Object(second_global.clone()), &[],)
+            .call(
+                &first_to_string,
+                Value::Object(second_global.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::String(JsString::try_from_utf8("[object second-global]").unwrap()),
         "a foreign native method must read the receiver global's own tag"
     );
     assert_eq!(
         first
-            .call(&second_to_string, Value::Object(first_global.clone()), &[],)
+            .call(
+                &second_to_string,
+                Value::Object(first_global.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::String(JsString::try_from_utf8("[object first-global]").unwrap())
     );
@@ -231,11 +243,15 @@ fn object_to_string_cross_realm_uses_receiver_tag_and_method_defining_realm() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let object_to_string = property_callable(&runtime, &mut context, &object_prototype, "toString");
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
 
     let initial = runtime.get_own_property(&global, &tag).unwrap().unwrap();
     let mut observations = vec![format!(
@@ -337,7 +353,11 @@ fn rust_observations() -> Vec<String> {
         .expect("the global tag key must be observable");
     let symbols = &keys[tag_index..];
     let strings_precede_symbols = marker_index.checked_add(1) == Some(tag_index);
-    let symbols_are_exact_tail = symbols == [tag.clone(), extra.clone()];
+    let symbols_are_exact_tail = symbols
+        == [
+            tag.try_clone().expect("duplicate root"),
+            extra.try_clone().expect("duplicate root"),
+        ];
     observations.push(format!(
         "keys={selected}|{strings_precede_symbols}|{symbols_are_exact_tail}|{}|{}|{}",
         symbols.len(),
@@ -482,7 +502,11 @@ fn call_to_string(
 ) -> String {
     plain_value(
         context
-            .call(method, Value::Object(object.clone()), &[])
+            .call(
+                method,
+                Value::Object(object.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
     )
 }

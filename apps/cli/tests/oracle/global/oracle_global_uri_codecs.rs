@@ -333,14 +333,18 @@ fn global_uri_codecs_match_pinned_quickjs() {
 fn global_uri_codec_errors_use_the_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_encode = global_callable(&runtime, &mut first, "encodeURI");
     let first_decode = global_callable(&runtime, &mut first, "decodeURIComponent");
     let first_function_prototype = first.function_prototype().unwrap();
     assert_eq!(
         runtime.get_prototype_of(first_encode.as_object()).unwrap(),
-        Some(first_function_prototype.clone())
+        Some(
+            first_function_prototype
+                .try_clone()
+                .expect("duplicate root")
+        )
     );
     assert_eq!(
         runtime.get_prototype_of(first_decode.as_object()).unwrap(),
@@ -405,8 +409,17 @@ fn global_uri_codec_errors_use_the_defining_realm() {
     define_data_key(
         &runtime,
         &foreign_object,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(foreign_throw.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            foreign_throw
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     assert_eq!(
         first.call(
@@ -429,15 +442,18 @@ fn global_uri_codec_keeps_its_defining_realm_alive_until_collection() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let codec = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         global_callable(&runtime, &mut context, "encodeURIComponent")
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(codec);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]
@@ -481,7 +497,7 @@ fn global_uri_codec_native_stacks_match_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let codecs = CODEC_NAMES
@@ -598,8 +614,17 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &exotic,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(exotic_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            exotic_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let extra = context.new_object().unwrap();
     let extra_conversion = eval_callable(
@@ -610,8 +635,17 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &extra,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(extra_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            extra_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let fallback = context.new_object().unwrap();
     let fallback_to_string = eval_callable(
@@ -628,13 +662,23 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &fallback,
         "toString",
-        Value::Object(fallback_to_string.as_object().clone()),
+        Value::Object(
+            fallback_to_string
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     define_data(
         &runtime,
         &fallback,
         "valueOf",
-        Value::Object(fallback_value_of.as_object().clone()),
+        Value::Object(
+            fallback_value_of
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let invalid_result = context.new_object().unwrap();
     define_data(
@@ -652,16 +696,34 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &invalid,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(invalid_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            invalid_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let arbitrary_throw = context.new_object().unwrap();
     let arbitrary_conversion = eval_callable(&runtime, &mut context, "(function() { throw 71; })");
     define_data_key(
         &runtime,
         &arbitrary_throw,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(arbitrary_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            arbitrary_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let this_symbol = runtime
         .new_symbol(Some(JsString::try_from_utf8("this").unwrap()))
@@ -673,8 +735,11 @@ fn rust_observations() -> Vec<String> {
             &runtime,
             &mut context,
             callable,
-            Value::Symbol(this_symbol.clone()),
-            &[Value::Object(exotic.clone()), Value::Object(extra.clone())],
+            Value::Symbol(this_symbol.try_clone().expect("duplicate root")),
+            &[
+                Value::Object(exotic.try_clone().expect("duplicate root")),
+                Value::Object(extra.try_clone().expect("duplicate root")),
+            ],
         );
         let exotic_log = global_string(&runtime, &mut context, &global, "conversionLog");
         set_global_string(&runtime, &mut context, &global, "conversionLog", "");
@@ -683,7 +748,7 @@ fn rust_observations() -> Vec<String> {
             &mut context,
             callable,
             Value::Undefined,
-            &[Value::Object(fallback.clone())],
+            &[Value::Object(fallback.try_clone().expect("duplicate root"))],
         );
         let fallback_log = global_string(&runtime, &mut context, &global, "conversionLog");
         let invalid_result = observe_call_args(
@@ -691,14 +756,16 @@ fn rust_observations() -> Vec<String> {
             &mut context,
             callable,
             Value::Undefined,
-            &[Value::Object(invalid.clone())],
+            &[Value::Object(invalid.try_clone().expect("duplicate root"))],
         );
         let arbitrary_result = observe_call_args(
             &runtime,
             &mut context,
             callable,
             Value::Undefined,
-            &[Value::Object(arbitrary_throw.clone())],
+            &[Value::Object(
+                arbitrary_throw.try_clone().expect("duplicate root"),
+            )],
         );
         object_results.push(format!(
             "{name}:{exotic_result}:{exotic_log}:{fallback_result}:{fallback_log}:{invalid_result}:{arbitrary_result}"
@@ -731,8 +798,17 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &lone_surrogate_result,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(lone_surrogate_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            lone_surrogate_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let malformed_result = context.new_object().unwrap();
     let malformed_conversion = eval_callable(
@@ -743,8 +819,17 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &malformed_result,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(malformed_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            malformed_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let thrown_before_codec = context.new_object().unwrap();
     let thrown_conversion = eval_callable(
@@ -755,8 +840,17 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &thrown_before_codec,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(thrown_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            thrown_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let priority_results = [
         observe_call_args(
@@ -1269,7 +1363,7 @@ fn plain_value(value: Value) -> String {
 fn rust_uncaught_error(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context.eval_with_options(source, &EvalOptions::new("<cmdline>")),
         Err(RuntimeError::Exception)
@@ -1286,7 +1380,7 @@ fn rust_uncaught_error(source: &str) -> String {
 fn rust_uncaught_error_with_symbol(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     define_data(
         &runtime,

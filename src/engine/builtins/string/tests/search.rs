@@ -20,7 +20,7 @@ fn string_index_scan_is_utf16_exact_and_inclusive() {
 #[test]
 fn string_index_methods_preserve_pinned_positions_and_conversion_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     for (source, expected) in [
         (r#""aaa".indexOf("a",NaN)"#, 0),
@@ -71,7 +71,7 @@ fn string_index_methods_preserve_pinned_positions_and_conversion_order() {
 #[test]
 fn string_includes_family_publishes_typed_autoinit_entries_and_identities() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let entries = [
         ("includes", StringIncludesKind::Includes),
@@ -132,7 +132,7 @@ fn string_includes_family_publishes_typed_autoinit_entries_and_identities() {
 #[test]
 fn string_includes_preserves_pinned_values_utf16_and_shared_magic_kernel() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     for (source, expected) in [
         (r#""abc".includes("b")"#, true),
@@ -189,7 +189,7 @@ fn string_includes_preserves_pinned_values_utf16_and_shared_magic_kernel() {
 #[test]
 fn string_includes_preserves_is_regexp_and_conversion_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let order = context
         .eval(
             r#"(function(){

@@ -77,26 +77,8 @@ runner verifies matching receipts when present. External engines without a
 receipt are identified by binary hash/version output; attach their compiler
 and build configuration separately when publishing comparisons.
 
-## Profile-guided optimization
-
-`pgo.py` builds a profile-guided CLI in three phases: an instrumented build, a
-training run, and an optimized build. It needs the rustup `llvm-tools`
-component for `llvm-profdata`:
-
-```sh
-rustup component add llvm-tools
-python3 scripts/benchmark/pgo.py --jobs 16 --v8-source ../js-engine-benchmark
-```
-
-By default every `scaling.py` case is trained at sizes 64 and 128, and the
-external v8-v7 suite is added when `--v8-source` points at an
-`js-engine-benchmark` checkout outside this repository. Training failures only
-shrink coverage: raw profiles are kept and merged anyway. The optimized binary
-is written under `--use-target` with a `qjs.build.json` receipt recording the
-merged profile hash, training load and compiler flags. `--skip-training`
-rebuilds from existing raw profiles. Ordinary release builds also take
-`lto = "fat"` and `codegen-units = 1` from `[profile.release]`; comparisons
-must use the same flags on both sides.
+Ordinary release builds take `lto = "fat"` and `codegen-units = 1` from
+`[profile.release]`; comparisons must use the same flags on both sides.
 
 The source identities, build protocol and A/A and A/B design are in
 [the performance measurement guide](../../docs/performance/measurement.md).
@@ -138,6 +120,58 @@ both the source commit and generated workload hashes: upstream can change.
 The original suite reports scores, not ns/op. Require every expected suite score
 and a valid aggregate `Score` even if the engine exits zero: its error callback
 can swallow failures. Internal assertions remain the original suite's checks.
+
+### Paired confidence intervals and acceptance
+
+`paired.py` reads `fixed.py` or original V8 `run.py` results. It requires at
+least six complete pairs per case in a declared balanced ABBA/BAAB schedule.
+It verifies the sample journal order and rejects missing, duplicated, failed,
+or mismatched observations before calculating any ratio. The existing runners'
+shorter diagnostic schedules remain available; they cannot pass this acceptance
+report.
+
+Freeze a same-binary A/A matrix before comparing candidates. Use the same
+workload bytes, CPU affinity, machine and metric for both matrices. On Linux,
+both runners accept `--cpu 2` to pin measured processes; a machine snapshot
+does not establish that other builds or tests were absent. For the original
+V8 matrix, request all eight isolated cases and `--case all` in the same
+planned run. The combined program is a separate measurement.
+
+```sh
+python3 scripts/benchmark/paired.py \
+  --results /tmp/oxide-fixed-ab/results.json \
+  --baseline reference --candidate candidate --metric fixed-time \
+  --aa-results /tmp/oxide-fixed-aa/results.json \
+  --gate net-gain --output /tmp/oxide-fixed-ab/paired.json
+
+python3 scripts/benchmark/paired.py \
+  --results /tmp/oxide-original-ab/results.json \
+  --baseline reference --candidate candidate --metric original-score \
+  --aa-results /tmp/oxide-original-aa/results.json \
+  --require-v8-matrix --gate noninferior \
+  --output /tmp/oxide-original-ab/paired.json
+```
+
+The estimator is the median of **paired** percent gains, with 10,000 paired
+bootstrap resamples, seed 79, and an empirical percentile 95% interval. Positive
+means better: fixed-work time uses `100 * (1 - candidate / baseline)`; original
+Score uses `100 * (candidate / baseline - 1)`. The JSON retains individual gains,
+absolute medians, input hashes and both measurement receipts; a Markdown table
+is written beside it. Existing files are not overwritten.
+
+The frozen A/A noise for each case and metric is the larger absolute endpoint
+of its gain interval. `net-gain` requires the candidate interval's lower endpoint
+to exceed that noise. `noninferior` requires a lower endpoint greater than
+−1%; A/A noise cannot enlarge this fixed margin. A within-margin slowdown is
+still reported with a negative gain. A/A quality is reported separately and
+must be considered before using a result. A failed gate returns exit status 1;
+invalid evidence is rejected. Do not keep adding samples until a gate passes.
+
+Original combined subscore medians are listed separately for comparison with
+historical **combined-run** Boa data. They never replace isolated acceptance
+results. Reuse unchanged Boa data; this report neither runs Boa nor invents an
+aggregate from isolated scores. Compare the final stack directly with its
+original baseline, rather than multiplying separately measured stage gains.
 
 ### Fixed V8 function and callsite diagnostic
 

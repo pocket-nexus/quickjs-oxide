@@ -42,12 +42,14 @@ impl NativeCallableInput<'_> {
         }
     }
 
-    fn into_owned(self) -> CallableRef {
-        match self {
-            Self::Borrowed(callable) => callable.clone(),
+    fn into_owned(self) -> Result<CallableRef, crate::engine::api::RuntimeError> {
+        Ok({
+            match self {
+                Self::Borrowed(callable) => callable.try_clone()?,
 
-            Self::Owned(callable) => callable,
-        }
+                Self::Owned(callable) => callable,
+            }
+        })
     }
 }
 
@@ -417,7 +419,7 @@ impl Runtime {
         Ok(PreparedNativeCall {
             activation: NativeActivation {
                 runtime: Some(self.clone()),
-                callable: Some(callable_input.into_owned()),
+                callable: Some(callable_input.into_owned()?),
                 realm,
                 target,
                 mode,
@@ -646,7 +648,7 @@ mod tests {
     fn borrowed_native_adaptation_shares_validation_and_preserves_input_owners() {
         use super::super::NativeInvocationAdaptation;
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for (fixture, construct) in [
             ("Reflect.get", false),
             ("Math.min", true),
@@ -802,7 +804,7 @@ mod tests {
     fn native_argument_pool_reuses_nested_capacity_and_releases_all_owners() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -876,7 +878,7 @@ mod tests {
     #[cfg(feature = "profiling")]
     fn owned_readable_arguments_keep_buffer_identity_arity_and_padding() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -891,12 +893,12 @@ mod tests {
         let marker = runtime.new_object(None).unwrap();
         for actual in [
             vec![],
-            vec![Value::Object(marker.clone())],
+            vec![Value::Object(marker.try_clone().expect("duplicate root"))],
             vec![
-                Value::Object(marker.clone()),
+                Value::Object(marker.try_clone().expect("duplicate root")),
                 Value::Int(0),
                 Value::Undefined,
-                Value::Object(marker.clone()),
+                Value::Object(marker.try_clone().expect("duplicate root")),
             ],
         ] {
             let borrowed = runtime
@@ -976,7 +978,7 @@ mod tests {
 
     fn owning_preparation_keeps_rejection_order_and_argument_domain_errors() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -990,7 +992,7 @@ mod tests {
         };
         let foreign = Runtime::new();
         let rejected = foreign.prepare_native_invocation_owned(
-            callable.clone(),
+            callable.try_clone().expect("duplicate root"),
             realm,
             target,
             min_readable_args + 1,
@@ -1006,7 +1008,7 @@ mod tests {
         ));
         assert!(foreign.0.state.borrow().active_frames.is_empty());
         let rejected = runtime.prepare_native_invocation_owned(
-            callable.clone(),
+            callable.try_clone().expect("duplicate root"),
             realm,
             target,
             min_readable_args + 1,
@@ -1031,14 +1033,17 @@ mod tests {
         for owned in [false, true] {
             let rejected = if owned {
                 runtime.prepare_native_invocation_owned(
-                    callable.clone(),
+                    callable.try_clone().expect("duplicate root"),
                     realm,
                     target,
                     min_readable_args,
                     NativeInvocation::Call {
                         this_value: JsValue::Undefined,
                     },
-                    arguments.clone(),
+                    arguments
+                        .iter()
+                        .map(|value| value.try_clone().expect("duplicate root"))
+                        .collect(),
                     NativeInvokeMode::Ordinary,
                 )
             } else {
@@ -1068,7 +1073,7 @@ mod tests {
     #[cfg(feature = "profiling")]
     fn readable_buffer_ledger_separates_padding_from_copied_roots() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let marker = runtime.new_object(None).unwrap();
         let profile = crate::engine::api::profiling::CostProfile::start();
         let native = prepare(
@@ -1095,7 +1100,7 @@ mod tests {
     fn prepared_native_activation_owns_all_arguments_without_invoking_the_body() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let target = context
             .eval("var calls=0;new Proxy({}, {get(){calls++;return 1}})")
             .unwrap();
@@ -1129,7 +1134,7 @@ mod tests {
     #[test]
     fn prepared_native_padding_and_unwind_restore_the_frame() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let native = prepare(&runtime, &mut context, &[]);
         assert_eq!(native.activation.arguments.actual_arg_count, 0);
         assert!(!native.activation.arguments.readable.is_empty());
@@ -1146,14 +1151,14 @@ mod tests {
             panic!("abandon native activation");
         }));
         assert!(result.is_err());
-        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert!(runtime.is_poisoned());
     }
 
     #[test]
     fn native_activation_materializes_errors_before_leaving_its_defining_realm() {
         let runtime = Runtime::new();
-        let mut caller = runtime.new_context();
-        let mut defining = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
+        let mut defining = runtime.new_context().expect("create context");
         let expected_prototype = defining.eval("TypeError.prototype").unwrap();
         let native = prepare(&runtime, &mut defining, &[]);
         drop(defining);
@@ -1203,7 +1208,7 @@ mod tests {
     #[test]
     fn native_activation_rejects_foreign_and_changed_metadata_before_registration() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -1258,7 +1263,7 @@ mod continuation_publication_tests {
     #[test]
     fn native_continuation_publication_preserves_abi_hidden_flags_and_single_registration() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for (source, mode) in [
             ("Map.prototype.set", NativeInvokeMode::Ordinary),
             ("[].values().next", NativeInvokeMode::IteratorNextRaw),
@@ -1326,7 +1331,7 @@ mod continuation_publication_tests {
     #[test]
     fn promise_resolving_publication_hides_backtrace_frames() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "Promise.withResolvers().resolve",
             "Promise.withResolvers().reject",
@@ -1377,7 +1382,7 @@ mod continuation_publication_tests {
     #[test]
     fn native_continuation_publication_rejects_stale_metadata_before_publishing() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("Math.min").unwrap())
             .unwrap();
@@ -1391,7 +1396,7 @@ mod continuation_publication_tests {
         };
         let token = runtime.0.state.borrow().next_active_frame_token;
         let result = runtime.prepare_native_continuation_owned(
-            callable.clone(),
+            callable.try_clone().expect("duplicate root"),
             realm,
             target,
             min_readable_args.saturating_add(1),
@@ -1457,7 +1462,7 @@ mod publication_witness_tests {
     #[test]
     fn publication_witness_matches_checked_registration_and_keeps_count_guard() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "Map.prototype.set",
             "Math.min",
@@ -1477,7 +1482,13 @@ mod publication_witness_tests {
             };
             let count = usize::from(min_readable_args);
             let checked = runtime
-                .push_native_active_frame(callable.as_object().clone(), realm, target, 0, count)
+                .push_native_active_frame(
+                    callable.as_object().try_clone().expect("duplicate root"),
+                    realm,
+                    target,
+                    0,
+                    count,
+                )
                 .unwrap();
             let original = *runtime.0.state.borrow().active_frames.last().unwrap();
             checked.finish().unwrap();
@@ -1523,8 +1534,8 @@ mod publication_witness_tests {
     #[test]
     fn publication_witness_preserves_foreign_realm_metadata_and_token_error_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let other_context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
+        let other_context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -1595,7 +1606,7 @@ mod publication_witness_tests {
     #[test]
     fn publication_witness_keeps_native_reentry_throw_and_following_result() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "(function(){var m=new Map(),n=0,o={valueOf(){n++;m.set('x',41);return m.get('x')}};return Math.min(o,99)+n})()",
             "(function(){var marker={},m=new Map(),n=0;try{Math.min({valueOf(){n++;m.set('x',41);throw marker}},0);return 0}catch(e){return e===marker&&n===1?m.get('x')+1:0}})()",
@@ -1615,7 +1626,7 @@ mod classified_preparation_tests {
     #[test]
     fn selected_native_payload_is_bound_to_its_call_owner() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("Math.min").unwrap())
             .unwrap();
@@ -1632,7 +1643,7 @@ mod classified_preparation_tests {
             .unwrap();
         let prepared = runtime
             .prepare_native_continuation_selected(
-                callable.clone(),
+                callable.try_clone().expect("duplicate root"),
                 realm,
                 target,
                 min_readable_args,

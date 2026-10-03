@@ -241,7 +241,7 @@ pub(crate) fn assert_runtime_completion_helper_contracts() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let callable = context.eval("(function(){})").unwrap();
     let ordinary = context.eval("({})").unwrap();
     assert_eq!(checked_value_type(&runtime, &callable), "function");
@@ -301,7 +301,7 @@ pub(crate) fn compare_eval_completion_cases(group: &str, cases: &[(&str, &str)])
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_eval_completion(&runtime, &mut context, source, description),
             crate::quickjs_oracle::observe_completion(&oracle, source, description),
@@ -323,7 +323,7 @@ pub(crate) fn compare_eval_completion_cases_with_prelude(
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = source_with_prelude(prelude, source);
         assert_eq!(
             observe_eval_completion_without_source_diagnostic(
@@ -353,7 +353,7 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
     for &(description, original_source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = source_with_prelude(prelude, original_source);
         let actual = observe_eval_completion_with(
             &runtime,

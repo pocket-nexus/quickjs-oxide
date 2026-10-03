@@ -449,7 +449,7 @@ fn capture_waiting_step(
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     // Completed non-migrated domains must also remain allocation-free. Only
     // after their small payload is ruled out acquire the resident wait record.
-    let mut step = step.into();
+    let mut step = Step::try_from(step)?;
     if let Some(result) = take_immediate(&mut step) {
         return Ok(Some(result));
     }
@@ -889,6 +889,7 @@ pub(super) fn begin_selected_into(
         )
         .map_err(runtime_error_to_vm_error)?;
     let mut waiting_written = false;
+    let mut waiting_error = None;
     let prepared = (|| match runtime
         .adapt_native_invocation_borrowed(
             target,
@@ -902,10 +903,16 @@ pub(super) fn begin_selected_into(
             Ok(Some(NativeInvokeOutcome::Completion(result)))
         }
         super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
-            let mut waiting = |waiting: crate::engine::builtins::continuation::NativeStep| {
-                *output = waiting.into();
-                waiting_written = true;
-            };
+            let mut waiting =
+                |waiting: crate::engine::builtins::continuation::NativeStep| match Step::try_from(
+                    waiting,
+                ) {
+                    Ok(step) => {
+                        *output = step;
+                        waiting_written = true;
+                    }
+                    Err(error) => waiting_error = Some(error),
+                };
             // Known Array-next calls keep every activation and ABI check above,
             // but need not enter the generic native dispatcher's wide frame.
             let started = match kind {
@@ -928,6 +935,9 @@ pub(super) fn begin_selected_into(
             };
             // Only a changed-protocol adaptation owns an extra edge.
             let _ = invocation.release(runtime);
+            if let Some(error) = waiting_error {
+                return Err(runtime_error_to_vm_error(error));
+            }
             started.map_err(runtime_error_to_vm_error)
         }
     })();
@@ -987,6 +997,7 @@ pub(super) fn compact_array_next_into(
         .prepare_array_next_owned(callable, realm, min_readable_args, receiver)
         .map_err(runtime_error_to_vm_error)?;
     let mut waiting_written = false;
+    let mut waiting_error = None;
     let started = (|| match runtime.adapt_native_invocation_borrowed(
         call.activation.target,
         realm,
@@ -1001,12 +1012,18 @@ pub(super) fn compact_array_next_into(
                 runtime,
                 realm,
                 invocation.as_ref(),
-                |step| {
-                    *output = step.into();
-                    waiting_written = true;
+                |step| match Step::try_from(step) {
+                    Ok(step) => {
+                        *output = step;
+                        waiting_written = true;
+                    }
+                    Err(error) => waiting_error = Some(error),
                 },
             );
             let _ = invocation.release(runtime);
+            if let Some(error) = waiting_error {
+                return Err(error);
+            }
             started
         }
     })()
@@ -1054,7 +1071,7 @@ mod tests {
     #[test]
     fn classified_native_calls_preserve_bound_tail_receiver_and_waiting_reentry() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -1083,8 +1100,8 @@ mod tests {
     #[test]
     fn classified_native_errors_use_defining_realm_on_cold_and_warm_calls() {
         let runtime = Runtime::new();
-        let mut caller = runtime.new_context();
-        let mut defining = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
+        let mut defining = runtime.new_context().expect("create context");
         let minimum = defining.eval("Math.min").unwrap();
         let type_error = defining.eval("TypeError.prototype").unwrap();
         let global = caller.global_object().unwrap();
@@ -1110,7 +1127,7 @@ mod tests {
     fn classified_native_calls_use_direct_completion_and_install_wait_only_once() {
         use crate::engine::api::profiling::CostProfile;
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         assert_eq!(
             context
@@ -1167,7 +1184,7 @@ mod tests {
     #[test]
     fn direct_array_next_keeps_getter_conversion_and_reentry_progress() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -1190,7 +1207,7 @@ mod tests {
     #[test]
     fn direct_array_next_keeps_proxy_holes_and_abrupt_record_disabling() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let trace='', values=[];
             let source=new Proxy([1,,3],{get(o,k,r){if(k==='length')trace+='L';if(k==='0'||k==='1'||k==='2')trace+=k;return Reflect.get(o,k,r);}});
@@ -1208,7 +1225,7 @@ mod tests {
     #[test]
     fn direct_array_next_keeps_conversion_throw_and_normal_early_close() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let calls=0,caught=false,closed=0;
             let bad=Array.prototype.values.call({get length(){return {valueOf(){calls++;throw 99;}};}});
@@ -1226,7 +1243,7 @@ mod tests {
     #[cfg(feature = "profiling")]
     fn direct_array_next_reports_completion_without_query_and_preserved_waits() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context
@@ -1261,7 +1278,7 @@ mod tests {
     #[test]
     fn immediate_native_errors_and_raw_iterator_results_preserve_activation_lifetimes() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -1290,7 +1307,7 @@ mod tests {
     fn immediate_and_waiting_native_outputs_keep_nested_coercion_and_error_order() {
         use crate::engine::api::profiling::CostProfile;
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         assert_eq!(
             context
@@ -1344,7 +1361,7 @@ mod array_next_small_entry_tests {
     #[test]
     fn array_next_small_entry_preserves_cached_loop_and_ordinary_native_calls() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
@@ -1392,7 +1409,7 @@ mod array_next_small_entry_tests {
     #[test]
     fn array_next_small_entry_preserves_selected_waits_and_error_recovery() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -1437,7 +1454,7 @@ mod native_continuation_publication_tests {
     #[test]
     fn native_continuation_publication_keeps_waits_nested_calls_and_throw_recovery() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -1481,36 +1498,38 @@ mod cached_native_inplace_tests {
     #[test]
     fn cached_native_inplace_handles_cold_warm_wait_throw_and_actual_host_reentry() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let host_context = RefCell::new(context.clone());
+        let mut context = runtime.new_context().expect("create context");
+        let host_context = RefCell::new(context.try_clone().expect("duplicate root"));
         let calls = Rc::new(Cell::new(0));
         let observed = calls.clone();
         struct ClearTracker(Runtime);
         impl Drop for ClearTracker {
             fn drop(&mut self) {
-                self.0.clear_host_promise_rejection_tracker();
+                let _ = self.0.clear_host_promise_rejection_tracker();
             }
         }
         let guard = ClearTracker(runtime.clone());
-        runtime.set_host_promise_rejection_tracker(move |event| {
-            if event.is_handled() {
-                return;
-            }
-            observed.set(observed.get() + 1);
-            assert_eq!(
-                host_context
-                    .borrow_mut()
-                    .eval(
-                        r#"(function() {
+        runtime
+            .set_host_promise_rejection_tracker(move |event| {
+                if event.is_handled() {
+                    return;
+                }
+                observed.set(observed.get() + 1);
+                assert_eq!(
+                    host_context
+                        .borrow_mut()
+                        .eval(
+                            r#"(function() {
                 var map = new Map();
                 for (var i = 0; i < 4; i++) map.set(i, Math.min(7, 2));
                 return map.get(3);
             })()"#
-                    )
-                    .unwrap(),
-                Value::Int(2)
-            );
-        });
+                        )
+                        .unwrap(),
+                    Value::Int(2)
+                );
+            })
+            .expect("configure test runtime");
         assert_eq!(
             context
                 .eval(
@@ -1545,7 +1564,7 @@ mod selected_replace_local_tests {
     #[test]
     fn selected_replace_keeps_method_getter_custom_exec_groups_and_callbacks_once() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(() => {
             const replace = RegExp.prototype[Symbol.replace];
             let methods = 0, flags = 0, execGets = 0, execCalls = 0, groups = 0, names = 0;
@@ -1586,11 +1605,11 @@ mod selected_replace_local_tests {
     #[test]
     fn selected_replace_inner_budget_rejects_in_parent_realm_before_input_conversion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let input = context
             .eval("globalThis.conversions=0;({toString(){conversions++;return 'a'}})")
             .unwrap();
-        let mut foreign = runtime.new_context();
+        let mut foreign = runtime.new_context().expect("create context");
         let search = foreign.eval("/a/g").unwrap();
         let callable = runtime
             .callable_from_value(context.eval("String.prototype.replace").unwrap())
@@ -1659,8 +1678,8 @@ mod selected_replace_local_tests {
     #[test]
     fn selected_replace_inner_error_uses_defining_realm_and_both_diagnostic_activations() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let mut foreign = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
+        let mut foreign = runtime.new_context().expect("create context");
         let global = context.global_object().unwrap();
         for (name, value) in [
             (

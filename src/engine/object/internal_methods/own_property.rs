@@ -95,7 +95,7 @@ fn method(
             drop(resume);
             match target {
                 None => ProxyOwnStep::request_descriptor(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     key,
                     ProxyOwnResume(Box::new(ProxyOwnResumeState {
                         pending_effect: ProxyOwnStepPending::new(runtime.clone()),
@@ -105,8 +105,9 @@ fn method(
                 ),
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
-                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
-                    let arguments = [Value::Object(rooted.target.clone()), key_value]
+                    let receiver =
+                        runtime.into_jsvalue(Value::Object(rooted.handler.try_clone()?))?;
+                    let arguments = [Value::Object(rooted.target.try_clone()?), key_value]
                         .into_iter()
                         .map(|value| runtime.into_jsvalue(value))
                         .collect::<Result<Vec<_>, _>>()?;
@@ -169,7 +170,7 @@ impl ProxyOwnResume {
                     )?));
                 }
                 Ok(ProxyOwnStep::request_descriptor(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     key,
                     Self(Box::new(ProxyOwnResumeState {
                         pending_effect: ProxyOwnStepPending::new(runtime.clone()),
@@ -226,7 +227,7 @@ impl ProxyOwnResume {
                     result.expect("object trap result").into_handle(),
                 ));
                 Ok(ProxyOwnStep::request_extensible(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     Self(Box::new(ProxyOwnResumeState {
                         pending_effect: pending,
                         realm: self.0.realm,

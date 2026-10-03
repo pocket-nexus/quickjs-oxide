@@ -43,7 +43,7 @@ fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
     let _registration = runtime.set_module_loader(RecordingModuleLoader {
         loads: loads.clone(),
     });
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     if install_test262_host {
         #[cfg(feature = "test262-host")]
         context.install_test262_host().unwrap();
@@ -77,7 +77,7 @@ fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
     );
     assert!(loads.borrow().is_empty(), "module load ran synchronously");
     assert!(
-        runtime.is_job_pending(),
+        runtime.is_job_pending().expect("runtime state"),
         "ImportCall did not enqueue a load job"
     );
 
@@ -106,7 +106,7 @@ fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
         context.eval("globalThis.__dynamicImportResult").unwrap(),
         Value::Int(42)
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
     assert!(context.take_exception().unwrap().is_none());
 }
 
@@ -114,13 +114,13 @@ fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
 fn public_entrypoints_execute_dynamic_import_promise_jobs() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     context
         .compile(IMPORT_SOURCE)
         .expect("Context::compile rejected a valid ImportCall");
     assert!(
-        !runtime.is_job_pending(),
+        !runtime.is_job_pending().expect("runtime state"),
         "compilation scheduled an import job"
     );
     assert!(context.take_exception().unwrap().is_none());
@@ -152,7 +152,7 @@ fn public_module_entrypoint_executes_top_level_await_jobs() {
     ] {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let module = context
             .compile_module(source)
             .expect("Context::compile_module rejected top-level await");
@@ -195,7 +195,7 @@ fn conformance_eval_script_executes_dynamic_import_promise_jobs() {
 fn context_compiles_and_executes_catch_destructuring_bindings() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let bytecode = context
         .compile("try { throw {value: 42}; } catch ({value}) { value }")
         .unwrap();

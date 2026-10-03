@@ -7,6 +7,7 @@ use crate::engine::vm::frame::{FrameEntry, FrameId};
 use crate::engine::vm::{VmResume, VmSuspendKind};
 
 pub(in crate::engine::vm) struct OwnedSuspension {
+    runtime: std::rc::Weak<crate::engine::heap::runtime::RuntimeInner>,
     entry: Option<FrameEntry>,
     pub(in crate::engine::vm) return_to: Option<crate::engine::vm::frame::ReturnTarget>,
     pc: usize,
@@ -16,32 +17,34 @@ pub(in crate::engine::vm) struct OwnedSuspension {
 impl Drop for OwnedSuspension {
     /// Release the storage of a suspended frame abandoned before freeze or
     /// resume. `freeze` takes the entry first, so a completed suspension drops
-    /// an empty slot. Releases are defer-safe and never run JavaScript.
+    /// an empty slot. Abandonment acquires state outside a running segment;
+    /// this weak record never keeps its runtime alive.
     fn drop(&mut self) {
-        let Some(entry) = self.entry.take() else {
-            return;
-        };
-        let runtime = entry.cold.function.runtime().clone();
-        crate::engine::vm::stack::release_frame_storage(&runtime, entry.storage);
+        if let Some(runtime) = self.runtime.upgrade().map(Runtime) {
+            runtime.unregister_raw_execution_owner();
+            if runtime.skip_cleanup() {
+                return;
+            }
+            let _unwind = runtime.unwind_guard();
+            if let Some(entry) = self.entry.take() {
+                if entry.release(&runtime).is_err() {
+                    runtime.0.poisoned.set(true);
+                }
+            }
+        }
     }
 }
 
 impl OwnedSuspension {
     pub(in crate::engine::vm) fn detach(
+        runtime: &Runtime,
         execution: &mut RunningExecution,
         id: FrameId,
         kind: VmSuspendKind,
     ) -> Result<Self, Error> {
         #[cfg(feature = "profiling")]
         let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("freeze.detach");
-        let runtime = execution
-            .frames
-            .current_mut(id)?
-            .cold
-            .function
-            .runtime()
-            .clone();
-        execution.frames.materialize(&runtime)?;
+        execution.frames.materialize(runtime)?;
         let frame = execution.frames.current_mut(id)?;
         if frame.cold.has_pending_query()
             || frame.cold.iterator_wait.is_some()
@@ -53,30 +56,39 @@ impl OwnedSuspension {
                 "suspension has an unresolved frame continuation",
             ));
         }
+        let storage = execution
+            .slots
+            .take_frame_resident(runtime, &mut frame.window)?;
+        let mut storage = crate::engine::vm::stack::FrameStorageGuard::new(runtime, storage);
         let mut frame = execution.frames.pop(id)?;
-        let storage = execution.slots.take_frame(&runtime, frame.window.take())?;
-        if let Some(guard) = frame.cold.entry_guard.take()
-            && let Err(error) = guard.finish()
-        {
-            crate::engine::vm::stack::release_frame_storage(&runtime, storage);
-            return Err(crate::engine::vm::exception::runtime_error_to_vm_error(
-                error,
-            ));
-        }
         let return_to = frame.cold.return_to.take();
-        Ok(Self {
-            return_to,
-            entry: Some(FrameEntry {
+        let pc = frame.resume_pc;
+        let executable = frame.executable.take();
+        let mut entry = crate::engine::vm::frame::FrameEntryGuard::new(
+            runtime,
+            FrameEntry {
                 initialize_bindings: false,
                 property_generation: frame.property_generation,
                 iterator_generation: frame.iterator_generation,
                 caller_realm: frame.caller_realm,
                 active_frame: frame.active_frame,
-                executable: frame.executable.take(),
+                executable,
                 cold: frame.cold,
-                storage,
-            }),
-            pc: frame.resume_pc,
+                storage: storage.take(),
+            },
+        );
+        if let Some(guard) = entry.cold.entry_guard.take() {
+            guard
+                .finish(&mut runtime.0.state.borrow_mut())
+                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+        }
+        Ok(Self {
+            runtime: runtime
+                .register_raw_execution_owner()
+                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?,
+            return_to,
+            entry: Some(entry.take()),
+            pc,
             kind,
         })
     }
@@ -122,6 +134,7 @@ impl OwnedSuspension {
 }
 
 pub(super) fn prepare(
+    runtime: &Runtime,
     entry: &mut FrameEntry,
     kind: VmSuspendKind,
     pending: &mut Option<VmActivationResume>,
@@ -190,7 +203,9 @@ pub(super) fn prepare(
             entry.storage.operands.push(JsValue::Int(magic));
         }
     }
-    entry.cold.release_resume_throw();
+    entry
+        .cold
+        .release_resume_throw(&mut runtime.0.state.borrow_mut())?;
     entry.cold.resume_throw = abrupt;
     Ok(())
 }

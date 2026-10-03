@@ -4,14 +4,14 @@ use crate::engine::value::Value;
 
 fn check(source: &str) {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
 }
 
 #[test]
 fn ordinary_property_context_free_set_rejects_proxy_prototype() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(object) = context.eval("Object.create(new Proxy({}, {}))").unwrap() else {
         panic!("expected object")
     };
@@ -152,7 +152,7 @@ fn ordinary_property_proxy_forwarding_preserves_rejection_classification() {
     use crate::engine::object::operations::{InternalSetResult, PropertySetRejection};
     use crate::engine::value::conversion::NativeConversion;
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for (source, name, expected) in [
         (
             "new Proxy(Object.preventExtensions({}),{})",
@@ -175,7 +175,7 @@ fn ordinary_property_proxy_forwarding_preserves_rejection_classification() {
                 &proxy,
                 &key,
                 Value::Int(1),
-                Value::Object(proxy.clone()),
+                Value::Object(proxy.try_clone().expect("duplicate root")),
             )
             .unwrap();
         assert!(
@@ -188,7 +188,7 @@ fn ordinary_property_proxy_forwarding_preserves_rejection_classification() {
 fn ordinary_property_replacing_last_heap_edge_reclaims_old_object() {
     use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = runtime.new_object(None).unwrap();
     let old = runtime.new_object(None).unwrap();
     let old_id = old.object_id();
@@ -260,7 +260,7 @@ fn ordinary_property_typed_access_revalidates_after_conversion() {
 fn prepared_read_owns_selected_getter_without_repeating_lookup() {
     use crate::engine::object::ordinary::OrdinaryRead;
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(object) = context
         .eval("var calls=0; var object={get x(){calls++;return this.marker}}; object")
         .unwrap()

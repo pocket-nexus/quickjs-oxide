@@ -35,7 +35,7 @@ fn take_exception_object(context: &mut Context, description: &str) -> ObjectRef 
 #[test]
 fn map_and_filter_match_quickjs_species_and_callback_contracts() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -304,7 +304,7 @@ fn map_and_filter_match_quickjs_species_and_callback_contracts() {
 #[test]
 fn map_and_filter_keep_snapshot_ranges_and_live_source_and_target_effects() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -483,8 +483,8 @@ fn map_and_filter_keep_snapshot_ranges_and_live_source_and_target_effects() {
 #[test]
 fn map_filter_species_and_hidden_arrays_keep_quickjs_realms() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_uint8 = eval_object(
         &mut defining,
         "Uint8Array.prototype",
@@ -539,7 +539,9 @@ fn map_filter_species_and_hidden_arrays_keep_quickjs_realms() {
         .call(
             &map,
             Value::Object(default_source),
-            &[Value::Object(identity.as_object().clone())],
+            &[Value::Object(
+                identity.as_object().try_clone().expect("duplicate root"),
+            )],
         )
         .expect("cross-realm map with default species")
     else {
@@ -560,7 +562,9 @@ fn map_filter_species_and_hidden_arrays_keep_quickjs_realms() {
         .call(
             &map,
             Value::Object(inherited_source),
-            &[Value::Object(identity.as_object().clone())],
+            &[Value::Object(
+                identity.as_object().try_clone().expect("duplicate root"),
+            )],
         )
         .expect("cross-realm map with inherited species")
     else {
@@ -590,7 +594,9 @@ fn map_filter_species_and_hidden_arrays_keep_quickjs_realms() {
             .call(
                 &filter,
                 Value::Object(filter_source),
-                &[Value::Object(identity.as_object().clone())],
+                &[Value::Object(
+                    identity.as_object().try_clone().expect("duplicate root"),
+                )],
             )
             .expect("cross-realm filter"),
     );
@@ -615,7 +621,9 @@ fn map_filter_species_and_hidden_arrays_keep_quickjs_realms() {
         caller.call(
             &map,
             Value::Object(bad_source),
-            &[Value::Object(identity.as_object().clone())],
+            &[Value::Object(
+                identity.as_object().try_clone().expect("duplicate root")
+            )],
         ),
         Err(RuntimeError::Exception),
     ));
@@ -631,7 +639,7 @@ fn map_filter_species_and_hidden_arrays_keep_quickjs_realms() {
 fn pending_map_element_owns_source_target_callback_and_conversion_input() {
     let runtime = Runtime::new();
     let weak = std::rc::Rc::downgrade(&runtime.0);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = context.eval("new Uint8Array(2)").unwrap();
     let mapped = context.eval("new Uint8Array(2)").unwrap();
     let callback = context.eval("(function(x){return x})").unwrap();

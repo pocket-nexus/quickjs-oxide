@@ -118,7 +118,7 @@ impl Runtime {
         this_value: JsValue,
         arguments: Vec<JsValue>,
     ) -> Result<Completion, RuntimeError> {
-        let mut callable = callable.clone();
+        let mut callable = callable.try_clone()?;
         let mut receiver = Some(this_value);
         let mut arguments = arguments;
         let mut argument_start = 0;
@@ -159,7 +159,7 @@ impl Runtime {
                         if target == NativeFunctionId::FunctionPrototypeCall {
                             forwarded_call_frames.push(
                                 self.push_native_active_frame(
-                                    callable.as_object().clone(),
+                                    callable.as_object().try_clone()?,
                                     realm,
                                     target,
                                     arguments.len() - argument_start,

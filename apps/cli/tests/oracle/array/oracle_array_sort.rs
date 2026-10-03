@@ -444,8 +444,8 @@ fn array_sort_prototype_order_metadata_and_constructability_match_pinned_quickjs
 fn array_sort_cross_realm_results_boxing_native_and_user_errors_match_quickjs() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let caller_array_prototype = caller.array_prototype().unwrap();
     let defining_number_prototype = eval_object(
@@ -497,7 +497,11 @@ fn array_sort_cross_realm_results_boxing_native_and_user_errors_match_quickjs() 
     };
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "Array.toSorted result did not use the method defining realm",
     );
     assert_ne!(
@@ -514,7 +518,7 @@ fn array_sort_cross_realm_results_boxing_native_and_user_errors_match_quickjs() 
     let native_error = take_exception_object(&mut caller, "Array.sort comparefn TypeError");
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "Array.sort comparefn TypeError did not use the method defining realm",
     );
 
@@ -561,7 +565,9 @@ fn array_sort_cross_realm_results_boxing_native_and_user_errors_match_quickjs() 
         caller.call(
             &sort,
             Value::Object(receiver),
-            &[Value::Object(comparator.as_object().clone())],
+            &[Value::Object(
+                comparator.as_object().try_clone().expect("duplicate root")
+            )],
         ),
         Err(RuntimeError::Exception),
     ));
@@ -577,8 +583,8 @@ fn array_sort_cross_realm_results_boxing_native_and_user_errors_match_quickjs() 
 fn array_sort_atom_literal_identity_survives_publication_and_context_boundaries() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     assert_eq!(
         caller
             .eval(
@@ -607,7 +613,7 @@ fn array_sort_atom_literal_identity_survives_publication_and_context_boundaries(
         "(function(){sortCalls++;return 0})",
         "literal identity comparator",
     );
-    let comparator = Value::Object(comparator.as_object().clone());
+    let comparator = Value::Object(comparator.as_object().try_clone().expect("duplicate root"));
 
     let first = defining.eval("'shared across contexts'").unwrap();
     let second = caller.eval("'shared across contexts'").unwrap();
@@ -676,7 +682,7 @@ fn array_sort_atom_literal_identity_survives_publication_and_context_boundaries(
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

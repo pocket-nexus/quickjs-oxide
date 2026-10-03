@@ -24,62 +24,88 @@ pub(super) fn finish(
     exit: VmAction,
     forwarded: Option<Completion>,
 ) -> Result<FrameExit, Error> {
+    // Admit the completion into reachable execution storage before any
+    // fallible window or frame operation can abandon retirement.
+    if let Some(completion) = forwarded {
+        debug_assert!(execution.pending_completion.is_none());
+        execution.pending_completion = Some(completion);
+    }
     if exit != VmAction::Complete {
         return Err(Error::internal("driver did not handle a run exit"));
     }
-    let mut frame = execution.frames.pop(id)?;
+    if execution.pending_completion.is_none() {
+        execution.pending_completion = Some(
+            execution
+                .pending
+                .take()
+                .map(Completion::Return)
+                .ok_or_else(|| Error::internal("owned completion has no payload"))?,
+        );
+    }
+    let frame = execution.frames.pop(id)?;
+    let mut frame = super::frame::RetiredFrame::new(runtime, &mut execution.slots, frame);
     let return_to = frame.cold.return_to;
-    let guard = frame.cold.entry_guard.take();
-    let completion = match forwarded {
-        Some(completion) => completion,
-        None => execution
-            .pending
-            .take()
-            .map(Completion::Return)
-            .ok_or_else(|| Error::internal("owned completion has no payload"))?,
-    };
-    execution.slots.clear_frame(runtime, frame.window.take())?;
+    frame.clear_window()?;
     if let Some(mut pending) = frame.cold.iterator_wait.take() {
         super::iterator_driver::release_wait(runtime, &mut pending)?;
     }
-    if let Some(guard) = guard {
-        guard.finish().map_err(runtime_error_to_vm_error)?;
-    }
-    let constructor_return = frame.cold.constructor_return.take();
-    execution.call_storage.recycle(frame.cold);
-    let completion = match (completion, constructor_return) {
-        (Completion::Return(value), Some(ConstructorReturn::Base(receiver))) => {
-            Completion::Return(if matches!(value, JsValue::Object(_)) {
-                runtime
-                    .release_jsvalue(receiver)
-                    .map_err(runtime_error_to_vm_error)?;
-                value
-            } else {
-                runtime
-                    .release_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?;
-                receiver
-            })
-        }
-        (Completion::Return(value), Some(ConstructorReturn::Derived)) => {
-            if !matches!(value, JsValue::Object(_)) {
-                runtime
-                    .release_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?;
-                return Err(Error::internal(
-                    "derived constructor bytecode returned an unvalidated primitive",
-                ));
+    // Keep the completion and constructor receiver in their registered
+    // stores while normalization can still fail. Only the selected result
+    // leaves execution storage after retirement has completed.
+    let returns_object = matches!(
+        execution.pending_completion,
+        Some(Completion::Return(JsValue::Object(_)))
+    );
+    let returns_value = matches!(execution.pending_completion, Some(Completion::Return(_)));
+    if matches!(
+        frame.cold.constructor_return,
+        Some(ConstructorReturn::Base(_))
+    ) {
+        if returns_value && !returns_object {
+            let Some(Completion::Return(value)) = execution.pending_completion.take() else {
+                unreachable!("checked return completion")
+            };
+            if let Err(error) = runtime.release_jsvalue(value) {
+                runtime.0.poisoned.set(true);
+                return Err(runtime_error_to_vm_error(error));
             }
-            Completion::Return(value)
+            let Some(ConstructorReturn::Base(receiver)) = frame.cold.constructor_return.take()
+            else {
+                unreachable!("checked base constructor receiver")
+            };
+            execution.pending_completion = Some(Completion::Return(receiver));
+        } else if let Err(error) = frame
+            .cold
+            .release_constructor_return(&mut runtime.0.state.borrow_mut())
+        {
+            runtime.0.poisoned.set(true);
+            return Err(runtime_error_to_vm_error(error));
         }
-        (completion, Some(ConstructorReturn::Base(receiver))) => {
-            runtime
-                .release_jsvalue(receiver)
-                .map_err(runtime_error_to_vm_error)?;
-            completion
+    } else if returns_value
+        && !returns_object
+        && matches!(
+            frame.cold.constructor_return,
+            Some(ConstructorReturn::Derived)
+        )
+    {
+        let Some(Completion::Return(value)) = execution.pending_completion.take() else {
+            unreachable!("checked return completion")
+        };
+        if let Err(error) = runtime.release_jsvalue(value) {
+            runtime.0.poisoned.set(true);
+            return Err(runtime_error_to_vm_error(error));
         }
-        (completion, _) => completion,
-    };
+        return Err(Error::internal(
+            "derived constructor bytecode returned an unvalidated primitive",
+        ));
+    }
+    frame
+        .recycle(&mut execution.call_storage)
+        .map_err(runtime_error_to_vm_error)?;
+    let completion = execution
+        .pending_completion
+        .take()
+        .expect("retired frame completion");
     Ok(FrameExit {
         completion,
         return_to,

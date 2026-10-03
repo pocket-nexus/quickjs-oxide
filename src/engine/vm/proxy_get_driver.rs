@@ -326,7 +326,7 @@ pub(super) fn start(
                 frame,
                 identity,
                 Vec::new(),
-                step.into(),
+                Step::try_from(step)?,
                 Finish::PropertyRead(depth),
             )
         })();
@@ -353,7 +353,7 @@ pub(super) fn start_owned_read(
     depth: usize,
 ) -> Result<CallStep, Error> {
     let mut step = Step::Read {
-        object: Some(object.clone()),
+        object: Some(object.try_clone()?),
         key: Some(key),
         receiver: Some(receiver),
         resume: Some(Resume::ReadOwner(object)),
@@ -442,9 +442,11 @@ pub(super) fn start_boolean(
     let realm = parent.executable.realm;
     let resume = Resume::BooleanResult {
         payload: Box::new(request::BooleanResultPayload {
-            _object: object.clone(),
+            _object: object.try_clone()?,
             _key: match &kind {
-                ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) => Some(key.clone()),
+                ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) => {
+                    Some(key.try_clone()?)
+                }
                 _ => None,
             },
             strict_delete,
@@ -505,7 +507,9 @@ pub(super) fn start_prototype(
         let mut parents = Vec::new();
         storage::reserve(&mut parents, 1, "query.parents")
             .map_err(|_| Error::internal("property continuation allocation failed"))?;
-        parents.push(Resume::ReadOwner(object.clone()));
+        parents.push(Resume::ReadOwner(
+            object.try_clone().expect("duplicate root"),
+        ));
         let step = ProxyPrototypeStep::start(runtime, realm, object, kind)
             .map_err(runtime_error_to_vm_error)?;
         advance(
@@ -514,7 +518,7 @@ pub(super) fn start_prototype(
             frame,
             identity,
             parents,
-            step.into(),
+            Step::try_from(step)?,
             Finish::PropertyRead(0),
         )
     })();
@@ -541,7 +545,7 @@ pub(super) fn start_conversion(
     let realm = parent.executable.realm;
     let result = (|| {
         let arguments = execution.slots.take_argument_buffer(3)?;
-        let receiver = JsValue::Object(object.clone().into_handle());
+        let receiver = JsValue::Object(object.try_clone()?.into_handle());
         let step = ProxyGetStep::start_buffered(runtime, realm, object, key, receiver, arguments)
             .map_err(runtime_error_to_vm_error)?;
         advance(
@@ -550,7 +554,7 @@ pub(super) fn start_conversion(
             frame,
             identity,
             Vec::new(),
-            step.into(),
+            Step::try_from(step)?,
             Finish::Conversion(wait),
         )
     })();
@@ -666,7 +670,7 @@ pub(super) fn start_native_with_classification(
         let realm = execution.frames.current_mut(frame)?.executable.realm;
         let result = (|| {
             {
-                let _operation = runtime.operation();
+                let _operation = runtime.operation()?;
             }
             let completion = if !execution.frames.can_push_with_continuations(0)
                 || runtime.host_stack_would_overflow()
@@ -742,7 +746,7 @@ pub(super) fn start_waitable_native_call(
     let owner = ReturnOwner::Frame(frame);
     let result = (|| {
         {
-            let _operation = runtime.operation();
+            let _operation = runtime.operation()?;
         }
         if !execution.frames.can_push_with_continuations(0) || runtime.host_stack_would_overflow() {
             release_call_operands(runtime, receiver, arguments);
@@ -925,7 +929,7 @@ pub(super) fn start_apply(
             execution.slots.peek(&parent.window, 0)?,
         )
         .map_err(runtime_error_to_vm_error)?;
-        start_instruction(runtime, execution, frame, step.into(), 3)
+        start_instruction(runtime, execution, frame, Step::try_from(step)?, 3)
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
@@ -1094,7 +1098,7 @@ fn start_proxy_call(
             frame,
             identity,
             Vec::new(),
-            step.into(),
+            Step::try_from(step)?,
             finish,
         )
     })();
@@ -1189,7 +1193,11 @@ fn start_write_adapted(
             } else {
                 // The selector borrows the finalization key. Only a pending
                 // continuation needs a separate finalization owner.
-                advance_write_pending(runtime, execution, frame, step, key.clone(), strict, depth)
+                key.try_clone()
+                    .map_err(runtime_error_to_vm_error)
+                    .and_then(|key| {
+                        advance_write_pending(runtime, execution, frame, step, key, strict, depth)
+                    })
             });
         };
         let action = match object {
@@ -1197,7 +1205,7 @@ fn start_write_adapted(
                 runtime,
                 Some(realm),
                 object,
-                key.clone(),
+                key.try_clone()?,
                 value,
                 receiver,
                 waiting,
@@ -1240,7 +1248,15 @@ fn advance_write_pending(
         crate::engine::object::SetStep::Complete(action) => {
             finish_write_action(runtime, execution, frame, action, key, strict, depth)
         }
-        step => schedule_write(runtime, execution, frame, step.into(), key, strict, depth),
+        step => schedule_write(
+            runtime,
+            execution,
+            frame,
+            Step::try_from(step)?,
+            key,
+            strict,
+            depth,
+        ),
     }
 }
 
@@ -1534,13 +1550,13 @@ pub(super) fn start_root(
             resume: Some(Resume::RootSet),
         },
 
-        super::driver::RootOperation::ModuleCallback(step) => step.into(),
-        super::driver::RootOperation::ModuleEvaluation(step) => step.into(),
-        super::driver::RootOperation::ModuleLink(step) => step.into(),
-        super::driver::RootOperation::FromSync(step) => step.into(),
-        super::driver::RootOperation::AsyncGenerator(step) => step.into(),
-        super::driver::RootOperation::Promise(step) => step.into(),
-        super::driver::RootOperation::Async(step) => step.into(),
+        super::driver::RootOperation::ModuleCallback(step) => Step::try_from(step)?,
+        super::driver::RootOperation::ModuleEvaluation(step) => Step::try_from(step)?,
+        super::driver::RootOperation::ModuleLink(step) => Step::try_from(step)?,
+        super::driver::RootOperation::FromSync(step) => Step::try_from(step)?,
+        super::driver::RootOperation::AsyncGenerator(step) => Step::from(step),
+        super::driver::RootOperation::Promise(step) => Step::try_from(step)?,
+        super::driver::RootOperation::Async(step) => Step::from(step),
     };
     let query = execution
         .query_storage
@@ -1650,7 +1666,7 @@ fn drive_inner(
                 let had_callback = std::mem::replace(&mut query.had_callback, true);
                 let pending = execution.query_storage.pending(identity, query, resume);
                 put_pending(execution, owner, pending)?;
-                match push_frame(execution, *entry) {
+                match push_frame(runtime, execution, *entry) {
                     Ok(id) => {
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
@@ -1881,7 +1897,7 @@ fn invoke(
                 runtime, realm, proxy, receiver, arguments,
             )
             .map_err(runtime_error_to_vm_error)?
-            .into();
+            .try_into()?;
             *next_step = step;
             return Ok(Next::Continue);
         }
@@ -1911,6 +1927,7 @@ fn invoke(
             return Ok(Next::Continue);
         }
         let entry = call.prepare_callback(
+            runtime,
             &mut execution.call_storage,
             receiver,
             arguments,
@@ -1965,12 +1982,12 @@ fn invoke(
         step = crate::engine::object::ProxyCallStep::start(
             runtime,
             realm,
-            callable.as_object().clone(),
+            callable.as_object().try_clone()?,
             receiver,
             arguments,
         )
         .map_err(runtime_error_to_vm_error)?
-        .into();
+        .try_into()?;
         *next_step = step;
         return Ok(Next::Continue);
     }
@@ -2042,7 +2059,7 @@ fn invoke(
                 query.parents.push(resume);
                 Resume::GeneratorCreate(super::suspend::creation::GeneratorCreation {
                     realm,
-                    callable: callable.clone(),
+                    callable: callable.try_clone()?,
                     asynchronous: kind == FunctionKind::AsyncGenerator,
                 })
             };
@@ -2167,7 +2184,7 @@ mod native_scope_tests {
     fn narrow_native_completion_keeps_pc_tail_waiting_and_cleanup_order() {
         use crate::engine::api::profiling::CostProfile;
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         let value = context.eval(r#"(function(){
             var total=0, gets=0, values=0, traps=0, errors=0, map=new Map();
@@ -2210,8 +2227,8 @@ mod native_scope_tests {
     #[test]
     fn narrow_native_completion_keeps_foreign_error_realm_on_cold_and_warm_calls() {
         let runtime = Runtime::new();
-        let mut caller = runtime.new_context();
-        let mut defining = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
+        let mut defining = runtime.new_context().expect("create context");
         let minimum = defining.eval("Math.min").unwrap();
         let prototype = defining.eval("TypeError.prototype").unwrap();
         let global = caller.global_object().unwrap();
@@ -2237,7 +2254,7 @@ mod native_scope_tests {
         };
         for cached in [false, true] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let parent_callable = runtime
                 .callable_from_value(context.eval("(function(){return 1+2})").unwrap())
                 .unwrap();
@@ -2287,7 +2304,7 @@ mod native_scope_tests {
             }
             .prepare(&runtime, &mut execution.call_storage)
             .unwrap();
-            let frame = super::super::driver::push_frame(&mut execution, entry).unwrap();
+            let frame = super::super::driver::push_frame(&runtime, &mut execution, entry).unwrap();
             if cached {
                 let query = execution.query_storage.acquire(
                     context.realm,
@@ -2365,7 +2382,7 @@ mod native_scope_tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let receiver = context.eval(receiver).unwrap();
             if name == "RegExp.prototype[Symbol.replace]" || name == "String.prototype.replace" {
                 // The unchanged standard matcher predicate requires a Data
@@ -2422,7 +2439,7 @@ mod native_scope_tests {
             }
             .prepare(&runtime, &mut execution.call_storage)
             .unwrap();
-            let frame = super::super::driver::push_frame(&mut execution, entry).unwrap();
+            let frame = super::super::driver::push_frame(&runtime, &mut execution, entry).unwrap();
             execution
                 .frames
                 .current_mut(frame)
@@ -2501,9 +2518,9 @@ mod native_scope_tests {
     fn nested_native_scope_errors_keep_frames_until_capture_and_restore_parent_realm() {
         let runtime = Runtime::new();
         let mut slots = super::super::stack::SlotStore::new(0);
-        let mut caller = runtime.new_context();
-        let mut outer = runtime.new_context();
-        let mut inner = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
+        let mut outer = runtime.new_context().expect("create context");
+        let mut inner = runtime.new_context().expect("create context");
         let prototype = inner.eval("TypeError.prototype").unwrap();
         let first = prepare(&runtime, &mut outer, "Object.getPrototypeOf");
         let second = prepare(&runtime, &mut inner, "Reflect.setPrototypeOf");
@@ -2684,7 +2701,7 @@ pub(super) fn start_iterator_next(
             }
         };
     }
-    start_iterator_query(runtime, execution, pending, step.into(), true)
+    start_iterator_query(runtime, execution, pending, Step::try_from(step)?, true)
 }
 
 /// Complete a known Array-next before allocating a generic iterator operation.
@@ -2973,6 +2990,7 @@ pub(super) fn start_instance(
     target: ObjectRef,
     depth: usize,
 ) -> Result<CallStep, Error> {
+    let intrinsic_budget = execution.frames.can_push_with_continuations(0);
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
     let identity = parent
@@ -2981,15 +2999,21 @@ pub(super) fn start_instance(
         .ok_or_else(|| Error::internal("instance query identity exhausted"))?;
     parent.property_generation = identity;
     let result = (|| {
-        let step = crate::engine::builtins::InstanceStep::start(runtime, realm, candidate, target)
-            .map_err(runtime_error_to_vm_error)?;
+        let step = crate::engine::builtins::InstanceStep::start(
+            runtime,
+            realm,
+            candidate,
+            target,
+            intrinsic_budget,
+        )
+        .map_err(runtime_error_to_vm_error)?;
         advance(
             runtime,
             execution,
             frame,
             identity,
             Vec::new(),
-            step.into(),
+            Step::try_from(step)?,
             Finish::Call { depth, tail: false },
         )
     })();
@@ -3090,7 +3114,7 @@ pub(super) fn start_object_copy(
             frame,
             identity,
             Vec::new(),
-            step.into(),
+            Step::try_from(step)?,
             Finish::Discard(depth),
         )
     })();
@@ -3154,7 +3178,7 @@ pub(super) fn start_environment(
         frame,
         identity,
         Vec::new(),
-        step.into(),
+        Step::try_from(step)?,
         finish,
     );
     match finish_error(runtime, realm, result)? {
@@ -3222,7 +3246,7 @@ fn continue_iterator(
                     callable,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into(),
+                .try_into()?,
                 true,
             )
         }
@@ -3276,7 +3300,7 @@ pub(super) fn start_numeric(
         frame,
         identity,
         Vec::new(),
-        step.into(),
+        Step::try_from(step)?,
         Finish::Numeric(depth),
     );
     match finish_error(runtime, realm, result)? {
@@ -3327,22 +3351,114 @@ pub(super) fn start_public_field(
     descriptor.writable = crate::engine::object::DescriptorField::Present(true);
     descriptor.enumerable = crate::engine::object::DescriptorField::Present(true);
     descriptor.configurable = crate::engine::object::DescriptorField::Present(true);
-    let realm = execution.frames.current_mut(frame)?.executable.realm;
+    let parent = execution.frames.current_mut(frame)?;
+    let realm = parent.executable.realm;
+    // Keep the instruction's admission before any own-property mutation. The
+    // fallback consumes this identity rather than checking or advancing twice.
+    let Some(identity) = parent.property_generation.checked_add(1) else {
+        // The old, unentered Define request dropped these fields in this order.
+        drop(object);
+        drop(key);
+        drop(descriptor);
+        return Err(Error::internal("instruction query identity exhausted"));
+    };
+    parent.property_generation = identity;
+    let result = {
+        // Match the dispatcher's local owner order: all definition inputs drop
+        // before publishing the next PC or reifying an error in the frame realm.
+        let object = object;
+        let key = key;
+        let descriptor = descriptor;
+        match runtime.try_define_owned_property(&object, &key, &descriptor) {
+            Ok(None) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "public_field_query_fallback",
+                );
+                return start_public_field_pending(
+                    runtime, execution, frame, realm, identity, object, key, descriptor, depth,
+                );
+            }
+            Ok(Some(accepted)) => Runtime::finish_public_class_field_definition(
+                NativeConversion::Value(if accepted {
+                    crate::engine::object::operations::InternalDefineResult::Defined
+                } else {
+                    crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(
+                        object,
+                    )
+                }),
+            )
+            .map_err(runtime_error_to_vm_error),
+            Err(error) => Err(runtime_error_to_vm_error(error)),
+        }
+    };
+    let result = result.and_then(|result| {
+        use crate::engine::object::operations::PropertyDefineOutcome;
+        let completion = match result {
+            PropertyDefineOutcome::Defined(true) => Completion::Return(JsValue::Undefined),
+            PropertyDefineOutcome::Defined(false) => {
+                return Err(Error::internal("public field rejected without throwing"));
+            }
+            PropertyDefineOutcome::Throw(value) => Completion::Throw(value),
+        };
+        let result = finish_instruction_call(
+            runtime,
+            execution,
+            ReturnOwner::Frame(frame),
+            completion,
+            false,
+            depth,
+        )?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "public_field_completed_without_query",
+        );
+        Ok(Progress::Call(result))
+    });
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("public field returned a conversion task")),
+    }
+}
+
+// Only a selected special definition needs the wide query representation.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn start_public_field_pending(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    realm: crate::engine::heap::ContextId,
+    identity: u64,
+    object: ObjectRef,
+    key: PropertyKey,
+    descriptor: crate::engine::object::OwnedPropertyDescriptor,
+    depth: usize,
+) -> Result<CallStep, Error> {
     let step = Step::Define {
         object: Some(object),
         key: Some(key),
         descriptor: Some(descriptor.into()),
         resume: Some(Resume::PublicField),
     };
-    start_instruction_query(
+    let result = advance(
         runtime,
         execution,
         frame,
-        realm,
+        identity,
+        Vec::new(),
         step,
         Finish::Discard(depth),
-    )
+    );
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("instruction returned a conversion task")),
+    }
 }
+
+#[cfg(test)]
+mod public_field_tests;
+
 fn start_instruction_query(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -3430,7 +3546,7 @@ fn start_for_in_pending(
         frame,
         identity,
         Vec::new(),
-        step.into(),
+        Step::try_from(step)?,
         Finish::ForIn(depth),
     )? {
         Progress::Call(step) => Ok(step),
@@ -3482,7 +3598,7 @@ pub(super) fn start_literal_definition(
         execution,
         frame,
         realm,
-        step.into(),
+        Step::try_from(step)?,
         Finish::Discard(depth),
     )
 }
@@ -3509,7 +3625,7 @@ pub(super) fn start_import(
         options,
     )
     .map_err(runtime_error_to_vm_error)
-    .and_then(|step| start_instruction(runtime, execution, frame, step.into(), 2));
+    .and_then(|step| start_instruction(runtime, execution, frame, Step::try_from(step)?, 2));
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
         Progress::Conversion(_) => Err(Error::internal(
@@ -3525,7 +3641,7 @@ mod write_completion_tests {
     #[test]
     fn write_completion_runs_following_opcode_once_across_local_waiting_and_throw() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

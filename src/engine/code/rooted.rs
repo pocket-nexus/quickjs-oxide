@@ -27,6 +27,7 @@ use crate::engine::heap::{FunctionBytecodeId, HeapError};
 pub struct FunctionBytecodeRef {
     runtime: Runtime,
     id: FunctionBytecodeId,
+    owns_edge: bool,
 }
 
 impl FunctionBytecodeRef {
@@ -35,8 +36,17 @@ impl FunctionBytecodeRef {
     /// The runtime uses this after transactional publication; it deliberately
     /// does not retain the newly allocated node a second time.
     #[must_use]
-    pub(crate) const fn from_owned_handle(runtime: Runtime, id: FunctionBytecodeId) -> Self {
-        Self { runtime, id }
+    pub(crate) fn from_owned_handle(runtime: Runtime, id: FunctionBytecodeId) -> Self {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.bytecode_root.adopt",
+            "core.bytecode_root.adopt",
+        );
+        Self {
+            runtime,
+            id,
+            owns_edge: true,
+        }
     }
 
     /// Promote a borrowed raw heap edge to a public owning root.
@@ -44,18 +54,40 @@ impl FunctionBytecodeRef {
         runtime: Runtime,
         id: FunctionBytecodeId,
     ) -> Result<Self, HeapError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.bytecode_root.promote",
+            "core.bytecode_root.promote",
+        );
         runtime.retain_function_bytecode_handle(id)?;
-        Ok(Self { runtime, id })
+        Ok(Self {
+            runtime,
+            id,
+            owns_edge: true,
+        })
     }
 
-    /// Duplicate this root while preserving a checked internal path for the
-    /// runtime and tests.  Public [`Clone`] treats failure as an invariant or
-    /// resource-exhaustion violation because a live root cannot be stale.
-    pub(crate) fn try_clone(&self) -> Result<Self, HeapError> {
+    /// Duplicate this root with checked admission and reference retention.
+    /// Poisoned runtimes reject duplication before touching state.
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, crate::engine::api::RuntimeError> {
+        self.runtime.check_poison()?;
+        // Checked retention and Rc cloning do not unwind; diagnostics can.
+        #[cfg(any(debug_assertions, feature = "profiling"))]
+        let _unwind = self.runtime.unwind_guard();
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.bytecode_root.clone",
+            "core.bytecode_root.clone",
+        );
         self.runtime.retain_function_bytecode_handle(self.id)?;
         Ok(Self {
             runtime: self.runtime.clone(),
             id: self.id,
+            owns_edge: true,
         })
     }
 
@@ -88,19 +120,18 @@ impl FunctionBytecodeRef {
     pub(crate) const fn bytecode_id(&self) -> FunctionBytecodeId {
         self.id
     }
-}
 
-impl Clone for FunctionBytecodeRef {
-    fn clone(&self) -> Self {
-        self.try_clone().unwrap_or_else(|_| {
-            panic!("attempted to clone stale function bytecode or overflow its reference count")
-        })
+    pub(crate) fn into_execution_handle(mut self) -> FunctionBytecodeId {
+        self.owns_edge = false;
+        self.id
     }
 }
 
 impl Drop for FunctionBytecodeRef {
     fn drop(&mut self) {
-        self.runtime.release_function_bytecode_handle(self.id);
+        if self.owns_edge {
+            self.runtime.release_function_bytecode_handle(self.id);
+        }
     }
 }
 

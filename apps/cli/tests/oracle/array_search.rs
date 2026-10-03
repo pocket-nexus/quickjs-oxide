@@ -308,8 +308,8 @@ fn array_search_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_search_errors_use_the_native_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     drop(
         defining
             .eval("TypeError.prototype.arraySearchRealm='defining'")
@@ -353,7 +353,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
         let expected = observe_oracle(&oracle, source, description);
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             expected,
@@ -365,7 +365,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let selected = [

@@ -4,7 +4,7 @@ use super::*;
 fn numeric_array_accumulate_is_selected_from_local_value_uses() {
     use crate::engine::code::exec_opcode::Opcode;
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let root = context
         .compile(
             "(function(array, i, scale) { var sum = 0; sum += array[i] * scale; return sum; })",
@@ -39,7 +39,7 @@ fn numeric_array_accumulate_is_selected_from_local_value_uses() {
 #[test]
 fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let data = |value| OrdinaryPropertyDescriptor {
         value: DescriptorField::Present(value),
@@ -61,7 +61,11 @@ fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() 
     let base_name = runtime.intern_property_key("base").unwrap();
     assert!(
         context
-            .define_own_property(&global, &base_name, &data(Value::Object(base.clone())))
+            .define_own_property(
+                &global,
+                &base_name,
+                &data(Value::Object(base.try_clone().expect("duplicate root")))
+            )
             .unwrap()
     );
 
@@ -138,7 +142,11 @@ fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() 
         panic!("ToPropertyKey source did not produce a function");
     };
     let key_object = context.new_object().unwrap();
-    let to_primitive = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
     assert!(
         context
             .define_own_property(&key_object, &to_primitive, &data(Value::Object(to_key)))
@@ -183,7 +191,7 @@ fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() 
 #[test]
 fn member_assignment_and_delete_lower_through_quickjs_lvalue_shapes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let fixed = context.compile("Function.fixed = 1").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -295,7 +303,7 @@ fn member_assignment_and_delete_lower_through_quickjs_lvalue_shapes() {
 #[test]
 fn direct_identifier_delete_uses_quickjs_scope_resolution() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context.eval("delete __qjo_missing_delete").unwrap(),
@@ -396,7 +404,7 @@ fn direct_identifier_delete_uses_quickjs_scope_resolution() {
         );
     }
 
-    let mut caller = runtime.new_context();
+    let mut caller = runtime.new_context().expect("create context");
     let realm_key = runtime.intern_property_key("__qjo_delete_realm").unwrap();
     let descriptor = OrdinaryPropertyDescriptor {
         value: DescriptorField::Present(Value::Int(1)),
@@ -478,7 +486,7 @@ fn direct_identifier_delete_uses_quickjs_scope_resolution() {
 #[test]
 fn bitwise_compound_assignment_reuses_quickjs_lvalue_shapes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let fixed = context.compile("Function.bits &= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -654,7 +662,7 @@ fn bitwise_compound_assignment_reuses_quickjs_lvalue_shapes() {
 #[test]
 fn shift_compound_assignment_reuses_quickjs_lvalue_shapes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let fixed = context.compile("Function.shift <<= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -760,7 +768,7 @@ fn shift_compound_assignment_reuses_quickjs_lvalue_shapes() {
 #[test]
 fn exponent_compound_assignment_reuses_quickjs_lvalue_shapes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let fixed = context.compile("Function.power **= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -886,7 +894,7 @@ fn exponent_compound_assignment_reuses_quickjs_lvalue_shapes() {
 #[test]
 fn logical_member_assignment_uses_quickjs_branch_cleanup_shapes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let fixed = context.compile("Function.fixed &&= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -1054,7 +1062,7 @@ fn logical_member_assignment_uses_quickjs_branch_cleanup_shapes() {
 #[test]
 fn identifier_compound_assignment_uses_resolved_get_set_paths() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let argument_root = context
         .compile("(function(value){ value += 2; return value; })")

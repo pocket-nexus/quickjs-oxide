@@ -1,6 +1,123 @@
 use super::*;
 
 #[test]
+fn many_edge_transactions_count_duplicates_and_distinguish_arenas() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let object = leaf(&mut heap, shape);
+    let cell = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(7)))
+        .unwrap();
+    let string = heap.allocate_string(JsString::from_static("edge")).unwrap();
+    assert_eq!(
+        (object.index, object.generation),
+        (shape.index, shape.generation)
+    );
+    assert_eq!(
+        (object.index, object.generation),
+        (cell.index, cell.generation)
+    );
+    assert_eq!(
+        (object.index, object.generation),
+        (string.index, string.generation)
+    );
+    let edges = [
+        RawId::Object(object),
+        RawId::Shape(shape),
+        RawId::VarRef(cell),
+        RawId::String(string),
+        RawId::Object(object),
+        RawId::Shape(shape),
+        RawId::VarRef(cell),
+        RawId::String(string),
+        RawId::Object(object),
+    ];
+    heap.retain_edges_transactionally(&edges).unwrap();
+    assert_eq!(heap.object_strong_count(object), Ok(4));
+    assert_eq!(heap.shape_strong_count(shape), Ok(4));
+    assert_eq!(heap.var_ref_strong_count(cell), Ok(3));
+    assert_eq!(
+        heap.live_leaf_slot(RawId::String(string))
+            .unwrap()
+            .strong
+            .get(),
+        3
+    );
+    for edge in edges {
+        heap.release_raw_no_drain(edge).unwrap();
+    }
+    assert_eq!(heap.object_strong_count(object), Ok(1));
+    assert_eq!(heap.shape_strong_count(shape), Ok(2));
+    assert_eq!(heap.var_ref_strong_count(cell), Ok(1));
+    assert_eq!(
+        heap.live_leaf_slot(RawId::String(string))
+            .unwrap()
+            .strong
+            .get(),
+        1
+    );
+    heap.release_object(object).unwrap();
+    heap.release_var_ref(cell).unwrap();
+    heap.release_string(string).unwrap();
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
+fn many_edge_transactions_preflight_stale_generations_and_saturation() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let first = leaf(&mut heap, shape);
+    let stale = leaf(&mut heap, shape);
+    heap.release_object(stale).unwrap();
+    let replacement = leaf(&mut heap, shape);
+    assert_eq!(stale.index, replacement.index);
+    assert_ne!(stale.generation, replacement.generation);
+    let shape_count = heap.shape_strong_count(shape).unwrap();
+    assert!(matches!(
+        heap.retain_edges_transactionally(&[
+            RawId::Object(first),
+            RawId::Shape(shape),
+            RawId::Object(replacement),
+            RawId::Object(stale),
+            RawId::Object(first),
+        ]),
+        Err(HeapError::Stale { .. })
+    ));
+    assert_eq!(heap.object_strong_count(first), Ok(1));
+    assert_eq!(heap.object_strong_count(replacement), Ok(1));
+    assert_eq!(heap.shape_strong_count(shape), Ok(shape_count));
+
+    let edges = [
+        RawId::Object(first),
+        RawId::Shape(shape),
+        RawId::Shape(shape),
+        RawId::Object(replacement),
+    ];
+    heap.set_strong_count_for_test(RawId::Shape(shape), u32::MAX - 1);
+    assert!(matches!(
+        heap.retain_edges_transactionally(&edges),
+        Err(HeapError::Overflow { .. })
+    ));
+    assert_eq!(heap.shape_strong_count(shape), Ok(u32::MAX - 1));
+    assert_eq!(heap.object_strong_count(first), Ok(1));
+    assert_eq!(heap.object_strong_count(replacement), Ok(1));
+
+    heap.set_strong_count_for_test(RawId::Shape(shape), u32::MAX - 2);
+    heap.retain_edges_transactionally(&edges).unwrap();
+    assert_eq!(heap.shape_strong_count(shape), Ok(u32::MAX));
+    assert_eq!(heap.object_strong_count(first), Ok(2));
+    assert_eq!(heap.object_strong_count(replacement), Ok(2));
+    heap.set_strong_count_for_test(RawId::Shape(shape), shape_count);
+    for object in [first, replacement] {
+        heap.release_object(object).unwrap();
+        heap.release_object(object).unwrap();
+    }
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
 fn proxy_revocation_releases_only_the_one_shot_closure_capture() {
     let mut heap = Heap::new();
     let null_shape = empty_shape(&mut heap);

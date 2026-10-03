@@ -188,7 +188,7 @@ mod resident_tests {
     #[test]
     fn literal_conversion_and_definition_reuse_one_owner() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context.eval("new Proxy({}, {})").unwrap() else {
             panic!("object")
         };
@@ -197,7 +197,7 @@ mod resident_tests {
         let LiteralDefinitionStep::Primitive { mut resume } = LiteralDefinitionStep::start(
             &runtime,
             context.realm,
-            object.clone(),
+            object.try_clone().expect("duplicate root"),
             runtime.unroot_value(&key).unwrap(),
             JsValue::Int(42),
         )

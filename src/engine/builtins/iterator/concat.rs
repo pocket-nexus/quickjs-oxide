@@ -402,7 +402,7 @@ impl ConcatStep {
                     .iterator
                     .ok_or(RuntimeError::Invariant("concat return iterator missing"))?,
             )?;
-            resume.phase = ConcatPhase::ReturnMethod(iterator.clone());
+            resume.phase = ConcatPhase::ReturnMethod(iterator.try_clone()?);
             return Ok({
                 let __pending_field_object = iterator;
                 let __pending_field_key =
@@ -446,8 +446,8 @@ impl ConcatResume {
                 )));
             }
         };
-        let object = current.clone();
-        let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+        let object = current.try_clone()?;
+        let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?);
         let resume = Self(Box::new(ConcatResumeState {
             runtime: runtime.clone(),
             pending_effect: ConcatStepPending::default(),
@@ -539,7 +539,7 @@ impl ConcatResume {
                 .iterator_concat_state(self.concat()?.object_id())?
         };
         if matches!(snapshot.next, RawValue::Undefined) {
-            self.0.phase = ConcatPhase::Method(iterator.clone());
+            self.0.phase = ConcatPhase::Method(iterator.try_clone()?);
             return Ok({
                 let __pending_field_object = iterator;
                 let __pending_field_key =

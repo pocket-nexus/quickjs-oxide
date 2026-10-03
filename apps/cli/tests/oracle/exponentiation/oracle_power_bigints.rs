@@ -28,7 +28,7 @@ fn bigint_power_matrix_matches_pinned_quickjs() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for (index, (case, oracle_observation)) in cases.iter().zip(&oracle_observations).enumerate() {
         let rust_value = context.eval(&case.source).unwrap_or_else(|error| {
             panic!(
