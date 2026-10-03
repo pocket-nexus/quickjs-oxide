@@ -130,6 +130,7 @@ pub(crate) fn compact_backtrace() -> String {
 impl Runtime {
     #[inline]
     pub(crate) fn operation(&self) -> RuntimeOperation<'_> {
+        let _unwind = self.unwind_guard();
         if !self.skip_cleanup() {
             let result = self.drain_deferred_references();
             debug_assert!(result.is_ok(), "deferred root release failed: {result:?}");

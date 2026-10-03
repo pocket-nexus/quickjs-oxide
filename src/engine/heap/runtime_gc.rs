@@ -91,7 +91,7 @@ impl Runtime {
     #[must_use]
     pub fn heap_counts(&self) -> Result<HeapCounts, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _unwind = self.unwind_guard();
         Ok(self.0.state.borrow().heap.counts())
     }
 }

@@ -73,7 +73,7 @@ impl Runtime {
     #[must_use]
     pub fn memory_snapshot(&self) -> Result<MemorySnapshot, crate::engine::api::RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _unwind = self.unwind_guard();
         let state = self.0.state.borrow();
         let mut categories = state.heap.memory_categories();
         categories.push(MemoryCategory {

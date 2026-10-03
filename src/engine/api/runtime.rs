@@ -197,7 +197,7 @@ impl Runtime {
     #[must_use]
     pub fn debug_info_mode(&self) -> Result<DebugInfoMode, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _unwind = self.unwind_guard();
         Ok(self.0.state.borrow().debug_info_mode)
     }
 
@@ -361,6 +361,12 @@ mod poison_tests {
         subprocess("module-host-caught-panic");
     }
 
+    #[cfg(debug_assertions)]
+    #[test]
+    fn panic_during_operation_entry_drain_quarantines_runtime() {
+        subprocess("entry-drain-panic");
+    }
+
     #[derive(Debug)]
     struct PanicClock;
     impl HostServices for PanicClock {
@@ -431,6 +437,26 @@ mod poison_tests {
         let symbol = runtime.new_symbol(None).unwrap();
         let bytecode = context.compile("1").unwrap();
         match case.as_str() {
+            #[cfg(debug_assertions)]
+            "entry-drain-panic" => {
+                let id = object.object_id();
+                runtime
+                    .0
+                    .state
+                    .borrow_mut()
+                    .heap
+                    .release_object(id)
+                    .unwrap();
+                runtime
+                    .0
+                    .deferred_references
+                    .push_back(crate::engine::heap::runtime::DeferredRefOp::Object(id));
+                let failed = catch_unwind(AssertUnwindSafe(|| {
+                    // The drain fails before RuntimeOperation is constructed.
+                    let _operation = runtime.operation();
+                }));
+                assert!(failed.is_err());
+            }
             "partial-mutation" => {
                 let failed = catch_unwind(AssertUnwindSafe(|| {
                     let _operation = runtime.operation();

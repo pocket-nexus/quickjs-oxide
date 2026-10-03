@@ -3,6 +3,34 @@ use super::runtime::DeferredRefOp;
 use crate::engine::api::Runtime;
 use crate::engine::value::Value;
 
+#[test]
+fn state_queries_leave_deferred_releases_pending() {
+    let runtime = Runtime::new();
+    let object = runtime.new_object(None).unwrap();
+    let id = object.object_id();
+    let counts = runtime.0.state.borrow().heap.counts();
+    {
+        let _state = runtime.0.state.borrow();
+        drop(object);
+    }
+    assert!(runtime.0.deferred_references.has_pending());
+
+    assert_eq!(runtime.heap_counts().unwrap(), counts);
+    assert!(runtime.0.deferred_references.has_pending());
+    runtime.debug_info_mode().unwrap();
+    assert!(runtime.0.deferred_references.has_pending());
+    #[cfg(feature = "profiling")]
+    {
+        assert_eq!(runtime.memory_snapshot().unwrap().heap, counts);
+        assert!(runtime.0.deferred_references.has_pending());
+    }
+    assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+
+    runtime.drain_deferred_references().unwrap();
+    assert!(!runtime.0.deferred_references.has_pending());
+    assert!(runtime.0.state.borrow().heap.object(id).is_err());
+}
+
 fn restoration(depth: usize) -> DeferredRefOp {
     DeferredRefOp::ActiveCollectionRecordsTruncate { depth }
 }
