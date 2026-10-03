@@ -674,6 +674,42 @@ impl FrameCold {
         Some(target)
     }
 
+    /// Report only the metadata gate that already declined this state return.
+    /// This diagnostic reads no heap data and disappears from timing builds.
+    #[cfg(feature = "profiling")]
+    pub(super) fn record_state_return_decline(&self) {
+        let reason = match self.return_to {
+            None => "core.return_decline.root",
+            Some(target)
+                if target.operation.is_some()
+                    && !matches!(target.operation, Some(OperationTarget::PropertyGet(_))) =>
+            {
+                "core.return_decline.operation"
+            }
+            Some(target) if !matches!(target.owner, ReturnOwner::Frame(_)) => {
+                "core.return_decline.root"
+            }
+            Some(_) => {
+                let rare = self.rare.get().expect("declined return owns a rare phase");
+                if rare.property_wait.is_some()
+                    || rare.iterator_wait.is_some()
+                    || rare.conversion.is_some()
+                    || !rare.regions.is_empty()
+                    || rare.resume_throw.is_some()
+                {
+                    "core.return_decline.live_wait"
+                } else {
+                    debug_assert!(matches!(
+                        rare.constructor_return,
+                        Some(ConstructorReturn::Derived)
+                    ));
+                    "core.return_decline.derived"
+                }
+            }
+        };
+        crate::engine::api::profiling::record_owned_execution_event(reason);
+    }
+
     /// Keep the incoming result and saved Base receiver registered throughout
     /// selection. Ordinary frames never initialize their rare storage here.
     pub(super) fn normalize_base_return_in_state(
