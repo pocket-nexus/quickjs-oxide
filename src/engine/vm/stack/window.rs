@@ -81,6 +81,15 @@ impl<'a> FrameExecution<'a> {
         }
     }
 
+    /// End the frame projection before making its current PC and ancestors
+    /// observable. Registration uses the segment's existing state access.
+    pub(in crate::engine::vm) fn materialize_in_state(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+    ) -> Result<(), Error> {
+        self.execution.frames.materialize_in_state(state)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn enter_ordinary(
         &mut self,
@@ -583,6 +592,11 @@ impl CheckedOrdinaryCallOperands {
 }
 
 impl FrameTransaction<'_> {
+    #[cfg(feature = "profiling")]
+    pub(in crate::engine::vm) fn operand_depth(&self) -> usize {
+        self.window.depth
+    }
+
     /// Consume the selected caller lease to publish a Base constructor. No
     /// caller-supplied detached window or mutable slot access can intervene.
     #[allow(clippy::too_many_arguments)]
