@@ -93,6 +93,33 @@ mod direct_state_release_tests {
     use crate::engine::heap::VarRefData;
 
     #[test]
+    fn captured_frame_read_uses_the_shared_checked_state_kernel() {
+        let runtime = Runtime::new();
+        let object = runtime.new_object(None).unwrap().into_handle();
+        let cell = runtime
+            .new_var_ref(
+                JsValue::Object(object),
+                false,
+                false,
+                ClosureVariableKind::Normal,
+            )
+            .unwrap()
+            .into_execution_handle();
+        let binding = FrameBinding::Captured(cell);
+        let read = read_frame_binding(&runtime, &binding).unwrap();
+        assert_eq!(read, JsValue::Object(object));
+        let state = runtime.0.state.borrow();
+        assert_eq!(state.heap.object_strong_count(object), Ok(2));
+        assert_eq!(state.heap.var_ref_strong_count(cell), Ok(1));
+        assert!(!runtime.0.deferred_references.has_pending());
+        drop(state);
+        runtime.release_jsvalue(read).unwrap();
+        release_frame_binding(&runtime, binding).unwrap();
+        assert!(runtime.0.state.borrow().heap.object(object).is_err());
+        assert!(runtime.0.state.borrow().heap.var_ref(cell).is_err());
+    }
+
+    #[test]
     fn captured_and_private_bindings_release_their_edges_directly() {
         let runtime = Runtime::new();
         let value_id = runtime.new_object(None).unwrap().into_handle();
@@ -164,9 +191,18 @@ pub(in crate::engine::vm) fn read_frame_binding(
         FrameBinding::Uninitialized => Err(Error::internal(
             "unchecked local read reached an uninitialized lexical binding",
         )),
-        FrameBinding::Captured(var_ref) => runtime
-            .read_var_ref(&VarRefView::from_frame(runtime, *var_ref))
-            .map_err(|error| Error::internal(error.to_string())),
+        FrameBinding::Captured(var_ref) => {
+            let _operation = runtime
+                .operation()
+                .map_err(|error| Error::internal(error.to_string()))?;
+            // This frame binding owns the cell edge throughout the read.
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .read_var_ref(*var_ref)
+                .map_err(|error| Error::internal(error.to_string()))
+        }
     }
 }
 

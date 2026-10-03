@@ -2,10 +2,172 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::code::function::metadata::{ClosureVariable, ClosureVariableKind};
+use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{HeapError, RawValue, VarRefData, VarRefId};
 use crate::engine::object::{ObjectRef, SymbolRef};
 use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::bindings::closure_view_matches_cell;
+use std::cell::Cell;
+
+// Direct cell operations use an owned or admitted same-runtime ID. The
+// caller holds the runtime's unwind marker for this state segment; these
+// kernels neither execute JavaScript nor drain Runtime's deferred queue.
+impl RuntimeState {
+    /// Adopt an internal value into a fresh cell. The returned ID owns one
+    /// cell edge; rejection consumes the input, with cleanup failure taking
+    /// precedence over the allocation error.
+    pub(crate) fn new_var_ref(
+        &mut self,
+        poisoned: &Cell<bool>,
+        value: JsValue,
+        is_lexical: bool,
+        is_const: bool,
+        kind: ClosureVariableKind,
+    ) -> Result<VarRefId, RuntimeError> {
+        let data = VarRefData::captured(value.into_raw(), is_lexical, is_const, kind);
+        match self.heap.allocate_var_ref_owned(data) {
+            Ok(id) => Ok(id),
+            Err((error, data)) => {
+                self.release_owned_jsvalue(
+                    poisoned,
+                    JsValue::from_raw(data.value).expect("captured internal value"),
+                )?;
+                Err(error.into())
+            }
+        }
+    }
+
+    pub(crate) fn new_uninitialized_var_ref(&mut self) -> Result<VarRefId, RuntimeError> {
+        self.new_uninitialized_captured_var_ref(false, false, ClosureVariableKind::Normal)
+    }
+
+    pub(crate) fn new_uninitialized_captured_var_ref(
+        &mut self,
+        is_lexical: bool,
+        is_const: bool,
+        kind: ClosureVariableKind,
+    ) -> Result<VarRefId, RuntimeError> {
+        Ok(self.heap.allocate_var_ref(VarRefData::captured(
+            RawValue::Uninitialized,
+            is_lexical,
+            is_const,
+            kind,
+        ))?)
+    }
+
+    /// The caller owns or has admitted this cell in the current runtime.
+    pub(crate) fn set_var_ref_metadata(
+        &mut self,
+        id: VarRefId,
+        is_lexical: bool,
+        is_const: bool,
+        kind: ClosureVariableKind,
+    ) -> Result<(), RuntimeError> {
+        self.heap
+            .set_var_ref_metadata(id, is_lexical, is_const, kind)?;
+        Ok(())
+    }
+
+    /// Restore TDZ storage and retire the previous edge under this state
+    /// access. A failed destructive cleanup quarantines the runtime.
+    pub(crate) fn reset_var_ref_uninitialized(
+        &mut self,
+        poisoned: &Cell<bool>,
+        id: VarRefId,
+    ) -> Result<(), RuntimeError> {
+        let previous = match self
+            .heap
+            .replace_var_ref_value_owned(id, RawValue::Uninitialized)
+        {
+            Ok(previous) => previous,
+            Err((error, _uninitialized)) => return Err(error.into()),
+        };
+        let cleanup = self
+            .heap
+            .retire_var_ref_value(previous)
+            .inspect_err(|_| poisoned.set(true))?;
+        self.apply_cleanup(cleanup)
+            .inspect_err(|_| poisoned.set(true))
+    }
+
+    /// Read an admitted cell as an owned internal value. Checked retain keeps
+    /// the ordinary overflow and generation rules for every carried edge.
+    pub(crate) fn read_var_ref(&mut self, id: VarRefId) -> Result<JsValue, RuntimeError> {
+        let var_ref = self.heap.var_ref(id)?;
+        if var_ref.kind.is_private() {
+            return Err(RuntimeError::Invariant(
+                "ordinary VarRef read reached a private-element binding",
+            ));
+        }
+        let raw = var_ref.value.clone();
+        self.retain_raw_root(raw.clone())?;
+        JsValue::from_raw(raw).ok_or(RuntimeError::Invariant(
+            "internal value sentinel occupied a captured variable cell",
+        ))
+    }
+
+    /// Inspect storage without duplicating its edge. The caller keeps the
+    /// admitted cell alive while using this representation, including TDZ or
+    /// private values that cannot become ordinary internal values.
+    pub(crate) fn raw_var_ref_value(&self, id: VarRefId) -> Result<RawValue, RuntimeError> {
+        Ok(self.heap.var_ref(id)?.value.clone())
+    }
+
+    pub(crate) fn validate_var_ref_metadata(
+        &self,
+        id: VarRefId,
+        descriptor: ClosureVariable,
+    ) -> Result<(), RuntimeError> {
+        let var_ref = self.heap.var_ref(id)?;
+        if !closure_view_matches_cell(
+            (var_ref.is_lexical, var_ref.is_const, var_ref.kind),
+            descriptor,
+        ) {
+            return Err(RuntimeError::Invariant(
+                "closure descriptor metadata does not match the shared variable cell",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Consume a replacement edge. A rejected write releases the input;
+    /// a published write releases the old edge. Cleanup failure takes
+    /// precedence over validation failure and poisons partially retired state.
+    pub(crate) fn write_var_ref(
+        &mut self,
+        poisoned: &Cell<bool>,
+        id: VarRefId,
+        value: JsValue,
+    ) -> Result<(), RuntimeError> {
+        let validation = (|| {
+            if self.heap.var_ref(id)?.kind.is_private() {
+                return Err(RuntimeError::Invariant(
+                    "ordinary VarRef write reached a private-element binding",
+                ));
+            }
+            Ok(())
+        })();
+        if let Err(error) = validation {
+            self.release_owned_jsvalue(poisoned, value)?;
+            return Err(error);
+        }
+        match self.heap.replace_var_ref_value_owned(id, value.into_raw()) {
+            Ok(previous) => {
+                if let Some(previous) = JsValue::from_raw(previous) {
+                    self.release_owned_jsvalue(poisoned, previous)?;
+                }
+                Ok(())
+            }
+            Err((error, rejected)) => {
+                self.release_owned_jsvalue(
+                    poisoned,
+                    JsValue::from_raw(rejected).expect("internal replacement"),
+                )?;
+                Err(error.into())
+            }
+        }
+    }
+}
 
 impl Runtime {
     /// Store an internal value into a fresh captured cell, consuming the
@@ -18,17 +180,14 @@ impl Runtime {
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
         let _operation = self.operation()?;
-        let data = VarRefData::captured(value.into_raw(), is_lexical, is_const, kind);
-        let allocation = self.0.state.borrow_mut().heap.allocate_var_ref_owned(data);
-        match allocation {
-            Ok(id) => Ok(VarRefRoot::from_owned_handle(self.clone(), id)),
-            Err((error, data)) => {
-                self.release_jsvalue(
-                    JsValue::from_raw(data.value).expect("captured internal value"),
-                )?;
-                Err(error.into())
-            }
-        }
+        let id = self.0.state.borrow_mut().new_var_ref(
+            &self.0.poisoned,
+            value,
+            is_lexical,
+            is_const,
+            kind,
+        )?;
+        Ok(VarRefRoot::from_owned_handle(self.clone(), id))
     }
 
     /// Public-root boundary form of [`Runtime::new_var_ref`]: converts the
@@ -49,17 +208,7 @@ impl Runtime {
 
     pub(crate) fn new_uninitialized_var_ref(&self) -> Result<VarRefRoot, RuntimeError> {
         let _operation = self.operation()?;
-        let id = self
-            .0
-            .state
-            .borrow_mut()
-            .heap
-            .allocate_var_ref(VarRefData::captured(
-                RawValue::Uninitialized,
-                false,
-                false,
-                ClosureVariableKind::Normal,
-            ))?;
+        let id = self.0.state.borrow_mut().new_uninitialized_var_ref()?;
         Ok(VarRefRoot::from_owned_handle(self.clone(), id))
     }
 
@@ -74,13 +223,7 @@ impl Runtime {
             .0
             .state
             .borrow_mut()
-            .heap
-            .allocate_var_ref(VarRefData::captured(
-                RawValue::Uninitialized,
-                is_lexical,
-                is_const,
-                kind,
-            ))?;
+            .new_uninitialized_captured_var_ref(is_lexical, is_const, kind)?;
         Ok(VarRefRoot::from_owned_handle(self.clone(), id))
     }
 
@@ -94,13 +237,12 @@ impl Runtime {
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
         }
-        self.0.state.borrow_mut().heap.set_var_ref_metadata(
-            root.id(),
-            is_lexical,
-            is_const,
-            kind,
-        )?;
-        Ok(())
+        self.check_poison()?;
+        let _unwind = self.unwind_guard();
+        self.0
+            .state
+            .borrow_mut()
+            .set_var_ref_metadata(root.id(), is_lexical, is_const, kind)
     }
 
     pub(crate) fn reset_var_ref_uninitialized(
@@ -110,11 +252,12 @@ impl Runtime {
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
         }
-        let mut state = self.0.state.borrow_mut();
-        let cleanup = state
-            .heap
-            .replace_var_ref_value(root.id(), RawValue::Uninitialized)?;
-        state.apply_cleanup(cleanup)
+        self.check_poison()?;
+        let _unwind = self.unwind_guard();
+        self.0
+            .state
+            .borrow_mut()
+            .reset_var_ref_uninitialized(&self.0.poisoned, root.id())
     }
 
     /// Read a captured cell as an owned internal value, duplicating every
@@ -127,21 +270,7 @@ impl Runtime {
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
         }
-        let raw = {
-            let state = self.0.state.borrow();
-            let var_ref = state.heap.var_ref(root.id())?;
-            if var_ref.kind.is_private() {
-                return Err(RuntimeError::Invariant(
-                    "ordinary VarRef read reached a private-element binding",
-                ));
-            }
-            var_ref.value.clone()
-        };
-        let mut state = self.0.state.borrow_mut();
-        state.retain_raw_root(raw.clone())?;
-        JsValue::from_raw(raw).ok_or(RuntimeError::Invariant(
-            "internal value sentinel occupied a captured variable cell",
-        ))
+        self.0.state.borrow_mut().read_var_ref(root.id())
     }
 
     pub(crate) fn raw_var_ref_value(
@@ -152,7 +281,7 @@ impl Runtime {
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
         }
-        Ok(self.0.state.borrow().heap.var_ref(root.id())?.value.clone())
+        self.0.state.borrow().raw_var_ref_value(root.id())
     }
 
     pub(crate) fn validate_var_ref_metadata(
@@ -164,17 +293,10 @@ impl Runtime {
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
         }
-        let var_ref = self.0.state.borrow();
-        let var_ref = var_ref.heap.var_ref(root.id())?;
-        if !closure_view_matches_cell(
-            (var_ref.is_lexical, var_ref.is_const, var_ref.kind),
-            descriptor,
-        ) {
-            return Err(RuntimeError::Invariant(
-                "closure descriptor metadata does not match the shared variable cell",
-            ));
-        }
-        Ok(())
+        self.0
+            .state
+            .borrow()
+            .validate_var_ref_metadata(root.id(), descriptor)
     }
 
     /// Replace a captured value by moving its edge into the cell. Validation
@@ -185,47 +307,17 @@ impl Runtime {
         value: JsValue,
     ) -> Result<(), RuntimeError> {
         let _operation = self.operation()?;
-        let validation = (|| {
-            if !root.belongs_to(self) {
-                return Err(RuntimeError::WrongRuntime("closure variable"));
-            }
-            if self
-                .0
+        if !root.belongs_to(self) {
+            self.0
                 .state
-                .borrow()
-                .heap
-                .var_ref(root.id())?
-                .kind
-                .is_private()
-            {
-                return Err(RuntimeError::Invariant(
-                    "ordinary VarRef write reached a private-element binding",
-                ));
-            }
-            Ok(())
-        })();
-        if let Err(error) = validation {
-            self.release_jsvalue(value)?;
-            return Err(error);
+                .borrow_mut()
+                .release_owned_jsvalue(&self.0.poisoned, value)?;
+            return Err(RuntimeError::WrongRuntime("closure variable"));
         }
-        let result = self
-            .0
+        self.0
             .state
             .borrow_mut()
-            .heap
-            .replace_var_ref_value_owned(root.id(), value.into_raw());
-        match result {
-            Ok(previous) => {
-                if let Some(previous) = JsValue::from_raw(previous) {
-                    self.release_jsvalue(previous)?;
-                }
-                Ok(())
-            }
-            Err((error, rejected)) => {
-                self.release_jsvalue(JsValue::from_raw(rejected).expect("internal replacement"))?;
-                Err(error.into())
-            }
-        }
+            .write_var_ref(&self.0.poisoned, root.id(), value)
     }
 
     pub(crate) fn take_owned_raw_value(&self, value: RawValue) -> Result<Value, RuntimeError> {
@@ -462,3 +554,6 @@ impl<T: VarRefHandle + ?Sized> VarRefHandle for &mut T {
         (**self).runtime()
     }
 }
+
+#[cfg(test)]
+mod captured_cell_state_tests;
