@@ -112,8 +112,9 @@ impl Drop for RuntimeOperation<'_> {
         if self.0.skip_cleanup() {
             return;
         }
-        let _unwind = self.0.unwind_guard();
-        if self.0.drain_deferred_references().is_err() {
+        if self.0.0.deferred_references.has_pending()
+            && self.0.drain_deferred_references_slow().is_err()
+        {
             self.0.0.poisoned.set(true);
         }
     }

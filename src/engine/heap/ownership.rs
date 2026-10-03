@@ -130,7 +130,6 @@ pub(crate) fn compact_backtrace() -> String {
 impl Runtime {
     #[inline]
     pub(crate) fn operation(&self) -> Result<RuntimeOperation<'_>, RuntimeError> {
-        let _unwind = self.unwind_guard();
         self.drain_deferred_references()?;
         Ok(RuntimeOperation(self))
     }
@@ -144,7 +143,10 @@ impl Runtime {
         self.drain_deferred_references_slow()
     }
 
-    fn drain_deferred_references_slow(&self) -> Result<(), RuntimeError> {
+    pub(super) fn drain_deferred_references_slow(&self) -> Result<(), RuntimeError> {
+        // The empty-queue path cannot mutate runtime state. Keep the unwind
+        // marker at the shared cleanup kernel, including direct drain callers.
+        let _unwind = self.unwind_guard();
         let deferred = &self.0.deferred_references;
         let Some(_drain) = deferred.try_start_draining() else {
             return Ok(());
@@ -734,6 +736,39 @@ impl RuntimeState {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(all(test, panic = "unwind"))]
+mod deferred_drain_unwind_tests {
+    use super::*;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn direct_drain_panic_quarantines_before_later_cleanup() {
+        let runtime = Runtime::new();
+        let survivor = runtime.new_object(None).unwrap().into_handle();
+        let deferred = &runtime.0.deferred_references;
+        deferred.push_back(DeferredRefOp::Object(survivor));
+        {
+            // Force the existing queue's borrow assertion to panic before
+            // removing the owner, without an enclosing RuntimeOperation.
+            let _queue = deferred.borrow();
+            let failed = catch_unwind(AssertUnwindSafe(|| {
+                runtime.drain_deferred_references().unwrap();
+            }));
+            assert!(failed.is_err());
+        }
+        assert!(runtime.is_poisoned());
+        assert!(deferred.has_pending());
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(survivor),
+            Ok(1)
+        );
+        assert_eq!(
+            runtime.drain_deferred_references(),
+            Err(RuntimeError::Poisoned)
+        );
     }
 }
 
