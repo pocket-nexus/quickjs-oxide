@@ -28,9 +28,9 @@
 
 `3d420407`→`eaf23ba8` 的组合固定负载完整进程耗时下降 **11.86%**。该矩阵使用默认 affinity，不与后续 CPU 2 的结果相减作单层归因。同一组合的完整进程资源诊断中，RSS 中位数增加 **1,286 KiB（0.37%）**，instructions 下降 **11.11%**；它不是原版 Score 或峰值分布结论。原始证据位于仓库外 `/home/eric/.cache/oxide-v8v7-boa-campaign/` 的 `cumulative-fixed-ledger.json` 与 `integrated-wave2-resources/`。
 
-## 当前原版结果
+## 此前原版结果（2026-10-02）
 
-最新原版计时源码为 `a40fe615`，包含前九项实现与 factory 正确性修复。完整原版 combined 输出的中位数为 **188**；RegExp 为 **91.15**，NavierStokes 为 **581.5**。该次测量中仅这两个子项超过历史 Boa，八项与 Combined 全部超过 Boa 的目标尚未达到。
+这一轮的原版计时源码为 `a40fe615`，包含前九项实现与 factory 正确性修复。完整原版 combined 输出的中位数为 **188**；RegExp 为 **91.15**，NavierStokes 为 **581.5**。该次测量中仅这两个子项超过历史 Boa，八项与 Combined 全部超过 Boa 的目标尚未达到。后续内部执行所有权组合的独立验收与当前成绩见 [阶段 A 验收](runtime-core-stage-a.md)。
 
 八项分数、同期配对基线、观察范围、历史 Boa 对照及构建身份见 [RegExpSplit 验收](v8-v7-structural-simplification.md)。该表中的变化只归属于 RegExpSplit 改动的完整受测产物，不是本会话相对旧 main 的累计百分比。机制计数与原版时间分别验收，各项收益不相加。
 

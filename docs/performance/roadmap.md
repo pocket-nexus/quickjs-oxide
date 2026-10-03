@@ -24,13 +24,15 @@
 
 ## 帧、所有权与生命周期
 
-`SlotStore` 为参数、局部和操作数提供窗口；`FrameTransaction` 与 `FrameSlots` 约束短时访问。帧保持值的 root，堆记录保持其拥有的边，pending 操作持有跨边界所需的状态。提交前完成准入；提交后的剩余工作沿已选的 continuation 前进。当前 ready driver 对 `VmAction::observes_activation` 分类的动作执行帧物化：`Call` 与 `Complete` 使用各自的帧协议，其余动作进入该步骤。已物化帧在这一步发布当前 PC。
+`SlotStore` 为参数、局部和操作数提供窗口；`FrameTransaction` 与 `FrameSlots` 约束短时访问。调用输入、帧函数与捕获存储持有原始堆 ID，使用当前状态显式退休；放弃执行由 Weak 注册兜底。片段取得一次 `RuntimeState`，通过 `FrameExecution` 借用实际当前帧与窗口。普通调用、返回、tail 退休与 Base 构造在同一 opcode 循环继续，使用携带的 fallthrough 与窗口事实，保留容量、占用与动态目的地检查。
+
+pending 操作持有跨边界所需 owner。未迁移的对象、native、eval、发布与挂起 helper 结束片段借用后继续，其边界在 profiling 构建中计数。ready driver 对剩余 `VmAction::observes_activation` 动作执行物化；已物化帧在这一步发布当前 PC。公共 API 取得状态与认证外部 root，panic 或破坏性清理失败会隔离 runtime，后续入口拒绝继续使用它。
 
 捕获变量与形状分别存于类型化 arena。每个 ID 包含完整代际身份；引用释放、零计数队列和显式回收沿用同一堆生命周期规则。详细存储契约见[类型化存储](typed-arenas.md)。
 
 ## 自动循环回收
 
-循环节点发布消费统一的净增长预算，普通引用计数清理按批次返还预算。预算耗尽后，ready driver 在堆借用结束的执行边界处理请求，最外层 execution turn 也处理请求。VM 没有独立的 GC 指令或分支轮询；显式 GC 与自动 GC 使用同一个完整回收器。预算、weak roots、重入和借用规则见 [GC 策略](../cycle-collection.md)。
+循环节点发布消费统一的净增长预算，普通引用计数清理按批次返还预算。普通帧安装不分配可收集节点，无需重复轮询；Base 构造先完整发布 receiver、参数与返回 owner，再用已持有状态服务分配压力。剩余 legacy 执行边界与最外层 execution turn 保留服务位置。VM 没有独立的 GC 指令或分支轮询；显式 GC 与自动 GC 使用同一个完整回收器。预算、weak roots、重入和借用规则见 [GC 策略](../cycle-collection.md)。
 
 ## 验证入口
 

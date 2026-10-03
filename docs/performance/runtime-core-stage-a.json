@@ -1,0 +1,883 @@
+{
+  "schema": "oxide-runtime-core-stage-a-summary-v1",
+  "runtime_baseline": "fe0b57cd9a81d64e6172efa9e7d452dd2fcb0c3c",
+  "runtime_candidate": "e034f650e50ed964d7a2fc480149d957362e532f",
+  "scope": "Stage A only; remaining Stage B/C migration and Boa-parity goal are not complete. Limits apply exactly as approved: fixed-workload RSS <=5%; code/readonly <=10%; sustained allocation remains bounded.",
+  "approved_stage_a_gates": {
+    "correctness": true,
+    "richards_deltablue_fixed_net_gain": true,
+    "richards_deltablue_original_net_gain": true,
+    "fixed_all_noninferior": true,
+    "original_all_noninferior": true,
+    "no_entirely_negative_fixed_interval": true,
+    "no_entirely_negative_original_interval": true,
+    "fixed_peak_rss_growth_at_most_5_percent": true,
+    "text_growth_at_most_10_percent": true,
+    "sustained_allocation_bounded_observations": true
+  },
+  "plain_binary_sha256": {
+    "baseline": "25ddd4d139000f5cb91f32fed159d155bafed83f37c4fc809854fa5db10af6ee",
+    "candidate": "eb58fbd5fe75ca991cc93a015613f86f44ff30e9b81054aaad81fe980e58bdc0"
+  },
+  "build": "Rust 1.88.0; x86_64-unknown-linux-gnu; opt-level=3; fat LTO; codegen-units=1; features=[]; no PGO",
+  "source": {
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "4e86354f280d1a62a27e85b784bd17194694a9c7",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/home/eric/.cache/oxide-benchmark-source",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "expected_commit": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+    "source": "/home/eric/.cache/oxide-benchmark-source",
+    "files": {
+      "base.js": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "richards.js": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "deltablue.js": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "crypto.js": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+      "raytrace.js": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "earley-boyer.js": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "regexp.js": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "splay.js": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "navier-stokes.js": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    "run_js_sha256": "f13e44c0c4c70a9eb7bdab79956cab9faf59be8b9bec97f98f21548e01d9f938",
+    "adaptation": "only upstream scripts/build.ts load inlining and standalone concatenation; no benchmark-body or timing changes",
+    "timer": "external harness Date millisecond clock",
+    "metric": "suite score; higher is better"
+  },
+  "measurement_context": {
+    "cpu": 2,
+    "machine": {
+      "platform": "Linux-7.2.7-arch1-1-x86_64-with-glibc2.44",
+      "machine": "x86_64",
+      "cpu": "AMD Ryzen 7 7840HS with Radeon 780M Graphics",
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "scaling_governors": {
+        "0": "powersave",
+        "1": "powersave",
+        "2": "powersave",
+        "3": "powersave",
+        "4": "powersave",
+        "5": "powersave",
+        "6": "powersave",
+        "7": "powersave",
+        "8": "powersave",
+        "9": "powersave",
+        "10": "powersave",
+        "11": "powersave",
+        "12": "powersave",
+        "13": "powersave",
+        "14": "powersave",
+        "15": "powersave"
+      }
+    },
+    "darwin_counters": false
+  },
+  "statistics": {
+    "estimator": "median of paired percent gains; positive means better",
+    "formula": "100 * (candidate / baseline - 1)",
+    "resamples": 10000,
+    "seed": 79,
+    "interval": "empirical percentile 95%; indices 249 and 9749",
+    "minimum_pairs": 6,
+    "aa_noise": "maximum absolute endpoint of matched A/A gain 95% interval"
+  },
+  "fixed_time": [
+    {
+      "case": "richards",
+      "pairs": 6,
+      "baseline_median": 773278582.5,
+      "candidate_median": 638472846.5,
+      "median_gain_percent": 17.09653690747482,
+      "gain_ci95_percent": [
+        16.90525833561052,
+        18.277579915470554
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 2.7799402787444194
+    },
+    {
+      "case": "deltablue",
+      "pairs": 6,
+      "baseline_median": 809870546.5,
+      "candidate_median": 677501372.0,
+      "median_gain_percent": 16.420862046838273,
+      "gain_ci95_percent": [
+        14.81527303485125,
+        17.643680966307997
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 2.1527994175150447
+    },
+    {
+      "case": "crypto",
+      "pairs": 6,
+      "baseline_median": 604757474.5,
+      "candidate_median": 535664255.5,
+      "median_gain_percent": 11.292999525355707,
+      "gain_ci95_percent": [
+        10.862834950518991,
+        12.69992837850565
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.763422871001108
+    },
+    {
+      "case": "raytrace",
+      "pairs": 6,
+      "baseline_median": 926757584.0,
+      "candidate_median": 875211111.5,
+      "median_gain_percent": 5.116380319304586,
+      "gain_ci95_percent": [
+        3.449058125383403,
+        7.442369885236089
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.1218099839109763
+    },
+    {
+      "case": "earley-boyer",
+      "pairs": 6,
+      "baseline_median": 1360849841.0,
+      "candidate_median": 1143504861.0,
+      "median_gain_percent": 16.328855926392784,
+      "gain_ci95_percent": [
+        14.165332592317359,
+        16.988919909278827
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.0996741556422163
+    },
+    {
+      "case": "regexp",
+      "pairs": 6,
+      "baseline_median": 2150382504.5,
+      "candidate_median": 2141381179.5,
+      "median_gain_percent": 0.9499637541020844,
+      "gain_ci95_percent": [
+        0.045055385136422155,
+        1.6311982942724457
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 2.0739746243528865
+    },
+    {
+      "case": "splay",
+      "pairs": 6,
+      "baseline_median": 1718466163.0,
+      "candidate_median": 1640472763.5,
+      "median_gain_percent": 4.375061350706244,
+      "gain_ci95_percent": [
+        2.720893601584468,
+        5.205037647069894
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 2.636032435802327
+    },
+    {
+      "case": "navier-stokes",
+      "pairs": 6,
+      "baseline_median": 638095727.0,
+      "candidate_median": 550538482.0,
+      "median_gain_percent": 13.72165321478117,
+      "gain_ci95_percent": [
+        10.612165591527194,
+        14.185232796109991
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 3.261646390740791
+    },
+    {
+      "case": "combined",
+      "pairs": 6,
+      "baseline_median": 8964690510.0,
+      "candidate_median": 8188187096.0,
+      "median_gain_percent": 8.63570626174538,
+      "gain_ci95_percent": [
+        8.292730462335186,
+        9.659460498338817
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.06280657589653
+    }
+  ],
+  "original_score": [
+    {
+      "case": "richards",
+      "pairs": 6,
+      "baseline_median": 96.6,
+      "candidate_median": 117.0,
+      "median_gain_percent": 21.433095701294604,
+      "gain_ci95_percent": [
+        20.207382971229258,
+        21.964117454762235
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.2730792715699213
+    },
+    {
+      "case": "deltablue",
+      "pairs": 6,
+      "baseline_median": 107.0,
+      "candidate_median": 128.5,
+      "median_gain_percent": 20.560747663551403,
+      "gain_ci95_percent": [
+        18.13343717549325,
+        20.853548966756506
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.4240790655885016
+    },
+    {
+      "case": "crypto",
+      "pairs": 6,
+      "baseline_median": 204.0,
+      "candidate_median": 233.0,
+      "median_gain_percent": 14.215686274509798,
+      "gain_ci95_percent": [
+        7.038834951456307,
+        14.988409156766146
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 2.8171000666769253
+    },
+    {
+      "case": "raytrace",
+      "pairs": 6,
+      "baseline_median": 163.0,
+      "candidate_median": 174.0,
+      "median_gain_percent": 6.748466257668717,
+      "gain_ci95_percent": [
+        6.727891665419728,
+        7.428494747335323
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.2364849321371052
+    },
+    {
+      "case": "earley-boyer",
+      "pairs": 6,
+      "baseline_median": 217.0,
+      "candidate_median": 251.5,
+      "median_gain_percent": 15.668202764976957,
+      "gain_ci95_percent": [
+        15.204417542741854,
+        16.32139686297721
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.3986089980439043
+    },
+    {
+      "case": "regexp",
+      "pairs": 12,
+      "baseline_median": 91.9,
+      "candidate_median": 91.7,
+      "median_gain_percent": 0.0003575485044315929,
+      "gain_ci95_percent": [
+        -0.7592271270182083,
+        0.6564622145185384
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.767533246821662
+    },
+    {
+      "case": "splay",
+      "pairs": 6,
+      "baseline_median": 482.5,
+      "candidate_median": 514.0,
+      "median_gain_percent": 7.046639691416889,
+      "gain_ci95_percent": [
+        4.818594104308394,
+        8.45935706749411
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 2.284416837250891
+    },
+    {
+      "case": "navier-stokes",
+      "pairs": 6,
+      "baseline_median": 550.0,
+      "candidate_median": 667.0,
+      "median_gain_percent": 20.999757570992394,
+      "gain_ci95_percent": [
+        14.599936873668428,
+        22.323563091387598
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 1.1422073702775482
+    },
+    {
+      "case": "all",
+      "pairs": 6,
+      "baseline_median": 191.0,
+      "candidate_median": 215.0,
+      "median_gain_percent": 12.303664921465963,
+      "gain_ci95_percent": [
+        11.71875,
+        13.089005235602091
+      ],
+      "gate_passed": true,
+      "aa_noise_percent": 0.5263157894736858
+    }
+  ],
+  "combined_run_boa_comparison": [
+    {
+      "benchmark": "Richards",
+      "baseline": 97.35,
+      "candidate": 116.5,
+      "boa_historical": 225.0,
+      "candidate_over_boa_percent": 51.77777777777778
+    },
+    {
+      "benchmark": "DeltaBlue",
+      "baseline": 107.0,
+      "candidate": 127.0,
+      "boa_historical": 206.0,
+      "candidate_over_boa_percent": 61.650485436893206
+    },
+    {
+      "benchmark": "Crypto",
+      "baseline": 205.0,
+      "candidate": 233.0,
+      "boa_historical": 242.0,
+      "candidate_over_boa_percent": 96.28099173553719
+    },
+    {
+      "benchmark": "RayTrace",
+      "baseline": 162.0,
+      "candidate": 173.5,
+      "boa_historical": 398.0,
+      "candidate_over_boa_percent": 43.5929648241206
+    },
+    {
+      "benchmark": "EarleyBoyer",
+      "baseline": 217.0,
+      "candidate": 250.5,
+      "boa_historical": 502.0,
+      "candidate_over_boa_percent": 49.9003984063745
+    },
+    {
+      "benchmark": "RegExp",
+      "baseline": 90.75,
+      "candidate": 91.35,
+      "boa_historical": 67.6,
+      "candidate_over_boa_percent": 135.13313609467457
+    },
+    {
+      "benchmark": "Splay",
+      "baseline": 482.5,
+      "candidate": 507.5,
+      "boa_historical": 833.0,
+      "candidate_over_boa_percent": 60.924369747899156
+    },
+    {
+      "benchmark": "NavierStokes",
+      "baseline": 553.0,
+      "candidate": 667.5,
+      "boa_historical": 520.0,
+      "candidate_over_boa_percent": 128.3653846153846
+    },
+    {
+      "benchmark": "Combined",
+      "baseline": 191.0,
+      "candidate": 215.0,
+      "boa_historical": 300.0,
+      "candidate_over_boa_percent": 71.66666666666667
+    }
+  ],
+  "fixed_peak_rss": [
+    {
+      "case": "richards",
+      "complete": true,
+      "eligible": true,
+      "gate_passed": true,
+      "peaks_kib": {
+        "baseline": 10956,
+        "candidate": 10588
+      },
+      "peak_growth_percent": -3.358890105878054,
+      "limit_growth_percent": 5
+    },
+    {
+      "case": "deltablue",
+      "complete": true,
+      "eligible": true,
+      "gate_passed": true,
+      "peaks_kib": {
+        "baseline": 17728,
+        "candidate": 17380
+      },
+      "peak_growth_percent": -1.9629963898916913,
+      "limit_growth_percent": 5
+    },
+    {
+      "case": "crypto",
+      "complete": true,
+      "eligible": true,
+      "gate_passed": true,
+      "peaks_kib": {
+        "baseline": 12444,
+        "candidate": 11892
+      },
+      "peak_growth_percent": -4.43587270973963,
+      "limit_growth_percent": 5
+    },
+    {
+      "case": "raytrace",
+      "complete": true,
+      "eligible": true,
+      "gate_passed": true,
+      "peaks_kib": {
+        "baseline": 11512,
+        "candidate": 11344
+      },
+      "peak_growth_percent": -1.459346768589298,
+      "limit_growth_percent": 5
+    },
+    {
+      "case": "earley-boyer",
+      "complete": true,
+      "eligible": true,
+      "gate_passed": true,
+      "peaks_kib": {
+        "baseline": 41272,
+        "candidate": 41240
+      },
+      "peak_growth_percent": -0.07753440589260974,
+      "limit_growth_percent": 5
+    },
+    {
+      "case": "regexp",
+      "complete": true,
+      "eligible": true,
+      "gate_passed": true,
+      "peaks_kib": {
+        "baseline": 17716,
+        "candidate": 17664
+      },
+      "peak_growth_percent": -0.29351998193722917,
+      "limit_growth_percent": 5
+    },
+    {
+      "case": "splay",
+      "complete": true,
+      "eligible": true,
+      "gate_passed": true,
+      "peaks_kib": {
+        "baseline": 339652,
+        "candidate": 340712
+      },
+      "peak_growth_percent": 0.31208413317160844,
+      "limit_growth_percent": 5
+    },
+    {
+      "case": "navier-stokes",
+      "complete": true,
+      "eligible": true,
+      "gate_passed": true,
+      "peaks_kib": {
+        "baseline": 13572,
+        "candidate": 13144
+      },
+      "peak_growth_percent": -3.1535514294135036,
+      "limit_growth_percent": 5
+    },
+    {
+      "case": "combined",
+      "complete": true,
+      "eligible": true,
+      "gate_passed": true,
+      "peaks_kib": {
+        "baseline": 346812,
+        "candidate": 348852
+      },
+      "peak_growth_percent": 0.5882149406594817,
+      "limit_growth_percent": 5
+    }
+  ],
+  "code_size": {
+    "scope": "GNU text includes executable code and read-only data",
+    "text_growth_percent": 3.5959589135297287,
+    "limit_growth_percent": 10,
+    "gate_passed": true
+  },
+  "code_size_bytes": {
+    "baseline": 8288860,
+    "candidate": 8586924
+  },
+  "sustained_bounds": [
+    {
+      "kind": "node-cycles",
+      "engine": "baseline",
+      "eligible": true,
+      "bounded_observation_passed": true,
+      "peaks_kib": {
+        "65536": 14888,
+        "262144": 14620,
+        "1048576": 14892
+      },
+      "largest_scale_allowed_peak_kib": 15912,
+      "largest_job_windows_settled": true,
+      "criterion": "16x work: peak <= smallest-scale peak + max(1 MiB,5%), and both largest-job final windows settle"
+    },
+    {
+      "kind": "node-cycles",
+      "engine": "candidate",
+      "eligible": true,
+      "bounded_observation_passed": true,
+      "peaks_kib": {
+        "65536": 14112,
+        "262144": 14204,
+        "1048576": 14372
+      },
+      "largest_scale_allowed_peak_kib": 15136,
+      "largest_job_windows_settled": true,
+      "criterion": "16x work: peak <= smallest-scale peak + max(1 MiB,5%), and both largest-job final windows settle"
+    },
+    {
+      "kind": "closure-cycles",
+      "engine": "baseline",
+      "eligible": true,
+      "bounded_observation_passed": true,
+      "peaks_kib": {
+        "65536": 14256,
+        "262144": 14384,
+        "1048576": 14616
+      },
+      "largest_scale_allowed_peak_kib": 15280,
+      "largest_job_windows_settled": true,
+      "criterion": "16x work: peak <= smallest-scale peak + max(1 MiB,5%), and both largest-job final windows settle"
+    },
+    {
+      "kind": "closure-cycles",
+      "engine": "candidate",
+      "eligible": true,
+      "bounded_observation_passed": true,
+      "peaks_kib": {
+        "65536": 14224,
+        "262144": 15344,
+        "1048576": 14396
+      },
+      "largest_scale_allowed_peak_kib": 15248,
+      "largest_job_windows_settled": true,
+      "criterion": "16x work: peak <= smallest-scale peak + max(1 MiB,5%), and both largest-job final windows settle"
+    }
+  ],
+  "sustained_peak_diagnostic": {
+    "tool_stricter_gate_passed": false,
+    "rows": [
+      {
+        "case": "node-cycles-65536",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 14888,
+          "candidate": 14112
+        },
+        "peak_growth_percent": -5.212251477700159,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "node-cycles-262144",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 14620,
+          "candidate": 14204
+        },
+        "peak_growth_percent": -2.8454172366621067,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "node-cycles-1048576",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 14892,
+          "candidate": 14372
+        },
+        "peak_growth_percent": -3.4918076819768995,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "closure-cycles-65536",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 14256,
+          "candidate": 14224
+        },
+        "peak_growth_percent": -0.22446689113355678,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "closure-cycles-262144",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": false,
+        "peaks_kib": {
+          "baseline": 14384,
+          "candidate": 15344
+        },
+        "peak_growth_percent": 6.674082313681873,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "closure-cycles-1048576",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 14616,
+          "candidate": 14396
+        },
+        "peak_growth_percent": -1.50519978106185,
+        "limit_growth_percent": 5
+      }
+    ],
+    "scope": "The collector also applied the fixed-workload 5% cross-engine cap to synthetic sustained workloads. This additional diagnostic is not an approved gate; its middle closure scale fails at +6.67% and is retained. Approved boundedness observations all pass, including both largest-scale windows."
+  },
+  "correctness": {
+    "passed": true,
+    "native_ci_commands": 44,
+    "default_parent_harness_tests": {
+      "passed": 3260,
+      "ignored": 1
+    },
+    "combined_features_parent_harness_tests": {
+      "passed": 3496,
+      "ignored": 1
+    },
+    "test262": {
+      "focused_passed": 6844,
+      "full_passed": 80010,
+      "runnable": 80060,
+      "total": 102037,
+      "existing_failures_unchanged": 50,
+      "full_tsv_body_sha256": "971cc666767b3c4eb9b519340b5d7a77a80ff8405f6a8d800aada822d3230b19",
+      "full_jsonl_body_sha256": "8447c3de7a70959ff9bcff40102b469d51d810fff0033d7c78ba3065dbd55418"
+    },
+    "quickjs": {
+      "cli_passed": 38,
+      "oracle_passed": 913,
+      "existing_ignore": 1,
+      "js_fixtures": 13,
+      "c_oracles": 9,
+      "immutable_reference_sha256": "b2f8494ceee444455d240d7834ff4ba7ff5d9ca631f0d8a136fdbab85d931acf"
+    }
+  },
+  "mechanism": {
+    "conservation_witnesses": [
+      {
+        "case": "richards",
+        "calls": {
+          "baseline_exits": 849792,
+          "internal": 849790,
+          "remaining_exits": 2,
+          "count_conserved": true
+        },
+        "returns": {
+          "baseline_exits": 850234,
+          "internal": 850231,
+          "remaining_exits": 3,
+          "count_conserved": true
+        },
+        "other_events": {
+          "core.runtime_clone": {
+            "a1": 3019119,
+            "stage_a": 1315081,
+            "delta": -1704038,
+            "change_percent": -56.4415645756262,
+            "a1_counter_present": true,
+            "stage_a_counter_present": true
+          },
+          "core.pc_authentication": {
+            "a1": 2281475,
+            "stage_a": 524690,
+            "delta": -1756785,
+            "change_percent": -77.00215869119758,
+            "a1_counter_present": true,
+            "stage_a_counter_present": true
+          },
+          "core.window_authentication": {
+            "a1": 3201032,
+            "stage_a": 594457,
+            "delta": -2606575,
+            "change_percent": -81.42920783047467,
+            "a1_counter_present": true,
+            "stage_a_counter_present": true
+          }
+        }
+      },
+      {
+        "case": "deltablue",
+        "calls": {
+          "baseline_exits": 1500732,
+          "internal": 1443777,
+          "remaining_exits": 56955,
+          "count_conserved": true
+        },
+        "returns": {
+          "baseline_exits": 1473212,
+          "internal": 1462638,
+          "remaining_exits": 10574,
+          "count_conserved": true
+        },
+        "other_events": {
+          "core.runtime_clone": {
+            "a1": 4565671,
+            "stage_a": 1400731,
+            "delta": -3164940,
+            "change_percent": -69.32036933892083,
+            "a1_counter_present": true,
+            "stage_a_counter_present": true
+          },
+          "core.pc_authentication": {
+            "a1": 3309226,
+            "stage_a": 383947,
+            "delta": -2925279,
+            "change_percent": -88.39767969911998,
+            "a1_counter_present": true,
+            "stage_a_counter_present": true
+          },
+          "core.window_authentication": {
+            "a1": 5038458,
+            "stage_a": 669402,
+            "delta": -4369056,
+            "change_percent": -86.71414944810496,
+            "a1_counter_present": true,
+            "stage_a_counter_present": true
+          }
+        }
+      }
+    ],
+    "sampling_limits": [
+      "VmCallSample::enter selects roughly one in 64 legacy enter_selected attempts; continuous ordinary prepare/install does not activate that sample scope. Absent ordinary install/auth phase rows do not mean zero execution cost.",
+      "Retained phase arrays contain at most the first 4096 selected attempts per phase. DeltaBlue native.prepare records 67798 attempts, 4096 retained samples and 63702 omitted samples.",
+      "Execution diagnostic omission fields are zero within recorded structures. Their raw callsite_scope label still says enter-selected-only, while current prepare_ordinary_in_state also records callsites; this stale label does not define complete coverage of constructs/callbacks/general calls.",
+      "Compile phases and GC clock samples use the diagnostic binary and may share CPU time with builds/tests. No elapsed improvement is attributed to them.",
+      "Richards has no automatic GC phase sample; DeltaBlue has one at 2,321,780 inclusive diagnostic ns. Neither establishes a plain-build maximum pause or latency distribution."
+    ]
+  },
+  "sampling_notes": [
+    "RegExp original Score initial six-pair interval crossed the frozen -1% margin; one prospective six-pair supplement was used once, retaining all 12 pairs. Final paired median is flat, CI [-0.759%,+0.656%].",
+    "Interrupted unpaired Combined observation is excluded; final Combined uses six complete fresh pairs. Other completed cases, frozen A/A and historical Boa are reused.",
+    "First sustained sampling interval 50ms produced only two observations on a 0.13s smallest baseline run; incomplete receipt retained. Only sustained sampling repeated at 10ms, inputs and bounds unchanged."
+  ],
+  "receipt": {
+    "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/acceptance.json",
+    "sha256": "7cf2983d75dba67116f07ad5738effbb821fe0267d90c9ed2a0233cf440f13b4"
+  },
+  "evidence": [
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/campaign-provenance.json",
+      "sha256": "383002447e34b35015bfe642958ad5d2e0e0da7ec9df35f5ce33613821c1f328"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/fixed-full-paired.json",
+      "sha256": "f6a650fec8ff56de638c33ef957f75d18d950d9c3bd7ae40b17af9a68e32d52e"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/original-final-paired.json",
+      "sha256": "e9c5d339ad28be1e9d239f8af31e135f37a905e69078f3d85581db322c0c0706"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/original-regexp-12-paired.json",
+      "sha256": "16b91bcf90ec080a990f2f4f26e34496171bfad5f427232143d060ac2d52da23"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/regexp-score-resolution-plan.json",
+      "sha256": "20f59b81128fc280c0332221e1ccd8718ea7b3bcf7987a8d4300ab6e8087cc14"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/regexp-score-resolution-result.json",
+      "sha256": "51b226bb8860090da5fb40f23a2a0be762b38fc6e7ed2b6d97ef1d39419724f3"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/resource-sampling-resolution.json",
+      "sha256": "094b9d0eafe1fa2bbc1d79908b5df63905400c6e3f464af13fb056d4d2d98997"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/resources/code-size.json",
+      "sha256": "c8f402fb6166144394c77fb9e83315594f87023d3423d4c936b1b11b6450d6eb"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/resources/fixed-rss/results.json",
+      "sha256": "ffc969a850c0dc15e434634106ee8bb1a1866c82de6b6fbb43100ece8118d1b9"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/stage-a-e034f650e50e/resources-sustained-10ms/sustained/results.json",
+      "sha256": "0b9c6bab0614bef0c5e6a1b853e2b59de3eb7c6feccf866a7ae068c0ab92fe40"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/a-stage-e034-correctness/acceptance.json",
+      "sha256": "d8eaf2f22fd33cc8915c0186dc3a12400e6fea544943910a43e368165f449ff2"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/a-stage-e034-mechanism/interpretation.json",
+      "sha256": "7140b7028510e50e70b1011707caea501f387ec1bc8f757ade715aaf2bf65217"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-history-three-engines-2026-10-01/boa-missing-combined/results.json",
+      "sha256": "8b7dfeb10f19d0e3ecc678d7f79f197b1e510f623593ea6dbe68e3fe6a59451c"
+    }
+  ],
+  "completed_original_combined_created_utc": "2026-10-03T18:40:35Z"
+}
