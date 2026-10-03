@@ -42,6 +42,12 @@ Publication also selects bounded fast entries for Number increments from locals 
 
 Bytecode call inputs, function/capture owners and active-frame restoration records store owned heap IDs. Retirement releases their edges explicitly through the current `RuntimeState`; uninstalled entries stay under a borrowed cleanup guard before the first fallible reservation. `RunningExecution` and detached activation records carry weak runtime references for abandonment cleanup, with one header registration per execution record. If the runtime has already died, their raw storage is discarded without traversing its heap. Cold publication, eval and native continuation payloads still use public roots and finish outside a held state borrow.
 
+An execution segment borrows `RuntimeState` once and admits its current frame through the private `FrameExecution` lease. Ordinary calls, Base constructors and ordinary returns continue in the same opcode loop. The lease lends the actual current frame and slot transaction; ordinary installation and retirement establish the next current window. Internal ordinary transitions use the carried instruction fallthrough without repeating external PC or window authentication. Capacity, occupancy and dynamic return-target checks remain. Legacy entry still authenticates supplied frame identities and operand witnesses.
+
+State operations in a segment copy, move and release values directly. A selected getter owns its required edges in execution storage before crossing a legacy boundary. Cached native selections contain weak domain/function facts: they apply only to the actual callee, so an outer method selection does not interrupt ordinary argument calls. Cold helpers end the segment's state borrow before they use the public Runtime surface. These remaining boundaries are counted in profiling builds and are migration work, rather than an alternative interpreter.
+
+Ordinary frame installation does not allocate collectible heap nodes and needs no collection poll. A Base constructor publishes its new receiver, arguments and saved return receiver before servicing allocation pressure with the held state. Legacy and outermost completion boundaries retain collection service. Temporary owners remain in state-aware guards until their transfer is complete; cleanup failure quarantines the runtime before further heap traversal.
+
 Direct `Put`, `Set` and initialization use `vm/stack/transfer.rs`. `Put` and initialization transfer the operand owner to the destination. `Set` preserves the operand and obtains an additional owner for the destination. The transfer checks the destination and displaced owner in the active frame window, then either commits there or enters the operation's observation path. Captured and special bindings use their binding operations.
 
 Named reads use the published property site and the selector in `object/ordinary_storage/ic.rs`. The location cache records one or two guarded shapes, an accessor location, or a bounded cooldown; a cold data selection feeds its consumer during the same heap borrow. The selector returns current data, an accessor or complete absence when it can complete the lookup. Ordinary stack reads and borrowed direct-binding reads share that selection. The VM completes admitted data reads in the active frame scope and carries a selected accessor into the property driver. General object semantics remain in the object and property driver modules.
@@ -66,9 +72,10 @@ catches a nested panic cannot resume its parent engine operation.
 Root, execution and cleanup destructors skip semantic traversal after poison.
 On final teardown, `StateStorage` forgets the entire interrupted state, avoiding
 a secondary panic from destructors inspecting a partially mutated heap. This
-quarantine deliberately leaks the interrupted state. Ordinary JS exceptions
-and checked resource errors still follow normal cleanup and transaction
-rollback; they do not poison the runtime.
+quarantine deliberately leaks the interrupted state. An owned-release failure
+also quarantines the runtime, since cleanup may already have changed the heap.
+Ordinary JS exceptions and recoverable checked resource errors still follow
+normal cleanup and transaction rollback.
 
 ## Heap and lifecycle
 
