@@ -368,6 +368,13 @@ mod poison_tests {
         subprocess("exit-drain-error");
     }
 
+    #[test]
+    fn failed_kept_owner_release_stops_execution_turn_cleanup() {
+        for case in ["kept-finish-error", "kept-drop-error", "kept-unwind"] {
+            subprocess(case);
+        }
+    }
+
     #[derive(Debug)]
     struct PanicClock;
     impl HostServices for PanicClock {
@@ -477,6 +484,57 @@ mod poison_tests {
                     runtime.0.state.borrow().heap.object_strong_count(survivor),
                     Ok(1)
                 );
+            }
+            "kept-finish-error" | "kept-drop-error" | "kept-unwind" => {
+                use crate::engine::{heap::WeakCollectionKey, value::JsValue};
+                let turn = runtime.enter_execution_turn().unwrap();
+                let first = runtime.new_object(None).unwrap().into_handle();
+                let second = runtime.new_object(None).unwrap().into_handle();
+                runtime
+                    .add_to_kept_objects(WeakCollectionKey::Object(first))
+                    .unwrap();
+                runtime
+                    .add_to_kept_objects(WeakCollectionKey::Object(second))
+                    .unwrap();
+                let queued = runtime.new_object(None).unwrap().into_handle();
+                let (stale, survivor) = {
+                    let mut state = runtime.0.state.borrow_mut();
+                    state.release_jsvalue(JsValue::Object(first)).unwrap();
+                    state.release_jsvalue(JsValue::Object(second)).unwrap();
+                    // Use the actual table's scan order rather than assuming a
+                    // handle hash order. Both iter and drain scan this same table.
+                    let keys: Vec<_> = state.kept_objects.iter().copied().collect();
+                    let [
+                        WeakCollectionKey::Object(stale),
+                        WeakCollectionKey::Object(survivor),
+                    ] = keys.as_slice()
+                    else {
+                        panic!("two retained targets");
+                    };
+                    let (stale, survivor) = (*stale, *survivor);
+                    state.release_jsvalue(JsValue::Object(stale)).unwrap();
+                    // A separate, valid owner waits for the later drain phase.
+                    runtime.release_jsvalue(JsValue::Object(queued)).unwrap();
+                    (stale, survivor)
+                };
+                if case == "kept-finish-error" {
+                    assert!(matches!(turn.finish(), Err(RuntimeError::Heap(_))));
+                } else if case == "kept-drop-error" {
+                    drop(turn);
+                } else {
+                    let caught = catch_unwind(AssertUnwindSafe(|| {
+                        let _turn = turn;
+                        panic!("injected execution turn unwind");
+                    }));
+                    assert!(caught.is_err());
+                }
+                assert!(runtime.is_poisoned());
+                assert_eq!(runtime.0.execution_turn_depth.get(), 0);
+                let state = runtime.0.state.borrow();
+                assert!(state.heap.object(stale).is_err());
+                assert_eq!(state.heap.object_strong_count(survivor), Ok(1));
+                assert_eq!(state.heap.object_strong_count(queued), Ok(1));
+                assert!(runtime.0.deferred_references.has_pending());
             }
             "partial-mutation" => {
                 let failed = catch_unwind(AssertUnwindSafe(|| {
