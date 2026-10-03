@@ -16,6 +16,7 @@
 | `08e80874`、`4ecedac9` | Error backtrace 的渲染和新 Error 的元数据捕获共享状态实现；对象、message 和 backtrace 字段发布失败先隔离，再停止后续 owner 清理。任意既有 Error 的通用属性语义保留。 |
 | `375d9462` | 原生调用准备期间，参数继续由 guard 持有，直到 callable 的最后一次 checked retain 成功；修复该步骤失败时参数 owner 丢失。 |
 | `b037075a` | 布局分配只保留一个必传隔离标志的入口；删除可漏传标志的旧入口及 Array 工厂的可选模式。Base 构造、Arguments、公共对象和公共 Array 分配都遵守此契约。 |
+| `f23e9d68` | native receiver/argv 移出帧槽后，由局部 guard 持有直到 NativeActivation 接手；修复帧 materialization 可恢复失败时 owner 丢失。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -30,6 +31,7 @@
 - Array：13 个新见证；profiling 见证确认一次执行入口和一次内部 Array 操作，直接完成，不产生 Runtime clone 或 deferred release。
 - Error：7 个 backtrace 与 5 个发布失败新见证；最终普通配置和 profiling 配置各通过 62 个选定用例。
 - 原生 argv：真实 callable retain overflow 见证确认活动帧、receiver 和参数正确清理，runtime 未隔离且仍可继续执行。
+- 原生帧登记：Call/CallMethod 在 token 耗尽时释放独占 owner、保留有效别名与 lower slots，故障 PC 和活动帧恢复正确；25 条验证命令通过。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
