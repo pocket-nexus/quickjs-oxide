@@ -150,6 +150,7 @@ fn source_identity(
     runtime: &Runtime,
     executable: &PublishedFunctionSnapshot,
 ) -> (Option<String>, Option<String>, Option<u32>, Option<u32>) {
+    let _diagnostic = super::core::DiagnosticScope::enter();
     let Some(id) = executable.bytecode_id() else {
         return (None, None, None, None);
     };

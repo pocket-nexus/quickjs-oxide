@@ -331,6 +331,12 @@ fn record_exit(result: &Result<VmAction, Error>) {
     layout::<VmAction>("VmAction");
     layout::<Result<VmAction, Error>>("Result<VmAction, Error>");
     layout::<crate::engine::vm::frame::Frame>("Frame");
+    record_event("core.frame_executor_exit");
+    match result {
+        Ok(VmAction::Call { .. }) => record_event("core.call_frame_executor_exit"),
+        Ok(VmAction::Complete) => record_event("core.return_frame_executor_exit"),
+        _ => {}
+    }
     record_event(match result {
         Ok(exit) => exit.diagnostic_name(),
         Err(_) => "execute_continuation.EngineError",

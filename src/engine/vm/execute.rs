@@ -393,6 +393,8 @@ pub(super) fn execute_frame(
     execution: &mut RunningExecution,
     id: FrameId,
 ) -> Result<VmAction, Error> {
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("core.frame_executor_entry");
     let frame = execution.frames.current_mut(id)?;
     let body = &mut *frame.cold;
     let executable = &*body.executable;
@@ -404,6 +406,8 @@ pub(super) fn execute_frame(
         &mut frame.fault_pc,
         &mut frame.resume_pc,
     );
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("core.pc_authentication");
     if !executable.exec.is_boundary(cursor.resume) {
         return Err(Error::internal(
             "execution entry PC is not an instruction boundary",

@@ -4,7 +4,9 @@ use crate::engine::atom::AtomTable;
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::heap::Heap;
 
-use crate::engine::heap::runtime::{NEXT_RUNTIME_DOMAIN_ID, RuntimeInner, RuntimeState};
+use crate::engine::heap::runtime::{
+    NEXT_RUNTIME_DOMAIN_ID, RuntimeInner, RuntimeState, StateStorage,
+};
 use crate::engine::host::HostServices;
 use crate::engine::object::WellKnownSymbol;
 
@@ -60,7 +62,7 @@ impl Runtime {
         Self(Rc::new(RuntimeInner {
             execution_turn_depth: Cell::new(0),
             gc_pressure: gc_pressure.clone(),
-            state: RefCell::new(RuntimeState {
+            state: StateStorage::new(RuntimeState {
                 kept_objects: Default::default(),
                 atoms,
                 pinned_atoms,
@@ -190,8 +192,16 @@ impl Runtime {
 ///
 /// Cloning this handle does not clone the runtime; it creates another owner of
 /// the same heap/atom domain so multiple contexts can share runtime resources.
-#[derive(Clone)]
 pub struct Runtime(pub(crate) Rc<RuntimeInner>);
+
+impl Clone for Runtime {
+    #[inline]
+    fn clone(&self) -> Self {
+        #[cfg(feature = "profiling")]
+        super::profiling::record_runtime_event("runtime.clone", "core.runtime_clone");
+        Self(Rc::clone(&self.0))
+    }
+}
 
 #[cfg(test)]
 impl Default for Runtime {

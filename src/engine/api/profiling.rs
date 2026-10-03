@@ -7,6 +7,8 @@
 
 mod cost;
 pub(crate) use cost::record_call_preparation;
+#[cfg(feature = "profiling")]
+pub(crate) use cost::{CoreExecutionScope, record_runtime_event};
 
 #[cfg(feature = "profiling")]
 pub(crate) use cost::record_compiled_numeric_rejections;

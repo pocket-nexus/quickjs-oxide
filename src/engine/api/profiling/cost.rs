@@ -8,12 +8,16 @@
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 mod buffers;
+#[cfg(feature = "profiling")]
+mod core;
 pub use buffers::CallBufferCost;
 pub(crate) use buffers::{
     record_call_buffer_capacity, record_call_buffer_initialized,
     record_call_buffer_js_value_copies, record_call_buffer_moves, record_call_buffer_observed,
     record_call_buffer_share, record_call_raw_buffer_copies,
 };
+#[cfg(feature = "profiling")]
+pub(crate) use core::{CoreExecutionScope, record_runtime_event};
 mod phases;
 pub(crate) use phases::{CompilePhase, PhaseTimer, VmCallSample};
 mod sites;

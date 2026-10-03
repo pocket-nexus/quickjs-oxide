@@ -7,11 +7,13 @@
 pub(crate) mod execution_turn;
 mod layout;
 mod retained_shapes;
+mod state_storage;
 use self::error::RuntimeError;
 use self::intrinsics::promise::HostPromiseRejectionTracker;
 use self::module::ModuleLoader;
 use crate::engine::api::runtime_error as error;
 use crate::engine::host::HostServices;
+pub(crate) use state_storage::StateStorage;
 
 use crate::engine::{builtins as intrinsics, jobs, modules as module};
 
@@ -33,7 +35,7 @@ pub(crate) static NEXT_RUNTIME_DOMAIN_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct RuntimeInner {
     pub(crate) execution_turn_depth: Cell<usize>,
-    pub(crate) state: RefCell<RuntimeState>,
+    pub(crate) state: StateStorage,
     /// Incremental activation count, readable without borrowing heap state.
     pub(crate) active_frame_depth: Rc<Cell<usize>>,
     pub(crate) deferred_references: super::deferred::DeferredOperations,

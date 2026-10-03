@@ -656,6 +656,8 @@ fn run_frames_with_state(
     mut conversion: Option<super::conversion_driver::ConversionTask>,
     mut next_operation: u64,
 ) -> Result<RunningExit, Error> {
+    #[cfg(feature = "profiling")]
+    let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
     loop {
         if let Some(result) = execution.root_descriptor.take() {
             if execution.frames.current_id().is_some()

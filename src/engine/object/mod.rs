@@ -36,7 +36,12 @@ impl ObjectRef {
     /// Allocation and raw-to-root promotion use this path after establishing
     /// that `id` is live in `runtime`; it deliberately does not retain again.
     #[must_use]
-    pub(crate) const fn from_owned_handle(runtime: Runtime, id: ObjectId) -> Self {
+    pub(crate) fn from_owned_handle(runtime: Runtime, id: ObjectId) -> Self {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.object_root.adopt",
+            "core.object_root.adopt",
+        );
         Self {
             runtime: Some(runtime),
             id,
@@ -45,6 +50,11 @@ impl ObjectRef {
 
     /// Promote a borrowed raw heap edge to a public owning root.
     pub(crate) fn from_borrowed_handle(runtime: Runtime, id: ObjectId) -> Result<Self, HeapError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.object_root.promote",
+            "core.object_root.promote",
+        );
         runtime.retain_object_handle(id)?;
         Ok(Self {
             runtime: Some(runtime),
@@ -55,6 +65,11 @@ impl ObjectRef {
     /// Duplicate this root without turning a runtime invariant failure into a
     /// panic.  The public [`Clone`] implementation delegates to this method.
     pub(crate) fn try_clone(&self) -> Result<Self, HeapError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.object_root.clone",
+            "core.object_root.clone",
+        );
         self.runtime().retain_object_handle(self.id)?;
         Ok(Self {
             runtime: Some(self.runtime().clone()),
@@ -192,6 +207,11 @@ impl AtomOwner {
     }
 
     fn try_clone(&self) -> Result<Self, AtomError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.atom_root.clone",
+            "core.atom_root.clone",
+        );
         self.runtime().retain_atom_handle(self.atom)?;
         Ok(Self {
             runtime: Some(self.runtime().clone()),

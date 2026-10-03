@@ -154,6 +154,8 @@ impl SlotStore {
     ) -> Result<FrameTransaction<'a>, Error> {
         self.check_current(window)?;
         #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("core.window_authentication");
+        #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "frame_authentication.transaction",
         );

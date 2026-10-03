@@ -87,6 +87,8 @@ fn active_execution(domain: u64) -> Option<u64> {
 #[must_use]
 pub(crate) struct HostBoundaryGuard {
     boundary: HostBoundary,
+    #[cfg(feature = "profiling")]
+    _origin: crate::engine::api::profiling::CoreExecutionScope,
 }
 
 impl HostBoundaryGuard {
@@ -112,7 +114,11 @@ impl HostBoundaryGuard {
             boundaries.push(boundary);
             Ok(())
         })?;
-        Ok(Self { boundary })
+        Ok(Self {
+            boundary,
+            #[cfg(feature = "profiling")]
+            _origin: crate::engine::api::profiling::CoreExecutionScope::outside(),
+        })
     }
 
     pub(crate) fn finish(self, runtime: &Runtime) -> Result<(), Error> {

@@ -35,7 +35,12 @@ impl FunctionBytecodeRef {
     /// The runtime uses this after transactional publication; it deliberately
     /// does not retain the newly allocated node a second time.
     #[must_use]
-    pub(crate) const fn from_owned_handle(runtime: Runtime, id: FunctionBytecodeId) -> Self {
+    pub(crate) fn from_owned_handle(runtime: Runtime, id: FunctionBytecodeId) -> Self {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.bytecode_root.adopt",
+            "core.bytecode_root.adopt",
+        );
         Self { runtime, id }
     }
 
@@ -44,6 +49,11 @@ impl FunctionBytecodeRef {
         runtime: Runtime,
         id: FunctionBytecodeId,
     ) -> Result<Self, HeapError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.bytecode_root.promote",
+            "core.bytecode_root.promote",
+        );
         runtime.retain_function_bytecode_handle(id)?;
         Ok(Self { runtime, id })
     }
@@ -52,6 +62,11 @@ impl FunctionBytecodeRef {
     /// runtime and tests.  Public [`Clone`] treats failure as an invariant or
     /// resource-exhaustion violation because a live root cannot be stale.
     pub(crate) fn try_clone(&self) -> Result<Self, HeapError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.bytecode_root.clone",
+            "core.bytecode_root.clone",
+        );
         self.runtime.retain_function_bytecode_handle(self.id)?;
         Ok(Self {
             runtime: self.runtime.clone(),

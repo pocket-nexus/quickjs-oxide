@@ -312,10 +312,20 @@ pub(crate) struct VarRefRoot {
 
 impl VarRefRoot {
     pub(crate) fn from_owned_handle(runtime: Runtime, id: VarRefId) -> Self {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.var_ref_root.adopt",
+            "core.var_ref_root.adopt",
+        );
         Self { runtime, id }
     }
 
     pub(crate) fn from_borrowed_handle(runtime: Runtime, id: VarRefId) -> Result<Self, HeapError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "runtime.var_ref_root.promote",
+            "core.var_ref_root.promote",
+        );
         runtime.retain_var_ref_handle(id)?;
         Ok(Self { runtime, id })
     }
