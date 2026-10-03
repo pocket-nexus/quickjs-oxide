@@ -227,17 +227,6 @@ pub(super) fn set_name(
 }
 
 #[inline(never)]
-pub(super) fn instantiate_closure(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    index: u32,
-) -> Result<CallStep, Error> {
-    super::closure_driver::instantiate(runtime, execution, id, index)?;
-    Ok(CallStep::Entered)
-}
-
-#[inline(never)]
 pub(super) fn reset_captured(
     runtime: &Runtime,
     execution: &mut RunningExecution,

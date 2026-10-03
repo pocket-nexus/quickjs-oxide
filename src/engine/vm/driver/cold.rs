@@ -161,15 +161,6 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        VmAction::InstantiateClosure(index) => {
-            let step = super::super::frame_operations::instantiate_closure(
-                context.runtime,
-                context.execution,
-                context.id,
-                index,
-            )?;
-            context.step(step)
-        }
         VmAction::ResetCaptured(index) => {
             let step = super::super::frame_operations::reset_captured(
                 context.runtime,
@@ -314,7 +305,8 @@ pub(super) fn dispatch(
         VmAction::Materialize
         | VmAction::Pure(_)
         | VmAction::Object { .. }
-        | VmAction::ArrayFrom { .. } => {
+        | VmAction::ArrayFrom { .. }
+        | VmAction::InstantiateClosure { .. } => {
             return Err(Error::internal("resident-only exit reached cold dispatch"));
         }
     })

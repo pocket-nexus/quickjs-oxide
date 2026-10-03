@@ -1175,6 +1175,20 @@ impl FrameSlots<'_> {
         self.store.parameter_current(self.window, index)
     }
 
+    pub(in crate::engine::vm) fn local_mut(
+        &mut self,
+        index: u16,
+    ) -> Result<&mut FrameBinding, Error> {
+        self.store.local_mut_current(self.window, index)
+    }
+
+    pub(in crate::engine::vm) fn parameter_mut(
+        &mut self,
+        index: u16,
+    ) -> Result<&mut FrameBinding, Error> {
+        self.store.parameter_mut_current(self.window, index)
+    }
+
     /// Non-owning numeric read of a direct local binding. Bounds, binding kind
     /// and domain form one guard; every miss leaves canonical diagnostics and
     /// evaluation untouched, and no owner edge is created.

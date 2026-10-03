@@ -4835,12 +4835,6 @@ mod tests {
         ));
         let child = execution.frames.current_id().unwrap();
         assert_ne!(child, parent);
-        let VmAction::InstantiateClosure(index) =
-            execute_frame(&runtime, &mut execution, child).unwrap()
-        else {
-            panic!("expected static block closure")
-        };
-        super::super::closure_driver::instantiate(&runtime, &mut execution, child, index).unwrap();
         assert_eq!(
             execute_frame(&runtime, &mut execution, child).unwrap(),
             VmAction::ClassInitializer(InitializerKind::Block)

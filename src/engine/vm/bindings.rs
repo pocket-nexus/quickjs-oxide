@@ -5,6 +5,8 @@
 //! closing roots the detached value before dropping the frame's cell handle.
 //! Long-lived suspension storage must encode these owners as managed raw edges.
 
+pub(in crate::engine::vm) mod capture;
+
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
@@ -237,114 +239,23 @@ pub(in crate::engine::vm) fn try_read_captured_immediate_in_state(
     Some(value)
 }
 
-/// Publish a freshly created shared cell as both the frame binding and the
-/// caller's returned root. The binding and the returned root are independent
-/// owners, so the binding retains its own edge before the store.
-fn publish_captured_cell(
-    runtime: &Runtime,
-    binding: &mut FrameBinding,
-    root: VarRefRoot,
-) -> Result<VarRefRoot, Error> {
-    runtime
-        .retain_var_ref_handle(root.id())
-        .map_err(|error| Error::internal(error.to_string()))?;
-    *binding = FrameBinding::Captured(root.id());
-    Ok(root)
-}
-
+/// Compatibility entry for unmigrated frame consumers. Admission happens
+/// before a direct owner moves out of its binding; the shared state operation
+/// owns and cleans the capture thereafter.
 pub(in crate::engine::vm) fn capture_frame_binding(
     runtime: &Runtime,
     binding: &mut FrameBinding,
     descriptor: ClosureVariable,
 ) -> Result<VarRefRoot, Error> {
-    match binding {
-        FrameBinding::Direct(_) => {
-            if descriptor.kind.is_private() {
-                return Err(Error::internal(
-                    "private-name capture reached an ordinary frame value",
-                ));
-            }
-            // Move the direct owner into the shared cell; `new_var_ref`
-            // consumes its edges and the capture replaces the binding.
-            let owned = std::mem::replace(binding, FrameBinding::Uninitialized);
-            let FrameBinding::Direct(value) = owned else {
-                unreachable!("direct binding authenticated before the move")
-            };
-            let root = runtime
-                .new_var_ref(
-                    value,
-                    descriptor.is_lexical,
-                    descriptor.is_const,
-                    descriptor.kind,
-                )
-                .map_err(|error| Error::internal(error.to_string()))?;
-            publish_captured_cell(runtime, binding, root)
-        }
-        FrameBinding::Private(index) => {
-            if descriptor.kind != ClosureVariableKind::PrivateField
-                || !descriptor.is_lexical
-                || !descriptor.is_const
-            {
-                return Err(Error::internal(
-                    "private-field frame cell used an incompatible closure descriptor",
-                ));
-            }
-            let index = *index;
-            let root = runtime
-                .new_private_var_ref_from_index(index)
-                .map_err(|error| Error::internal(error.to_string()))?;
-            let root = publish_captured_cell(runtime, binding, root)?;
-            // The shared cell owns its own atom edge now; drop the frame's.
-            runtime.release_atom_index(index);
-            Ok(root)
-        }
-        FrameBinding::PrivateCallable(object) => {
-            if !is_private_callable_kind(descriptor.kind)
-                || !descriptor.is_lexical
-                || !descriptor.is_const
-            {
-                return Err(Error::internal(
-                    "private-callable frame cell used an incompatible closure descriptor",
-                ));
-            }
-            let object = *object;
-            let root = runtime
-                .new_private_callable_var_ref_from_id(object, descriptor.kind)
-                .map_err(|error| Error::internal(error.to_string()))?;
-            let root = publish_captured_cell(runtime, binding, root)?;
-            // The shared cell owns its own object edge now; drop the frame's.
-            runtime.release_object_handle(object);
-            Ok(root)
-        }
-        FrameBinding::Uninitialized => {
-            let root = runtime
-                .new_uninitialized_captured_var_ref(
-                    descriptor.is_lexical,
-                    descriptor.is_const,
-                    descriptor.kind,
-                )
-                .map_err(|error| Error::internal(error.to_string()))?;
-            publish_captured_cell(runtime, binding, root)
-        }
-        FrameBinding::Captured(var_ref) => reuse_frame_capture(
-            runtime,
-            &VarRefView::from_frame(runtime, *var_ref),
-            descriptor,
-        ),
-    }
-}
-
-/// Reuse a live cell through a publication-authenticated descriptor view.
-/// This checks actual cell metadata without redispatching its frame storage.
-pub(in crate::engine::vm) fn reuse_frame_capture(
-    runtime: &Runtime,
-    root: &impl crate::engine::heap::roots::VarRefHandle,
-    descriptor: ClosureVariable,
-) -> Result<VarRefRoot, Error> {
-    runtime
-        .validate_var_ref_metadata(root, descriptor)
-        .map_err(|error| Error::internal(error.to_string()))?;
-    Ok(root.to_root()?)
+    let _operation = runtime.operation().map_err(runtime_error_to_vm_error)?;
+    let id = capture::capture_frame_binding(
+        &mut runtime.0.state.borrow_mut(),
+        &runtime.0.poisoned,
+        binding,
+        descriptor,
+    )
+    .map_err(runtime_error_to_vm_error)?;
+    Ok(VarRefRoot::from_owned_handle(runtime.clone(), id))
 }
 
 pub(in crate::engine::vm) fn close_frame_binding(
@@ -698,34 +609,6 @@ pub(in crate::engine::vm) fn write_checked_closure(
     runtime
         .write_var_ref(root, value)
         .map_err(runtime_error_to_vm_error)
-}
-
-/// New local cells take the parent's canonical metadata; existing cells validate
-/// the child's authenticated view without changing the cell's identity.
-pub(in crate::engine::vm) fn capture_local_binding(
-    runtime: &Runtime,
-    binding: &mut FrameBinding,
-    definition: crate::engine::code::function::metadata::VariableDefinition,
-    descriptor: ClosureVariable,
-) -> Result<VarRefRoot, Error> {
-    if let FrameBinding::Captured(var_ref) = binding {
-        reuse_frame_capture(
-            runtime,
-            &VarRefView::from_frame(runtime, *var_ref),
-            descriptor,
-        )
-    } else {
-        capture_frame_binding(
-            runtime,
-            binding,
-            ClosureVariable {
-                is_lexical: definition.is_lexical,
-                is_const: definition.is_const,
-                kind: definition.kind,
-                ..descriptor
-            },
-        )
-    }
 }
 
 /// Preserve the initial TDZ cell or reset the same cell after an abrupt scope

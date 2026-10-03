@@ -48,6 +48,18 @@ impl ClosureSlots {
         }
     }
 
+    /// The frame's admitted callee/environment owns this cell throughout the
+    /// borrow. This projects the index without constructing a public root.
+    pub(in crate::engine::vm) fn cell_id(&self, index: usize) -> Option<VarRefId> {
+        match &self.0 {
+            Environment::Shared { ids, .. } | Environment::ResidentShared { ids, .. } => {
+                ids.get(index).copied()
+            }
+            Environment::Rooted(roots) => roots.get(index).map(VarRefRoot::id),
+            Environment::ResidentOwned(ids) => ids.get(index).copied(),
+        }
+    }
+
     pub(crate) fn borrowed_cell<'a>(
         &'a self,
         runtime: &'a Runtime,

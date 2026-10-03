@@ -15,13 +15,16 @@ use crate::engine::atom::{Atom, AtomIdx, AtomKind};
 use crate::engine::code::function::metadata::{
     ClosureVariableKind, ConstructorKind, EvalKind, FunctionKind,
 };
+#[cfg(test)]
 use crate::engine::heap::roots::VarRefRoot;
-use crate::engine::heap::{ObjectId, ObjectPayload, PropertySlot, RawValue, VarRefData};
+use crate::engine::heap::runtime::RuntimeState;
+use crate::engine::heap::{ObjectId, ObjectPayload, PropertySlot, RawValue, VarRefData, VarRefId};
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
 use crate::engine::object::{CallableRef, ObjectRef, PrivateNameRef};
 #[cfg(test)]
 use crate::engine::value::Value;
 use crate::engine::value::{JsString, JsValue};
+use std::cell::Cell;
 
 impl Runtime {
     /// Allocate a fresh runtime-local identity for one evaluated private name.
@@ -284,41 +287,6 @@ impl Runtime {
         Ok(VarRefRoot::from_owned_handle(self.clone(), id))
     }
 
-    /// Capture a private-name identity already held as an unbranded index.
-    ///
-    /// Trust argument: the caller holds one owned atom edge for `index` (for
-    /// example a frame binding) and transfers a duplicate of it to the new
-    /// cell.
-    pub(crate) fn new_private_var_ref_from_index(
-        &self,
-        index: AtomIdx,
-    ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation()?;
-        let atom = self.0.state.borrow().atoms.brand(index)?;
-        if self.0.state.borrow().atoms.kind(atom)? != AtomKind::Private {
-            return Err(RuntimeError::Invariant(
-                "private-name frame binding contains a non-private atom",
-            ));
-        }
-        let mut state = self.0.state.borrow_mut();
-        state.atoms.retain(atom)?;
-        let data = VarRefData::captured(
-            RawValue::Private(state.atoms.unbrand(atom)?),
-            true,
-            true,
-            ClosureVariableKind::PrivateField,
-        );
-        let id = match state.heap.allocate_var_ref(data) {
-            Ok(id) => id,
-            Err(error) => {
-                state.atoms.release(atom)?;
-                return Err(error.into());
-            }
-        };
-        drop(state);
-        Ok(VarRefRoot::from_owned_handle(self.clone(), id))
-    }
-
     /// Initialize an uninitialized private-name VarRef without routing its
     /// identity through ordinary value writes.
     pub(crate) fn initialize_private_var_ref(
@@ -485,40 +453,6 @@ impl Runtime {
             ));
         }
         let (callable_id, home_object) = self.private_callable_parts(callable, kind)?;
-        if home_object.is_none() {
-            return Err(RuntimeError::Invariant(
-                "private callable has no HomeObject",
-            ));
-        }
-        let id = self
-            .0
-            .state
-            .borrow_mut()
-            .heap
-            .allocate_var_ref(VarRefData::captured(
-                RawValue::Object(callable_id),
-                true,
-                true,
-                kind,
-            ))?;
-        Ok(VarRefRoot::from_owned_handle(self.clone(), id))
-    }
-
-    /// Capture one class-private callable already held as a frame-owned object
-    /// handle. Its HomeObject must already be installed, exactly as for the
-    /// rooted entry point.
-    pub(crate) fn new_private_callable_var_ref_from_id(
-        &self,
-        callable_id: ObjectId,
-        kind: ClosureVariableKind,
-    ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation()?;
-        if !Self::is_private_callable_kind(kind) {
-            return Err(RuntimeError::Invariant(
-                "private-callable VarRef received a non-callable binding kind",
-            ));
-        }
-        let (callable_id, home_object) = self.private_callable_parts_from_id(callable_id, kind)?;
         if home_object.is_none() {
             return Err(RuntimeError::Invariant(
                 "private callable has no HomeObject",
@@ -869,45 +803,10 @@ impl Runtime {
         method_id: ObjectId,
         kind: ClosureVariableKind,
     ) -> Result<(ObjectId, Option<ObjectId>), RuntimeError> {
-        let state = self.0.state.borrow();
-        let object = state.heap.object(method_id)?;
-        let ObjectPayload::BytecodeFunction {
-            bytecode,
-            home_object,
-            ..
-        } = &object.payload
-        else {
-            return Err(RuntimeError::Invariant(
-                "private-callable cell contains a non-bytecode callable",
-            ));
-        };
-        let metadata = state.heap.function_bytecode(*bytecode)?.metadata;
-        let callable_shape_valid = match kind {
-            ClosureVariableKind::PrivateMethod => matches!(
-                (metadata.function_kind, metadata.has_prototype),
-                (FunctionKind::Normal | FunctionKind::Async, false)
-                    | (FunctionKind::Generator | FunctionKind::AsyncGenerator, true)
-            ),
-            ClosureVariableKind::PrivateGetter
-            | ClosureVariableKind::PrivateSetter
-            | ClosureVariableKind::PrivateGetterSetter => {
-                metadata.function_kind == FunctionKind::Normal && !metadata.has_prototype
-            }
-            _ => false,
-        };
-        if object.is_constructor
-            || !callable_shape_valid
-            || metadata.constructor_kind != ConstructorKind::None
-            || metadata.class_initializer_kind.is_some()
-            || !metadata.strict
-            || metadata.eval_kind != EvalKind::None
-            || !metadata.needs_home_object
-        {
-            return Err(RuntimeError::Invariant(
-                "private-callable cell has invalid bytecode metadata",
-            ));
-        }
-        Ok((method_id, *home_object))
+        self.0
+            .state
+            .borrow()
+            .private_callable_parts_from_id(method_id, kind)
     }
 
     fn private_brand_atom(&self, home_object: &ObjectRef) -> Result<Atom, RuntimeError> {
@@ -976,6 +875,106 @@ impl Runtime {
             .push_atom_get_str(name.atom(), &mut message)?;
         message.push_utf8(suffix);
         Ok(Error::from_native_message(ErrorKind::Type, message))
+    }
+}
+
+impl RuntimeState {
+    pub(crate) fn new_private_var_ref_from_index(
+        &mut self,
+        poisoned: &Cell<bool>,
+        index: AtomIdx,
+    ) -> Result<VarRefId, RuntimeError> {
+        let atom = self.atoms.brand(index)?;
+        if self.atoms.kind(atom)? != AtomKind::Private {
+            return Err(RuntimeError::Invariant(
+                "private-name frame binding contains a non-private atom",
+            ));
+        }
+        self.atoms.retain(atom)?;
+        let data = VarRefData::captured(
+            RawValue::Private(self.atoms.unbrand(atom)?),
+            true,
+            true,
+            ClosureVariableKind::PrivateField,
+        );
+        match self.heap.allocate_var_ref(data) {
+            Ok(id) => Ok(id),
+            Err(error) => {
+                self.atoms
+                    .release(atom)
+                    .inspect_err(|_| poisoned.set(true))?;
+                Err(error.into())
+            }
+        }
+    }
+
+    pub(crate) fn new_private_callable_var_ref_from_id(
+        &mut self,
+        callable_id: ObjectId,
+        kind: ClosureVariableKind,
+    ) -> Result<VarRefId, RuntimeError> {
+        if !Runtime::is_private_callable_kind(kind) {
+            return Err(RuntimeError::Invariant(
+                "private-callable VarRef received a non-callable binding kind",
+            ));
+        }
+        let (callable_id, home_object) = self.private_callable_parts_from_id(callable_id, kind)?;
+        if home_object.is_none() {
+            return Err(RuntimeError::Invariant(
+                "private callable has no HomeObject",
+            ));
+        }
+        Ok(self.heap.allocate_var_ref(VarRefData::captured(
+            RawValue::Object(callable_id),
+            true,
+            true,
+            kind,
+        ))?)
+    }
+
+    fn private_callable_parts_from_id(
+        &self,
+        method_id: ObjectId,
+        kind: ClosureVariableKind,
+    ) -> Result<(ObjectId, Option<ObjectId>), RuntimeError> {
+        let object = self.heap.object(method_id)?;
+        let ObjectPayload::BytecodeFunction {
+            bytecode,
+            home_object,
+            ..
+        } = &object.payload
+        else {
+            return Err(RuntimeError::Invariant(
+                "private-callable cell contains a non-bytecode callable",
+            ));
+        };
+        let metadata = self.heap.function_bytecode(*bytecode)?.metadata;
+        let callable_shape_valid = match kind {
+            ClosureVariableKind::PrivateMethod => matches!(
+                (metadata.function_kind, metadata.has_prototype),
+                (FunctionKind::Normal | FunctionKind::Async, false)
+                    | (FunctionKind::Generator | FunctionKind::AsyncGenerator, true)
+            ),
+            ClosureVariableKind::PrivateGetter
+            | ClosureVariableKind::PrivateSetter
+            | ClosureVariableKind::PrivateGetterSetter => {
+                metadata.function_kind == FunctionKind::Normal && !metadata.has_prototype
+            }
+            _ => false,
+        };
+        if object.is_constructor
+            || !callable_shape_valid
+            || metadata.constructor_kind != ConstructorKind::None
+            || metadata.class_initializer_kind.is_some()
+            || !metadata.strict
+            || metadata.eval_kind != EvalKind::None
+            || !metadata.needs_home_object
+        {
+            return Err(RuntimeError::Invariant(
+                "private-callable cell has invalid bytecode metadata",
+            ));
+        }
+        Ok((method_id, *home_object))
     }
 }
 

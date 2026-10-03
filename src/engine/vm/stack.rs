@@ -1298,7 +1298,16 @@ impl SlotStore {
         window: &FrameWindow,
         index: u16,
     ) -> Result<&mut FrameBinding, Error> {
-        self.local(window, index)?;
+        self.check_current(window)?;
+        self.local_mut_current(window, index)
+    }
+
+    fn local_mut_current(
+        &mut self,
+        window: &FrameWindow,
+        index: u16,
+    ) -> Result<&mut FrameBinding, Error> {
+        self.local_current(window, index)?;
         Ok(self.slots[window.locals().start + usize::from(index)]
             .as_mut()
             .unwrap())
@@ -1309,7 +1318,16 @@ impl SlotStore {
         window: &FrameWindow,
         index: u16,
     ) -> Result<&mut FrameBinding, Error> {
-        self.parameter(window, index)?;
+        self.check_current(window)?;
+        self.parameter_mut_current(window, index)
+    }
+
+    fn parameter_mut_current(
+        &mut self,
+        window: &FrameWindow,
+        index: u16,
+    ) -> Result<&mut FrameBinding, Error> {
+        self.parameter_current(window, index)?;
         Ok(self.slots[window.parameters().start + usize::from(index)]
             .as_mut()
             .unwrap())

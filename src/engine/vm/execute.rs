@@ -75,7 +75,7 @@ pub(crate) fn test_numeric_region_hits<T>(run: impl FnOnce() -> T) -> (T, usize)
 /// Short-lived access to one frame's slots and execution word cursor. The
 /// transaction owns the frame window; `with_slots` ends its borrow before a
 /// caller can publish a PC, invoke JavaScript, or perform observable cleanup.
-struct FrameCursor<'a> {
+pub(super) struct FrameCursor<'a> {
     transaction: FrameTransaction<'a>,
     published_fault: &'a mut usize,
     published_resume: &'a mut usize,
@@ -106,11 +106,11 @@ impl<'a> FrameCursor<'a> {
         self.fault
     }
 
-    fn advance(&mut self, next: usize) {
+    pub(super) fn advance(&mut self, next: usize) {
         self.resume = next;
     }
 
-    fn with_slots<T>(
+    pub(super) fn with_slots<T>(
         &mut self,
         operation: impl FnOnce(&mut FrameSlots<'_>) -> Result<T, Error>,
     ) -> Result<T, Error> {
@@ -130,7 +130,11 @@ impl<'a> FrameCursor<'a> {
         self.with_slots(|slots| slots.push(value))
     }
 
-    fn commit_owned(&mut self, state: &mut RuntimeState, value: JsValue) -> Result<(), Error> {
+    pub(super) fn commit_owned(
+        &mut self,
+        state: &mut RuntimeState,
+        value: JsValue,
+    ) -> Result<(), Error> {
         let mut pending = Some(value);
         let result = self.with_slots(|slots| slots.push_pending(&mut pending));
         if let Some(value) = pending {
@@ -299,7 +303,10 @@ pub(super) enum VmAction {
     NormalizeThis,
     Arguments(ArgumentsKind),
     Rest(u16),
-    InstantiateClosure(u32),
+    InstantiateClosure {
+        index: u32,
+        fallthrough: FallthroughPc,
+    },
     SetName(Option<u32>),
     CloseCaptured(u16),
     ResetCaptured(u16),
@@ -378,7 +385,7 @@ impl VmAction {
             Self::NormalizeThis => "execute.action.normalize_this",
             Self::Arguments(_) => "execute.action.arguments",
             Self::Rest(_) => "execute.action.rest",
-            Self::InstantiateClosure(_) => "execute.action.instantiate_closure",
+            Self::InstantiateClosure { .. } => "execute.action.instantiate_closure",
             Self::SetName(_) => "execute.action.set_name",
             Self::CloseCaptured(_) => "execute.action.close_captured",
             Self::ResetCaptured(_) => "execute.action.reset_captured",
@@ -600,6 +607,12 @@ pub(super) fn execute_frame_in_state(
                     Opcode::ArrayFrom => {
                         break 'dispatch Ok(VmAction::ArrayFrom {
                             count: published_u16(operand),
+                            fallthrough: FallthroughPc::from_decoded(decoded),
+                        });
+                    }
+                    Opcode::FClosure => {
+                        break 'dispatch Ok(VmAction::InstantiateClosure {
+                            index: operand,
                             fallthrough: FallthroughPc::from_decoded(decoded),
                         });
                     }
@@ -2679,6 +2692,47 @@ pub(super) fn execute_frame_in_state(
                 );
                 continue;
             }
+            VmAction::InstantiateClosure { index, fallthrough } => {
+                segment.materialize_in_state(state)?;
+                {
+                    let FrameTurn {
+                        owners,
+                        executable,
+                        transaction,
+                        fault_pc,
+                        resume_pc,
+                        ..
+                    } = segment.frame();
+                    #[cfg(feature = "profiling")]
+                    let depth = transaction.operand_depth();
+                    let mut cursor =
+                        FrameCursor::new(transaction, fault_pc, resume_pc, &runtime.0.poisoned);
+                    #[cfg(feature = "test262-host")]
+                    let dynamic_import_allowed = runtime.0.dynamic_import_bytecode_allowed.get();
+                    #[cfg(not(feature = "test262-host"))]
+                    let dynamic_import_allowed = true;
+                    super::closure_driver::instantiate(
+                        state,
+                        &runtime.0.poisoned,
+                        dynamic_import_allowed,
+                        &mut cursor,
+                        executable,
+                        owners.function.closures(),
+                        index,
+                        fallthrough,
+                    )?;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_instruction(depth);
+                }
+                state
+                    .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                    .map_err(runtime_error_to_vm_error)?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "core.internal_closure",
+                );
+                continue;
+            }
             VmAction::Call {
                 arguments,
                 method,
@@ -3113,7 +3167,7 @@ fn deferred_action(
         Opcode::Import => VmAction::Import,
         Opcode::Arguments => VmAction::Arguments(decode_arguments_kind(a)?),
         Opcode::Rest => VmAction::Rest(checked_u16(a)?),
-        Opcode::FClosure => VmAction::InstantiateClosure(a),
+
         Opcode::SetName => VmAction::SetName(Some(a)),
         Opcode::SetNameComputed => VmAction::SetName(None),
         Opcode::ThrowReadOnly | Opcode::ThrowRedeclaration => VmAction::BindingError {
@@ -3395,9 +3449,12 @@ fn borrowed_this_read_ready_in_state(state: &RuntimeState, base: &JsValue) -> bo
 #[cfg(test)]
 mod captured_read_tests;
 #[cfg(test)]
+mod closure_allocation_tests;
+#[cfg(test)]
 mod continuous_call_tests;
 #[cfg(test)]
 mod dynamic_ret_tests;
+
 #[cfg(test)]
 mod object_allocation_tests;
 

@@ -42,31 +42,10 @@ impl Runtime {
         &self,
         function: FunctionBytecodeId,
     ) -> Result<bool, RuntimeError> {
-        let state = self.0.state.borrow();
-        let mut pending = vec![function];
-        let mut visited = HashSet::new();
-        while let Some(bytecode) = pending.pop() {
-            if !visited.insert(bytecode) {
-                continue;
-            }
-            let bytecode = state.heap.function_bytecode(bytecode)?;
-            if (0..bytecode.exec.instruction_len()).any(|pc| {
-                bytecode.exec.opcode_at_source(pc)
-                    == Some(crate::engine::code::exec_opcode::Opcode::Import)
-            }) {
-                return Ok(true);
-            }
-            pending.extend(
-                bytecode
-                    .constants
-                    .iter()
-                    .filter_map(|constant| match constant {
-                        BytecodeConstant::Function(child) => Some(*child),
-                        BytecodeConstant::Value(_) | BytecodeConstant::RegExp { .. } => None,
-                    }),
-            );
-        }
-        Ok(false)
+        self.0
+            .state
+            .borrow()
+            .dynamic_import_bytecode_id_tree_contains(function)
     }
 
     /// Set the dynamic-import capability for this isolated runtime.
@@ -156,6 +135,63 @@ impl Runtime {
     pub(crate) fn ensure_dynamic_import_bytecode_authorized(
         &self,
         _function: Option<&FunctionBytecodeRef>,
+    ) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+}
+
+impl crate::engine::heap::runtime::RuntimeState {
+    #[cfg(feature = "test262-host")]
+    pub(crate) fn dynamic_import_bytecode_id_tree_contains(
+        &self,
+        function: FunctionBytecodeId,
+    ) -> Result<bool, RuntimeError> {
+        let mut pending = vec![function];
+        let mut visited = HashSet::new();
+        while let Some(bytecode) = pending.pop() {
+            if !visited.insert(bytecode) {
+                continue;
+            }
+            let bytecode = self.heap.function_bytecode(bytecode)?;
+            if (0..bytecode.exec.instruction_len()).any(|pc| {
+                bytecode.exec.opcode_at_source(pc)
+                    == Some(crate::engine::code::exec_opcode::Opcode::Import)
+            }) {
+                return Ok(true);
+            }
+            pending.extend(
+                bytecode
+                    .constants
+                    .iter()
+                    .filter_map(|constant| match constant {
+                        BytecodeConstant::Function(child) => Some(*child),
+                        BytecodeConstant::Value(_) | BytecodeConstant::RegExp { .. } => None,
+                    }),
+            );
+        }
+        Ok(false)
+    }
+
+    #[cfg(feature = "test262-host")]
+    pub(crate) fn ensure_dynamic_import_bytecode_id_tree_authorized(
+        &self,
+        function: FunctionBytecodeId,
+        allowed: bool,
+    ) -> Result<(), RuntimeError> {
+        if !allowed && self.dynamic_import_bytecode_id_tree_contains(function)? {
+            return Err(Error::internal(
+                "host dynamic-import bytecode policy rejected a disabled executable",
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "test262-host"))]
+    pub(crate) fn ensure_dynamic_import_bytecode_id_tree_authorized(
+        &self,
+        _function: crate::engine::heap::FunctionBytecodeId,
+        _allowed: bool,
     ) -> Result<(), RuntimeError> {
         Ok(())
     }
