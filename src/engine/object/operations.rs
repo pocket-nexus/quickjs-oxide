@@ -1,7 +1,5 @@
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::heap::{ObjectId, RawValue, VarRefId};
 use crate::engine::object::property::{CompletePropertyDescriptor, PropertyDescriptor};
-use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor,
 };
@@ -11,23 +9,6 @@ pub(crate) enum RawStringProperty {
     Missing,
     String(JsString),
     Other,
-}
-
-pub(crate) enum PropertySnapshot {
-    Data {
-        value: RawValue,
-        flags: PropertyFlags,
-    },
-    VarRef {
-        var_ref: VarRefId,
-        flags: PropertyFlags,
-    },
-    Accessor {
-        get: Option<ObjectId>,
-        set: Option<ObjectId>,
-        flags: PropertyFlags,
-    },
-    AutoInit,
 }
 
 #[cfg(test)]

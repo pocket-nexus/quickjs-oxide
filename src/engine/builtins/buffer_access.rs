@@ -66,6 +66,22 @@ enum BufferBackingToken {
     Shared(SharedBufferHandle),
 }
 
+/// Copy one shared word with no RuntimeState borrow alive. Both rooted-token
+/// reads and own-property continuations use this exact conversion/read leaf.
+pub(crate) fn read_shared_buffer_word(
+    handle: &SharedBufferHandle,
+    byte_offset: usize,
+    byte_length: usize,
+) -> Result<[u8; 8], RuntimeError> {
+    let byte_offset = u32::try_from(byte_offset)
+        .map_err(|_| RuntimeError::Invariant("shared buffer word offset overflowed u32"))?;
+    let byte_length = u8::try_from(byte_length)
+        .map_err(|_| RuntimeError::Invariant("shared buffer word width overflowed u8"))?;
+    handle
+        .read_word(byte_offset, byte_length)
+        .map_err(shared_memory_runtime_error)
+}
+
 const BUFFER_COPY_SCRATCH_BYTE_LENGTH: usize = 8 * 1024;
 
 impl Runtime {
@@ -241,15 +257,7 @@ impl Runtime {
                 )?)
             }
             BufferBackingToken::Shared(handle) => {
-                let byte_offset = u32::try_from(byte_offset).map_err(|_| {
-                    RuntimeError::Invariant("shared buffer word offset overflowed u32")
-                })?;
-                let byte_length = u8::try_from(byte_length).map_err(|_| {
-                    RuntimeError::Invariant("shared buffer word width overflowed u8")
-                })?;
-                handle
-                    .read_word(byte_offset, byte_length)
-                    .map_err(shared_memory_runtime_error)
+                read_shared_buffer_word(handle, byte_offset, byte_length)
             }
         }
     }

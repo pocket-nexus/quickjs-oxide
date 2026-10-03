@@ -7,6 +7,8 @@ use crate::engine::{
     value::JsValue,
 };
 
+mod state;
+
 pub(crate) struct OwnedPropertyDescriptor {
     runtime: Runtime,
     pub value: DescriptorField<JsValue>,
@@ -251,75 +253,25 @@ impl OwnedCompletePropertyDescriptor {
         runtime: &Runtime,
         source: &super::property::CompletePropertyDescriptor<RawValue>,
     ) -> Result<Self, RuntimeError> {
-        use super::property::CompletePropertyDescriptor;
-        let mut owned = Self {
+        let _unwind = runtime.unwind_guard();
+        let record = runtime
+            .0
+            .state
+            .borrow_mut()
+            .retain_complete_descriptor(&runtime.0.poisoned, source)?;
+        Ok(Self::from_owned_record(runtime, record))
+    }
+
+    /// Infallibly adopt a descriptor whose edges were acquired under State.
+    /// Call immediately after that borrow ends, with no fallible owner gap.
+    pub(crate) fn from_owned_record(
+        runtime: &Runtime,
+        record: super::property::CompletePropertyDescriptor<RawValue>,
+    ) -> Self {
+        Self {
             runtime: runtime.clone(),
-            record: CompletePropertyDescriptor::Accessor {
-                get: None,
-                set: None,
-                enumerable: false,
-                configurable: false,
-            },
-        };
-        match source {
-            CompletePropertyDescriptor::Data {
-                value,
-                writable,
-                enumerable,
-                configurable,
-            } => {
-                let value =
-                    runtime
-                        .dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
-                            RuntimeError::Invariant("descriptor held internal sentinel"),
-                        )?)?;
-                owned.record = CompletePropertyDescriptor::Data {
-                    value: value.into_raw(),
-                    writable: *writable,
-                    enumerable: *enumerable,
-                    configurable: *configurable,
-                };
-            }
-            CompletePropertyDescriptor::Accessor {
-                get,
-                set,
-                enumerable,
-                configurable,
-            } => {
-                let CompletePropertyDescriptor::Accessor {
-                    get: owned_get,
-                    set: owned_set,
-                    enumerable: e,
-                    configurable: c,
-                } = &mut owned.record
-                else {
-                    unreachable!()
-                };
-                *e = *enumerable;
-                *c = *configurable;
-                if let Some(value) = get {
-                    *owned_get = Some(
-                        runtime
-                            .dup_jsvalue(
-                                &JsValue::from_raw(value.clone())
-                                    .ok_or(RuntimeError::Invariant("invalid getter sentinel"))?,
-                            )?
-                            .into_raw(),
-                    );
-                }
-                if let Some(value) = set {
-                    *owned_set = Some(
-                        runtime
-                            .dup_jsvalue(
-                                &JsValue::from_raw(value.clone())
-                                    .ok_or(RuntimeError::Invariant("invalid setter sentinel"))?,
-                            )?
-                            .into_raw(),
-                    );
-                }
-            }
+            record,
         }
-        Ok(owned)
     }
     pub(crate) fn record(&self) -> &super::property::CompletePropertyDescriptor<RawValue> {
         &self.record
@@ -349,45 +301,7 @@ impl OwnedCompletePropertyDescriptor {
     pub(crate) fn to_public(
         &self,
     ) -> Result<super::CompleteOrdinaryPropertyDescriptor, RuntimeError> {
-        use super::property::CompletePropertyDescriptor;
-        Ok(match &self.record {
-            CompletePropertyDescriptor::Data {
-                value,
-                writable,
-                enumerable,
-                configurable,
-            } => super::CompleteOrdinaryPropertyDescriptor::Data {
-                value: self.runtime.root_raw_value(value.clone())?,
-                writable: *writable,
-                enumerable: *enumerable,
-                configurable: *configurable,
-            },
-            CompletePropertyDescriptor::Accessor {
-                get,
-                set,
-                enumerable,
-                configurable,
-            } => {
-                let callable = |raw: &Option<RawValue>| -> Result<_, RuntimeError> {
-                    raw.as_ref()
-                        .map(|v| match v {
-                            RawValue::Object(id) => Ok(super::CallableRef::from_validated_object(
-                                super::ObjectRef::from_borrowed_handle(self.runtime.clone(), *id)?,
-                            )),
-                            _ => Err(RuntimeError::Invariant(
-                                "complete descriptor accessor is not an object",
-                            )),
-                        })
-                        .transpose()
-                };
-                super::CompleteOrdinaryPropertyDescriptor::Accessor {
-                    get: callable(get)?,
-                    set: callable(set)?,
-                    enumerable: *enumerable,
-                    configurable: *configurable,
-                }
-            }
-        })
+        self.runtime.root_complete_descriptor(&self.record)
     }
     pub(crate) fn from_public(
         runtime: &Runtime,
@@ -450,6 +364,53 @@ impl Drop for OwnedCompletePropertyDescriptor {
 }
 
 impl Runtime {
+    /// Public representation conversion shared by ordinary ready snapshots and
+    /// durable owned records. String/BigInt clone payloads; public heap/atom
+    /// identities and each accessor acquire exactly their existing one edge.
+    pub(super) fn root_complete_descriptor(
+        &self,
+        record: &super::property::CompletePropertyDescriptor<RawValue>,
+    ) -> Result<super::CompleteOrdinaryPropertyDescriptor, RuntimeError> {
+        use super::property::CompletePropertyDescriptor;
+        Ok(match record {
+            CompletePropertyDescriptor::Data {
+                value,
+                writable,
+                enumerable,
+                configurable,
+            } => super::CompleteOrdinaryPropertyDescriptor::Data {
+                value: self.root_raw_value(value.clone())?,
+                writable: *writable,
+                enumerable: *enumerable,
+                configurable: *configurable,
+            },
+            CompletePropertyDescriptor::Accessor {
+                get,
+                set,
+                enumerable,
+                configurable,
+            } => {
+                let callable = |raw: &Option<RawValue>| -> Result<_, RuntimeError> {
+                    raw.as_ref()
+                        .map(|v| match v {
+                            RawValue::Object(id) => Ok(super::CallableRef::from_validated_object(
+                                super::ObjectRef::from_borrowed_handle(self.clone(), *id)?,
+                            )),
+                            _ => Err(RuntimeError::Invariant(
+                                "complete descriptor accessor is not an object",
+                            )),
+                        })
+                        .transpose()
+                };
+                super::CompleteOrdinaryPropertyDescriptor::Accessor {
+                    get: callable(get)?,
+                    set: callable(set)?,
+                    enumerable: *enumerable,
+                    configurable: *configurable,
+                }
+            }
+        })
+    }
     pub(crate) fn public_descriptor_result(
         &self,
         value: crate::engine::value::conversion::NativeConversion<

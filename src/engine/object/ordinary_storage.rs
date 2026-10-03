@@ -557,42 +557,6 @@ impl Runtime {
         })))
     }
 
-    pub(super) fn ordinary_property_snapshot(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<Option<Option<crate::engine::object::operations::PropertySnapshot>>, RuntimeError>
-    {
-        use crate::engine::object::operations::PropertySnapshot;
-        let state = self.0.state.borrow();
-        let id = object.object_id();
-        if !is_ordinary(state.heap.object(id)?) {
-            return Ok(None);
-        }
-        let Some(slot) = locate(&state, id, key.atom())? else {
-            return Ok(Some(None));
-        };
-        let flags = slot.flags;
-        Ok(Some(Some(
-            match &state.heap.object(id)?.slots[slot.index] {
-                PropertySlot::Data(value) => PropertySnapshot::Data {
-                    value: value.clone(),
-                    flags,
-                },
-                PropertySlot::Accessor { get, set } => PropertySnapshot::Accessor {
-                    get: get.option(),
-                    set: set.option(),
-                    flags,
-                },
-                PropertySlot::VarRef(var_ref) => PropertySnapshot::VarRef {
-                    var_ref: *var_ref,
-                    flags,
-                },
-                PropertySlot::AutoInit(_) => PropertySnapshot::AutoInit,
-            },
-        )))
-    }
-
     #[cfg(test)]
     pub(super) fn ordinary_read_probe(
         &self,

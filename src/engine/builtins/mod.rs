@@ -33,6 +33,9 @@ mod array;
 mod array_buffer;
 mod atomics;
 pub(crate) use array_buffer::typed_array::CanonicalNumericIndex;
+pub(crate) use array_buffer::typed_array::own_property::{
+    SharedTypedOwnWord, TypedOwnProperty, TypedOwnWord,
+};
 pub(crate) use array_buffer::typed_array::write::TypedWriteStep;
 
 pub(crate) use array_buffer::typed_array::{

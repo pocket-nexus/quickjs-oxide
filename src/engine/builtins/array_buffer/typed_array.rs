@@ -5,7 +5,6 @@
 //! and one element selector, while detach and resizable-buffer bounds are
 //! derived from the backing store for every observable operation.
 
-use crate::engine::atom::PropertyKeyKind;
 use crate::engine::builtins::native::{
     ArrayFindKind, ArrayIterationKind, ArrayIteratorKind, ArrayJoinKind, ArrayReduceKind,
     ArraySearchKind, TypedArrayElementKind, TypedArrayNativeKind, Uint8ArrayCodecKind,
@@ -56,6 +55,7 @@ mod iteration;
 
 pub(crate) use iteration::{TypedIterationResume, TypedIterationStep};
 mod mutation;
+pub(crate) mod own_property;
 
 pub(crate) use mutation::{TypedMutationKind, TypedMutationResume, TypedMutationStep};
 mod reduce;
@@ -1249,29 +1249,20 @@ impl Runtime {
         if !key.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property key"));
         }
-        // Immediate atoms are canonical nonnegative integer strings. Numeric
-        // -0 has already become the zero atom; the string "-0" falls through.
+        // Preserve the existing borrow-free immediate-key boundary. The full
+        // spelling algorithm is shared with State, rather than repeated here.
         if let Some(index) = key.atom().immediate_integer() {
             return Ok(Some(CanonicalNumericIndex::Valid(u64::from(index))));
         }
-        if self.0.state.borrow().atoms.property_key_kind(key.atom())? != PropertyKeyKind::String {
+        let selected = self.0.state.borrow().typed_own_key(key.atom())?;
+        if matches!(selected, own_property::TypedOwnKey::Other) {
             return Ok(None);
         }
-        let spelling = self.property_key_to_js_string(key)?;
-        if spelling == JsString::from_static("-0") {
-            return Ok(Some(CanonicalNumericIndex::Invalid));
-        }
-        let number = Value::String(spelling.clone())
-            .to_number()
-            .map_err(RuntimeError::Engine)?;
-        if spelling != Value::number(number).to_js_string()? {
-            return Ok(None);
-        }
-        if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > u64::MAX as f64
-        {
-            return Ok(Some(CanonicalNumericIndex::Invalid));
-        }
-        Ok(Some(CanonicalNumericIndex::Valid(number as u64)))
+        let _spelling_operation = self.operation()?;
+        self.0
+            .state
+            .borrow()
+            .typed_canonical_numeric_index(key.atom(), selected)
     }
 
     pub(crate) fn typed_array_read_index(

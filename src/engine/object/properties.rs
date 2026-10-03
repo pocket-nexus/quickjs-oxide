@@ -10,8 +10,8 @@ use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
 
 use crate::engine::heap::{
-    AutoInitProperty, ContextId, HeapError, ObjectData, ObjectId, ObjectPayload,
-    PrimitiveObjectData, PropertySlot, RawValue,
+    AutoInitProperty, ContextId, HeapError, ObjectData, ObjectId, ObjectPayload, PropertySlot,
+    RawValue,
 };
 use crate::engine::object::access::raw_string_property_one_level;
 #[cfg(test)]
@@ -19,7 +19,7 @@ use crate::engine::object::operations::PropertyGetAction;
 
 use crate::engine::object::operations::{
     ArrayLengthConversion, ArrayOwnKey, PropertyDefineOutcome, PropertySetAction,
-    PropertySetRejection, PropertySnapshot, ValidationValue, complete_to_validation_record,
+    PropertySetRejection, ValidationValue, complete_to_validation_record,
     descriptor_to_validation_record, validation_record_to_complete,
 };
 use crate::engine::object::property::{
@@ -27,8 +27,8 @@ use crate::engine::object::property::{
 };
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry, extend_fingerprint_hash};
 use crate::engine::object::{
-    CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey,
+    CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
+    PropertyKey,
 };
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
@@ -171,69 +171,17 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Option<JsString>, RuntimeError> {
-        let state = self.0.state.borrow();
-        let object = state.heap.object(object.object_id())?;
-        let ObjectPayload::Primitive(PrimitiveObjectData::String(value)) = &object.payload else {
-            return Ok(None);
-        };
-        let Some(index) = state.atoms.array_index(key.atom())? else {
-            return Ok(None);
-        };
-        let Ok(index) = usize::try_from(index) else {
-            return Ok(None);
-        };
-        Ok(state
-            .heap
-            .string(*value)?
-            .code_unit_at(index)
-            .map(JsString::from_code_unit))
+        self.0
+            .state
+            .borrow()
+            .string_exotic_index_value(object.object_id(), key.atom())
     }
 
     fn string_exotic_length(&self, object: &ObjectRef) -> Result<Option<usize>, RuntimeError> {
-        let state = self.0.state.borrow();
-        let object = state.heap.object(object.object_id())?;
-        Ok(match &object.payload {
-            ObjectPayload::Primitive(PrimitiveObjectData::String(value)) => {
-                Some(state.heap.string(*value)?.len())
-            }
-            ObjectPayload::Ordinary
-            | ObjectPayload::ArrayBuffer(_)
-            | ObjectPayload::SharedArrayBuffer(_)
-            | ObjectPayload::DataView(_)
-            | ObjectPayload::TypedArray(_)
-            | ObjectPayload::Proxy(_)
-            | ObjectPayload::RawJson
-            | ObjectPayload::Promise(_)
-            | ObjectPayload::Date(_)
-            | ObjectPayload::RegExp(_)
-            | ObjectPayload::Array { .. }
-            | ObjectPayload::Arguments { .. }
-            | ObjectPayload::ArrayIterator { .. }
-            | ObjectPayload::IteratorHelper(_)
-            | ObjectPayload::IteratorWrap(_)
-            | ObjectPayload::AsyncFromSyncIterator(_)
-            | ObjectPayload::IteratorConcat(_)
-            | ObjectPayload::Map { .. }
-            | ObjectPayload::MapIterator { .. }
-            | ObjectPayload::Set { .. }
-            | ObjectPayload::WeakMap { .. }
-            | ObjectPayload::WeakSet { .. }
-            | ObjectPayload::WeakRef { .. }
-            | ObjectPayload::FinalizationRegistry(_)
-            | ObjectPayload::SetIterator { .. }
-            | ObjectPayload::ForInIterator(_)
-            | ObjectPayload::Primitive(_)
-            | ObjectPayload::GlobalObject { .. }
-            | ObjectPayload::Error
-            | ObjectPayload::StringIterator { .. }
-            | ObjectPayload::RegExpStringIterator { .. }
-            | ObjectPayload::NativeFunction { .. }
-            | ObjectPayload::BoundFunction { .. }
-            | ObjectPayload::BytecodeFunction { .. }
-            | ObjectPayload::AsyncFunctionState(_)
-            | ObjectPayload::Generator { .. }
-            | ObjectPayload::AsyncGenerator(_) => None,
-        })
+        self.0
+            .state
+            .borrow()
+            .string_exotic_length(object.object_id())
     }
 
     fn string_exotic_own_property(
@@ -256,232 +204,10 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Option<RawValue>, RuntimeError> {
-        let state = self.0.state.borrow();
-        let object = state.heap.object(object.object_id())?;
-        let ObjectPayload::Array { dense: Some(dense) } = &object.payload else {
-            return Ok(None);
-        };
-        let Some(index) = state.atoms.array_index(key.atom())? else {
-            return Ok(None);
-        };
-        Ok(dense.get(index as usize).cloned())
-    }
-
-    /// Snapshot an own property as a complete descriptor, including the
-    /// virtual UTF-16 index properties of genuine String wrappers.
-    pub fn get_own_property(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
-        let _operation = self.operation()?;
-        self.validate_object_and_key(object, key)?;
-        self.get_own_property_in_operation(object, key)
-    }
-
-    /// The caller has validated object/key domains and holds an operation
-    /// guard. Keep the descriptor algorithm shared without nesting public
-    /// validation/cleanup boundaries on completion-aware Get fallback.
-    pub(super) fn get_own_property_in_operation(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
-        if let Some(snapshot) = self.ordinary_property_snapshot(object, key)? {
-            return match snapshot {
-                Some(snapshot) => self.materialize_property_snapshot(object, key, snapshot),
-                None => Ok(None),
-            };
-        }
-        if self.typed_array_is_object(object)?
-            && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
-        {
-            return match numeric {
-                CanonicalNumericIndex::Valid(index) => {
-                    self.typed_array_get_index_descriptor(object, index)
-                }
-                CanonicalNumericIndex::Invalid => Ok(None),
-            };
-        }
-        if let Some(property) = self.string_exotic_own_property(object, key)? {
-            return Ok(Some(property));
-        }
-        if let Some(value) = self.dense_array_index_value(object, key)? {
-            return Ok(Some(CompleteOrdinaryPropertyDescriptor::Data {
-                value: self.root_raw_value(value.clone())?,
-                writable: true,
-                enumerable: true,
-                configurable: true,
-            }));
-        }
-        let snapshot = {
-            let state = self.0.state.borrow();
-            let object_data = state.heap.object(object.object_id())?;
-            let shape = state.heap.shape(object_data.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(None);
-            };
-            let index = usize::try_from(index)
-                .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
-            let entry = shape.entries().get(index).ok_or(RuntimeError::Invariant(
-                "shape lookup index was out of bounds",
-            ))?;
-            let slot = object_data
-                .slots
-                .get(index)
-                .ok_or(RuntimeError::Invariant("object property slot was missing"))?;
-            match slot {
-                PropertySlot::Data(value) => PropertySnapshot::Data {
-                    value: value.clone(),
-                    flags: entry.flags,
-                },
-                PropertySlot::VarRef(var_ref) => PropertySnapshot::VarRef {
-                    var_ref: *var_ref,
-                    flags: entry.flags,
-                },
-                PropertySlot::Accessor { get, set } => PropertySnapshot::Accessor {
-                    get: get.option(),
-                    set: set.option(),
-                    flags: entry.flags,
-                },
-                PropertySlot::AutoInit(_) => PropertySnapshot::AutoInit,
-            }
-        };
-
-        self.materialize_property_snapshot(object, key, snapshot)
-    }
-
-    pub(crate) fn get_own_property_owned(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<Option<super::OwnedCompletePropertyDescriptor>, RuntimeError> {
-        use super::property::CompletePropertyDescriptor;
-        self.validate_object_and_key(object, key)?;
-        // These virtual properties construct their language value on demand.
-        if self.typed_array_is_object(object)?
-            && self.typed_array_canonical_numeric_index(key)?.is_some()
-        {
-            return self
-                .get_own_property(object, key)?
-                .as_ref()
-                .map(|v| super::OwnedCompletePropertyDescriptor::from_public(self, v))
-                .transpose();
-        }
-        if let Some(value) = self.string_exotic_own_property(object, key)? {
-            return super::OwnedCompletePropertyDescriptor::from_public(self, &value).map(Some);
-        }
-        if let Some(value) = self.dense_array_index_value(object, key)? {
-            return super::OwnedCompletePropertyDescriptor::from_raw(
-                self,
-                &CompletePropertyDescriptor::Data {
-                    value,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true,
-                },
-            )
-            .map(Some);
-        }
-        let record = {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(object.object_id())?;
-            let shape = state.heap.shape(data.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(None);
-            };
-            let flags = shape.entries()[index as usize].flags;
-            match &data.slots[index as usize] {
-                PropertySlot::Data(value) => Some(CompletePropertyDescriptor::Data {
-                    value: value.clone(),
-                    writable: flags.writable,
-                    enumerable: flags.enumerable,
-                    configurable: flags.configurable,
-                }),
-                PropertySlot::VarRef(id) => {
-                    let value = state.heap.var_ref(*id)?.value.clone();
-                    if matches!(value, RawValue::Uninitialized) {
-                        None
-                    } else {
-                        Some(CompletePropertyDescriptor::Data {
-                            value,
-                            writable: flags.writable,
-                            enumerable: flags.enumerable,
-                            configurable: flags.configurable,
-                        })
-                    }
-                }
-                PropertySlot::Accessor { get, set } => Some(CompletePropertyDescriptor::Accessor {
-                    get: get.option().map(RawValue::Object),
-                    set: set.option().map(RawValue::Object),
-                    enumerable: flags.enumerable,
-                    configurable: flags.configurable,
-                }),
-                PropertySlot::AutoInit(_) => None,
-            }
-        };
-        if let Some(record) = record {
-            return super::OwnedCompletePropertyDescriptor::from_raw(self, &record).map(Some);
-        }
-        // Preserve lazy initialization and uninitialized-binding errors before
-        // reacquiring the canonical raw slot; this branch cannot cache a root.
-        drop(self.get_own_property(object, key)?);
-        self.get_own_property_owned(object, key)
-    }
-
-    pub(super) fn materialize_property_snapshot(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        snapshot: PropertySnapshot,
-    ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
-        match snapshot {
-            PropertySnapshot::Data { value, flags } => {
-                Ok(Some(CompleteOrdinaryPropertyDescriptor::Data {
-                    value: self.root_raw_value(value.clone())?,
-                    writable: flags.writable,
-                    enumerable: flags.enumerable,
-                    configurable: flags.configurable,
-                }))
-            }
-            PropertySnapshot::VarRef { var_ref, flags } => {
-                let value = self.0.state.borrow().heap.var_ref(var_ref)?.value.clone();
-                if matches!(value, RawValue::Uninitialized) {
-                    return Err(RuntimeError::Engine(self.native_atom_error(
-                        ErrorKind::Reference,
-                        "",
-                        key,
-                        " is not initialized",
-                    )?));
-                }
-                Ok(Some(CompleteOrdinaryPropertyDescriptor::Data {
-                    value: self.root_raw_value(value.clone())?,
-                    writable: flags.writable,
-                    enumerable: flags.enumerable,
-                    configurable: flags.configurable,
-                }))
-            }
-            PropertySnapshot::Accessor { get, set, flags } => {
-                let get = get
-                    .map(|id| ObjectRef::from_borrowed_handle(self.clone(), id))
-                    .transpose()?
-                    .map(CallableRef::from_validated_object);
-                let set = set
-                    .map(|id| ObjectRef::from_borrowed_handle(self.clone(), id))
-                    .transpose()?
-                    .map(CallableRef::from_validated_object);
-                Ok(Some(CompleteOrdinaryPropertyDescriptor::Accessor {
-                    get,
-                    set,
-                    enumerable: flags.enumerable,
-                    configurable: flags.configurable,
-                }))
-            }
-            PropertySnapshot::AutoInit => {
-                self.materialize_auto_init_property(object, key)?;
-                self.get_own_property(object, key)
-            }
-        }
+        self.0
+            .state
+            .borrow()
+            .dense_array_index_value(object.object_id(), key.atom())
     }
 
     /// Read a string property without materializing autoinit slots or running

@@ -397,6 +397,8 @@ mod coercion;
 
 mod properties;
 
+mod own_properties;
+
 mod native_calls;
 
 mod active_frames;

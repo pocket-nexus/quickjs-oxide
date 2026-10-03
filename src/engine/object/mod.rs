@@ -1098,6 +1098,7 @@ pub(crate) mod template_object;
 
 mod dictionary;
 mod dictionary_order;
+pub(crate) mod own_properties;
 mod owned_descriptor;
 pub mod property;
 pub(crate) use owned_descriptor::{
