@@ -220,13 +220,20 @@ impl AtomOwner {
 
     fn try_clone(&self) -> Result<Self, RuntimeError> {
         self.runtime().check_poison()?;
+        // Checked retention and Rc cloning do not unwind; diagnostics can.
+        #[cfg(any(debug_assertions, feature = "profiling"))]
         let _unwind = self.runtime().unwind_guard();
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_runtime_event(
             "runtime.atom_root.clone",
             "core.atom_root.clone",
         );
-        self.runtime().retain_atom_handle(self.atom)?;
+        {
+            let state = self.runtime().0.state.try_borrow().map_err(|_| {
+                RuntimeError::Invariant("atom root retained during a runtime state borrow")
+            })?;
+            state.atoms.retain_shared(self.atom)?;
+        }
         Ok(Self {
             runtime: Some(self.runtime().clone()),
             atom: self.atom,
@@ -844,6 +851,59 @@ impl CompleteOrdinaryPropertyDescriptor {
 mod tests {
     use super::{AccessorValue, DescriptorField, OrdinaryPropertyDescriptor};
     use crate::engine::value::Value;
+
+    #[test]
+    fn atom_root_clone_borrow_conflict_preserves_count_and_runtime_reuse() {
+        use crate::engine::api::{Runtime, RuntimeError};
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
+        let runtime = Runtime::new();
+        let key = runtime
+            .intern_property_key("checked atom root clone")
+            .unwrap();
+        let atom = key.atom();
+        let state = runtime.0.state.borrow_mut();
+        let before = state.atoms.resolve(atom).unwrap().ref_count;
+        let clone = catch_unwind(AssertUnwindSafe(|| key.try_clone()));
+        let after = state.atoms.resolve(atom).unwrap().ref_count;
+        drop(state);
+
+        assert!(matches!(
+            clone,
+            Ok(Err(RuntimeError::Invariant(
+                "atom root retained during a runtime state borrow"
+            )))
+        ));
+        assert_eq!(before, Some(1));
+        assert_eq!(after, before);
+        assert!(!runtime.is_poisoned());
+
+        let duplicate = key.try_clone().unwrap();
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .atoms
+                .resolve(atom)
+                .unwrap()
+                .ref_count,
+            Some(2)
+        );
+        drop(duplicate);
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .atoms
+                .resolve(atom)
+                .unwrap()
+                .ref_count,
+            before
+        );
+        assert!(!runtime.is_poisoned());
+    }
 
     #[test]
     fn consuming_roots_transfers_edges_without_queueing_releases() {
