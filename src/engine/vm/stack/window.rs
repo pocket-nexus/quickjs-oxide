@@ -2,6 +2,128 @@
 use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
 use crate::engine::value::number::operations::Number;
 
+/// One checked external entry followed by ordinary frame transitions.
+///
+/// The exclusive execution borrow prevents a caller, legacy helper, or host
+/// callback from replacing the admitted stores. The only structural changes
+/// available through this lease are ordinary installation and retirement;
+/// both publish their resulting current window before returning. A frame turn
+/// lends that actual window, rather than accepting a detached window identity.
+/// End this lease before crossing any other driver or host boundary.
+pub(in crate::engine::vm) struct FrameExecution<'a> {
+    execution: &'a mut crate::engine::vm::execution::RunningExecution,
+}
+
+/// Borrowed projections of the current frame. No frame window or JS owner is
+/// copied, and these borrows prevent a call/return transition during execution.
+pub(in crate::engine::vm) struct FrameTurn<'a> {
+    pub id: crate::engine::vm::frame::FrameId,
+    pub property_generation: &'a mut u64,
+    pub active_frame: crate::engine::vm::frames::ActiveFrameToken,
+    pub owners: &'a mut crate::engine::vm::frame::FrameCold,
+    pub executable: &'a crate::engine::code::runtime::PublishedFunctionSnapshot,
+    pub transaction: FrameTransaction<'a>,
+    pub fault_pc: &'a mut usize,
+    pub resume_pc: &'a mut usize,
+    pub pending: &'a mut Option<JsValue>,
+    pub selected_named_read: &'a mut Option<crate::engine::vm::property_driver::SelectedNamedRead>,
+}
+
+impl<'a> FrameExecution<'a> {
+    /// External and legacy entry remains checked. Internal turns use the
+    /// actual top frame established by this admission or a completed producer.
+    pub(in crate::engine::vm) fn admit(
+        execution: &'a mut crate::engine::vm::execution::RunningExecution,
+        id: crate::engine::vm::frame::FrameId,
+    ) -> Result<Self, Error> {
+        let frame = execution.frames.current_mut(id)?;
+        execution.slots.check_current(&frame.window)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("core.window_authentication");
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("core.pc_authentication");
+        if !frame.executable.exec.is_boundary(frame.resume_pc) {
+            return Err(Error::internal(
+                "execution entry PC is not an instruction boundary",
+            ));
+        }
+        Ok(Self { execution })
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn frame(&mut self) -> FrameTurn<'_> {
+        let (id, frame) = self
+            .execution
+            .frames
+            .current_frame_mut()
+            .expect("an admitted ordinary execution has a current frame");
+        let body = &mut *frame.cold;
+        FrameTurn {
+            id,
+            property_generation: &mut frame.property_generation,
+            active_frame: frame.active_frame,
+            owners: &mut body.owners,
+            executable: &body.executable,
+            // Admission checked this window. The store cannot change during
+            // a turn; ordinary install/pop establishes the next current one.
+            transaction: FrameTransaction {
+                store: &mut self.execution.slots,
+                window: &mut body.window,
+            },
+            fault_pc: &mut frame.fault_pc,
+            resume_pc: &mut frame.resume_pc,
+            pending: &mut self.execution.pending,
+            selected_named_read: &mut self.execution.selected_named_read,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn enter_ordinary(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        arguments: u16,
+        method: bool,
+        tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<crate::engine::vm::driver::ordinary::Entry, Error> {
+        // The ordinary segment cannot consume a native activation. Preserve
+        // its already selected facts for the legacy boundary's consumer.
+        if self.execution.selected_native.is_some() {
+            return Ok(crate::engine::vm::driver::ordinary::Entry::General);
+        }
+        let id = self
+            .execution
+            .frames
+            .current_id()
+            .expect("an admitted ordinary execution has a current frame");
+        crate::engine::vm::driver::ordinary::enter_selected_in_state(
+            runtime,
+            state,
+            self.execution,
+            id,
+            arguments,
+            method,
+            tail,
+            None,
+            fallthrough,
+        )
+    }
+
+    pub(in crate::engine::vm) fn finish_ordinary(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+    ) -> Result<crate::engine::vm::driver::ordinary::ReturnProgress, Error> {
+        let id = self
+            .execution
+            .frames
+            .current_id()
+            .expect("an admitted ordinary execution has a current frame");
+        crate::engine::vm::driver::ordinary::finish_in_state(runtime, state, self.execution, id)
+    }
+}
+
 /// A frame-owned binding addressed without an operand-stack value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::engine::vm) enum DirectSlot {
@@ -698,6 +820,289 @@ mod primitive_transaction_tests {
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
     use crate::engine::value::Value;
     use crate::engine::vm::stack::FrameStorage;
+
+    fn execution_frame(
+        runtime: &Runtime,
+        execution: &mut crate::engine::vm::execution::RunningExecution,
+        realm: crate::engine::heap::ContextId,
+        code: &[crate::engine::code::bytecode::Instruction],
+        operands: Vec<JsValue>,
+    ) -> crate::engine::vm::frame::FrameId {
+        use crate::engine::vm::{
+            CallInput,
+            closure::FrameFunction,
+            frame::{ColdFrame, FrameCold, FrameEntry},
+            frames::ActiveFrameToken,
+        };
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(realm);
+        executable.exec = crate::engine::code::exec::ExecCode::encode(code).unwrap();
+        executable.metadata.max_stack = 2;
+        let function = runtime.new_object(None).unwrap();
+        crate::engine::vm::driver::push_frame(
+            runtime,
+            execution,
+            FrameEntry {
+                property_generation: 0,
+                iterator_generation: 0,
+                caller_realm: realm,
+                active_frame: ActiveFrameToken(0),
+                initialize_bindings: false,
+                executable,
+                cold: ColdFrame::new(FrameCold {
+                    rare: Default::default(),
+                    return_to: None,
+                    entry_guard: None,
+                    function: FrameFunction::new(function, Default::default())
+                        .unwrap()
+                        .into(),
+                    reusable_captured_locals: Vec::new(),
+                    input: CallInput::new(runtime, JsValue::Undefined, JsValue::Undefined, None)
+                        .into(),
+                }),
+                storage: FrameStorage {
+                    original_arguments: Vec::new(),
+                    parameters: Vec::new(),
+                    locals: Vec::new(),
+                    operands,
+                },
+            },
+        )
+        .unwrap()
+    }
+
+    fn running(runtime: &Runtime) -> crate::engine::vm::execution::RunningExecution {
+        crate::engine::vm::execution::RunningExecution::new(
+            runtime,
+            crate::engine::vm::execution::ExecutionLimits {
+                frames: 8,
+                slots: 64,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn frame_execution_admits_once_and_lends_current_slots_without_rechecking() {
+        use crate::engine::code::bytecode::Instruction;
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let mut execution = running(&runtime);
+        let id = execution_frame(
+            &runtime,
+            &mut execution,
+            context.realm,
+            &[Instruction::ReturnUndefined],
+            vec![JsValue::Int(7)],
+        );
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        {
+            let mut segment = FrameExecution::admit(&mut execution, id).unwrap();
+            for value in [9, 11] {
+                let mut turn = segment.frame();
+                assert_eq!(turn.id, id);
+                assert_eq!(*turn.property_generation, (value - 9) as u64 / 2);
+                *turn.property_generation += 1;
+                assert!(!turn.active_frame.is_materialized());
+                assert_eq!(*turn.fault_pc, 0);
+                assert!(turn.selected_named_read.is_none());
+                assert_eq!(
+                    turn.transaction.slots().pop().unwrap(),
+                    JsValue::Int(value - 2)
+                );
+                turn.transaction.slots().push(JsValue::Int(value)).unwrap();
+                assert!(turn.transaction.slots().push(JsValue::Int(0)).is_ok());
+                // Safe capacity/occupancy checks remain inside the turn.
+                assert!(turn.transaction.slots().push(JsValue::Int(0)).is_err());
+                assert_eq!(turn.transaction.slots().pop().unwrap(), JsValue::Int(0));
+            }
+        }
+        #[cfg(feature = "profiling")]
+        {
+            let events = profile.snapshot().owned_execution_events;
+            assert_eq!(events.get("slot_authentication"), Some(&1));
+            assert_eq!(events.get("core.pc_authentication"), Some(&1));
+        }
+    }
+
+    #[test]
+    fn frame_execution_rejects_foreign_store_without_consuming_owners() {
+        use crate::engine::code::bytecode::Instruction;
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let mut execution = running(&runtime);
+        let id = execution_frame(
+            &runtime,
+            &mut execution,
+            context.realm,
+            &[Instruction::ReturnUndefined],
+            vec![JsValue::Int(7)],
+        );
+        let original = std::mem::replace(&mut execution.slots, SlotStore::new(64));
+        let result = FrameExecution::admit(&mut execution, id);
+        assert!(
+            matches!(result, Err(ref error) if error.message() == "frame window is not the active arena window")
+        );
+        execution.slots = original;
+        let mut segment = FrameExecution::admit(&mut execution, id).unwrap();
+        assert_eq!(
+            segment.frame().transaction.peek(0).unwrap(),
+            &JsValue::Int(7)
+        );
+    }
+
+    #[test]
+    fn frame_execution_rejects_suspended_parent_and_wide_instruction_middle() {
+        use crate::engine::code::bytecode::Instruction;
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let mut execution = running(&runtime);
+        let parent = execution_frame(
+            &runtime,
+            &mut execution,
+            context.realm,
+            &[Instruction::ReturnUndefined],
+            vec![],
+        );
+        let child = execution_frame(
+            &runtime,
+            &mut execution,
+            context.realm,
+            &[Instruction::PushI32(i32::MAX), Instruction::Return],
+            vec![JsValue::Int(7)],
+        );
+        assert!(
+            matches!(FrameExecution::admit(&mut execution, parent), Err(ref error)
+            if error.message() == "frame identity is not the current execution frame")
+        );
+        execution.frames.current_mut(child).unwrap().resume_pc = 1;
+        assert!(
+            matches!(FrameExecution::admit(&mut execution, child), Err(ref error)
+            if error.message() == "execution entry PC is not an instruction boundary")
+        );
+        execution.frames.current_mut(child).unwrap().resume_pc = 0;
+        let mut segment = FrameExecution::admit(&mut execution, child).unwrap();
+        assert_eq!(
+            segment.frame().transaction.peek(0).unwrap(),
+            &JsValue::Int(7)
+        );
+    }
+
+    #[test]
+    fn frame_execution_lends_installed_child_and_restored_parent() {
+        use crate::engine::{
+            code::bytecode::Instruction,
+            vm::{
+                driver::ordinary::{Entry, ReturnProgress},
+                execute::FallthroughPc,
+            },
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let child = runtime
+            .into_jsvalue(context.eval("(function(){return 42})").unwrap())
+            .unwrap();
+        let JsValue::Object(child_id) = child else {
+            panic!("bytecode function")
+        };
+        let mut execution = running(&runtime);
+        let parent = execution_frame(
+            &runtime,
+            &mut execution,
+            context.realm,
+            &[Instruction::Call(0), Instruction::Return],
+            vec![JsValue::Object(child_id)],
+        );
+        let mut state = runtime.0.state.borrow_mut();
+        {
+            let mut segment = FrameExecution::admit(&mut execution, parent).unwrap();
+            let fallthrough = {
+                let turn = segment.frame();
+                FallthroughPc::from_decoded(turn.executable.exec.decode_published(0).unwrap())
+            };
+            assert!(matches!(
+                segment
+                    .enter_ordinary(&runtime, &mut state, 0, false, false, fallthrough)
+                    .unwrap(),
+                Entry::Ordinary
+            ));
+            {
+                let turn = segment.frame();
+                assert_ne!(turn.id, parent);
+                assert_eq!(*turn.resume_pc, 0);
+                assert_eq!(turn.owners.function.object_id(), child_id);
+                *turn.pending = Some(JsValue::Int(42));
+            }
+            assert!(matches!(
+                segment.finish_ordinary(&runtime, &mut state).unwrap(),
+                ReturnProgress::Returned
+            ));
+            let mut turn = segment.frame();
+            assert_eq!(turn.id, parent);
+            assert_eq!(*turn.resume_pc, fallthrough.index());
+            assert_eq!(turn.transaction.slots().pop().unwrap(), JsValue::Int(42));
+            assert!(turn.pending.is_none());
+        }
+        assert!(
+            state.heap.object(child_id).is_err(),
+            "retirement releases the callee's final owner"
+        );
+    }
+
+    #[test]
+    fn frame_execution_failed_install_preserves_current_frame_and_callee_owner() {
+        use crate::engine::{code::bytecode::Instruction, vm::execute::FallthroughPc};
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let child = runtime
+            .into_jsvalue(
+                context
+                    .eval("(function(a){let b=1,c=2;return a+b+c})")
+                    .unwrap(),
+            )
+            .unwrap();
+        let JsValue::Object(child_id) = child else {
+            panic!("bytecode function")
+        };
+        let mut execution = crate::engine::vm::execution::RunningExecution::new(
+            &runtime,
+            crate::engine::vm::execution::ExecutionLimits {
+                frames: 8,
+                slots: 2,
+            },
+        )
+        .unwrap();
+        let parent = execution_frame(
+            &runtime,
+            &mut execution,
+            context.realm,
+            &[Instruction::Call(1), Instruction::Return],
+            vec![JsValue::Object(child_id), JsValue::Int(7)],
+        );
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            let mut segment = FrameExecution::admit(&mut execution, parent).unwrap();
+            let fallthrough = {
+                let turn = segment.frame();
+                FallthroughPc::from_decoded(turn.executable.exec.decode_published(0).unwrap())
+            };
+            assert!(
+                matches!(segment.enter_ordinary(&runtime, &mut state, 1, false, false, fallthrough), Err(ref error)
+                if error.message() == "execution slot limit exceeded")
+            );
+            let turn = segment.frame();
+            assert_eq!(turn.id, parent);
+            assert_eq!(*turn.resume_pc, 0);
+            assert_eq!(turn.transaction.peek(0).unwrap(), &JsValue::Int(7));
+            assert_eq!(
+                turn.transaction.peek(1).unwrap(),
+                &JsValue::Object(child_id)
+            );
+            assert_eq!(state.heap.object_strong_count(child_id).unwrap(), 1);
+        }
+        drop(execution);
+        assert!(runtime.0.state.borrow().heap.object(child_id).is_err());
+    }
 
     fn linked_executable(
         runtime: &Runtime,
