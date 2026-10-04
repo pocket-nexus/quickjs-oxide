@@ -15,7 +15,10 @@ use crate::engine::{
             owned_values::{OwnedValueGuard, OwnedValuesGuard},
         },
     },
-    value::{JsString, JsValue, conversion::NativeConversion},
+    value::{
+        JsString, JsValue,
+        conversion::{NativeConversion, NumberPrimitiveStep, StringPrimitiveStep},
+    },
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -47,6 +50,7 @@ impl ScalarTextKind {
 }
 pub(crate) enum ScalarTextStep {
     Complete(Completion),
+    CyclePublished(Completion),
     String {
         value: JsValue,
         resume: ScalarTextResume,
@@ -117,7 +121,7 @@ impl ScalarTextStep {
             ));
         };
         if matches!(this_value, JsValue::Null | JsValue::Undefined) {
-            return Ok(Self::Complete(Completion::Throw(JsValue::Object(
+            return Ok(Self::CyclePublished(Completion::Throw(JsValue::Object(
                 state.new_native_error_from_message(
                     poisoned,
                     realm,
@@ -133,7 +137,7 @@ impl ScalarTextStep {
             crate::engine::api::profiling::record_owned_execution_event(
                 "string_scalar_completed_without_state",
             );
-            return Ok(Self::Complete(result));
+            return Ok(result);
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
@@ -234,9 +238,11 @@ impl ScalarTextResume {
             ScalarTextKind::Iterator => {
                 let string = std::mem::replace(&mut self.0.string, JsString::from_static(""));
                 match state.new_string_iterator(poisoned, self.0.realm, string) {
-                    Ok(id) => {
-                        self.complete(state, poisoned, Completion::Return(JsValue::Object(id)))
-                    }
+                    Ok(id) => self.complete_published(
+                        state,
+                        poisoned,
+                        Completion::Return(JsValue::Object(id)),
+                    ),
                     Err(error) => self.fail(state, poisoned, error),
                 }
             }
@@ -358,6 +364,20 @@ impl ScalarTextResume {
             Completion::Return(value)
         }))
     }
+    fn complete_published(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        completion: Completion,
+    ) -> Result<ScalarTextStep, RuntimeError> {
+        // The real iterator result remains guarded by complete while retiring
+        // the source/argv suffix. Tag only after that retirement succeeds.
+        let ScalarTextStep::Complete(completion) = self.complete(state, poisoned, completion)?
+        else {
+            unreachable!("ScalarText completion does not wait")
+        };
+        Ok(ScalarTextStep::CyclePublished(completion))
+    }
     fn fail(
         self,
         state: &mut RuntimeState,
@@ -419,7 +439,7 @@ fn complete_primitive(
     kind: ScalarTextKind,
     receiver: &JsValue,
     arguments: &NativeArguments,
-) -> Result<Option<Completion>, RuntimeError> {
+) -> Result<Option<ScalarTextStep>, RuntimeError> {
     if matches!(receiver, JsValue::Object(_)) {
         return Ok(None);
     }
@@ -437,27 +457,48 @@ fn complete_primitive(
     {
         return Ok(None);
     }
-    let mut string = match state.string_from_primitive_jsvalue(poisoned, realm, receiver)? {
-        NativeConversion::Value(value) => value,
-        NativeConversion::Throw(value) => return Ok(Some(Completion::Throw(value))),
+    let mut string = match state
+        .string_from_primitive_jsvalue_with_publication(poisoned, realm, receiver)?
+    {
+        StringPrimitiveStep::Value(value) => value,
+        StringPrimitiveStep::CyclePublishedThrow(value) => {
+            return Ok(Some(ScalarTextStep::CyclePublished(Completion::Throw(
+                value,
+            ))));
+        }
+        StringPrimitiveStep::Throw(_) => unreachable!("primitive String suffix cannot propagate"),
     };
     let value = match kind {
         ScalarTextKind::CharAt(_) | ScalarTextKind::CharCodeAt | ScalarTextKind::CodePointAt => {
-            let number = match state.number_from_primitive_jsvalue(poisoned, realm, first)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => return Ok(Some(Completion::Throw(value))),
+            let number = match state
+                .number_from_primitive_jsvalue_with_publication(poisoned, realm, first)?
+            {
+                NumberPrimitiveStep::Value(value) => value,
+                NumberPrimitiveStep::CyclePublishedThrow(value) => {
+                    return Ok(Some(ScalarTextStep::CyclePublished(Completion::Throw(
+                        value,
+                    ))));
+                }
             };
-            return finish_index(state, kind, &string, number).map(Some);
+            return finish_index(state, kind, &string, number)
+                .map(|completion| Some(ScalarTextStep::Complete(completion)));
         }
         ScalarTextKind::Concat => {
             for argument in inputs {
                 let chunk = if let JsValue::String(id) = argument {
                     state.heap.string(*id)?.clone()
                 } else {
-                    match state.string_from_primitive_jsvalue(poisoned, realm, argument)? {
-                        NativeConversion::Value(value) => value,
-                        NativeConversion::Throw(value) => {
-                            return Ok(Some(Completion::Throw(value)));
+                    match state
+                        .string_from_primitive_jsvalue_with_publication(poisoned, realm, argument)?
+                    {
+                        StringPrimitiveStep::Value(value) => value,
+                        StringPrimitiveStep::CyclePublishedThrow(value) => {
+                            return Ok(Some(ScalarTextStep::CyclePublished(Completion::Throw(
+                                value,
+                            ))));
+                        }
+                        StringPrimitiveStep::Throw(_) => {
+                            unreachable!("primitive String suffix cannot propagate")
                         }
                     }
                 };
@@ -472,10 +513,13 @@ fn complete_primitive(
             JsValue::String(state.heap.allocate_string(string.to_well_formed())?)
         }
         ScalarTextKind::Iterator => {
-            JsValue::Object(state.new_string_iterator(poisoned, realm, string)?)
+            let object = state.new_string_iterator(poisoned, realm, string)?;
+            return Ok(Some(ScalarTextStep::CyclePublished(Completion::Return(
+                JsValue::Object(object),
+            ))));
         }
     };
-    Ok(Some(Completion::Return(value)))
+    Ok(Some(ScalarTextStep::Complete(Completion::Return(value))))
 }
 
 /// The callback-free scalar kernel is shared by local and resumed execution.
@@ -527,11 +571,25 @@ fn finish_index(
 pub(crate) fn finish(
     runtime: &Runtime,
     realm: ContextId,
-    mut step: ScalarTextStep,
+    step: ScalarTextStep,
 ) -> Result<Completion, RuntimeError> {
+    let mut owner = ScalarTextBoundaryGuard {
+        runtime,
+        step: Some(step),
+    };
     loop {
-        step = match step {
+        let next = match owner.step.take().expect("ScalarText boundary progress") {
             ScalarTextStep::Complete(result) => return Ok(result),
+            ScalarTextStep::CyclePublished(result) => {
+                owner.step = Some(ScalarTextStep::CyclePublished(result));
+                runtime.collect_if_requested()?;
+                let ScalarTextStep::CyclePublished(result) =
+                    owner.step.take().expect("published ScalarText completion")
+                else {
+                    unreachable!()
+                };
+                return Ok(result);
+            }
             ScalarTextStep::String { value, resume } => {
                 match runtime.native_to_js_string_jsvalue(realm, value) {
                     Ok(result) => resume.string(runtime, result)?,
@@ -551,6 +609,57 @@ pub(crate) fn finish(
                 }
             }
         };
+        owner.step = Some(next);
+    }
+}
+impl ScalarTextStep {
+    pub(crate) fn retire_in_state(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        match self {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value))
+            | Self::CyclePublished(Completion::Return(value) | Completion::Throw(value)) => {
+                state.release_owned_jsvalue(poisoned, value)
+            }
+            Self::String { value, resume } | Self::Number { value, resume } => {
+                state.release_owned_jsvalue(poisoned, value)?;
+                resume.retire_in_state(state, poisoned)
+            }
+        }
+    }
+    pub(crate) fn retire_at_boundary(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        if runtime.skip_cleanup() {
+            return Err(RuntimeError::Poisoned);
+        }
+        let _unwind = runtime.unwind_guard();
+        if let Ok(mut state) = runtime.0.state.try_borrow_mut() {
+            return self.retire_in_state(&mut state, &runtime.0.poisoned);
+        }
+        match self {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value))
+            | Self::CyclePublished(Completion::Return(value) | Completion::Throw(value)) => {
+                runtime.release_jsvalue(value)?;
+                runtime.check_poison()
+            }
+            Self::String { value, resume } | Self::Number { value, resume } => {
+                runtime.release_jsvalue(value)?;
+                runtime.check_poison()?;
+                resume.retire_at_boundary(runtime)
+            }
+        }
+    }
+}
+struct ScalarTextBoundaryGuard<'a> {
+    runtime: &'a Runtime,
+    step: Option<ScalarTextStep>,
+}
+impl Drop for ScalarTextBoundaryGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(step) = self.step.take() {
+            let _ = step.retire_at_boundary(self.runtime);
+        }
     }
 }
 

@@ -50,6 +50,13 @@ impl Query {
                         cycle_published,
                     });
                 }
+                Step::CyclePublishedStringReply { value, resume } => {
+                    cycle_published = true;
+                    *step = Step::StringReply {
+                        value: value.take(),
+                        resume: resume.take(),
+                    };
+                }
                 Step::CyclePublishedPrimitiveReply { value, resume } => {
                     cycle_published = true;
                     *step = Step::PrimitiveReply {
@@ -549,7 +556,8 @@ impl Step {
                     state.release_owned_jsvalue(poisoned, value)?;
                 }
             }
-            Self::StringReply { value, resume } => {
+            Self::StringReply { value, resume }
+            | Self::CyclePublishedStringReply { value, resume } => {
                 if let Some(NativeConversion::Throw(value)) = value.take() {
                     state.release_owned_jsvalue(poisoned, value)?;
                 }

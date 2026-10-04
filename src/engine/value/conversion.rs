@@ -6,7 +6,9 @@ pub(crate) mod primitive;
 pub(crate) mod property_key;
 mod property_key_value;
 mod state;
+pub(crate) use state::{BigIntPrimitiveStep, IndexPrimitiveStep, NumberPrimitiveStep};
 mod string;
+pub(crate) use string::StringPrimitiveStep;
 
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;

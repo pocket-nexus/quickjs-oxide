@@ -267,6 +267,8 @@ pub(crate) enum NativeStep {
     Property(PropertyStep),
     String(ObjectStringStep),
     Complete(crate::engine::vm::Completion),
+    /// The completion owns a collectible node freshly published by its State producer.
+    CyclePublishedComplete(crate::engine::vm::Completion),
     Definitions(DefinitionsStep),
     Predicate(PredicateStep),
 }

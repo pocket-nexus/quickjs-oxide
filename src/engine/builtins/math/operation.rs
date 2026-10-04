@@ -44,6 +44,7 @@ impl MathKind {
 }
 pub(crate) enum MathStep {
     Complete(Completion),
+    CyclePublished(Completion),
     Number { value: JsValue, resume: MathResume },
 }
 pub(crate) struct MathResume(Box<MathResumeState>);
@@ -82,7 +83,10 @@ impl MathStep {
             runtime.check_poison()
         };
         match self {
-            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => release(value),
+            Self::Complete(Completion::Return(value) | Completion::Throw(value))
+            | Self::CyclePublished(Completion::Return(value) | Completion::Throw(value)) => {
+                release(value)
+            }
             Self::Number { value, resume } => {
                 release(value)?;
                 resume.retire_at_boundary(runtime)
@@ -164,7 +168,22 @@ impl MathStep {
                 // Object arguments above retain the shared waiting protocol.
                 // NativeActivation already owns this primitive: borrow it in
                 // the same conversion kernel used by NumberStep completion.
-                let result = state.number_from_primitive_jsvalue(poisoned, realm, value)?;
+                let result = match state
+                    .number_from_primitive_jsvalue_with_publication(poisoned, realm, value)?
+                {
+                    crate::engine::value::conversion::NumberPrimitiveStep::Value(number) => {
+                        NativeConversion::Value(number)
+                    }
+                    crate::engine::value::conversion::NumberPrimitiveStep::CyclePublishedThrow(
+                        value,
+                    ) => {
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "math_completed_without_argument_storage",
+                        );
+                        return Ok(Self::CyclePublished(Completion::Throw(value)));
+                    }
+                };
                 if let Some(completion) = resume.accept_number(result)? {
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
@@ -367,6 +386,16 @@ pub(crate) fn finish(
     loop {
         match step.step.take().expect("Math boundary progress") {
             MathStep::Complete(result) => return Ok(result),
+            MathStep::CyclePublished(result) => {
+                step.step = Some(MathStep::CyclePublished(result));
+                runtime.collect_if_requested()?;
+                let MathStep::CyclePublished(result) =
+                    step.step.take().expect("published Math completion")
+                else {
+                    unreachable!()
+                };
+                return Ok(result);
+            }
             MathStep::Number { value, resume } => {
                 let mut owner = MathBoundaryGuard {
                     runtime,
@@ -392,7 +421,8 @@ impl MathStep {
         poisoned: &Cell<bool>,
     ) -> Result<(), RuntimeError> {
         match self {
-            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value))
+            | Self::CyclePublished(Completion::Return(value) | Completion::Throw(value)) => {
                 state.release_owned_jsvalue(poisoned, value)
             }
             Self::Number { value, resume } => {

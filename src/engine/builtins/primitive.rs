@@ -513,11 +513,12 @@ impl Runtime {
         invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let _unwind = self.unwind_guard();
-        self.0.state.borrow_mut().call_symbol_prototype_description(
-            &self.0.poisoned,
-            realm,
-            invocation,
-        )
+        let step = self
+            .0
+            .state
+            .borrow_mut()
+            .call_symbol_prototype_description(&self.0.poisoned, realm, invocation)?;
+        self.finish_state_native_body_step(realm, step)
     }
 
     pub(crate) fn call_primitive_prototype_value_of(
@@ -527,12 +528,12 @@ impl Runtime {
         invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let _unwind = self.unwind_guard();
-        self.0.state.borrow_mut().call_primitive_prototype_value_of(
-            &self.0.poisoned,
-            realm,
-            kind,
-            invocation,
-        )
+        let step = self
+            .0
+            .state
+            .borrow_mut()
+            .call_primitive_prototype_value_of(&self.0.poisoned, realm, kind, invocation)?;
+        self.finish_state_native_body_step(realm, step)
     }
 
     #[cfg(test)]

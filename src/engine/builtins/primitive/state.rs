@@ -6,14 +6,21 @@ use crate::engine::{
         error::{NativeErrorKind, NativeErrorMessage},
         runtime_error::RuntimeError,
     },
-    builtins::native::PrimitiveKind,
+    builtins::{NumericStep, continuation::NativeStep, native::PrimitiveKind},
     heap::{
         ContextId, ObjectPayload, PrimitiveObjectData,
         runtime::{RuntimeState, owned_values::OwnedValueGuard},
     },
-    value::{JsString, JsValue, Value, conversion::NativeConversion},
+    value::{JsString, JsValue, Value},
     vm::{Completion, call::NativeInvocation},
 };
+
+/// Brand selection either retains the exact primitive edge or publishes its
+/// own brand Error; it never accepts a propagated callback completion.
+pub(crate) enum BrandedPrimitiveStep {
+    Value(JsValue),
+    CyclePublishedThrow(JsValue),
+}
 
 impl RuntimeState {
     pub(crate) fn primitive_this_value_jsvalue(
@@ -22,7 +29,7 @@ impl RuntimeState {
         realm: ContextId,
         kind: PrimitiveKind,
         value: &JsValue,
-    ) -> Result<NativeConversion<JsValue>, RuntimeError> {
+    ) -> Result<BrandedPrimitiveStep, RuntimeError> {
         if matches!(
             (value, kind),
             (JsValue::Int(_) | JsValue::Float(_), PrimitiveKind::Number)
@@ -34,7 +41,7 @@ impl RuntimeState {
                     PrimitiveKind::BigInt
                 )
         ) {
-            return self.dup_jsvalue(value).map(NativeConversion::Value);
+            return self.dup_jsvalue(value).map(BrandedPrimitiveStep::Value);
         }
         if let JsValue::Object(id) = value {
             let payload = match &self.heap.object(*id)?.payload {
@@ -75,7 +82,7 @@ impl RuntimeState {
                 _ => None,
             };
             if let Some(payload) = payload {
-                return self.dup_jsvalue(&payload).map(NativeConversion::Value);
+                return self.dup_jsvalue(&payload).map(BrandedPrimitiveStep::Value);
             }
         }
         let message = match kind {
@@ -85,7 +92,7 @@ impl RuntimeState {
             PrimitiveKind::Symbol => "not a symbol",
             PrimitiveKind::BigInt => "not a BigInt",
         };
-        Ok(NativeConversion::Throw(JsValue::Object(
+        Ok(BrandedPrimitiveStep::CyclePublishedThrow(JsValue::Object(
             self.new_native_error_from_message(
                 poisoned,
                 realm,
@@ -103,9 +110,9 @@ impl RuntimeState {
         kind: PrimitiveKind,
         value: JsValue,
         radix: u32,
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<NumericStep, RuntimeError> {
         if matches!((kind, &value), (PrimitiveKind::String, JsValue::String(_))) {
-            return Ok(Completion::Return(value));
+            return Ok(NumericStep::Complete(Completion::Return(value)));
         }
         let mut input = OwnedValueGuard::new(self, poisoned, value);
         let (state, input) = input.parts();
@@ -130,7 +137,7 @@ impl RuntimeState {
         kind: PrimitiveKind,
         value: &JsValue,
         radix: u32,
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<NumericStep, RuntimeError> {
         let text = match (kind, value) {
             (PrimitiveKind::Number, JsValue::Int(_) | JsValue::Float(_)) => {
                 let number = value.as_number().ok_or(RuntimeError::Invariant(
@@ -172,13 +179,13 @@ impl RuntimeState {
                 if bigint.exceeds_allocation_limit()
                     && (bigint.is_negative() || !radix.is_power_of_two())
                 {
-                    return Ok(Completion::Throw(JsValue::Object(
-                        self.new_native_error_from_message(
+                    return Ok(NumericStep::CyclePublished(Completion::Throw(
+                        JsValue::Object(self.new_native_error_from_message(
                             poisoned,
                             realm,
                             NativeErrorKind::Range,
                             NativeErrorMessage::from_utf8("BigInt is too large to allocate"),
-                        )?,
+                        )?),
                     )));
                 }
                 let text = bigint
@@ -193,9 +200,9 @@ impl RuntimeState {
                 ));
             }
         };
-        Ok(Completion::Return(JsValue::String(
+        Ok(NumericStep::Complete(Completion::Return(JsValue::String(
             self.heap.allocate_string(text)?,
-        )))
+        ))))
     }
 
     pub(crate) fn finish_number_format(
@@ -203,15 +210,15 @@ impl RuntimeState {
         poisoned: &Cell<bool>,
         realm: ContextId,
         result: Result<String, crate::engine::value::number::NumberFormatError>,
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<NumericStep, RuntimeError> {
         match result {
             Ok(value) => {
                 JsString::checked_length(0, value.len())?;
                 debug_assert!(value.is_ascii());
-                Ok(Completion::Return(JsValue::String(
+                Ok(NumericStep::Complete(Completion::Return(JsValue::String(
                     self.heap
                         .allocate_string(JsString::from_owned_latin1(value.into_bytes()))?,
-                )))
+                ))))
             }
             Err(error) => {
                 let message = match error {
@@ -222,13 +229,13 @@ impl RuntimeState {
                         "radix must be between 2 and 36"
                     }
                 };
-                Ok(Completion::Throw(JsValue::Object(
-                    self.new_native_error_from_message(
+                Ok(NumericStep::CyclePublished(Completion::Throw(
+                    JsValue::Object(self.new_native_error_from_message(
                         poisoned,
                         realm,
                         NativeErrorKind::Range,
                         NativeErrorMessage::from_utf8(message),
-                    )?,
+                    )?),
                 )))
             }
         }
@@ -239,7 +246,7 @@ impl RuntimeState {
         poisoned: &Cell<bool>,
         realm: ContextId,
         invocation: &NativeInvocation,
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<NativeStep, RuntimeError> {
         let NativeInvocation::Getter { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "Symbol.prototype.description received the wrong native invocation",
@@ -251,8 +258,10 @@ impl RuntimeState {
             PrimitiveKind::Symbol,
             this_value,
         )? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+            BrandedPrimitiveStep::Value(value) => value,
+            BrandedPrimitiveStep::CyclePublishedThrow(value) => {
+                return Ok(NativeStep::CyclePublishedComplete(Completion::Throw(value)));
+            }
         };
         let mut symbol = OwnedValueGuard::new(self, poisoned, value);
         let (state, edge) = symbol.parts();
@@ -263,12 +272,12 @@ impl RuntimeState {
                 ));
             };
             let atom = state.atoms.brand(*index)?;
-            Ok(Completion::Return(
+            Ok(NativeStep::Complete(Completion::Return(
                 match state.symbol_description_atom(atom)? {
                     Some(value) => JsValue::String(state.heap.allocate_string(value)?),
                     None => JsValue::Undefined,
                 },
-            ))
+            )))
         })();
         state.release_owned_jsvalue(poisoned, edge.take().expect("symbol description brand"))?;
         result
@@ -280,7 +289,7 @@ impl RuntimeState {
         realm: ContextId,
         kind: PrimitiveKind,
         invocation: &NativeInvocation,
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<NativeStep, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
                 "primitive valueOf did not receive a generic invocation",
@@ -288,8 +297,12 @@ impl RuntimeState {
         };
         Ok(
             match self.primitive_this_value_jsvalue(poisoned, realm, kind, this_value)? {
-                NativeConversion::Value(value) => Completion::Return(value),
-                NativeConversion::Throw(value) => Completion::Throw(value),
+                BrandedPrimitiveStep::Value(value) => {
+                    NativeStep::Complete(Completion::Return(value))
+                }
+                BrandedPrimitiveStep::CyclePublishedThrow(value) => {
+                    NativeStep::CyclePublishedComplete(Completion::Throw(value))
+                }
             },
         )
     }

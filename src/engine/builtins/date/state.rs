@@ -8,13 +8,16 @@ use crate::engine::{
         runtime::RuntimeUnwindGuard,
         runtime_error::RuntimeError,
     },
-    builtins::native::{DateNativeKind, DateStringMethod},
+    builtins::{
+        continuation::NativeStep,
+        native::{DateNativeKind, DateStringMethod},
+    },
     heap::{
         ContextId, ObjectId, ObjectPayload,
         runtime::{RuntimeState, owned_values::OwnedValueGuard},
     },
     host::HostServices,
-    value::{JsString, JsValue, conversion::NativeConversion, number::operations::Number},
+    value::{JsString, JsValue, number::operations::Number},
     vm::{Completion, call::NativeInvocation},
 };
 use std::cell::Cell;
@@ -30,6 +33,11 @@ fn date_format_kind(method: DateStringMethod) -> DateStringKind {
         DateStringMethod::LocaleDateString => DateStringKind::LocaleDateString,
         DateStringMethod::LocaleTimeString => DateStringKind::LocaleTimeString,
     }
+}
+
+pub(super) enum DateThisStep {
+    Value((ObjectId, f64)),
+    CyclePublishedThrow(JsValue),
 }
 
 impl RuntimeState {
@@ -50,9 +58,9 @@ impl RuntimeState {
         poisoned: &Cell<bool>,
         realm: ContextId,
         this_value: &JsValue,
-    ) -> Result<NativeConversion<(ObjectId, f64)>, RuntimeError> {
+    ) -> Result<DateThisStep, RuntimeError> {
         let JsValue::Object(object) = this_value else {
-            return Ok(NativeConversion::Throw(self.date_error(
+            return Ok(DateThisStep::CyclePublishedThrow(self.date_error(
                 poisoned,
                 realm,
                 NativeErrorKind::Type,
@@ -64,7 +72,7 @@ impl RuntimeState {
         let (state, receiver) = receiver.parts();
         if let Some(value) = state.genuine_date_value(this_value)? {
             receiver.take();
-            return Ok(NativeConversion::Value((*object, value)));
+            return Ok(DateThisStep::Value((*object, value)));
         }
         let error =
             state.date_error(poisoned, realm, NativeErrorKind::Type, "not a Date object")?;
@@ -74,7 +82,7 @@ impl RuntimeState {
             poisoned,
             receiver.take().expect("checked Date receiver temporary"),
         )?;
-        Ok(NativeConversion::Throw(
+        Ok(DateThisStep::CyclePublishedThrow(
             error_owner.take().expect("Date brand error result"),
         ))
     }
@@ -82,6 +90,7 @@ impl RuntimeState {
     /// This fixed group contains every input shape of all 28 read-only Date
     /// selectors. Clock/timezone providers forbid reentry and borrow the
     /// existing Runtime header's host service without another Rc owner.
+    #[cfg(test)]
     pub(crate) fn call_date_readonly_native(
         &mut self,
         poisoned: &Cell<bool>,
@@ -90,6 +99,22 @@ impl RuntimeState {
         kind: DateNativeKind,
         invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
+        match self
+            .call_date_readonly_native_with_publication(poisoned, host, realm, kind, invocation)?
+        {
+            NativeStep::Complete(value) | NativeStep::CyclePublishedComplete(value) => Ok(value),
+            _ => unreachable!("read-only Date body never waits"),
+        }
+    }
+
+    pub(crate) fn call_date_readonly_native_with_publication(
+        &mut self,
+        poisoned: &Cell<bool>,
+        host: &dyn HostServices,
+        realm: ContextId,
+        kind: DateNativeKind,
+        invocation: &NativeInvocation,
+    ) -> Result<NativeStep, RuntimeError> {
         let _unwind = RuntimeUnwindGuard::from_flag(poisoned);
         let NativeInvocation::Call { this_value } = invocation else {
             return Err(RuntimeError::Invariant(
@@ -98,9 +123,9 @@ impl RuntimeState {
         };
         match kind {
             DateNativeKind::Now => {
-                return Ok(Completion::Return(
+                return Ok(NativeStep::Complete(Completion::Return(
                     Number::compact(host.now_millis() as f64).into(),
-                ));
+                )));
             }
             DateNativeKind::TimeValue
             | DateNativeKind::String(_)
@@ -114,8 +139,10 @@ impl RuntimeState {
         }
         let (object, value) =
             match self.date_this_time_value_jsvalue(poisoned, realm, this_value)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(error) => return Ok(Completion::Throw(error)),
+                DateThisStep::Value(value) => value,
+                DateThisStep::CyclePublishedThrow(error) => {
+                    return Ok(NativeStep::CyclePublishedComplete(Completion::Throw(error)));
+                }
             };
         let mut receiver = OwnedValueGuard::new(self, poisoned, JsValue::Object(object));
         let (state, receiver) = receiver.parts();
@@ -136,7 +163,7 @@ impl RuntimeState {
         realm: ContextId,
         kind: DateNativeKind,
         value: f64,
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<NativeStep, RuntimeError> {
         let number = match kind {
             DateNativeKind::TimeValue => value,
             DateNativeKind::String(method) => {
@@ -149,18 +176,20 @@ impl RuntimeState {
                 let output = match format_date_string(fields.as_ref(), kind) {
                     Ok(output) => output,
                     Err(_) => {
-                        return Ok(Completion::Throw(self.date_error(
-                            poisoned,
-                            realm,
-                            NativeErrorKind::Range,
-                            "Date value is NaN",
-                        )?));
+                        return Ok(NativeStep::CyclePublishedComplete(Completion::Throw(
+                            self.date_error(
+                                poisoned,
+                                realm,
+                                NativeErrorKind::Range,
+                                "Date value is NaN",
+                            )?,
+                        )));
                     }
                 };
-                return Ok(Completion::Return(JsValue::String(
+                return Ok(NativeStep::Complete(Completion::Return(JsValue::String(
                     self.heap
                         .allocate_string(JsString::try_from_utf8(&output)?)?,
-                )));
+                ))));
             }
             DateNativeKind::GetField(field) => {
                 let Some(fields) =
@@ -168,7 +197,9 @@ impl RuntimeState {
                         host.timezone_offset_minutes(instant)
                     })
                 else {
-                    return Ok(Completion::Return(Number::compact(f64::NAN).into()));
+                    return Ok(NativeStep::Complete(Completion::Return(
+                        Number::compact(f64::NAN).into(),
+                    )));
                 };
                 let value = fields[usize::from(field.field_index())];
                 if field.is_legacy_year() {
@@ -190,7 +221,9 @@ impl RuntimeState {
                 ));
             }
         };
-        Ok(Completion::Return(Number::compact(number).into()))
+        Ok(NativeStep::Complete(Completion::Return(
+            Number::compact(number).into(),
+        )))
     }
 
     pub(super) fn set_date_this_time_value(

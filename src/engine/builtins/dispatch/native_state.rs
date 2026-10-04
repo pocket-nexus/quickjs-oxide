@@ -69,6 +69,9 @@ impl RuntimeState {
                 NativeInvocationAdaptation::Complete(completion) => {
                     NativeInvocationAdaptation::Complete(completion)
                 }
+                NativeInvocationAdaptation::CyclePublishedComplete(completion) => {
+                    NativeInvocationAdaptation::CyclePublishedComplete(completion)
+                }
             },
         )
     }
@@ -162,9 +165,9 @@ impl RuntimeState {
                     NativeErrorKind::Type,
                     NativeErrorMessage::from_utf8("must be called with new"),
                 )?);
-                return Ok(NativeInvocationAdaptation::Complete(Completion::Throw(
-                    exception,
-                )));
+                return Ok(NativeInvocationAdaptation::CyclePublishedComplete(
+                    Completion::Throw(exception),
+                ));
             }
             (
                 NativeCProto::ConstructorOrFunction | NativeCProto::ConstructorOrFunctionMagic,
@@ -269,6 +272,9 @@ impl RuntimeState {
             NativeInvocationAdaptation::Complete(completion) => {
                 Ok(NativeStep::Complete(completion))
             }
+            NativeInvocationAdaptation::CyclePublishedComplete(completion) => {
+                Ok(NativeStep::CyclePublishedComplete(completion))
+            }
             NativeInvocationAdaptation::Invoke(invocation) => {
                 let result = self.dispatch_state_native_body(
                     poisoned,
@@ -308,6 +314,9 @@ impl RuntimeState {
                 crate::engine::builtins::MathStep::Complete(completion) => {
                     NativeStep::Complete(completion)
                 }
+                crate::engine::builtins::MathStep::CyclePublished(completion) => {
+                    NativeStep::CyclePublishedComplete(completion)
+                }
                 step => NativeStep::Math(step),
             });
         }
@@ -320,6 +329,9 @@ impl RuntimeState {
             .map(|step| match step {
                 crate::engine::builtins::NumericStep::Complete(completion) => {
                     NativeStep::Complete(completion)
+                }
+                crate::engine::builtins::NumericStep::CyclePublished(completion) => {
+                    NativeStep::CyclePublishedComplete(completion)
                 }
                 step => NativeStep::Numeric(step),
             });
@@ -337,6 +349,9 @@ impl RuntimeState {
             .map(|step| match step {
                 crate::engine::builtins::ScalarTextStep::Complete(completion) => {
                     NativeStep::Complete(completion)
+                }
+                crate::engine::builtins::ScalarTextStep::CyclePublished(completion) => {
+                    NativeStep::CyclePublishedComplete(completion)
                 }
                 step => NativeStep::ScalarText(step),
             });
@@ -366,15 +381,15 @@ impl RuntimeState {
                 }
                 step => NativeStep::DatePrototype(step),
             }),
-            NativeFunctionId::Date(kind) => self
-                .call_date_readonly_native(poisoned, host, realm, kind, invocation)
-                .map(NativeStep::Complete),
-            NativeFunctionId::PrimitivePrototypeValueOf(kind) => self
-                .call_primitive_prototype_value_of(poisoned, realm, kind, invocation)
-                .map(NativeStep::Complete),
-            NativeFunctionId::SymbolPrototypeDescription => self
-                .call_symbol_prototype_description(poisoned, realm, invocation)
-                .map(NativeStep::Complete),
+            NativeFunctionId::Date(kind) => self.call_date_readonly_native_with_publication(
+                poisoned, host, realm, kind, invocation,
+            ),
+            NativeFunctionId::PrimitivePrototypeValueOf(kind) => {
+                self.call_primitive_prototype_value_of(poisoned, realm, kind, invocation)
+            }
+            NativeFunctionId::SymbolPrototypeDescription => {
+                self.call_symbol_prototype_description(poisoned, realm, invocation)
+            }
             _ => Err(RuntimeError::Invariant(
                 "native body has not migrated to state",
             )),
@@ -392,6 +407,27 @@ impl crate::engine::api::runtime::Runtime {
     ) -> Result<Completion, RuntimeError> {
         match step {
             NativeStep::Complete(completion) => Ok(completion),
+            NativeStep::CyclePublishedComplete(completion) => {
+                let _unwind = self.unwind_guard();
+                let (value, thrown) = match completion {
+                    Completion::Return(value) => (value, false),
+                    Completion::Throw(value) => (value, true),
+                };
+                let mut state = self.0.state.borrow_mut();
+                let mut owner = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+                    &mut state,
+                    &self.0.poisoned,
+                    value,
+                );
+                let (state, owner) = owner.parts();
+                state.collect_if_requested(&self.0.gc_pressure, &self.0.poisoned)?;
+                let value = owner.take().expect("published native completion");
+                Ok(if thrown {
+                    Completion::Throw(value)
+                } else {
+                    Completion::Return(value)
+                })
+            }
             NativeStep::Math(step) => {
                 crate::engine::builtins::math::operation::finish(self, realm, step)
             }

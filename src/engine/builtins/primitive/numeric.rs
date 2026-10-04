@@ -35,6 +35,7 @@ impl NumericKind {
 }
 pub(crate) enum NumericStep {
     Complete(Completion),
+    CyclePublished(Completion),
     Number {
         value: JsValue,
         resume: NumericResume,
@@ -79,7 +80,10 @@ impl NumericStep {
             runtime.check_poison()
         };
         match self {
-            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => release(value),
+            Self::Complete(Completion::Return(value) | Completion::Throw(value))
+            | Self::CyclePublished(Completion::Return(value) | Completion::Throw(value)) => {
+                release(value)
+            }
             Self::Number { value, resume } | Self::Primitive { value, resume } => {
                 release(value)?;
                 resume.retire_at_boundary(runtime)
@@ -131,9 +135,9 @@ impl NumericStep {
                     _ => PrimitiveKind::Number,
                 };
                 match state.primitive_this_value_jsvalue(poisoned, realm, brand, this_value)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(value)));
+                    super::state::BrandedPrimitiveStep::Value(value) => value,
+                    super::state::BrandedPrimitiveStep::CyclePublishedThrow(value) => {
+                        return Ok(Self::CyclePublished(Completion::Throw(value)));
                     }
                 }
             }
@@ -144,15 +148,13 @@ impl NumericStep {
             if !matches!(brand, PrimitiveKind::Number | PrimitiveKind::BigInt)
                 || matches!(argument, JsValue::Undefined)
             {
-                return state
-                    .finish_branded_to_string(
-                        poisoned,
-                        realm,
-                        brand,
-                        payload.take().expect("scalar brand owner"),
-                        10,
-                    )
-                    .map(Self::Complete);
+                return state.finish_branded_to_string(
+                    poisoned,
+                    realm,
+                    brand,
+                    payload.take().expect("scalar brand owner"),
+                    10,
+                );
             }
         }
         let phase = match kind {
@@ -195,7 +197,8 @@ impl NumericStep {
         poisoned: &Cell<bool>,
     ) -> Result<(), RuntimeError> {
         match self {
-            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value))
+            | Self::CyclePublished(Completion::Return(value) | Completion::Throw(value)) => {
                 state.release_owned_jsvalue(poisoned, value)
             }
             Self::Number { value, resume } | Self::Primitive { value, resume } => {
@@ -275,34 +278,38 @@ impl NumericResume {
                         NativeErrorKind::Range,
                         NativeErrorMessage::from_utf8("radix must be between 2 and 36"),
                     )?;
+                    let mut output = OwnedValueGuard::new(state, poisoned, JsValue::Object(value));
+                    let (state, output) = output.parts();
                     state
                         .release_owned_jsvalue(poisoned, payload.take().expect("radix payload"))?;
-                    return Ok(NumericStep::Complete(Completion::Throw(JsValue::Object(
-                        value,
-                    ))));
+                    return Ok(NumericStep::CyclePublished(Completion::Throw(
+                        output.take().expect("radix diagnostic"),
+                    )));
                 }
                 let NumericKind::ToString(kind) = self.0.kind else {
                     return Err(RuntimeError::Invariant("scalar radix kind mismatch"));
                 };
-                state
-                    .finish_branded_to_string(
-                        poisoned,
-                        self.0.realm,
-                        kind,
-                        payload.take().expect("radix payload"),
-                        radix as u32,
-                    )
-                    .map(NumericStep::Complete)
+                state.finish_branded_to_string(
+                    poisoned,
+                    self.0.realm,
+                    kind,
+                    payload.take().expect("radix payload"),
+                    radix as u32,
+                )
             }
             Phase::Width => {
-                let bits = state.index_from_number(poisoned, self.0.realm, value);
+                let bits = state.index_from_number_with_publication(poisoned, self.0.realm, value);
                 let bits = match bits {
-                    Ok(NativeConversion::Value(bits)) => bits,
-                    Ok(NativeConversion::Throw(value)) => {
+                    Ok(crate::engine::value::conversion::IndexPrimitiveStep::Value(bits)) => bits,
+                    Ok(
+                        crate::engine::value::conversion::IndexPrimitiveStep::CyclePublishedThrow(
+                            value,
+                        ),
+                    ) => {
                         let mut output = OwnedValueGuard::new(state, poisoned, value);
                         let (state, output) = output.parts();
                         self.retire_in_state(state, poisoned)?;
-                        return Ok(NumericStep::Complete(Completion::Throw(
+                        return Ok(NumericStep::CyclePublished(Completion::Throw(
                             output.take().expect("width throw"),
                         )));
                     }
@@ -367,7 +374,7 @@ impl NumericResume {
             return Err(result.err().unwrap_or(RuntimeError::Poisoned));
         }
         state.release_owned_jsvalue(poisoned, payload.take().expect("Number format payload"))?;
-        result.map(NumericStep::Complete)
+        result
     }
     pub(crate) fn primitive(
         self,
@@ -405,7 +412,7 @@ impl NumericResume {
                 reply.take().expect("BigInt throw"),
             )));
         }
-        let result = state.bigint_from_primitive_jsvalue(
+        let result = state.bigint_from_primitive_jsvalue_with_publication(
             poisoned,
             self.0.realm,
             reply.as_ref().expect("BigInt primitive reply"),
@@ -413,11 +420,33 @@ impl NumericResume {
         if poisoned.get() {
             return Err(result.err().unwrap_or(RuntimeError::Poisoned));
         }
-        state.release_owned_jsvalue(poisoned, reply.take().expect("BigInt primitive reply"))?;
-        let value = match result? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => {
-                return Ok(NumericStep::Complete(Completion::Throw(value)));
+        let value = match result {
+            Ok(crate::engine::value::conversion::BigIntPrimitiveStep::Value(value)) => {
+                state.release_owned_jsvalue(
+                    poisoned,
+                    reply.take().expect("BigInt primitive reply"),
+                )?;
+                value
+            }
+            Ok(crate::engine::value::conversion::BigIntPrimitiveStep::CyclePublishedThrow(
+                value,
+            )) => {
+                let mut output = OwnedValueGuard::new(state, poisoned, value);
+                let (state, output) = output.parts();
+                state.release_owned_jsvalue(
+                    poisoned,
+                    reply.take().expect("BigInt primitive reply"),
+                )?;
+                return Ok(NumericStep::CyclePublished(Completion::Throw(
+                    output.take().expect("BigInt diagnostic"),
+                )));
+            }
+            Err(error) => {
+                state.release_owned_jsvalue(
+                    poisoned,
+                    reply.take().expect("BigInt primitive reply"),
+                )?;
+                return Err(error);
             }
         };
         let NumericKind::BigIntAsN(kind) = self.0.kind else {
@@ -427,18 +456,20 @@ impl NumericResume {
             BigIntAsNKind::AsUintN => value.as_uint_n(self.0.bits),
             BigIntAsNKind::AsIntN => value.as_int_n(self.0.bits),
         };
-        Ok(NumericStep::Complete(match result {
-            Ok(value) => Completion::Return(match value.as_i64() {
+        Ok(match result {
+            Ok(value) => NumericStep::Complete(Completion::Return(match value.as_i64() {
                 Some(value) => JsValue::ShortBigInt(value),
                 None => JsValue::BigInt(state.heap.allocate_bigint(value)?),
-            }),
-            Err(_) => Completion::Throw(JsValue::Object(state.new_native_error_from_message(
-                poisoned,
-                self.0.realm,
-                NativeErrorKind::Range,
-                NativeErrorMessage::from_utf8("BigInt is too large to allocate"),
-            )?)),
-        }))
+            })),
+            Err(_) => NumericStep::CyclePublished(Completion::Throw(JsValue::Object(
+                state.new_native_error_from_message(
+                    poisoned,
+                    self.0.realm,
+                    NativeErrorKind::Range,
+                    NativeErrorMessage::from_utf8("BigInt is too large to allocate"),
+                )?,
+            ))),
+        })
     }
 }
 
@@ -455,6 +486,16 @@ pub(crate) fn finish(
     loop {
         match step.step.take().expect("numeric boundary progress") {
             NumericStep::Complete(result) => return Ok(result),
+            NumericStep::CyclePublished(result) => {
+                step.step = Some(NumericStep::CyclePublished(result));
+                runtime.collect_if_requested()?;
+                let NumericStep::CyclePublished(result) =
+                    step.step.take().expect("published Numeric completion")
+                else {
+                    unreachable!()
+                };
+                return Ok(result);
+            }
             NumericStep::Number { value, resume } => {
                 // Install the resume before the fallible child conversion takes input.
                 let mut owner = NumericBoundaryGuard {

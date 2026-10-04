@@ -8,6 +8,7 @@ impl TryFrom<crate::engine::builtins::MathStep> for Step {
             use crate::engine::builtins::MathStep as T;
             match step {
                 T::Complete(result) => Self::Complete(Some(result)),
+                T::CyclePublished(result) => Self::CyclePublishedComplete(Some(result)),
                 T::Number { value, resume } => Self::Number {
                     value: Some(value),
                     resume: Some(Resume::Math(resume)),
@@ -44,6 +45,7 @@ impl TryFrom<crate::engine::builtins::NumericStep> for Step {
             use crate::engine::builtins::NumericStep as T;
             match step {
                 T::Complete(result) => Self::Complete(Some(result)),
+                T::CyclePublished(result) => Self::CyclePublishedComplete(Some(result)),
                 T::Number { value, resume } => Self::Number {
                     value: Some(value),
                     resume: Some(Resume::Numeric(resume)),
@@ -65,6 +67,7 @@ impl TryFrom<crate::engine::builtins::ScalarTextStep> for Step {
             use crate::engine::builtins::ScalarTextStep as T;
             match step {
                 T::Complete(result) => Self::Complete(Some(result)),
+                T::CyclePublished(result) => Self::CyclePublishedComplete(Some(result)),
                 T::Number { value, resume } => Self::Number {
                     value: Some(value),
                     resume: Some(Resume::ScalarText(resume)),

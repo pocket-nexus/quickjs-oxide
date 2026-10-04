@@ -25,6 +25,7 @@ pub(super) fn primitive(
                 | Step::Primitive { .. }
                 | Step::String { .. }
                 | Step::StringReply { .. }
+                | Step::CyclePublishedStringReply { .. }
                 | Step::Number { .. }
                 | Step::PrimitiveProgress(_)
                 | Step::NumberProgress(_)

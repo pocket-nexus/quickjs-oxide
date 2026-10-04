@@ -111,6 +111,9 @@ impl TryFrom<crate::engine::builtins::continuation::NativeStep> for Step {
                 NativeStep::Property(step) => step.try_into()?,
                 NativeStep::String(step) => step.try_into()?,
                 NativeStep::Complete(result) => Self::Complete(Some(result)),
+                NativeStep::CyclePublishedComplete(result) => {
+                    Self::CyclePublishedComplete(Some(result))
+                }
                 NativeStep::Definitions(step) => step.try_into()?,
                 NativeStep::Predicate(step) => step.try_into()?,
             }

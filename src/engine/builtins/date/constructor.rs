@@ -63,15 +63,20 @@ impl Runtime {
 
     fn call_date_now(&self, realm: ContextId) -> Result<Completion, RuntimeError> {
         let _unwind = self.unwind_guard();
-        self.0.state.borrow_mut().call_date_readonly_native(
-            &self.0.poisoned,
-            self.0.host_services.as_ref(),
-            realm,
-            DateNativeKind::Now,
-            &NativeInvocation::Call {
-                this_value: JsValue::Undefined,
-            },
-        )
+        let step = self
+            .0
+            .state
+            .borrow_mut()
+            .call_date_readonly_native_with_publication(
+                &self.0.poisoned,
+                self.0.host_services.as_ref(),
+                realm,
+                DateNativeKind::Now,
+                &NativeInvocation::Call {
+                    this_value: JsValue::Undefined,
+                },
+            )?;
+        self.finish_state_native_body_step(realm, step)
     }
 
     fn genuine_date_value(&self, value: &JsValue) -> Result<Option<f64>, RuntimeError> {

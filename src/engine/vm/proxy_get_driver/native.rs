@@ -247,7 +247,10 @@ pub(super) fn begin_synchronous_owned(
                 .expect("prepared native invocation owner"),
             &call.activation.arguments,
         )? {
-            super::super::call::NativeInvocationAdaptation::Complete(result) => result,
+            super::super::call::NativeInvocationAdaptation::Complete(result)
+            | super::super::call::NativeInvocationAdaptation::CyclePublishedComplete(result) => {
+                result
+            }
             super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
                 // Keep changed-protocol owners guarded through body unwinding;
                 // unchanged protocols borrow the prepared invocation.
@@ -700,7 +703,8 @@ pub(super) fn begin_local_owned<'a>(
         )
         .map_err(runtime_error_to_vm_error)?
     {
-        super::super::call::NativeInvocationAdaptation::Complete(result) => {
+        super::super::call::NativeInvocationAdaptation::Complete(result)
+        | super::super::call::NativeInvocationAdaptation::CyclePublishedComplete(result) => {
             Ok(Some(NativeInvokeOutcome::Completion(result)))
         }
         super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
@@ -1195,7 +1199,8 @@ pub(super) fn begin_published_into<'a>(
         )
         .map_err(runtime_error_to_vm_error)?
     {
-        super::super::call::NativeInvocationAdaptation::Complete(result) => {
+        super::super::call::NativeInvocationAdaptation::Complete(result)
+        | super::super::call::NativeInvocationAdaptation::CyclePublishedComplete(result) => {
             Ok(Some(NativeInvokeOutcome::Completion(result)))
         }
         super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {
@@ -1310,7 +1315,8 @@ pub(super) fn compact_array_next_into<'a>(
         &call.invocation,
         &call.activation.arguments,
     )? {
-        super::super::call::NativeInvocationAdaptation::Complete(result) => {
+        super::super::call::NativeInvocationAdaptation::Complete(result)
+        | super::super::call::NativeInvocationAdaptation::CyclePublishedComplete(result) => {
             Ok(Some(NativeInvokeOutcome::Completion(result)))
         }
         super::super::call::NativeInvocationAdaptation::Invoke(invocation) => {

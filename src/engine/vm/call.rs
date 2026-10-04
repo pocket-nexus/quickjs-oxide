@@ -849,6 +849,11 @@ impl Runtime {
                 NativeInvocationAdaptation::Complete(result) => Ok(
                     crate::engine::builtins::continuation::NativeStep::Complete(result),
                 ),
+                NativeInvocationAdaptation::CyclePublishedComplete(result) => Ok(
+                    crate::engine::builtins::continuation::NativeStep::CyclePublishedComplete(
+                        result,
+                    ),
+                ),
                 NativeInvocationAdaptation::Invoke(invocation) => {
                     let result = state.dispatch_state_native_body(
                         &self.0.poisoned,
@@ -1053,6 +1058,7 @@ impl AdaptedNativeInvocation<'_> {
 pub(crate) enum NativeInvocationAdaptation<I = NativeInvocation> {
     Invoke(I),
     Complete(Completion),
+    CyclePublishedComplete(Completion),
 }
 
 /// Result of invoking one native function before the public call adapter has

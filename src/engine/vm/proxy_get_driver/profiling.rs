@@ -38,7 +38,9 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::ArrayCopy { .. } => "query_dispatch.step.array_copy",
         Step::OrdinaryInstance { .. } => "query_dispatch.step.ordinary_instance",
         Step::ParseIterator { .. } => "query_dispatch.step.parse_iterator",
-        Step::StringReply { .. } => "query_dispatch.step.string_reply",
+        Step::StringReply { .. } | Step::CyclePublishedStringReply { .. } => {
+            "query_dispatch.step.string_reply"
+        }
         Step::String { .. } => "query_dispatch.step.string",
         Step::ObjectTag { .. } => "query_dispatch.step.object_tag",
         Step::RegExpExec { .. } => "query_dispatch.step.reg_exp_exec",
@@ -114,6 +116,7 @@ pub(super) fn record_dispatch(step: &Step) {
     let resume = match step {
         Step::NumberReply { resume, .. }
         | Step::StringReply { resume, .. }
+        | Step::CyclePublishedStringReply { resume, .. }
         | Step::PrimitiveReply { resume, .. }
         | Step::CyclePublishedPrimitiveReply { resume, .. }
         | Step::RawRead { resume, .. }

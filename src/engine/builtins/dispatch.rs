@@ -375,13 +375,27 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<NativeInvocationAdaptation, RuntimeError> {
         let _unwind = self.unwind_guard();
-        self.0.state.borrow_mut().adapt_native_invocation(
+        let adapted = self.0.state.borrow_mut().adapt_native_invocation(
             &self.0.poisoned,
             target,
             realm,
             invocation,
             arguments,
-        )
+        )?;
+        match adapted {
+            NativeInvocationAdaptation::CyclePublishedComplete(value) => {
+                // This compatibility boundary owns the real diagnostic before
+                // consuming its publication fact through the shared adapter.
+                self.finish_state_native_body_step(
+                    realm,
+                    crate::engine::builtins::continuation::NativeStep::CyclePublishedComplete(
+                        value,
+                    ),
+                )
+                .map(NativeInvocationAdaptation::Complete)
+            }
+            adapted => Ok(adapted),
+        }
     }
 
     pub(crate) fn adapt_native_invocation_borrowed<'a>(
@@ -392,13 +406,27 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<NativeInvocationAdaptation<AdaptedNativeInvocation<'a>>, RuntimeError> {
         let _unwind = self.unwind_guard();
-        self.0.state.borrow_mut().adapt_native_invocation_borrowed(
+        let adapted = self.0.state.borrow_mut().adapt_native_invocation_borrowed(
             &self.0.poisoned,
             target,
             realm,
             invocation,
             arguments,
-        )
+        )?;
+        match adapted {
+            NativeInvocationAdaptation::CyclePublishedComplete(value) => {
+                // This compatibility boundary owns the real diagnostic before
+                // consuming its publication fact through the shared adapter.
+                self.finish_state_native_body_step(
+                    realm,
+                    crate::engine::builtins::continuation::NativeStep::CyclePublishedComplete(
+                        value,
+                    ),
+                )
+                .map(NativeInvocationAdaptation::Complete)
+            }
+            adapted => Ok(adapted),
+        }
     }
 
     pub(crate) fn dispatch_native_iterator_next_raw(
@@ -410,7 +438,8 @@ impl Runtime {
     ) -> Result<NativeInvokeOutcome, RuntimeError> {
         let invocation = match self.adapt_native_invocation(target, realm, invocation, arguments)? {
             NativeInvocationAdaptation::Invoke(invocation) => invocation,
-            NativeInvocationAdaptation::Complete(completion) => {
+            NativeInvocationAdaptation::Complete(completion)
+            | NativeInvocationAdaptation::CyclePublishedComplete(completion) => {
                 return Ok(NativeInvokeOutcome::Completion(completion));
             }
         };
@@ -448,7 +477,10 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let invocation = match self.adapt_native_invocation(target, realm, invocation, arguments)? {
             NativeInvocationAdaptation::Invoke(invocation) => invocation,
-            NativeInvocationAdaptation::Complete(completion) => return Ok(completion),
+            NativeInvocationAdaptation::Complete(completion)
+            | NativeInvocationAdaptation::CyclePublishedComplete(completion) => {
+                return Ok(completion);
+            }
         };
         self.dispatch_adapted_native_function(callable, target, realm, invocation, arguments)
     }

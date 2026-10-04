@@ -57,6 +57,8 @@ mod iterator;
 mod json;
 mod map;
 mod math;
+#[cfg(test)]
+pub(crate) use math::operation::MathKind;
 mod object;
 
 pub(crate) use object::definitions::{DefinitionsResume, DefinitionsStep};

@@ -52,11 +52,16 @@ impl RuntimeState {
                 self.intern_property_key_string_id(*id)?,
             ));
         }
-        match self.string_from_primitive_jsvalue(poisoned, realm, value)? {
-            NativeConversion::Value(text) => Ok(PropertyKeyAtomStep::Value(
+        match self.string_from_primitive_jsvalue_with_publication(poisoned, realm, value)? {
+            super::StringPrimitiveStep::Value(text) => Ok(PropertyKeyAtomStep::Value(
                 self.intern_property_key_js_string(&text)?,
             )),
-            NativeConversion::Throw(value) => Ok(PropertyKeyAtomStep::CyclePublishedThrow(value)),
+            super::StringPrimitiveStep::CyclePublishedThrow(value) => {
+                Ok(PropertyKeyAtomStep::CyclePublishedThrow(value))
+            }
+            super::StringPrimitiveStep::Throw(_) => {
+                unreachable!("primitive suffix cannot propagate a child throw")
+            }
         }
     }
 

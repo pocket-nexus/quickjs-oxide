@@ -220,8 +220,8 @@ impl DatePrototypeStep {
         }
         let (object, value) =
             match state.date_this_time_value_jsvalue(poisoned, realm, this_value)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => {
+                super::super::state::DateThisStep::Value(value) => value,
+                super::super::state::DateThisStep::CyclePublishedThrow(value) => {
                     return Ok(Self::CyclePublished(Completion::Throw(value)));
                 }
             };

@@ -92,8 +92,17 @@ fn scalar_text_state_all_eight_selectors_complete_object_receiver_protocol() {
             }
             step => step,
         };
-        let ScalarTextStep::Complete(Completion::Return(value)) = step else {
-            panic!("scalar completion");
+        let value = match (kind, step) {
+            (
+                ScalarTextKind::Iterator,
+                ScalarTextStep::CyclePublished(Completion::Return(value)),
+            ) => value,
+            (kind, ScalarTextStep::Complete(Completion::Return(value)))
+                if !matches!(kind, ScalarTextKind::Iterator) =>
+            {
+                value
+            }
+            _ => panic!("only the iterator publishes a collectible scalar completion"),
         };
         match (&kind, &value) {
             (ScalarTextKind::CharAt(_), JsValue::String(id)) => {

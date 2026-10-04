@@ -285,6 +285,11 @@ pub(in crate::engine::vm) struct PreparedNativeBoundary {
 }
 
 pub(in crate::engine::vm) enum Step {
+    /// A fresh ToString diagnostic plus its still-owned concrete parent.
+    CyclePublishedStringReply {
+        value: Option<NativeConversion<crate::engine::value::JsString>>,
+        resume: Option<Resume>,
+    },
     StringReply {
         value: Option<NativeConversion<crate::engine::value::JsString>>,
         resume: Option<Resume>,
@@ -677,6 +682,7 @@ impl Step {
             | Self::NumberProgress(Some(_))
             | Self::NumberReply { .. }
             | Self::StringReply { .. }
+            | Self::CyclePublishedStringReply { .. }
             | Self::PrimitiveReply { .. }
             | Self::CyclePublishedPrimitiveReply { .. }
             | Self::RawRead { .. }
@@ -724,7 +730,8 @@ impl Step {
                     value.resume.release_owned(runtime);
                 }
             }
-            Self::StringReply { value, resume } => {
+            Self::StringReply { value, resume }
+            | Self::CyclePublishedStringReply { value, resume } => {
                 if let Some(NativeConversion::Throw(value)) = value {
                     release(value);
                 }
@@ -1817,13 +1824,21 @@ impl Resume {
         };
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("tostring_state_reply");
-        let result = state.finish_string_value(poisoned, *realm, completion)?;
+        let result = state.finish_string_value_with_publication(poisoned, *realm, completion)?;
         let Self::StringValue { resume, .. } = std::mem::replace(self, Self::Identity) else {
             unreachable!()
         };
-        Ok(Step::StringReply {
-            value: Some(result),
-            resume: Some(*resume),
+        Ok(match result {
+            crate::engine::value::conversion::StringPrimitiveStep::CyclePublishedThrow(value) => {
+                Step::CyclePublishedStringReply {
+                    value: Some(NativeConversion::Throw(value)),
+                    resume: Some(*resume),
+                }
+            }
+            result => Step::StringReply {
+                value: Some(result.into_conversion()),
+                resume: Some(*resume),
+            },
         })
     }
     pub(super) fn can_string_in_state(&self) -> bool {

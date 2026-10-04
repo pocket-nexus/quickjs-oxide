@@ -34,6 +34,8 @@ mod native_owner_tests;
 #[cfg(feature = "profiling")]
 mod profiling;
 mod request;
+#[cfg(test)]
+mod resident_publication_tests;
 mod state;
 mod storage;
 use native::start_into as native_scope;
@@ -1936,6 +1938,7 @@ fn advance_inner(
                     | Step::PrimitiveReply { .. }
                     | Step::NumberReply { .. }
                     | Step::StringReply { .. }
+                    | Step::CyclePublishedStringReply { .. }
                     | Step::RawCall { .. }
             )
         {
@@ -2020,6 +2023,7 @@ fn advance_inner(
             | Step::PrimitiveProgress(_)
             | Step::NumberProgress(_)
             | Step::StringReply { .. }
+            | Step::CyclePublishedStringReply { .. }
             | Step::String { .. }
             | Step::OrdinaryPrimitive { .. }
             | Step::Arguments { .. }
