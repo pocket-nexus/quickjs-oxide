@@ -1,5 +1,14 @@
 use super::*;
 
+/// Object publication may succeed before weak-registry linking fails. A state
+/// caller must distinguish that case from rejected preparation before running
+/// temporary-owner cleanup.
+#[derive(Debug)]
+pub(crate) struct ObjectAllocationError {
+    pub(crate) error: HeapError,
+    pub(crate) published: bool,
+}
+
 impl Heap {
     /// Allocate and publish a shape, retaining its prototype edge.
     ///
@@ -30,6 +39,14 @@ impl Heap {
     /// The caller owns one returned object reference and must eventually call
     /// [`Heap::release_object`].
     pub fn allocate_object(&mut self, object: ObjectData) -> Result<ObjectId, HeapError> {
+        self.allocate_object_with_status(object)
+            .map_err(|failure| failure.error)
+    }
+
+    pub(crate) fn allocate_object_with_status(
+        &mut self,
+        object: ObjectData,
+    ) -> Result<ObjectId, ObjectAllocationError> {
         if matches!(
             &object.payload,
             ObjectPayload::NativeFunction {
@@ -37,11 +54,14 @@ impl Heap {
                 ..
             }
         ) {
-            return Err(HeapError::Invariant(
-                "an unbound native function may only be allocated during realm bootstrap",
-            ));
+            return Err(ObjectAllocationError {
+                error: HeapError::Invariant(
+                    "an unbound native function may only be allocated during realm bootstrap",
+                ),
+                published: false,
+            });
         }
-        self.allocate_object_inner(object)
+        self.allocate_object_inner_with_status(object)
     }
 
     /// Allocate a genuine WeakRef behind the runtime intrinsic surface. The
@@ -105,7 +125,14 @@ impl Heap {
         &mut self,
         object: ObjectData,
     ) -> Result<ObjectId, HeapError> {
-        self.validate_object_layout(&object)?;
+        self.allocate_object_inner_with_status(object)
+            .map_err(|failure| failure.error)
+    }
+
+    fn allocate_object_inner_with_status(
+        &mut self,
+        object: ObjectData,
+    ) -> Result<ObjectId, ObjectAllocationError> {
         let is_weak_object = matches!(
             &object.payload,
             ObjectPayload::WeakMap { .. }
@@ -113,16 +140,26 @@ impl Heap {
                 | ObjectPayload::WeakRef { .. }
                 | ObjectPayload::FinalizationRegistry(_)
         );
-        let (index, generation) = self.reserve(HeapNodeKind::Object)?;
+        let prepared = (|| {
+            self.validate_object_layout(&object)?;
+            let (index, generation) = self.reserve(HeapNodeKind::Object)?;
+            let edges = object_edges(&object);
+            if let Err(error) = self.retain_edges_transactionally(&edges) {
+                self.abort_initializing(index)?;
+                return Err(error);
+            }
+            Ok((index, generation))
+        })();
+        let (index, generation) = prepared.map_err(|error| ObjectAllocationError {
+            error,
+            published: false,
+        })?;
         let id = ObjectId { index, generation };
-        let edges = object_edges(&object);
-
-        if let Err(error) = self.retain_edges_transactionally(&edges) {
-            self.abort_initializing(index)?;
-            return Err(error);
-        }
-
-        self.publish(index, NodeData::Object(object))?;
+        self.publish(index, NodeData::Object(object))
+            .map_err(|error| ObjectAllocationError {
+                error,
+                published: false,
+            })?;
         #[cfg(debug_assertions)]
         if super::ownership::trace_object_matches(id) {
             eprintln!(
@@ -131,7 +168,11 @@ impl Heap {
             );
         }
         if is_weak_object {
-            self.link_weak_object(id)?;
+            self.link_weak_object(id)
+                .map_err(|error| ObjectAllocationError {
+                    error,
+                    published: true,
+                })?;
         }
         Ok(id)
     }
@@ -1391,5 +1432,50 @@ impl Heap {
         self.var_refs.publish(id, var_ref)?;
         self.record_cycle_allocation();
         Ok(id)
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    #[test]
+    fn checked_object_allocation_rejection_does_not_publish() {
+        let mut heap = Heap::new();
+        let shape = heap
+            .allocate_shape(crate::engine::object::shape::Shape::new(None, []).unwrap())
+            .unwrap();
+        heap.set_strong_count_for_test(RawId::Shape(shape), u32::MAX);
+        let before = heap.counts();
+        let failure = heap
+            .allocate_object_with_status(ObjectData::ordinary(shape, Vec::new()))
+            .unwrap_err();
+        assert!(!failure.published);
+        assert!(matches!(failure.error, HeapError::Overflow { .. }));
+        assert_eq!(heap.counts().object_nodes, before.object_nodes);
+        assert_eq!(heap.counts().initializing, before.initializing);
+        assert_eq!(heap.shape_strong_count(shape), Ok(u32::MAX));
+    }
+
+    #[test]
+    fn weak_registry_failure_reports_the_published_object() {
+        let mut heap = Heap::new();
+        let shape = heap
+            .allocate_shape(crate::engine::object::shape::Shape::new(None, []).unwrap())
+            .unwrap();
+        heap.allocate_object(ObjectData::weak_map(shape, Vec::new()))
+            .unwrap();
+        heap.weak_head = None;
+        let before = heap.counts();
+        let failure = heap
+            .allocate_object_with_status(ObjectData::weak_map(shape, Vec::new()))
+            .unwrap_err();
+        assert!(failure.published);
+        assert_eq!(
+            failure.error,
+            HeapError::Invariant("weak-collection registry endpoints disagreed")
+        );
+        assert_eq!(heap.counts().object_nodes, before.object_nodes + 1);
+        assert_eq!(heap.counts().initializing, before.initializing);
     }
 }
