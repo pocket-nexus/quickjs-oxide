@@ -11,9 +11,10 @@ use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::atom::PropertyKeyKind;
+use crate::engine::atom::{Atom, PropertyKeyKind};
 use crate::engine::builtins::CanonicalNumericIndex;
-use crate::engine::heap::{ContextId, ObjectPayload, ProxyData};
+use crate::engine::heap::runtime::RuntimeState;
+use crate::engine::heap::{ContextId, ObjectId, ObjectPayload, ProxyData};
 use crate::engine::object::operations::{
     InternalDefineResult, InternalSetResult, PropertyDefineOutcome, PropertySetAction,
 };
@@ -109,10 +110,67 @@ impl Drop for ProxyMethodStackGuard {
 // Selection preserves IntegerIndexedElementSet's conversion/fallthrough split.
 // A different valid receiver needs its original descriptor path; ignored
 // canonical indices do not convert the supplied value.
-enum TypedSetSelection {
+/// Exact integer-index Set choice. A shared descriptor read is a genuine
+/// backing mutex effect and must leave the selecting State lease once.
+pub(super) enum SelectedTypedSet {
     Decline,
     Ignore,
-    Element(Option<u64>),
+    Element {
+        index: Option<u64>,
+        element: crate::engine::builtins::native::TypedArrayElementKind,
+    },
+    SharedDecline(crate::engine::builtins::SharedTypedOwnWord),
+}
+
+impl RuntimeState {
+    pub(super) fn select_typed_array_set(
+        &mut self,
+        object: ObjectId,
+        atom: Atom,
+        receiver: &JsValue,
+    ) -> Result<SelectedTypedSet, RuntimeError> {
+        let key = self.typed_own_key(atom)?;
+        let numeric = self.typed_canonical_numeric_index(atom, key)?;
+        self.select_typed_array_set_from_index(object, numeric, receiver)
+    }
+
+    /// Both the admitted raw Set caller and the public spelling-admission
+    /// adapter use this sole receiver/index/storage choice.
+    fn select_typed_array_set_from_index(
+        &mut self,
+        object: ObjectId,
+        numeric: Option<CanonicalNumericIndex>,
+        receiver: &JsValue,
+    ) -> Result<SelectedTypedSet, RuntimeError> {
+        let Some(numeric) = numeric else {
+            return Ok(SelectedTypedSet::Decline);
+        };
+        let same_receiver = matches!(receiver, JsValue::Object(id) if *id == object);
+        if same_receiver {
+            let ObjectPayload::TypedArray(data) = &self.heap.object(object)?.payload else {
+                return Err(RuntimeError::Invariant(
+                    "validated TypedArray lost its class payload",
+                ));
+            };
+            return Ok(SelectedTypedSet::Element {
+                index: match numeric {
+                    CanonicalNumericIndex::Valid(index) => Some(index),
+                    CanonicalNumericIndex::Invalid => None,
+                },
+                element: data.element,
+            });
+        }
+        if let CanonicalNumericIndex::Valid(index) = numeric {
+            return Ok(match self.select_typed_own_property(object, index)? {
+                crate::engine::builtins::TypedOwnProperty::Missing => SelectedTypedSet::Ignore,
+                crate::engine::builtins::TypedOwnProperty::Word(_) => SelectedTypedSet::Decline,
+                crate::engine::builtins::TypedOwnProperty::Shared(word) => {
+                    SelectedTypedSet::SharedDecline(word)
+                }
+            });
+        }
+        Ok(SelectedTypedSet::Ignore)
+    }
 }
 
 impl Runtime {
@@ -817,17 +875,18 @@ impl Runtime {
         value: JsValue,
         receiver: JsValue,
     ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
-        let mut step = super::ordinary::SetStep::start(
+        let mut step = super::ordinary::SetStep::start_borrowed(
             self,
             Some(realm),
-            object.try_clone()?,
-            key.try_clone()?,
+            object,
+            key,
             value,
             receiver,
         )?;
         let action = loop {
             match step {
-                super::ordinary::SetStep::Complete(action) => break action,
+                super::ordinary::SetStep::Complete(action)
+                | super::ordinary::SetStep::CyclePublishedComplete(action) => break action,
                 request => step = request.finish_sync(self)?,
             }
         };
@@ -841,9 +900,10 @@ impl Runtime {
                 Ok(NativeConversion::Value(InternalSetResult::Rejected(reason)))
             }
             PropertySetAction::Call { payload } => {
-                let (setter, receiver, argument) = payload.into_parts();
-
+                // The finite boundary payload protects both raw inputs until
+                // admission succeeds; canonical call admission then owns them.
                 let _operation = self.operation()?;
+                let (setter, receiver, argument) = payload.into_parts();
                 match self.call_internal_jsvalue(realm, &setter, receiver, vec![argument])? {
                     Completion::Return(value) => {
                         self.release_jsvalue(value)?;
@@ -853,95 +913,6 @@ impl Runtime {
                 }
             }
         }
-    }
-
-    pub(crate) fn prepare_typed_array_set(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        value: &JsValue,
-        receiver: &JsValue,
-    ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
-        self.prepare_typed_array_set_in_realm(None, object, key, value, receiver)
-    }
-
-    pub(crate) fn prepare_typed_array_set_in_realm(
-        &self,
-        _realm: Option<ContextId>,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        value: &JsValue,
-        receiver: &JsValue,
-    ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
-        use crate::engine::builtins::TypedWriteStep;
-        match self.select_typed_array_set(object, key, receiver)? {
-            TypedSetSelection::Decline => Ok(None),
-            TypedSetSelection::Ignore => Ok(Some(TypedWriteStep::Complete(
-                NativeConversion::Value(true),
-            ))),
-            TypedSetSelection::Element(index) => {
-                if let Some(realm) = _realm
-                    && !matches!(value, JsValue::Object(_))
-                {
-                    return TypedWriteStep::set_primitive(self, realm, object, index, value)
-                        .map(Some);
-                }
-                TypedWriteStep::set(self, object.try_clone()?, index, self.dup_jsvalue(value)?)
-                    .map(Some)
-            }
-        }
-    }
-
-    pub(crate) fn try_typed_array_set_primitive(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        value: &JsValue,
-        receiver: &JsValue,
-    ) -> Result<Option<NativeConversion<bool>>, RuntimeError> {
-        if matches!(value, JsValue::Object(_)) {
-            return Err(RuntimeError::Invariant(
-                "primitive typed Set received an object",
-            ));
-        }
-        match self.select_typed_array_set(object, key, receiver)? {
-            TypedSetSelection::Decline => Ok(None),
-            TypedSetSelection::Ignore => Ok(Some(NativeConversion::Value(true))),
-            TypedSetSelection::Element(index) => {
-                crate::engine::builtins::TypedWriteStep::set_primitive_result(
-                    self, realm, object, index, value,
-                )
-                .map(Some)
-            }
-        }
-    }
-
-    fn select_typed_array_set(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        receiver: &JsValue,
-    ) -> Result<TypedSetSelection, RuntimeError> {
-        let Some(numeric) = self.typed_array_canonical_numeric_index(key)? else {
-            return Ok(TypedSetSelection::Decline);
-        };
-        let same_receiver =
-            matches!(receiver, JsValue::Object(receiver) if *receiver == object.object_id());
-        if same_receiver {
-            return Ok(TypedSetSelection::Element(match numeric {
-                CanonicalNumericIndex::Valid(index) => Some(index),
-                CanonicalNumericIndex::Invalid => None,
-            }));
-        }
-        if let CanonicalNumericIndex::Valid(index) = numeric
-            && self
-                .typed_array_get_index_descriptor(object, index)?
-                .is_some()
-        {
-            return Ok(TypedSetSelection::Decline);
-        }
-        Ok(TypedSetSelection::Ignore)
     }
 
     pub(super) fn proxy_set(

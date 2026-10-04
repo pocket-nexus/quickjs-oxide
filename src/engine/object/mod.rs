@@ -370,6 +370,12 @@ impl PropertyKey {
         Self(AtomOwner::from_owned_handle(runtime, atom))
     }
 
+    /// Transfer this admitted key's owned edge to finite execution storage.
+    #[must_use]
+    pub(crate) fn into_atom(self) -> Atom {
+        self.0.into_atom()
+    }
+
     /// Promote one borrowed, kind-validated atom reference.
     pub(crate) fn from_borrowed_atom(runtime: Runtime, atom: Atom) -> Result<Self, AtomError> {
         AtomOwner::from_borrowed_handle(runtime, atom).map(Self)
@@ -1150,7 +1156,7 @@ pub(crate) use internal_methods::{
     ProxyDefineResume, ProxyDefineStep, ProxySetResume, ProxySetStep,
 };
 
-pub(crate) use ordinary::{SetResume, SetStep, set_completion};
+pub(crate) use ordinary::{SetAction, SetProgress, SetResume, SetStep, SetWait, set_completion};
 
 mod array_length;
 
@@ -1163,4 +1169,5 @@ pub(crate) use internal_methods::{KeysResume, KeysStep};
 
 pub(crate) use internal_methods::{ProxyConstructResume, ProxyConstructStep};
 
+pub(crate) mod delete;
 mod dense_mutation;

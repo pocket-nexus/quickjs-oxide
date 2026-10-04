@@ -6,6 +6,43 @@ use crate::engine::object::operations::ArrayLengthConversion;
 use crate::engine::value::Value;
 use crate::engine::value::{JsValue, conversion::NativeConversion};
 
+/// The callback-free initial conversion selected from a still-owned input.
+/// Invalid lengths retain their actual diagnostic boundary; Number requests
+/// retain the original input for the two observable ToNumbers.
+#[derive(Clone, Copy)]
+pub(crate) enum InitialArrayLength {
+    Length(u32),
+    Invalid,
+    Number,
+}
+impl InitialArrayLength {
+    pub(crate) fn select(value: &JsValue) -> Self {
+        match value {
+            JsValue::Int(value) if *value >= 0 => Self::Length(*value as u32),
+            JsValue::Bool(value) => Self::Length(u32::from(*value)),
+            JsValue::Null => Self::Length(0),
+            JsValue::Float(value) => {
+                validated_array_length_number(*value, None).map_or(Self::Invalid, Self::Length)
+            }
+            JsValue::Int(_) => Self::Invalid,
+            _ => Self::Number,
+        }
+    }
+}
+
+pub(super) fn validated_array_length_number(
+    value: f64,
+    expected_uint32: Option<u32>,
+) -> Option<u32> {
+    if value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0 {
+        let length = value as u32;
+        if expected_uint32.is_none_or(|expected| expected == length) {
+            return Some(length);
+        }
+    }
+    None
+}
+
 pub(crate) enum ArrayLengthStep {
     Complete(ArrayLengthConversion),
     Number {
@@ -45,17 +82,22 @@ impl ArrayLengthStep {
         realm: Option<ContextId>,
         value: JsValue,
     ) -> Result<Self, RuntimeError> {
-        Ok(match value {
-            JsValue::Int(value) if value >= 0 => {
-                Self::Complete(ArrayLengthConversion::Length(value as u32))
+        let initial = InitialArrayLength::select(&value);
+        Self::start_selected(runtime, realm, value, initial)
+    }
+
+    pub(crate) fn start_selected(
+        runtime: &Runtime,
+        realm: Option<ContextId>,
+        value: JsValue,
+        initial: InitialArrayLength,
+    ) -> Result<Self, RuntimeError> {
+        Ok(match initial {
+            InitialArrayLength::Length(length) => {
+                Self::Complete(ArrayLengthConversion::Length(length))
             }
-            JsValue::Bool(value) => Self::Complete(ArrayLengthConversion::Length(u32::from(value))),
-            JsValue::Null => Self::Complete(ArrayLengthConversion::Length(0)),
-            JsValue::Float(value) => {
-                Self::Complete(runtime.validate_array_length_number(realm, value, None)?)
-            }
-            JsValue::Int(_) => Self::Complete(runtime.invalid_array_length(realm)?),
-            value => {
+            InitialArrayLength::Invalid => Self::Complete(runtime.invalid_array_length(realm)?),
+            InitialArrayLength::Number => {
                 let resume = ArrayLengthResume(Box::new(ArrayLengthResumeState {
                     runtime: runtime.clone(),
                     realm,

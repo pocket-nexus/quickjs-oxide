@@ -299,22 +299,39 @@ impl Query {
 }
 
 impl Finish {
-    pub(in crate::engine::vm) fn retire_computed_in_state(
+    pub(in crate::engine::vm) fn retire_owned_in_state(
         &mut self,
         state: &mut RuntimeState,
         poisoned: &Cell<bool>,
     ) -> Result<(), RuntimeError> {
-        if let Self::ComputedRead(input) = self {
-            input.retire_in_state(state, poisoned)?;
+        match self {
+            Self::ComputedRead(input) => input.retire_in_state(state, poisoned)?,
+            Self::ResidentWrite { key_owner, .. } => {
+                if let Some(atom) = key_owner.take() {
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        JsValue::Symbol(AtomIdx::from_raw(atom.raw())),
+                    )?;
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
-    pub(super) fn retire_computed_at_boundary(
+    pub(super) fn retire_owned_at_boundary(
         &mut self,
         runtime: &Runtime,
     ) -> Result<(), RuntimeError> {
-        if let Self::ComputedRead(input) = self {
-            input.retire_at_boundary(runtime)?;
+        match self {
+            Self::ComputedRead(input) => input.retire_at_boundary(runtime)?,
+            Self::ResidentWrite { key_owner, .. } => {
+                runtime.check_poison()?;
+                if let Some(atom) = key_owner.take() {
+                    runtime.release_jsvalue(JsValue::Symbol(AtomIdx::from_raw(atom.raw())))?;
+                    runtime.check_poison()?;
+                }
+            }
+            _ => {}
         }
         Ok(())
     }

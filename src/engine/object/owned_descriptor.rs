@@ -294,6 +294,22 @@ impl OwnedCompletePropertyDescriptor {
             CompletePropertyDescriptor::Accessor { .. } => None,
         }
     }
+    /// Transfer the already-owned descriptor at an actual boundary. Invoke
+    /// before acquiring State so the emptied Runtime adapter drops outside it.
+    pub(crate) fn into_owned_record(
+        mut self,
+    ) -> super::property::CompletePropertyDescriptor<RawValue> {
+        std::mem::replace(
+            &mut self.record,
+            super::property::CompletePropertyDescriptor::Accessor {
+                get: None,
+                set: None,
+                enumerable: false,
+                configurable: false,
+            },
+        )
+    }
+
     pub(crate) fn configurable(&self) -> bool {
         self.record.configurable()
     }

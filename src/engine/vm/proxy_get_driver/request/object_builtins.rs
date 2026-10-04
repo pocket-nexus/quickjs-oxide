@@ -340,7 +340,7 @@ impl TryFrom<crate::engine::builtins::ObjectIterationStep> for Step {
                     let object = resume.take_push_object();
                     let value = resume.take_push_value();
                     Self::ArrayPush {
-                        object: Some(object),
+                        object: Some(object.into_handle()),
                         value: Some(value),
                         resume: Some(Resume::ObjectIteration(resume)),
                     }

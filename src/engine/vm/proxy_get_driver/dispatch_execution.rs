@@ -126,6 +126,37 @@ pub(super) fn finish(
                     | Finish::Numeric(depth)
                     | Finish::Write { depth, .. }
                     | Finish::Discard(depth) => (depth, false),
+                    Finish::ResidentWrite {
+                        key_owner, depth, ..
+                    } => {
+                        // The completion stays armed while its last computed
+                        // key edge retires; fatal cleanup wins before placement.
+                        let mut reply = super::native::NativeStepGuard::new(
+                            runtime,
+                            Step::Complete(completion.take()),
+                        );
+                        if let Some(atom) = key_owner {
+                            runtime
+                                .release_jsvalue(JsValue::Symbol(
+                                    crate::engine::atom::AtomIdx::from_raw(atom.raw()),
+                                ))
+                                .map_err(runtime_error_to_vm_error)?;
+                            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+                        }
+                        let Step::Complete(value) = &mut *reply else {
+                            unreachable!()
+                        };
+                        return super::finish_instruction_call_with_continuation::<true>(
+                            runtime,
+                            execution,
+                            owner,
+                            value.take().expect("resident Set result"),
+                            false,
+                            depth,
+                        )
+                        .map(Progress::Call)
+                        .map(Next::Done);
+                    }
                     Finish::PropertyRead(depth) => (depth, true),
                     Finish::Call { depth, tail } => {
                         return super::finish_call_instruction(

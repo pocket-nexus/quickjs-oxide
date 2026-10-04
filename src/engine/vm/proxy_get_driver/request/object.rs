@@ -252,67 +252,7 @@ impl TryFrom<crate::engine::object::ProxyCallStep> for Step {
 impl TryFrom<SetStep> for Step {
     type Error = crate::engine::api::RuntimeError;
     fn try_from(step: SetStep) -> Result<Self, Self::Error> {
-        Ok({
-            match step {
-                SetStep::Complete(action) => Self::SetComplete(Some(action)),
-                SetStep::Continue { resume } => Self::SetContinue(Some(resume)),
-                SetStep::Proxy { mut resume } => {
-                    let object = resume.take_object();
-                    let key = resume.take_key();
-                    let value = resume.take_value();
-                    let receiver = resume.take_receiver();
-                    Self::SetProxy {
-                        object: Some(object),
-                        key: Some(key),
-                        value: Some(value),
-                        receiver: Some(receiver),
-                        resume: Some(Resume::OrdinarySet(resume)),
-                    }
-                }
-                SetStep::Special { mut resume } => {
-                    let object = resume.take_object();
-                    let key = resume.take_key();
-                    let value = resume.take_value();
-                    let receiver = resume.take_receiver();
-                    Self::SetSpecial {
-                        object: Some(object),
-                        key: Some(key),
-                        value: Some(value),
-                        receiver: Some(receiver),
-                        resume: Some(resume),
-                    }
-                }
-                SetStep::ArrayLength { mut resume } => {
-                    drop(resume.take_object());
-                    drop(resume.take_key());
-                    let value = resume.take_value();
-                    Self::SetLength {
-                        value: Some(value),
-                        resume: Some(resume),
-                    }
-                }
-                SetStep::Descriptor { mut resume } => {
-                    let object = resume.take_object();
-                    let key = resume.take_key();
-                    Self::Descriptor {
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::OrdinarySet(resume)),
-                    }
-                }
-                SetStep::Define { mut resume } => {
-                    let object = resume.take_object();
-                    let key = resume.take_key();
-                    let descriptor = resume.take_descriptor();
-                    Self::Define {
-                        object: Some(object),
-                        key: Some(key),
-                        descriptor: Some(descriptor.into()),
-                        resume: Some(Resume::OrdinarySet(resume)),
-                    }
-                }
-            }
-        })
+        Ok(Self::SetProgress(Some(step.into_progress())))
     }
 }
 

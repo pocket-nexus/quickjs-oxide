@@ -10,32 +10,16 @@ use std::cell::Cell;
 use std::collections::HashMap;
 
 impl RuntimeState {
-    // Legacy entry remains for unconverted consumers; remove in B5.
-    pub(crate) fn ensure_dictionary_layout(
-        &mut self,
-        object: ObjectId,
-    ) -> Result<(), RuntimeError> {
-        self.ensure_dictionary_layout_inner(None, object)
-    }
-
     pub(crate) fn ensure_dictionary_layout_with_poison(
         &mut self,
         poisoned: &Cell<bool>,
         object: ObjectId,
     ) -> Result<(), RuntimeError> {
-        self.ensure_dictionary_layout_inner(Some(poisoned), object)
-    }
-
-    fn ensure_dictionary_layout_inner(
-        &mut self,
-        poisoned: Option<&Cell<bool>>,
-        object: ObjectId,
-    ) -> Result<(), RuntimeError> {
         let shape_id = self.heap.object(object)?.shape;
         if self.heap.shape_strong_count(shape_id)? == 1 {
             self.heap.enable_object_dictionary(object)?;
-            // Metadata conversion preserves entries; unlink before the first
-            // mutation changes the fingerprint of this exclusively owned shape.
+            // Metadata conversion preserves entries; unlink before mutation
+            // changes this exclusively owned shape's fingerprint.
             self.unlink_finalized_shapes([shape_id]);
             return Ok(());
         }
@@ -43,11 +27,7 @@ impl RuntimeState {
         shape.enable_dictionary();
         let slots = self.heap.object(object)?.slots.clone();
         let shape_id = self.allocate_uncached_shape(shape)?;
-        if let Some(poisoned) = poisoned {
-            self.replace_layout_with_owned_shape_with_poison(poisoned, object, shape_id, slots)
-        } else {
-            self.replace_layout_with_owned_shape(object, shape_id, slots)
-        }
+        self.replace_layout_with_owned_shape_with_poison(poisoned, object, shape_id, slots)
     }
 
     fn allocate_uncached_shape(&mut self, shape: Shape) -> Result<ShapeId, RuntimeError> {

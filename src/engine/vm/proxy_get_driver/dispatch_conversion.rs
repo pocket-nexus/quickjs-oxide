@@ -3,6 +3,7 @@ mod boundary;
 use super::{
     Error, Next, Query, ReturnOwner, RunningExecution, Runtime, Step, runtime_error_to_vm_error,
 };
+pub(super) use boundary::consume as consume_selected;
 
 #[inline(never)]
 pub(super) fn primitive(
@@ -18,7 +19,11 @@ pub(super) fn primitive(
     loop {
         if matches!(
             step,
-            Step::CyclePublishedComplete(_)
+            Step::ArrayPush { .. }
+                | Step::ArrayMutationProgress(_)
+                | Step::ArrayMutationRead { .. }
+                | Step::ArrayMutationSharedDelete { .. }
+                | Step::CyclePublishedComplete(_)
                 | Step::CyclePublishedNumber(_)
                 | Step::CyclePublishedElement(_)
                 | Step::ComputedError(_)
@@ -58,6 +63,9 @@ pub(super) fn primitive(
                 runtime
                     .collect_if_requested()
                     .map_err(runtime_error_to_vm_error)?;
+            }
+            if matches!(progress.effect, super::state::StateEffect::Publication) {
+                continue;
             }
             return boundary::consume(runtime, execution, owner, identity, query, step);
         }

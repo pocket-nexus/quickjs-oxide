@@ -64,8 +64,13 @@ impl PropertySetterCall {
 }
 impl Drop for PropertySetterCall {
     fn drop(&mut self) {
-        if let Some(receiver) = self.receiver.take() {
-            let _ = self.runtime.release_jsvalue(receiver);
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        if let Some(receiver) = self.receiver.take()
+            && (self.runtime.release_jsvalue(receiver).is_err() || self.runtime.is_poisoned())
+        {
+            return;
         }
         if let Some(value) = self.argument.take() {
             let _ = self.runtime.release_jsvalue(value);

@@ -27,6 +27,7 @@ mod dispatch_execution;
 mod dispatch_iteration;
 mod dispatch_read;
 mod dispatch_write;
+pub(in crate::engine::vm) use dispatch_write::enter_prepared_set_in_state;
 
 mod native;
 #[cfg(test)]
@@ -41,11 +42,11 @@ mod storage;
 pub(super) use native::NativeStepGuard;
 use native::start_into as native_scope;
 pub(in crate::engine::vm) use request::{
-    PreparedNativeBoundary, Resume, SelectedRawCallback, Step,
+    PreparedNativeBoundary, Resume, SelectedRawCallback, Step, WriteKeyInputs,
 };
 pub(in crate::engine::vm) use state::{
     RawNativeQuery, ResidentQueryBoundary, StateEffect, StateNativeProgress,
-    recycle_resident_query, resident_query,
+    recycle_resident_query, resident_query, resident_write_query,
 };
 pub(super) use storage::QueryStorage;
 
@@ -230,7 +231,7 @@ impl Query {
             }
         }
         if let (Some(runtime), Some(finish)) = (&runtime, self.finish.as_mut()) {
-            let _ = finish.retire_computed_at_boundary(runtime);
+            let _ = finish.retire_owned_at_boundary(runtime);
         }
         // Raw parent-only queries use the same single registration as native
         // scopes. Keep it until every scope/pending domain has been retired.
@@ -275,6 +276,15 @@ pub(in crate::engine::vm) enum Finish {
     IteratorNext(FrameId),
     Write {
         key: PropertyKey,
+        strict: bool,
+        depth: usize,
+    },
+    /// A resident Set consumed its operand suffix and carries the already
+    /// decoded continuation. A computed key owns one atom edge; linked keys
+    /// remain borrowed from the published parent executable.
+    ResidentWrite {
+        atom: crate::engine::atom::Atom,
+        key_owner: Option<crate::engine::atom::Atom>,
         strict: bool,
         depth: usize,
     },
@@ -1323,37 +1333,56 @@ fn start_write_adapted(
     let parent = match execution.frames.current_mut(frame) {
         Ok(parent) => parent,
         Err(error) => {
-            let _ = runtime.release_jsvalue(value);
-            let _ = runtime.release_jsvalue(receiver);
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+            runtime
+                .release_jsvalue(receiver)
+                .map_err(runtime_error_to_vm_error)?;
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
             return Err(error);
         }
     };
     let realm = parent.executable.realm;
     let result = (|| {
         let mut waiting_result = None;
-        let waiting = |step| {
+        let mut waiting = |step: crate::engine::object::SetStep| {
             waiting_result = Some(if waiting_result.is_some() {
                 Err(Error::internal("Set start repeated its waiting step"))
             } else {
                 // The selector borrows the finalization key. Only a pending
                 // continuation needs a separate finalization owner.
-                key.try_clone()
-                    .map_err(runtime_error_to_vm_error)
-                    .and_then(|key| {
+                match key.try_clone() {
+                    Ok(key) => {
                         advance_write_pending(runtime, execution, frame, step, key, strict, depth)
-                    })
+                    }
+                    Err(error) => {
+                        step.release(runtime);
+                        match runtime.check_poison() {
+                            Ok(()) => Err(runtime_error_to_vm_error(error)),
+                            Err(error) => Err(runtime_error_to_vm_error(error)),
+                        }
+                    }
+                }
             });
         };
         let action = match object {
-            Some(object) => crate::engine::object::SetStep::start_into(
+            Some(object) => crate::engine::object::SetStep::start_borrowed(
                 runtime,
                 Some(realm),
-                object,
-                key.try_clone()?,
+                &object,
+                &key,
                 value,
                 receiver,
-                waiting,
-            ),
+            )
+            .map(|step| match step {
+                crate::engine::object::SetStep::Complete(action) => Some(action),
+                step => {
+                    waiting(step);
+                    None
+                }
+            }),
             None => crate::engine::object::SetStep::start_receiver_into(
                 runtime, realm, &key, value, receiver, waiting,
             ),
@@ -1681,21 +1710,18 @@ pub(super) fn start_root(
             key,
             value,
             receiver,
-        } => Step::Set {
-            object: Some(object),
-            key: Some(key),
-            value: Some(
-                runtime
-                    .into_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?,
-            ),
-            receiver: Some(
-                runtime
-                    .into_jsvalue(receiver)
-                    .map_err(runtime_error_to_vm_error)?,
-            ),
-            resume: Some(Resume::RootSet),
-        },
+        } => {
+            let (value, receiver) =
+                crate::engine::object::SetStep::prepare_inputs(runtime, value, receiver)
+                    .map_err(runtime_error_to_vm_error)?;
+            Step::Set {
+                object: Some(object),
+                key: Some(key),
+                value: Some(value),
+                receiver: Some(receiver),
+                resume: Some(Resume::RootSet),
+            }
+        }
 
         super::driver::RootOperation::ModuleCallback(step) => Step::try_from(step)?,
         super::driver::RootOperation::ModuleEvaluation(step) => Step::try_from(step)?,
@@ -1977,7 +2003,6 @@ fn advance_inner(
             | Step::RegExpSpeciesComplete { .. }
             | Step::Aggregate { .. }
             | Step::ArraySpecies { .. }
-            | Step::ArrayPush { .. }
             | Step::IteratorNext { .. }
             | Step::IteratorNextComplete { .. }
             | Step::IteratorCall { .. }
@@ -2004,6 +2029,10 @@ fn advance_inner(
             | Step::PreparedNativeBoundary(_)
             | Step::PrimitiveProgress(_)
             | Step::NumberProgress(_)
+            | Step::ArrayPush { .. }
+            | Step::ArrayMutationProgress(_)
+            | Step::ArrayMutationRead { .. }
+            | Step::ArrayMutationSharedDelete { .. }
             | Step::StringReply { .. }
             | Step::CyclePublishedStringReply { .. }
             | Step::String { .. }
@@ -2035,9 +2064,13 @@ fn advance_inner(
             | Step::Keys { .. }
             | Step::KeysComplete { .. }
             | Step::ReadValue { .. } => dispatch_write::keys,
-            Step::SetContinue { .. }
+            Step::WriteOperands { .. }
+            | Step::ValueSet { .. }
+            | Step::PreparedSetProgress { .. }
+            | Step::SetProgress(_)
+            | Step::SetReply { .. }
+            | Step::WriteError(_)
             | Step::SetLength { .. }
-            | Step::SetSpecial { .. }
             | Step::SetComplete { .. }
             | Step::PreparedSet { .. }
             | Step::Set { .. }

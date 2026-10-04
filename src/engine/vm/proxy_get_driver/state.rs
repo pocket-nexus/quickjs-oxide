@@ -22,6 +22,10 @@ pub(in crate::engine::vm) enum StateEffect {
     Callback,
     PropertyRead,
     Diagnostic,
+    WriteOperands,
+    SetChild,
+    /// The next owned phase is armed; service its actual publication first.
+    Publication,
     Boundary,
 }
 pub(in crate::engine::vm) struct StateProgress {
@@ -42,7 +46,302 @@ impl Query {
         let mut cycle_published = false;
         loop {
             match step {
-                Step::ComputedError(_) => {
+                Step::PreparedSetProgress { .. } => {
+                    return Ok(StateProgress {
+                        effect: StateEffect::SetChild,
+                        cycle_published,
+                    });
+                }
+                Step::WriteOperands { .. } => {
+                    return Ok(StateProgress {
+                        effect: StateEffect::WriteOperands,
+                        cycle_published,
+                    });
+                }
+                Step::ValueSet {
+                    atom,
+                    value,
+                    receiver,
+                } => {
+                    let target = match receiver.as_ref().expect("write receiver") {
+                        JsValue::Object(id) => *id,
+                        JsValue::Null | JsValue::Undefined => {
+                            let suffix = if matches!(receiver.as_ref(), Some(JsValue::Null)) {
+                                "' of null"
+                            } else {
+                                "' of undefined"
+                            };
+                            // Historical assignment consumes value then base
+                            // before formatting the nullish diagnostic.
+                            state.release_owned_jsvalue(
+                                poisoned,
+                                value.take().expect("write value"),
+                            )?;
+                            state.release_owned_jsvalue(
+                                poisoned,
+                                receiver.take().expect("write receiver"),
+                            )?;
+                            *step = Step::WriteError(Some(state.native_atom_error(
+                                crate::engine::api::error::ErrorKind::Type,
+                                "cannot set property '",
+                                *atom,
+                                suffix,
+                            )?));
+                            continue;
+                        }
+                        primitive => {
+                            use crate::engine::builtins::native::PrimitiveKind;
+                            let kind = match primitive {
+                                JsValue::Bool(_) => PrimitiveKind::Boolean,
+                                JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
+                                JsValue::String(_) => PrimitiveKind::String,
+                                JsValue::ShortBigInt(_) | JsValue::BigInt(_) => {
+                                    PrimitiveKind::BigInt
+                                }
+                                JsValue::Symbol(_) => PrimitiveKind::Symbol,
+                                _ => unreachable!(),
+                            };
+                            state.primitive_prototype_id_for_realm(self.realm, kind)?
+                        }
+                    };
+                    *step = Step::SetProgress(Some(state.start_set_borrowed(
+                        poisoned,
+                        Some(self.realm),
+                        target,
+                        *atom,
+                        value.take().expect("write value"),
+                        receiver.take().expect("write receiver"),
+                    )?));
+                }
+                Step::SetProgress(progress) => {
+                    use crate::engine::object::{SetAction, SetProgress, SetWait};
+                    match progress.as_mut().expect("raw Set progress") {
+                        SetProgress::Waiting {
+                            phase: SetWait::Continue,
+                            ..
+                        } => {
+                            let SetProgress::Waiting { resume, .. } =
+                                progress.take().expect("raw Set progress")
+                            else {
+                                unreachable!()
+                            };
+                            *progress = Some(resume.advance_in_state(state, poisoned)?);
+                        }
+                        SetProgress::Waiting { resume, .. } => {
+                            cycle_published |= resume.take_cycle_published();
+                            break;
+                        }
+                        SetProgress::Complete(_) | SetProgress::CyclePublished(_) => {
+                            let action = match progress.take().expect("raw Set progress") {
+                                SetProgress::Complete(action) => action,
+                                SetProgress::CyclePublished(action) => {
+                                    cycle_published = true;
+                                    action
+                                }
+                                _ => unreachable!(),
+                            };
+                            if let SetAction::Call {
+                                function,
+                                receiver,
+                                argument,
+                            } = action
+                            {
+                                *step = Step::RawCall {
+                                    inputs: Some(RawCallbackInputs::new(
+                                        function,
+                                        receiver,
+                                        vec![argument],
+                                    )),
+                                    resume: Some(Resume::Setter),
+                                };
+                                continue;
+                            }
+                            if self.parents.0.last().is_some_and(Resume::can_set_in_state) {
+                                let parent = self.parents.pop().expect("Set parent");
+                                *step = parent.set_in_state(state, poisoned, action)?;
+                            } else if self.parents.is_empty()
+                                && matches!(self.finish, Some(super::Finish::ResidentWrite { .. }))
+                            {
+                                let Some(super::Finish::ResidentWrite { atom, strict, .. }) =
+                                    self.finish.as_ref()
+                                else {
+                                    unreachable!()
+                                };
+                                *step = match state.finish_property_set_in_state(
+                                    match action.into_result() {
+                                        Ok(result) => result,
+                                        Err(action) => {
+                                            action.retire(state, poisoned)?;
+                                            return Err(RuntimeError::Invariant(
+                                                "setter result bypassed callback consumer",
+                                            ));
+                                        }
+                                    },
+                                    *atom,
+                                    *strict,
+                                ) {
+                                    Ok(completion) => Step::Complete(Some(completion)),
+                                    Err(RuntimeError::Engine(error)) => {
+                                        Step::WriteError(Some(error))
+                                    }
+                                    Err(error) => return Err(error),
+                                };
+                            } else {
+                                *step = Step::SetReply {
+                                    action: Some(action),
+                                    resume: self.parents.pop(),
+                                };
+                            }
+                        }
+                    }
+                }
+                Step::SetReply {
+                    action: _,
+                    resume: Some(parent),
+                } if parent.can_set_in_state() => {
+                    let parent = match step {
+                        Step::SetReply { resume, .. } => resume.take().expect("Set reply parent"),
+                        _ => unreachable!(),
+                    };
+                    let Step::SetReply { action, .. } = step else {
+                        unreachable!()
+                    };
+                    *step =
+                        parent.set_in_state(state, poisoned, action.take().expect("Set reply"))?;
+                }
+                Step::ArrayPush {
+                    object,
+                    value,
+                    resume,
+                } => {
+                    self.parents.try_reserve(1).map_err(|_| {
+                        RuntimeError::Invariant("Array push continuation allocation failed")
+                    })?;
+                    // Reserve argv before detaching the selected source/value.
+                    let mut arguments = Vec::new();
+                    arguments.try_reserve_exact(1).map_err(|_| {
+                        RuntimeError::Invariant("Array push argv allocation failed")
+                    })?;
+                    arguments.push(value.take().expect("Array push value"));
+                    let object = object.take().expect("Array push object");
+                    self.parents.push(resume.take().expect("Array push parent"));
+                    *step = Step::from(
+                        crate::engine::builtins::ArrayMutationStep::start_values_in_state(
+                            state,
+                            poisoned,
+                            self.realm,
+                            crate::engine::builtins::ArrayMutationKind::Push(
+                                crate::engine::builtins::native::ArrayPushKind::Push,
+                            ),
+                            object,
+                            arguments,
+                        )?,
+                    );
+                }
+                Step::ArrayMutationProgress(progress) => {
+                    use crate::engine::builtins::ArrayMutationStep as T;
+                    // Copy/Proxy delete are already selected genuine boundaries.
+                    if matches!(progress, Some(T::Copy { .. } | T::Delete { .. })) {
+                        break;
+                    }
+                    *step = match progress.take().expect("Array mutation progress") {
+                        T::Complete(result) => Step::Complete(Some(result)),
+                        T::CyclePublished(result) => Step::CyclePublishedComplete(Some(result)),
+                        T::Read { resume } => Step::ArrayMutationRead {
+                            read: None,
+                            resume: Some(resume),
+                        },
+                        T::CyclePublishedRead { resume } => {
+                            cycle_published = true;
+                            Step::ArrayMutationRead {
+                                read: None,
+                                resume: Some(resume),
+                            }
+                        }
+                        T::Number { value, resume } => Step::Number {
+                            value: Some(value),
+                            resume: Some(Resume::ArrayMutation(resume)),
+                        },
+                        // The original local producer selected this setter or
+                        // wait before PreparedSet's child budget and reserve.
+                        // Keep both owners armed for that canonical preflight.
+                        T::Set { progress, resume } => Step::PreparedSetProgress {
+                            progress: Some(*progress),
+                            resume: Some(Resume::ArrayMutation(resume)),
+                        },
+                        T::CyclePublishedSet { progress, resume } => {
+                            use crate::engine::object::{SetAction, SetProgress};
+                            // An immediate next completion needs no child-frame
+                            // admission. A real wait keeps the selected producer
+                            // before its canonical PreparedSet preflight.
+                            *step = match *progress {
+                                SetProgress::Complete(action)
+                                | SetProgress::CyclePublished(action)
+                                    if !matches!(action, SetAction::Call { .. }) =>
+                                {
+                                    Step::SetReply {
+                                        action: Some(action),
+                                        resume: Some(Resume::ArrayMutation(resume)),
+                                    }
+                                }
+                                progress => Step::PreparedSetProgress {
+                                    progress: Some(progress),
+                                    resume: Some(Resume::ArrayMutation(resume)),
+                                },
+                            };
+                            return Ok(StateProgress {
+                                effect: StateEffect::Publication,
+                                cycle_published: true,
+                            });
+                        }
+                        T::SharedDelete { word, resume } => Step::ArrayMutationSharedDelete {
+                            word: Some(word),
+                            resume: Some(resume),
+                        },
+                        T::Copy { .. } | T::Delete { .. } => unreachable!(),
+                    };
+                }
+                Step::ArrayMutationRead { read, resume } => {
+                    if read.is_none() {
+                        *read = Some(
+                            resume
+                                .as_mut()
+                                .expect("Array read parent")
+                                .select_read_in_state(state, poisoned, runtime.domain_id())?,
+                        );
+                    }
+                    cycle_published |= matches!(read, Some(ReadStep::CyclePublished(_)));
+                    let selected = match read.as_ref().expect("selected Array read") {
+                        ReadStep::Shared(_) => break,
+                        ReadStep::Ready(read) | ReadStep::CyclePublished(read) => read,
+                    };
+                    resume
+                        .as_mut()
+                        .expect("Array read parent")
+                        .finish_read_selection_in_state(state, poisoned, selected)?;
+                    if matches!(selected, OwnedRead::Proxy { .. }) {
+                        break;
+                    }
+                    let selected = match read.take().expect("selected Array read") {
+                        ReadStep::Ready(read) | ReadStep::CyclePublished(read) => read,
+                        ReadStep::Shared(_) => unreachable!(),
+                    };
+                    let parent = resume.take().expect("Array read parent");
+                    *step = match selected {
+                        OwnedRead::Complete(value) => Step::from(parent.resume_in_state(
+                            state,
+                            poisoned,
+                            Completion::Return(value.unwrap_or(JsValue::Undefined)),
+                        )?),
+                        OwnedRead::Getter { function, receiver } => Step::RawCall {
+                            inputs: Some(RawCallbackInputs::new(function, receiver, Vec::new())),
+                            resume: Some(Resume::ArrayMutation(parent)),
+                        },
+                        OwnedRead::Proxy { .. } => unreachable!(),
+                    };
+                }
+                Step::ArrayMutationSharedDelete { .. } => break,
+                Step::ComputedError(_) | Step::WriteError(_) => {
                     // Frame publication belongs to the executor. Keep the
                     // selected diagnostic armed until it supplies that fact.
                     return Ok(StateProgress {
@@ -722,6 +1021,11 @@ impl Query {
             }
             Step::PrimitiveReply { .. } => "native_query.boundary.legacy_primitive_reply",
             Step::StringReply { .. } => "native_query.boundary.legacy_string_reply",
+            Step::ArrayMutationProgress(_)
+            | Step::ArrayMutationRead { .. }
+            | Step::ArrayMutationSharedDelete { .. } => {
+                "native_query.boundary.array_mutation_selected"
+            }
             Step::RawRead { read, .. } => match read {
                 Some(ReadStep::Shared(_)) => "native_query.boundary.shared_read",
                 Some(ReadStep::Ready(OwnedRead::Proxy { .. }))
@@ -754,6 +1058,49 @@ impl Step {
             state.release_owned_jsvalue(poisoned, value)
         };
         match self {
+            Self::WriteOperands { atom, input } => {
+                if let Some(input) = input {
+                    input.retire_in_state(state, poisoned)?;
+                }
+                if let Some(atom) = atom.take() {
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        JsValue::Symbol(crate::engine::atom::AtomIdx::from_raw(atom.raw())),
+                    )?;
+                }
+            }
+            Self::ValueSet {
+                value, receiver, ..
+            } => {
+                if let Some(value) = value.take() {
+                    state.release_owned_jsvalue(poisoned, value)?;
+                }
+                if let Some(receiver) = receiver.take() {
+                    state.release_owned_jsvalue(poisoned, receiver)?;
+                }
+            }
+            Self::SetProgress(progress) => {
+                if let Some(progress) = progress.take() {
+                    progress.retire_in_state(state, poisoned)?;
+                }
+            }
+            Self::PreparedSetProgress { progress, resume } => {
+                if let Some(progress) = progress.take() {
+                    progress.retire_in_state(state, poisoned)?;
+                }
+                if let Some(resume) = resume {
+                    resume.retire_raw_in_state(state, poisoned)?;
+                }
+            }
+            Self::SetReply { action, resume } => {
+                if let Some(action) = action.take() {
+                    action.retire(state, poisoned)?;
+                }
+                if let Some(resume) = resume {
+                    resume.retire_raw_in_state(state, poisoned)?;
+                }
+            }
+
             Self::Complete(value) | Self::CyclePublishedComplete(value) => {
                 if let Some(value) = value.take() {
                     completion(state, value)?;
@@ -879,6 +1226,21 @@ impl Step {
                     state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
                 }
             }
+            Self::ArrayPush {
+                object,
+                value,
+                resume,
+            } => {
+                if let Some(value) = value.take() {
+                    state.release_owned_jsvalue(poisoned, value)?;
+                }
+                if let Some(object) = object.take() {
+                    state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
+                }
+                if let Some(resume) = resume {
+                    resume.retire_raw_in_state(state, poisoned)?;
+                }
+            }
             Self::RawValueReadRequest {
                 selected,
                 receiver,
@@ -895,6 +1257,24 @@ impl Step {
                 }
                 if let Some(resume) = resume {
                     resume.retire_raw_in_state(state, poisoned)?;
+                }
+            }
+            Self::ArrayMutationProgress(progress) => {
+                if let Some(progress) = progress.take() {
+                    progress.retire_in_state(state, poisoned)?;
+                }
+            }
+            Self::ArrayMutationRead { read, resume } => {
+                if let Some(ReadStep::Ready(read) | ReadStep::CyclePublished(read)) = read.take() {
+                    read.retire(state, poisoned)?;
+                }
+                if let Some(resume) = resume.take() {
+                    resume.retire_in_state(state, poisoned)?;
+                }
+            }
+            Self::ArrayMutationSharedDelete { resume, .. } => {
+                if let Some(resume) = resume.take() {
+                    resume.retire_in_state(state, poisoned)?;
                 }
             }
             Self::RawReadRequest {
@@ -961,7 +1341,7 @@ impl Query {
             }
         }
         if let Some(finish) = self.finish.as_mut() {
-            finish.retire_computed_in_state(state, poisoned)?;
+            finish.retire_owned_in_state(state, poisoned)?;
         }
         Ok(())
     }
@@ -1352,6 +1732,7 @@ impl super::PendingProxyGet {
                 || resume.can_number_in_state()
                 || resume.can_string_in_state()
                 || resume.can_arguments_in_state()
+                || resume.can_set_in_state()
                 || matches!(resume, Resume::StringValue { .. })
         };
         operation == Some(OperationTarget::PropertyGet(self.identity))
@@ -1361,6 +1742,7 @@ impl super::PendingProxyGet {
                     super::Finish::Call { .. }
                         | super::Finish::ResidentCall { .. }
                         | super::Finish::VmCall(_)
+                        | super::Finish::ResidentWrite { .. }
                         | super::Finish::ComputedRead(_)
                         | super::Finish::PropertyKeyValue { .. }
                 )
@@ -1389,7 +1771,9 @@ impl<'a> RawNativeQuery<'a> {
             .expect("native reply continuation");
         let index = match finish {
             super::Finish::Call { .. } => frame.next_pc()?,
-            super::Finish::ResidentCall { .. } | super::Finish::VmCall(_) => frame.resume_pc,
+            super::Finish::ResidentCall { .. }
+            | super::Finish::VmCall(_)
+            | super::Finish::ResidentWrite { .. } => frame.resume_pc,
             super::Finish::ComputedRead(input) => input.fallthrough.index(),
             super::Finish::PropertyKeyValue { fallthrough, .. } => fallthrough.index(),
             _ => unreachable!("non-native query used native reply continuation"),
@@ -1438,10 +1822,65 @@ impl<'a> RawNativeQuery<'a> {
                 Some(*depth),
             ),
             super::Finish::VmCall(use_value) => (false, *use_value, None),
+            super::Finish::ResidentWrite { depth, .. } => (
+                false,
+                crate::engine::vm::frame::ReturnValue::Discard,
+                Some(*depth),
+            ),
             super::Finish::ComputedRead(_) | super::Finish::PropertyKeyValue { .. } => {
                 (false, crate::engine::vm::frame::ReturnValue::Push, None)
             }
             _ => unreachable!("non-native query used native result placement"),
         }
+    }
+}
+
+/// Concrete instruction consumer for both linked and computed writes. Query
+/// storage remains empty on a local completion, and raw input/result owners are
+/// protected by RawNativeQuery under the same admitted State lease.
+pub(in crate::engine::vm) fn resident_write_query(
+    storage: &mut super::storage::QueryStorage,
+    realm: crate::engine::heap::ContextId,
+    atom: crate::engine::atom::Atom,
+    key_owner: Option<crate::engine::atom::Atom>,
+    strict: bool,
+    depth: usize,
+) -> Query {
+    storage.acquire(
+        realm,
+        Vec::new(),
+        super::Finish::ResidentWrite {
+            atom,
+            key_owner,
+            strict,
+            depth,
+        },
+    )
+}
+
+impl Query {
+    pub(in crate::engine::vm) fn adopt_write_key(
+        &mut self,
+        owned: &mut Option<crate::engine::atom::Atom>,
+    ) -> Result<crate::engine::atom::Atom, RuntimeError> {
+        let Some(super::Finish::ResidentWrite {
+            atom: key,
+            key_owner,
+            ..
+        }) = &mut self.finish
+        else {
+            return Err(RuntimeError::Invariant(
+                "computed write lost its final continuation",
+            ));
+        };
+        if !key.is_null() || key_owner.is_some() {
+            return Err(RuntimeError::Invariant(
+                "computed write repeated key publication",
+            ));
+        }
+        let atom = owned.take().expect("selected write atom owner");
+        *key = atom;
+        *key_owner = Some(atom);
+        Ok(atom)
     }
 }

@@ -5,8 +5,6 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::builtins::CanonicalNumericIndex;
-use crate::engine::code::function::metadata::ClosureVariableKind;
-use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
 
 #[cfg(test)]
@@ -303,8 +301,9 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
         value: JsValue,
+        initial: super::array_length::InitialArrayLength,
     ) -> Result<PropertySetAction, RuntimeError> {
-        let new_length = match self.to_array_length_jsvalue(realm, value)? {
+        let new_length = match self.to_array_length_selected(realm, value, initial)? {
             ArrayLengthConversion::Length(length) => length,
             ArrayLengthConversion::Throw(value) => return Ok(PropertySetAction::Throw(value)),
         };
@@ -633,44 +632,6 @@ impl Runtime {
             .array_dense_len(object.object_id())?)
     }
 
-    fn materialize_dense_array(
-        &self,
-        object: &ObjectRef,
-        #[cfg(feature = "profiling")] reason: &'static str,
-    ) -> Result<(), RuntimeError> {
-        let _unwind = self.unwind_guard();
-        self.0.state.borrow_mut().materialize_dense_array(
-            &self.0.poisoned,
-            object.object_id(),
-            #[cfg(feature = "profiling")]
-            reason,
-        )
-    }
-
-    pub(super) fn replace_dense_array_value_jsvalue(
-        &self,
-        object: &ObjectRef,
-        index: u32,
-        value: &JsValue,
-    ) -> Result<(), RuntimeError> {
-        self.replace_dense_array_raw(object, index, value.as_raw())
-    }
-
-    fn replace_dense_array_raw(
-        &self,
-        object: &ObjectRef,
-        index: u32,
-        raw: RawValue,
-    ) -> Result<(), RuntimeError> {
-        let _unwind = self.unwind_guard();
-        self.0.state.borrow_mut().replace_dense_array_raw(
-            &self.0.poisoned,
-            object.object_id(),
-            index,
-            raw,
-        )
-    }
-
     /// Read and structurally validate a genuine Array's mandatory first
     /// `length` slot, returning `None` for every other object class. The
     /// numeric payload is always an exact Uint32, using an Int for the compact
@@ -756,22 +717,6 @@ impl Runtime {
         } else {
             Value::Float(f64::from(length))
         }
-    }
-
-    /// The caller has selected an absent consecutive dense element and walked
-    /// its ordinary prototypes without callbacks. Reuse that descriptor fact;
-    /// permission failures retain Set's existing precise rejection path.
-    pub(super) fn define_selected_dense_array_append(
-        &self,
-        object: &ObjectRef,
-        index: u32,
-        value: &JsValue,
-    ) -> Result<Option<PropertySetRejection>, RuntimeError> {
-        let _unwind = self.unwind_guard();
-        self.0
-            .state
-            .borrow_mut()
-            .define_selected_dense_array_append(&self.0.poisoned, object.object_id(), index, value)
     }
 
     /// Apply a Set-selected data definition without converting its stored
@@ -889,7 +834,18 @@ impl Runtime {
         realm: Option<ContextId>,
         value: JsValue,
     ) -> Result<ArrayLengthConversion, RuntimeError> {
-        let mut step = crate::engine::object::ArrayLengthStep::start(self, realm, value)?;
+        let initial = super::array_length::InitialArrayLength::select(&value);
+        self.to_array_length_selected(realm, value, initial)
+    }
+
+    fn to_array_length_selected(
+        &self,
+        realm: Option<ContextId>,
+        value: JsValue,
+        initial: super::array_length::InitialArrayLength,
+    ) -> Result<ArrayLengthConversion, RuntimeError> {
+        let mut step =
+            crate::engine::object::ArrayLengthStep::start_selected(self, realm, value, initial)?;
         loop {
             step = match step {
                 crate::engine::object::ArrayLengthStep::Complete(result) => return Ok(result),
@@ -919,11 +875,10 @@ impl Runtime {
         value: f64,
         expected_uint32: Option<u32>,
     ) -> Result<ArrayLengthConversion, RuntimeError> {
-        if value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0 {
-            let length = value as u32;
-            if expected_uint32.is_none_or(|expected| expected == length) {
-                return Ok(ArrayLengthConversion::Length(length));
-            }
+        if let Some(length) =
+            super::array_length::validated_array_length_number(value, expected_uint32)
+        {
+            return Ok(ArrayLengthConversion::Length(length));
         }
         self.invalid_array_length(realm)
     }
@@ -991,32 +946,18 @@ impl Runtime {
     ) -> Result<bool, RuntimeError> {
         let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
-        if let Some(flags) = self.ordinary_property_flags(object, key)? {
-            return Ok(flags.is_some());
+        let selected = self
+            .0
+            .state
+            .borrow_mut()
+            .select_own_presence(object.object_id(), key.atom())?;
+        match selected {
+            super::own_properties::OwnPresenceSelection::Ready(own) => Ok(own),
+            super::own_properties::OwnPresenceSelection::Shared(word) => {
+                word.read()?;
+                Ok(true)
+            }
         }
-        if self.typed_array_is_object(object)?
-            && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
-        {
-            return match numeric {
-                CanonicalNumericIndex::Valid(index) => self
-                    .typed_array_get_index_descriptor(object, index)
-                    .map(|descriptor| descriptor.is_some()),
-                CanonicalNumericIndex::Invalid => Ok(false),
-            };
-        }
-        if self.string_exotic_index_value(object, key)?.is_some() {
-            return Ok(true);
-        }
-        if self.dense_array_index_value(object, key)?.is_some() {
-            return Ok(true);
-        }
-        let state = self.0.state.borrow();
-        let object = state.heap.object(object.object_id())?;
-        Ok(state
-            .heap
-            .shape(object.shape)?
-            .find(AtomIdx::from_raw(key.atom().raw()))
-            .is_some())
     }
 
     /// Read an own property's enumerable bit without materializing autoinit
@@ -1056,162 +997,6 @@ impl Runtime {
         let index = usize::try_from(index)
             .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
         Ok(shape.entries()[index].flags.enumerable)
-    }
-
-    /// Delete an ordinary own property without invoking accessors.
-    pub fn delete_property(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<bool, RuntimeError> {
-        let _operation = self.operation()?;
-        self.validate_object_and_key(object, key)?;
-        if self.typed_array_is_object(object)?
-            && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
-        {
-            return match numeric {
-                CanonicalNumericIndex::Valid(index) => self.typed_array_delete_index(object, index),
-                CanonicalNumericIndex::Invalid => Ok(true),
-            };
-        }
-        if self.string_exotic_index_value(object, key)?.is_some() {
-            return Ok(false);
-        }
-        let array_index = match self.array_own_key(object, key)? {
-            ArrayOwnKey::Index(index) => Some(index),
-            ArrayOwnKey::Length | ArrayOwnKey::Other => None,
-        };
-        if let Some(index) = array_index
-            && let Some(dense_len) = self.array_fast_len(object)?
-            && index < dense_len
-        {
-            if index.checked_add(1) == Some(dense_len) {
-                let mut state = self.0.state.borrow_mut();
-                let prepared = state
-                    .heap
-                    .prepare_array_dense_truncation(object.object_id(), index)?;
-                let cleanup = match state
-                    .heap
-                    .commit_array_dense_truncation_with_status(prepared)
-                {
-                    Ok(cleanup) => cleanup,
-                    Err(failure) => {
-                        if failure.published {
-                            self.0.poisoned.set(true);
-                        }
-                        return Err(failure.error.into());
-                    }
-                };
-                if let Err(error) = state.apply_cleanup(cleanup) {
-                    self.0.poisoned.set(true);
-                    return Err(error);
-                }
-                return Ok(true);
-            }
-            #[cfg(feature = "profiling")]
-            self.materialize_dense_array(
-                object,
-                "array_storage_dense_materialization_interior_delete",
-            )?;
-            #[cfg(not(feature = "profiling"))]
-            self.materialize_dense_array(object)?;
-        }
-        let arguments_index = self
-            .arguments_index_state(object, key)?
-            .map(|(index, _, _)| index);
-        let global_var_ref = {
-            let state = self.0.state.borrow();
-            let object_data = state.heap.object(object.object_id())?;
-            match &object_data.payload {
-                ObjectPayload::GlobalObject { uninitialized_vars } => {
-                    let shape = state.heap.shape(object_data.shape)?;
-                    let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                        return Ok(true);
-                    };
-                    let index = index as usize;
-                    let entry = shape.entries().get(index).ok_or(RuntimeError::Invariant(
-                        "shape lookup index was out of bounds",
-                    ))?;
-                    match object_data.slots.get(index).ok_or(RuntimeError::Invariant(
-                        "shape property has no parallel object slot",
-                    ))? {
-                        PropertySlot::VarRef(var_ref)
-                            if state.heap.var_ref_strong_count(*var_ref)? > 1 =>
-                        {
-                            Some((*uninitialized_vars, *var_ref, entry.flags.configurable))
-                        }
-                        PropertySlot::VarRef(_)
-                        | PropertySlot::Data(_)
-                        | PropertySlot::Accessor { .. }
-                        | PropertySlot::AutoInit(_) => None,
-                    }
-                }
-                ObjectPayload::Ordinary
-                | ObjectPayload::ArrayBuffer(_)
-                | ObjectPayload::SharedArrayBuffer(_)
-                | ObjectPayload::DataView(_)
-                | ObjectPayload::TypedArray(_)
-                | ObjectPayload::Proxy(_)
-                | ObjectPayload::RawJson
-                | ObjectPayload::Promise(_)
-                | ObjectPayload::Date(_)
-                | ObjectPayload::RegExp(_)
-                | ObjectPayload::Array { .. }
-                | ObjectPayload::Arguments { .. }
-                | ObjectPayload::ArrayIterator { .. }
-                | ObjectPayload::IteratorHelper(_)
-                | ObjectPayload::IteratorWrap(_)
-                | ObjectPayload::AsyncFromSyncIterator(_)
-                | ObjectPayload::IteratorConcat(_)
-                | ObjectPayload::Map { .. }
-                | ObjectPayload::MapIterator { .. }
-                | ObjectPayload::Set { .. }
-                | ObjectPayload::WeakMap { .. }
-                | ObjectPayload::WeakSet { .. }
-                | ObjectPayload::WeakRef { .. }
-                | ObjectPayload::FinalizationRegistry(_)
-                | ObjectPayload::SetIterator { .. }
-                | ObjectPayload::ForInIterator(_)
-                | ObjectPayload::Primitive(_)
-                | ObjectPayload::Error
-                | ObjectPayload::StringIterator { .. }
-                | ObjectPayload::RegExpStringIterator { .. }
-                | ObjectPayload::NativeFunction { .. }
-                | ObjectPayload::BoundFunction { .. }
-                | ObjectPayload::BytecodeFunction { .. }
-                | ObjectPayload::AsyncFunctionState(_)
-                | ObjectPayload::Generator { .. }
-                | ObjectPayload::AsyncGenerator(_) => None,
-            }
-        };
-        if let Some((hidden, var_ref, configurable)) = global_var_ref {
-            if !configurable {
-                return Ok(false);
-            }
-            let root = VarRefRoot::from_borrowed_handle(self.clone(), var_ref)?;
-            let hidden = ObjectRef::from_borrowed_handle(self.clone(), hidden)?;
-            match self.own_var_ref_root(&hidden, key)? {
-                Some(existing) if existing.id() != root.id() => {
-                    return Err(RuntimeError::Invariant(
-                        "hidden global table contains a different VarRef",
-                    ));
-                }
-                Some(_) => {}
-                None => self.store_property_slot(
-                    &hidden,
-                    key,
-                    PropertyFlags::data(true, true, true),
-                    PropertySlot::VarRef(root.id()),
-                )?,
-            }
-            self.reset_var_ref_uninitialized(&root)?;
-            self.set_var_ref_metadata(&root, false, false, ClosureVariableKind::Normal)?;
-        }
-        self.0.state.borrow_mut().delete_ordinary_property(
-            object.object_id(),
-            key.atom(),
-            arguments_index,
-        )
     }
 
     /// Return a rooted own-key snapshot in ECMAScript order.
@@ -1390,32 +1175,11 @@ impl Runtime {
 }
 
 impl RuntimeState {
-    /// Delete a selected ordinary own-slot property after the public entry
-    /// handled exotic and Global binding behavior. Hidden Global tables use
-    /// the same dictionary/shape algorithm with no Arguments index update.
-    pub(super) fn delete_ordinary_property(
-        &mut self,
-        object_id: ObjectId,
-        atom: Atom,
-        arguments_index: Option<u32>,
-    ) -> Result<bool, RuntimeError> {
-        // Legacy entry remains for unconverted consumers; remove in B5.
-        self.delete_ordinary_property_inner(None, object_id, atom, arguments_index)
-    }
-
+    /// The one ordinary shape/dictionary deletion algorithm. The selected
+    /// caller handles virtual/Global behavior and supplies the real header.
     pub(super) fn delete_ordinary_property_with_poison(
         &mut self,
         poisoned: &Cell<bool>,
-        object_id: ObjectId,
-        atom: Atom,
-        arguments_index: Option<u32>,
-    ) -> Result<bool, RuntimeError> {
-        self.delete_ordinary_property_inner(Some(poisoned), object_id, atom, arguments_index)
-    }
-
-    fn delete_ordinary_property_inner(
-        &mut self,
-        poisoned: Option<&Cell<bool>>,
         object_id: ObjectId,
         atom: Atom,
         arguments_index: Option<u32>,
@@ -1436,26 +1200,18 @@ impl RuntimeState {
             if !shape.entries()[index as usize].flags.configurable {
                 return Ok(false);
             }
-            if let Some(poisoned) = poisoned {
-                state.ensure_dictionary_layout_with_poison(poisoned, object_id)?;
-            } else {
-                state.ensure_dictionary_layout(object_id)?;
-            }
+            state.ensure_dictionary_layout_with_poison(poisoned, object_id)?;
             let cleanup = state
                 .heap
                 .delete_dictionary_property_with_status(object_id, atom)
                 .map_err(|failure| {
                     if failure.published {
-                        if let Some(poisoned) = poisoned {
-                            poisoned.set(true);
-                        }
+                        poisoned.set(true);
                     }
                     RuntimeError::from(failure.error)
                 })?;
             state.apply_cleanup(cleanup).inspect_err(|_| {
-                if let Some(poisoned) = poisoned {
-                    poisoned.set(true);
-                }
+                poisoned.set(true);
             })?;
             return Ok(true);
         }
@@ -1500,17 +1256,7 @@ impl RuntimeState {
         let mut next_entries = entries;
         next_entries.remove(index);
         slots.remove(index);
-        if let Some(poisoned) = poisoned {
-            state.replace_layout_with_poison(
-                poisoned,
-                object_id,
-                prototype,
-                &next_entries,
-                slots,
-            )?;
-        } else {
-            state.replace_layout(object_id, prototype, &next_entries, slots)?;
-        }
+        state.replace_layout_with_poison(poisoned, object_id, prototype, &next_entries, slots)?;
         if let Some(next_fast_len) = arguments_fast_update {
             state
                 .heap

@@ -47,6 +47,11 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::IteratorCloseWithResume { .. } => "query_dispatch.step.iterator_close_with_resume",
         Step::NativeRawComplete { .. } => "query_dispatch.step.native_raw_complete",
         Step::ArraySpecies { .. } => "query_dispatch.step.array_species",
+        Step::ArrayMutationProgress(_) => "query_dispatch.step.array_mutation_progress",
+        Step::ArrayMutationRead { .. } => "query_dispatch.step.array_mutation_read",
+        Step::ArrayMutationSharedDelete { .. } => {
+            "query_dispatch.step.array_mutation_shared_delete"
+        }
         Step::ArrayPush { .. } => "query_dispatch.step.array_push",
         Step::IteratorNext { .. } => "query_dispatch.step.iterator_next",
         Step::IteratorNextComplete { .. } => "query_dispatch.step.iterator_next_complete",
@@ -97,10 +102,14 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::NumberComplete { .. } => "query_dispatch.step.number_complete",
         Step::LengthComplete { .. } => "query_dispatch.step.length_complete",
         Step::SetLength { .. } => "query_dispatch.step.set_length",
+        Step::WriteOperands { .. } => "query_dispatch.step.write_operands",
+        Step::ValueSet { .. } => "query_dispatch.step.value_set",
+        Step::PreparedSetProgress { .. } => "query_dispatch.step.prepared_set_progress",
+        Step::SetProgress(_) => "query_dispatch.step.set_progress",
+        Step::SetReply { .. } => "query_dispatch.step.set_reply",
+        Step::WriteError(_) => "query_dispatch.step.write_error",
         Step::SetComplete { .. } => "query_dispatch.step.set_complete",
         Step::PreparedSet { .. } => "query_dispatch.step.prepared_set",
-        Step::SetContinue { .. } => "query_dispatch.step.set_continue",
-        Step::SetSpecial { .. } => "query_dispatch.step.set_special",
         Step::Set { .. } => "query_dispatch.step.set",
         Step::SetProxy { .. } => "query_dispatch.step.set_proxy",
         Step::Define { .. } => "query_dispatch.step.define",
@@ -118,7 +127,9 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::Convert { .. } => "query_dispatch.step.convert",
     });
     let resume = match step {
-        Step::NumberReply { resume, .. }
+        Step::PreparedSetProgress { resume, .. }
+        | Step::SetReply { resume, .. }
+        | Step::NumberReply { resume, .. }
         | Step::StringReply { resume, .. }
         | Step::CyclePublishedStringReply { resume, .. }
         | Step::PrimitiveReply { resume, .. }

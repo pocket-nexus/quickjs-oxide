@@ -168,6 +168,76 @@ pub(super) fn keys(
     }
 }
 
+/// Preserve the existing PreparedSet prefix for an actual selected child.
+/// The selected progress and parent stay in Step across budget, materialization,
+/// Error allocation, and continuation reservation. Return only a real Error
+/// publication fact; callers service it after the new reply is armed in Step.
+pub(in crate::engine::vm) fn enter_prepared_set_in_state(
+    runtime: &Runtime,
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    execution: &mut RunningExecution,
+    query: &mut Query,
+    step: &mut Step,
+) -> Result<bool, Error> {
+    if !matches!(step, Step::PreparedSetProgress { .. }) {
+        return Err(Error::internal(
+            "Set child preflight lost selected progress",
+        ));
+    }
+    if !execution
+        .frames
+        .can_push_with_continuations(query.continuation_depth())
+    {
+        execution.frames.materialize_in_state(state)?;
+        let result = state.new_native_error_from_message(
+            &runtime.0.poisoned,
+            query.realm,
+            crate::engine::api::error::NativeErrorKind::Internal,
+            crate::engine::api::error::NativeErrorMessage::from_utf8("stack overflow"),
+        );
+        if runtime.0.poisoned.get() {
+            return Err(runtime_error_to_vm_error(
+                crate::engine::api::RuntimeError::Poisoned,
+            ));
+        }
+        let object = result.map_err(runtime_error_to_vm_error)?;
+        let mut output = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+            state,
+            &runtime.0.poisoned,
+            crate::engine::value::JsValue::Object(object),
+        );
+        let (state, output) = output.parts();
+        let Step::PreparedSetProgress { progress, resume } = step else {
+            unreachable!()
+        };
+        progress
+            .take()
+            .expect("selected Set child")
+            .retire_in_state(state, &runtime.0.poisoned)
+            .map_err(runtime_error_to_vm_error)?;
+        *step = Step::SetReply {
+            action: Some(crate::engine::object::SetAction::Throw(
+                output.take().expect("Set child overflow output"),
+            )),
+            resume: resume.take(),
+        };
+        return Ok(true);
+    }
+    query
+        .parents
+        .try_reserve(1)
+        .map_err(|_| Error::internal("property continuation allocation failed"))?;
+    let Step::PreparedSetProgress { progress, resume } = step else {
+        unreachable!()
+    };
+    let progress = progress.take().expect("selected Set child");
+    query
+        .parents
+        .push(resume.take().expect("selected Set parent"));
+    *step = Step::SetProgress(Some(progress));
+    Ok(false)
+}
+
 #[inline(never)]
 pub(super) fn set(
     runtime: &Runtime,
@@ -182,6 +252,112 @@ pub(super) fn set(
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("dispatch_write.set.visit");
         let realm = query.realm;
+        if matches!(step, Step::PreparedSetProgress { .. }) {
+            query.ensure_raw_owner_registration(runtime)?;
+            let published = {
+                let mut state = runtime.0.state.borrow_mut();
+                enter_prepared_set_in_state(runtime, &mut state, execution, query, step)?
+            };
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+            if published {
+                runtime
+                    .collect_if_requested()
+                    .map_err(runtime_error_to_vm_error)?;
+            }
+            continue;
+        }
+        if matches!(
+            step,
+            Step::WriteOperands { .. }
+                | Step::ValueSet { .. }
+                | Step::SetProgress(_)
+                | Step::SetReply { .. }
+                | Step::WriteError(_)
+        ) {
+            query.ensure_raw_owner_registration(runtime)?;
+            let progress = {
+                let mut state = runtime.0.state.borrow_mut();
+                query
+                    .advance_raw_in_state(runtime, &mut state, step)
+                    .map_err(runtime_error_to_vm_error)?
+            };
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+            if progress.cycle_published {
+                runtime
+                    .collect_if_requested()
+                    .map_err(runtime_error_to_vm_error)?;
+            }
+            match step {
+                Step::WriteOperands { .. } => {
+                    let mut segment = crate::engine::vm::stack::FrameExecution::admit(
+                        execution,
+                        _owner.frame()?,
+                    )?;
+                    let mut state = runtime.0.state.borrow_mut();
+                    segment.publish_write_operands_in_state(runtime, &mut state, query, step)?;
+                    continue;
+                }
+                Step::SetProgress(progress) => {
+                    let selected = progress.take().expect("selected Set effect");
+                    *step = super::request::set::consume_boundary(runtime, query, selected)
+                        .map_err(runtime_error_to_vm_error)?;
+                    continue;
+                }
+                Step::SetReply { action, resume } => {
+                    let action = action.take().expect("selected Set reply");
+                    *step = if let Some(parent) = resume.take() {
+                        parent
+                            .set(runtime, action.into_boundary(runtime))
+                            .map_err(runtime_error_to_vm_error)?
+                    } else {
+                        let Some(Finish::Write { key, strict, .. }) = query.finish.as_ref() else {
+                            action
+                                .retire_at_boundary(runtime)
+                                .map_err(runtime_error_to_vm_error)?;
+                            return Err(Error::internal("Set result has no assignment owner"));
+                        };
+                        Step::Complete(Some(
+                            runtime
+                                .finish_property_set(
+                                    match action.into_result() {
+                                        Ok(result) => result,
+                                        Err(action) => {
+                                            action
+                                                .retire_at_boundary(runtime)
+                                                .map_err(runtime_error_to_vm_error)?;
+                                            return Err(Error::internal(
+                                                "setter result bypassed callback consumer",
+                                            ));
+                                        }
+                                    },
+                                    key,
+                                    *strict,
+                                )
+                                .map_err(runtime_error_to_vm_error)?,
+                        ))
+                    };
+                    continue;
+                }
+                Step::WriteError(error) => {
+                    execution.frames.materialize(runtime)?;
+                    let completion = super::super::property_driver::throw_error(
+                        runtime,
+                        realm,
+                        error.take().expect("selected write error"),
+                    )?;
+                    let super::CallStep::Complete(completion) = completion else {
+                        return Err(Error::internal("write diagnostic omitted its completion"));
+                    };
+                    *step = Step::Complete(Some(completion));
+                    continue;
+                }
+                _ => {
+                    return super::dispatch_conversion::consume_selected(
+                        runtime, execution, _owner, _identity, query, step,
+                    );
+                }
+            }
+        }
         match &mut *step {
             Step::PreparedSet {
                 step: selected,
@@ -194,10 +370,22 @@ pub(super) fn set(
                     let Completion::Throw(value) = overflow(runtime, realm)? else {
                         unreachable!()
                     };
+                    let mut reply = super::native::NativeStepGuard::new(
+                        runtime,
+                        Step::Complete(Some(Completion::Throw(value))),
+                    );
+                    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
                     selected
                         .take()
                         .expect("selected Step field")
                         .release(runtime);
+                    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+                    let Step::Complete(completion) = &mut *reply else {
+                        unreachable!()
+                    };
+                    let Some(Completion::Throw(value)) = completion.take() else {
+                        unreachable!()
+                    };
                     let resume = resume.take().expect("selected Step field");
                     *step = resume
                         .set(
@@ -217,69 +405,23 @@ pub(super) fn set(
                 *step = (*selected).try_into()?;
                 continue;
             }
-            Step::SetContinue(resume) => {
-                let resume = resume.take().expect("selected Step field");
-
-                *step = resume
-                    .advance(runtime)
-                    .map_err(runtime_error_to_vm_error)?
-                    .try_into()?;
-                continue;
-            }
             Step::SetLength { value, resume } => {
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("property continuation allocation failed"))?;
                 let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
+                let mut resume = resume.take().expect("selected Step field");
+                let initial = resume.take_array_length_initial();
                 query.parents.push(Resume::SetLength(resume));
-                *step = crate::engine::object::ArrayLengthStep::start(runtime, Some(realm), value)
-                    .map_err(runtime_error_to_vm_error)?
-                    .try_into()?;
-                continue;
-            }
-            Step::SetSpecial {
-                object,
-                key,
-                value,
-                receiver,
-                resume,
-            } => {
-                let object = object.take().expect("selected Step field");
-                let key = key.take().expect("selected Step field");
-                let value = value.take().expect("selected Step field");
-                let receiver = receiver.take().expect("selected Step field");
-
-                let result = runtime.prepare_typed_array_set(&object, &key, &value, &receiver);
-                let value_cleanup = runtime.release_jsvalue(value);
-                let receiver_cleanup = runtime.release_jsvalue(receiver);
-                if let Err(error) = value_cleanup.and(receiver_cleanup) {
-                    if let Ok(Some(request)) = result {
-                        let mut abandoned: Step = request.try_into()?;
-                        abandoned.release_owned(runtime);
-                    }
-                    return Err(runtime_error_to_vm_error(error));
-                }
-                match result.map_err(runtime_error_to_vm_error)? {
-                    None => {
-                        let resume = resume.take().expect("selected Step field");
-                        *step = resume
-                            .special(runtime, None)
-                            .map_err(runtime_error_to_vm_error)?
-                            .try_into()?
-                    }
-                    Some(request) => {
-                        if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = request.try_into()?;
-                            abandoned.release_owned(runtime);
-                            return Err(Error::internal("property continuation allocation failed"));
-                        }
-                        let resume = resume.take().expect("selected Step field");
-                        query.parents.push(Resume::SetTyped(resume));
-                        *step = request.try_into()?;
-                    }
-                }
+                *step = crate::engine::object::ArrayLengthStep::start_selected(
+                    runtime,
+                    Some(realm),
+                    value,
+                    initial,
+                )
+                .map_err(runtime_error_to_vm_error)?
+                .try_into()?;
                 continue;
             }
             Step::SetComplete(action) => {
@@ -338,17 +480,31 @@ pub(super) fn set(
                     let Completion::Throw(error) = overflow(runtime, realm)? else {
                         unreachable!()
                     };
-                    let resume = resume.take().expect("selected Step field");
-                    let value_cleanup =
-                        runtime.release_jsvalue(value.take().expect("selected Step field"));
-                    let receiver_cleanup =
-                        runtime.release_jsvalue(receiver.take().expect("selected Step field"));
-                    if let Err(failure) = value_cleanup.and(receiver_cleanup) {
-                        let _ = runtime.release_jsvalue(error);
-                        resume.release_owned(runtime);
-                        return Err(runtime_error_to_vm_error(failure));
-                    }
+                    // Keep the real overflow result and resume armed while
+                    // retiring the original value then receiver. Fatal cleanup
+                    // wins and never traverses the remaining suffix.
+                    let mut reply = super::native::NativeStepGuard::new(
+                        runtime,
+                        Step::Complete(Some(Completion::Throw(error))),
+                    );
+                    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+                    runtime
+                        .release_jsvalue(value.take().expect("selected Set value"))
+                        .map_err(runtime_error_to_vm_error)?;
+                    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+                    runtime
+                        .release_jsvalue(receiver.take().expect("selected Set receiver"))
+                        .map_err(runtime_error_to_vm_error)?;
+                    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+                    let Step::Complete(completion) = &mut *reply else {
+                        unreachable!()
+                    };
+                    let Some(Completion::Throw(error)) = completion.take() else {
+                        unreachable!()
+                    };
                     *step = resume
+                        .take()
+                        .expect("selected Set parent")
                         .set(
                             runtime,
                             crate::engine::object::operations::PropertySetAction::Throw(error),
@@ -397,17 +553,31 @@ pub(super) fn set(
                     let Completion::Throw(error) = overflow(runtime, realm)? else {
                         unreachable!()
                     };
-                    let resume = resume.take().expect("selected Step field");
-                    let value_cleanup =
-                        runtime.release_jsvalue(value.take().expect("selected Step field"));
-                    let receiver_cleanup =
-                        runtime.release_jsvalue(receiver.take().expect("selected Step field"));
-                    if let Err(failure) = value_cleanup.and(receiver_cleanup) {
-                        let _ = runtime.release_jsvalue(error);
-                        resume.release_owned(runtime);
-                        return Err(runtime_error_to_vm_error(failure));
-                    }
+                    // Keep the real overflow result and resume armed while
+                    // retiring the original value then receiver. Fatal cleanup
+                    // wins and never traverses the remaining suffix.
+                    let mut reply = super::native::NativeStepGuard::new(
+                        runtime,
+                        Step::Complete(Some(Completion::Throw(error))),
+                    );
+                    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+                    runtime
+                        .release_jsvalue(value.take().expect("selected Set value"))
+                        .map_err(runtime_error_to_vm_error)?;
+                    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+                    runtime
+                        .release_jsvalue(receiver.take().expect("selected Set receiver"))
+                        .map_err(runtime_error_to_vm_error)?;
+                    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+                    let Step::Complete(completion) = &mut *reply else {
+                        unreachable!()
+                    };
+                    let Some(Completion::Throw(error)) = completion.take() else {
+                        unreachable!()
+                    };
                     *step = resume
+                        .take()
+                        .expect("selected Set parent")
                         .set(
                             runtime,
                             crate::engine::object::operations::PropertySetAction::Throw(error),
@@ -672,6 +842,259 @@ mod local_set_tests {
             runtime.array_length_state_if_genuine(&array).unwrap(),
             Some((0, true))
         );
+    }
+
+    #[test]
+    fn legacy_set_budget_failure_precedes_selected_callee_maximum() {
+        use crate::engine::{
+            api::error::NativeErrorKind,
+            heap::RawId,
+            object::{AccessorValue, DescriptorField, OrdinaryPropertyDescriptor},
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(setter) = context.eval("(function(v){throw 'must not run'})").unwrap()
+        else {
+            panic!("setter fixture")
+        };
+        let object = runtime.new_object(None).unwrap();
+        let value = runtime.new_object(None).unwrap();
+        let key = runtime.intern_property_key("x").unwrap();
+        runtime
+            .define_own_property(
+                &object,
+                &key,
+                &OrdinaryPropertyDescriptor {
+                    set: DescriptorField::Present(AccessorValue::Callable(
+                        runtime.as_callable(&setter).unwrap().unwrap(),
+                    )),
+                    configurable: DescriptorField::Present(true),
+                    ..OrdinaryPropertyDescriptor::new()
+                },
+            )
+            .unwrap();
+        let expected = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .context(context.realm)
+            .unwrap()
+            .native_error_prototypes[NativeErrorKind::Internal.index()]
+        .unwrap();
+        let mut query = Query {
+            native_runtime: std::rc::Weak::new(),
+            #[cfg(feature = "profiling")]
+            had_callback: false,
+            realm: context.realm,
+            parents: Parents::default(),
+            natives: Vec::new(),
+            saved_native_depth: 0,
+            spare_parents: Vec::new(),
+            finish: None,
+        };
+        let mut pending = Step::Set {
+            object: Some(object.try_clone().unwrap()),
+            key: Some(key.try_clone().unwrap()),
+            value: Some(
+                runtime
+                    .dup_jsvalue(&JsValue::Object(value.object_id()))
+                    .unwrap(),
+            ),
+            receiver: Some(
+                runtime
+                    .dup_jsvalue(&JsValue::Object(object.object_id()))
+                    .unwrap(),
+            ),
+            resume: Some(Resume::RootSet),
+        };
+        let mut execution = RunningExecution::new(
+            &runtime,
+            ExecutionLimits {
+                frames: 0,
+                slots: 0,
+            },
+        )
+        .unwrap();
+        let count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(setter.object_id())
+            .unwrap();
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(setter.object_id()), u32::MAX);
+        let result = set(
+            &runtime,
+            &mut execution,
+            ReturnOwner::Root,
+            1,
+            &mut query,
+            &mut pending,
+        );
+        let maximum = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(setter.object_id());
+        // Restore before assertions can unwind through real accessor owners.
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(setter.object_id()), count);
+        assert!(matches!(result.unwrap(), Next::Continue));
+        let Step::Complete(Some(Completion::Throw(error))) = &mut pending else {
+            panic!("budget must win the competing callee refusal")
+        };
+        let error = runtime.root_value(error).unwrap();
+        let Value::Object(error) = error else {
+            panic!("actual overflow Error")
+        };
+        assert_eq!(
+            runtime
+                .get_prototype_of(&error)
+                .unwrap()
+                .unwrap()
+                .object_id(),
+            expected
+        );
+        assert_eq!(maximum, Ok(u32::MAX));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(value.object_id()),
+            Ok(1)
+        );
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(object.object_id()),
+            Ok(1)
+        );
+        assert!(query.parents.is_empty());
+        assert_eq!(runtime.0.active_frame_depth.get(), 0);
+        assert!(!runtime.is_poisoned());
+        pending.release_owned(&runtime);
+    }
+
+    #[test]
+    fn prepared_raw_set_budget_retires_selected_inputs_before_parent_reply() {
+        use crate::engine::object::{
+            AccessorValue, DescriptorField, OrdinaryPropertyDescriptor, SetAction, SetProgress,
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(function) = context.eval("(function(v){throw 'must not run'})").unwrap()
+        else {
+            panic!("actual selected setter")
+        };
+        let receiver = runtime.new_object(None).unwrap();
+        let argument = runtime.new_object(None).unwrap();
+        let key = runtime.intern_property_key("x").unwrap();
+        runtime
+            .define_own_property(
+                &receiver,
+                &key,
+                &OrdinaryPropertyDescriptor {
+                    set: DescriptorField::Present(AccessorValue::Callable(
+                        runtime.as_callable(&function).unwrap().unwrap(),
+                    )),
+                    ..OrdinaryPropertyDescriptor::new()
+                },
+            )
+            .unwrap();
+        let input = runtime
+            .dup_jsvalue(&JsValue::Object(argument.object_id()))
+            .unwrap();
+        let this = runtime
+            .dup_jsvalue(&JsValue::Object(receiver.object_id()))
+            .unwrap();
+        let mut query = Query {
+            native_runtime: std::rc::Weak::new(),
+            #[cfg(feature = "profiling")]
+            had_callback: false,
+            realm: context.realm,
+            parents: Parents::default(),
+            natives: Vec::new(),
+            saved_native_depth: 0,
+            spare_parents: Vec::new(),
+            finish: None,
+        };
+        let mut execution = RunningExecution::new(
+            &runtime,
+            ExecutionLimits {
+                frames: 0,
+                slots: 0,
+            },
+        )
+        .unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        let selected = state
+            .start_set_borrowed(
+                &runtime.0.poisoned,
+                Some(context.realm),
+                receiver.object_id(),
+                key.atom(),
+                input,
+                this,
+            )
+            .unwrap();
+        assert!(matches!(
+            selected,
+            SetProgress::Complete(SetAction::Call { .. })
+        ));
+        let count = state
+            .heap
+            .object_strong_count(function.object_id())
+            .unwrap();
+        assert_eq!(
+            count, 3,
+            "public, stored accessor, actual selected callback owners"
+        );
+        let mut step = Step::PreparedSetProgress {
+            progress: Some(selected),
+            resume: Some(Resume::RootSet),
+        };
+        let published = enter_prepared_set_in_state(
+            &runtime,
+            &mut state,
+            &mut execution,
+            &mut query,
+            &mut step,
+        )
+        .unwrap();
+        assert!(published);
+        assert!(matches!(
+            step,
+            Step::SetReply {
+                action: Some(SetAction::Throw(_)),
+                ..
+            }
+        ));
+        assert_eq!(
+            state.heap.object_strong_count(function.object_id()),
+            Ok(count - 1)
+        );
+        assert_eq!(state.heap.object_strong_count(receiver.object_id()), Ok(1));
+        assert_eq!(state.heap.object_strong_count(argument.object_id()), Ok(1));
+        assert!(query.parents.is_empty());
+        assert!(!runtime.is_poisoned());
+        step.retire_raw_in_state(&mut state, &runtime.0.poisoned)
+            .unwrap();
     }
 
     #[test]

@@ -1,9 +1,13 @@
 //! Guarded endpoint effects. No shape or prototype fact survives the borrow.
-use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
+#[cfg(test)]
+use crate::engine::api::runtime::Runtime;
+use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::Atom;
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectData, ObjectPayload, PropertySlot, RawValue};
-use crate::engine::object::{ObjectRef, ordinary_storage::prototypes_allow_dense_append};
+#[cfg(test)]
+use crate::engine::object::ObjectRef;
+use crate::engine::object::ordinary_storage::prototypes_allow_dense_append;
 use crate::engine::value::JsValue;
 #[cfg(test)]
 use crate::engine::value::Value;
@@ -34,9 +38,8 @@ fn writable_dense_length(
     Ok((length as usize == dense.len()).then_some(length))
 }
 
+#[cfg(test)]
 impl Runtime {
-    /// A single-element Push's Get(length), Set(index), Set(length) share one
-    /// storage borrow. All rejection/callback cases decline before any write.
     pub(crate) fn try_dense_push(
         &self,
         object: &ObjectRef,
@@ -46,13 +49,41 @@ impl Runtime {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property object"));
         }
+        self.0
+            .state
+            .borrow_mut()
+            .try_dense_push(&self.0.poisoned, object.object_id(), value)
+    }
+    pub(crate) fn try_dense_pop(
+        &self,
+        object: &ObjectRef,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        let _operation = self.operation()?;
+        if !object.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("property object"));
+        }
+        self.0
+            .state
+            .borrow_mut()
+            .try_dense_pop(&self.0.poisoned, object.object_id())
+    }
+}
+
+impl RuntimeState {
+    /// A single-element Push's Get(length), Set(index), Set(length) share one
+    /// storage borrow. All rejection/callback cases decline before any write.
+    pub(crate) fn try_dense_push(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        id: crate::engine::heap::ObjectId,
+        value: &JsValue,
+    ) -> Result<Option<JsValue>, RuntimeError> {
         let raw = value.as_raw();
         // Borrow the existing edge; a decline neither materializes nor retains it.
-        let mut state = self.0.state.borrow_mut();
-        let id = object.object_id();
+        let state = self;
         let prepared = (|| -> Result<Option<u32>, RuntimeError> {
             let data = state.heap.object(id)?;
-            let Some(length) = writable_dense_length(&state, data)? else {
+            let Some(length) = writable_dense_length(state, data)? else {
                 return Ok(None);
             };
             if !data.extensible {
@@ -62,7 +93,7 @@ impl Runtime {
                 return Ok(None);
             };
             let prototype = state.heap.shape(data.shape)?.prototype();
-            if !prototypes_allow_dense_append(&state, atom, prototype)? {
+            if !prototypes_allow_dense_append(state, atom, prototype)? {
                 return Ok(None);
             }
             Ok(Some(length))
@@ -75,12 +106,15 @@ impl Runtime {
         };
         // The shared allocation/edge kernel commits the element before length.
         // The explicit final Set(length) is a no-op on this writable own slot.
+        let _unwind = crate::engine::api::runtime::RuntimeUnwindGuard::from_flag(poisoned);
         let retained = state.retain_raw_value_atoms(std::iter::once(&raw))?;
         let appended = state.heap.append_fresh_array_dense_value(id, raw);
         match appended {
             Ok(()) => {}
             Err(error) => {
-                let released = state.release_atoms(retained);
+                let released = state
+                    .release_atoms(retained)
+                    .inspect_err(|_| poisoned.set(true));
                 released?;
                 return Err(error.into());
             }
@@ -97,17 +131,13 @@ impl Runtime {
     /// Immediate dense tails need no root materialization before deletion.
     /// Reference tails, holes, fixed length and slow Arrays keep the protocol.
     pub(crate) fn try_dense_pop(
-        &self,
-        object: &ObjectRef,
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        id: crate::engine::heap::ObjectId,
     ) -> Result<Option<JsValue>, RuntimeError> {
-        let _operation = self.operation()?;
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("property object"));
-        }
-        let mut state = self.0.state.borrow_mut();
-        let id = object.object_id();
+        let state = self;
         let data = state.heap.object(id)?;
-        let Some(length) = writable_dense_length(&state, data)? else {
+        let Some(length) = writable_dense_length(state, data)? else {
             return Ok(None);
         };
         let ObjectPayload::Array { dense: Some(dense) } = &data.payload else {
@@ -123,9 +153,22 @@ impl Runtime {
             _ => return Ok(None),
         };
         if length != 0 {
-            let cleanup = state.heap.truncate_array_dense(id, length - 1)?;
-            state.apply_cleanup(cleanup)?;
-            state.replace_property_slot(
+            let _unwind = crate::engine::api::runtime::RuntimeUnwindGuard::from_flag(poisoned);
+            let prepared = state.heap.prepare_array_dense_truncation(id, length - 1)?;
+            let cleanup = state
+                .heap
+                .commit_array_dense_truncation_with_status(prepared)
+                .map_err(|failure| {
+                    if failure.published {
+                        poisoned.set(true);
+                    }
+                    RuntimeError::from(failure.error)
+                })?;
+            state
+                .apply_cleanup(cleanup)
+                .inspect_err(|_| poisoned.set(true))?;
+            state.replace_property_slot_with_poison(
+                poisoned,
                 id,
                 0,
                 PropertySlot::Data(if let Ok(n) = i32::try_from(length - 1) {

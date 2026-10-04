@@ -7,19 +7,19 @@
 
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::atom::AtomIdx;
+#[cfg(test)]
 use crate::engine::heap::roots::VarRefRoot;
 
 #[cfg(test)]
 use crate::engine::heap::ContextId;
 #[cfg(test)]
 use crate::engine::heap::ObjectPayload;
-use crate::engine::heap::PropertySlot;
 #[cfg(test)]
 use crate::engine::object::CompleteOrdinaryPropertyDescriptor;
 #[cfg(test)]
 use crate::engine::object::WellKnownSymbol;
 use crate::engine::object::{ObjectRef, OrdinaryPropertyDescriptor, PropertyKey};
+#[cfg(test)]
 use crate::engine::value::JsValue;
 
 mod allocation;
@@ -90,21 +90,6 @@ impl Runtime {
         result.map(|object| ObjectRef::from_owned_handle(self.clone(), object))
     }
 
-    /// Return the class state and numeric index for one Arguments own-key
-    /// operation. `None` means either a non-Arguments receiver or a non-index
-    /// property key.
-    pub(crate) fn arguments_index_state(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<Option<(u32, bool, Option<u32>)>, RuntimeError> {
-        self.validate_object_and_key(object, key)?;
-        self.0
-            .state
-            .borrow()
-            .arguments_index_state(object.object_id(), key.atom())
-    }
-
     #[cfg(test)]
     pub(crate) fn arguments_fast_len(
         &self,
@@ -151,53 +136,6 @@ impl Runtime {
             key.atom(),
             descriptor,
         )
-    }
-
-    /// Direct ordinary assignment to an existing Arguments index uses the
-    /// fast element path and must not trigger the explicit-define conversion.
-    pub(crate) fn set_arguments_index_value(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        value: &JsValue,
-    ) -> Result<bool, RuntimeError> {
-        if self.arguments_index_state(object, key)?.is_none() {
-            return Ok(false);
-        }
-        let (flags, slot) = {
-            let state = self.0.state.borrow();
-            let object_data = state.heap.object(object.object_id())?;
-            let shape = state.heap.shape(object_data.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(false);
-            };
-            let index = usize::try_from(index)
-                .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
-            (
-                shape.entries()[index].flags,
-                object_data.slots[index].clone(),
-            )
-        };
-        if !flags.writable {
-            return Ok(false);
-        }
-        match slot {
-            PropertySlot::VarRef(id) => {
-                let root = VarRefRoot::from_borrowed_handle(self.clone(), id)?;
-                self.write_var_ref(&root, self.dup_jsvalue(value)?)?;
-            }
-            PropertySlot::Data(_) => {
-                let stored = self.store_property_slot(
-                    object,
-                    key,
-                    flags,
-                    PropertySlot::Data(value.as_raw()),
-                );
-                stored?;
-            }
-            PropertySlot::Accessor { .. } | PropertySlot::AutoInit(_) => return Ok(false),
-        }
-        Ok(true)
     }
 }
 

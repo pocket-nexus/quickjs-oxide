@@ -18,7 +18,7 @@ use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::heap::{AutoInitProperty, ContextId, PropertySlot};
 #[cfg(test)]
 use crate::engine::host::HostServices;
-use crate::engine::object::operations::{InternalSetResult, PropertySetRejection};
+use crate::engine::object::operations::InternalSetResult;
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol};
 use crate::engine::realm::bindings::GlobalBindingCreationMode;
@@ -140,42 +140,13 @@ impl Runtime {
         key: &PropertyKey,
         result: NativeConversion<InternalSetResult>,
     ) -> Result<Option<crate::engine::value::JsValue>, RuntimeError> {
-        match result {
-            NativeConversion::Value(InternalSetResult::Accepted) => Ok(None),
-            NativeConversion::Throw(value) => Ok(Some(value)),
-            NativeConversion::Value(result) => {
-                let error = match result {
-                    InternalSetResult::RejectedProxyTrap => {
-                        Error::new(ErrorKind::Type, "proxy: cannot set property")
-                    }
-                    InternalSetResult::Rejected(PropertySetRejection::ReadOnly) => {
-                        self.native_atom_error(ErrorKind::Type, "'", key, "' is read-only")?
-                    }
-                    InternalSetResult::Rejected(PropertySetRejection::ArrayLengthReadOnly) => {
-                        let length = self
-                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-                        self.native_atom_error(ErrorKind::Type, "'", &length, "' is read-only")?
-                    }
-                    InternalSetResult::Rejected(PropertySetRejection::NotConfigurable) => {
-                        Error::new(ErrorKind::Type, "not configurable")
-                    }
-                    InternalSetResult::Rejected(PropertySetRejection::NoSetter) => {
-                        Error::new(ErrorKind::Type, "no setter for property")
-                    }
-                    InternalSetResult::Rejected(PropertySetRejection::NotExtensible) => {
-                        Error::new(ErrorKind::Type, "object is not extensible")
-                    }
-                    InternalSetResult::Rejected(PropertySetRejection::NotObject) => {
-                        Error::new(ErrorKind::Type, "not an object")
-                    }
-                    InternalSetResult::Accepted => unreachable!("accepted Set returned above"),
-                };
-                Ok(Some(self.new_native_error_from_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Type,
-                    &error,
-                )?))
-            }
+        match self.finish_property_set(result, key, true) {
+            Ok(crate::engine::vm::Completion::Return(_)) => Ok(None),
+            Ok(crate::engine::vm::Completion::Throw(value)) => Ok(Some(value)),
+            Err(RuntimeError::Engine(error)) => Ok(Some(
+                self.new_native_error_from_error_jsvalue(realm, NativeErrorKind::Type, &error)?,
+            )),
+            Err(error) => Err(error),
         }
     }
 }

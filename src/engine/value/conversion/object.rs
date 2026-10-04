@@ -247,11 +247,21 @@ impl Runtime {
         realm: ContextId,
         value: JsValue,
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+        Ok(match self.native_to_object_outcome(realm, value)? {
+            ToObjectOutcome::Existing(object) | ToObjectOutcome::Boxed(object) => {
+                NativeConversion::Value(ObjectRef::from_owned_handle(self.clone(), object))
+            }
+            ToObjectOutcome::Throw(value) => NativeConversion::Throw(value),
+        })
+    }
+
+    pub(crate) fn native_to_object_outcome(
+        &self,
+        realm: ContextId,
+        value: JsValue,
+    ) -> Result<ToObjectOutcome, RuntimeError> {
         if let JsValue::Object(object) = value {
-            return Ok(NativeConversion::Value(ObjectRef::from_owned_handle(
-                self.clone(),
-                object,
-            )));
+            return Ok(ToObjectOutcome::Existing(object));
         }
         if matches!(value, JsValue::Undefined | JsValue::Null) {
             let _operation = self.operation()?;
@@ -263,7 +273,7 @@ impl Runtime {
             let ToObjectOutcome::Throw(value) = result else {
                 unreachable!("nullish ToObject throws")
             };
-            return Ok(NativeConversion::Throw(value));
+            return Ok(ToObjectOutcome::Throw(value));
         }
         let mut owner = ToObjectBoundaryGuard {
             runtime: self,
@@ -294,12 +304,7 @@ impl Runtime {
             &self.0.poisoned,
             owner.prepared.take().expect("ToObject prepared owner"),
         )?;
-        Ok(match result {
-            ToObjectOutcome::Existing(object) | ToObjectOutcome::Boxed(object) => {
-                NativeConversion::Value(ObjectRef::from_owned_handle(self.clone(), object))
-            }
-            ToObjectOutcome::Throw(value) => NativeConversion::Throw(value),
-        })
+        Ok(result)
     }
 }
 

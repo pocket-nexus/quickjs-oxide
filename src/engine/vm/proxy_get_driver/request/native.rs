@@ -100,7 +100,7 @@ impl TryFrom<crate::engine::builtins::continuation::NativeStep> for Step {
                 NativeStep::IteratorCreate(step) => step.try_into()?,
                 NativeStep::ArrayNext(step) => step.try_into()?,
                 NativeStep::Raw(result) => Self::NativeRawComplete(Some(result)),
-                NativeStep::ArrayMutation(step) => step.try_into()?,
+                NativeStep::ArrayMutation(step) => step.into(),
                 NativeStep::ArrayCallback(step) => step.try_into()?,
                 NativeStep::ObjectIteration(step) => step.try_into()?,
                 NativeStep::StringReplace(step) => step.try_into()?,

@@ -317,6 +317,9 @@ pub(super) fn run(
                         "computed instruction escaped its resident consumer",
                     ));
                 }
+                VmAction::WriteProperty { .. } => {
+                    unreachable!("resident Set selection escaped its FrameExecution turn")
+                }
                 VmAction::SetProperty(key) => {
                     let frame = execution.frames.current_mut(id)?;
                     if key.is_none()

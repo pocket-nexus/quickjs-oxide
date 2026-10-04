@@ -1570,3 +1570,6 @@ mod named_read_tests;
 
 #[cfg(test)]
 mod computed_read_tests;
+
+#[cfg(test)]
+mod write_state_tests;

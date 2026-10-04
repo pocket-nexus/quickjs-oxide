@@ -27,7 +27,8 @@ fn prepared_array_dense_truncation_is_inert_until_commit() {
     assert_eq!(heap.object_strong_count(target), Ok(2));
 
     let prepared = heap.prepare_array_dense_truncation(array, 0).unwrap();
-    heap.commit_array_dense_truncation(prepared).unwrap();
+    heap.commit_array_dense_truncation_with_status(prepared)
+        .unwrap();
     assert_eq!(heap.array_dense_len(array), Ok(Some(0)));
     assert_eq!(heap.object_strong_count(target), Ok(1));
 

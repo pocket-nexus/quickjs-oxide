@@ -41,12 +41,59 @@ pub(crate) enum OwnPropertySelection {
     Shared(SharedTypedOwnWord),
 }
 
+pub(crate) enum OwnPresenceSelection {
+    Ready(bool),
+    Shared(SharedTypedOwnWord),
+}
+
 /// A checked stored-slot snapshot consumed under the selecting State lease.
 /// Handles borrow the receiver's edges; this is not an owning descriptor and
 /// must not cross a callback, collection, or property mutation.
 pub(super) struct StoredOwnProperty {
     pub(super) flags: PropertyFlags,
     pub(super) slot: PropertySlot,
+}
+
+impl RuntimeState {
+    /// Presence preserves lazy shape flags and the exact typed/shared check;
+    /// it never materializes an AutoInit descriptor merely to classify rejection.
+    pub(crate) fn select_own_presence(
+        &mut self,
+        object: ObjectId,
+        atom: Atom,
+    ) -> Result<OwnPresenceSelection, RuntimeError> {
+        if let Some(flags) = self.ordinary_property_flags_in_state(object, atom)? {
+            return Ok(OwnPresenceSelection::Ready(flags.is_some()));
+        }
+        if matches!(
+            self.heap.object(object)?.payload,
+            ObjectPayload::TypedArray(_)
+        ) && let Some(numeric) =
+            self.typed_canonical_numeric_index(atom, self.typed_own_key(atom)?)?
+        {
+            return match numeric {
+                CanonicalNumericIndex::Invalid => Ok(OwnPresenceSelection::Ready(false)),
+                CanonicalNumericIndex::Valid(index) => {
+                    Ok(match self.select_typed_own_property(object, index)? {
+                        TypedOwnProperty::Missing => OwnPresenceSelection::Ready(false),
+                        TypedOwnProperty::Word(_) => OwnPresenceSelection::Ready(true),
+                        TypedOwnProperty::Shared(word) => OwnPresenceSelection::Shared(word),
+                    })
+                }
+            };
+        }
+        if self.string_exotic_index_value(object, atom)?.is_some()
+            || self.dense_array_index_value(object, atom)?.is_some()
+        {
+            return Ok(OwnPresenceSelection::Ready(true));
+        }
+        Ok(OwnPresenceSelection::Ready(
+            self.heap
+                .shape(self.heap.object(object)?.shape)?
+                .find(AtomIdx::from_raw(atom.raw()))
+                .is_some(),
+        ))
+    }
 }
 
 impl RuntimeState {

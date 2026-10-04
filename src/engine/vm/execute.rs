@@ -27,6 +27,7 @@ use crate::engine::vm::stack::{
 
 pub(in crate::engine::vm) mod computed_read;
 pub(in crate::engine::vm) mod named_read;
+mod property_write;
 
 #[cfg(test)]
 thread_local! {
@@ -263,6 +264,11 @@ pub(super) enum VmAction {
         fallthrough: FallthroughPc,
     },
     SetProperty(Option<u32>),
+    /// Internal selection consumed by this same FrameExecution turn.
+    WriteProperty {
+        index: Option<u32>,
+        fallthrough: FallthroughPc,
+    },
     GetField {
         index: u32,
         keep_receiver: bool,
@@ -382,6 +388,7 @@ impl VmAction {
             Self::Apply { .. } => "execute.action.apply",
             Self::Eval { .. } => "execute.action.eval",
             Self::Call { .. } => "execute.action.call",
+            Self::WriteProperty { .. } => "write_property",
             Self::SetProperty(_) => "execute.action.set_property",
             Self::GetField { .. } => "execute.action.get_field",
             Self::GetElement { .. } => "execute.action.get_element",
@@ -2488,33 +2495,11 @@ pub(super) fn execute_frame_in_state_with_identity(
                             });
                         }
                     }
-                    Opcode::PutField => {
-                        let Some(generation) = property_generation.checked_add(1) else {
-                            break 'dispatch Ok(VmAction::SetProperty(Some(operand)));
-                        };
-                        if !cursor.with_slots(|slots| {
-                            slots.try_scalar_field_write_in_state(
-                                state,
-                                &runtime.0.poisoned,
-                                runtime.domain_id(),
-                                executable,
-                                operand,
-                            )
-                        })? {
-                            break 'dispatch Ok(VmAction::SetProperty(Some(operand)));
-                        }
-                        *property_generation = generation;
-                    }
-                    Opcode::PutArrayEl => {
-                        let Some(generation) = property_generation.checked_add(1) else {
-                            break 'dispatch Ok(VmAction::SetProperty(None));
-                        };
-                        if !cursor.with_slots(|slots| {
-                            slots.try_scalar_element_write_in_state(state, &runtime.0.poisoned)
-                        })? {
-                            break 'dispatch Ok(VmAction::SetProperty(None));
-                        }
-                        *property_generation = generation;
+                    Opcode::PutField | Opcode::PutArrayEl => {
+                        break 'dispatch Ok(VmAction::WriteProperty {
+                            index: (decoded.opcode == Opcode::PutField).then_some(operand),
+                            fallthrough: FallthroughPc::from_decoded(decoded),
+                        });
                     }
                     Opcode::Goto => next = operand as usize,
                     Opcode::IfTrue | Opcode::IfFalse => {
@@ -2643,6 +2628,22 @@ pub(super) fn execute_frame_in_state_with_identity(
             }
         }?;
         match action {
+            VmAction::WriteProperty { index, fallthrough } => {
+                match property_write::complete(
+                    runtime,
+                    state,
+                    &mut segment,
+                    next_operation,
+                    index,
+                    fallthrough,
+                )? {
+                    property_write::Progress::Completed | property_write::Progress::Entered => {
+                        continue;
+                    }
+                    property_write::Progress::Boundary => return Ok(VmAction::NativeProgress),
+                    property_write::Progress::Throw => return Ok(VmAction::Throw),
+                }
+            }
             VmAction::GetField {
                 index,
                 keep_receiver,

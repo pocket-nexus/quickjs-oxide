@@ -2,7 +2,6 @@
 use super::{LinkedNativeSelection, NamedDataSelection, NamedSelectionMiss};
 #[cfg(test)]
 use crate::engine::api::runtime::Runtime;
-use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::runtime::RuntimeState;
@@ -305,92 +304,11 @@ impl RuntimeState {
         }
         super::immediate_value_jsvalue(data.dense_array_value(index)?)
     }
-
-    pub(crate) fn try_linked_scalar_field_write(
-        &mut self,
-        domain_id: u64,
-        base: &JsValue,
-        value: &JsValue,
-        executable: &PublishedFunctionSnapshot,
-        key_index: u32,
-    ) -> Result<bool, RuntimeError> {
-        if !matches!(
-            value,
-            JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_)
-        ) {
-            return Ok(false);
-        }
-        let JsValue::Object(object) = base else {
-            return Ok(false);
-        };
-        let Some(atom) = super::linked_field_atom_in_domain(domain_id, executable, key_index)
-        else {
-            return Ok(false);
-        };
-        if !super::is_ordinary(self.heap.object(*object)?) {
-            return Ok(false);
-        }
-        let Some(slot) = super::locate(self, *object, atom)? else {
-            return Ok(false);
-        };
-        if !slot.flags.writable
-            || !matches!(
-                self.heap.object(*object)?.slots.get(slot.index),
-                Some(crate::engine::heap::PropertySlot::Data(
-                    RawValue::Undefined
-                        | RawValue::Null
-                        | RawValue::Bool(_)
-                        | RawValue::Int(_)
-                        | RawValue::Float(_)
-                        | RawValue::ShortBigInt(_)
-                ))
-            )
-        {
-            return Ok(false);
-        }
-        // Both values own no edges. The shared replacement kernel preserves
-        // storage invariants without enqueueing cleanup or changing layout.
-        self.replace_property_slot(
-            *object,
-            slot.index,
-            crate::engine::heap::PropertySlot::Data(value.as_raw()),
-        )?;
-        Ok(true)
-    }
-
-    pub(crate) fn try_dense_array_write_scalar(
-        &mut self,
-        base: &JsValue,
-        index: u32,
-        value: &JsValue,
-    ) -> Result<bool, RuntimeError> {
-        if !matches!(
-            value,
-            JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_)
-        ) {
-            return Ok(false);
-        }
-        let JsValue::Object(object) = base else {
-            return Ok(false);
-        };
-        Ok(self
-            .heap
-            .try_replace_dense_immediate_value(*object, index, value.as_raw()))
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::{StateSetProbe, linked_field_atom_in_domain};
     use super::*;
     use crate::engine::code::bytecode::Instruction;
     use crate::engine::value::Value;
@@ -696,10 +614,12 @@ mod tests {
     }
 
     #[test]
-    fn direct_state_scalar_and_dense_writes_preserve_rejections() {
+    fn canonical_state_field_and_dense_writes_preserve_rejections() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
+        let atom = linked_field_atom_in_domain(runtime.domain_id(), &code, key).unwrap();
+        let index = crate::engine::atom::Atom::from_immediate_integer(0).unwrap();
         let base = runtime
             .into_jsvalue(context.eval("({x:1})").unwrap())
             .unwrap();
@@ -712,32 +632,33 @@ mod tests {
         let frozen_dense = runtime
             .into_jsvalue(context.eval("Object.freeze([5])").unwrap())
             .unwrap();
-        let typed = runtime
-            .into_jsvalue(context.eval("new Float64Array([7])").unwrap())
-            .unwrap();
         let mut state = runtime.0.state.borrow_mut();
-        assert!(
+        assert!(matches!(
             state
-                .try_linked_scalar_field_write(
-                    runtime.domain_id(),
-                    &base,
+                .ordinary_set_probe_in_state(
+                    &runtime.0.poisoned,
+                    object(&base),
+                    atom,
                     &JsValue::Int(42),
-                    &code,
-                    key
+                    true,
+                    true
                 )
-                .unwrap()
-        );
-        assert!(
-            !state
-                .try_linked_scalar_field_write(
-                    runtime.domain_id(),
-                    &frozen,
+                .unwrap(),
+            StateSetProbe::Stored(true)
+        ));
+        assert!(matches!(
+            state
+                .ordinary_set_probe_in_state(
+                    &runtime.0.poisoned,
+                    object(&frozen),
+                    atom,
                     &JsValue::Int(42),
-                    &code,
-                    key
+                    true,
+                    true
                 )
-                .unwrap()
-        );
+                .unwrap(),
+            StateSetProbe::Stored(false)
+        ));
         assert_eq!(
             state.select_linked_data_into(
                 runtime.domain_id(),
@@ -755,20 +676,24 @@ mod tests {
             state.try_array_immediate_read(&dense, 0),
             Some(JsValue::Int(1))
         );
-        assert!(
+        assert!(matches!(
             state
-                .try_dense_array_write_scalar(&dense, 0, &JsValue::Int(9))
-                .unwrap()
-        );
+                .ordinary_set_probe_in_state(
+                    &runtime.0.poisoned,
+                    object(&dense),
+                    index,
+                    &JsValue::Int(9),
+                    true,
+                    true
+                )
+                .unwrap(),
+            StateSetProbe::Stored(true)
+        ));
         assert_eq!(
             state.try_dense_array_kept_read(&dense, 0),
             Some(JsValue::Int(9))
         );
-        assert!(
-            !state
-                .try_dense_array_write_scalar(&dense, 99, &JsValue::Int(9))
-                .unwrap()
-        );
+        // These numeric compound-operation kernels remain actual VM consumers.
         state
             .try_add_array_own_number(&dense, 0, Number::Int(1))
             .unwrap();
@@ -788,23 +713,18 @@ mod tests {
             state.peek_dense_number(&frozen_dense, 0),
             Some(Number::Int(5))
         ));
-        assert!(state.try_typed_array_number_write(&typed, 0, 12.0));
-        assert!(!state.try_typed_array_number_write(&typed, 99, 12.0));
-        assert_eq!(
-            state.try_array_immediate_read(&typed, 0),
-            Some(JsValue::Int(12))
-        );
-        for owner in [base, frozen, dense, frozen_dense, typed] {
+        for owner in [base, frozen, dense, frozen_dense] {
             state.release_jsvalue(owner).unwrap();
         }
         assert!(!runtime.0.deferred_references.has_pending());
     }
 
     #[test]
-    fn linked_scalar_field_write_commits_without_set_protocol() {
+    fn canonical_state_field_write_preserves_receiver_owner_count() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let (code, _, key) = site(&runtime);
+        let atom = linked_field_atom_in_domain(runtime.domain_id(), &code, key).unwrap();
         let base = runtime
             .into_jsvalue(
                 context
@@ -819,20 +739,22 @@ mod tests {
             .heap
             .object_strong_count(object(&base))
             .unwrap();
-        assert!(
+        assert!(matches!(
             runtime
                 .0
                 .state
                 .borrow_mut()
-                .try_linked_scalar_field_write(
-                    runtime.domain_id(),
-                    &base,
+                .ordinary_set_probe_in_state(
+                    &runtime.0.poisoned,
+                    object(&base),
+                    atom,
                     &JsValue::Int(42),
-                    &code,
-                    key
+                    true,
+                    true
                 )
-                .unwrap()
-        );
+                .unwrap(),
+            StateSetProbe::Stored(true)
+        ));
         assert_eq!(context.eval("scalarBase.x").unwrap(), Value::Int(42));
         assert_eq!(
             runtime
@@ -843,60 +765,6 @@ mod tests {
                 .object_strong_count(object(&base))
                 .unwrap(),
             owners
-        );
-        runtime.release_jsvalue(base).unwrap();
-    }
-
-    #[test]
-    fn linked_scalar_field_write_declines_observable_or_non_scalar_storage() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        let (code, _, key) = site(&runtime);
-        for source in [
-            "Object.freeze({x:1})",
-            "({get x(){throw 99}, set x(v){throw 98}})",
-            "Object.create({x:1})",
-            "new Proxy({x:1},{set(){throw 97}})",
-            "({x:{marker:1}})",
-            "({x:'old'})",
-            "Object.assign([], {x:1})",
-        ] {
-            let base = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
-            let root = runtime.dup_jsvalue(&base).unwrap();
-            assert!(
-                !runtime
-                    .0
-                    .state
-                    .borrow_mut()
-                    .try_linked_scalar_field_write(
-                        runtime.domain_id(),
-                        &base,
-                        &JsValue::Int(42),
-                        &code,
-                        key
-                    )
-                    .unwrap(),
-                "{source}"
-            );
-            runtime.release_jsvalue(root).unwrap();
-            runtime.release_jsvalue(base).unwrap();
-        }
-        let base = runtime
-            .into_jsvalue(context.eval("({x:1})").unwrap())
-            .unwrap();
-        assert!(
-            runtime
-                .0
-                .state
-                .borrow_mut()
-                .try_linked_scalar_field_write(
-                    runtime.domain_id(),
-                    &base,
-                    &JsValue::Int(42),
-                    &code,
-                    key,
-                )
-                .unwrap()
         );
         runtime.release_jsvalue(base).unwrap();
     }
@@ -935,7 +803,7 @@ mod tests {
 
     #[cfg(feature = "profiling")]
     #[test]
-    fn scalar_field_vm_records_local_completion() {
+    fn canonical_set_vm_records_local_completion() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let _ = context.eval("globalThis.scalarProfile = {x:0};").unwrap();
@@ -950,7 +818,7 @@ mod tests {
             profile
                 .snapshot()
                 .owned_execution_events
-                .get("ordinary_scalar_field_write_in_execute")
+                .get("core.internal_property_write")
                 .copied(),
             Some(16)
         );

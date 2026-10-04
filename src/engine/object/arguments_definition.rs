@@ -10,13 +10,57 @@ use super::property::{
 use super::shape::PropertyFlags;
 use super::storage::GlobalVarRefGuard;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::atom::Atom;
+use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectPayload, PropertySlot, RawValue, VarRefId};
 use crate::engine::value::JsValue;
 use std::cell::Cell;
 
 impl RuntimeState {
+    /// Assignment preserves mapped-cell identity. Explicit descriptor definition
+    /// still uses its separate alias-detaching publication below.
+    pub(super) fn set_arguments_index_value(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        atom: Atom,
+        value: &JsValue,
+    ) -> Result<bool, RuntimeError> {
+        if self.arguments_index_state(object, atom)?.is_none() {
+            return Ok(false);
+        }
+        let (flags, slot) = {
+            let data = self.heap.object(object)?;
+            let shape = self.heap.shape(data.shape)?;
+            let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+                return Ok(false);
+            };
+            let index = usize::try_from(index)
+                .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
+            (shape.entries()[index].flags, data.slots[index].clone())
+        };
+        if !flags.writable {
+            return Ok(false);
+        }
+        match slot {
+            PropertySlot::VarRef(cell) => {
+                // The admitted Arguments slot keeps the cell alive throughout
+                // this nonreentrant checked-input store and old-edge retirement.
+                let value = self.dup_jsvalue(value)?;
+                self.write_var_ref(poisoned, cell, value)?;
+            }
+            PropertySlot::Data(_) => self.store_property_slot_with_poison(
+                poisoned,
+                object,
+                atom,
+                flags,
+                PropertySlot::Data(value.as_raw()),
+            )?,
+            PropertySlot::Accessor { .. } | PropertySlot::AutoInit(_) => return Ok(false),
+        }
+        Ok(true)
+    }
+
     pub(super) fn arguments_index_state(
         &self,
         object: ObjectId,

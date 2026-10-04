@@ -69,7 +69,13 @@ impl Runtime {
         {
             return Ok(PropertyKey::from_owned_atom(self.clone(), atom));
         }
-        self.intern_property_key(&index.to_string())
+        let _operation = self.operation()?;
+        let atom = self
+            .0
+            .state
+            .borrow_mut()
+            .property_key_atom_for_index(index)?;
+        Ok(PropertyKey::from_owned_atom(self.clone(), atom))
     }
 
     #[cfg(test)]

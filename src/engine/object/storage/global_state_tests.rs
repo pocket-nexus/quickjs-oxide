@@ -960,7 +960,9 @@ fn state_poison_descriptor_entry_preserves_published_atom_before_owner_drop() {
             )
             .unwrap();
         if dictionary {
-            state.ensure_dictionary_layout(owner.object_id()).unwrap();
+            state
+                .ensure_dictionary_layout_with_poison(&runtime.0.poisoned, owner.object_id())
+                .unwrap();
         }
         let atom = state.atoms.new_symbol(Some("published-edge")).unwrap();
         let index = state.atoms.unbrand(atom).unwrap();

@@ -1581,16 +1581,15 @@ fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
     let symbol = runtime
         .into_jsvalue(second.eval("Symbol()").unwrap())
         .unwrap();
-    let NativeConversion::Throw(JsValue::Object(error)) =
-        write::TypedWriteStep::set_primitive_result(
-            &runtime,
-            second.realm,
-            &view,
-            Some(0),
-            &symbol,
-        )
-        .unwrap()
-    else {
+    let NativeConversion::Throw(JsValue::Object(error)) = write::TypedWriteStep::set(
+        &runtime,
+        view.try_clone().unwrap(),
+        Some(0),
+        runtime.dup_jsvalue(&symbol).unwrap(),
+    )
+    .unwrap()
+    .finish_sync(&runtime, second.realm)
+    .unwrap() else {
         panic!("expected conversion error")
     };
     let error = ObjectRef::from_owned_handle(runtime.clone(), error);

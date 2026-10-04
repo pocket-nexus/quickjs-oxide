@@ -14,6 +14,7 @@ use crate::engine::value::JsValue;
 #[cfg(test)]
 use crate::engine::value::Value;
 use crate::engine::value::number::operations::Number;
+use std::cell::Cell;
 
 /// One non-observable named-property selection. Data owns its promoted edge;
 /// other cases have not changed guest-visible state or consumed an input.
@@ -251,7 +252,7 @@ fn select_found_set_slot(data: &crate::engine::heap::ObjectData, slot: OwnSlot) 
 
 enum MissingSelection {
     Define,
-    Complete(SetProbe),
+    Complete(StateSetProbe),
     Special(ObjectId, SpecialKind),
 }
 
@@ -277,10 +278,12 @@ fn select_missing_prototypes(
                 match &data.slots[slot.index] {
                     PropertySlot::Data(_) if slot.flags.writable => break,
                     PropertySlot::Data(_) => {
-                        return Ok(MissingSelection::Complete(SetProbe::Stored(false)));
+                        return Ok(MissingSelection::Complete(StateSetProbe::Stored(false)));
                     }
                     PropertySlot::Accessor { set, .. } => {
-                        return Ok(MissingSelection::Complete(SetProbe::Setter(set.option())));
+                        return Ok(MissingSelection::Complete(StateSetProbe::Setter(
+                            set.option(),
+                        )));
                     }
                     _ => return Ok(MissingSelection::Special(id, SpecialKind::Other)),
                 }
@@ -291,9 +294,11 @@ fn select_missing_prototypes(
         match select_set_slot(state, id, atom)? {
             BorrowedSet::Missing(next) => prototype = next,
             BorrowedSet::Data(slot) if slot.flags.writable => break,
-            BorrowedSet::Data(_) => return Ok(MissingSelection::Complete(SetProbe::Stored(false))),
+            BorrowedSet::Data(_) => {
+                return Ok(MissingSelection::Complete(StateSetProbe::Stored(false)));
+            }
             BorrowedSet::Setter(setter) => {
-                return Ok(MissingSelection::Complete(SetProbe::Setter(setter)));
+                return Ok(MissingSelection::Complete(StateSetProbe::Setter(setter)));
             }
             BorrowedSet::Special(kind) => return Ok(MissingSelection::Special(id, kind)),
         }
@@ -329,7 +334,7 @@ fn set_missing_local(
     // A complete new data descriptor has no compatibility comparison; the
     // shared descriptor algorithm rejects it exactly when not extensible.
     if !state.heap.object(receiver)?.extensible {
-        return Ok(MissingSelection::Complete(SetProbe::Rejected(
+        return Ok(MissingSelection::Complete(StateSetProbe::Rejected(
             crate::engine::object::operations::PropertySetRejection::NotExtensible,
         )));
     }
@@ -354,52 +359,30 @@ fn special_kind(data: &crate::engine::heap::ObjectData) -> SpecialKind {
     }
 }
 
-pub(super) enum SetProbe {
+/// A same-lease Set selection. Object identities borrow the caller's live
+/// target/receiver graph until a real waiting request acquires its checked owner.
+pub(super) enum StateSetProbe {
     Stored(bool),
-
     Rejected(crate::engine::object::operations::PropertySetRejection),
-
-    SpecialAt(ObjectRef, SpecialKind),
+    SpecialAt(ObjectId, SpecialKind),
     Writable,
     Setter(Option<ObjectId>),
-    Missing(Option<ObjectRef>),
+    Missing(Option<ObjectId>),
     Special(SpecialKind),
 }
 
-impl Runtime {
-    /// The target stays rooted until the selected setter/prototype has been
-    /// promoted. No callback, mutation or cleanup occurs between snapshot and
-    /// promotion. Data writes locate and commit in a single mutable borrow.
-    pub(super) fn ordinary_set_probe(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
+impl RuntimeState {
+    /// The canonical physical Set selection and commit. This lease admits raw
+    /// identities; no owner retirement, callback or State reborrow intervenes.
+    pub(super) fn ordinary_set_probe_in_state(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        atom: Atom,
         value: &JsValue,
         receiver_is_target: bool,
-    ) -> Result<SetProbe, RuntimeError> {
-        self.ordinary_set_probe_inner(object, key, value, receiver_is_target, true)
-    }
-
-    // OrdinarySetWithOwnDescriptor checks only Receiver's own descriptor. Its
-    // prototype must not be consulted again after the target selected a writable
-    // data descriptor (Reflect.set may have a completely different receiver).
-    pub(super) fn ordinary_set_receiver_probe(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        value: &JsValue,
-    ) -> Result<SetProbe, RuntimeError> {
-        self.ordinary_set_probe_inner(object, key, value, true, false)
-    }
-
-    fn ordinary_set_probe_inner(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        value: &JsValue,
-        receiver_is_target: bool,
-        _walk_missing: bool,
-    ) -> Result<SetProbe, RuntimeError> {
+        walk_missing: bool,
+    ) -> Result<StateSetProbe, RuntimeError> {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("property_storage_set_probe");
         enum Selected {
@@ -412,12 +395,12 @@ impl Runtime {
             SpecialAt(ObjectId, SpecialKind),
         }
         let selected = {
-            let mut state = self.0.state.borrow_mut();
-            let id = object.object_id();
+            let state = &mut *self;
+            let id = object;
             let data = state.heap.object(id)?;
 
             let dense_index = if receiver_is_target && matches!(data.kind, ObjectKind::Array) {
-                key.atom().immediate_integer().and_then(|index| {
+                atom.immediate_integer().and_then(|index| {
                     if let ObjectPayload::Array { dense: Some(dense) } = &data.payload {
                         (index as usize <= dense.len()).then_some((index, dense.len()))
                     } else {
@@ -433,12 +416,12 @@ impl Runtime {
                     Selected::Dense(index)
                 } else {
                     {
-                        let prototype = if _walk_missing {
+                        let prototype = if walk_missing {
                             state.heap.shape(data.shape)?.prototype()
                         } else {
                             None
                         };
-                        match select_missing_prototypes(&state, key.atom(), prototype)? {
+                        match select_missing_prototypes(state, atom, prototype)? {
                             MissingSelection::Define => Selected::DenseAppend(index),
                             MissingSelection::Complete(result) => return Ok(result),
                             MissingSelection::Special(id, kind) => Selected::SpecialAt(id, kind),
@@ -446,23 +429,24 @@ impl Runtime {
                     }
                 }
             } else {
-                match select_set_slot(&state, id, key.atom())? {
+                match select_set_slot(state, id, atom)? {
                     BorrowedSet::Missing(prototype) => {
                         if receiver_is_target {
                             match set_missing_local(
-                                &mut state,
+                                state,
                                 id,
-                                key.atom(),
-                                if _walk_missing { prototype } else { None },
+                                atom,
+                                if walk_missing { prototype } else { None },
                             )? {
                                 MissingSelection::Complete(result) => return Ok(result),
                                 MissingSelection::Special(id, kind) => {
                                     Selected::SpecialAt(id, kind)
                                 }
                                 MissingSelection::Define => {
-                                    state.store_selected_property_slot(
+                                    state.store_selected_property_slot_with_poison(
+                                        poisoned,
                                         id,
-                                        key.atom(),
+                                        atom,
                                         PropertyFlags::data(true, true, true),
                                         PropertySlot::Data(value.as_raw()),
                                         None,
@@ -471,7 +455,7 @@ impl Runtime {
                                     crate::engine::api::profiling::record_owned_execution_event(
                                         "set_missing_committed_from_selection",
                                     );
-                                    return Ok(SetProbe::Stored(true));
+                                    return Ok(StateSetProbe::Stored(true));
                                 }
                             }
                         } else {
@@ -480,10 +464,10 @@ impl Runtime {
                     }
                     BorrowedSet::Data(slot) => {
                         if !slot.flags.writable {
-                            return Ok(SetProbe::Stored(false));
+                            return Ok(StateSetProbe::Stored(false));
                         }
                         if !receiver_is_target {
-                            return Ok(SetProbe::Writable);
+                            return Ok(StateSetProbe::Writable);
                         }
                         // The slot was selected under this exclusive borrow.
                         // The shared kernel retains new edges before retiring
@@ -492,13 +476,14 @@ impl Runtime {
                         if matches!(
                             state.heap.object(id)?.payload,
                             ObjectPayload::Array { dense: None }
-                        ) && state.atoms.array_index(key.atom())?.is_some()
+                        ) && state.atoms.array_index(atom)?.is_some()
                         {
                             crate::engine::api::profiling::record_owned_execution_event(
                                 "array_materialized_own_data_write",
                             );
                         }
-                        state.replace_property_slot(
+                        state.replace_property_slot_with_poison(
+                            poisoned,
                             id,
                             slot.index,
                             PropertySlot::Data(value.as_raw()),
@@ -507,10 +492,10 @@ impl Runtime {
                         crate::engine::api::profiling::record_owned_execution_event(
                             "set_own_data_committed_from_selection",
                         );
-                        return Ok(SetProbe::Stored(true));
+                        return Ok(StateSetProbe::Stored(true));
                     }
                     BorrowedSet::Setter(set) => Selected::Setter(set),
-                    BorrowedSet::Special(kind) => return Ok(SetProbe::Special(kind)),
+                    BorrowedSet::Special(kind) => return Ok(StateSetProbe::Special(kind)),
                 }
             }
         };
@@ -518,28 +503,22 @@ impl Runtime {
             Selected::Dense(index) => {
                 // No callback or owner release occurs between selection and
                 // this authoritative transaction, which rechecks dense bounds.
-                self.replace_dense_array_value_jsvalue(object, index, value)?;
-                SetProbe::Stored(true)
+                self.replace_dense_array_raw(poisoned, object, index, value.as_raw())?;
+                StateSetProbe::Stored(true)
             }
 
-            Selected::SpecialAt(id, kind) => {
-                SetProbe::SpecialAt(ObjectRef::from_borrowed_handle(self.clone(), id)?, kind)
-            }
+            Selected::SpecialAt(id, kind) => StateSetProbe::SpecialAt(id, kind),
 
             Selected::DenseAppend(index) => {
                 // This is the exact missing element selected above, with no
                 // callback or owner release before the shared Array definition.
-                match self.define_selected_dense_array_append(object, index, value)? {
-                    None => SetProbe::Stored(true),
-                    Some(reason) => SetProbe::Rejected(reason),
+                match self.define_selected_dense_array_append(poisoned, object, index, value)? {
+                    None => StateSetProbe::Stored(true),
+                    Some(reason) => StateSetProbe::Rejected(reason),
                 }
             }
-            Selected::Setter(set) => SetProbe::Setter(set),
-            Selected::Missing(prototype) => SetProbe::Missing(
-                prototype
-                    .map(|id| ObjectRef::from_borrowed_handle(self.clone(), id))
-                    .transpose()?,
-            ),
+            Selected::Setter(set) => StateSetProbe::Setter(set),
+            Selected::Missing(prototype) => StateSetProbe::Missing(prototype),
         })
     }
 }
@@ -555,6 +534,25 @@ pub(super) struct OwnFlags {
     pub(super) needs_materialization: bool,
 }
 
+impl RuntimeState {
+    pub(super) fn ordinary_property_flags_in_state(
+        &self,
+        id: ObjectId,
+        atom: Atom,
+    ) -> Result<Option<Option<OwnFlags>>, RuntimeError> {
+        if !is_ordinary(self.heap.object(id)?) {
+            return Ok(None);
+        }
+        Ok(Some(locate(self, id, atom)?.map(|slot| OwnFlags {
+            flags: slot.flags,
+            needs_materialization: matches!(
+                self.heap.object(id).expect("located live object").slots[slot.index],
+                PropertySlot::AutoInit(_) | PropertySlot::VarRef(_)
+            ),
+        })))
+    }
+}
+
 impl Runtime {
     pub(super) fn ordinary_property_flags(
         &self,
@@ -562,18 +560,10 @@ impl Runtime {
         key: &PropertyKey,
     ) -> Result<Option<Option<OwnFlags>>, RuntimeError> {
         self.validate_object_and_key(object, key)?;
-        let state = self.0.state.borrow();
-        let id = object.object_id();
-        if !is_ordinary(state.heap.object(id)?) {
-            return Ok(None);
-        }
-        Ok(Some(locate(&state, id, key.atom())?.map(|slot| OwnFlags {
-            flags: slot.flags,
-            needs_materialization: matches!(
-                state.heap.object(id).expect("located live object").slots[slot.index],
-                PropertySlot::AutoInit(_) | PropertySlot::VarRef(_)
-            ),
-        })))
+        self.0
+            .state
+            .borrow()
+            .ordinary_property_flags_in_state(object.object_id(), key.atom())
     }
 
     #[cfg(test)]
@@ -706,15 +696,26 @@ mod tests {
         let other_key = runtime.intern_property_key("y").unwrap();
         let object_id = object.object_id();
         let operation = runtime.operation().unwrap();
+        let _unwind = runtime.unwind_guard();
 
         // The borrowed receiver owns the producer edge while a missing slot
         // retains its self edge. Replacing the same edge must remain balanced.
         for _ in 0..2 {
             assert!(matches!(
                 runtime
-                    .ordinary_set_probe(&object, &key, &JsValue::Object(object_id), true)
+                    .0
+                    .state
+                    .borrow_mut()
+                    .ordinary_set_probe_in_state(
+                        &runtime.0.poisoned,
+                        object.object_id(),
+                        key.atom(),
+                        &JsValue::Object(object_id),
+                        true,
+                        true
+                    )
                     .unwrap(),
-                SetProbe::Stored(true)
+                StateSetProbe::Stored(true)
             ));
             assert_eq!(
                 runtime.0.state.borrow().heap.object_strong_count(object_id),
@@ -723,9 +724,19 @@ mod tests {
         }
         assert!(matches!(
             runtime
-                .ordinary_set_probe(&object, &key, &JsValue::Null, true)
+                .0
+                .state
+                .borrow_mut()
+                .ordinary_set_probe_in_state(
+                    &runtime.0.poisoned,
+                    object.object_id(),
+                    key.atom(),
+                    &JsValue::Null,
+                    true,
+                    true
+                )
                 .unwrap(),
-            SetProbe::Stored(true)
+            StateSetProbe::Stored(true)
         ));
         assert_eq!(
             runtime.0.state.borrow().heap.object_strong_count(object_id),
@@ -735,7 +746,17 @@ mod tests {
         let old = runtime.new_object(None).unwrap();
         let old_id = old.object_id();
         runtime
-            .ordinary_set_probe(&object, &key, &JsValue::Object(old_id), true)
+            .0
+            .state
+            .borrow_mut()
+            .ordinary_set_probe_in_state(
+                &runtime.0.poisoned,
+                object.object_id(),
+                key.atom(),
+                &JsValue::Object(old_id),
+                true,
+                true,
+            )
             .unwrap();
         drop(old);
         let invalid = runtime.new_object(None).unwrap();
@@ -744,7 +765,17 @@ mod tests {
         for rejected_key in [&key, &other_key] {
             assert!(
                 runtime
-                    .ordinary_set_probe(&object, rejected_key, &JsValue::Object(invalid_id), true)
+                    .0
+                    .state
+                    .borrow_mut()
+                    .ordinary_set_probe_in_state(
+                        &runtime.0.poisoned,
+                        object.object_id(),
+                        rejected_key.atom(),
+                        &JsValue::Object(invalid_id),
+                        true,
+                        true
+                    )
                     .is_err()
             );
         }
@@ -767,9 +798,19 @@ mod tests {
         for stored_key in [&key, &other_key] {
             assert!(matches!(
                 runtime
-                    .ordinary_set_probe(&object, stored_key, &JsValue::Object(replacement_id), true)
+                    .0
+                    .state
+                    .borrow_mut()
+                    .ordinary_set_probe_in_state(
+                        &runtime.0.poisoned,
+                        object.object_id(),
+                        stored_key.atom(),
+                        &JsValue::Object(replacement_id),
+                        true,
+                        true
+                    )
                     .unwrap(),
-                SetProbe::Stored(true)
+                StateSetProbe::Stored(true)
             ));
         }
         assert!(runtime.0.state.borrow().heap.object(old_id).is_err());
@@ -852,11 +893,22 @@ mod dense_set_tests {
         };
         let key = runtime.intern_property_key("0").unwrap();
         let operation = runtime.operation().unwrap();
+        let _unwind = runtime.unwind_guard();
         assert!(matches!(
             runtime
-                .ordinary_set_probe(&array, &key, &JsValue::Int(9), true)
+                .0
+                .state
+                .borrow_mut()
+                .ordinary_set_probe_in_state(
+                    &runtime.0.poisoned,
+                    array.object_id(),
+                    key.atom(),
+                    &JsValue::Int(9),
+                    true,
+                    true
+                )
                 .unwrap(),
-            SetProbe::Stored(true)
+            StateSetProbe::Stored(true)
         ));
         drop(operation);
         assert!(matches!(

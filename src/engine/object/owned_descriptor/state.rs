@@ -36,6 +36,29 @@ impl<'a> CompleteDescriptorGuard<'a> {
         }
     }
 
+    /// Adopt a concrete owned reply from the shared own-property producer.
+    pub(in crate::engine::object) fn from_owned_record(
+        state: &'a mut RuntimeState,
+        poisoned: &'a Cell<bool>,
+        record: CompletePropertyDescriptor<RawValue>,
+    ) -> Self {
+        Self {
+            state,
+            poisoned,
+            record: Some(record),
+            producer: None,
+        }
+    }
+
+    pub(in crate::engine::object) fn parts(
+        &mut self,
+    ) -> (&mut RuntimeState, &CompletePropertyDescriptor<RawValue>) {
+        (
+            self.state,
+            self.record.as_ref().expect("guard owns descriptor"),
+        )
+    }
+
     pub(in crate::engine::object) fn duplicate(
         &mut self,
         source: &CompletePropertyDescriptor<RawValue>,

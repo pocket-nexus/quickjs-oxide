@@ -9,7 +9,7 @@ use crate::engine::{
     vm::call::ordinary::CallbackSelection,
 };
 
-pub(super) fn consume(
+pub(in crate::engine::vm::proxy_get_driver) fn consume(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
@@ -18,6 +18,12 @@ pub(super) fn consume(
     pending: &mut Step,
 ) -> Result<Next, Error> {
     match pending {
+        Step::ArrayMutationProgress(_)
+        | Step::ArrayMutationRead { .. }
+        | Step::ArrayMutationSharedDelete { .. } => {
+            super::super::request::array_mutation::consume_boundary(runtime, pending)
+                .map_err(runtime_error_to_vm_error)?;
+        }
         Step::ComputedError(error) => {
             let result = super::super::super::property_driver::throw_error(
                 runtime,

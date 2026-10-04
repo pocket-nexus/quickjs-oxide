@@ -204,7 +204,7 @@ impl FrameExecution<'_> {
             }
             if let Some(finish) = query.finish.as_mut() {
                 finish
-                    .retire_computed_in_state(state, &runtime.0.poisoned)
+                    .retire_owned_in_state(state, &runtime.0.poisoned)
                     .map_err(runtime_error_to_vm_error)?;
             }
             if query.has_computed_publication() {

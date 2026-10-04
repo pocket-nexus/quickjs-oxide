@@ -229,6 +229,8 @@ impl RuntimeState {
                     crate::engine::builtins::native::ReflectKind::Apply
                         | crate::engine::builtins::native::ReflectKind::Construct
                 )
+                | NativeFunctionId::ArrayPrototypePush(_)
+                | NativeFunctionId::ArrayPrototypePop(_)
                 | NativeFunctionId::NumberPredicate(_)
                 | NativeFunctionId::MathRandom
                 | NativeFunctionId::FunctionPrototype
@@ -326,6 +328,20 @@ impl RuntimeState {
                     NativeStep::Complete(completion)
                 }
                 step => NativeStep::Invoke(step),
+            });
+        }
+        if let Some(kind) = crate::engine::builtins::ArrayMutationKind::for_target(target) {
+            return crate::engine::builtins::ArrayMutationStep::start_in_state(
+                self, poisoned, realm, kind, invocation, arguments,
+            )
+            .map(|step| match step {
+                crate::engine::builtins::ArrayMutationStep::Complete(result) => {
+                    NativeStep::Complete(result)
+                }
+                crate::engine::builtins::ArrayMutationStep::CyclePublished(result) => {
+                    NativeStep::CyclePublishedComplete(result)
+                }
+                step => NativeStep::ArrayMutation(step),
             });
         }
         if let Some(kind) = crate::engine::builtins::math::operation::MathKind::for_target(target) {
@@ -465,6 +481,9 @@ impl crate::engine::api::runtime::Runtime {
             }
             NativeStep::Invoke(step) => {
                 crate::engine::builtins::function::invoke::finish(self, realm, step)
+            }
+            NativeStep::ArrayMutation(step) => {
+                crate::engine::builtins::array::mutation::finish(self, realm, step)
             }
             NativeStep::Math(step) => {
                 crate::engine::builtins::math::operation::finish(self, realm, step)

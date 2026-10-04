@@ -7,7 +7,7 @@ use crate::engine::object::operations::{
     ArrayOwnKey, InternalDefineResult, InternalSetResult, PropertyDefineOutcome, PropertySetAction,
     PropertySetRejection,
 };
-use crate::engine::object::ordinary_storage::{SetProbe, SpecialKind};
+use crate::engine::object::ordinary_storage::SpecialKind;
 use crate::engine::object::{DescriptorField, ObjectRef, PropertyKey};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsValue, Value};
@@ -15,8 +15,8 @@ use crate::engine::value::{JsValue, Value};
 pub(crate) mod read;
 mod set;
 
-pub(crate) use set::SetResume;
 pub(crate) use set::SetStep;
+pub(crate) use set::{SetAction, SetProgress, SetResume, SetWait};
 
 impl Runtime {
     #[cfg(test)]

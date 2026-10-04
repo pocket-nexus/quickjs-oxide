@@ -1,5 +1,6 @@
 //! Closed reply routing between domain states and the owned scheduler.
 mod array;
+pub(super) mod array_mutation;
 mod buffer;
 mod conversion;
 mod function;
@@ -7,6 +8,8 @@ mod iterator;
 mod module;
 mod native;
 mod object;
+pub(super) mod set;
+pub(in crate::engine::vm) use set::WriteKeyInputs;
 mod object_builtins;
 mod scalar;
 mod string;
@@ -206,9 +209,6 @@ pub(in crate::engine::vm) enum Resume {
 
     ArrayNext(crate::engine::builtins::ArrayNextResume),
     ArrayMutation(crate::engine::builtins::ArrayMutationResume),
-    ArrayMutationSet {
-        resume: crate::engine::builtins::ArrayMutationResume,
-    },
     ArrayCallback(crate::engine::builtins::ArrayCallbackResume),
     ArraySpecies(crate::engine::builtins::ArraySpeciesResume),
     StringReplace(crate::engine::builtins::StringReplaceResume),
@@ -259,6 +259,7 @@ pub(in crate::engine::vm) enum Resume {
     DefineLength {
         payload: Box<DefineLengthPayload>,
     },
+    WriteKey(set::WriteKeyInputs),
     OrdinarySet(SetResume),
     ProxySet(ProxySetResume),
     Define(ProxyDefineResume),
@@ -332,6 +333,15 @@ pub(in crate::engine::vm) enum Step {
         key: crate::engine::atom::Atom,
         receiver: Option<JsValue>,
         resume: Option<Resume>,
+    },
+    ArrayMutationProgress(Option<crate::engine::builtins::ArrayMutationStep>),
+    ArrayMutationRead {
+        read: Option<crate::engine::object::ReadStep>,
+        resume: Option<crate::engine::builtins::ArrayMutationResume>,
+    },
+    ArrayMutationSharedDelete {
+        word: Option<crate::engine::builtins::SharedTypedOwnWord>,
+        resume: Option<crate::engine::builtins::ArrayMutationResume>,
     },
     RawReadRequest {
         selected: Option<crate::engine::object::ReadStep>,
@@ -481,7 +491,7 @@ pub(in crate::engine::vm) enum Step {
         resume: Option<Resume>,
     },
     ArrayPush {
-        object: Option<ObjectRef>,
+        object: Option<crate::engine::heap::ObjectId>,
         value: Option<JsValue>,
         resume: Option<Resume>,
     },
@@ -610,18 +620,33 @@ pub(in crate::engine::vm) enum Step {
         value: Option<JsValue>,
         resume: Option<SetResume>,
     },
+    /// The actual VM receiver/value own their transferred operand edges. The
+    /// key is borrowed from the linked executable or owned final continuation.
+    ValueSet {
+        atom: crate::engine::atom::Atom,
+        value: Option<JsValue>,
+        receiver: Option<JsValue>,
+    },
+    WriteOperands {
+        atom: Option<crate::engine::atom::Atom>,
+        input: Option<set::WriteKeyInputs>,
+    },
+    SetProgress(Option<crate::engine::object::SetProgress>),
+    // A real already-selected Set child keeps PreparedSet's budget/reserve
+    // prefix. Direct VM ValueSet has no such prefix.
+    PreparedSetProgress {
+        progress: Option<crate::engine::object::SetProgress>,
+        resume: Option<Resume>,
+    },
+    SetReply {
+        action: Option<crate::engine::object::SetAction>,
+        resume: Option<Resume>,
+    },
+    WriteError(Option<crate::engine::api::Error>),
     SetComplete(Option<PropertySetAction>),
     PreparedSet {
         step: Option<Box<SetStep>>,
         resume: Option<Resume>,
-    },
-    SetContinue(Option<SetResume>),
-    SetSpecial {
-        object: Option<ObjectRef>,
-        key: Option<PropertyKey>,
-        value: Option<JsValue>,
-        receiver: Option<JsValue>,
-        resume: Option<SetResume>,
     },
     Set {
         object: Option<ObjectRef>,
@@ -691,6 +716,11 @@ pub(in crate::engine::vm) enum Step {
 impl Step {
     pub(super) fn has_raw_owner(&self) -> bool {
         match self {
+            Self::ValueSet { .. }
+            | Self::WriteOperands { .. }
+            | Self::PreparedSetProgress { .. }
+            | Self::SetProgress(Some(_))
+            | Self::SetReply { .. } => true,
             Self::ArgumentsProgress(Some(_))
             | Self::InvokeProgress(Some(_))
             | Self::ArgumentsReply { .. }
@@ -704,6 +734,10 @@ impl Step {
             | Self::RawRead { .. }
             | Self::RawReadRequest { .. }
             | Self::RawValueReadRequest { .. }
+            | Self::ArrayPush { .. }
+            | Self::ArrayMutationProgress(_)
+            | Self::ArrayMutationRead { .. }
+            | Self::ArrayMutationSharedDelete { .. }
             | Self::CyclePublishedComplete(_)
             | Self::CyclePublishedPrimitive { .. }
             | Self::OrdinaryPrimitive { .. }
@@ -735,6 +769,58 @@ impl Step {
             release(value);
         };
         match std::mem::replace(self, Self::Complete(None)) {
+            Self::WriteOperands { atom, input } => {
+                if let Some(mut input) = input
+                    && input.retire_at_boundary(runtime).is_err()
+                {
+                    return;
+                }
+                if !runtime.skip_cleanup()
+                    && let Some(atom) = atom
+                {
+                    release(JsValue::Symbol(crate::engine::atom::AtomIdx::from_raw(
+                        atom.raw(),
+                    )));
+                }
+            }
+            Self::ValueSet {
+                value, receiver, ..
+            } => {
+                if let Some(value) = value {
+                    release(value);
+                }
+                if !runtime.skip_cleanup()
+                    && let Some(receiver) = receiver
+                {
+                    release(receiver);
+                }
+            }
+            Self::SetProgress(value) => {
+                if let Some(value) = value {
+                    let _ = value.retire_at_boundary(runtime);
+                }
+            }
+            Self::PreparedSetProgress { progress, resume } => {
+                if let Some(progress) = progress
+                    && progress.retire_at_boundary(runtime).is_err()
+                {
+                    return;
+                }
+                if let Some(resume) = resume {
+                    resume.release_owned(runtime);
+                }
+            }
+            Self::SetReply { action, resume } => {
+                if let Some(action) = action
+                    && action.retire_at_boundary(runtime).is_err()
+                {
+                    return;
+                }
+                if let Some(resume) = resume {
+                    resume.release_owned(runtime);
+                }
+            }
+            Self::WriteError(_) => {}
             Self::ComputedError(_) => {}
             Self::CallbackBoundary(value) => {
                 if let Some(mut value) = value {
@@ -772,6 +858,30 @@ impl Step {
                 }
                 if let Some(resume) = resume {
                     resume.release_owned(runtime);
+                }
+            }
+            Self::ArrayMutationProgress(progress) => {
+                if let Some(progress) = progress {
+                    let _ = progress.retire_at_boundary(runtime);
+                }
+            }
+            Self::ArrayMutationRead { read, resume } => {
+                if let Some(
+                    crate::engine::object::ReadStep::Ready(read)
+                    | crate::engine::object::ReadStep::CyclePublished(read),
+                ) = read
+                {
+                    if read.retire_at_boundary(runtime).is_err() {
+                        return;
+                    }
+                }
+                if let Some(resume) = resume {
+                    let _ = resume.retire_at_boundary(runtime);
+                }
+            }
+            Self::ArrayMutationSharedDelete { resume, .. } => {
+                if let Some(resume) = resume {
+                    let _ = resume.retire_at_boundary(runtime);
                 }
             }
             Self::RawValueReadRequest {
@@ -1198,15 +1308,24 @@ impl Step {
                 }
             }
             Self::ArrayPush {
-                object: _,
+                object,
                 value,
                 resume,
             } => {
                 if let Some(value) = value {
-                    release(value);
+                    if runtime.release_jsvalue(value).is_err() || runtime.is_poisoned() {
+                        return;
+                    }
                 }
-                if let Some(value) = resume {
-                    value.release_owned(runtime);
+                if let Some(object) = object {
+                    if runtime.release_jsvalue(JsValue::Object(object)).is_err()
+                        || runtime.is_poisoned()
+                    {
+                        return;
+                    }
+                }
+                if let Some(resume) = resume {
+                    resume.release_owned(runtime);
                 }
             }
             Self::IteratorNext {
@@ -1511,9 +1630,14 @@ impl Step {
                     release(value);
                 }
             }
-            Self::SetLength { value, resume: _ } => {
+            Self::SetLength { value, resume } => {
                 if let Some(value) = value {
                     release(value);
+                }
+                if !runtime.skip_cleanup()
+                    && let Some(resume) = resume
+                {
+                    let _ = resume.retire_at_boundary(runtime);
                 }
             }
             Self::SetComplete(value) => {
@@ -1527,23 +1651,6 @@ impl Step {
                 }
                 if let Some(value) = resume {
                     value.release_owned(runtime);
-                }
-            }
-            Self::SetContinue(value) => {
-                drop(value);
-            }
-            Self::SetSpecial {
-                object: _,
-                key: _,
-                value,
-                receiver,
-                resume: _,
-            } => {
-                if let Some(value) = value {
-                    release(value);
-                }
-                if let Some(value) = receiver {
-                    release(value);
                 }
             }
             Self::Set {
@@ -1700,13 +1807,18 @@ impl Resume {
         poisoned: &std::cell::Cell<bool>,
     ) -> Result<(), crate::engine::api::RuntimeError> {
         match self {
+            Self::WriteKey(input) => input.retire_in_state(state, poisoned),
             Self::Primitive(_)
             | Self::Number(_)
             | Self::Numeric(_)
             | Self::NumericPrimitive(_)
             | Self::Math(_)
             | Self::ScalarText(_)
+            | Self::OrdinarySet(_)
+            | Self::SetTyped(_)
+            | Self::SetLength(_)
             | Self::DatePrototype(_)
+            | Self::ArrayMutation(_)
             | Self::Arguments(_)
             | Self::Invoke(_)
             | Self::DateConstructor(_)
@@ -1724,6 +1836,10 @@ impl Resume {
                 Self::DateConstructor(resume) | Self::DateConstructorPrimitive(resume) => {
                     resume.retire_in_state(state, poisoned)
                 }
+                Self::OrdinarySet(resume) | Self::SetTyped(resume) | Self::SetLength(resume) => {
+                    resume.retire_in_state(state, poisoned)
+                }
+                Self::ArrayMutation(resume) => resume.retire_in_state(state, poisoned),
                 _ => unreachable!(),
             },
             Self::StringValue { resume, .. }
@@ -1743,13 +1859,18 @@ impl Resume {
         runtime: &Runtime,
     ) -> Result<(), crate::engine::api::RuntimeError> {
         match self {
+            Self::WriteKey(input) => input.retire_at_boundary(runtime),
             Self::Primitive(_)
             | Self::Number(_)
             | Self::Numeric(_)
             | Self::NumericPrimitive(_)
             | Self::Math(_)
             | Self::ScalarText(_)
+            | Self::OrdinarySet(_)
+            | Self::SetTyped(_)
+            | Self::SetLength(_)
             | Self::DatePrototype(_)
+            | Self::ArrayMutation(_)
             | Self::Arguments(_)
             | Self::Invoke(_)
             | Self::DateConstructor(_)
@@ -1767,6 +1888,10 @@ impl Resume {
                 Self::DateConstructor(resume) | Self::DateConstructorPrimitive(resume) => {
                     resume.retire_at_boundary(runtime)
                 }
+                Self::OrdinarySet(resume) | Self::SetTyped(resume) | Self::SetLength(resume) => {
+                    resume.retire_at_boundary(runtime)
+                }
+                Self::ArrayMutation(resume) => resume.retire_at_boundary(runtime),
                 _ => unreachable!(),
             },
             Self::StringValue { resume, .. }
@@ -1781,13 +1906,18 @@ impl Resume {
     }
     pub(super) fn has_raw_owner(&self) -> bool {
         match self {
+            Self::WriteKey(_) => true,
             Self::Primitive(_)
             | Self::Number(_)
             | Self::Numeric(_)
             | Self::NumericPrimitive(_)
             | Self::Math(_)
             | Self::ScalarText(_)
+            | Self::OrdinarySet(_)
+            | Self::SetTyped(_)
+            | Self::SetLength(_)
             | Self::DatePrototype(_)
+            | Self::ArrayMutation(_)
             | Self::Arguments(_)
             | Self::Invoke(_)
             | Self::DateConstructor(_)
@@ -1858,6 +1988,9 @@ impl Resume {
                 | Self::Arguments(_)
                 | Self::DateConstructor(_)
                 | Self::DateConstructorPrimitive(_)
+                | Self::Setter
+                | Self::WriteKey(_)
+                | Self::ArrayMutation(_)
                 | Self::Identity
                 | Self::ComputedKey
                 | Self::PropertyKeyValue
@@ -1871,6 +2004,19 @@ impl Resume {
         completion: Completion,
     ) -> Result<Step, crate::engine::api::RuntimeError> {
         match self {
+            Self::WriteKey(input) => input.reply_in_state(state, poisoned, completion),
+            Self::Setter => {
+                let action = match completion {
+                    Completion::Return(value) => {
+                        state.release_owned_jsvalue(poisoned, value)?;
+                        crate::engine::object::SetAction::Complete
+                    }
+                    Completion::Throw(value) => crate::engine::object::SetAction::Throw(value),
+                };
+                Ok(Step::SetProgress(Some(
+                    crate::engine::object::SetProgress::Complete(action),
+                )))
+            }
             Self::PropertyKeyValue => Ok(Step::Complete(Some(match completion {
                 Completion::Return(value) => {
                     Completion::Return(state.property_key_primitive(poisoned, value)?)
@@ -1890,6 +2036,9 @@ impl Resume {
             Self::NumericPrimitive(resume) => resume
                 .primitive_in_state(state, poisoned, completion)
                 .and_then(Step::try_from),
+            Self::ArrayMutation(resume) => resume
+                .resume_in_state(state, poisoned, completion)
+                .map(Step::from),
             Self::DatePrototype(resume) => resume
                 .resume_in_state(state, poisoned, completion)
                 .and_then(Step::try_from),
@@ -2011,6 +2160,7 @@ impl Resume {
                 | Self::DatePrototype(_)
                 | Self::Arguments(_)
                 | Self::DateConstructor(_)
+                | Self::ArrayMutation(_)
         )
     }
     pub(super) fn number_in_state(
@@ -2030,6 +2180,9 @@ impl Resume {
             Self::ScalarText(resume) => resume
                 .number_in_state(state, poisoned, result)
                 .and_then(Step::try_from),
+            Self::ArrayMutation(resume) => resume
+                .number_in_state(state, poisoned, result)
+                .map(Step::from),
             Self::DatePrototype(resume) => resume
                 .number_in_state(state, poisoned, host, result)
                 .and_then(Step::try_from),
@@ -2163,16 +2316,16 @@ impl Resume {
                     .set(runtime, key, set_result(action)?)
                     .and_then(Step::try_from)
             }
-            Self::ArrayMutationSet { mut resume } => {
-                let key = resume.take_scheduler_set_key();
-                resume
-                    .set(runtime, key, set_result(action)?)
-                    .and_then(Step::try_from)
-            }
+            Self::ArrayMutation(resume) => resume
+                .set_boundary(
+                    runtime,
+                    crate::engine::object::SetAction::from_boundary(action),
+                )
+                .map(Step::from),
             Self::Property(resume) => resume
                 .set(runtime, set_result(action)?)
                 .and_then(Step::try_from),
-            Self::OrdinarySet(resume) => resume.forward(action).and_then(Step::try_from),
+            Self::OrdinarySet(resume) => resume.forward(runtime, action).and_then(Step::try_from),
             Self::ProxySet(resume) => resume.set(set_result(action)?).and_then(Step::try_from),
             resume => {
                 resume.release_owned(runtime);
@@ -2275,7 +2428,7 @@ impl Resume {
             Self::ArraySort(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
             Self::ArrayIndexed(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
             Self::ArrayReverse(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
-            Self::ArrayMutation(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ArrayMutation(resume) => resume.boolean(runtime, result).map(Step::from),
             Self::ArrayCallback(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
             Self::BooleanResult { payload } => runtime
                 .finish_property_delete(result, payload.strict_delete)
@@ -2338,6 +2491,7 @@ impl Resume {
         completion: Completion,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
+            Self::WriteKey(input) => input.reply_at_boundary(runtime, completion),
             abandoned @ (Self::RootDescriptor | Self::RootDefine | Self::RootSet) => {
                 abandoned.release_owned(runtime);
                 let (Completion::Return(value) | Completion::Throw(value)) = completion;
@@ -2617,9 +2771,7 @@ impl Resume {
                 resume.string(runtime, result)
             }
             Self::ArrayNext(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
-            Self::ArrayMutation(resume) => {
-                resume.resume(runtime, completion).and_then(Step::try_from)
-            }
+            Self::ArrayMutation(resume) => resume.resume(runtime, completion).map(Step::from),
             Self::ArrayCallback(resume) => {
                 resume.resume(runtime, completion).and_then(Step::try_from)
             }
@@ -2725,13 +2877,20 @@ impl Resume {
             }
             Self::ProxySet(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::Define(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
-            Self::Setter => Ok(Step::SetComplete(Some(match completion {
-                Completion::Return(value) => {
-                    runtime.release_jsvalue(value)?;
-                    PropertySetAction::Complete
-                }
-                Completion::Throw(value) => PropertySetAction::Throw(value),
-            }))),
+            Self::Setter => {
+                // A cold callback still replies to the same raw Set producer.
+                // Its assignment owner can be ResidentWrite or a Set parent;
+                // the obsolete SetComplete route only recognized legacy Write.
+                let _unwind = runtime.unwind_guard();
+                let result = Self::Setter.resume_in_state(
+                    &mut runtime.0.state.borrow_mut(),
+                    &runtime.0.poisoned,
+                    runtime.0.host_services.as_ref(),
+                    completion,
+                );
+                runtime.check_poison()?;
+                result
+            }
             abandoned @ Self::BooleanResult { .. } => {
                 abandoned.release_owned(runtime);
                 let (Completion::Return(value) | Completion::Throw(value)) = completion;
@@ -2754,7 +2913,6 @@ impl Resume {
             | Self::ArraySortSet { .. }
             | Self::ArrayIndexedSet { .. }
             | Self::ArrayReverseSet { .. }
-            | Self::ArrayMutationSet { .. }
             | Self::Invoke(_)
             | Self::Predicate(_)
             | Self::OwnFlagReply { .. }
@@ -3007,7 +3165,7 @@ impl Resume {
             Self::ArrayString(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::IteratorCreate(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::ArrayNext(resume) => resume.number(runtime, result).and_then(Step::try_from),
-            Self::ArrayMutation(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayMutation(resume) => resume.number(runtime, result).map(Step::from),
             Self::ArrayCallback(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::Arguments(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::LengthNumber(resume) => resume.number(runtime, result).and_then(Step::try_from),

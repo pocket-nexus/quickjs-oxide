@@ -1492,14 +1492,6 @@ impl Runtime {
         write::TypedWriteStep::define(self, object.try_clone()?, index, descriptor)?
             .finish_sync(self, realm)
     }
-
-    pub(crate) fn typed_array_delete_index(
-        &self,
-        object: &ObjectRef,
-        index: u64,
-    ) -> Result<bool, RuntimeError> {
-        Ok(self.typed_array_read_index(object, index)?.is_none())
-    }
 }
 
 fn typed_array_snapshot_from_payload(payload: &ObjectPayload) -> Option<TypedArraySnapshot> {
@@ -1746,36 +1738,4 @@ fn typed_array_parse_primitive_bigint(
         };
         RuntimeError::Engine(Error::new(kind, error.to_string()))
     })
-}
-
-impl crate::engine::heap::runtime::RuntimeState {
-    pub(crate) fn try_typed_array_number_write(
-        &mut self,
-        base: &JsValue,
-        index: u32,
-        number: f64,
-    ) -> bool {
-        let JsValue::Object(object) = base else {
-            return false;
-        };
-        let Ok(data) = self.heap.object(*object) else {
-            return false;
-        };
-        let Some(snapshot) = typed_array_snapshot_from_payload(&data.payload) else {
-            return false;
-        };
-        if snapshot.element.is_bigint() {
-            return false;
-        }
-        let bytes = typed_array_encode_number(snapshot.element, number);
-        matches!(
-            ordinary_typed_array_word_in_heap(
-                &mut self.heap,
-                snapshot,
-                u64::from(index),
-                Some(&bytes)
-            ),
-            Ok(OrdinaryTypedWord::Word(_))
-        )
-    }
 }

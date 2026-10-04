@@ -451,7 +451,83 @@ impl FrameExecution<'_> {
         }
     }
 
-    pub(super) fn consume_native_query(
+    /// One actual suffix consumer for resident and cold selected-key replies.
+    /// Query adopts the atom before retiring the original discarded key; value
+    /// and receiver are published together before that release can poison.
+    pub(in crate::engine::vm) fn publish_write_operands_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut RuntimeState,
+        query: &mut crate::engine::vm::proxy_get_driver::Query,
+        step: &mut crate::engine::vm::proxy_get_driver::Step,
+    ) -> Result<(), Error> {
+        use crate::engine::vm::proxy_get_driver::Step;
+        let Step::WriteOperands { atom, input } = step else {
+            return Err(Error::internal("computed write lost its selected key"));
+        };
+        let input = input.as_mut().expect("write key domain");
+        let moved = match input.operands.as_ref() {
+            Some(operands) if operands.base.is_some() && operands.value.is_some() => true,
+            Some(_) => return Err(Error::internal("computed write lost a moved operand")),
+            None => false,
+        };
+        if !moved {
+            let turn = self.frame();
+            turn.transaction.peek(0)?;
+            turn.transaction.peek(1)?;
+            turn.transaction.peek(2)?;
+        }
+        let atom = query
+            .adopt_write_key(atom)
+            .map_err(runtime_error_to_vm_error)?;
+        let (value, receiver, discarded) = if moved {
+            let operands = input.operands.as_mut().expect("moved write operands");
+            (
+                operands.value.take().expect("moved write value"),
+                operands.base.take().expect("moved write base"),
+                None,
+            )
+        } else {
+            let mut turn = self.frame();
+            let value = turn.transaction.slots().pop().expect("checked write value");
+            let key = turn.transaction.slots().pop().expect("checked write key");
+            let receiver = turn.transaction.slots().pop().expect("checked write base");
+            (value, receiver, Some(key))
+        };
+        *step = Step::ValueSet {
+            atom,
+            value: Some(value),
+            receiver: Some(receiver),
+        };
+        if let Some(key) = discarded {
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, key)
+                .map_err(|_| {
+                    runtime_error_to_vm_error(crate::engine::api::RuntimeError::Poisoned)
+                })?;
+        }
+        Ok(())
+    }
+
+    pub(in crate::engine::vm) fn acquire_write_query(
+        &mut self,
+        realm: crate::engine::heap::ContextId,
+        atom: crate::engine::atom::Atom,
+        key_owner: Option<crate::engine::atom::Atom>,
+        strict: bool,
+        depth: usize,
+    ) -> crate::engine::vm::proxy_get_driver::Query {
+        crate::engine::vm::proxy_get_driver::resident_write_query(
+            &mut self.execution.query_storage,
+            realm,
+            atom,
+            key_owner,
+            strict,
+            depth,
+        )
+    }
+
+    pub(in crate::engine::vm) fn consume_native_query(
         &mut self,
         owner: &mut crate::engine::vm::proxy_get_driver::RawNativeQuery<'_>,
         return_to: crate::engine::vm::frame::ReturnTarget,
@@ -480,12 +556,14 @@ impl FrameExecution<'_> {
                     .map_err(runtime_error_to_vm_error)?;
             }
             match progress.effect {
+                StateEffect::Publication => continue,
                 StateEffect::Diagnostic => {
                     self.materialize_in_state(owner.state)?;
-                    let Step::ComputedError(error) = &mut owner.step else {
-                        unreachable!("selected computed diagnostic")
+                    let error = match &mut owner.step {
+                        Step::ComputedError(error) | Step::WriteError(error) => error,
+                        _ => unreachable!("selected property diagnostic"),
                     };
-                    let error = error.take().expect("selected computed diagnostic");
+                    let error = error.take().expect("selected property diagnostic");
                     let Some(kind) =
                         crate::engine::api::error::NativeErrorKind::from_javascript_error(
                             error.kind(),
@@ -556,7 +634,43 @@ impl FrameExecution<'_> {
                     self.publish_native_boundary(owner, return_to.owner, fallthrough)?;
                     return Ok(StateNativeProgress::Boundary);
                 }
-                StateEffect::Callback => {}
+                StateEffect::SetChild => {
+                    // Count the still-local actual native activation before
+                    // the existing selected child budget and parent reserve.
+                    owner
+                        .publish_outer_scope()
+                        .map_err(runtime_error_to_vm_error)?;
+                    let published =
+                        crate::engine::vm::proxy_get_driver::enter_prepared_set_in_state(
+                            runtime,
+                            owner.state,
+                            self.execution,
+                            owner.query.as_mut().expect("Set child query"),
+                            &mut owner.step,
+                        )?;
+                    if published {
+                        owner
+                            .state
+                            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                            .map_err(runtime_error_to_vm_error)?;
+                    }
+                    continue;
+                }
+                StateEffect::WriteOperands => {
+                    self.publish_write_operands_in_state(
+                        runtime,
+                        owner.state,
+                        owner.query.as_mut().expect("write key query"),
+                        &mut owner.step,
+                    )?;
+                    continue;
+                }
+                StateEffect::Callback => {
+                    // Raw property writes can select a real callback without
+                    // a preceding native activation. Publish their exact caller
+                    // observation through the same frame registry algorithm.
+                    self.materialize_in_state(owner.state)?;
+                }
             }
             owner
                 .publish_outer_scope()

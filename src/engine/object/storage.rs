@@ -583,19 +583,25 @@ impl RuntimeState {
         )
     }
 
-    /// Consume an own-slot selection made under this same exclusive state borrow.
-    /// Callers must not release the borrow or perform another mutation between
-    /// selecting `existing` and committing it. No slot index is cached in a VM state.
-    pub(super) fn store_selected_property_slot(
+    /// Preserve an uninterrupted Set selection through the canonical store,
+    /// quarantining destructive publication/rollback failure before its owners retire.
+    pub(super) fn store_selected_property_slot_with_poison(
         &mut self,
+        poisoned: &Cell<bool>,
         object_id: ObjectId,
         atom: Atom,
         flags: PropertyFlags,
         replacement: PropertySlot,
         existing: Option<(usize, PropertyFlags)>,
     ) -> Result<(), RuntimeError> {
-        // Legacy entry remains for unconverted consumers; remove in B5.
-        self.store_selected_property_slot_inner(None, object_id, atom, flags, replacement, existing)
+        self.store_selected_property_slot_inner(
+            Some(poisoned),
+            object_id,
+            atom,
+            flags,
+            replacement,
+            existing,
+        )
     }
 
     fn store_selected_property_slot_inner(

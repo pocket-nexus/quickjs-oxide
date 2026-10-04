@@ -684,54 +684,6 @@ impl Heap {
         true
     }
 
-    /// Scalar-on-scalar dense replacement has no retained edges or cleanup.
-    /// Keep the shape and slot proof in this leaf instead of first reading the
-    /// element and then entering the general owning replacement transaction.
-    #[inline]
-    pub(crate) fn try_replace_dense_immediate_value(
-        &mut self,
-        id: ObjectId,
-        index: u32,
-        replacement: RawValue,
-    ) -> bool {
-        if !matches!(
-            replacement,
-            RawValue::Undefined
-                | RawValue::Null
-                | RawValue::Bool(_)
-                | RawValue::Int(_)
-                | RawValue::Float(_)
-                | RawValue::ShortBigInt(_)
-        ) {
-            return false;
-        }
-        let Ok(data) = self.object_mut(id) else {
-            return false;
-        };
-        if !matches!(data.kind, ObjectKind::Array) {
-            return false;
-        }
-        let ObjectPayload::Array { dense: Some(dense) } = &mut data.payload else {
-            return false;
-        };
-        let Some(slot) = dense.get_mut(index as usize) else {
-            return false;
-        };
-        if !matches!(
-            slot,
-            RawValue::Undefined
-                | RawValue::Null
-                | RawValue::Bool(_)
-                | RawValue::Int(_)
-                | RawValue::Float(_)
-                | RawValue::ShortBigInt(_)
-        ) {
-            return false;
-        }
-        *slot = replacement;
-        true
-    }
-
     /// Reserve every container needed to shorten a fast Array prefix without
     /// changing either its dense storage or logical `length` slot.
     pub(crate) fn prepare_array_dense_truncation(
@@ -778,16 +730,6 @@ impl Heap {
         })
     }
 
-    /// Publish an allocation-complete fast Array truncation and detach every
-    /// removed edge and Symbol atom.
-    pub(crate) fn commit_array_dense_truncation(
-        &mut self,
-        prepared: PreparedArrayDenseTruncation,
-    ) -> Result<HeapCleanup, HeapError> {
-        self.commit_array_dense_truncation_with_status(prepared)
-            .map_err(|failure| failure.error)
-    }
-
     pub(crate) fn commit_array_dense_truncation_with_status(
         &mut self,
         mut prepared: PreparedArrayDenseTruncation,
@@ -822,17 +764,6 @@ impl Heap {
                 error,
                 published: true,
             })
-    }
-
-    /// Truncate the contiguous fast prefix without changing the Array's
-    /// logical `length` slot. Every removed edge and Symbol atom is detached.
-    pub fn truncate_array_dense(
-        &mut self,
-        id: ObjectId,
-        new_len: u32,
-    ) -> Result<HeapCleanup, HeapError> {
-        let prepared = self.prepare_array_dense_truncation(id, new_len)?;
-        self.commit_array_dense_truncation(prepared)
     }
 
     /// Read one Arguments object's representation-sensitive indexed prefix.

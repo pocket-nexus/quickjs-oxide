@@ -91,33 +91,6 @@ pub(super) fn advance(
                 .try_into()?;
                 continue;
             }
-            Step::ArrayPush {
-                object,
-                value,
-                resume,
-            } => {
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("Array push continuation allocation failed"))?;
-                let object = object.take().expect("selected Step field");
-                let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
-                query.parents.push(resume);
-                *step = crate::engine::builtins::ArrayMutationStep::start_values(
-                    runtime,
-                    realm,
-                    crate::engine::builtins::ArrayMutationKind::Push(
-                        crate::engine::builtins::native::ArrayPushKind::Push,
-                    ),
-                    object,
-                    vec![value],
-                )
-                .map_err(runtime_error_to_vm_error)?
-                .try_into()?;
-                continue;
-            }
             Step::IteratorNext {
                 iterator,
                 method,

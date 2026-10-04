@@ -44,6 +44,25 @@ impl Drop for TypedWriteResumeState {
     }
 }
 impl TypedWriteStep {
+    /// Retire an actual selected child rejected before scheduler publication.
+    pub(crate) fn retire_at_boundary(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        if runtime.skip_cleanup() {
+            return Err(RuntimeError::Poisoned);
+        }
+        match self {
+            Self::Complete(NativeConversion::Throw(value)) => runtime.release_jsvalue(value)?,
+            Self::Complete(NativeConversion::Value(_)) => {}
+            Self::Element { value, resume, .. } => {
+                runtime.release_jsvalue(value)?;
+                runtime.check_poison()?;
+                drop(resume);
+            }
+        }
+        runtime.check_poison()
+    }
+}
+
+impl TypedWriteStep {
     pub(crate) fn set(
         runtime: &Runtime,
         object: ObjectRef,
@@ -56,6 +75,34 @@ impl TypedWriteStep {
             value: Some(value),
         }));
         let element = runtime.typed_array_snapshot(&resume.object)?.element;
+        Self::start_selected(runtime, element, resume)
+    }
+
+    /// Consume the exact metadata/index chosen by the State Set producer.
+    /// All input kinds use the same Element child; no key or view is selected again.
+    pub(crate) fn set_selected(
+        runtime: &Runtime,
+        object: ObjectRef,
+        index: Option<u64>,
+        element: TypedArrayElementKind,
+        value: JsValue,
+    ) -> Result<Self, RuntimeError> {
+        Self::start_selected(
+            runtime,
+            element,
+            TypedWriteResume(Box::new(TypedWriteResumeState {
+                object,
+                index,
+                value: Some(value),
+            })),
+        )
+    }
+
+    fn start_selected(
+        runtime: &Runtime,
+        element: TypedArrayElementKind,
+        resume: TypedWriteResume,
+    ) -> Result<Self, RuntimeError> {
         let value = runtime.dup_jsvalue(resume.value.as_ref().expect("typed write value"))?;
         Ok(Self::Element {
             element,
@@ -63,36 +110,7 @@ impl TypedWriteStep {
             resume,
         })
     }
-    /// Primitive Set performs the same conversion before reacquiring buffer
-    /// access, but never constructs a waiting resume or clones the view root.
-    pub(crate) fn set_primitive(
-        runtime: &Runtime,
-        realm: ContextId,
-        object: &ObjectRef,
-        index: Option<u64>,
-        value: &JsValue,
-    ) -> Result<Self, RuntimeError> {
-        Self::set_primitive_result(runtime, realm, object, index, value).map(Self::Complete)
-    }
 
-    /// Small transport for the same primitive conversion and final write.
-    pub(crate) fn set_primitive_result(
-        runtime: &Runtime,
-        realm: ContextId,
-        object: &ObjectRef,
-        index: Option<u64>,
-        value: &JsValue,
-    ) -> Result<NativeConversion<bool>, RuntimeError> {
-        if matches!(value, JsValue::Object(_)) {
-            return Err(RuntimeError::Invariant(
-                "primitive typed Set received an object",
-            ));
-        }
-        let element = runtime.typed_array_snapshot(object)?.element;
-        let result =
-            super::element::encode_primitive(runtime, realm, element, runtime.dup_jsvalue(value)?)?;
-        finish_element(runtime, object, index, result)
-    }
     pub(crate) fn define(
         runtime: &Runtime,
         object: ObjectRef,
@@ -115,31 +133,6 @@ impl TypedWriteStep {
             return Ok(Self::Complete(NativeConversion::Value(true)));
         };
         Self::set(runtime, object, Some(index), runtime.unroot_value(value)?)
-    }
-    /// Advance only a primitive input through the shared conversion and write
-    /// kernels. Object inputs retain the original request for the owned driver.
-    pub(crate) fn complete_primitive(
-        self,
-        runtime: &Runtime,
-        realm: ContextId,
-    ) -> Result<Self, RuntimeError> {
-        match self {
-            Self::Element {
-                element,
-                value,
-                resume,
-            } if !matches!(value, JsValue::Object(_)) => {
-                let ElementStep::Complete(result) =
-                    ElementStep::start(runtime, realm, element, value)?
-                else {
-                    return Err(RuntimeError::Invariant(
-                        "primitive element conversion suspended",
-                    ));
-                };
-                resume.element(runtime, result)
-            }
-            step => Ok(step),
-        }
     }
 
     pub(crate) fn finish_context_free(
@@ -263,73 +256,69 @@ mod tests {
     }
 
     #[test]
-    fn small_primitive_selection_matches_owned_wrapper_for_receiver_and_key_rules() {
-        for wrapper in [false, true] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
-            for (key, input, same_receiver, expected) in [
-                ("0", "257", true, "stored"),
-                ("-0", "Symbol()", true, "throw"),
-                ("NaN", "1n", true, "throw"),
-                ("01", "Symbol()", true, "decline"),
-                ("0", "Symbol()", false, "decline"),
-                ("-0", "Symbol()", false, "ignore"),
-                ("5", "Symbol()", false, "ignore"),
-            ] {
-                let Value::Object(object) = context.eval("new Uint8Array(1)").unwrap() else {
-                    panic!("expected typed array");
-                };
-                let receiver = if same_receiver {
-                    Value::Object(object.try_clone().expect("duplicate root"))
-                } else {
-                    Value::Object(runtime.new_object(None).unwrap())
-                };
-                let receiver = runtime.into_jsvalue(receiver).unwrap();
-                let key = runtime.intern_property_key(key).unwrap();
-                let value = runtime.into_jsvalue(context.eval(input).unwrap()).unwrap();
-                let result = if wrapper {
+    fn canonical_set_covers_typed_index_receiver_and_ordinary_key_rules() {
+        use crate::engine::object::operations::InternalSetResult;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        for (key, input, same_receiver, expected) in [
+            ("0", "257", true, "stored"),
+            ("-0", "Symbol()", true, "throw"),
+            ("NaN", "1n", true, "throw"),
+            ("01", "Symbol()", true, "ordinary"),
+            ("0", "Symbol()", false, "ordinary"),
+            ("-0", "Symbol()", false, "ignore"),
+            ("5", "Symbol()", false, "ignore"),
+        ] {
+            let Value::Object(object) = context.eval("new Uint8Array(1)").unwrap() else {
+                panic!("expected typed array");
+            };
+            let receiver = if same_receiver {
+                object.try_clone().expect("duplicate root")
+            } else {
+                runtime.new_object(None).unwrap()
+            };
+            let key = runtime.intern_property_key(key).unwrap();
+            let value = context.eval(input).unwrap();
+            // The actual canonical consumer owns both converted operands.
+            let result = runtime
+                .internal_set_jsvalue(
+                    context.realm,
+                    &object,
+                    &key,
+                    runtime.unroot_value(&value).unwrap(),
                     runtime
-                        .prepare_typed_array_set_in_realm(
-                            Some(context.realm),
-                            &object,
-                            &key,
-                            &value,
-                            &receiver,
-                        )
-                        .unwrap()
-                        .map(|step| step.finish_sync(&runtime, context.realm).unwrap())
-                } else {
-                    runtime
-                        .try_typed_array_set_primitive(
-                            context.realm,
-                            &object,
-                            &key,
-                            &value,
-                            &receiver,
-                        )
-                        .unwrap()
-                };
+                        .into_jsvalue(Value::Object(receiver.try_clone().unwrap()))
+                        .unwrap(),
+                )
+                .unwrap();
+            assert!(matches!(
+                (expected, &result),
+                (
+                    "stored" | "ordinary" | "ignore",
+                    NativeConversion::Value(InternalSetResult::Accepted)
+                ) | ("throw", NativeConversion::Throw(_))
+            ));
+            if let NativeConversion::Throw(value) = result {
                 runtime.release_jsvalue(value).unwrap();
-                runtime.release_jsvalue(receiver).unwrap();
-                assert!(matches!(
-                    (expected, &result),
-                    ("decline", None)
-                        | ("stored" | "ignore", Some(NativeConversion::Value(true)))
-                        | ("throw", Some(NativeConversion::Throw(_)))
-                ));
-                if let Some(NativeConversion::Throw(value)) = result {
-                    runtime.release_jsvalue(value).unwrap();
-                }
+            }
+            assert_eq!(
+                runtime.typed_array_read_index(&object, 0).unwrap(),
+                Some(Value::Int(if expected == "stored" { 1 } else { 0 }))
+            );
+            if expected == "ordinary" {
+                assert_eq!(context.get_property(&receiver, &key).unwrap(), value);
+            } else if expected == "ignore" {
                 assert_eq!(
-                    runtime.typed_array_read_index(&object, 0).unwrap(),
-                    Some(Value::Int(if expected == "stored" { 1 } else { 0 }))
+                    context.get_property(&receiver, &key).unwrap(),
+                    Value::Undefined
                 );
             }
         }
     }
 
     #[test]
-    fn small_primitive_result_keeps_detached_conversion_and_rejects_object_inputs() {
+    fn canonical_set_keeps_detached_conversion_and_accepts_object_requests() {
+        use crate::engine::object::operations::InternalSetResult;
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let Value::Object(buffer) = context.eval("globalThis.b=new ArrayBuffer(1); b").unwrap()
@@ -344,62 +333,72 @@ mod tests {
         let receiver = JsValue::Object(object.try_clone().expect("duplicate root").into_handle());
         assert!(matches!(
             runtime
-                .try_typed_array_set_primitive(
+                .internal_set_jsvalue(
                     context.realm,
                     &object,
                     &key,
-                    &JsValue::Int(257),
-                    &receiver
+                    JsValue::Int(257),
+                    runtime.dup_jsvalue(&receiver).unwrap()
                 )
                 .unwrap(),
-            Some(NativeConversion::Value(true))
+            NativeConversion::Value(InternalSetResult::Accepted)
         ));
         let bigint = runtime.into_jsvalue(context.eval("1n").unwrap()).unwrap();
-        let Some(NativeConversion::Throw(thrown)) = runtime
-            .try_typed_array_set_primitive(context.realm, &object, &key, &bigint, &receiver)
+        let NativeConversion::Throw(thrown) = runtime
+            .internal_set_jsvalue(
+                context.realm,
+                &object,
+                &key,
+                runtime.dup_jsvalue(&bigint).unwrap(),
+                runtime.dup_jsvalue(&receiver).unwrap(),
+            )
             .unwrap()
         else {
-            panic!("expected conversion throw")
+            panic!("expected conversion throw");
         };
         runtime.release_jsvalue(thrown).unwrap();
         let other_receiver = JsValue::Object(runtime.new_object(None).unwrap().into_handle());
         assert!(matches!(
             runtime
-                .try_typed_array_set_primitive(
+                .internal_set_jsvalue(
                     context.realm,
                     &object,
                     &key,
-                    &bigint,
-                    &other_receiver
+                    runtime.dup_jsvalue(&bigint).unwrap(),
+                    other_receiver
                 )
                 .unwrap(),
-            Some(NativeConversion::Value(true))
+            NativeConversion::Value(InternalSetResult::Accepted)
         ));
+        // A detached destination still converts a same-receiver object input.
         let value = runtime
-            .into_jsvalue(Value::Object(runtime.new_object(None).unwrap()))
+            .into_jsvalue(
+                context
+                    .eval("globalThis.calls=0; ({valueOf(){calls++; return 257}})")
+                    .unwrap(),
+            )
             .unwrap();
         assert!(matches!(
-            TypedWriteStep::set_primitive_result(&runtime, context.realm, &object, Some(0), &value),
-            Err(RuntimeError::Invariant(
-                "primitive typed Set received an object"
-            ))
+            runtime
+                .internal_set_jsvalue(
+                    context.realm,
+                    &object,
+                    &key,
+                    value,
+                    runtime.dup_jsvalue(&receiver).unwrap()
+                )
+                .unwrap(),
+            NativeConversion::Value(InternalSetResult::Accepted)
         ));
-        assert!(matches!(
-            runtime.try_typed_array_set_primitive(context.realm, &object, &key, &value, &receiver),
-            Err(RuntimeError::Invariant(
-                "primitive typed Set received an object"
-            ))
-        ));
+        assert_eq!(context.eval("calls").unwrap(), Value::Int(1));
         assert!(
             runtime
                 .typed_array_read_index(&object, 0)
                 .unwrap()
                 .is_none()
         );
-        runtime.release_jsvalue(value).unwrap();
         runtime.release_jsvalue(bigint).unwrap();
         runtime.release_jsvalue(receiver).unwrap();
-        runtime.release_jsvalue(other_receiver).unwrap();
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 

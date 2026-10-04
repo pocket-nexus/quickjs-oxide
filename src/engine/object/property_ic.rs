@@ -1124,7 +1124,10 @@ mod tests {
                         .0
                         .state
                         .borrow_mut()
-                        .ensure_dictionary_layout(holder.object_id())
+                        .ensure_dictionary_layout_with_poison(
+                            &runtime.0.poisoned,
+                            holder.object_id(),
+                        )
                         .unwrap();
                 }
                 let cache = PropertyReadCache::default();
