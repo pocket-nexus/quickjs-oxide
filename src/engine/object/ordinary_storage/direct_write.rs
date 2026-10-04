@@ -9,9 +9,25 @@ fn public_value(value: &RawValue) -> bool {
 }
 
 impl RuntimeState {
+    /// Resolve a static key owned by the current published executable, then
+    /// consume the frame's existing value owner through the ordinary selector.
+    #[inline]
+    pub(crate) fn try_exchange_linked_field(
+        &mut self,
+        domain: u64,
+        object: ObjectId,
+        input: &mut JsValue,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        key: u32,
+    ) -> Result<bool, RuntimeError> {
+        let Some(atom) = super::linked_field_atom_in_domain(domain, executable, key) else {
+            return Ok(false);
+        };
+        self.try_exchange_own_data(object, atom, input)
+    }
+
     /// The input owner becomes the old slot owner. A miss leaves it untouched.
     /// Physical Set selection is shared with the ordinary semantic algorithm.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn try_exchange_own_data(
         &mut self,
         object: ObjectId,
@@ -115,6 +131,61 @@ mod tests {
             panic!("object")
         };
         *id
+    }
+
+    #[test]
+    fn vm_field_exchange_preserves_aliases_all_value_kinds_and_throw_recovery() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(() => {
+            let o = {x: {previous:true}};
+            let other = {marker:true};
+            let values = [undefined,null,false,0,-0,1.5,3n,2n**90n,
+                          'new string',Symbol('owner'),other,o];
+            for (let v of values) {
+                if (!Object.is(o.x = v, v) || !Object.is(o.x,v)) return false;
+            }
+            o.x = o; o.x = o.x; if (o.x !== o) return false;
+            other.x = o; o.x = other; if (o.x.x !== o) return false;
+            o.x = null; other.x = null;
+            let calls=0;
+            let setter={set x(v){calls++;throw v}};
+            try {setter.x=other;return false} catch(e){if(e!==other)return false}
+            o.x=other; o.x=null;
+            const frozen=Object.freeze({x:other});
+            try {(function(){'use strict';frozen.x=o})();return false}
+            catch(e){if(!(e instanceof TypeError))return false}
+            return calls===1 && frozen.x===other;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn heap_field_values_complete_in_the_same_execute_segment() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let _ = context
+            .eval("globalThis.exchangeTarget={x:null};globalThis.exchangeInput={};")
+            .unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(context.eval("for(let i=0;i<16;i++)exchangeTarget.x=exchangeInput;exchangeTarget.x===exchangeInput").unwrap(), Value::Bool(true));
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("ordinary_owned_field_write_in_execute")
+                .copied(),
+            Some(16)
+        );
     }
 
     #[test]

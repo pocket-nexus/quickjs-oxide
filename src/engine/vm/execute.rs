@@ -2423,7 +2423,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(VmAction::SetProperty(Some(operand)));
                         };
                         if !cursor.with_slots(|slots| {
-                            slots.try_scalar_field_write_in_state(
+                            slots.try_owned_field_write_in_state(
                                 state,
                                 &runtime.0.poisoned,
                                 runtime.domain_id(),

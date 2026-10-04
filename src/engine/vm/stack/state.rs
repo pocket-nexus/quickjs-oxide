@@ -350,7 +350,7 @@ impl FrameSlots<'_> {
         Ok(true)
     }
 
-    pub(in crate::engine::vm) fn try_scalar_field_write_in_state(
+    pub(in crate::engine::vm) fn try_owned_field_write_in_state(
         &mut self,
         state: &mut RuntimeState,
         poisoned: &std::cell::Cell<bool>,
@@ -358,21 +358,41 @@ impl FrameSlots<'_> {
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         key: u32,
     ) -> Result<bool, Error> {
+        let JsValue::Object(object) = self.peek(1)? else {
+            return Ok(false);
+        };
+        let object = *object;
+        let input = self.top_direct_mut()?;
         if !state
-            .try_linked_scalar_field_write(domain, self.peek(1)?, self.peek(0)?, executable, key)
+            .try_exchange_linked_field(domain, object, input, executable, key)
             .map_err(runtime_error_to_vm_error)?
         {
             return Ok(false);
         }
-        let _scalar = self.pop()?;
+        // Selection never moved the receiver. The input now owns the old slot
+        // value, and it is retired before the receiver's final owner can die.
+        state
+            .release_owned_jsvalue(poisoned, self.pop()?)
+            .map_err(runtime_error_to_vm_error)?;
         state
             .release_owned_jsvalue(poisoned, self.pop()?)
             .map_err(runtime_error_to_vm_error)?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
-            "ordinary_scalar_field_write_in_execute",
+            "ordinary_owned_field_write_in_execute",
         );
         Ok(true)
+    }
+
+    /// Keep the temporary owner in the execution store until publication. A
+    /// declined operation leaves the exact value and stack depth unchanged.
+    fn top_direct_mut(&mut self) -> Result<&mut JsValue, Error> {
+        self.peek(0)?;
+        let top = self.window.operands().start + self.window.depth - 1;
+        match self.store.slots[top].as_mut() {
+            Some(FrameBinding::Direct(value)) => Ok(value),
+            _ => Err(Error::internal("admitted operand is not direct")),
+        }
     }
 
     pub(in crate::engine::vm) fn try_scalar_element_write_in_state(

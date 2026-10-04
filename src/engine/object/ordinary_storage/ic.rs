@@ -306,63 +306,6 @@ impl RuntimeState {
         super::immediate_value_jsvalue(data.dense_array_value(index)?)
     }
 
-    pub(crate) fn try_linked_scalar_field_write(
-        &mut self,
-        domain_id: u64,
-        base: &JsValue,
-        value: &JsValue,
-        executable: &PublishedFunctionSnapshot,
-        key_index: u32,
-    ) -> Result<bool, RuntimeError> {
-        if !matches!(
-            value,
-            JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_)
-        ) {
-            return Ok(false);
-        }
-        let JsValue::Object(object) = base else {
-            return Ok(false);
-        };
-        let Some(atom) = super::linked_field_atom_in_domain(domain_id, executable, key_index)
-        else {
-            return Ok(false);
-        };
-        if !super::is_ordinary(self.heap.object(*object)?) {
-            return Ok(false);
-        }
-        let Some(slot) = super::locate(self, *object, atom)? else {
-            return Ok(false);
-        };
-        if !slot.flags.writable
-            || !matches!(
-                self.heap.object(*object)?.slots.get(slot.index),
-                Some(crate::engine::heap::PropertySlot::Data(
-                    RawValue::Undefined
-                        | RawValue::Null
-                        | RawValue::Bool(_)
-                        | RawValue::Int(_)
-                        | RawValue::Float(_)
-                        | RawValue::ShortBigInt(_)
-                ))
-            )
-        {
-            return Ok(false);
-        }
-        // Both values own no edges. The shared replacement kernel preserves
-        // storage invariants without enqueueing cleanup or changing layout.
-        self.replace_property_slot(
-            *object,
-            slot.index,
-            crate::engine::heap::PropertySlot::Data(value.as_raw()),
-        )?;
-        Ok(true)
-    }
-
     pub(crate) fn try_dense_array_write_scalar(
         &mut self,
         base: &JsValue,
@@ -718,10 +661,10 @@ mod tests {
         let mut state = runtime.0.state.borrow_mut();
         assert!(
             state
-                .try_linked_scalar_field_write(
+                .try_exchange_linked_field(
                     runtime.domain_id(),
-                    &base,
-                    &JsValue::Int(42),
+                    object(&base),
+                    &mut JsValue::Int(42),
                     &code,
                     key
                 )
@@ -729,10 +672,10 @@ mod tests {
         );
         assert!(
             !state
-                .try_linked_scalar_field_write(
+                .try_exchange_linked_field(
                     runtime.domain_id(),
-                    &frozen,
-                    &JsValue::Int(42),
+                    object(&frozen),
+                    &mut JsValue::Int(42),
                     &code,
                     key
                 )
@@ -824,10 +767,10 @@ mod tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_linked_scalar_field_write(
+                .try_exchange_linked_field(
                     runtime.domain_id(),
-                    &base,
-                    &JsValue::Int(42),
+                    object(&base),
+                    &mut JsValue::Int(42),
                     &code,
                     key
                 )
@@ -848,7 +791,7 @@ mod tests {
     }
 
     #[test]
-    fn linked_scalar_field_write_declines_observable_or_non_scalar_storage() {
+    fn linked_field_exchange_declines_observable_storage() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let (code, _, key) = site(&runtime);
@@ -857,9 +800,6 @@ mod tests {
             "({get x(){throw 99}, set x(v){throw 98}})",
             "Object.create({x:1})",
             "new Proxy({x:1},{set(){throw 97}})",
-            "({x:{marker:1}})",
-            "({x:'old'})",
-            "Object.assign([], {x:1})",
         ] {
             let base = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
             let root = runtime.dup_jsvalue(&base).unwrap();
@@ -868,10 +808,10 @@ mod tests {
                     .0
                     .state
                     .borrow_mut()
-                    .try_linked_scalar_field_write(
+                    .try_exchange_linked_field(
                         runtime.domain_id(),
-                        &base,
-                        &JsValue::Int(42),
+                        object(&base),
+                        &mut JsValue::Int(42),
                         &code,
                         key
                     )
@@ -889,10 +829,10 @@ mod tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_linked_scalar_field_write(
+                .try_exchange_linked_field(
                     runtime.domain_id(),
-                    &base,
-                    &JsValue::Int(42),
+                    object(&base),
+                    &mut JsValue::Int(42),
                     &code,
                     key,
                 )
@@ -950,7 +890,7 @@ mod tests {
             profile
                 .snapshot()
                 .owned_execution_events
-                .get("ordinary_scalar_field_write_in_execute")
+                .get("ordinary_owned_field_write_in_execute")
                 .copied(),
             Some(16)
         );
