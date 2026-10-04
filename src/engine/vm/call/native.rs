@@ -15,10 +15,12 @@ use crate::engine::{
     vm::frames::ActiveFrameRestore,
 };
 
+#[cfg(test)]
+mod preparation_tests;
 mod state;
 #[cfg(test)]
 mod state_tests;
-pub(in crate::engine::vm) use state::{NativeCallGuard, NativeStateGuard, RootedNativeCall};
+pub(in crate::engine::vm) use state::{NativeCallGuard, NativeStateGuard};
 
 /// Internal owner record. Its storage, borrowed guard or external boundary
 /// adapter explicitly retires it; it owns no Runtime and has no root Drop.
@@ -131,7 +133,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &[Value],
         mode: NativeInvokeMode,
-    ) -> Result<RootedNativeCall, RuntimeError> {
+    ) -> Result<NativeCallGuard<'_>, RuntimeError> {
         self.prepare_native_arguments(
             NativeCallableInput::Borrowed(callable),
             realm,
@@ -156,7 +158,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: Vec<Value>,
         mode: NativeInvokeMode,
-    ) -> Result<RootedNativeCall, RuntimeError> {
+    ) -> Result<NativeCallGuard<'_>, RuntimeError> {
         self.prepare_native_arguments(
             NativeCallableInput::Owned(callable),
             realm,
@@ -180,7 +182,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: Vec<JsValue>,
         mode: NativeInvokeMode,
-    ) -> Result<RootedNativeCall, RuntimeError> {
+    ) -> Result<NativeCallGuard<'_>, RuntimeError> {
         self.prepare_native_arguments(
             NativeCallableInput::Borrowed(callable),
             realm,
@@ -205,7 +207,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: Vec<Value>,
         mode: NativeInvokeMode,
-    ) -> Result<RootedNativeCall, RuntimeError> {
+    ) -> Result<NativeCallGuard<'_>, RuntimeError> {
         self.prepare_native_arguments(
             NativeCallableInput::Owned(callable),
             realm,
@@ -248,7 +250,7 @@ impl Runtime {
         mode: NativeInvokeMode,
         continuation: bool,
         selected: Option<super::super::frames::NativeClassification>,
-    ) -> Result<RootedNativeCall, RuntimeError> {
+    ) -> Result<NativeCallGuard<'_>, RuntimeError> {
         #[cfg(feature = "profiling")]
         let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("native.prepare");
         let callable = callable_input.as_ref();
@@ -391,9 +393,8 @@ impl Runtime {
 
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
-        let boundary = self.clone();
-        Ok(RootedNativeCall::new(
-            boundary,
+        Ok(NativeCallGuard::new(
+            self,
             PreparedNativeCall {
                 activation: NativeActivation {
                     callable: Some(callable.into_object().into_execution_handle()),
@@ -417,7 +418,11 @@ mod tests {
         vm::call::CallableExecution,
     };
 
-    fn prepare(runtime: &Runtime, context: &mut Context, arguments: &[Value]) -> RootedNativeCall {
+    fn prepare<'a>(
+        runtime: &'a Runtime,
+        context: &mut Context,
+        arguments: &[Value],
+    ) -> NativeCallGuard<'a> {
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();

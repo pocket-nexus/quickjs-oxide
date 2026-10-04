@@ -861,9 +861,8 @@ impl Runtime {
 
     fn invoke_prepared_native(
         &self,
-        prepared: native::RootedNativeCall,
+        mut call: NativeCallGuard<'_>,
     ) -> Result<NativeInvokeOutcome, RuntimeError> {
-        let mut call = prepared.into_borrowed(self);
         let invocation = std::mem::replace(
             &mut call.invocation,
             NativeInvocation::Getter {

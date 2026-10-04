@@ -133,6 +133,22 @@ impl<'a> NativeCallGuard<'a> {
             )
             .0
     }
+    #[cfg(test)]
+    pub(in crate::engine::vm) fn own_continuation(&mut self) -> Result<(), RuntimeError> {
+        let call = self.call.as_mut().expect("native call owner");
+        call.activation
+            .own_continuation(&mut self.runtime.0.state.borrow_mut())
+    }
+    /// Only a standalone test owner needs to extend the runtime lifetime.
+    /// Keep the borrowed guard armed until that lifetime owner exists.
+    #[cfg(test)]
+    pub(in crate::engine::vm) fn into_standalone(self) -> RootedNativeCall {
+        let runtime = self.runtime.clone();
+        RootedNativeCall {
+            runtime,
+            call: Some(self.into_inner()),
+        }
+    }
     pub(in crate::engine::vm) fn into_inner(mut self) -> PreparedNativeCall {
         self.call.take().expect("native call owner")
     }
@@ -156,58 +172,22 @@ impl Drop for NativeCallGuard<'_> {
     }
 }
 
-/// An external prepared call may outlive its original Runtime binding. Only
-/// this true boundary adapter retains runtime lifetime for that standalone use.
+/// A standalone test adapter may outlive the Runtime binding that prepared
+/// the call. Production consumers lend the runtime through NativeCallGuard.
+#[cfg(test)]
 #[must_use]
 pub(in crate::engine::vm) struct RootedNativeCall {
     runtime: Runtime,
     call: Option<PreparedNativeCall>,
 }
-impl RootedNativeCall {
-    pub(in crate::engine::vm) fn new(runtime: Runtime, call: PreparedNativeCall) -> Self {
-        Self {
-            runtime,
-            call: Some(call),
-        }
-    }
-    pub(in crate::engine::vm) fn into_inner(mut self) -> PreparedNativeCall {
-        self.call.take().expect("native call owner")
-    }
-    pub(in crate::engine::vm) fn into_borrowed(self, runtime: &Runtime) -> NativeCallGuard<'_> {
-        NativeCallGuard::new(runtime, self.into_inner())
-    }
-    #[cfg(test)]
-    pub(in crate::engine::vm) fn finish(
-        self,
-        result: Result<NativeInvokeOutcome, RuntimeError>,
-    ) -> Result<NativeInvokeOutcome, RuntimeError> {
-        let runtime = self.runtime.clone();
-        self.into_inner()
-            .finish_reusing(
-                &mut runtime.0.state.borrow_mut(),
-                &runtime.0.poisoned,
-                result,
-            )
-            .0
-    }
-    #[cfg(test)]
-    pub(in crate::engine::vm) fn own_continuation(&mut self) -> Result<(), RuntimeError> {
-        let call = self.call.as_mut().expect("native call owner");
-        call.activation
-            .own_continuation(&mut self.runtime.0.state.borrow_mut())
-    }
-}
+#[cfg(test)]
 impl Deref for RootedNativeCall {
     type Target = PreparedNativeCall;
     fn deref(&self) -> &Self::Target {
         self.call.as_ref().expect("native call owner")
     }
 }
-impl DerefMut for RootedNativeCall {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.call.as_mut().expect("native call owner")
-    }
-}
+#[cfg(test)]
 impl Drop for RootedNativeCall {
     fn drop(&mut self) {
         if let Some(call) = self.call.take() {
