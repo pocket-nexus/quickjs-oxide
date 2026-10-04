@@ -201,19 +201,6 @@ pub(super) fn numeric(
 }
 
 #[inline(never)]
-pub(super) fn arguments(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    exit: VmAction,
-) -> Result<CallStep, Error> {
-    match super::arguments_driver::step(runtime, execution, id, exit)? {
-        None => Ok(CallStep::Entered),
-        Some(completion) => Ok(CallStep::Complete(completion)),
-    }
-}
-
-#[inline(never)]
 pub(super) fn set_name(
     runtime: &Runtime,
     execution: &mut RunningExecution,

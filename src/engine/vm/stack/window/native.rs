@@ -278,9 +278,20 @@ impl FrameExecution<'_> {
                 self.execution
                     .slots
                     .recycle_native_argument_buffer(arguments);
-                return Err(runtime_error_to_vm_error(
-                    result.expect_err("failed body cannot complete"),
-                ));
+                let completion = result.map_err(runtime_error_to_vm_error)?;
+                let query = crate::engine::vm::proxy_get_driver::resident_query(
+                    &mut self.execution.query_storage,
+                    realm,
+                    return_to,
+                    instruction_depth,
+                );
+                let mut query = RawNativeQuery::from_query(
+                    runtime,
+                    state,
+                    query,
+                    Step::CyclePublishedComplete(Some(completion)),
+                );
+                return self.consume_native_query(&mut query, return_to, fallthrough);
             }
         };
         if let crate::engine::builtins::continuation::NativeStep::Complete(completion) = started {
@@ -776,9 +787,14 @@ impl FrameExecution<'_> {
                             self.execution
                                 .slots
                                 .recycle_native_argument_buffer(arguments);
-                            return Err(runtime_error_to_vm_error(
-                                result.expect_err("failed body cannot complete"),
-                            ));
+                            let completion = result.map_err(runtime_error_to_vm_error)?;
+                            let Step::RawCall { resume, .. } = &mut owner.step else {
+                                unreachable!()
+                            };
+                            owner.step = Step::CyclePublishedPrimitiveReply {
+                                value: Some(completion),
+                                resume: resume.take(),
+                            };
                         }
                     }
                 }

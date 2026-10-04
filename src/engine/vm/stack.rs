@@ -1370,6 +1370,7 @@ impl SlotStore {
         self.snapshot_argument_tail(window, runtime, 0)
     }
 
+    #[cfg(test)]
     pub(in crate::engine::vm) fn actual_argument_count(
         &self,
         window: &FrameWindow,
@@ -1384,6 +1385,27 @@ impl SlotStore {
         runtime: &Runtime,
         start: usize,
     ) -> Result<Vec<JsValue>, Error> {
+        let _operation = runtime
+            .operation()
+            .map_err(|error| Error::internal(error.to_string()))?;
+        let result = self.snapshot_argument_tail_in_state(
+            window,
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            start,
+        );
+        runtime
+            .check_poison()
+            .map_err(|error| Error::internal(error.to_string()))?;
+        result
+    }
+    pub(in crate::engine::vm) fn snapshot_argument_tail_in_state(
+        &self,
+        window: &FrameWindow,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        start: usize,
+    ) -> Result<Vec<JsValue>, Error> {
         self.check_current(window)?;
         let count = window.actual_count;
         if count > window.parameters().len() || start > window.parameters().len() {
@@ -1396,15 +1418,19 @@ impl SlotStore {
         arguments
             .try_reserve_exact(count - start)
             .map_err(|_| Error::internal("argument snapshot allocation failed"))?;
+        let mut arguments_owner = crate::engine::heap::runtime::owned_values::OwnedValuesGuard::new(
+            state, poisoned, arguments,
+        );
+        let (state, arguments) = arguments_owner.parts();
         for index in window.parameters().start + start..window.parameters().start + count {
             let binding = self.slots[index]
                 .as_ref()
                 .ok_or_else(|| Error::internal("owned parameter is vacant"))?;
-            arguments.push(crate::engine::vm::bindings::read_frame_binding(
-                runtime, binding,
+            arguments.push(crate::engine::vm::bindings::read_frame_binding_in_state(
+                state, binding,
             )?);
         }
-        Ok(arguments)
+        Ok(std::mem::take(arguments))
     }
 
     pub(in crate::engine::vm) fn parameter(

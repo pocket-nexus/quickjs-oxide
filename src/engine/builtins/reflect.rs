@@ -17,8 +17,10 @@ use crate::engine::builtins::native::{NativeFunctionId, ReflectKind};
 use crate::engine::heap::{AutoInitProperty, ContextId, HeapError, ObjectPayload, PropertySlot};
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, WellKnownSymbol};
+#[cfg(test)]
+use crate::engine::value::Value;
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsString, JsValue};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -27,21 +29,16 @@ mod tests;
 
 const MAX_APPLY_ARGUMENTS: u64 = 65_534;
 
-impl Runtime {
-    /// Snapshot QuickJS's fast Array/Arguments storage in numeric-index order.
-    ///
-    /// Arrays expose their physical dense payload directly. Arguments retain
-    /// their distinct mapped/unmapped shape-slot representation and are
-    /// reconstructed without observable property lookup. The owning object
-    /// stays rooted while raw values are promoted to public roots.
+impl RuntimeState {
     pub(crate) fn fast_array_like_values_jsvalue(
-        &self,
-        object: &ObjectRef,
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
         expected_len: u32,
     ) -> Result<Option<Vec<JsValue>>, RuntimeError> {
         let raw_values = {
-            let state = self.0.state.borrow();
-            let object_data = state.heap.object(object.object_id())?;
+            let state = &*self;
+            let object_data = state.heap.object(object)?;
             if let ObjectPayload::Array { dense } = &object_data.payload {
                 let Some(dense) = dense else {
                     return Ok(None);
@@ -165,18 +162,14 @@ impl Runtime {
             .map_err(|_| HeapError::Allocation {
                 operation: "retaining fast argument snapshot",
             })?;
+        let mut values_owner = crate::engine::heap::runtime::owned_values::OwnedValuesGuard::new(
+            self, poisoned, values,
+        );
+        let (state, values) = values_owner.parts();
         for raw in raw_values {
             let borrowed =
                 JsValue::from_raw(raw).ok_or(RuntimeError::Invariant("argument storage value"))?;
-            match self.dup_jsvalue(&borrowed) {
-                Ok(value) => values.push(value),
-                Err(error) => {
-                    for value in values {
-                        let _ = self.release_jsvalue(value);
-                    }
-                    return Err(error);
-                }
-            }
+            values.push(state.dup_jsvalue(&borrowed)?);
         }
         #[cfg(feature = "profiling")]
         {
@@ -187,10 +180,146 @@ impl Runtime {
             );
             crate::engine::api::profiling::record_call_buffer_js_value_copies(
                 "arguments.fast_internal",
-                &values,
+                values,
             );
         }
-        Ok(Some(values))
+        Ok(Some(std::mem::take(values)))
+    }
+}
+
+impl RuntimeState {
+    pub(crate) fn prepare_fast_array_arguments_jsvalue(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+        object: ObjectId,
+    ) -> Result<Option<NativeConversion<Vec<JsValue>>>, RuntimeError> {
+        let arguments_length = {
+            let state = &*self;
+            let data = state.heap.object(object)?;
+            match (data.kind, &data.payload) {
+                (crate::engine::heap::ObjectKind::Array, ObjectPayload::Array { .. }) => None,
+                (
+                    crate::engine::heap::ObjectKind::Arguments,
+                    ObjectPayload::Arguments {
+                        fast_len: Some(length),
+                        ..
+                    },
+                ) => {
+                    // The admitted carrier keeps storage live. Only actual
+                    // snapshot outputs need checked promotion; no intermediate
+                    // public Get/receiver roles or coordinator eligibility.
+                    let shape = state.heap.shape(data.shape)?;
+                    let key = state
+                        .pinned_atoms
+                        .get(crate::engine::atom::pinned::PinnedAtom::Length);
+                    let Some(slot) = shape.find(crate::engine::atom::AtomIdx::from_raw(key.raw()))
+                    else {
+                        return Ok(None);
+                    };
+                    if shape.entries()[slot as usize].flags.storage
+                        != crate::engine::object::shape::PropertyStorageKind::Data
+                    {
+                        return Ok(None);
+                    }
+                    let matches_prefix = match data.slots.get(slot as usize) {
+                        Some(PropertySlot::Data(crate::engine::heap::RawValue::Int(value))) => {
+                            u32::try_from(*value).ok() == Some(*length)
+                        }
+                        Some(PropertySlot::Data(crate::engine::heap::RawValue::Float(value))) => {
+                            *value == f64::from(*length)
+                        }
+                        _ => false,
+                    };
+                    if !matches_prefix {
+                        return Ok(None);
+                    }
+                    Some(*length)
+                }
+                _ => return Ok(None),
+            }
+        };
+        let length = if let Some(length) = arguments_length {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event("arguments.direct_length");
+            u64::from(length)
+        } else {
+            let data = self.heap.object(object)?;
+            let shape = self.heap.shape(data.shape)?;
+            let key = self
+                .pinned_atoms
+                .get(crate::engine::atom::pinned::PinnedAtom::Length);
+            let Some(index) = shape.find(crate::engine::atom::AtomIdx::from_raw(key.raw())) else {
+                return Err(RuntimeError::Invariant(
+                    "Array argument carrier has no data length",
+                ));
+            };
+            if shape.entries()[index as usize].flags.storage
+                != crate::engine::object::shape::PropertyStorageKind::Data
+            {
+                return Err(RuntimeError::Invariant(
+                    "Array argument carrier has no data length",
+                ));
+            }
+            let Some(PropertySlot::Data(value)) = data.slots.get(index as usize) else {
+                return Err(RuntimeError::Invariant(
+                    "Array argument carrier has no data length",
+                ));
+            };
+            match value {
+                RawValue::Int(value) if *value >= 0 => u64::try_from(*value).unwrap(),
+                RawValue::Float(value)
+                    if *value >= 0.0 && *value <= f64::from(u32::MAX) && value.fract() == 0.0 =>
+                {
+                    *value as u64
+                }
+                _ => {
+                    return Err(RuntimeError::Invariant(
+                        "Array argument carrier has an invalid length",
+                    ));
+                }
+            }
+        };
+        if length > MAX_APPLY_ARGUMENTS {
+            return Ok(Some(NativeConversion::Throw(JsValue::Object(
+                self.new_native_error_from_message(
+                    poisoned,
+                    realm,
+                    NativeErrorKind::Range,
+                    crate::engine::api::error::NativeErrorMessage::from_utf8(
+                        "too many arguments in function call (only 65534 allowed)",
+                    ),
+                )?,
+            ))));
+        }
+        self.fast_array_like_values_jsvalue(poisoned, object, length as u32)
+            .map(|values| values.map(NativeConversion::Value))
+    }
+}
+
+impl Runtime {
+    /// Snapshot QuickJS's fast Array/Arguments storage in numeric-index order.
+    ///
+    /// Arrays expose their physical dense payload directly. Arguments retain
+    /// their distinct mapped/unmapped shape-slot representation and are
+    /// reconstructed without observable property lookup. The owning object
+    /// stays rooted while raw values are promoted to public roots.
+    pub(crate) fn fast_array_like_values_jsvalue(
+        &self,
+        object: &ObjectRef,
+        expected_len: u32,
+    ) -> Result<Option<Vec<JsValue>>, RuntimeError> {
+        if !object.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("object"));
+        }
+        let _unwind = self.unwind_guard();
+        let result = self.0.state.borrow_mut().fast_array_like_values_jsvalue(
+            &self.0.poisoned,
+            object.object_id(),
+            expected_len,
+        );
+        self.check_poison()?;
+        result
     }
 
     #[cfg(all(test, feature = "profiling"))]
@@ -248,106 +377,14 @@ impl Runtime {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
-        let arguments_length = {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(object.object_id())?;
-            match (data.kind, &data.payload) {
-                (crate::engine::heap::ObjectKind::Array, ObjectPayload::Array { .. }) => None,
-                (
-                    crate::engine::heap::ObjectKind::Arguments,
-                    ObjectPayload::Arguments {
-                        fast_len: Some(length),
-                        ..
-                    },
-                ) => {
-                    // Keep the old property/conversion cleanup checkpoints when
-                    // unrelated releases await processing. Otherwise no callback
-                    // or release can intervene between this fact and the existing
-                    // fast snapshot, while `object` keeps the carrier rooted.
-                    if self.0.deferred_references.has_pending()
-                        || state.heap.has_pending_zero_cleanup()
-                    {
-                        return Ok(None);
-                    }
-                    // The old length protocol owns up to two additional carrier
-                    // references (read object and receiver). Reserve headroom for
-                    // both and conservatively for every snapshot item aliasing
-                    // the carrier, preserving checked overflow/immortal behavior.
-                    let headroom = length.saturating_add(2);
-                    if state.heap.object_strong_count(object.object_id())?
-                        >= u32::MAX.saturating_sub(headroom)
-                    {
-                        return Ok(None);
-                    }
-                    let shape = state.heap.shape(data.shape)?;
-                    let key = state
-                        .pinned_atoms
-                        .get(crate::engine::atom::pinned::PinnedAtom::Length);
-                    let Some(slot) = shape.find(crate::engine::atom::AtomIdx::from_raw(key.raw()))
-                    else {
-                        return Ok(None);
-                    };
-                    if shape.entries()[slot as usize].flags.storage
-                        != crate::engine::object::shape::PropertyStorageKind::Data
-                    {
-                        return Ok(None);
-                    }
-                    let matches_prefix = match data.slots.get(slot as usize) {
-                        Some(PropertySlot::Data(crate::engine::heap::RawValue::Int(value))) => {
-                            u32::try_from(*value).ok() == Some(*length)
-                        }
-                        Some(PropertySlot::Data(crate::engine::heap::RawValue::Float(value))) => {
-                            *value == f64::from(*length)
-                        }
-                        _ => false,
-                    };
-                    if !matches_prefix {
-                        return Ok(None);
-                    }
-                    Some(*length)
-                }
-                _ => return Ok(None),
-            }
-        };
-        let length = if let Some(length) = arguments_length {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("arguments.direct_length");
-            u64::from(length)
-        } else {
-            let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-            let Some(crate::engine::object::CompleteOrdinaryPropertyDescriptor::Data {
-                value, ..
-            }) = self.get_own_property(object, &key)?
-            else {
-                return Err(RuntimeError::Invariant(
-                    "Array argument carrier has no data length",
-                ));
-            };
-            match value {
-                Value::Int(value) if value >= 0 => u64::try_from(value).unwrap(),
-                Value::Float(value)
-                    if value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0 =>
-                {
-                    value as u64
-                }
-                _ => {
-                    return Err(RuntimeError::Invariant(
-                        "Array argument carrier has an invalid length",
-                    ));
-                }
-            }
-        };
-        if length > MAX_APPLY_ARGUMENTS {
-            return Ok(Some(NativeConversion::Throw(
-                self.new_native_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Range,
-                    "too many arguments in function call (only 65534 allowed)",
-                )?,
-            )));
-        }
-        self.fast_array_like_values_jsvalue(object, length as u32)
-            .map(|values| values.map(NativeConversion::Value))
+        let _operation = self.operation()?;
+        let result = self
+            .0
+            .state
+            .borrow_mut()
+            .prepare_fast_array_arguments_jsvalue(&self.0.poisoned, realm, object.object_id());
+        self.check_poison()?;
+        result
     }
 
     #[cfg(test)]
@@ -856,7 +893,7 @@ mod arguments_prefix_tests {
     }
 
     #[test]
-    fn arguments_prefix_declines_pending_deferred_cleanup_without_draining() {
+    fn arguments_prefix_public_admission_drains_deferred_before_shared_snapshot() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let object = carrier(&mut context, "(function(){return arguments})(1,2)");
@@ -871,10 +908,10 @@ mod arguments_prefix_tests {
             runtime
                 .prepare_fast_array_arguments_jsvalue(context.realm, &object)
                 .unwrap()
-                .is_none()
+                .is_some()
         );
-        assert!(runtime.0.deferred_references.has_pending());
-        assert!(runtime.0.state.borrow().heap.object(pending_id).is_ok());
+        assert!(!runtime.0.deferred_references.has_pending());
+        assert!(runtime.0.state.borrow().heap.object(pending_id).is_err());
         runtime.drain_deferred_references().unwrap();
         assert_eq!(
             snapshot(&runtime, context.realm, &object),

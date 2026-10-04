@@ -45,38 +45,14 @@ impl Runtime {
         realm: ContextId,
         target: &JsValue,
     ) -> Result<JsValue, RuntimeError> {
-        let object = match target {
-            JsValue::Object(id) => Some(crate::engine::object::ObjectRef::from_borrowed_handle(
-                self.clone(),
-                *id,
-            )?),
-            _ => None,
-        };
-        self.new_not_constructor_error_object(realm, object.as_ref())
-    }
-
-    fn new_not_constructor_error_object(
-        &self,
-        realm: ContextId,
-        object: Option<&crate::engine::object::ObjectRef>,
-    ) -> Result<JsValue, RuntimeError> {
-        let name = if let Some(object) = object
-            && self.as_callable(object)?.is_some()
-        {
-            let name = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
-            raw_string_property_one_level(&self.0.state.borrow(), object.object_id(), name.atom())?
-                .filter(JsString::is_flat)
-        } else {
-            None
-        };
-        let mut message = NativeErrorMessage::new();
-        if let Some(name) = name {
-            name.push_c_string_to(&mut message);
-            message.push_utf8(" is not a constructor");
-        } else {
-            message.push_utf8("not a constructor");
-        }
-        self.new_native_error_from_message_jsvalue(realm, NativeErrorKind::Type, message)
+        let _operation = self.operation()?;
+        let result = self.0.state.borrow_mut().new_not_constructor_error_jsvalue(
+            &self.0.poisoned,
+            realm,
+            target,
+        );
+        self.check_poison()?;
+        result
     }
 
     pub(crate) fn call_global_number_parse(
@@ -570,7 +546,9 @@ impl Runtime {
                 let active_function = self.active_function()?;
                 return Ok(InvokeStep::Call(Box::new(
                     super::function::invoke::InvokeCall {
-                        target: crate::engine::vm::call::DirectCallTarget::Callable(callback),
+                        target: super::function::invoke::InvokeCallTarget::Callable(
+                            callback.into_object().into_handle(),
+                        ),
                         receiver: JsValue::Undefined,
                         arguments: vec![self.unroot_value(&Value::Object(active_function))?],
                     },
@@ -625,5 +603,61 @@ impl crate::engine::heap::runtime::RuntimeState {
             }
         });
         Ok(Completion::Return(JsValue::Bool(result)))
+    }
+}
+
+impl crate::engine::heap::runtime::RuntimeState {
+    /// Keep the diagnostic's checked object and callable temporary roles while
+    /// reading the same callback-free name field. No public root is staged.
+    pub(crate) fn new_not_constructor_error_jsvalue(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        realm: ContextId,
+        target: &JsValue,
+    ) -> Result<JsValue, RuntimeError> {
+        use crate::engine::heap::runtime::owned_values::OwnedValueGuard;
+        let JsValue::Object(object) = target else {
+            return Ok(JsValue::Object(self.new_native_error_from_message(
+                poisoned,
+                realm,
+                NativeErrorKind::Type,
+                NativeErrorMessage::from_utf8("not a constructor"),
+            )?));
+        };
+        let object = *object;
+        let temporary = self.dup_jsvalue(target)?;
+        let mut temporary = OwnedValueGuard::new(self, poisoned, temporary);
+        let (state, temporary) = temporary.parts();
+        let name = if state.object_id_has_call_capability(object)? {
+            let callable =
+                state.dup_jsvalue(temporary.as_ref().expect("constructor diagnostic object"))?;
+            state.release_owned_jsvalue(poisoned, callable)?;
+            let key = state
+                .pinned_atoms
+                .get(crate::engine::atom::pinned::PinnedAtom::Name);
+            raw_string_property_one_level(state, object, key)?.filter(JsString::is_flat)
+        } else {
+            None
+        };
+        let mut message = NativeErrorMessage::new();
+        if let Some(name) = name {
+            name.push_c_string_to(&mut message);
+            message.push_utf8(" is not a constructor");
+        } else {
+            message.push_utf8("not a constructor");
+        }
+        let result = JsValue::Object(state.new_native_error_from_message(
+            poisoned,
+            realm,
+            NativeErrorKind::Type,
+            message,
+        )?);
+        let mut result = OwnedValueGuard::new(state, poisoned, result);
+        let (state, result) = result.parts();
+        state.release_owned_jsvalue(
+            poisoned,
+            temporary.take().expect("constructor diagnostic object"),
+        )?;
+        Ok(result.take().expect("constructor diagnostic result"))
     }
 }

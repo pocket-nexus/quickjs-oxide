@@ -560,6 +560,73 @@ pub(crate) fn execute_root(
 ) -> Result<Completion, Error> {
     start_root(&runtime, realm, operation)?.finish(runtime)
 }
+/// Invoke's public/cold consumers run the same actual raw Query and frame loop.
+/// Arm the finite request before RunningExecution registration can fail.
+pub(crate) fn execute_invoke_step(
+    runtime: &Runtime,
+    realm: crate::engine::heap::ContextId,
+    step: crate::engine::builtins::InvokeStep,
+) -> Result<Completion, Error> {
+    execute_owned_root_step(
+        runtime,
+        realm,
+        super::proxy_get_driver::Step::InvokeProgress(Some(step)),
+    )
+}
+pub(crate) fn execute_owned_call(
+    runtime: &Runtime,
+    realm: crate::engine::heap::ContextId,
+    callee: crate::engine::heap::ObjectId,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
+) -> Result<Completion, Error> {
+    execute_owned_root_step(
+        runtime,
+        realm,
+        super::proxy_get_driver::Step::RawCall {
+            inputs: Some(super::call::ordinary::RawCallbackInputs::new(
+                callee, receiver, arguments,
+            )),
+            resume: Some(super::proxy_get_driver::Resume::Identity),
+        },
+    )
+}
+fn execute_owned_root_step(
+    runtime: &Runtime,
+    realm: crate::engine::heap::ContextId,
+    step: super::proxy_get_driver::Step,
+) -> Result<Completion, Error> {
+    let _unwind = runtime.unwind_guard();
+    let step = super::proxy_get_driver::NativeStepGuard::new(runtime, step);
+    // On rejection, the registered execution is absent and the guard retires
+    // raw inputs once. On unwind the same header quarantines them first.
+    let mut execution = RunningExecution::new(runtime, ExecutionLimits::for_runtime(runtime))?;
+    let result = match super::proxy_get_driver::start_owned_root_step(
+        runtime,
+        &mut execution,
+        realm,
+        step.into_inner(),
+    )? {
+        super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
+            RunningExit::Complete(completion)
+        }
+        super::proxy_get_driver::Progress::Call(CallStep::Entered) => {
+            run_frames(runtime, execution)?
+        }
+        _ => {
+            return Err(Error::internal(
+                "owned root request returned a bytecode-only continuation",
+            ));
+        }
+    };
+    match result {
+        RunningExit::Complete(completion) => Ok(completion),
+        _ => Err(Error::internal(
+            "owned root request suspended or returned a descriptor",
+        )),
+    }
+}
+
 pub(super) fn execute_root_descriptor(
     runtime: Runtime,
     realm: crate::engine::heap::ContextId,
@@ -2713,18 +2780,11 @@ mod tests {
             let profile = CostProfile::start();
             assert!(matches!(
                 execute_frame(&runtime, &mut execution, id).unwrap(),
-                VmAction::Apply(ApplyKind::Construct)
+                VmAction::NativeProgress
             ));
             assert!(matches!(
-                super::super::apply_driver::step(
-                    &runtime,
-                    &mut execution,
-                    id,
-                    ApplyKind::Construct,
-                    1
-                )
-                .unwrap(),
-                CallStep::Entered
+                ready::resume_native_boundary(&runtime, &mut execution).unwrap(),
+                ready::Boundary::Entered
             ));
             assert_ne!(execution.frames.current_id(), Some(id));
             assert!(

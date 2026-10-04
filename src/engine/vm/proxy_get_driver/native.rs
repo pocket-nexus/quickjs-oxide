@@ -304,18 +304,18 @@ pub(super) fn begin_synchronous_owned(
 /// Direct iterator entry protects its emitted step until all fallible
 /// query/iterator installation has completed. Domain teardown is still an
 /// explicit legacy bridge outside the state lease.
-pub(super) struct NativeStepGuard<'a> {
+pub(in crate::engine::vm) struct NativeStepGuard<'a> {
     runtime: &'a Runtime,
     step: Option<Step>,
 }
 impl<'a> NativeStepGuard<'a> {
-    pub(super) fn new(runtime: &'a Runtime, step: Step) -> Self {
+    pub(in crate::engine::vm) fn new(runtime: &'a Runtime, step: Step) -> Self {
         Self {
             runtime,
             step: Some(step),
         }
     }
-    pub(super) fn into_inner(mut self) -> Step {
+    pub(in crate::engine::vm) fn into_inner(mut self) -> Step {
         self.step.take().expect("native step owner")
     }
 }

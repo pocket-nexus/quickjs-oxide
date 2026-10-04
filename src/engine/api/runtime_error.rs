@@ -68,16 +68,13 @@ impl StdError for RuntimeError {}
 
 impl From<RuntimeError> for Error {
     fn from(error: RuntimeError) -> Self {
-        match error {
-            RuntimeError::Engine(error) => error,
-            error => Error::internal(error.to_string()),
-        }
+        Error::from_runtime_error(error)
     }
 }
 
 impl From<Error> for RuntimeError {
     fn from(error: Error) -> Self {
-        Self::Engine(error)
+        error.into_runtime_error()
     }
 }
 

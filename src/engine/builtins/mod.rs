@@ -52,7 +52,7 @@ pub(crate) mod continuation;
 
 pub(crate) use function::arguments::{ArgumentsResume, ArgumentsStep};
 
-pub(crate) use function::invoke::{InvokeResume, InvokeStep};
+pub(crate) use function::invoke::{InvokeCallTarget, InvokeNewTarget, InvokeResume, InvokeStep};
 mod iterator;
 mod json;
 mod map;

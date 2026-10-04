@@ -1,6 +1,5 @@
 //! Native cproto adaptation and exhaustive builtin dispatch.
 
-use crate::engine::api::error::{ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
@@ -16,8 +15,8 @@ use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
 
 use crate::engine::vm::call::{
-    AdaptedNativeInvocation, CallableExecution, DirectCallTarget, NativeArguments,
-    NativeInvocation, NativeInvocationAdaptation, NativeInvokeOutcome,
+    AdaptedNativeInvocation, NativeArguments, NativeInvocation, NativeInvocationAdaptation,
+    NativeInvokeOutcome,
 };
 #[cfg(test)]
 mod input_admission_tests;
@@ -88,7 +87,7 @@ impl Runtime {
     /// Consumes the internal call edges, including every rejected entry.
     pub(crate) fn call_internal_jsvalue(
         &self,
-        mut caller_realm: ContextId,
+        caller_realm: ContextId,
         callable: &CallableRef,
         this_value: JsValue,
         arguments: Vec<JsValue>,
@@ -96,188 +95,30 @@ impl Runtime {
         let mut checked_callable = None;
         let mut receiver = Some(this_value);
         let mut arguments = arguments;
-        let mut argument_start = 0;
-        let mut forwarded_call_frames = Vec::new();
-        let mut terminal_classification = None;
         let result = (|| {
-            // Owned inputs are already recorded for the same final cleanup on
-            // checked-callee rejection. Keep the admitted root through cleanup.
             checked_callable = Some(callable.try_clone()?);
             self.0.state.borrow().heap.context(caller_realm)?;
-            loop {
-                // Public Invoke admission precedes genuine Bound payload
-                // promotions. Each new semantic forwarded call can produce
-                // another Bound target; adjacent wrappers normalize once.
-                let _operation = self.operation()?;
-                if !checked_callable
-                    .as_ref()
-                    .expect("checked internal callee")
-                    .belongs_to(self)
-                {
-                    return Err(RuntimeError::WrongRuntime("callable"));
-                }
-                let bound = {
-                    let state = self.0.state.borrow();
-                    let function = checked_callable
-                        .as_ref()
-                        .expect("checked internal callee")
-                        .as_object()
-                        .object_id();
-                    crate::engine::vm::call::BoundSelection::from_payload(
-                        &state.heap.object(function)?.payload,
-                    )
-                };
-                if let Some(bound) = bound {
-                    for value in arguments.drain(..argument_start) {
-                        self.release_jsvalue(value)?;
-                    }
-                    argument_start = 0;
-                    let normalized = crate::engine::vm::call::normalize_selected_bound_callback(
-                        self,
-                        caller_realm,
-                        checked_callable.take().expect("checked Bound callee"),
-                        receiver.take().expect("Bound call receiver"),
-                        std::mem::take(&mut arguments),
-                        bound,
-                    )?;
-                    match normalized {
-                        NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
-                        NativeConversion::Value(call) => {
-                            checked_callable = Some(call.callable);
-                            receiver = Some(call.receiver);
-                            arguments = call.arguments;
-                            // Terminal classification is already selected by
-                            // the boundary producer; dispatch it exactly once.
-                            terminal_classification = Some(call.classification);
-                        }
-                    }
-                }
-                let callable = checked_callable.as_mut().expect("checked internal callee");
-                let classification = match terminal_classification.take() {
-                    Some(classification) => classification,
-                    None => self.bytecode_for_callable(callable)?,
-                };
-                match classification {
-                    CallableExecution::Bytecode {
-                        bytecode,
-                        closure_slots,
-                    } => {
-                        for value in arguments.drain(..argument_start) {
-                            self.release_jsvalue(value)?;
-                        }
-                        return self.execute_bytecode_callable_jsvalue(
-                            caller_realm,
-                            callable,
-                            receiver.take().expect("call receiver"),
-                            JsValue::Undefined,
-                            std::mem::take(&mut arguments),
-                            bytecode,
-                            closure_slots,
-                        );
-                    }
-                    CallableExecution::Native {
-                        target,
-                        realm,
-                        min_readable_args,
-                    } => {
-                        if self.native_call_would_overflow(target) {
-                            return Ok(Completion::Throw(self.new_native_error_jsvalue(
-                                caller_realm,
-                                NativeErrorKind::Internal,
-                                "stack overflow",
-                            )?));
-                        }
-                        if target == NativeFunctionId::FunctionPrototypeCall {
-                            forwarded_call_frames.push(
-                                self.push_native_active_frame(
-                                    callable.as_object().try_clone()?,
-                                    realm,
-                                    target,
-                                    arguments.len() - argument_start,
-                                    (arguments.len() - argument_start)
-                                        .max(usize::from(min_readable_args)),
-                                )?,
-                            );
-                            let target = match self.direct_call_target_from_jsvalue(
-                                receiver.take().expect("call receiver"),
-                            ) {
-                                Ok(target) => target,
-                                Err(RuntimeError::Engine(error))
-                                    if error.kind() == ErrorKind::Type =>
-                                {
-                                    return Ok(Completion::Throw(
-                                        self.new_native_error_from_error_jsvalue(
-                                            realm,
-                                            NativeErrorKind::Type,
-                                            &error,
-                                        )?,
-                                    ));
-                                }
-                                Err(error) => return Err(error),
-                            };
-                            receiver = Some(self.dup_jsvalue(
-                                arguments.get(argument_start).unwrap_or(&JsValue::Undefined),
-                            )?);
-                            argument_start += usize::from(argument_start < arguments.len());
-                            caller_realm = realm;
-                            match target {
-                                DirectCallTarget::Callable(target) => {
-                                    *callable = target;
-                                    continue;
-                                }
-                                DirectCallTarget::NonCallableProxy(proxy) => {
-                                    for value in arguments.drain(..argument_start) {
-                                        self.release_jsvalue(value)?;
-                                    }
-                                    return self.call_proxy_jsvalue(
-                                        caller_realm,
-                                        &proxy,
-                                        receiver.take().expect("call receiver"),
-                                        std::mem::take(&mut arguments),
-                                    );
-                                }
-                            }
-                        }
-                        let execution_realm = if target.uses_calling_realm() {
-                            caller_realm
-                        } else {
-                            realm
-                        };
-                        for value in arguments.drain(..argument_start) {
-                            self.release_jsvalue(value)?;
-                        }
-                        return Self::ordinary_native_completion(
-                            self.invoke_native_function_jsvalue(
-                                callable,
-                                execution_realm,
-                                target,
-                                min_readable_args,
-                                NativeInvocation::Call {
-                                    this_value: receiver.take().expect("call receiver"),
-                                },
-                                std::mem::take(&mut arguments),
-                                crate::engine::vm::call::NativeInvokeMode::Ordinary,
-                            )?,
-                        );
-                    }
-                    CallableExecution::Bound { .. } => {
-                        unreachable!(
-                            "adjacent Bound CALL chain is normalized before Invoke dispatch"
-                        )
-                    }
-                    CallableExecution::Proxy => {
-                        for value in arguments.drain(..argument_start) {
-                            self.release_jsvalue(value)?;
-                        }
-                        return self.call_proxy_jsvalue(
-                            caller_realm,
-                            callable.as_object(),
-                            receiver.take().expect("call receiver"),
-                            std::mem::take(&mut arguments),
-                        );
-                    }
-                }
+            let _operation = self.operation()?;
+            if !checked_callable
+                .as_ref()
+                .expect("checked internal callee")
+                .belongs_to(self)
+            {
+                return Err(RuntimeError::WrongRuntime("callable"));
             }
+            let callee = checked_callable
+                .take()
+                .expect("checked internal callee")
+                .into_object()
+                .into_handle();
+            crate::engine::vm::execute_owned_call(
+                self,
+                caller_realm,
+                callee,
+                receiver.take().expect("owned call receiver"),
+                std::mem::take(&mut arguments),
+            )
+            .map_err(RuntimeError::from)
         })();
         {
             let _unwind = self.unwind_guard();
@@ -320,27 +161,7 @@ impl Runtime {
             // completion may traverse the quarantined state.
             return Err(RuntimeError::Poisoned);
         }
-        let mut frame_error = None;
-        while !self.skip_cleanup()
-            && let Some(frame) = forwarded_call_frames.pop()
-        {
-            if let Err(error) = frame.finish()
-                && frame_error.is_none()
-            {
-                frame_error = Some(error);
-            }
-        }
-        if self.skip_cleanup() {
-            return Err(RuntimeError::Poisoned);
-        }
-        if let Some(error) = frame_error {
-            if let Ok(Completion::Return(value) | Completion::Throw(value)) = result {
-                let _ = self.release_jsvalue(value);
-            }
-            Err(error)
-        } else {
-            result
-        }
+        result
     }
 
     fn call_function_prototype_call(

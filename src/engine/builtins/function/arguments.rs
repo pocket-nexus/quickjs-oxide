@@ -1,19 +1,30 @@
-//! QuickJS build_arg_list: owned carrier, fixed length and ordered indexed reads.
+//! QuickJS build_arg_list: raw carrier, fixed length and ordered indexed reads.
 use crate::engine::{
-    api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
-    heap::{ContextId, HeapError},
-    object::{ObjectRef, PropertyKey},
+    api::{
+        error::{NativeErrorKind, NativeErrorMessage},
+        runtime::Runtime,
+        runtime_error::RuntimeError,
+    },
+    atom::{Atom, pinned::PinnedAtom},
+    heap::{
+        ContextId, HeapError, ObjectId,
+        runtime::{
+            RuntimeState,
+            owned_values::{OwnedValueGuard, OwnedValuesGuard},
+        },
+    },
     value::{JsValue, conversion::NativeConversion},
     vm::Completion,
 };
+use std::cell::Cell;
 
 const MAX_APPLY_ARGUMENTS: u64 = 65_534;
 
 pub(crate) enum ArgumentsStep {
     Complete(NativeConversion<Vec<JsValue>>),
+    /// Only a freshly allocated Type/Range Error produces this fact.
+    CyclePublished(NativeConversion<Vec<JsValue>>),
     Read {
-        object: ObjectRef,
-        key: PropertyKey,
         resume: ArgumentsResume,
     },
     Number {
@@ -21,140 +32,256 @@ pub(crate) enum ArgumentsStep {
     },
 }
 pub(crate) struct ArgumentsResume(Box<ArgumentsResumeState>);
-impl std::ops::Deref for ArgumentsResume {
-    type Target = ArgumentsResumeState;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl std::ops::DerefMut for ArgumentsResume {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
 const _: () = assert!(std::mem::size_of::<ArgumentsResume>() <= 8);
-pub(crate) struct ArgumentsResumeState {
+struct ArgumentsResumeState {
     realm: ContextId,
-    carrier: ObjectRef,
+    carrier: Option<ObjectId>,
     number_value: Option<JsValue>,
+    requested_object: Option<ObjectId>,
+    // Length is pinned; bounded list indices are immediate atoms. Neither
+    // request introduces an independently allocated atom owner.
+    requested_key: Option<Atom>,
     phase: Phase,
-}
-impl Drop for ArgumentsResumeState {
-    fn drop(&mut self) {
-        if let Some(value) = self.number_value.take() {
-            let _ = self.carrier.runtime().release_jsvalue(value);
-        }
-        if let Phase::Item { values, .. } = &mut self.phase {
-            for value in values.drain(..) {
-                let _ = self.carrier.runtime().release_jsvalue(value);
-            }
-        }
-    }
 }
 enum Phase {
     Length,
     Number,
     Item { length: usize, values: Vec<JsValue> },
 }
+enum Effect {
+    Read,
+    Number,
+    Complete(NativeConversion<Vec<JsValue>>, bool),
+}
 impl ArgumentsStep {
-    pub(crate) fn start(
-        runtime: &Runtime,
+    pub(crate) fn start_in_state(
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
         realm: ContextId,
         value: JsValue,
     ) -> Result<Self, RuntimeError> {
-        let JsValue::Object(carrier) = value else {
-            runtime.release_jsvalue(value)?;
-            return Ok(Self::Complete(NativeConversion::Throw(
-                runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a object")?,
+        let mut input = OwnedValueGuard::new(state, poisoned, value);
+        let (state, input) = input.parts();
+        let Some(JsValue::Object(carrier)) = input.as_ref() else {
+            state.release_owned_jsvalue(poisoned, input.take().expect("arguments input"))?;
+            return Ok(Self::CyclePublished(NativeConversion::Throw(
+                JsValue::Object(state.new_native_error_from_message(
+                    poisoned,
+                    realm,
+                    NativeErrorKind::Type,
+                    NativeErrorMessage::from_utf8("not a object"),
+                )?),
             )));
         };
-        let carrier = ObjectRef::from_owned_handle(runtime.clone(), carrier);
-        if let Some(result) = runtime.prepare_fast_array_arguments_jsvalue(realm, &carrier)? {
-            return Ok(Self::Complete(result));
-        }
-        Ok(Self::Read {
-            object: carrier.try_clone()?,
-            key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-            resume: ArgumentsResume(Box::new(ArgumentsResumeState {
+        let carrier = *carrier;
+        if let Some(result) =
+            state.prepare_fast_array_arguments_jsvalue(poisoned, realm, carrier)?
+        {
+            let fresh = matches!(result, NativeConversion::Throw(_));
+            let owner = ArgumentsResume(Box::new(ArgumentsResumeState {
                 realm,
-                carrier,
+                carrier: Some(carrier),
                 number_value: None,
+                requested_object: None,
+                requested_key: None,
                 phase: Phase::Length,
-            })),
+            }));
+            input.take();
+            return owner.finish_effect(state, poisoned, Ok(Effect::Complete(result, fresh)));
+        }
+        let JsValue::Object(requested_object) = state.dup_jsvalue(&JsValue::Object(carrier))?
+        else {
+            unreachable!()
+        };
+        let requested_key = state.pinned_atoms.get(PinnedAtom::Length);
+        let resume = ArgumentsResume(Box::new(ArgumentsResumeState {
+            realm,
+            carrier: Some(carrier),
+            number_value: None,
+            requested_object: Some(requested_object),
+            requested_key: Some(requested_key),
+            phase: Phase::Length,
+        }));
+        input.take();
+        Ok(Self::Read { resume })
+    }
+    pub(crate) fn retire_in_state(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        self.retire_with(&mut |value| state.release_owned_jsvalue(poisoned, value))
+    }
+    fn retire_with(
+        self,
+        release: &mut impl FnMut(JsValue) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        match self {
+            Self::Complete(NativeConversion::Throw(value))
+            | Self::CyclePublished(NativeConversion::Throw(value)) => release(value),
+            Self::Complete(NativeConversion::Value(values))
+            | Self::CyclePublished(NativeConversion::Value(values)) => {
+                for value in values {
+                    release(value)?;
+                }
+                Ok(())
+            }
+            Self::Read { resume } | Self::Number { resume } => resume.retire_with(release),
+        }
+    }
+    pub(crate) fn retire_at_boundary(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        let _unwind = runtime.unwind_guard();
+        if runtime.skip_cleanup() {
+            return Err(RuntimeError::Poisoned);
+        }
+        if let Ok(mut state) = runtime.0.state.try_borrow_mut() {
+            return self.retire_in_state(&mut state, &runtime.0.poisoned);
+        }
+        self.retire_with(&mut |value| {
+            runtime.release_jsvalue(value)?;
+            runtime.check_poison()
         })
     }
 }
 impl ArgumentsResume {
+    pub(crate) fn read_in_state(&self) -> (ObjectId, Atom) {
+        (
+            self.0.requested_object.expect("argument read object"),
+            self.0.requested_key.expect("argument read key"),
+        )
+    }
+    pub(crate) fn take_read_in_state(&mut self) -> (ObjectId, Atom) {
+        (
+            self.0
+                .requested_object
+                .take()
+                .expect("argument read object"),
+            self.0.requested_key.take().expect("argument read key"),
+        )
+    }
     pub(crate) fn take_number_value(&mut self) -> JsValue {
         self.0.number_value.take().expect("arguments number")
     }
-
     pub(crate) fn read(
-        mut self,
+        self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<ArgumentsStep, RuntimeError> {
-        let value = match result {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => {
-                return Ok(ArgumentsStep::Complete(NativeConversion::Throw(value)));
-            }
-        };
-        match std::mem::replace(&mut self.0.phase, Phase::Number) {
-            Phase::Length => {
-                self.0.phase = Phase::Number;
-                self.0.number_value = Some(value);
-                Ok(ArgumentsStep::Number { resume: self })
-            }
-            Phase::Item { length, mut values } => {
-                values.push(value);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_call_buffer_moves("apply.indexed", 1);
-                self.next(runtime, length, values)
-            }
-            Phase::Number => {
-                runtime.release_jsvalue(value)?;
-                Err(RuntimeError::Invariant(
-                    "argument length received an untyped reply",
-                ))
-            }
-        }
+        let _unwind = runtime.unwind_guard();
+        let result = self.resume_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            result,
+        );
+        runtime.check_poison()?;
+        result
     }
     pub(crate) fn number(
         self,
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<ArgumentsStep, RuntimeError> {
+        let _unwind = runtime.unwind_guard();
+        let result = self.number_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            result,
+        );
+        runtime.check_poison()?;
+        result
+    }
+    pub(crate) fn resume_in_state(
+        mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        completion: Completion,
+    ) -> Result<ArgumentsStep, RuntimeError> {
+        let result = self.advance_read(state, poisoned, completion);
+        self.finish_effect(state, poisoned, result)
+    }
+    fn advance_read(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        result: Completion,
+    ) -> Result<Effect, RuntimeError> {
+        let value = match result {
+            Completion::Throw(value) => {
+                return Ok(Effect::Complete(NativeConversion::Throw(value), false));
+            }
+            Completion::Return(value) => value,
+        };
+        match &mut self.0.phase {
+            Phase::Length => {
+                self.0.phase = Phase::Number;
+                self.0.number_value = Some(value);
+                Ok(Effect::Number)
+            }
+            Phase::Item { values, .. } => {
+                values.push(value);
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_call_buffer_moves("apply.indexed", 1);
+                self.next(state)
+            }
+            Phase::Number => {
+                state.release_owned_jsvalue(poisoned, value)?;
+                Err(RuntimeError::Invariant(
+                    "argument length received an untyped reply",
+                ))
+            }
+        }
+    }
+    pub(crate) fn number_in_state(
+        mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        result: NativeConversion<f64>,
+    ) -> Result<ArgumentsStep, RuntimeError> {
+        let next = self.advance_number(state, poisoned, result);
+        self.finish_effect(state, poisoned, next)
+    }
+    fn advance_number(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        result: NativeConversion<f64>,
+    ) -> Result<Effect, RuntimeError> {
         if !matches!(self.0.phase, Phase::Number) {
             if let NativeConversion::Throw(value) = result {
-                let _ = runtime.release_jsvalue(value);
+                state.release_owned_jsvalue(poisoned, value)?;
             }
             return Err(RuntimeError::Invariant(
                 "argument number reply has no length phase",
             ));
         }
         let number = match result {
-            NativeConversion::Value(number) => number,
             NativeConversion::Throw(value) => {
-                return Ok(ArgumentsStep::Complete(NativeConversion::Throw(value)));
+                return Ok(Effect::Complete(NativeConversion::Throw(value), false));
             }
+            NativeConversion::Value(number) => number,
         };
         let length = Runtime::length_from_number(number);
         if length > MAX_APPLY_ARGUMENTS {
-            return Ok(ArgumentsStep::Complete(NativeConversion::Throw(
-                runtime.new_native_error_jsvalue(
+            return Ok(Effect::Complete(
+                NativeConversion::Throw(JsValue::Object(state.new_native_error_from_message(
+                    poisoned,
                     self.0.realm,
                     NativeErrorKind::Range,
-                    "too many arguments in function call (only 65534 allowed)",
-                )?,
-            )));
+                    NativeErrorMessage::from_utf8(
+                        "too many arguments in function call (only 65534 allowed)",
+                    ),
+                )?)),
+                true,
+            ));
         }
         let length = usize::try_from(length)
             .map_err(|_| RuntimeError::Invariant("argument-list length does not fit usize"))?;
-        if let Some(values) =
-            runtime.fast_array_like_values_jsvalue(&self.0.carrier, length as u32)?
-        {
-            return Ok(ArgumentsStep::Complete(NativeConversion::Value(values)));
+        if let Some(values) = state.fast_array_like_values_jsvalue(
+            poisoned,
+            self.0.carrier.expect("arguments carrier"),
+            length as u32,
+        )? {
+            return Ok(Effect::Complete(NativeConversion::Value(values), false));
         }
         let mut values = Vec::new();
         values
@@ -169,50 +296,105 @@ impl ArgumentsResume {
             values.capacity(),
             size_of::<JsValue>(),
         );
-        self.next(runtime, length, values)
-    }
-    fn next(
-        mut self,
-        runtime: &Runtime,
-        length: usize,
-        values: Vec<JsValue>,
-    ) -> Result<ArgumentsStep, RuntimeError> {
-        if values.len() == length {
-            return Ok(ArgumentsStep::Complete(NativeConversion::Value(values)));
-        }
-        let index = values.len();
         self.0.phase = Phase::Item { length, values };
-        let key = runtime.property_key_for_index(index as u64)?;
-        Ok(ArgumentsStep::Read {
-            object: self.0.carrier.try_clone()?,
-            key,
-            resume: self,
+        self.next(state)
+    }
+    fn next(&mut self, state: &mut RuntimeState) -> Result<Effect, RuntimeError> {
+        let Phase::Item { length, values } = &mut self.0.phase else {
+            unreachable!()
+        };
+        if values.len() == *length {
+            return Ok(Effect::Complete(
+                NativeConversion::Value(std::mem::take(values)),
+                false,
+            ));
+        }
+        let key =
+            Atom::from_immediate_integer(values.len() as u32).expect("bounded argument index");
+        let JsValue::Object(object) =
+            state.dup_jsvalue(&JsValue::Object(self.0.carrier.expect("arguments carrier")))?
+        else {
+            unreachable!()
+        };
+        self.0.requested_key = Some(key);
+        self.0.requested_object = Some(object);
+        Ok(Effect::Read)
+    }
+    fn finish_effect(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        result: Result<Effect, RuntimeError>,
+    ) -> Result<ArgumentsStep, RuntimeError> {
+        if poisoned.get() {
+            return Err(RuntimeError::Poisoned);
+        }
+        match result {
+            Ok(Effect::Read) => Ok(ArgumentsStep::Read { resume: self }),
+            Ok(Effect::Number) => Ok(ArgumentsStep::Number { resume: self }),
+            Ok(Effect::Complete(result, fresh)) => {
+                let result = match result {
+                    NativeConversion::Throw(value) => {
+                        let mut value = OwnedValueGuard::new(state, poisoned, value);
+                        let (state, value) = value.parts();
+                        self.retire_in_state(state, poisoned)?;
+                        NativeConversion::Throw(value.take().expect("arguments throw"))
+                    }
+                    NativeConversion::Value(values) => {
+                        let mut values = OwnedValuesGuard::new(state, poisoned, values);
+                        let (state, values) = values.parts();
+                        self.retire_in_state(state, poisoned)?;
+                        NativeConversion::Value(std::mem::take(values))
+                    }
+                };
+                Ok(if fresh {
+                    ArgumentsStep::CyclePublished(result)
+                } else {
+                    ArgumentsStep::Complete(result)
+                })
+            }
+            Err(error) => {
+                self.retire_in_state(state, poisoned)?;
+                Err(error)
+            }
+        }
+    }
+    pub(crate) fn retire_in_state(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        self.retire_with(&mut |value| state.release_owned_jsvalue(poisoned, value))
+    }
+    fn retire_with(
+        mut self,
+        release: &mut impl FnMut(JsValue) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(value) = self.0.number_value.take() {
+            release(value)?;
+        }
+        if let Phase::Item { values, .. } = &mut self.0.phase {
+            for value in values.drain(..) {
+                release(value)?;
+            }
+        }
+        if let Some(carrier) = self.0.carrier.take() {
+            release(JsValue::Object(carrier))?;
+        }
+        if let Some(requested) = self.0.requested_object.take() {
+            release(JsValue::Object(requested))?;
+        }
+        self.0.requested_key.take();
+        Ok(())
+    }
+    pub(crate) fn retire_at_boundary(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        self.retire_with(&mut |value| {
+            if runtime.skip_cleanup() {
+                return Err(RuntimeError::Poisoned);
+            }
+            runtime.release_jsvalue(value)?;
+            runtime.check_poison()
         })
     }
 }
-pub(crate) fn finish(
-    runtime: &Runtime,
-    realm: ContextId,
-    mut step: ArgumentsStep,
-) -> Result<NativeConversion<Vec<JsValue>>, RuntimeError> {
-    loop {
-        step = match step {
-            ArgumentsStep::Complete(result) => return Ok(result),
-            ArgumentsStep::Read {
-                object,
-                key,
-                resume,
-            } => resume.read(
-                runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
-            )?,
-            ArgumentsStep::Number { mut resume } => {
-                let value = resume.take_number_value();
-                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
-            }
-        };
-    }
-}
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<ArgumentsStep>() <= 64);

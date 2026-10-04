@@ -526,6 +526,12 @@ pub(in crate::engine::vm) enum Step {
         resume: Option<Resume>,
     },
     ArgumentsComplete(Option<NativeConversion<Vec<JsValue>>>),
+    ArgumentsProgress(Option<crate::engine::builtins::ArgumentsStep>),
+    InvokeProgress(Option<crate::engine::builtins::InvokeStep>),
+    ArgumentsReply {
+        value: Option<NativeConversion<Vec<JsValue>>>,
+        resume: Option<Resume>,
+    },
     SnapshotEnumerable {
         object: Option<ObjectRef>,
         key: Option<PropertyKey>,
@@ -678,7 +684,10 @@ pub(in crate::engine::vm) enum Step {
 impl Step {
     pub(super) fn has_raw_owner(&self) -> bool {
         match self {
-            Self::PrimitiveProgress(Some(_))
+            Self::ArgumentsProgress(Some(_))
+            | Self::InvokeProgress(Some(_))
+            | Self::ArgumentsReply { .. }
+            | Self::PrimitiveProgress(Some(_))
             | Self::NumberProgress(Some(_))
             | Self::NumberReply { .. }
             | Self::StringReply { .. }
@@ -695,7 +704,8 @@ impl Step {
             | Self::PreparedNativeBoundary(_)
             | Self::CyclePublishedNumber(Some(_))
             | Self::CyclePublishedElement(Some(_)) => true,
-            Self::String { resume, .. }
+            Self::Arguments { resume, .. }
+            | Self::String { resume, .. }
             | Self::Primitive { resume, .. }
             | Self::Number { resume, .. }
             | Self::Call { resume, .. }
@@ -1277,6 +1287,31 @@ impl Step {
                     value.release_owned(runtime);
                 }
             }
+            Self::ArgumentsProgress(step) => {
+                if let Some(step) = step {
+                    let _ = step.retire_at_boundary(runtime);
+                }
+            }
+            Self::InvokeProgress(step) => {
+                if let Some(step) = step {
+                    let _ = step.retire_at_boundary(runtime);
+                }
+            }
+            Self::ArgumentsReply { value, resume } => {
+                if let Some(value) = value {
+                    match value {
+                        NativeConversion::Value(values) => {
+                            for value in values {
+                                release(value);
+                            }
+                        }
+                        NativeConversion::Throw(value) => release(value),
+                    }
+                }
+                if let Some(resume) = resume {
+                    resume.release_owned(runtime);
+                }
+            }
             Self::Arguments { value, resume } => {
                 if let Some(value) = value {
                     release(value);
@@ -1639,7 +1674,9 @@ impl Resume {
             | Self::NumericPrimitive(_)
             | Self::Math(_)
             | Self::ScalarText(_)
-            | Self::DatePrototype(_) => match std::mem::replace(self, Self::Identity) {
+            | Self::DatePrototype(_)
+            | Self::Arguments(_)
+            | Self::Invoke(_) => match std::mem::replace(self, Self::Identity) {
                 Self::Primitive(resume) => resume.retire_in_state(state, poisoned),
                 Self::Number(resume) => resume.retire_in_state(state, poisoned),
                 Self::Numeric(resume) | Self::NumericPrimitive(resume) => {
@@ -1648,6 +1685,8 @@ impl Resume {
                 Self::Math(resume) => resume.retire_in_state(state, poisoned),
                 Self::ScalarText(resume) => resume.retire_in_state(state, poisoned),
                 Self::DatePrototype(resume) => resume.retire_in_state(state, poisoned),
+                Self::Arguments(resume) => resume.retire_in_state(state, poisoned),
+                Self::Invoke(resume) => resume.retire_in_state(state, poisoned),
                 _ => unreachable!(),
             },
             Self::StringValue { resume, .. }
@@ -1673,7 +1712,9 @@ impl Resume {
             | Self::NumericPrimitive(_)
             | Self::Math(_)
             | Self::ScalarText(_)
-            | Self::DatePrototype(_) => match std::mem::replace(self, Self::Identity) {
+            | Self::DatePrototype(_)
+            | Self::Arguments(_)
+            | Self::Invoke(_) => match std::mem::replace(self, Self::Identity) {
                 Self::Primitive(resume) => resume.retire_at_boundary(runtime),
                 Self::Number(resume) => resume.retire_at_boundary(runtime),
                 Self::Numeric(resume) | Self::NumericPrimitive(resume) => {
@@ -1682,6 +1723,8 @@ impl Resume {
                 Self::Math(resume) => resume.retire_at_boundary(runtime),
                 Self::ScalarText(resume) => resume.retire_at_boundary(runtime),
                 Self::DatePrototype(resume) => resume.retire_at_boundary(runtime),
+                Self::Arguments(resume) => resume.retire_at_boundary(runtime),
+                Self::Invoke(resume) => resume.retire_at_boundary(runtime),
                 _ => unreachable!(),
             },
             Self::StringValue { resume, .. }
@@ -1702,7 +1745,9 @@ impl Resume {
             | Self::NumericPrimitive(_)
             | Self::Math(_)
             | Self::ScalarText(_)
-            | Self::DatePrototype(_) => true,
+            | Self::DatePrototype(_)
+            | Self::Arguments(_)
+            | Self::Invoke(_) => true,
             Self::StringValue { resume, .. }
             | Self::OwnFlagReply { resume, .. }
             | Self::PrototypeGetReply(resume)
@@ -1766,6 +1811,7 @@ impl Resume {
                 | Self::Number(_)
                 | Self::NumericPrimitive(_)
                 | Self::DatePrototype(_)
+                | Self::Arguments(_)
                 | Self::Identity
                 | Self::ComputedKey
                 | Self::PropertyKeyValue
@@ -1789,6 +1835,9 @@ impl Resume {
                 .resume_in_state(state, poisoned, completion)
                 .and_then(Step::try_from),
             Self::Number(resume) => resume
+                .resume_in_state(state, poisoned, completion)
+                .and_then(Step::try_from),
+            Self::Arguments(resume) => resume
                 .resume_in_state(state, poisoned, completion)
                 .and_then(Step::try_from),
             Self::NumericPrimitive(resume) => resume
@@ -1841,6 +1890,37 @@ impl Resume {
             },
         })
     }
+    pub(super) fn can_arguments_in_state(&self) -> bool {
+        matches!(self, Self::Invoke(_))
+    }
+    pub(super) fn arguments_in_state(
+        self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        result: NativeConversion<Vec<JsValue>>,
+    ) -> Result<Step, crate::engine::api::RuntimeError> {
+        match self {
+            Self::Invoke(resume) => resume
+                .arguments_in_state(state, poisoned, result)
+                .and_then(Step::try_from),
+            mut resume => {
+                match result {
+                    NativeConversion::Value(values) => {
+                        for value in values {
+                            state.release_owned_jsvalue(poisoned, value)?;
+                        }
+                    }
+                    NativeConversion::Throw(value) => {
+                        state.release_owned_jsvalue(poisoned, value)?
+                    }
+                }
+                resume.retire_raw_in_state(state, poisoned)?;
+                Err(crate::engine::api::RuntimeError::Invariant(
+                    "unmigrated argument-list consumer entered State",
+                ))
+            }
+        }
+    }
     pub(super) fn can_string_in_state(&self) -> bool {
         matches!(self, Self::ScalarText(_))
     }
@@ -1868,7 +1948,11 @@ impl Resume {
     pub(super) fn can_number_in_state(&self) -> bool {
         matches!(
             self,
-            Self::Math(_) | Self::Numeric(_) | Self::ScalarText(_) | Self::DatePrototype(_)
+            Self::Math(_)
+                | Self::Numeric(_)
+                | Self::ScalarText(_)
+                | Self::DatePrototype(_)
+                | Self::Arguments(_)
         )
     }
     pub(super) fn number_in_state(
@@ -1890,6 +1974,9 @@ impl Resume {
                 .and_then(Step::try_from),
             Self::DatePrototype(resume) => resume
                 .number_in_state(state, poisoned, host, result)
+                .and_then(Step::try_from),
+            Self::Arguments(resume) => resume
+                .number_in_state(state, poisoned, result)
                 .and_then(Step::try_from),
             mut resume => {
                 if let NativeConversion::Throw(value) = result {
@@ -2913,14 +3000,17 @@ impl Resume {
             Self::Invoke(resume) => resume.arguments(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned(runtime);
+                runtime.check_poison()?;
                 match result {
                     NativeConversion::Value(values) => {
                         for value in values {
-                            let _ = runtime.release_jsvalue(value);
+                            runtime.release_jsvalue(value)?;
+                            runtime.check_poison()?;
                         }
                     }
                     NativeConversion::Throw(value) => {
-                        let _ = runtime.release_jsvalue(value);
+                        runtime.release_jsvalue(value)?;
+                        runtime.check_poison()?;
                     }
                 }
                 Err(crate::engine::api::runtime_error::RuntimeError::Invariant(

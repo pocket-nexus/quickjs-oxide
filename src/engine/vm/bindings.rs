@@ -183,8 +183,26 @@ pub(in crate::engine::vm) fn read_frame_binding(
     runtime: &Runtime,
     binding: &FrameBinding,
 ) -> Result<JsValue, Error> {
+    let _operation = if matches!(binding, FrameBinding::Captured(_)) {
+        Some(
+            runtime
+                .operation()
+                .map_err(|error| Error::internal(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    read_frame_binding_in_state(&mut runtime.0.state.borrow_mut(), binding)
+}
+
+/// One checked binding read; the current frame owns direct values and cells.
+#[inline]
+pub(in crate::engine::vm) fn read_frame_binding_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    binding: &FrameBinding,
+) -> Result<JsValue, Error> {
     match binding {
-        FrameBinding::Direct(value) => runtime
+        FrameBinding::Direct(value) => state
             .dup_jsvalue(value)
             .map_err(|error| Error::internal(error.to_string())),
         FrameBinding::Private(_) | FrameBinding::PrivateCallable(_) => Err(Error::internal(
@@ -193,18 +211,9 @@ pub(in crate::engine::vm) fn read_frame_binding(
         FrameBinding::Uninitialized => Err(Error::internal(
             "unchecked local read reached an uninitialized lexical binding",
         )),
-        FrameBinding::Captured(var_ref) => {
-            let _operation = runtime
-                .operation()
-                .map_err(|error| Error::internal(error.to_string()))?;
-            // This frame binding owns the cell edge throughout the read.
-            runtime
-                .0
-                .state
-                .borrow_mut()
-                .read_var_ref(*var_ref)
-                .map_err(|error| Error::internal(error.to_string()))
-        }
+        FrameBinding::Captured(var_ref) => state
+            .read_var_ref(*var_ref)
+            .map_err(|error| Error::internal(error.to_string())),
     }
 }
 

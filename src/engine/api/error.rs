@@ -171,6 +171,8 @@ struct ErrorData {
     message: String,
     native_message: Option<Box<NativeErrorMessage>>,
     span: Option<SourceSpan>,
+    // Preserve a concrete non-JS failure across the VM error channel.
+    runtime_error: Option<Box<crate::engine::api::runtime_error::RuntimeError>>,
 }
 
 /// An engine error. JavaScript exceptions will eventually carry a heap value;
@@ -191,6 +193,26 @@ impl fmt::Debug for Error {
 }
 
 impl Error {
+    pub(crate) fn from_runtime_error(
+        error: crate::engine::api::runtime_error::RuntimeError,
+    ) -> Self {
+        match error {
+            crate::engine::api::runtime_error::RuntimeError::Engine(error) => error,
+            error => {
+                let mut result = Self::internal(error.to_string());
+                result.0.runtime_error = Some(Box::new(error));
+                result
+            }
+        }
+    }
+
+    pub(crate) fn into_runtime_error(mut self) -> crate::engine::api::runtime_error::RuntimeError {
+        match self.0.runtime_error.take() {
+            Some(error) => *error,
+            None => crate::engine::api::runtime_error::RuntimeError::Engine(self),
+        }
+    }
+
     #[must_use]
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self(Box::new(ErrorData {
@@ -198,6 +220,7 @@ impl Error {
             message: message.into(),
             native_message: None,
             span: None,
+            runtime_error: None,
         }))
     }
 
@@ -209,6 +232,7 @@ impl Error {
             message,
             native_message: Some(Box::new(native_message)),
             span: None,
+            runtime_error: None,
         }))
     }
 
@@ -308,6 +332,27 @@ mod tests {
             [0x80, b'A']
         );
         assert!(public.native_message().is_none());
+    }
+
+    #[test]
+    fn runtime_failure_provenance_survives_vm_channel_and_clone() {
+        for original in [
+            RuntimeError::Invariant("native probe engine error"),
+            RuntimeError::Poisoned,
+            RuntimeError::WrongRuntime("callee"),
+            RuntimeError::Heap(crate::engine::heap::HeapError::Overflow {
+                operation: "retain",
+            }),
+        ] {
+            let error = Error::from(original.clone());
+            assert_eq!(error.kind(), ErrorKind::Internal);
+            assert_eq!(error.message(), original.to_string());
+            assert_eq!(RuntimeError::from(error.clone()), original);
+            assert_eq!(RuntimeError::from(error), original);
+        }
+        let original = Error::new(ErrorKind::Type, "not callable");
+        let runtime = RuntimeError::from(original.clone());
+        assert_eq!(Error::from(runtime), original);
     }
 
     #[test]

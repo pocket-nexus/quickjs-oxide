@@ -223,7 +223,13 @@ impl RuntimeState {
     pub(crate) fn has_state_native_body(target: NativeFunctionId) -> bool {
         matches!(
             target,
-            NativeFunctionId::NumberPredicate(_)
+            NativeFunctionId::FunctionPrototypeCall
+                | NativeFunctionId::FunctionPrototypeApply
+                | NativeFunctionId::Reflect(
+                    crate::engine::builtins::native::ReflectKind::Apply
+                        | crate::engine::builtins::native::ReflectKind::Construct
+                )
+                | NativeFunctionId::NumberPredicate(_)
                 | NativeFunctionId::MathRandom
                 | NativeFunctionId::FunctionPrototype
                 | NativeFunctionId::PrimitivePrototypeValueOf(_)
@@ -306,6 +312,19 @@ impl RuntimeState {
     ) -> Result<NativeStep, RuntimeError> {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_state_body");
+        if let Some(kind) =
+            crate::engine::builtins::function::invoke::InvokeKind::for_target(target)
+        {
+            return crate::engine::builtins::InvokeStep::start_in_state(
+                self, poisoned, realm, kind, invocation, arguments,
+            )
+            .map(|step| match step {
+                crate::engine::builtins::InvokeStep::Complete(completion) => {
+                    NativeStep::Complete(completion)
+                }
+                step => NativeStep::Invoke(step),
+            });
+        }
         if let Some(kind) = crate::engine::builtins::math::operation::MathKind::for_target(target) {
             return crate::engine::builtins::MathStep::start_in_state(
                 self, poisoned, realm, kind, invocation, arguments,
@@ -427,6 +446,9 @@ impl crate::engine::api::runtime::Runtime {
                 } else {
                     Completion::Return(value)
                 })
+            }
+            NativeStep::Invoke(step) => {
+                crate::engine::builtins::function::invoke::finish(self, realm, step)
             }
             NativeStep::Math(step) => {
                 crate::engine::builtins::math::operation::finish(self, realm, step)

@@ -191,6 +191,17 @@ impl RuntimeState {
         Atom::from_immediate_integer(index)
     }
 
+    /// Owned normalized nonnegative index atom; callers retire the atom once.
+    pub(crate) fn property_key_atom_for_index(&mut self, index: u64) -> Result<Atom, RuntimeError> {
+        if let Some(atom) = u32::try_from(index)
+            .ok()
+            .and_then(Atom::from_immediate_integer)
+        {
+            return Ok(atom);
+        }
+        self.intern_property_key_js_string(&JsString::try_from_utf8(&index.to_string())?)
+    }
+
     /// Borrow one admitted public symbol atom without manufacturing a root.
     pub(crate) fn symbol_description_atom(
         &self,

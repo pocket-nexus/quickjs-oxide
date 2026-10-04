@@ -12,14 +12,28 @@ use std::cell::Cell;
 
 /// The same existing capture Vec owns every checked temporary. Normal finish
 /// retires captures before bytecode, matching the old rooted local drop order.
-struct CapturedEdges<'a> {
+pub(super) struct CapturedEdges<'a> {
     state: &'a mut RuntimeState,
     poisoned: &'a Cell<bool>,
     cells: Vec<VarRefId>,
     bytecode: Option<FunctionBytecodeId>,
 }
 
-impl CapturedEdges<'_> {
+impl<'a> CapturedEdges<'a> {
+    pub(super) fn for_arguments(
+        state: &'a mut RuntimeState,
+        poisoned: &'a Cell<bool>,
+    ) -> CapturedEdges<'a> {
+        CapturedEdges {
+            state,
+            poisoned,
+            cells: Vec::new(),
+            bytecode: None,
+        }
+    }
+    pub(super) fn parts(&mut self) -> (&mut RuntimeState, &mut Vec<VarRefId>) {
+        (self.state, &mut self.cells)
+    }
     fn retire(&mut self) -> Result<(), RuntimeError> {
         let _unwind = crate::engine::api::runtime::RuntimeUnwindGuard::from_flag(self.poisoned);
         for cell in self.cells.drain(..) {

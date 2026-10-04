@@ -247,7 +247,7 @@ fn nonzero_release_still_drains_previously_queued_nodes() {
 }
 
 #[test]
-fn arguments_prefix_declines_pending_zero_cleanup_without_draining() {
+fn arguments_prefix_snapshot_preserves_pending_zero_cleanup_service_policy() {
     use super::RawId;
     let runtime = Runtime::new();
     let mut context = runtime.new_context().expect("create context");
@@ -269,7 +269,7 @@ fn arguments_prefix_declines_pending_zero_cleanup_without_draining() {
         runtime
             .prepare_fast_array_arguments_jsvalue(context.realm, &carrier)
             .unwrap()
-            .is_none()
+            .is_some()
     );
     assert!(runtime.0.state.borrow().heap.has_pending_zero_cleanup());
     drop(checkpoint);
@@ -278,20 +278,24 @@ fn arguments_prefix_declines_pending_zero_cleanup_without_draining() {
 }
 
 #[test]
-fn arguments_prefix_declines_carrier_saturation_and_preserves_old_clone() {
-    use crate::engine::builtins::ArgumentsStep;
+fn arguments_prefix_only_promotes_actual_outputs_at_carrier_saturation() {
     use crate::engine::heap::RawId;
-    use crate::engine::value::JsValue;
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-
+    use crate::engine::value::{JsValue, conversion::NativeConversion};
     for count in [u32::MAX - 3, u32::MAX - 2, u32::MAX - 1, u32::MAX] {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let mut context = runtime.new_context().unwrap();
         let Value::Object(carrier) = context.eval("(function(){return arguments})(1)").unwrap()
         else {
-            panic!("carrier");
+            panic!()
         };
         let id = carrier.object_id();
+        let actual = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(id)
+            .unwrap();
         runtime
             .0
             .state
@@ -299,49 +303,33 @@ fn arguments_prefix_declines_carrier_saturation_and_preserves_old_clone() {
             .heap
             .set_strong_count_for_test(RawId::Object(id), count);
         let result = runtime.prepare_fast_array_arguments_jsvalue(context.realm, &carrier);
-        let after_probe = runtime
+        let after = runtime
             .0
             .state
             .borrow()
             .heap
             .object_strong_count(id)
             .unwrap();
-        // Transfer the actual carrier owner, then run the unchanged slow start.
-        let id = carrier.into_handle();
-        let step = catch_unwind(AssertUnwindSafe(|| {
-            ArgumentsStep::start(&runtime, context.realm, JsValue::Object(id))
-        }));
-        let after_start = runtime
+        runtime
             .0
             .state
-            .borrow()
+            .borrow_mut()
             .heap
-            .object_strong_count(id)
-            .unwrap();
-        // Read owns exactly two edges after successful start; error unwind
-        // released the input carrier. Restore valid counts before teardown.
-        runtime.0.state.borrow_mut().heap.set_strong_count_for_test(
-            RawId::Object(id),
-            if matches!(step, Ok(Ok(_))) { 2 } else { 1 },
-        );
-        assert!(matches!(result, Ok(None)));
-        assert_eq!(after_probe, count);
-        if count == u32::MAX {
-            assert!(
-                matches!(step, Ok(Err(_))),
-                "checked root retention must report overflow without panic"
-            );
-            assert!(!runtime.is_poisoned());
-            runtime.release_jsvalue(JsValue::Object(id)).unwrap();
-        } else {
-            assert_eq!(after_start, count + 1);
-            assert!(matches!(step.unwrap().unwrap(), ArgumentsStep::Read { .. }));
+            .set_strong_count_for_test(RawId::Object(id), actual);
+        let Some(NativeConversion::Value(values)) = result.unwrap() else {
+            panic!("actual immediate output requires no carrier retain")
+        };
+        assert!(matches!(values.as_slice(), [JsValue::Int(1)]));
+        assert_eq!(after, count);
+        for value in values {
+            runtime.release_jsvalue(value).unwrap();
         }
+        assert!(!runtime.is_poisoned());
     }
 }
 
 #[test]
-fn arguments_prefix_reserves_headroom_for_self_aliases_and_pinned_length() {
+fn arguments_prefix_checks_each_self_alias_output_and_preserves_pinned_length() {
     use crate::engine::atom::pinned::PinnedAtom;
     use crate::engine::heap::RawId;
     use crate::engine::value::{JsValue, conversion::NativeConversion};
@@ -386,7 +374,6 @@ fn arguments_prefix_reserves_headroom_for_self_aliases_and_pinned_length() {
             .unwrap();
         match result {
             Some(NativeConversion::Value(values)) => {
-                assert_eq!(count, u32::MAX - 4);
                 assert!(matches!(values.as_slice(), [JsValue::Object(value)] if *value == id));
                 assert_eq!(
                     runtime
@@ -402,7 +389,7 @@ fn arguments_prefix_reserves_headroom_for_self_aliases_and_pinned_length() {
                     runtime.release_jsvalue(value).unwrap();
                 }
             }
-            None => assert!(count >= u32::MAX - 3),
+            None => panic!("intact Arguments does not require intermediate carrier headroom"),
             Some(NativeConversion::Throw(_)) => panic!("unexpected throw"),
         }
         assert_eq!(

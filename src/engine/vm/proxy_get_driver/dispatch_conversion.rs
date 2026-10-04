@@ -22,6 +22,11 @@ pub(super) fn primitive(
                 | Step::CyclePublishedNumber(_)
                 | Step::CyclePublishedElement(_)
                 | Step::ComputedError(_)
+                | Step::Arguments { .. }
+                | Step::ArgumentsComplete(_)
+                | Step::ArgumentsReply { .. }
+                | Step::ArgumentsProgress(_)
+                | Step::InvokeProgress(_)
                 | Step::Primitive { .. }
                 | Step::String { .. }
                 | Step::StringReply { .. }
@@ -63,20 +68,6 @@ pub(super) fn primitive(
         crate::engine::api::profiling::record_owned_execution_event("conversion_transition");
         let realm = query.realm;
         match &mut *step {
-            Step::Arguments { value, resume } => {
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("argument continuation allocation failed"))?;
-                let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
-                query.parents.push(resume);
-                *step = crate::engine::builtins::ArgumentsStep::start(runtime, realm, value)
-                    .map_err(runtime_error_to_vm_error)?
-                    .try_into()?;
-                continue;
-            }
             Step::ArgumentsComplete(result) => {
                 let Some(parent) = query.parents.pop() else {
                     return Err(Error::internal("argument list lost its continuation"));

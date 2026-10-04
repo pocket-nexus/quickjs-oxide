@@ -1,5 +1,6 @@
 //! One authenticated continuous execution borrow. No arena mutation API escapes.
 mod bound;
+mod invoke;
 mod native;
 mod read;
 use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
@@ -1425,6 +1426,18 @@ impl FrameSlots<'_> {
     }
 
     #[inline(always)]
+    pub(in crate::engine::vm) fn actual_argument_count(&self) -> usize {
+        self.window.actual_count
+    }
+    pub(in crate::engine::vm) fn snapshot_argument_tail_in_state(
+        &self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        start: usize,
+    ) -> Result<Vec<JsValue>, Error> {
+        self.store
+            .snapshot_argument_tail_in_state(self.window, state, poisoned, start)
+    }
     pub(in crate::engine::vm) fn parameter(&self, index: u16) -> Result<&FrameBinding, Error> {
         self.store.parameter_current(self.window, index)
     }

@@ -341,7 +341,7 @@ pub(super) fn run(
     }
 }
 
-fn resume_native_boundary(
+pub(super) fn resume_native_boundary(
     runtime: &Runtime,
     execution: &mut RunningExecution,
 ) -> Result<Boundary, Error> {

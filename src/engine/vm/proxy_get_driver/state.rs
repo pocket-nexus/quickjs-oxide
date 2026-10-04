@@ -2,7 +2,7 @@
 use super::{Completion, Query, Resume, Runtime, Step};
 use crate::engine::{
     api::runtime_error::RuntimeError,
-    heap::runtime::RuntimeState,
+    heap::runtime::{RuntimeState, owned_values::OwnedValueGuard},
     object::{OwnedRead, ReadStep},
     value::{
         JsValue,
@@ -56,6 +56,188 @@ impl Query {
                         value: value.take(),
                         resume: resume.take(),
                     };
+                }
+                Step::Arguments { value, resume } => {
+                    let next = crate::engine::builtins::ArgumentsStep::start_in_state(
+                        state,
+                        poisoned,
+                        self.realm,
+                        value.take().expect("argument-list input"),
+                    )?;
+                    cycle_published |= matches!(
+                        next,
+                        crate::engine::builtins::ArgumentsStep::CyclePublished(_)
+                    );
+                    match next {
+                        crate::engine::builtins::ArgumentsStep::Complete(result)
+                        | crate::engine::builtins::ArgumentsStep::CyclePublished(result) => {
+                            // The fresh fact is read before consuming the enum.
+                            *step = Step::ArgumentsReply {
+                                value: Some(result),
+                                resume: resume.take(),
+                            };
+                        }
+                        next => {
+                            if self.parents.try_reserve(1).is_err() {
+                                next.retire_in_state(state, poisoned)?;
+                                return Err(RuntimeError::Invariant(
+                                    "argument continuation allocation failed",
+                                ));
+                            }
+                            self.parents
+                                .push(resume.take().expect("argument-list parent"));
+                            *step = Step::ArgumentsProgress(Some(next));
+                        }
+                    }
+                }
+                Step::ArgumentsReply { value, resume } => {
+                    if !resume
+                        .as_ref()
+                        .expect("argument reply parent")
+                        .can_arguments_in_state()
+                    {
+                        break;
+                    }
+                    let parent = resume.take().expect("argument reply parent");
+                    *step = parent.arguments_in_state(
+                        state,
+                        poisoned,
+                        value.take().expect("argument reply"),
+                    )?;
+                }
+                Step::ArgumentsComplete(value) => {
+                    if !self
+                        .parents
+                        .0
+                        .last()
+                        .is_some_and(Resume::can_arguments_in_state)
+                    {
+                        break;
+                    }
+                    let parent = self.parents.pop().expect("argument-list parent");
+                    *step = parent.arguments_in_state(
+                        state,
+                        poisoned,
+                        value.take().expect("argument reply"),
+                    )?;
+                }
+                Step::InvokeProgress(progress) => {
+                    use crate::engine::builtins::{InvokeCallTarget, InvokeStep};
+                    match progress.as_ref().expect("Invoke progress") {
+                        InvokeStep::Construct(_) => break,
+                        InvokeStep::Call(request)
+                            if matches!(request.target, InvokeCallTarget::NonCallableProxy(_)) =>
+                        {
+                            break;
+                        }
+                        _ => {}
+                    }
+                    match progress.take().expect("Invoke progress") {
+                        InvokeStep::Complete(value) => *step = Step::Complete(Some(value)),
+                        InvokeStep::CyclePublished(value) => {
+                            *step = Step::CyclePublishedPrimitiveReply {
+                                value: Some(value),
+                                resume: Some(Resume::Identity),
+                            }
+                        }
+                        InvokeStep::Arguments { mut resume } => {
+                            *step = Step::Arguments {
+                                value: Some(resume.take_arguments_value()),
+                                resume: Some(Resume::Invoke(resume)),
+                            }
+                        }
+                        InvokeStep::Call(request) => {
+                            let InvokeCallTarget::Callable(callee) = request.target else {
+                                unreachable!()
+                            };
+                            *step = Step::RawCall {
+                                inputs: Some(RawCallbackInputs::new(
+                                    callee,
+                                    request.receiver,
+                                    request.arguments,
+                                )),
+                                resume: Some(Resume::Identity),
+                            };
+                        }
+                        InvokeStep::Construct(_) => unreachable!(),
+                    }
+                }
+                Step::ArgumentsProgress(progress) => {
+                    use crate::engine::builtins::ArgumentsStep;
+                    match progress.as_mut().expect("argument-list progress") {
+                        ArgumentsStep::Complete(_) | ArgumentsStep::CyclePublished(_) => {
+                            let next = progress.take().expect("argument-list progress");
+                            cycle_published |= matches!(next, ArgumentsStep::CyclePublished(_));
+                            let (ArgumentsStep::Complete(value)
+                            | ArgumentsStep::CyclePublished(value)) = next
+                            else {
+                                unreachable!()
+                            };
+                            *step = Step::ArgumentsComplete(Some(value));
+                        }
+                        ArgumentsStep::Number { .. } => {
+                            let ArgumentsStep::Number { mut resume } =
+                                progress.take().expect("argument-list progress")
+                            else {
+                                unreachable!()
+                            };
+                            *step = Step::Number {
+                                value: Some(resume.take_number_value()),
+                                resume: Some(Resume::Arguments(resume)),
+                            };
+                        }
+                        ArgumentsStep::Read { resume } => {
+                            let (object, key) = resume.read_in_state();
+                            let receiver = state.dup_jsvalue(&JsValue::Object(object))?;
+                            let mut receiver = OwnedValueGuard::new(state, poisoned, receiver);
+                            let (state, receiver_value) = receiver.parts();
+                            let selected = state.prepare_ordinary_read_in_state(
+                                poisoned,
+                                runtime.domain_id(),
+                                object,
+                                key,
+                                receiver_value.as_ref().expect("argument Get receiver"),
+                                false,
+                                None,
+                            );
+                            if let Err(error) = selected {
+                                if poisoned.get() {
+                                    return Err(RuntimeError::Poisoned);
+                                }
+                                state.release_owned_jsvalue(
+                                    poisoned,
+                                    receiver_value.take().expect("argument Get receiver"),
+                                )?;
+                                let (object, _) = resume.take_read_in_state();
+                                state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
+                                return Err(error);
+                            }
+                            let read = selected.expect("selected argument read");
+                            let ArgumentsStep::Read { resume } =
+                                progress.take().expect("argument-list progress")
+                            else {
+                                unreachable!()
+                            };
+                            *step = Step::RawRead {
+                                read: Some(read),
+                                key,
+                                resume: Some(Resume::Arguments(resume)),
+                            };
+                            state.release_owned_jsvalue(
+                                poisoned,
+                                receiver_value.take().expect("argument Get receiver"),
+                            )?;
+                            let Step::RawRead {
+                                resume: Some(Resume::Arguments(resume)),
+                                ..
+                            } = step
+                            else {
+                                unreachable!()
+                            };
+                            let (object, _) = resume.take_read_in_state();
+                            state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
+                        }
+                    }
                 }
                 Step::CyclePublishedPrimitiveReply { value, resume } => {
                     cycle_published = true;
@@ -556,6 +738,47 @@ impl Step {
                     state.release_owned_jsvalue(poisoned, value)?;
                 }
             }
+            Self::ArgumentsProgress(value) => {
+                if let Some(value) = value.take() {
+                    value.retire_in_state(state, poisoned)?;
+                }
+            }
+            Self::InvokeProgress(value) => {
+                if let Some(value) = value.take() {
+                    value.retire_in_state(state, poisoned)?;
+                }
+            }
+            Self::ArgumentsReply { value, resume } => {
+                if let Some(value) = value.take() {
+                    match value {
+                        NativeConversion::Value(values) => {
+                            for value in values {
+                                state.release_owned_jsvalue(poisoned, value)?;
+                            }
+                        }
+                        NativeConversion::Throw(value) => {
+                            state.release_owned_jsvalue(poisoned, value)?
+                        }
+                    }
+                }
+                if let Some(resume) = resume {
+                    resume.retire_raw_in_state(state, poisoned)?;
+                }
+            }
+            Self::ArgumentsComplete(value) => {
+                if let Some(value) = value.take() {
+                    match value {
+                        NativeConversion::Value(values) => {
+                            for value in values {
+                                state.release_owned_jsvalue(poisoned, value)?;
+                            }
+                        }
+                        NativeConversion::Throw(value) => {
+                            state.release_owned_jsvalue(poisoned, value)?
+                        }
+                    }
+                }
+            }
             Self::StringReply { value, resume }
             | Self::CyclePublishedStringReply { value, resume } => {
                 if let Some(NativeConversion::Throw(value)) = value.take() {
@@ -597,7 +820,8 @@ impl Step {
                     value.retire_in_state(state, poisoned)?;
                 }
             }
-            Self::String { value, resume }
+            Self::Arguments { value, resume }
+            | Self::String { value, resume }
             | Self::Number { value, resume }
             | Self::Primitive { value, resume, .. }
             | Self::CyclePublishedPrimitive { value, resume, .. } => {
@@ -1063,6 +1287,7 @@ impl super::PendingProxyGet {
             resume.can_resume_in_state()
                 || resume.can_number_in_state()
                 || resume.can_string_in_state()
+                || resume.can_arguments_in_state()
                 || matches!(resume, Resume::StringValue { .. })
         };
         operation == Some(OperationTarget::PropertyGet(self.identity))

@@ -4,67 +4,13 @@ use super::{DirectCallTarget, JsValue, Resume, Step};
 impl TryFrom<crate::engine::builtins::ArgumentsStep> for Step {
     type Error = crate::engine::api::RuntimeError;
     fn try_from(step: crate::engine::builtins::ArgumentsStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::ArgumentsStep;
-            match step {
-                ArgumentsStep::Complete(result) => Self::ArgumentsComplete(Some(result)),
-                ArgumentsStep::Read {
-                    object,
-                    key,
-                    resume,
-                } => Self::Read {
-                    receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                    object: Some(object),
-                    key: Some(key),
-                    resume: Some(Resume::Arguments(resume)),
-                },
-                ArgumentsStep::Number { mut resume } => Self::Number {
-                    value: Some(resume.take_number_value()),
-                    resume: Some(Resume::Arguments(resume)),
-                },
-            }
-        })
+        Ok(Self::ArgumentsProgress(Some(step)))
     }
 }
-
 impl TryFrom<crate::engine::builtins::InvokeStep> for Step {
     type Error = crate::engine::api::RuntimeError;
     fn try_from(step: crate::engine::builtins::InvokeStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::InvokeStep;
-            match step {
-                InvokeStep::Complete(result) => Self::Complete(Some(result)),
-                InvokeStep::Construct(request) => {
-                    let target = request.target;
-                    let new_target = request.new_target;
-                    let arguments = request.arguments;
-                    Self::Construct {
-                        target: Some(target),
-                        new_target: Some(new_target),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::Identity),
-                    }
-                }
-                InvokeStep::Arguments { mut resume } => {
-                    let value = resume.take_arguments_value();
-                    Self::Arguments {
-                        value: Some(value),
-                        resume: Some(Resume::Invoke(resume)),
-                    }
-                }
-                InvokeStep::Call(request) => {
-                    let target = request.target;
-                    let receiver = request.receiver;
-                    let arguments = request.arguments;
-                    Self::Call {
-                        target: Some(target),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::Identity),
-                    }
-                }
-            }
-        })
+        Ok(Self::InvokeProgress(Some(step)))
     }
 }
 

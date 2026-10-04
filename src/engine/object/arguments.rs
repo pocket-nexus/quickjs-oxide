@@ -11,75 +11,49 @@ use crate::engine::atom::AtomIdx;
 use crate::engine::heap::roots::VarRefRoot;
 
 #[cfg(test)]
+use crate::engine::heap::ContextId;
+#[cfg(test)]
 use crate::engine::heap::ObjectPayload;
-use crate::engine::heap::{ContextId, ObjectData, PropertySlot, RawValue};
+use crate::engine::heap::PropertySlot;
 #[cfg(test)]
 use crate::engine::object::CompleteOrdinaryPropertyDescriptor;
-use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
-use crate::engine::object::{ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol};
+#[cfg(test)]
+use crate::engine::object::WellKnownSymbol;
+use crate::engine::object::{ObjectRef, OrdinaryPropertyDescriptor, PropertyKey};
 use crate::engine::value::JsValue;
 
-/// Keys remain rooted until the complete layout has retained its atoms.
-/// This concrete builder keeps metadata and slots parallel in one operation.
-struct ArgumentsLayout {
-    keys: Vec<PropertyKey>,
-    entries: Vec<ShapeEntry>,
-    slots: Vec<PropertySlot>,
-}
-
-impl ArgumentsLayout {
-    fn new(count: usize) -> Self {
-        Self {
-            keys: Vec::with_capacity(count + 3),
-            entries: Vec::with_capacity(count + 3),
-            slots: Vec::with_capacity(count + 3),
-        }
-    }
-
-    fn push(&mut self, key: PropertyKey, flags: PropertyFlags, slot: PropertySlot) {
-        self.entries.push(ShapeEntry {
-            atom: AtomIdx::from_raw(key.atom().raw()),
-            flags,
-        });
-        self.slots.push(slot);
-        self.keys.push(key);
-    }
-}
+mod allocation;
 
 impl Runtime {
-    /// Build QuickJS `JS_CLASS_ARGUMENTS` from the exact actual arguments.
-    /// Formal-parameter padding must never be included in `values`.
+    #[cfg(test)]
     pub(crate) fn new_unmapped_arguments_object(
         &self,
         realm: ContextId,
         values: Vec<JsValue>,
     ) -> Result<ObjectRef, RuntimeError> {
-        let result = (|| {
-            let length = u32::try_from(values.len()).map_err(|_| {
-                RuntimeError::Invariant("actual argument count exceeded QuickJS Uint32 storage")
-            })?;
-            let mut layout = ArgumentsLayout::new(values.len());
-            for (index, value) in values.iter().enumerate() {
-                let key = self.property_key_for_index(index as u64)?;
-                layout.push(
-                    key,
-                    PropertyFlags::data(true, true, true),
-                    PropertySlot::Data(value.as_raw()),
-                );
+        let _unwind = self.unwind_guard();
+        let _operation = match self.operation() {
+            Ok(operation) => operation,
+            Err(error) => {
+                for value in values {
+                    if self.skip_cleanup() {
+                        break;
+                    }
+                    self.release_jsvalue(value)?;
+                }
+                self.check_poison()?;
+                return Err(error);
             }
-            self.prepare_arguments_common_properties(realm, length, None, &mut layout)?;
-            self.new_arguments_object_base(realm, false, length, layout)
-        })();
-        for value in values {
-            self.release_jsvalue(value)?;
-        }
-        result
+        };
+        let result = self.0.state.borrow_mut().new_unmapped_arguments_object(
+            &self.0.poisoned,
+            realm,
+            values,
+        );
+        self.check_poison()?;
+        result.map(|object| ObjectRef::from_owned_handle(self.clone(), object))
     }
-
-    /// Build QuickJS `JS_CLASS_MAPPED_ARGUMENTS`. Each supplied root is one
-    /// actual indexed element. Roots corresponding to formal parameters share
-    /// the frame cell; roots for extra actual arguments are detached cells
-    /// allocated by the VM before this call.
+    #[cfg(test)]
     pub(crate) fn new_mapped_arguments_object(
         &self,
         realm: ContextId,
@@ -89,113 +63,31 @@ impl Runtime {
         if !current_function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("mapped arguments callee"));
         }
-        if self.as_callable(current_function)?.is_none() {
-            return Err(RuntimeError::Invariant(
-                "mapped arguments callee has no [[Call]] method",
-            ));
-        }
+        // Preserve the real public prefix before looking at any cell domain.
+        let _operation = self.operation()?;
+        let callee = self
+            .0
+            .state
+            .borrow_mut()
+            .checked_arguments_callee(&self.0.poisoned, current_function.object_id())?;
+        self.check_poison()?;
         for root in &roots {
             if !root.belongs_to(self) {
                 return Err(RuntimeError::WrongRuntime("mapped arguments element"));
             }
         }
-        let length = u32::try_from(roots.len()).map_err(|_| {
-            RuntimeError::Invariant("actual argument count exceeded QuickJS Uint32 storage")
-        })?;
-        let mut layout = ArgumentsLayout::new(roots.len());
-        for (index, root) in roots.iter().enumerate() {
-            let key = self.property_key_for_index(index as u64)?;
-            layout.push(
-                key,
-                PropertyFlags::data(true, true, true),
-                PropertySlot::VarRef(root.id()),
-            );
-        }
-        self.prepare_arguments_common_properties(
-            realm,
-            length,
-            Some(current_function),
-            &mut layout,
-        )?;
-        self.new_arguments_object_base(realm, true, length, layout)
-    }
-
-    fn new_arguments_object_base(
-        &self,
-        realm: ContextId,
-        mapped: bool,
-        fast_len: u32,
-        layout: ArgumentsLayout,
-    ) -> Result<ObjectRef, RuntimeError> {
-        let ArgumentsLayout {
-            keys: _keys,
-            entries,
-            slots,
-        } = layout;
-        let prototype = self.0.state.borrow().heap.context(realm)?.object_prototype;
-        let mut state = self.0.state.borrow_mut();
-        let object = state.allocate_object_with_layout(
+        let cells = roots
+            .into_iter()
+            .map(VarRefRoot::into_execution_handle)
+            .collect();
+        let result = self.0.state.borrow_mut().new_mapped_arguments_object(
             &self.0.poisoned,
-            Some(prototype),
-            &entries,
-            slots,
-            |shape, slots| ObjectData::arguments(shape, slots, mapped, fast_len),
-        )?;
-        drop(state);
-        Ok(ObjectRef::from_owned_handle(self.clone(), object))
-    }
-
-    fn prepare_arguments_common_properties(
-        &self,
-        realm: ContextId,
-        length: u32,
-        current_function: Option<&ObjectRef>,
-        layout: &mut ArgumentsLayout,
-    ) -> Result<(), RuntimeError> {
-        let (array_values, thrower) = {
-            let state = self.0.state.borrow();
-            let context = state.heap.context(realm)?;
-            (
-                context
-                    .array_prototype_values
-                    .ok_or(RuntimeError::Invariant(
-                        "realm has no cached Array.prototype.values root",
-                    ))?,
-                context.throw_type_error.ok_or(RuntimeError::Invariant(
-                    "realm has no shared %ThrowTypeError% root",
-                ))?,
-            )
-        };
-
-        let length_key =
-            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-        let converted_length = self.raw_property_value(&Self::array_length_value(length))?;
-        layout.push(
-            length_key,
-            PropertyFlags::data(true, false, true),
-            PropertySlot::Data(converted_length.raw()),
+            realm,
+            callee,
+            cells,
         );
-
-        let callee = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Callee)?;
-        let (flags, slot) = if let Some(function) = current_function {
-            (
-                PropertyFlags::data(true, false, true),
-                PropertySlot::Data(RawValue::Object(function.object_id())),
-            )
-        } else {
-            (
-                PropertyFlags::accessor(false, false),
-                PropertySlot::accessor(Some(thrower), Some(thrower)),
-            )
-        };
-        layout.push(callee, flags, slot);
-        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
-        layout.push(
-            iterator,
-            PropertyFlags::data(true, false, true),
-            PropertySlot::Data(RawValue::Object(array_values)),
-        );
-        Ok(())
+        self.check_poison()?;
+        result.map(|object| ObjectRef::from_owned_handle(self.clone(), object))
     }
 
     /// Return the class state and numeric index for one Arguments own-key

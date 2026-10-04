@@ -248,7 +248,10 @@ pub(super) enum VmAction {
     Import,
     Pure(super::pure_operations::PureOperation),
     ApplyEval(u16),
-    Apply(ApplyKind),
+    Apply {
+        kind: ApplyKind,
+        fallthrough: FallthroughPc,
+    },
     Eval {
         arguments: u16,
         environment: u16,
@@ -313,8 +316,14 @@ pub(super) enum VmAction {
         fallthrough: FallthroughPc,
     },
     NormalizeThis,
-    Arguments(ArgumentsKind),
-    Rest(u16),
+    Arguments {
+        kind: ArgumentsKind,
+        fallthrough: FallthroughPc,
+    },
+    Rest {
+        start: u16,
+        fallthrough: FallthroughPc,
+    },
     InstantiateClosure {
         index: u32,
         fallthrough: FallthroughPc,
@@ -370,7 +379,7 @@ impl VmAction {
             Self::Import => "execute.action.import",
             Self::Pure(_) => "execute.action.pure",
             Self::ApplyEval(_) => "execute.action.apply_eval",
-            Self::Apply(_) => "execute.action.apply",
+            Self::Apply { .. } => "execute.action.apply",
             Self::Eval { .. } => "execute.action.eval",
             Self::Call { .. } => "execute.action.call",
             Self::SetProperty(_) => "execute.action.set_property",
@@ -396,8 +405,8 @@ impl VmAction {
             Self::ConvertPlus => "execute.action.convert_plus",
             Self::ConvertPropertyKey { .. } => "execute.action.convert_property_key",
             Self::NormalizeThis => "execute.action.normalize_this",
-            Self::Arguments(_) => "execute.action.arguments",
-            Self::Rest(_) => "execute.action.rest",
+            Self::Arguments { .. } => "execute.action.arguments",
+            Self::Rest { .. } => "execute.action.rest",
             Self::InstantiateClosure { .. } => "execute.action.instantiate_closure",
             Self::SetName(_) => "execute.action.set_name",
             Self::CloseCaptured(_) => "execute.action.close_captured",
@@ -2787,6 +2796,100 @@ pub(super) fn execute_frame_in_state_with_identity(
                 );
                 continue;
             }
+            VmAction::Arguments { kind, fallthrough } => {
+                segment.materialize_in_state(state)?;
+                {
+                    let FrameTurn {
+                        owners,
+                        executable,
+                        transaction,
+                        fault_pc,
+                        resume_pc,
+                        ..
+                    } = segment.frame();
+                    #[cfg(feature = "profiling")]
+                    let depth = transaction.operand_depth();
+                    let mut cursor =
+                        FrameCursor::new(transaction, fault_pc, resume_pc, &runtime.0.poisoned);
+                    let object = cursor.with_slots(|slots| {
+                        super::arguments_driver::arguments_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            executable,
+                            owners.function.object_id(),
+                            slots,
+                            kind,
+                        )
+                    })?;
+                    cursor.commit_owned(state, JsValue::Object(object))?;
+                    cursor.advance(fallthrough.index());
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_instruction(depth);
+                }
+                state
+                    .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                    .map_err(runtime_error_to_vm_error)?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "core.internal_arguments",
+                );
+                continue;
+            }
+            VmAction::Rest { start, fallthrough } => {
+                segment.materialize_in_state(state)?;
+                {
+                    let FrameTurn {
+                        executable,
+                        transaction,
+                        fault_pc,
+                        resume_pc,
+                        ..
+                    } = segment.frame();
+                    #[cfg(feature = "profiling")]
+                    let depth = transaction.operand_depth();
+                    let mut cursor =
+                        FrameCursor::new(transaction, fault_pc, resume_pc, &runtime.0.poisoned);
+                    let object = cursor.with_slots(|slots| {
+                        super::arguments_driver::rest_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            executable.realm,
+                            slots,
+                            start,
+                        )
+                    })?;
+                    cursor.commit_owned(state, JsValue::Object(object))?;
+                    cursor.advance(fallthrough.index());
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_instruction(depth);
+                }
+                state
+                    .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                    .map_err(runtime_error_to_vm_error)?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event("core.internal_rest");
+                continue;
+            }
+            VmAction::Apply { kind, fallthrough } => {
+                match segment.enter_apply_in_state(runtime, state, kind, fallthrough)? {
+                    super::driver::ordinary::Entry::Ordinary
+                    | super::driver::ordinary::Entry::NativeReady => {
+                        state
+                            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                            .map_err(runtime_error_to_vm_error)?;
+                        continue;
+                    }
+                    super::driver::ordinary::Entry::NativeBoundary => {
+                        return Ok(VmAction::NativeProgress);
+                    }
+                    super::driver::ordinary::Entry::NativeThrow => return Ok(VmAction::Throw),
+                    _ => {
+                        return Err(Error::internal(
+                            "Apply progress returned an unrelated call state",
+                        ));
+                    }
+                }
+            }
             VmAction::InstantiateClosure { index, fallthrough } => {
                 segment.materialize_in_state(state)?;
                 {
@@ -3287,16 +3390,28 @@ fn deferred_action(
             arguments: checked_u16(a)?,
             fallthrough,
         },
-        Opcode::Apply => VmAction::Apply(decode_apply_kind(a)?),
-        Opcode::ApplySuper => VmAction::Apply(ApplyKind::Construct),
+        Opcode::Apply => VmAction::Apply {
+            kind: decode_apply_kind(a)?,
+            fallthrough,
+        },
+        Opcode::ApplySuper => VmAction::Apply {
+            kind: ApplyKind::Construct,
+            fallthrough,
+        },
         Opcode::ApplyEval => VmAction::ApplyEval(checked_u16(a)?),
         Opcode::Eval => VmAction::Eval {
             arguments: checked_u16(a)?,
             environment: checked_u16(b)?,
         },
         Opcode::Import => VmAction::Import,
-        Opcode::Arguments => VmAction::Arguments(decode_arguments_kind(a)?),
-        Opcode::Rest => VmAction::Rest(checked_u16(a)?),
+        Opcode::Arguments => VmAction::Arguments {
+            kind: decode_arguments_kind(a)?,
+            fallthrough,
+        },
+        Opcode::Rest => VmAction::Rest {
+            start: checked_u16(a)?,
+            fallthrough,
+        },
 
         Opcode::SetName => VmAction::SetName(Some(a)),
         Opcode::SetNameComputed => VmAction::SetName(None),
@@ -3585,6 +3700,8 @@ mod continuous_call_tests;
 #[cfg(test)]
 mod dynamic_ret_tests;
 
+#[cfg(test)]
+mod arguments_allocation_tests;
 #[cfg(test)]
 mod native_date_state_tests;
 #[cfg(test)]

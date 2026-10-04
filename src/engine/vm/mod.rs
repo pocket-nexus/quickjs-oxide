@@ -38,7 +38,7 @@ mod driver;
 
 pub(crate) mod entry;
 
-pub(crate) use driver::{RootOperation, execute_root};
+pub(crate) use driver::{RootOperation, execute_invoke_step, execute_owned_call, execute_root};
 
 mod execution;
 
@@ -90,8 +90,6 @@ mod private_access;
 
 mod iterator_driver;
 mod iterator_support;
-
-mod apply_driver;
 
 mod frame_exit;
 

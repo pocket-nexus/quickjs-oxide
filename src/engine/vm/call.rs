@@ -9,7 +9,7 @@ mod request;
 
 pub(in crate::engine::vm) use request::{BytecodeCallRequest, normalize_callback};
 
-pub(crate) use request::{NormalizedCallback, normalize_selected_bound_callback};
+pub(crate) use request::NormalizedCallback;
 
 mod native;
 

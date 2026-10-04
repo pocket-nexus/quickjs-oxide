@@ -56,6 +56,9 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::Construct { .. } => "query_dispatch.step.construct",
         Step::ConstructProxy { .. } => "query_dispatch.step.construct_proxy",
         Step::ConstructorReady { .. } => "query_dispatch.step.constructor_ready",
+        Step::ArgumentsProgress(_) => "query_dispatch.step.arguments_progress",
+        Step::InvokeProgress(_) => "query_dispatch.step.invoke_progress",
+        Step::ArgumentsReply { .. } => "query_dispatch.step.arguments_reply",
         Step::Arguments { .. } => "query_dispatch.step.arguments",
         Step::ArgumentsComplete { .. } => "query_dispatch.step.arguments_complete",
         Step::SnapshotEnumerable { .. } => "query_dispatch.step.snapshot_enumerable",
@@ -119,6 +122,7 @@ pub(super) fn record_dispatch(step: &Step) {
         | Step::CyclePublishedStringReply { resume, .. }
         | Step::PrimitiveReply { resume, .. }
         | Step::CyclePublishedPrimitiveReply { resume, .. }
+        | Step::ArgumentsReply { resume, .. }
         | Step::RawRead { resume, .. }
         | Step::RawCall { resume, .. }
         | Step::Read { resume, .. }

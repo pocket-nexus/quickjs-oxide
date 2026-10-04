@@ -143,15 +143,6 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        exit @ (VmAction::Arguments(_) | VmAction::Rest(_)) => {
-            let step = super::super::frame_operations::arguments(
-                context.runtime,
-                context.execution,
-                context.id,
-                exit,
-            )?;
-            context.step(step)
-        }
         VmAction::SetName(index) => {
             let step = super::super::frame_operations::set_name(
                 context.runtime,
@@ -267,7 +258,6 @@ pub(super) fn dispatch(
         }
         VmAction::ClassInitializer(mode) => class_initializer(&mut context, mode)?,
         VmAction::Construct { arguments, .. } => construct(&mut context, arguments)?,
-        VmAction::Apply(kind) => apply(&mut context, kind)?,
         VmAction::InitDerivedConstructor => init_derived_constructor(&mut context)?,
         VmAction::ConvertAdd => convert(&mut context, true)?,
         VmAction::ApplyEval(environment) => apply_eval(&mut context, environment)?,
@@ -306,7 +296,10 @@ pub(super) fn dispatch(
         | VmAction::Pure(_)
         | VmAction::Object { .. }
         | VmAction::ArrayFrom { .. }
-        | VmAction::InstantiateClosure { .. } => {
+        | VmAction::InstantiateClosure { .. }
+        | VmAction::Arguments { .. }
+        | VmAction::Rest { .. }
+        | VmAction::Apply { .. } => {
             return Err(Error::internal("resident-only exit reached cold dispatch"));
         }
     })
@@ -640,25 +633,6 @@ fn construct(context: &mut Context<'_>, count: u16) -> Result<Disposition, Error
         context.execution,
         context.id,
         count,
-        *context.next_operation,
-    )?;
-    Ok(context.step(step))
-}
-
-#[inline(never)]
-fn apply(
-    context: &mut Context<'_>,
-    kind: crate::engine::code::bytecode::ApplyKind,
-) -> Result<Disposition, Error> {
-    *context.next_operation = context
-        .next_operation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("operation identity exhausted"))?;
-    let step = super::super::apply_driver::step(
-        context.runtime,
-        context.execution,
-        context.id,
-        kind,
         *context.next_operation,
     )?;
     Ok(context.step(step))

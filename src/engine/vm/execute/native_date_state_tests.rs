@@ -223,7 +223,8 @@ fn date_query_consumers_share_state_body_and_preserve_ignored_argv_and_error_bac
             .snapshot()
             .owned_execution_events
             .get("native_state_body"),
-        Some(&29)
+        // 29 Date bodies plus their 29 now-resident Function.call bodies.
+        Some(&58)
     );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
     assert!(!runtime.is_poisoned());

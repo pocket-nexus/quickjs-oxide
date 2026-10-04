@@ -57,6 +57,70 @@ pub(super) fn consume(
                 .map_err(runtime_error_to_vm_error)?;
             *pending = next;
         }
+        Step::InvokeProgress(progress) => {
+            use crate::engine::builtins::{InvokeCallTarget, InvokeNewTarget, InvokeStep};
+            match progress.take().expect("selected Invoke boundary") {
+                InvokeStep::Call(request) => {
+                    let InvokeCallTarget::NonCallableProxy(proxy) = request.target else {
+                        unreachable!()
+                    };
+                    *pending = Step::Call {
+                        target: Some(DirectCallTarget::NonCallableProxy(
+                            ObjectRef::from_owned_handle(runtime.clone(), proxy),
+                        )),
+                        receiver: Some(request.receiver),
+                        arguments: Some(request.arguments),
+                        resume: Some(Resume::Identity),
+                    };
+                    return Ok(Next::Invoke);
+                }
+                InvokeStep::Construct(request) => {
+                    let target = crate::engine::vm::call::ConstructorRef::from_validated_object(
+                        ObjectRef::from_owned_handle(runtime.clone(), request.target),
+                    );
+                    let new_target = match request.new_target {
+                        InvokeNewTarget::Validated(id) => {
+                            crate::engine::vm::call::ConstructNewTarget::Validated(
+                                crate::engine::vm::call::ConstructorRef::from_validated_object(
+                                    ObjectRef::from_owned_handle(runtime.clone(), id),
+                                ),
+                            )
+                        }
+                        InvokeNewTarget::Raw(value) => {
+                            crate::engine::vm::call::ConstructNewTarget::Raw(value)
+                        }
+                    };
+                    *pending = Step::Construct {
+                        target: Some(target),
+                        new_target: Some(new_target),
+                        arguments: Some(request.arguments),
+                        resume: Some(Resume::Identity),
+                    };
+                }
+                _ => {
+                    return Err(Error::internal(
+                        "Invoke boundary did not carry a selected effect",
+                    ));
+                }
+            }
+        }
+        Step::ArgumentsReply { value, resume } => {
+            let parent = resume.take().expect("argument reply parent");
+            *pending = parent
+                .arguments(runtime, value.take().expect("argument reply"))
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        Step::ArgumentsComplete(value) => {
+            // A nonmigrated or malformed parent still owns the actual result
+            // until its existing finite reply consumer retires it.
+            let parent = query
+                .parents
+                .pop()
+                .ok_or_else(|| Error::internal("argument list lost its continuation"))?;
+            *pending = parent
+                .arguments(runtime, value.take().expect("argument-list result"))
+                .map_err(runtime_error_to_vm_error)?;
+        }
         Step::RawRead { read, key, resume } => {
             if matches!(read.as_ref(), Some(ReadStep::Shared(_))) {
                 // This is the actual selected Arc and bounds, outside State.

@@ -38,6 +38,7 @@ mod request;
 mod resident_publication_tests;
 mod state;
 mod storage;
+pub(super) use native::NativeStepGuard;
 use native::start_into as native_scope;
 pub(in crate::engine::vm) use request::{
     PreparedNativeBoundary, Resume, SelectedRawCallback, Step,
@@ -1077,37 +1078,6 @@ fn drive_native_call(
     }
 }
 
-pub(super) fn start_apply(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    frame: FrameId,
-    kind: crate::engine::code::bytecode::ApplyKind,
-) -> Result<CallStep, Error> {
-    let realm = execution.frames.current_mut(frame)?.executable.realm;
-    let result = (|| {
-        let parent = execution.frames.current_mut(frame)?;
-        // The operands stay in their slots; the spread machine borrows rooted
-        // copies while `start_instruction` consumes the slot owners.
-        let step = crate::engine::builtins::InvokeStep::start_spread(
-            runtime,
-            realm,
-            kind,
-            execution.slots.peek(&parent.window, 2)?,
-            execution.slots.peek(&parent.window, 1)?,
-            execution.slots.peek(&parent.window, 0)?,
-        )
-        .map_err(runtime_error_to_vm_error)?;
-        start_instruction(runtime, execution, frame, Step::try_from(step)?, 3)
-    })();
-    match finish_error(runtime, realm, result)? {
-        Progress::Call(step) => Ok(step),
-        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
-            "resident computed query reached an unrelated consumer",
-        )),
-        Progress::Conversion(_) => Err(Error::internal("Apply returned a conversion")),
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_construct(
     runtime: &Runtime,
@@ -1735,6 +1705,17 @@ pub(super) fn start_root(
         super::driver::RootOperation::Promise(step) => Step::try_from(step)?,
         super::driver::RootOperation::Async(step) => Step::from(step),
     };
+    start_owned_root_step(runtime, execution, realm, step)
+}
+
+/// The producer's existing NativeStepGuard protects the input before execution
+/// registration. From here the existing Query driver owns every finite phase.
+pub(super) fn start_owned_root_step(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    realm: crate::engine::heap::ContextId,
+    step: Step,
+) -> Result<Progress, Error> {
     let query = execution
         .query_storage
         .acquire(realm, Vec::new(), Finish::Root);
@@ -2026,6 +2007,9 @@ fn advance_inner(
             | Step::CyclePublishedStringReply { .. }
             | Step::String { .. }
             | Step::OrdinaryPrimitive { .. }
+            | Step::ArgumentsProgress(_)
+            | Step::InvokeProgress(_)
+            | Step::ArgumentsReply { .. }
             | Step::Arguments { .. }
             | Step::ArgumentsComplete { .. }
             | Step::Primitive { .. }

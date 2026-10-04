@@ -189,30 +189,6 @@ pub(in crate::engine::vm) fn normalize_callback(
         .map_err(runtime_error_to_vm_error)
 }
 
-/// The synchronous Invoke bridge transfers its existing checked callee owner
-/// into the same complete State Bound-chain producer. It keeps the terminal
-/// legacy header bridge, not a second Bound-by-Bound normalization loop.
-pub(crate) fn normalize_selected_bound_callback(
-    runtime: &Runtime,
-    realm: ContextId,
-    callable: CallableRef,
-    receiver: JsValue,
-    arguments: Vec<JsValue>,
-    selected: super::BoundSelection,
-) -> Result<
-    crate::engine::value::conversion::NativeConversion<NormalizedCallback>,
-    crate::engine::api::RuntimeError,
-> {
-    normalize_callback_from_selection(
-        runtime,
-        realm,
-        callable,
-        receiver,
-        arguments,
-        super::ordinary::DirectSelection::Bound(selected),
-    )
-}
-
 fn normalize_callback_from_selection(
     runtime: &Runtime,
     realm: ContextId,

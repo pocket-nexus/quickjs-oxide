@@ -48,10 +48,7 @@ impl Runtime {
 }
 
 pub(in crate::engine::vm) fn runtime_error_to_vm_error(error: RuntimeError) -> Error {
-    match error {
-        RuntimeError::Engine(error) => error,
-        error => Error::internal(error.to_string()),
-    }
+    Error::from(error)
 }
 
 /// Heap retain/release failures at trusted VM sites carry the same internal
