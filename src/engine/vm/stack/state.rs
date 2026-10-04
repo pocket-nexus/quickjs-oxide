@@ -395,7 +395,7 @@ impl FrameSlots<'_> {
         }
     }
 
-    pub(in crate::engine::vm) fn try_scalar_element_write_in_state(
+    pub(in crate::engine::vm) fn try_owned_element_write_in_state(
         &mut self,
         state: &mut RuntimeState,
         poisoned: &std::cell::Cell<bool>,
@@ -406,30 +406,43 @@ impl FrameSlots<'_> {
         let Ok(index) = u32::try_from(*index) else {
             return Ok(false);
         };
-        let base = self.peek(2)?;
-        let value = self.peek(0)?;
-        let dense = state
-            .try_dense_array_write_scalar(base, index, value)
-            .map_err(runtime_error_to_vm_error)?;
+        let dense = if let JsValue::Object(object) = self.peek(2)? {
+            let object = *object;
+            let input = self.top_direct_mut()?;
+            state
+                .try_exchange_dense_value(object, index, input)
+                .map_err(runtime_error_to_vm_error)?
+                || state
+                    .try_append_dense_value(object, index, input)
+                    .map_err(runtime_error_to_vm_error)?
+        } else {
+            false
+        };
         let typed = !dense
-            && match value {
+            && match self.peek(0)? {
                 JsValue::Int(value) => {
-                    state.try_typed_array_number_write(base, index, f64::from(*value))
+                    state.try_typed_array_number_write(self.peek(2)?, index, f64::from(*value))
                 }
-                JsValue::Float(value) => state.try_typed_array_number_write(base, index, *value),
+                JsValue::Float(value) => {
+                    state.try_typed_array_number_write(self.peek(2)?, index, *value)
+                }
                 _ => false,
             };
         if !dense && !typed {
             return Ok(false);
         }
-        let _value = self.pop()?;
-        let _key = self.pop()?;
+        // Replacement moved the old entry into the frame. Append consumed the
+        // new owner and left undefined. Typed writes only admit numbers.
+        state
+            .release_owned_jsvalue(poisoned, self.pop()?)
+            .map_err(runtime_error_to_vm_error)?;
+        let _integer_key = self.pop()?;
         state
             .release_owned_jsvalue(poisoned, self.pop()?)
             .map_err(runtime_error_to_vm_error)?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(if dense {
-            "dense_array_scalar_write_in_execute"
+            "dense_array_owned_write_in_execute"
         } else {
             "typed_array_number_write_in_execute"
         });

@@ -2440,7 +2440,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(VmAction::SetProperty(None));
                         };
                         if !cursor.with_slots(|slots| {
-                            slots.try_scalar_element_write_in_state(state, &runtime.0.poisoned)
+                            slots.try_owned_element_write_in_state(state, &runtime.0.poisoned)
                         })? {
                             break 'dispatch Ok(VmAction::SetProperty(None));
                         }

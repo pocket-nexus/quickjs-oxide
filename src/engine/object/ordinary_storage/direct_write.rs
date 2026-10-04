@@ -56,7 +56,6 @@ impl RuntimeState {
         Ok(exchanged)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn try_exchange_dense_value(
         &mut self,
         object: ObjectId,
@@ -78,7 +77,6 @@ impl RuntimeState {
 
     /// Append only the next dense index. The existing shared prototype walk
     /// and length selector establish the complete callback-free Set case.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn try_append_dense_value(
         &mut self,
         object: ObjectId,
@@ -185,6 +183,60 @@ mod tests {
                 .get("ordinary_owned_field_write_in_execute")
                 .copied(),
             Some(16)
+        );
+    }
+
+    #[test]
+    fn vm_dense_writes_keep_append_replacement_and_observable_fallbacks() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(context.eval(r#"(() => {
+            const a=[]; const o={};
+            const values=[undefined,null,false,-0,1.5,3n,2n**90n,'owner',Symbol('v'),o,a];
+            for(let i=0;i<values.length;i++)
+                if(!Object.is(a[i]=values[i],values[i]))return false;
+            for(let i=0;i<values.length;i++)
+                if(!Object.is(a[i]=values[values.length-i-1],values[values.length-i-1]))return false;
+            a[0]=a; a[0]=a[0]; if(a[0]!==a)return false;
+            a[0]=o; a[0]=null;
+            const fixed=[o]; Object.defineProperty(fixed,'length',{writable:false});
+            fixed[0]=a; if(fixed[0]!==a)return false;
+            try{(function(){'use strict';fixed[1]=o})();return false}
+            catch(e){if(!(e instanceof TypeError))return false}
+            const sealed=Object.seal([o]); sealed[0]=a;
+            if(sealed[0]!==a)return false;
+            const frozen=Object.freeze([o]); frozen[0]=a;
+            if(frozen[0]!==o)return false;
+            let calls=0; const proto={set 0(v){calls++;if(v!==o)throw 7}};
+            const special=[]; Object.setPrototypeOf(special,proto); special[0]=o;
+            if(calls!==1 || special.length!==0 || Object.hasOwn(special,'0'))return false;
+            const hole=[]; hole[2]=o; if(hole.length!==3 || 0 in hole || hole[2]!==o)return false;
+            const p=new Proxy(a,{set(t,k,v,r){calls++;return Reflect.set(t,k,v,r)}});
+            p[0]=o; if(calls!==2 || a[0]!==o)return false;
+            const t=new Float64Array(2); t[0]=2.5; t[1]={valueOf(){calls++;return 3.5}};
+            return t[0]===2.5 && t[1]===3.5 && calls===3;
+        })()"#).unwrap(), Value::Bool(true));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn heap_dense_append_and_replace_complete_without_a_write_request() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let _ = context
+            .eval("globalThis.directDense=[];globalThis.denseInput={};")
+            .unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(context.eval("for(let i=0;i<16;i++)directDense[i]=denseInput;for(let i=0;i<16;i++)directDense[i]=null;directDense.length").unwrap(), Value::Int(16));
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("dense_array_owned_write_in_execute")
+                .copied(),
+            Some(32)
         );
     }
 

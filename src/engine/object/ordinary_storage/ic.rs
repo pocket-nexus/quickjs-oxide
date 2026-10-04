@@ -2,7 +2,6 @@
 use super::{LinkedNativeSelection, NamedDataSelection, NamedSelectionMiss};
 #[cfg(test)]
 use crate::engine::api::runtime::Runtime;
-use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::runtime::RuntimeState;
@@ -304,31 +303,6 @@ impl RuntimeState {
             return None;
         }
         super::immediate_value_jsvalue(data.dense_array_value(index)?)
-    }
-
-    pub(crate) fn try_dense_array_write_scalar(
-        &mut self,
-        base: &JsValue,
-        index: u32,
-        value: &JsValue,
-    ) -> Result<bool, RuntimeError> {
-        if !matches!(
-            value,
-            JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_)
-        ) {
-            return Ok(false);
-        }
-        let JsValue::Object(object) = base else {
-            return Ok(false);
-        };
-        Ok(self
-            .heap
-            .try_replace_dense_immediate_value(*object, index, value.as_raw()))
     }
 }
 
@@ -700,7 +674,7 @@ mod tests {
         );
         assert!(
             state
-                .try_dense_array_write_scalar(&dense, 0, &JsValue::Int(9))
+                .try_exchange_dense_value(object(&dense), 0, &mut JsValue::Int(9))
                 .unwrap()
         );
         assert_eq!(
@@ -709,7 +683,7 @@ mod tests {
         );
         assert!(
             !state
-                .try_dense_array_write_scalar(&dense, 99, &JsValue::Int(9))
+                .try_exchange_dense_value(object(&dense), 99, &mut JsValue::Int(9))
                 .unwrap()
         );
         state
