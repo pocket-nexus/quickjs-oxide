@@ -50,6 +50,89 @@ enum OrdinaryFrameInput<'a> {
     },
 }
 
+fn validate_callback_return_target(
+    target: crate::engine::vm::frame::ReturnTarget,
+    parent: crate::engine::vm::frame::FrameId,
+) -> Result<crate::engine::vm::frame::ReturnTarget, Error> {
+    if !matches!(target.owner, crate::engine::vm::frame::ReturnOwner::Frame(id) if id == parent) {
+        return Err(Error::internal(
+            "raw callback return target is not its current parent",
+        ));
+    }
+    Ok(target)
+}
+
+/// Callback-specific commit stays behind its concrete source selection. The
+/// common suffix succeeds before read operands move; the actual parent pending
+/// owner and PC are published before the sole frame publisher switches children.
+// These borrowed roles belong to the existing frame reservation and callback
+// input; keeping them explicit adds no owner or alternate publisher.
+#[allow(clippy::too_many_arguments)]
+fn install_callback_ordinary_window(
+    runtime: &Runtime,
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    slots: &mut SlotStore,
+    prepared: &mut crate::engine::vm::frame::FramePush<'_>,
+    layout: &crate::engine::code::function::layout::FrameLayout<'_>,
+    parent: crate::engine::vm::frame::FrameId,
+    resume_pc: usize,
+    function: crate::engine::heap::ObjectId,
+    observes_arguments: bool,
+    inputs: &mut crate::engine::vm::call::ordinary::RawCallbackInputs,
+    read_commit: Option<super::ReadOperandCommit<'_>>,
+    mut pending: Option<&mut Option<Box<crate::engine::vm::proxy_get_driver::PendingProxyGet>>>,
+) -> Result<(super::call::InstalledOrdinaryFrame, bool), Error> {
+    let (_, frame) = prepared
+        .current_frame_mut()
+        .expect("ordinary callback retains its caller");
+    let (installed, pending_to_publish, cycle_published) = {
+        #[cfg(feature = "profiling")]
+        let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+            "ordinary.install.slots.sampled",
+        );
+        let commit = match pending.as_mut() {
+            Some(slot) => slot
+                .as_mut()
+                .expect("callback pending owner")
+                .computed_callback_commit(),
+            None => read_commit,
+        };
+        let installed = slots.push_current_callback_frame_in_state(
+            runtime,
+            state,
+            layout,
+            &mut frame.cold.window,
+            inputs,
+            function,
+            observes_arguments,
+            commit,
+        )?;
+        let (pending_to_publish, cycle_published) = if let Some(slot) = pending {
+            let mut actual = slot.take().expect("callback pending owner");
+            let cycle_published = actual.take_computed_publication();
+            (Some(actual), cycle_published)
+        } else {
+            (None, false)
+        };
+        (installed, pending_to_publish, cycle_published)
+    };
+    frame.resume_pc = resume_pc;
+    if let Some(pending) = pending_to_publish {
+        prepared
+            .put_pending(parent, pending)
+            .expect("admitted empty parent pending slot");
+    }
+    Ok((installed, cycle_published))
+}
+
+#[inline]
+fn record_ordinary_install_storage(frame_bytes: usize, flag_bytes: usize) {
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
+    #[cfg(not(feature = "profiling"))]
+    let _ = (frame_bytes, flag_bytes);
+}
+
 impl<'a> FrameExecution<'a> {
     /// External and legacy entry remains checked. Internal turns use the
     /// actual top frame established by this admission or a completed producer.
@@ -283,14 +366,19 @@ impl<'a> FrameExecution<'a> {
         tail: bool,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<(), Error> {
-        self.install_current_ordinary_with_input(
+        #[cfg(feature = "profiling")]
+        let _timer =
+            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
+        let (_, frame_bytes, flag_bytes) = self.install_current_ordinary_with_input(
             runtime,
             state,
             call,
             OrdinaryFrameInput::Caller(checked),
             tail,
             fallthrough,
-        )
+        )?;
+        record_ordinary_install_storage(frame_bytes, flag_bytes);
+        Ok(())
     }
 
     pub(in crate::engine::vm) fn commit_property_read_operands(
@@ -344,7 +432,10 @@ impl<'a> FrameExecution<'a> {
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<(), Error> {
         let return_to = self.named_getter_return_target();
-        self.install_current_ordinary_with_input(
+        #[cfg(feature = "profiling")]
+        let _timer =
+            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
+        let installed = self.install_current_ordinary_with_input(
             runtime,
             state,
             call,
@@ -356,7 +447,8 @@ impl<'a> FrameExecution<'a> {
             },
             false,
             fallthrough,
-        )
+        )?;
+        self.finish_callback_install(runtime, state, installed)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -370,7 +462,10 @@ impl<'a> FrameExecution<'a> {
         fallthrough: crate::engine::vm::execute::FallthroughPc,
         pending: &mut Option<Box<crate::engine::vm::proxy_get_driver::PendingProxyGet>>,
     ) -> Result<(), Error> {
-        self.install_current_ordinary_with_input(
+        #[cfg(feature = "profiling")]
+        let _timer =
+            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
+        let installed = self.install_current_ordinary_with_input(
             runtime,
             state,
             call,
@@ -382,9 +477,29 @@ impl<'a> FrameExecution<'a> {
             },
             false,
             fallthrough,
-        )
+        )?;
+        self.finish_callback_install(runtime, state, installed)
     }
 
+    fn finish_callback_install(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        (cycle_published, frame_bytes, flag_bytes): (bool, usize, usize),
+    ) -> Result<(), Error> {
+        // Only the concrete callback entry can own a computed publication fact.
+        // Its child and the actual pending parent were both installed first.
+        if cycle_published {
+            self.materialize_in_state(state)?;
+            state
+                .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        record_ordinary_install_storage(frame_bytes, flag_bytes);
+        Ok(())
+    }
+
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     fn install_current_ordinary_with_input(
         &mut self,
@@ -394,10 +509,7 @@ impl<'a> FrameExecution<'a> {
         source: OrdinaryFrameInput<'_>,
         tail: bool,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
-    ) -> Result<(), Error> {
-        #[cfg(feature = "profiling")]
-        let _timer =
-            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
+    ) -> Result<(bool, usize, usize), Error> {
         use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
         #[cfg(feature = "profiling")]
         {
@@ -423,22 +535,22 @@ impl<'a> FrameExecution<'a> {
         let (function, executable, closure) = call.into_slot_parts();
         let depth = execution.frames.depth() + 1;
         execution.call_storage.reserve_depth(depth)?;
-        let callback_target = match &source {
-            OrdinaryFrameInput::Caller(_) => None,
-            OrdinaryFrameInput::Callback { return_to, .. } => Some(*return_to),
-        };
         let (parent, frame) = execution
             .frames
             .current_frame_mut()
             .expect("an admitted ordinary call has a caller");
         let caller_realm = frame.executable.realm;
-        if callback_target
-            .is_some_and(|target| !matches!(target.owner, ReturnOwner::Frame(id) if id == parent))
-        {
-            return Err(Error::internal(
-                "raw callback return target is not its current parent",
-            ));
-        }
+        let return_to = match &source {
+            OrdinaryFrameInput::Caller(_) => ReturnTarget {
+                value_use: ReturnValue::Push,
+                owner: ReturnOwner::Frame(parent),
+                tail,
+                operation: None,
+            },
+            OrdinaryFrameInput::Callback { return_to, .. } => {
+                validate_callback_return_target(*return_to, parent)?
+            }
+        };
         // The private continuation comes from the instruction that produced
         // this Call. No caller instruction or slot changed during preflight.
         let resume = fallthrough.index();
@@ -451,74 +563,56 @@ impl<'a> FrameExecution<'a> {
         };
         let prepared = execution.frames.prepare_push()?;
         let mut prepared = prepared;
-        let (_, frame) = prepared
-            .current_frame_mut()
-            .expect("ordinary publication retains its caller");
-        let mut pending_to_publish = None;
-        let mut cycle_published = false;
-        let installed = {
-            #[cfg(feature = "profiling")]
-            let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
-                "ordinary.install.slots.sampled",
-            );
-            let transaction = FrameTransaction {
-                store: &mut execution.slots,
-                window: &mut frame.cold.window,
-            };
+        let (installed, cycle_published) = {
             match source {
-                OrdinaryFrameInput::Caller(checked) => transaction.install_ordinary_window(
-                    runtime,
-                    state,
-                    &executable.frame_layout(),
-                    checked,
-                    function,
-                    executable.observes_arguments,
-                )?,
+                OrdinaryFrameInput::Caller(checked) => {
+                    let (_, frame) = prepared
+                        .current_frame_mut()
+                        .expect("ordinary publication retains its caller");
+                    let installed = {
+                        #[cfg(feature = "profiling")]
+                        let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+                            "ordinary.install.slots.sampled",
+                        );
+                        FrameTransaction {
+                            store: &mut execution.slots,
+                            window: &mut frame.cold.window,
+                        }
+                        .install_ordinary_window(
+                            runtime,
+                            state,
+                            &executable.frame_layout(),
+                            checked,
+                            function,
+                            executable.observes_arguments,
+                        )?
+                    };
+                    frame.resume_pc = resume;
+                    (installed, false)
+                }
                 OrdinaryFrameInput::Callback {
                     inputs,
                     read_commit,
-                    mut pending,
+                    pending,
                     ..
-                } => {
-                    let commit = match pending.as_mut() {
-                        Some(slot) => slot
-                            .as_mut()
-                            .expect("callback pending owner")
-                            .computed_callback_commit(),
-                        None => read_commit,
-                    };
-                    let installed = transaction.store.push_current_callback_frame_in_state(
-                        runtime,
-                        state,
-                        &executable.frame_layout(),
-                        transaction.window,
-                        inputs,
-                        function,
-                        executable.observes_arguments,
-                        commit,
-                    )?;
-                    if let Some(slot) = pending {
-                        let mut actual = slot.take().expect("callback pending owner");
-                        cycle_published = actual.take_computed_publication();
-                        pending_to_publish = Some(actual);
-                    }
-                    installed
-                }
+                } => install_callback_ordinary_window(
+                    runtime,
+                    state,
+                    &mut execution.slots,
+                    &mut prepared,
+                    &executable.frame_layout(),
+                    parent,
+                    resume,
+                    function,
+                    executable.observes_arguments,
+                    inputs,
+                    read_commit,
+                    pending,
+                )?,
             }
         };
-        frame.resume_pc = resume;
-        if let Some(pending) = pending_to_publish {
-            prepared
-                .put_pending(parent, pending)
-                .expect("admitted empty parent pending slot");
-        }
         let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(callback_target.unwrap_or(ReturnTarget {
-            value_use: ReturnValue::Push,
-            owner: ReturnOwner::Frame(parent),
-            tail,
-            operation: None,
-        }));
+        cold.return_to = Some(return_to);
         cold.entry_guard = None;
         cold.function =
             crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure)
@@ -537,19 +631,7 @@ impl<'a> FrameExecution<'a> {
             resume_pc: 0,
             cold,
         });
-        if cycle_published {
-            self.materialize_in_state(state)?;
-            state
-                .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
-                .map_err(runtime_error_to_vm_error)?;
-        }
-        #[cfg(feature = "profiling")]
-        {
-            crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
-        }
-        #[cfg(not(feature = "profiling"))]
-        let _ = (frame_bytes, flag_bytes);
-        Ok(())
+        Ok((cycle_published, frame_bytes, flag_bytes))
     }
 
     /// Sole Base constructor installer under the same exclusive lease that
@@ -1876,6 +1958,88 @@ mod primitive_transaction_tests {
             );
             assert_eq!(state.heap.object_strong_count(child_id).unwrap(), 1);
         }
+    }
+
+    #[test]
+    fn callback_wrong_return_parent_rejects_before_input_or_pc_publication() {
+        use crate::engine::{
+            code::bytecode::Instruction,
+            value::conversion::NativeConversion,
+            vm::{
+                call::ordinary::{CallbackSelection, RawCallbackInputs},
+                execute::FallthroughPc,
+                frame::{ReturnOwner, ReturnTarget, ReturnValue},
+            },
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let child = runtime
+            .into_jsvalue(context.eval("(function(a){return a})").unwrap())
+            .unwrap();
+        let JsValue::Object(child_id) = child else {
+            panic!("ordinary function")
+        };
+        let mut execution = running(&runtime);
+        let older = execution_frame(
+            &runtime,
+            &mut execution,
+            context.realm,
+            &[Instruction::ReturnUndefined],
+            vec![],
+        );
+        let parent = execution_frame(
+            &runtime,
+            &mut execution,
+            context.realm,
+            &[Instruction::Call(0), Instruction::Return],
+            vec![JsValue::Int(99)],
+        );
+        let mut inputs = RawCallbackInputs::new(child_id, JsValue::Int(7), vec![JsValue::Int(42)]);
+        let mut pending = None;
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            let NativeConversion::Value(CallbackSelection::Ordinary(call)) = inputs
+                .select_callback_in_state(&runtime, &mut state, context.realm)
+                .unwrap()
+            else {
+                panic!("ordinary callback")
+            };
+            inputs
+                .retire_selection(&mut state, &runtime.0.poisoned)
+                .unwrap();
+            let mut segment = FrameExecution::admit(&mut execution, parent).unwrap();
+            let fallthrough = {
+                let turn = segment.frame();
+                FallthroughPc::from_decoded(turn.executable.exec.decode_published(0).unwrap())
+            };
+            let rejected = segment.install_raw_property_callback(
+                &runtime,
+                &mut state,
+                call,
+                &mut inputs,
+                ReturnTarget {
+                    value_use: ReturnValue::Push,
+                    owner: ReturnOwner::Frame(older),
+                    tail: false,
+                    operation: None,
+                },
+                fallthrough,
+                &mut pending,
+            );
+            assert!(matches!(rejected, Err(ref error)
+                if error.message() == "raw callback return target is not its current parent"));
+            let turn = segment.frame();
+            assert_eq!(turn.id, parent);
+            assert_eq!(*turn.resume_pc, 0);
+            assert_eq!(turn.transaction.peek(0).unwrap(), &JsValue::Int(99));
+            assert_eq!(inputs.callback_callee, Some(child_id));
+            assert!(matches!(inputs.receiver, Some(JsValue::Int(7))));
+            assert_eq!(inputs.arguments, vec![JsValue::Int(42)]);
+            assert!(pending.is_none());
+            assert_eq!(state.heap.object_strong_count(child_id), Ok(1));
+            inputs.retire(&mut state, &runtime.0.poisoned).unwrap();
+        }
+        assert!(runtime.0.state.borrow().heap.object(child_id).is_err());
     }
 
     #[test]

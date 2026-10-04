@@ -302,35 +302,46 @@ impl SlotStore {
         #[cfg(feature = "profiling")]
         let mut roots = 0;
         if keep_originals {
-            // Complete all fallible retains before moving any caller owner.
-            for index in 0..count {
-                let value = match source {
-                    OrdinaryArgumentSource::Caller(_) => {
-                        let Some(FrameBinding::Direct(value)) = &self.slots[start + index] else {
-                            unreachable!("authenticated ordinary argument is direct")
-                        };
-                        value
+            // Reservation is complete. Caller arguments live below active_end;
+            // the unpublished copies live in its disjoint suffix. Choose the
+            // concrete source once, then retain in the same numeric order.
+            let copied = {
+                let (caller, suffix) = self.slots.split_at_mut(base);
+                let destination = &mut suffix[original_end - base..original_end - base + count];
+                match source {
+                    OrdinaryArgumentSource::Caller(_) => copy_original_arguments_in_state(
+                        state,
+                        caller[start..start + count].iter().map(|binding| {
+                            let Some(FrameBinding::Direct(value)) = binding else {
+                                unreachable!("authenticated ordinary argument is direct")
+                            };
+                            value
+                        }),
+                        destination,
+                    ),
+                    OrdinaryArgumentSource::Callback(values) => {
+                        copy_original_arguments_in_state(state, values.iter(), destination)
                     }
-                    OrdinaryArgumentSource::Callback(values) => &values[index],
-                };
-                #[cfg(feature = "profiling")]
-                {
-                    roots += usize::from(matches!(value, JsValue::Object(_) | JsValue::Symbol(_)));
                 }
-                match state.dup_jsvalue(value) {
-                    Ok(copied) => {
-                        #[cfg(feature = "profiling")]
-                        record_copy(value);
-                        self.slots[original_end + index] = Some(FrameBinding::Direct(copied));
+            };
+            match copied {
+                Ok(copied_roots) => {
+                    #[cfg(feature = "profiling")]
+                    {
+                        roots = copied_roots;
                     }
-                    Err(error) => {
-                        self.clear_unpublished_owned_in_state(
-                            state,
-                            &runtime.0.poisoned,
-                            original_end..original_end + index,
-                        )?;
-                        return Err(runtime_error_to_vm_error(error));
-                    }
+                    #[cfg(not(feature = "profiling"))]
+                    let _ = copied_roots;
+                }
+                Err((error, initialized)) => {
+                    // The source owners have not moved. Retire only the copied
+                    // prefix with the canonical first-fatal suffix cleanup.
+                    self.clear_unpublished_owned_in_state(
+                        state,
+                        &runtime.0.poisoned,
+                        original_end..original_end + initialized,
+                    )?;
+                    return Err(runtime_error_to_vm_error(error));
                 }
             }
         }
@@ -524,6 +535,40 @@ impl SlotStore {
         debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
         self.windows.pop();
         Ok(())
+    }
+}
+
+/// Copy only language-visible argument owners into the unpublished suffix.
+/// The two concrete iterator projections share this retain/write algorithm;
+/// failure leaves its initialized prefix armed for SlotStore's canonical cleanup.
+fn copy_original_arguments_in_state<'a>(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    values: impl Iterator<Item = &'a JsValue>,
+    destination: &mut [Option<FrameBinding>],
+) -> Result<usize, (crate::engine::api::runtime_error::RuntimeError, usize)> {
+    #[cfg(feature = "profiling")]
+    let mut roots = 0;
+    for (index, value) in values.enumerate() {
+        #[cfg(feature = "profiling")]
+        {
+            roots += usize::from(matches!(value, JsValue::Object(_) | JsValue::Symbol(_)));
+        }
+        match state.dup_jsvalue(value) {
+            Ok(copied) => {
+                #[cfg(feature = "profiling")]
+                record_copy(value);
+                destination[index] = Some(FrameBinding::Direct(copied));
+            }
+            Err(error) => return Err((error, index)),
+        }
+    }
+    #[cfg(feature = "profiling")]
+    {
+        Ok(roots)
+    }
+    #[cfg(not(feature = "profiling"))]
+    {
+        Ok(0)
     }
 }
 
@@ -749,6 +794,177 @@ mod tests {
         assert!(runtime.0.state.borrow().heap.object(marker_id).is_err());
         slots.clear_frame(&runtime, parent).unwrap();
     }
+    #[test]
+    fn callback_argument_projection_preserves_alias_owners_and_originals() {
+        use crate::engine::vm::call::ordinary::RawCallbackInputs;
+        for observes_arguments in [false, true] {
+            let runtime = Runtime::new();
+            let context = runtime.new_context().unwrap();
+            let function_id = runtime.new_object(None).unwrap().into_handle();
+            let alias = runtime.new_object(None).unwrap();
+            let alias_id = alias.object_id();
+            let mut inputs = RawCallbackInputs::new(
+                function_id,
+                JsValue::Object(alias.try_clone().unwrap().into_handle()),
+                vec![
+                    JsValue::Object(alias.try_clone().unwrap().into_handle()),
+                    JsValue::Object(alias.try_clone().unwrap().into_handle()),
+                ],
+            );
+            let mut caller = PublishedFunctionSnapshot::empty_for_test(context.realm);
+            caller.metadata.max_stack = 1;
+            let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
+            executable.metadata.argument_count = 2;
+            executable.metadata.max_stack = 1;
+            let mut slots = SlotStore::new(32);
+            let mut parent = slots
+                .push_frame(
+                    &runtime,
+                    &caller.frame_layout(),
+                    storage(vec![JsValue::Int(99)]),
+                )
+                .unwrap();
+            let installed = {
+                let mut state = runtime.0.state.borrow_mut();
+                // Supply callback authentication's real independent callee role,
+                // then retire the selection role exactly as the caller does.
+                state.heap.retain_object(function_id).unwrap();
+                inputs.callback_callee = Some(function_id);
+                inputs
+                    .retire_selection(&mut state, &runtime.0.poisoned)
+                    .unwrap();
+                let installed = slots
+                    .push_current_callback_frame_in_state(
+                        &runtime,
+                        &mut state,
+                        &executable.frame_layout(),
+                        &mut parent,
+                        &mut inputs,
+                        function_id,
+                        observes_arguments,
+                        None,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    state.heap.object_strong_count(alias_id),
+                    Ok(if observes_arguments { 6 } else { 4 })
+                );
+                assert!(inputs.callback_callee.is_none());
+                assert!(inputs.receiver.is_none());
+                assert!(inputs.arguments.is_empty());
+                installed
+            };
+            let child = take_installed_window(&runtime, installed);
+            assert_eq!(slots.depth(&parent), 1);
+            assert!(matches!(
+                &slots.slots[parent.operands().start],
+                Some(FrameBinding::Direct(JsValue::Int(99)))
+            ));
+            assert_eq!(
+                child.original_arguments().len(),
+                if observes_arguments { 2 } else { 0 }
+            );
+            for index in child.original_arguments() {
+                assert!(matches!(&slots.slots[index],
+                    Some(FrameBinding::Direct(JsValue::Object(id))) if *id == alias_id));
+            }
+            for index in 0..2 {
+                assert!(matches!(slots.parameter(&child, index).unwrap(),
+                    FrameBinding::Direct(JsValue::Object(id)) if *id == alias_id));
+            }
+            slots.clear_frame(&runtime, child).unwrap();
+            assert_eq!(
+                runtime.0.state.borrow().heap.object_strong_count(alias_id),
+                Ok(1)
+            );
+            slots.clear_frame(&runtime, parent).unwrap();
+        }
+    }
+
+    #[test]
+    fn callback_later_argument_overflow_rolls_back_without_moving_input_owners() {
+        use crate::engine::{heap::RawId, vm::call::ordinary::RawCallbackInputs};
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let function_id = runtime.new_object(None).unwrap().into_handle();
+        let first = runtime.new_object(None).unwrap();
+        let first_id = first.object_id();
+        let blocked = runtime.new_object(None).unwrap();
+        let blocked_id = blocked.object_id();
+        let mut inputs = RawCallbackInputs::new(
+            function_id,
+            JsValue::Object(first.try_clone().unwrap().into_handle()),
+            vec![
+                JsValue::Object(first.try_clone().unwrap().into_handle()),
+                JsValue::Object(blocked.try_clone().unwrap().into_handle()),
+            ],
+        );
+        let mut caller = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        caller.metadata.max_stack = 1;
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        executable.metadata.argument_count = 2;
+        executable.metadata.max_stack = 1;
+        let mut slots = SlotStore::new(32);
+        let mut parent = slots
+            .push_frame(
+                &runtime,
+                &caller.frame_layout(),
+                storage(vec![JsValue::Int(99)]),
+            )
+            .unwrap();
+        let end = slots.active_end;
+        let next_window = slots.next_window;
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            state.heap.retain_object(function_id).unwrap();
+            inputs.callback_callee = Some(function_id);
+            inputs
+                .retire_selection(&mut state, &runtime.0.poisoned)
+                .unwrap();
+            let blocked_count = state.heap.object_strong_count(blocked_id).unwrap();
+            state
+                .heap
+                .set_strong_count_for_test(RawId::Object(blocked_id), u32::MAX);
+            let failed = slots.push_current_callback_frame_in_state(
+                &runtime,
+                &mut state,
+                &executable.frame_layout(),
+                &mut parent,
+                &mut inputs,
+                function_id,
+                true,
+                None,
+            );
+            state
+                .heap
+                .set_strong_count_for_test(RawId::Object(blocked_id), blocked_count);
+            assert!(
+                failed
+                    .err()
+                    .unwrap()
+                    .message()
+                    .contains("retaining a heap reference")
+            );
+            assert!(!runtime.is_poisoned());
+            assert_eq!(slots.active_end, end);
+            assert_eq!(slots.next_window, next_window);
+            assert!(slots.slots[end..].iter().all(Option::is_none));
+            assert_eq!(slots.depth(&parent), 1);
+            assert_eq!(slots.peek(&parent, 0).unwrap(), &JsValue::Int(99));
+            assert_eq!(inputs.callback_callee, Some(function_id));
+            assert!(matches!(inputs.receiver, Some(JsValue::Object(id)) if id == first_id));
+            assert_eq!(inputs.arguments.len(), 2);
+            assert!(matches!(inputs.arguments[0], JsValue::Object(id) if id == first_id));
+            assert!(matches!(inputs.arguments[1], JsValue::Object(id) if id == blocked_id));
+            assert_eq!(state.heap.object_strong_count(first_id), Ok(3));
+            assert_eq!(state.heap.object_strong_count(blocked_id), Ok(2));
+            inputs.retire(&mut state, &runtime.0.poisoned).unwrap();
+            assert_eq!(state.heap.object_strong_count(first_id), Ok(1));
+            assert_eq!(state.heap.object_strong_count(blocked_id), Ok(1));
+        }
+        slots.clear_frame(&runtime, parent).unwrap();
+    }
+
     #[test]
     fn ordinary_retain_failure_keeps_the_entire_parent_and_rolls_back_suffix() {
         let runtime = Runtime::new();
