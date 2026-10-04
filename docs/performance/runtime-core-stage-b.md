@@ -170,6 +170,14 @@ Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete �
 
 该提交的短测随后发现新增回归，详见后面的 B34 筛查；阶段 B 的性能门槛仍未通过。不能仅凭旧协议已删除就宣布提速。
 
+## 已采纳的普通调用与回调职责分开
+
+`4ab30343` 保留唯一的帧预留、值复制和发布主体，把返回目标检查、read commit、pending 提取和发布后的 GC 服务移到真实 callback 分支。普通 caller 直接使用已有 operand 区间；需要原始 arguments 的消费者才复制实际参数。没有新增 Runtime owner、argv 缓冲、缓存或动态模式。callee、receiver、参数的真实 checked retain、失败时已初始化后缀清理及父帧提交顺序保持。
+
+新增三项见证覆盖 callback 参数别名与原始 arguments、第二项 retain MAX 失败后的后缀回退、错误父帧返回目标的拒绝。两个新增 fixture 初次使用了不匹配的活动窗口，已只修 fixture；生产源码与其他测试字节未变。最终新编译普通 Stack 域 **63 项**通过，另 **2596 项**成功结果按字节相同证明继承；**不称为新跑完整普通 2598 项**。新编译 profiling 完整 library **2820 项**全过，严格 Clippy 两配置、profiling+test262-host 和源检查通过。完整 **1022 项**输入与本提交相同，回执 `b-ordinary-installer-state/test-attempt-03/receipt.json`，SHA256 `903bb755a5ad906066eaf266dd1c240dd832deb6849c96df8e76d8de0941ccf1`。
+
+实际 Rust 1.88 无 PGO release 的共同安装函数从 6083 到 5633 字节，栈预留从 1080 到 1000 字节；全二进制 text+rodata 增长 **0.0028%**。共同函数仍被 outline，不能宣称 caller 的全部来源分派消失。两种参数迭代分别实例化，代码生成与新增成本已纳入实际短测。
+
 ## 中途机制检查
 
 在 runtime 提交 `25c152d6` 上，仅对冻结的 Richards/DeltaBlue 固定工作量各执行一次诊断运行。Rust 1.88、release、profiling feature、无 PGO；两项完成标志与冻结输入逐项核对。对照复用阶段 A 的相同诊断工作量。
@@ -202,7 +210,7 @@ Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete �
 
 ## 性能归因与剩余验收
 
-**阶段 B 尚未通过性能验收；累计 B32 的短测发现了明显回归。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
+**阶段 B 尚未通过性能验收；累计 B34 的短测仍有明显回归。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
 
 ### B32 累计版本的回归筛查
 
@@ -263,5 +271,25 @@ Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete �
 **这份实现不通过性能门槛。** 回执 `b-set-array-state/interim/summary.json`，SHA256 `1b51281e7bf5463b793b4dc1c6afe283a3ba2116b557c360b6dc8d8715a823fc`；二进制 SHA256 `012a876a50c36aa3942b6fa11b39111c7c9976aa0e12d3817867f0ccb3cc1ade`。各累计版本使用各自的配对运行，不据此给单个 commit 计算配对收益。
 
 实际 Crypto/NavierStokes 周期采样分别取得 799/744 个样本，未丢样；`Query::advance_raw_in_state` 自身为 11.96%/8.98%，调用栈进入实际属性写入。Query acquire/recycle、搬运和计算写入 publication 同样出现在热路径。源码确认，即使写入完全本地完成，也先取得 Query、再搬运与回收。下一项区分实验让同一 canonical producer 先执行，只在实际等待或边界需要时建立 Query。采样比例不能直接换算成回归份额或预计提速；dense endpoint 的 continuation 创建成本也尚未单独分辨。
+
+### 普通调用整理相对 B34 的独立短测
+
+同一机器、CPU 2、冻结固定输入、Rust 1.88 普通 release、无 PGO，每项一个 ABBA 块两对。基线为保留的 B34，候选只有上述调用整理；全部 36 个实际进程成功，语义输出完全相同。此处是独立短测，**不能作为相对阶段 A 的累计收益或正式性能门槛通过**。
+
+| 工作量 | B34 中位耗时 ms | 调用整理中位耗时 ms | 配对耗时变化 |
+|---|---:|---:|---:|
+| Richards | 870.53 | 841.37 | -3.35% |
+| DeltaBlue | 838.52 | 805.44 | -3.60% |
+| Crypto | 775.61 | 776.19 | +0.07% |
+| RayTrace | 844.03 | 841.90 | -0.20% |
+| EarleyBoyer | 1243.60 | 1237.70 | -0.47% |
+| RegExp | 2533.33 | 2508.66 | -0.97% |
+| Splay | 1681.32 | 1684.62 | +0.20% |
+| NavierStokes | 755.90 | 737.19 | -2.47% |
+| Combined | 9523.27 | 9459.07 | -0.67% |
+
+Richards 两对均改善（−3.84% / −2.86%）；DeltaBlue 一对 −9.68%、另一对 +2.48%，尚不能确认该项收益。Combined 两对为 −0.94% / −0.41%，只是较小的收益信号。保留此职责调整继续集成验证，阶段 B 的累计回归仍需解决，不将未分辨的变化记为已兑现收益。
+
+回执 `b-ordinary-installer-state/interim/summary.json`，SHA256 `27cdc7908a4fcb1504597197db30e83551e894dfa9a6fe0998bab2614ef66e96`；候选 SHA256 `a07216d66061c0f2cb86da734adfbca76f22b93815ebc09b22e2e93d7e7ad22f`。计时期间无并行构建或测试；没有重跑原版 Score、Boa 或 A/A。首个构建误用了默认 Rust 1.94.1，已在计时前拒绝并清空该独立构建目标，最终受测二进制由显式 Rust 1.88 重建；拒绝回执保留。
 
 内部 native、Proxy、模块/job、eval 和挂起路径仍有迁移工作。最终需要同时确认内部 Runtime 强 owner、状态重借用、deferred release/restore、公共 root 中间转换和迁移适配器全部为零，再执行完整 CI、native/wasm、冻结 Test262、QuickJS 差分和相对阶段 A 的全项性能验收。当前已删除的局部协议不代表这些全局指标已达成。
