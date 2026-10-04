@@ -8,7 +8,7 @@ use crate::engine::value::JsValue;
 #[cfg(test)]
 use crate::engine::value::Value;
 
-fn writable_dense_length(
+pub(super) fn writable_dense_length(
     state: &RuntimeState,
     data: &ObjectData,
 ) -> Result<Option<u32>, RuntimeError> {

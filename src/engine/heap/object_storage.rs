@@ -9,6 +9,63 @@ pub(crate) struct SlotReplacementError {
 }
 
 impl Heap {
+    /// Exchange two existing public owners. This leaf changes no layout,
+    /// reference count or Atom count; permissions are selected by ordinary Set.
+    pub(crate) fn exchange_owned_data_slot(
+        &mut self,
+        id: ObjectId,
+        index: usize,
+        input: &mut RawValue,
+    ) -> Result<bool, HeapError> {
+        if !is_map_storable_value(input) {
+            return Ok(false);
+        }
+        let slot = self
+            .object_mut(id)?
+            .slots
+            .get_mut(index)
+            .ok_or(HeapError::Invariant("selected data slot disappeared"))?;
+        let PropertySlot::Data(previous) = slot else {
+            return Ok(false);
+        };
+        if !is_map_storable_value(previous) {
+            return Ok(false);
+        }
+        std::mem::swap(previous, input);
+        Ok(true)
+    }
+
+    /// Dense entries have default writable data attributes. Descriptor changes
+    /// materialize them before this leaf can exchange their existing owners.
+    pub(crate) fn exchange_owned_dense_value(
+        &mut self,
+        id: ObjectId,
+        index: u32,
+        input: &mut RawValue,
+    ) -> Result<bool, HeapError> {
+        if !is_map_storable_value(input) {
+            return Ok(false);
+        }
+        let data = self.object_mut(id)?;
+        if !matches!(data.kind, ObjectKind::Array) {
+            return Ok(false);
+        }
+        let ObjectPayload::Array {
+            dense: Some(values),
+        } = &mut data.payload
+        else {
+            return Ok(false);
+        };
+        let Some(previous) = values.get_mut(index as usize) else {
+            return Ok(false);
+        };
+        if !is_map_storable_value(previous) {
+            return Ok(false);
+        }
+        std::mem::swap(previous, input);
+        Ok(true)
+    }
+
     /// Replace an existing writable own Number without releasing an owner.
     /// The source Number was read before this mutable target access.
     pub(crate) fn try_replace_array_own_number(
