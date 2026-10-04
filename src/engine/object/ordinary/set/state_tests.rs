@@ -421,3 +421,48 @@ fn owned_local_set_publication_failure_quarantines_target_and_key_after_domain_i
     assert_eq!(state.heap.object_strong_count(later), Ok(0));
     assert!(state.heap.has_pending_zero_cleanup());
 }
+
+#[cfg(feature = "profiling")]
+#[test]
+fn set_transport_distinguishes_local_completion_from_selected_wait_storage() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let data = target(&runtime, &mut context, "({x:1})");
+    let proxy = target(&runtime, &mut context, "new Proxy({x:1},{})");
+    let key = runtime.intern_property_key("x").unwrap();
+    let receivers = [
+        runtime
+            .dup_jsvalue(&JsValue::Object(data.object_id()))
+            .unwrap(),
+        runtime
+            .dup_jsvalue(&JsValue::Object(proxy.object_id()))
+            .unwrap(),
+    ];
+    let profile = crate::engine::api::profiling::CostProfile::start();
+    let mut state = runtime.0.state.borrow_mut();
+    for (object, receiver) in [data.object_id(), proxy.object_id()]
+        .into_iter()
+        .zip(receivers)
+    {
+        let progress = state
+            .start_set_borrowed(
+                &runtime.0.poisoned,
+                Some(context.realm),
+                object,
+                key.atom(),
+                JsValue::Int(2),
+                receiver,
+            )
+            .unwrap();
+        progress.retire_in_state(&mut state, &runtime.0.poisoned).unwrap();
+    }
+    let events = profile.snapshot().owned_execution_events;
+    assert_eq!(
+        events.get("set_transport.completed_without_wait").copied(),
+        Some(1)
+    );
+    assert_eq!(
+        events.get("set_transport.durable_record_created").copied(),
+        Some(1)
+    );
+}

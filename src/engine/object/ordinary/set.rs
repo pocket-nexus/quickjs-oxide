@@ -230,7 +230,17 @@ impl SetOperands {
                 self.retire(state, poisoned)?;
                 Err(error)
             }
-            Ok(Selected::Complete(action)) => self.finish_action(state, poisoned, action),
+            Ok(Selected::Complete(action)) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    if matches!(action, SetAction::Call { .. }) {
+                        "set_transport.selected_js_child"
+                    } else {
+                        "set_transport.completed_without_wait"
+                    },
+                );
+                self.finish_action(state, poisoned, action)
+            }
             Ok(selected) => {
                 let mut owner = SetResumeState::from_inputs(self);
                 let phase = match owner.publish(state, poisoned, selected) {
@@ -243,6 +253,10 @@ impl SetOperands {
                         return Err(error);
                     }
                 };
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "set_transport.durable_record_created",
+                );
                 Ok(SetProgress::Waiting {
                     phase,
                     resume: SetResume(Box::new(owner)),
