@@ -37,6 +37,7 @@
 | `620ecfe4` | 已迁移的 Number/BigInt/Index/String、Math/Numeric/Text、Date brand/ISO 与 constructor-only ABI 拒绝携带实际新建 Error/iterator 的发布事实；共同 Query 在 owner 发布后服务 GC。同步 Number 边界通过原 guarded finisher 消费事实，保留旧 Complete ABI。 |
 | `6607cbfe` | Function.call/apply、Reflect.apply/construct、spread CALL 与 Arguments/rest 共用状态内 producer、raw continuation 和既有 Query；mapped/unmapped 工厂与帧 binding 读取共享实现。删除旧 Apply driver、同步转发循环与 Arguments 外层创建路径；公开边界恢复 VM 携带的原始错误类型。 |
 | `aecf0703` | Date Constructor、Parse/Utc 与 function realm 共用状态算法及原始 continuation；转换、prototype 读取和已完成进展进入既有 Query。原生调用的原 invocation 保留到 body 完成，致命失败后停止原 owner 与 activation 后缀退休。 |
+| `673e91ca` | 外层与嵌套 native scope 共用空 Parents 缓存；成功退休后才清空并归还，删除回收时的重复清空遍历。入栈前为全部未完成 scope 预留返回容量，修复串行调用的缓存增长与平方级回收。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -75,6 +76,8 @@
 - 调用转发与 Arguments：22 个新见证覆盖四种 selector、Bound 链、长度/索引 getter 与 Proxy 顺序、真实 spread 错误、mapped alias、捕获与 rest、checked owner 拒绝、真实回调身份与原错误类型、发布/GC、放弃与隔离。最终新编译的普通完整 2521 项、profiling 完整 2743 项全部通过；两配置严格 workspace/all-targets Clippy、host feature、格式、布局、Rust-only、host-boundary 与 anti-special-casing 通过。1003 项 Rust/Cargo 输入与采纳提交逐项相同；回执 SHA256 `9ffe7fe1cd676eab0585c7a45c504f44bd7cff0367d844bfe4725b1e14744904`。保留早先真实 native/spread 错误归一化缺陷、VM 边界错误类型丢失、Arguments marker fixture 与诊断事件计数/lint 修正记录；最后一轮确实重跑了两个完整配置，没有混合累计测试数。没有性能运行。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
+
+- Native 父状态缓冲：2 个新见证覆盖同一 QueryStorage 的连续 Return/Throw、九层嵌套、真实 receiver/argv owner 和返回容量。新编译的完整普通 2548 项与 profiling 2770 项全部通过；严格 workspace/all-targets Clippy 两配置、profiling+test262-host 和源检查通过。1008 项 Rust/Cargo 输入与 `673e91ca` 相同；回执 `b-native-parent-reuse/test-attempt-01/receipt.json`，SHA256 `99ae83a0bceea013fbee3427655001c893c84bfc6dc442b567d5b2f58ebe5b63`。首轮即通过；该正确性结果不代替时间验收。
 
 ## 本次内部契约调整
 
@@ -186,6 +189,28 @@ mapped/unmapped Arguments 与 rest 使用共享状态工厂及 binding 读取，
 
 ## 性能归因与剩余验收
 
-**阶段 B 尚无性能结论。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
+**阶段 B 尚未通过性能验收；累计 B32 的短测发现了明显回归。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
+
+### B32 累计版本的回归筛查
+
+`aecf0703` 的累计运行时代码与已验收阶段 A 使用相同 Rust 1.88、普通 release、CPU 2 和冻结工作量。每项仅运行一个 ABBA 块、两对；计时期间没有并行构建或测试。以下是固定工作量耗时，**不是原版 Score，也不是正式置信区间或阶段验收**。未重跑 Boa 或 A/A。
+
+| 工作量 | 阶段 A 中位耗时 ms | B32 中位耗时 ms | 配对耗时变化 |
+|---|---:|---:|---:|
+| Richards | 624.86 | 679.29 | +8.71% |
+| DeltaBlue | 668.44 | 941.32 | +40.82% |
+| Crypto | 519.41 | 531.46 | +2.31% |
+| RayTrace | 851.54 | 4245.73 | +398.62% |
+| EarleyBoyer | 1125.29 | 1171.83 | +4.14% |
+| RegExp | 2192.20 | 2322.19 | +5.93% |
+| Splay | 1639.38 | 1631.32 | −0.48% |
+| NavierStokes | 502.31 | 508.52 | +1.24% |
+| Combined | 8178.49 | 24736.14 | +202.45% |
+
+筛查回执：`/home/eric/.cache/oxide-runtime-core-20261003/b-aecf-interim/summary.json`，SHA256 `9444df5a024fe81a09cf6c8e7f593258e70520163830e1056ca20a607bd2d9bf`。全部 36 个实际进程成功且语义输出一致。该表仅能归因给累计版本，不能把回归分配给未经独立测量的单个 commit；小幅变化尚不能判定。
+
+同一原版 RayTrace 固定工作量的 `perf record -e cycles:u -F 997` 采样显示，B32 的 `recycle_resident_query` 自身占 75.27% 周期样本；汇编热点是遍历 `spare_parents` 的清空循环。源码核对确认：外层 native scope 每次创建新空 Parents，完成后放回缓存，下一次外层进入却没有取用，导致缓冲数量随串行调用增长，回收的累计工作变成平方级。嵌套 scope 原有的取用路径没有同样的问题。
+
+采样、注释汇编及二进制证明保存在 `/home/eric/.cache/oxide-runtime-core-20261003/b-aecf-regression-profile/`。`673e91ca` 已修复这项生命周期缺陷，正在复测，后续迁移暂停采纳；计数下降不能抵消这份时间证据。
 
 内部 native、Proxy、模块/job、eval 和挂起路径仍有迁移工作。最终需要同时确认内部 Runtime 强 owner、状态重借用、deferred release/restore、公共 root 中间转换和迁移适配器全部为零，再执行完整 CI、native/wasm、冻结 Test262、QuickJS 差分和相对阶段 A 的全项性能验收。当前已删除的局部协议不代表这些全局指标已达成。
