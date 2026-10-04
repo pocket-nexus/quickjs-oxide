@@ -19,6 +19,8 @@ use crate::engine::vm::call::{
     AdaptedNativeInvocation, CallableExecution, DirectCallTarget, NativeArguments,
     NativeInvocation, NativeInvocationAdaptation, NativeInvokeOutcome,
 };
+#[cfg(test)]
+mod input_admission_tests;
 mod native_state;
 
 impl Runtime {
@@ -107,15 +109,19 @@ impl Runtime {
         this_value: JsValue,
         arguments: Vec<JsValue>,
     ) -> Result<Completion, RuntimeError> {
-        let mut callable = callable.try_clone()?;
+        let mut checked_callable = None;
         let mut receiver = Some(this_value);
         let mut arguments = arguments;
         let mut argument_start = 0;
         let mut forwarded_call_frames = Vec::new();
         let result = (|| {
+            // Owned inputs are already recorded for the same final cleanup on
+            // checked-callee rejection. Keep the admitted root through cleanup.
+            checked_callable = Some(callable.try_clone()?);
+            let callable = checked_callable.as_mut().expect("checked internal callee");
             self.0.state.borrow().heap.context(caller_realm)?;
             loop {
-                match self.bytecode_for_callable(&callable)? {
+                match self.bytecode_for_callable(callable)? {
                     CallableExecution::Bytecode {
                         bytecode,
                         closure_slots,
@@ -125,7 +131,7 @@ impl Runtime {
                         }
                         return self.execute_bytecode_callable_jsvalue(
                             caller_realm,
-                            &callable,
+                            callable,
                             receiver.take().expect("call receiver"),
                             JsValue::Undefined,
                             std::mem::take(&mut arguments),
@@ -180,7 +186,7 @@ impl Runtime {
                             caller_realm = realm;
                             match target {
                                 DirectCallTarget::Callable(target) => {
-                                    callable = target;
+                                    *callable = target;
                                     continue;
                                 }
                                 DirectCallTarget::NonCallableProxy(proxy) => {
@@ -206,7 +212,7 @@ impl Runtime {
                         }
                         return Self::ordinary_native_completion(
                             self.invoke_native_function_jsvalue(
-                                &callable,
+                                callable,
                                 execution_realm,
                                 target,
                                 min_readable_args,
@@ -238,7 +244,7 @@ impl Runtime {
                             }
                         };
                         argument_start = 0;
-                        callable = target;
+                        *callable = target;
                     }
                     CallableExecution::Proxy => {
                         for value in arguments.drain(..argument_start) {
@@ -254,19 +260,59 @@ impl Runtime {
                 }
             }
         })();
-        if let Some(receiver) = receiver {
-            let _ = self.release_jsvalue(receiver);
+        {
+            let _unwind = self.unwind_guard();
+            let mut cleanup_state = self.0.state.try_borrow_mut().ok();
+            for value in receiver.into_iter().chain(arguments) {
+                if self.skip_cleanup() {
+                    break;
+                }
+                let retired = if let Some(state) = cleanup_state.as_mut() {
+                    match value {
+                        JsValue::Object(_) | JsValue::String(_) | JsValue::BigInt(_) => state
+                            .release_owned_jsvalue(&self.0.poisoned, value)
+                            .and_then(|()| self.admit_deferred_in_state(state)),
+                        JsValue::Symbol(index) => state
+                            .atoms
+                            .release_index(index)
+                            .map_err(RuntimeError::from)
+                            .and_then(|outcome| {
+                                if matches!(outcome, crate::engine::atom::ReleaseOutcome::Removed) {
+                                    self.admit_deferred_in_state(state)
+                                } else {
+                                    Ok(())
+                                }
+                            }),
+                        _ => Ok(()),
+                    }
+                } else {
+                    // A normal busy boundary leaves ownership with the
+                    // existing coordinator until its state borrow ends.
+                    self.release_jsvalue(value)
+                };
+                if retired.is_err() {
+                    self.0.poisoned.set(true);
+                    break;
+                }
+            }
         }
-        for argument in arguments {
-            let _ = self.release_jsvalue(argument);
+        if self.skip_cleanup() {
+            // Destructive retirement is terminal; no remaining input or
+            // completion may traverse the quarantined state.
+            return Err(RuntimeError::Poisoned);
         }
         let mut frame_error = None;
-        while let Some(frame) = forwarded_call_frames.pop() {
+        while !self.skip_cleanup()
+            && let Some(frame) = forwarded_call_frames.pop()
+        {
             if let Err(error) = frame.finish()
                 && frame_error.is_none()
             {
                 frame_error = Some(error);
             }
+        }
+        if self.skip_cleanup() {
+            return Err(RuntimeError::Poisoned);
         }
         if let Some(error) = frame_error {
             if let Ok(Completion::Return(value) | Completion::Throw(value)) = result {
