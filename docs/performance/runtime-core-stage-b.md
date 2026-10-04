@@ -321,7 +321,25 @@ Combined 两对为 −4.25% / −5.17%；Crypto、NavierStokes 和 Richards 两�
 
 ## 性能归因与剩余验收
 
-**阶段 B 尚未通过性能验收；最新累计 B37 短测 Combined 耗时仍高约 9.46%。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
+**阶段 B 尚未通过性能验收；最新累计 B40 短测 Combined 耗时仍高约 2.77%。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
+
+### 同步 Set 采纳后的累计 B40 筛查
+
+使用上述 `f80b91ed` 的完全同源无 PGO 普通 release，直接对已验收的阶段 A 二进制运行一个 ABBA 块、每项两对。输入、CPU 2 与配置一致，全部 36 个进程和语义输出通过，计时期间没有并行编译/测试；不把前后独立变化相乘或相加来估计累计结果。以下仍是筛查，不是原版 Score、正式区间或最终阶段验收。
+
+| 工作量 | 阶段 A 中位耗时 ms | 累计 B40 中位耗时 ms | 配对耗时变化 |
+|---|---:|---:|---:|
+| Richards | 624.13 | 736.72 | +18.03% |
+| DeltaBlue | 660.17 | 791.47 | +19.89% |
+| Crypto | 522.10 | 565.75 | +8.36% |
+| RayTrace | 863.78 | 766.87 | −11.19% |
+| EarleyBoyer | 1130.20 | 1142.88 | +1.13% |
+| RegExp | 2192.10 | 2173.81 | −0.84% |
+| Splay | 1629.10 | 1698.38 | +4.28% |
+| NavierStokes | 508.38 | 576.24 | +13.35% |
+| Combined | 8162.66 | 8388.26 | +2.77% |
+
+Combined 两对为 +1.95% / +3.59%；Richards、DeltaBlue、Crypto 和 NavierStokes 的剩余回归两对同向。Splay 两对 +7.77% / +0.78%，幅度变化大，不能据此精确归因。**即使同步 Set 有独立净收益，阶段 B 累计性能门槛仍未通过。** RayTrace/RegExp 的改善不替其它项背书。回执 `b-set-local-guard-state/cumulative-interim/paired-screen-summary.json`，SHA256 `9fa2dd30f224d28646e5b186838790cd4a5023e3f28a3340684f4d7d8f9fdf8d`，保留两种真实二进制、全部原始输出及固定输入校验。未重跑原版 Score、A/A 或 Boa。
 
 ### B32 累计版本的回归筛查
 
