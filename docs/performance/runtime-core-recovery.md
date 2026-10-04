@@ -118,7 +118,9 @@ EarleyBoyer 的初次同向回退触发单项复核：修复前后局部 ABBA �
 +1.99% / −1.94%；A 对最终候选复核为 −1.08% / +0.81%。此前回退未复现，
 当前结论为未分辨，不能把首次 +3.06% 当作稳定回退或宣称该项已经提速。
 RayTrace 处在既有 A/A 边缘且两对幅度不同，保留为未分辨。Combined 不能
-代替这些单项结论。A/A 的部分工作量迭代数与本轮不同，仅作噪声背景。
+代替这些单项结论。重新核对 A/A 回执后，manifest 与完整 workload 元数据
+和本轮相同；迭代数是 R21/D13/C2/Ray2/EB2/Reg1/S1/NS2，Combined44。
+复用这一噪声参照，不新增 A/A 或重新校准。
 
 同二进制固定 callgrind（各项一次，模拟缓存）：
 
@@ -204,3 +206,61 @@ Ir −2.43%、Dw −2.65%；NavierStokes Ir +1.10%、Dw +0.68%。相对前一
 - `recovery-r1-append-callgrind-comparison.json`
 - `recovery-r1-append-ci-fast-gates.json` 及四个 gate 日志
 - `recovery-r1-append-focused.log`
+
+
+### B1 状态基础：atom、捕获值与 Object opcode
+
+三个运行时提交：`ffd22a92`（atom/对象/错误共享 State kernel）、`4ee964cb`
+（捕获变量共享 State kernel）、`56ac336a`（Object opcode 与帧观察在当前
+State 下完成）。构建/逐提交 profile 时的暂存提交分别为 `c16ae540`、
+`693df72c`、`3baf6cd1`；逐层源码树相同，集成不改运行时代码或构建输入。
+这批为后续 native 生命周期提供基础，不宣称每层都有独立时间收益。
+
+最终相关 profiling 核心测试 2408/2408、workspace all-targets、CI fast 各项
+和 focused Test262（6844/6844）均通过。每提交 R/D/NS 固定 callgrind 的
+原完整输出通过。最终相对前一已验证运行时 `1c49652f`：Richards Ir +0.013%、
+Dw −0.194%；DeltaBlue Ir −0.186%、Dw −0.381%；NavierStokes Ir −0.340%、
+Dw −0.482%。这些计数不足以把时间变化归因到某一个 State kernel。
+
+局部 ABBA 对 `1c49652f`：Richards −5.80%、DeltaBlue −6.21%、EarleyBoyer
+−0.29%（混合）、NavierStokes +0.35%（混合）。另外 RegExp 单独局部为
++1.09%（+0.74% / +1.43%），未分辨。以下是同批对 A 的累计全九项 ABBA，
+36/36 语义输出通过，仍不是原版 Score 或正式验收。
+
+| 子项 | 耗时变化 | 两对变化 |
+| --- | ---: | --- |
+| Richards | −18.00% | −17.48% / −18.53% |
+| DeltaBlue | −5.51% | −4.21% / −6.81% |
+| Crypto | −6.70% | −7.40% / −6.00% |
+| RayTrace | −7.46% | −6.58% / −8.34% |
+| EarleyBoyer | −6.93% | −6.03% / −7.82% |
+| RegExp | +2.24% | +2.02% / +2.46% |
+| Splay | −8.12% | −6.71% / −9.54% |
+| NavierStokes | +3.02% | +3.50% / +2.53% |
+| Combined | −4.58% | −3.90% / −5.26% |
+
+RegExp 的累计临界变化触发单项复核：+2.09%（+1.62% / +2.55%），既有
+匹配 A/A 噪声参照约 2.07%，不是两对均超出参照的可信回退，也不能判为
+无代价。NavierStokes 在约 3.26% 的既有参照内，局部变化混合；两项均保留
+为未分辨并继续跟踪，阶段性能门槛尚未宣布通过。没有用 Combined 背书。
+
+回执：`recovery-state-foundations-{vs-A,local}-abba-20261005/`、
+`recovery-state-foundations-{vs-A-regexp-check,local-regexp-abba}-20261005/`、
+`recovery-state-foundations-callgrind-{gates,comparison}.json`、
+`recovery-state-foundations-ci-fast-gates.json`、
+`recovery-state-foundations-focused.log` 与三个原始 `recovery-callgrind-*` 目录。
+
+### 历史归因补充：B32 的瞬时 parent buffer 问题
+
+B32 `aecf0703` 的 DeltaBlue profile 中，resident Query 回收函数自身约占
+34.7% 指令：外层 activation 不从 spare pool 取回 parent buffer，退出却
+持续放回，随后每次回收遍历并清空全部 spare。B33 `673e91ca` 复用取出的
+buffer、在退休处清理语义 parents 并删除重复全池扫描，现有测试覆盖容量
+有界、嵌套和失败路径。
+
+同冻结工作量、普通 release 的 B33 对 B32：DeltaBlue Ir −34.59%、Dw
+−20.48%；Richards 与 NavierStokes 几乎不变。B33 累计对 A 为 R Ir +2.14%、
+Dw +5.60%；D Ir +4.10%、Dw +9.07%；NS Ir −1.74%、Dw −1.59%。因此
+B32 的约 +59% 指令不能归因到 Date 算法或当作稳定 B 成本。
+原始回执 `r0-history-callgrind-{aecf0703,673e91ca}/` 与
+`r0-history-B32-B33-comparison.json`。其余历史区间仍需继续逐层补齐。
