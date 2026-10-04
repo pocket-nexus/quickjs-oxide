@@ -65,11 +65,22 @@ fn strict_write_diagnostics_consume_real_suffix_at_full_verified_capacity() {
                 "fixture must fill real verified capacity"
             );
         }
+        assert!(
+            !crate::engine::vm::proxy_get_driver::RawNativeQuery::has_cached_query_for_test(
+                &execution.query_storage
+            )
+        );
         let mut state = runtime.0.state.borrow_mut();
         assert!(matches!(
             execute_frame_in_state(&runtime, &mut state, &mut execution, id).unwrap(),
             VmAction::Throw
         ));
+        assert!(
+            crate::engine::vm::proxy_get_driver::RawNativeQuery::has_cached_query_for_test(
+                &execution.query_storage
+            ),
+            "actual diagnostic must enter the common Query consumer"
+        );
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!((frame.fault_pc, frame.resume_pc), (pc, pc));
         assert_eq!(execution.slots.depth(&frame.window), 2);
@@ -534,4 +545,323 @@ fn borrowed_set_vm_preserves_typed_conversion_reentry_and_throw() {
         Value::Bool(true)
     );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
+}
+
+#[test]
+fn local_writes_complete_without_query_storage_for_every_value_owner_and_base_alias() {
+    use crate::engine::vm::proxy_get_driver::RawNativeQuery;
+    for (source, opcode) in [
+        ("(function(o,v){o.x=v})", Opcode::PutField),
+        ("(function(o,k,v){o[k]=v})", Opcode::PutArrayEl),
+    ] {
+        for expression in [
+            "undefined",
+            "null",
+            "true",
+            "7",
+            "1.5",
+            "'arena value'",
+            "1n",
+            "123456789012345678901234567890n",
+            "Symbol('value')",
+            "({})",
+            "<base>",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context().unwrap();
+            let Value::Object(base) = context.eval("({x:7})").unwrap() else {
+                unreachable!()
+            };
+            let value = if expression == "<base>" {
+                runtime
+                    .dup_jsvalue(&JsValue::Object(base.object_id()))
+                    .unwrap()
+            } else {
+                runtime
+                    .into_jsvalue(context.eval(expression).unwrap())
+                    .unwrap()
+            };
+            let expected = runtime.root_value(&value).unwrap();
+            let preserved = runtime.dup_jsvalue(&value).unwrap();
+            let receiver = runtime
+                .dup_jsvalue(&JsValue::Object(base.object_id()))
+                .unwrap();
+            let key = if opcode == Opcode::PutArrayEl {
+                Some(runtime.into_jsvalue(context.eval("'x'").unwrap()).unwrap())
+            } else {
+                None
+            };
+            let (mut execution, id) = read_fixture(&runtime, &mut context, source, opcode);
+            assert!(!RawNativeQuery::has_cached_query_for_test(
+                &execution.query_storage
+            ));
+            push(&mut execution, id, preserved);
+            push(&mut execution, id, receiver);
+            if let Some(key) = key {
+                push(&mut execution, id, key);
+            }
+            push(&mut execution, id, value);
+            let owners = runtime.0.raw_execution_owners.get();
+            {
+                let mut state = runtime.0.state.borrow_mut();
+                assert!(matches!(
+                    execute_frame_in_state(&runtime, &mut state, &mut execution, id).unwrap(),
+                    VmAction::Complete
+                ));
+                assert!(
+                    !RawNativeQuery::has_cached_query_for_test(&execution.query_storage),
+                    "{opcode:?} {expression} acquired a Query"
+                );
+                assert!(execution.selected_native_query.is_none());
+                assert_eq!(runtime.0.raw_execution_owners.get(), owners);
+                assert!(!runtime.0.deferred_references.has_pending());
+            }
+            drop(execution);
+            let key = runtime.intern_property_key("x").unwrap();
+            assert_eq!(context.get_property(&base, &key).unwrap(), expected);
+            runtime.run_gc().unwrap();
+            assert!(!runtime.is_poisoned());
+        }
+    }
+}
+
+#[test]
+fn every_primitive_write_key_uses_local_state_without_query_or_extra_result_owner() {
+    use crate::engine::vm::proxy_get_driver::RawNativeQuery;
+    for expression in [
+        "undefined",
+        "null",
+        "true",
+        "0",
+        "-0",
+        "1.5",
+        "'arena key'",
+        "1n",
+        "123456789012345678901234567890n",
+        "Symbol('key')",
+    ] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let receiver = runtime.into_jsvalue(context.eval("({})").unwrap()).unwrap();
+        let key = runtime
+            .into_jsvalue(context.eval(expression).unwrap())
+            .unwrap();
+        let Value::Object(value) = context.eval("({marker:7})").unwrap() else {
+            unreachable!()
+        };
+        let value_id = value.object_id();
+        let baseline = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(value_id)
+            .unwrap();
+        let preserved = runtime.dup_jsvalue(&JsValue::Object(value_id)).unwrap();
+        let assigned = runtime.dup_jsvalue(&JsValue::Object(value_id)).unwrap();
+        // An external receiver root lets the stored edge survive fixture cleanup.
+        let receiver_root = runtime.root_value(&receiver).unwrap();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o,k,v){o[k]=v})",
+            Opcode::PutArrayEl,
+        );
+        push(&mut execution, id, preserved);
+        push(&mut execution, id, receiver);
+        push(&mut execution, id, key);
+        push(&mut execution, id, assigned);
+        let mut identity = 41;
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            assert!(matches!(
+                execute_frame_in_state_with_identity(
+                    &runtime,
+                    &mut state,
+                    &mut execution,
+                    id,
+                    &mut identity
+                )
+                .unwrap(),
+                VmAction::Complete
+            ));
+            assert_eq!(identity, 41, "primitive key created an operation identity");
+            assert!(
+                !RawNativeQuery::has_cached_query_for_test(&execution.query_storage),
+                "{expression} acquired a Query"
+            );
+            assert_eq!(
+                state.heap.object_strong_count(value_id),
+                Ok(baseline + 1),
+                "only the actual stored edge remains"
+            );
+            assert!(!runtime.is_poisoned());
+        }
+        drop(execution);
+        drop(receiver_root);
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(value_id),
+            Ok(baseline)
+        );
+    }
+}
+
+#[test]
+fn real_write_effects_publish_the_existing_query_after_local_selection() {
+    use crate::engine::vm::proxy_get_driver::RawNativeQuery;
+    for (base, key, value) in [
+        ("({set x(v){globalThis.prequerySetter=v}})", "'x'", "7"),
+        ("new Proxy({},{set(){return true}})", "'x'", "7"),
+        ("new Uint8Array(1)", "0", "({valueOf(){return 257}})"),
+        ("[1,2,3]", "'length'", "({valueOf(){return 2}})"),
+    ] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let base = runtime.into_jsvalue(context.eval(base).unwrap()).unwrap();
+        let key = runtime.into_jsvalue(context.eval(key).unwrap()).unwrap();
+        let value = runtime.into_jsvalue(context.eval(value).unwrap()).unwrap();
+        let preserved = runtime.dup_jsvalue(&value).unwrap();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o,k,v){o[k]=v})",
+            Opcode::PutArrayEl,
+        );
+        assert!(!RawNativeQuery::has_cached_query_for_test(
+            &execution.query_storage
+        ));
+        push(&mut execution, id, preserved);
+        push(&mut execution, id, base);
+        push(&mut execution, id, key);
+        push(&mut execution, id, value);
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            let _ = execute_frame_in_state(&runtime, &mut state, &mut execution, id).unwrap();
+            let published = execution
+                .frames
+                .current_mut(id)
+                .unwrap()
+                .cold
+                .has_pending_query()
+                || execution.selected_native_query.is_some()
+                || RawNativeQuery::has_cached_query_for_test(&execution.query_storage);
+            assert!(
+                published,
+                "actual setter/Proxy/typed/length wait did not use Query storage"
+            );
+            assert!(!runtime.is_poisoned());
+        }
+        drop(execution);
+        assert_eq!(runtime.0.raw_execution_owners.get(), 0);
+        assert!(!runtime.is_poisoned());
+    }
+}
+
+#[test]
+fn primitive_key_checked_duplicate_failure_preserves_window_identity_and_no_query() {
+    use crate::engine::{heap::RawId, vm::proxy_get_driver::RawNativeQuery};
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let base = runtime
+        .into_jsvalue(context.eval("({x:7})").unwrap())
+        .unwrap();
+    let key = runtime
+        .into_jsvalue(context.eval("'checked_prequery_key'").unwrap())
+        .unwrap();
+    let JsValue::String(key_id) = &key else {
+        unreachable!()
+    };
+    let key_id = *key_id;
+    let (mut execution, id) = read_fixture(
+        &runtime,
+        &mut context,
+        "(function(o,k,v){return o[k]=v})",
+        Opcode::PutArrayEl,
+    );
+    push(&mut execution, id, JsValue::Int(9));
+    push(&mut execution, id, base);
+    push(&mut execution, id, key);
+    push(&mut execution, id, JsValue::Int(9));
+    let pc = execution.frames.current_mut(id).unwrap().resume_pc;
+    let mut identity = 41;
+    let mut state = runtime.0.state.borrow_mut();
+    let raw = RawId::String(key_id);
+    let original = state.heap.strong_count(raw).unwrap();
+    state.heap.set_strong_count_for_test(raw, u32::MAX);
+    let result = execute_frame_in_state_with_identity(
+        &runtime,
+        &mut state,
+        &mut execution,
+        id,
+        &mut identity,
+    );
+    let maximum = state.heap.strong_count(raw);
+    state.heap.set_strong_count_for_test(raw, original);
+    assert!(result.is_err());
+    assert_eq!(maximum, Ok(u32::MAX));
+    assert_eq!(identity, 41);
+    let frame = execution.frames.current_mut(id).unwrap();
+    assert_eq!((frame.fault_pc, frame.resume_pc), (pc, pc));
+    assert_eq!(execution.slots.depth(&frame.window), 4);
+    assert_eq!(
+        execution.slots.peek(&frame.window, 1).unwrap(),
+        &JsValue::String(key_id)
+    );
+    assert!(!RawNativeQuery::has_cached_query_for_test(
+        &execution.query_storage
+    ));
+    assert!(!runtime.is_poisoned());
+}
+
+#[test]
+fn fatal_local_value_retirement_quarantines_atom_before_later_owner_cleanup() {
+    use crate::engine::vm::proxy_get_driver::RawNativeQuery;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let property = runtime
+        .intern_property_key("quarantined_prequery_key")
+        .unwrap();
+    let key = runtime
+        .into_jsvalue(context.eval("'quarantined_prequery_key'").unwrap())
+        .unwrap();
+    let invalid = runtime.new_object(None).unwrap().into_handle();
+    runtime.release_jsvalue(JsValue::Object(invalid)).unwrap();
+    let untouched = runtime.new_object(None).unwrap().into_handle();
+    let (mut execution, id) = read_fixture(
+        &runtime,
+        &mut context,
+        "(function(o,k,v){return o[k]=v})",
+        Opcode::PutArrayEl,
+    );
+    // Inject one stale destructive value while an unrelated lower operand stays
+    // owned by the real verified window. No fabricated guard or Query is used.
+    push(&mut execution, id, JsValue::Object(untouched));
+    push(&mut execution, id, JsValue::Null);
+    push(&mut execution, id, key);
+    push(&mut execution, id, JsValue::Object(invalid));
+    let mut state = runtime.0.state.borrow_mut();
+    let baseline = state
+        .atoms
+        .resolve(property.atom())
+        .unwrap()
+        .ref_count
+        .unwrap();
+    let result = execute_frame_in_state(&runtime, &mut state, &mut execution, id);
+    assert!(result.is_err());
+    assert!(runtime.is_poisoned());
+    assert_eq!(
+        state.atoms.resolve(property.atom()).unwrap().ref_count,
+        Some(baseline + 1),
+        "atom suffix must remain quarantined after fatal value retirement"
+    );
+    assert_eq!(state.heap.object_strong_count(untouched), Ok(1));
+    let frame = execution.frames.current_mut(id).unwrap();
+    assert_eq!(execution.slots.depth(&frame.window), 1);
+    assert_eq!(
+        execution.slots.peek(&frame.window, 0).unwrap(),
+        &JsValue::Object(untouched)
+    );
+    assert!(!RawNativeQuery::has_cached_query_for_test(
+        &execution.query_storage
+    ));
 }

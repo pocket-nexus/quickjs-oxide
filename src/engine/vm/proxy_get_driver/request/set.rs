@@ -7,6 +7,168 @@ use crate::engine::{
 };
 use std::cell::Cell;
 
+/// The complete assignment producer is shared by a local instruction and Query.
+/// Its inputs remain armed in the existing Step until the canonical Set takes them.
+pub(in crate::engine::vm) fn start_value_set_in_state(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
+    realm: crate::engine::heap::ContextId,
+    step: &mut Step,
+) -> Result<(), RuntimeError> {
+    let Step::ValueSet {
+        atom,
+        value,
+        receiver,
+    } = step
+    else {
+        return Err(RuntimeError::Invariant("local write lost its owned inputs"));
+    };
+    let target = match receiver.as_ref().expect("write receiver") {
+        JsValue::Object(id) => *id,
+        JsValue::Null | JsValue::Undefined => {
+            let suffix = if matches!(receiver.as_ref(), Some(JsValue::Null)) {
+                "' of null"
+            } else {
+                "' of undefined"
+            };
+            // Historical assignment consumes value then base
+            // before formatting the nullish diagnostic.
+            state.release_owned_jsvalue(poisoned, value.take().expect("write value"))?;
+            state.release_owned_jsvalue(poisoned, receiver.take().expect("write receiver"))?;
+            *step = Step::WriteError(Some(state.native_atom_error(
+                crate::engine::api::error::ErrorKind::Type,
+                "cannot set property '",
+                *atom,
+                suffix,
+            )?));
+            return Ok(());
+        }
+        primitive => {
+            use crate::engine::builtins::native::PrimitiveKind;
+            let kind = match primitive {
+                JsValue::Bool(_) => PrimitiveKind::Boolean,
+                JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
+                JsValue::String(_) => PrimitiveKind::String,
+                JsValue::ShortBigInt(_) | JsValue::BigInt(_) => PrimitiveKind::BigInt,
+                JsValue::Symbol(_) => PrimitiveKind::Symbol,
+                _ => unreachable!(),
+            };
+            state.primitive_prototype_id_for_realm(realm, kind)?
+        }
+    };
+    *step = Step::SetProgress(Some(state.start_set_borrowed(
+        poisoned,
+        Some(realm),
+        target,
+        *atom,
+        value.take().expect("write value"),
+        receiver.take().expect("write receiver"),
+    )?));
+    Ok(())
+}
+
+/// Advance the actual Set owner through Continue phases. A terminal action or
+/// selected wait remains armed in this slot until its real consumer takes it.
+pub(in crate::engine::vm) fn advance_set_progress_in_state(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
+    progress: &mut Option<SetProgress>,
+) -> Result<bool, RuntimeError> {
+    loop {
+        match progress.as_mut().expect("raw Set progress") {
+            SetProgress::Waiting {
+                phase: SetWait::Continue,
+                ..
+            } => {
+                let SetProgress::Waiting { resume, .. } =
+                    progress.take().expect("raw Set progress")
+                else {
+                    unreachable!()
+                };
+                *progress = Some(resume.advance_in_state(state, poisoned)?);
+            }
+            SetProgress::Waiting { resume, .. } => return Ok(resume.take_cycle_published()),
+            SetProgress::Complete(_) => return Ok(false),
+            SetProgress::CyclePublished(_) => return Ok(true),
+        }
+    }
+}
+
+/// The local instruction has no active Set parent. Publish its required
+/// callback or terminal reply once, after the canonical producer has finished.
+pub(in crate::engine::vm) fn advance_set_in_state(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
+    step: &mut Step,
+) -> Result<bool, RuntimeError> {
+    let Step::SetProgress(progress) = step else {
+        return Err(RuntimeError::Invariant("local write lost its Set progress"));
+    };
+    let cycle_published = advance_set_progress_in_state(state, poisoned, progress)?;
+    if matches!(progress.as_ref(), Some(SetProgress::Waiting { .. })) {
+        return Ok(cycle_published);
+    }
+    let action = match progress.take().expect("raw Set progress") {
+        SetProgress::Complete(action) | SetProgress::CyclePublished(action) => action,
+        SetProgress::Waiting { .. } => unreachable!(),
+    };
+    *step = match action {
+        SetAction::Call {
+            function,
+            receiver,
+            argument,
+        } => Step::RawCall {
+            inputs: Some(crate::engine::vm::call::ordinary::RawCallbackInputs::new(
+                function,
+                receiver,
+                vec![argument],
+            )),
+            resume: Some(Resume::Setter),
+        },
+        action => Step::SetReply {
+            action: Some(action),
+            resume: None,
+        },
+    };
+    Ok(cycle_published)
+}
+
+/// One assignment terminal consumer serves local completion and ResidentWrite.
+pub(in crate::engine::vm) fn finish_write_set_in_state(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
+    atom: crate::engine::atom::Atom,
+    strict: bool,
+    step: &mut Step,
+) -> Result<(), RuntimeError> {
+    let Step::SetReply {
+        action,
+        resume: None,
+    } = step
+    else {
+        return Err(RuntimeError::Invariant("write lost its terminal Set reply"));
+    };
+    let action = action.take().expect("write Set reply");
+    *step = match state.finish_property_set_in_state(
+        match action.into_result() {
+            Ok(result) => result,
+            Err(action) => {
+                action.retire(state, poisoned)?;
+                return Err(RuntimeError::Invariant(
+                    "setter result bypassed callback consumer",
+                ));
+            }
+        },
+        atom,
+        strict,
+    ) {
+        Ok(completion) => Step::Complete(Some(completion)),
+        Err(RuntimeError::Engine(error)) => Step::WriteError(Some(error)),
+        Err(error) => return Err(error),
+    };
+    Ok(())
+}
+
 impl From<SetProgress> for Step {
     fn from(progress: SetProgress) -> Self {
         Self::SetProgress(Some(progress))

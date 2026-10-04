@@ -33,6 +33,40 @@ pub(in crate::engine::vm) struct StateProgress {
     pub(in crate::engine::vm) cycle_published: bool,
 }
 
+/// The same primitive producer keeps the outer reply armed until a wait is published.
+fn start_primitive_in_state(
+    state: &mut RuntimeState,
+    poisoned: &std::cell::Cell<bool>,
+    realm: crate::engine::heap::ContextId,
+    step: &mut Step,
+) -> Result<Option<PrimitiveStep>, RuntimeError> {
+    let Step::Primitive {
+        value,
+        hint,
+        resume,
+    } = step
+    else {
+        return Err(RuntimeError::Invariant("primitive producer lost its input"));
+    };
+    let next = PrimitiveResume::start_in_state(
+        state,
+        poisoned,
+        realm,
+        value.take().expect("primitive input"),
+        hint.take().expect("primitive hint"),
+    )?;
+    match next {
+        PrimitiveStep::Complete(result) => {
+            *step = Step::PrimitiveReply {
+                value: Some(result),
+                resume: resume.take(),
+            };
+            Ok(None)
+        }
+        next => Ok(Some(next)),
+    }
+}
+
 impl Query {
     /// All Query consumers use these semantic transitions. The caller supplies
     /// one admitted lease and keeps the request armed across every fallible phase.
@@ -58,141 +92,76 @@ impl Query {
                         cycle_published,
                     });
                 }
-                Step::ValueSet {
-                    atom,
-                    value,
-                    receiver,
-                } => {
-                    let target = match receiver.as_ref().expect("write receiver") {
-                        JsValue::Object(id) => *id,
-                        JsValue::Null | JsValue::Undefined => {
-                            let suffix = if matches!(receiver.as_ref(), Some(JsValue::Null)) {
-                                "' of null"
-                            } else {
-                                "' of undefined"
-                            };
-                            // Historical assignment consumes value then base
-                            // before formatting the nullish diagnostic.
-                            state.release_owned_jsvalue(
-                                poisoned,
-                                value.take().expect("write value"),
-                            )?;
-                            state.release_owned_jsvalue(
-                                poisoned,
-                                receiver.take().expect("write receiver"),
-                            )?;
-                            *step = Step::WriteError(Some(state.native_atom_error(
-                                crate::engine::api::error::ErrorKind::Type,
-                                "cannot set property '",
-                                *atom,
-                                suffix,
-                            )?));
-                            continue;
-                        }
-                        primitive => {
-                            use crate::engine::builtins::native::PrimitiveKind;
-                            let kind = match primitive {
-                                JsValue::Bool(_) => PrimitiveKind::Boolean,
-                                JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
-                                JsValue::String(_) => PrimitiveKind::String,
-                                JsValue::ShortBigInt(_) | JsValue::BigInt(_) => {
-                                    PrimitiveKind::BigInt
-                                }
-                                JsValue::Symbol(_) => PrimitiveKind::Symbol,
-                                _ => unreachable!(),
-                            };
-                            state.primitive_prototype_id_for_realm(self.realm, kind)?
-                        }
-                    };
-                    *step = Step::SetProgress(Some(state.start_set_borrowed(
-                        poisoned,
-                        Some(self.realm),
-                        target,
-                        *atom,
-                        value.take().expect("write value"),
-                        receiver.take().expect("write receiver"),
-                    )?));
+                Step::ValueSet { .. } => {
+                    super::request::set::start_value_set_in_state(
+                        state, poisoned, self.realm, step,
+                    )?;
                 }
                 Step::SetProgress(progress) => {
-                    use crate::engine::object::{SetAction, SetProgress, SetWait};
-                    match progress.as_mut().expect("raw Set progress") {
-                        SetProgress::Waiting {
-                            phase: SetWait::Continue,
-                            ..
-                        } => {
-                            let SetProgress::Waiting { resume, .. } =
-                                progress.take().expect("raw Set progress")
-                            else {
-                                unreachable!()
-                            };
-                            *progress = Some(resume.advance_in_state(state, poisoned)?);
+                    use crate::engine::object::{SetAction, SetProgress};
+                    cycle_published |= super::request::set::advance_set_progress_in_state(
+                        state, poisoned, progress,
+                    )?;
+                    if matches!(progress.as_ref(), Some(SetProgress::Waiting { .. })) {
+                        break;
+                    }
+                    // Keep the actual terminal owner in SetProgress until this
+                    // existing parent, callback, or write consumer accepts it.
+                    let action = match progress.take().expect("raw Set progress") {
+                        SetProgress::Complete(action) | SetProgress::CyclePublished(action) => {
+                            action
                         }
-                        SetProgress::Waiting { resume, .. } => {
-                            cycle_published |= resume.take_cycle_published();
-                            break;
-                        }
-                        SetProgress::Complete(_) | SetProgress::CyclePublished(_) => {
-                            let action = match progress.take().expect("raw Set progress") {
-                                SetProgress::Complete(action) => action,
-                                SetProgress::CyclePublished(action) => {
-                                    cycle_published = true;
-                                    action
-                                }
-                                _ => unreachable!(),
-                            };
-                            if let SetAction::Call {
+                        SetProgress::Waiting { .. } => unreachable!(),
+                    };
+                    if let SetAction::Call {
+                        function,
+                        receiver,
+                        argument,
+                    } = action
+                    {
+                        *step = Step::RawCall {
+                            inputs: Some(RawCallbackInputs::new(
                                 function,
                                 receiver,
-                                argument,
-                            } = action
-                            {
-                                *step = Step::RawCall {
-                                    inputs: Some(RawCallbackInputs::new(
-                                        function,
-                                        receiver,
-                                        vec![argument],
-                                    )),
-                                    resume: Some(Resume::Setter),
-                                };
-                                continue;
-                            }
-                            if self.parents.0.last().is_some_and(Resume::can_set_in_state) {
-                                let parent = self.parents.pop().expect("Set parent");
-                                *step = parent.set_in_state(state, poisoned, action)?;
-                            } else if self.parents.is_empty()
-                                && matches!(self.finish, Some(super::Finish::ResidentWrite { .. }))
-                            {
-                                let Some(super::Finish::ResidentWrite { atom, strict, .. }) =
-                                    self.finish.as_ref()
-                                else {
-                                    unreachable!()
-                                };
-                                *step = match state.finish_property_set_in_state(
-                                    match action.into_result() {
-                                        Ok(result) => result,
-                                        Err(action) => {
-                                            action.retire(state, poisoned)?;
-                                            return Err(RuntimeError::Invariant(
-                                                "setter result bypassed callback consumer",
-                                            ));
-                                        }
-                                    },
-                                    *atom,
-                                    *strict,
-                                ) {
-                                    Ok(completion) => Step::Complete(Some(completion)),
-                                    Err(RuntimeError::Engine(error)) => {
-                                        Step::WriteError(Some(error))
-                                    }
-                                    Err(error) => return Err(error),
-                                };
-                            } else {
-                                *step = Step::SetReply {
-                                    action: Some(action),
-                                    resume: self.parents.pop(),
-                                };
-                            }
-                        }
+                                vec![argument],
+                            )),
+                            resume: Some(Resume::Setter),
+                        };
+                        continue;
+                    }
+                    if self.parents.0.last().is_some_and(Resume::can_set_in_state) {
+                        let parent = self.parents.pop().expect("Set parent");
+                        *step = parent.set_in_state(state, poisoned, action)?;
+                    } else if self.parents.is_empty()
+                        && matches!(self.finish, Some(super::Finish::ResidentWrite { .. }))
+                    {
+                        let Some(super::Finish::ResidentWrite { atom, strict, .. }) =
+                            self.finish.as_ref()
+                        else {
+                            unreachable!()
+                        };
+                        *step = match state.finish_property_set_in_state(
+                            match action.into_result() {
+                                Ok(result) => result,
+                                Err(action) => {
+                                    action.retire(state, poisoned)?;
+                                    return Err(RuntimeError::Invariant(
+                                        "setter result bypassed callback consumer",
+                                    ));
+                                }
+                            },
+                            *atom,
+                            *strict,
+                        ) {
+                            Ok(completion) => Step::Complete(Some(completion)),
+                            Err(RuntimeError::Engine(error)) => Step::WriteError(Some(error)),
+                            Err(error) => return Err(error),
+                        };
+                    } else {
+                        *step = Step::SetReply {
+                            action: Some(action),
+                            resume: self.parents.pop(),
+                        };
                     }
                 }
                 Step::SetReply {
@@ -605,35 +574,20 @@ impl Query {
                         }
                     }
                 }
-                Step::Primitive {
-                    value,
-                    hint,
-                    resume,
-                } => {
-                    let next = PrimitiveResume::start_in_state(
-                        state,
-                        poisoned,
-                        self.realm,
-                        value.take().expect("primitive input"),
-                        hint.take().expect("primitive hint"),
-                    )?;
-                    match next {
-                        PrimitiveStep::Complete(result) => {
-                            *step = Step::PrimitiveReply {
-                                value: Some(result),
-                                resume: resume.take(),
-                            };
+                Step::Primitive { .. } => {
+                    if let Some(next) = start_primitive_in_state(state, poisoned, self.realm, step)?
+                    {
+                        if self.parents.try_reserve(1).is_err() {
+                            next.retire_in_state(state, poisoned)?;
+                            return Err(RuntimeError::Invariant(
+                                "primitive continuation allocation failed",
+                            ));
                         }
-                        next => {
-                            if self.parents.try_reserve(1).is_err() {
-                                next.retire_in_state(state, poisoned)?;
-                                return Err(RuntimeError::Invariant(
-                                    "primitive continuation allocation failed",
-                                ));
-                            }
-                            self.parents.push(resume.take().expect("primitive parent"));
-                            *step = Step::try_from(next)?;
-                        }
+                        let Step::Primitive { resume, .. } = step else {
+                            unreachable!()
+                        };
+                        self.parents.push(resume.take().expect("primitive parent"));
+                        *step = Step::try_from(next)?;
                     }
                 }
                 Step::NumberReply { value, resume } => {
@@ -1376,6 +1330,85 @@ impl<'a> RawNativeQuery<'a> {
             pending_step: None,
             pending_call: None,
         }
+    }
+    /// Guard a local producer before it needs any persistent Query storage.
+    pub(in crate::engine::vm) fn from_step(
+        runtime: &'a Runtime,
+        state: &'a mut RuntimeState,
+        step: Step,
+    ) -> Self {
+        Self {
+            runtime,
+            state,
+            call: None,
+            query: None,
+            step,
+            pending_step: None,
+            pending_call: None,
+        }
+    }
+    pub(in crate::engine::vm) fn start_write_in_state(
+        &mut self,
+        realm: crate::engine::heap::ContextId,
+    ) -> Result<(), RuntimeError> {
+        super::request::set::start_value_set_in_state(
+            self.state,
+            &self.runtime.0.poisoned,
+            realm,
+            &mut self.step,
+        )
+    }
+    pub(in crate::engine::vm) fn advance_set_in_state(&mut self) -> Result<bool, RuntimeError> {
+        super::request::set::advance_set_in_state(
+            self.state,
+            &self.runtime.0.poisoned,
+            &mut self.step,
+        )
+    }
+    pub(in crate::engine::vm) fn finish_write_in_state(
+        &mut self,
+        atom: crate::engine::atom::Atom,
+        strict: bool,
+    ) -> Result<(), RuntimeError> {
+        super::request::set::finish_write_set_in_state(
+            self.state,
+            &self.runtime.0.poisoned,
+            atom,
+            strict,
+            &mut self.step,
+        )
+    }
+    /// The caller proved this original key is primitive, but still performs
+    /// its genuine checked duplicate and the canonical String-hint conversion.
+    pub(in crate::engine::vm) fn complete_primitive_write_key_in_state(
+        &mut self,
+        realm: crate::engine::heap::ContextId,
+    ) -> Result<(), RuntimeError> {
+        if let Some(next) =
+            start_primitive_in_state(self.state, &self.runtime.0.poisoned, realm, &mut self.step)?
+        {
+            next.retire_in_state(self.state, &self.runtime.0.poisoned)?;
+            return Err(RuntimeError::Invariant(
+                "primitive write key unexpectedly selected a callback",
+            ));
+        }
+        let Step::PrimitiveReply { value, resume } = &mut self.step else {
+            unreachable!()
+        };
+        let parent = resume.take().expect("write key parent");
+        self.step = parent.resume_in_state(
+            self.state,
+            &self.runtime.0.poisoned,
+            self.runtime.0.host_services.as_ref(),
+            value.take().expect("write key reply"),
+        )?;
+        Ok(())
+    }
+    #[cfg(test)]
+    pub(in crate::engine::vm) fn has_cached_query_for_test(
+        storage: &super::storage::QueryStorage,
+    ) -> bool {
+        storage.has_cached_entry()
     }
     pub(in crate::engine::vm) fn advance(&mut self) -> Result<StateProgress, RuntimeError> {
         self.query

@@ -461,11 +461,55 @@ impl FrameExecution<'_> {
         query: &mut crate::engine::vm::proxy_get_driver::Query,
         step: &mut crate::engine::vm::proxy_get_driver::Step,
     ) -> Result<(), Error> {
-        use crate::engine::vm::proxy_get_driver::Step;
-        let Step::WriteOperands { atom, input } = step else {
+        let moved = self.checked_write_operands(step)?;
+        let crate::engine::vm::proxy_get_driver::Step::WriteOperands { atom, .. } = step else {
+            unreachable!()
+        };
+        let atom = query
+            .adopt_write_key(atom)
+            .map_err(runtime_error_to_vm_error)?;
+        self.publish_selected_write_operands_in_state(runtime, state, step, atom, moved)
+    }
+
+    /// A local primitive key uses the existing outer atom guard until a real
+    /// wait transfers that same owner to ResidentWrite. It adds no Query storage.
+    pub(in crate::engine::vm) fn publish_local_write_operands_in_state(
+        &mut self,
+        owner: &mut crate::engine::vm::proxy_get_driver::RawNativeQuery<'_>,
+        key_owner: &mut Option<JsValue>,
+    ) -> Result<crate::engine::atom::Atom, Error> {
+        let moved = self.checked_write_operands(&owner.step)?;
+        if key_owner.is_some() {
+            return Err(Error::internal(
+                "computed write repeated local key publication",
+            ));
+        }
+        let crate::engine::vm::proxy_get_driver::Step::WriteOperands { atom, .. } = &mut owner.step
+        else {
+            unreachable!()
+        };
+        let atom = atom.take().expect("selected write atom owner");
+        *key_owner = Some(JsValue::Symbol(crate::engine::atom::AtomIdx::from_raw(
+            atom.raw(),
+        )));
+        self.publish_selected_write_operands_in_state(
+            owner.runtime,
+            owner.state,
+            &mut owner.step,
+            atom,
+            moved,
+        )?;
+        Ok(atom)
+    }
+
+    fn checked_write_operands(
+        &mut self,
+        step: &crate::engine::vm::proxy_get_driver::Step,
+    ) -> Result<bool, Error> {
+        let crate::engine::vm::proxy_get_driver::Step::WriteOperands { input, .. } = step else {
             return Err(Error::internal("computed write lost its selected key"));
         };
-        let input = input.as_mut().expect("write key domain");
+        let input = input.as_ref().expect("write key domain");
         let moved = match input.operands.as_ref() {
             Some(operands) if operands.base.is_some() && operands.value.is_some() => true,
             Some(_) => return Err(Error::internal("computed write lost a moved operand")),
@@ -477,9 +521,22 @@ impl FrameExecution<'_> {
             turn.transaction.peek(1)?;
             turn.transaction.peek(2)?;
         }
-        let atom = query
-            .adopt_write_key(atom)
-            .map_err(runtime_error_to_vm_error)?;
+        Ok(moved)
+    }
+
+    fn publish_selected_write_operands_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut RuntimeState,
+        step: &mut crate::engine::vm::proxy_get_driver::Step,
+        atom: crate::engine::atom::Atom,
+        moved: bool,
+    ) -> Result<(), Error> {
+        use crate::engine::vm::proxy_get_driver::Step;
+        let Step::WriteOperands { input, .. } = step else {
+            unreachable!()
+        };
+        let input = input.as_mut().expect("write key domain");
         let (value, receiver, discarded) = if moved {
             let operands = input.operands.as_mut().expect("moved write operands");
             (

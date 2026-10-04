@@ -1003,3 +1003,292 @@ fn readonly_date_host_panic_quarantines_before_any_following_owner_retirement() 
     assert_eq!(state.heap.object_strong_count(date.object_id()), Ok(1));
     assert_eq!(state.heap.object_strong_count(suffix), Ok(1));
 }
+
+#[test]
+fn set_progress_keeps_actual_setter_owners_until_query_publishes_the_callback() {
+    use crate::engine::object::{SetAction, SetProgress};
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let Value::Object(target) = context.eval("({set x(v){this.received=v}})").unwrap() else {
+        panic!("setter target")
+    };
+    let argument = runtime.new_object(None).unwrap();
+    let key = runtime.intern_property_key("x").unwrap();
+    let mut storage = QueryStorage::default();
+    let mut query = storage.acquire(context.realm, vec![Resume::RootSet], Finish::Root);
+    let mut state = runtime.0.state.borrow_mut();
+    let data = state.heap.object(target.object_id()).unwrap();
+    let index = state
+        .heap
+        .shape(data.shape)
+        .unwrap()
+        .find(crate::engine::atom::AtomIdx::from_raw(key.atom().raw()))
+        .unwrap() as usize;
+    let crate::engine::heap::PropertySlot::Accessor { set, .. } = &data.slots[index] else {
+        panic!("actual accessor")
+    };
+    let setter = set.option().unwrap();
+    let setter_count = state.heap.object_strong_count(setter).unwrap();
+    let receiver = state
+        .dup_jsvalue(&JsValue::Object(target.object_id()))
+        .unwrap();
+    let value = state
+        .dup_jsvalue(&JsValue::Object(argument.object_id()))
+        .unwrap();
+    let mut progress = Some(
+        state
+            .start_set_borrowed(
+                &runtime.0.poisoned,
+                Some(context.realm),
+                target.object_id(),
+                key.atom(),
+                value,
+                receiver,
+            )
+            .unwrap(),
+    );
+    assert!(
+        !request::set::advance_set_progress_in_state(
+            &mut state,
+            &runtime.0.poisoned,
+            &mut progress,
+        )
+        .unwrap()
+    );
+    assert!(matches!(
+        progress.as_ref(),
+        Some(SetProgress::Complete(SetAction::Call {
+            function,
+            receiver: JsValue::Object(receiver),
+            argument: JsValue::Object(value),
+        })) if *function == setter && *receiver == target.object_id() && *value == argument.object_id()
+    ));
+    assert_eq!(state.heap.object_strong_count(setter), Ok(setter_count + 1));
+    assert_eq!(state.heap.object_strong_count(target.object_id()), Ok(2));
+    assert_eq!(state.heap.object_strong_count(argument.object_id()), Ok(2));
+    let mut step = Step::SetProgress(progress);
+    let next = query
+        .advance_raw_in_state(&runtime, &mut state, &mut step)
+        .unwrap();
+    assert!(matches!(next.effect, state::StateEffect::Callback));
+    assert!(!next.cycle_published);
+    assert!(matches!(step, Step::RawCall { .. }));
+    assert_eq!(
+        query.parents.len(),
+        1,
+        "setter reply still owns its Set parent"
+    );
+    step.retire_raw_in_state(&mut state, &runtime.0.poisoned)
+        .unwrap();
+    query.retire_raw_in_state(&runtime, &mut state).unwrap();
+    assert_eq!(state.heap.object_strong_count(setter), Ok(setter_count));
+    assert_eq!(state.heap.object_strong_count(target.object_id()), Ok(1));
+    assert_eq!(state.heap.object_strong_count(argument.object_id()), Ok(1));
+    assert!(!runtime.is_poisoned());
+}
+
+#[test]
+fn query_state_set_parent_consumes_actual_autoinit_publication_once() {
+    use crate::engine::object::{SetAction, SetProgress};
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    runtime.set_gc_policy(GcPolicy::Manual).unwrap();
+    let cycle = unreachable_cycle(&runtime, &mut context);
+    let Value::Object(target) = context.eval("(function transportTarget(){})").unwrap() else {
+        panic!("bytecode constructor")
+    };
+    let marker = runtime.new_object(None).unwrap();
+    let key = runtime
+        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)
+        .unwrap();
+    let mut storage = QueryStorage::default();
+    let mut query = storage.acquire(context.realm, vec![Resume::RootSet], Finish::Root);
+    let rc = std::rc::Rc::strong_count(&runtime.0);
+    let mut state = runtime.0.state.borrow_mut();
+    let data = state.heap.object(target.object_id()).unwrap();
+    let index = state
+        .heap
+        .shape(data.shape)
+        .unwrap()
+        .find(crate::engine::atom::AtomIdx::from_raw(key.atom().raw()))
+        .unwrap() as usize;
+    assert!(matches!(
+        &data.slots[index],
+        crate::engine::heap::PropertySlot::AutoInit(_)
+    ));
+    let value = state
+        .dup_jsvalue(&JsValue::Object(marker.object_id()))
+        .unwrap();
+    let receiver = state
+        .dup_jsvalue(&JsValue::Object(target.object_id()))
+        .unwrap();
+    let progress = state
+        .start_set_borrowed(
+            &runtime.0.poisoned,
+            Some(context.realm),
+            target.object_id(),
+            key.atom(),
+            value,
+            receiver,
+        )
+        .unwrap();
+    assert!(matches!(
+        progress,
+        SetProgress::CyclePublished(SetAction::Complete)
+    ));
+    let mut step = Step::SetProgress(Some(progress));
+    let next = query
+        .advance_raw_in_state(&runtime, &mut state, &mut step)
+        .unwrap();
+    assert!(matches!(next.effect, state::StateEffect::Complete));
+    assert!(next.cycle_published);
+    assert!(query.parents.is_empty());
+    assert!(matches!(
+        step,
+        Step::Complete(Some(Completion::Return(JsValue::Bool(true))))
+    ));
+    assert!(
+        !query
+            .advance_raw_in_state(&runtime, &mut state, &mut step)
+            .unwrap()
+            .cycle_published
+    );
+    runtime.0.gc_pressure.policy.set(GcPolicy::Automatic);
+    runtime.0.gc_pressure.remaining.set(0);
+    state
+        .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+        .unwrap();
+    assert!(state.heap.object(cycle).is_err());
+    let data = state.heap.object(target.object_id()).unwrap();
+    assert!(matches!(
+        &data.slots[index],
+        crate::engine::heap::PropertySlot::Data(crate::engine::heap::RawValue::Object(id))
+            if *id == marker.object_id()
+    ));
+    assert_eq!(state.heap.object_strong_count(marker.object_id()), Ok(2));
+    assert_eq!(std::rc::Rc::strong_count(&runtime.0), rc);
+    step.retire_raw_in_state(&mut state, &runtime.0.poisoned)
+        .unwrap();
+    assert!(!runtime.is_poisoned());
+}
+
+#[test]
+fn query_legacy_regexp_set_reply_keeps_actual_parent_until_boundary_retirement() {
+    use crate::engine::{builtins::RegExpSearchStep, object::SetProgress};
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let Value::Object(regexp) = context
+        .eval("(()=>{const r=/a/;r.lastIndex=7;return r})()")
+        .unwrap()
+    else {
+        panic!("RegExp target")
+    };
+    let original_count = runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .object_strong_count(regexp.object_id())
+        .unwrap();
+    let original_rc = std::rc::Rc::strong_count(&runtime.0);
+    // These protocol inputs borrow the public RegExp and own only an Int argv.
+    let invocation = NativeInvocation::Call {
+        this_value: JsValue::Object(regexp.object_id()),
+    };
+    let arguments = NativeArguments {
+        actual_arg_count: 1,
+        readable: vec![JsValue::Int(42)],
+    };
+    let RegExpSearchStep::Primitive { mut resume } =
+        RegExpSearchStep::start(&runtime, context.realm, &invocation, &arguments).unwrap()
+    else {
+        panic!("actual search primitive phase")
+    };
+    let value = resume.take_primitive_value();
+    let RegExpSearchStep::Read { mut resume } =
+        resume.resume(&runtime, Completion::Return(value)).unwrap()
+    else {
+        panic!("actual lastIndex read")
+    };
+    let read_object = resume.take_read_object();
+    let read_key = resume.take_read_key();
+    let previous = context.get_property(&read_object, &read_key).unwrap();
+    let previous = runtime.into_jsvalue(previous).unwrap();
+    drop(read_key);
+    drop(read_object);
+    let RegExpSearchStep::Set { mut resume } = resume
+        .resume(&runtime, Completion::Return(previous))
+        .unwrap()
+    else {
+        panic!("nonzero lastIndex requires the real search Set phase")
+    };
+    let object = resume.take_set_object();
+    let key = resume.take_set_key();
+    let value = resume.take_set_value();
+    let receiver = runtime
+        .dup_jsvalue(&JsValue::Object(object.object_id()))
+        .unwrap();
+    let mut storage = QueryStorage::default();
+    let mut query = storage.acquire(
+        context.realm,
+        vec![Resume::RegExpSearch(resume)],
+        Finish::Root,
+    );
+    let mut step;
+    {
+        let mut state = runtime.0.state.borrow_mut();
+        let progress = state
+            .start_set_borrowed(
+                &runtime.0.poisoned,
+                Some(context.realm),
+                object.object_id(),
+                key.atom(),
+                value,
+                receiver,
+            )
+            .unwrap();
+        assert!(matches!(progress, SetProgress::Complete(_)));
+        step = Step::SetProgress(Some(progress));
+        let next = query
+            .advance_raw_in_state(&runtime, &mut state, &mut step)
+            .unwrap();
+        assert!(matches!(next.effect, state::StateEffect::Boundary));
+        assert!(!next.cycle_published);
+        assert!(query.parents.is_empty());
+        assert!(matches!(
+            &step,
+            Step::SetReply {
+                action: Some(crate::engine::object::SetAction::Complete),
+                resume: Some(Resume::RegExpSearch(_)),
+            }
+        ));
+        assert_eq!(
+            state.heap.object_strong_count(regexp.object_id()),
+            Ok(original_count + 2),
+            "public RegExp, extracted request object and armed legacy parent"
+        );
+    }
+    drop(key);
+    drop(object);
+    let Step::SetReply { action, resume } = &mut step else {
+        unreachable!()
+    };
+    let action = action.take().unwrap();
+    let parent = resume.take().unwrap();
+    step = parent
+        .set(&runtime, action.into_boundary(&runtime))
+        .unwrap();
+    assert!(matches!(step, Step::RegExpExec { .. }));
+    step.release_owned(&runtime);
+    assert_eq!(
+        runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(regexp.object_id()),
+        Ok(original_count)
+    );
+    assert_eq!(std::rc::Rc::strong_count(&runtime.0), original_rc);
+    assert!(!runtime.is_poisoned());
+}
