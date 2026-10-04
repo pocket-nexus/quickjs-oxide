@@ -79,6 +79,7 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::CyclePublishedNumber(_) => "query_dispatch.step.cycle_published_number",
         Step::CyclePublishedElement(_) => "query_dispatch.step.cycle_published_element",
         Step::ComputedError(_) => "query_dispatch.step.computed_error",
+        Step::RawValueReadRequest { .. } => "query_dispatch.step.raw_value_read_request",
         Step::RawRead { .. } => "query_dispatch.step.raw_read",
         Step::RawCall { .. } => "query_dispatch.step.raw_call",
         Step::CallbackBoundary(_) => "query_dispatch.step.callback_boundary",
@@ -124,6 +125,7 @@ pub(super) fn record_dispatch(step: &Step) {
         | Step::CyclePublishedPrimitiveReply { resume, .. }
         | Step::ArgumentsReply { resume, .. }
         | Step::RawRead { resume, .. }
+        | Step::RawValueReadRequest { resume, .. }
         | Step::RawCall { resume, .. }
         | Step::Read { resume, .. }
         | Step::PreparedRead { resume, .. }

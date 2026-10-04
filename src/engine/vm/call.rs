@@ -863,16 +863,37 @@ impl Runtime {
                         &invocation,
                         &call.activation.arguments,
                     );
-                    let released = invocation.release_in_state(&mut state, &self.0.poisoned);
-                    released.and(result)
+                    // A State body can return an owned waiting continuation.
+                    // Keep its original invocation in the existing call guard
+                    // until that body finishes and retires its own snapshots.
+                    // Retire it at the original point after that body,
+                    // before the activation owner suffix can be released.
+                    call.invocation = invocation;
+                    result
                 }
             };
             drop(state);
             let result = result.and_then(|step| self.finish_state_native_body_step(realm, step));
             let mut state = self.0.state.borrow_mut();
+            // Retire the original invocation after the actual body, before
+            // active-frame/callee/argv retirement. A first destructive failure
+            // must quarantine that activation suffix at the original point.
+            let released = if self.0.poisoned.get() {
+                // The body already crossed its first destructive failure;
+                // the existing guard keeps this original owner quarantined.
+                Err(RuntimeError::Poisoned)
+            } else {
+                let invocation = std::mem::replace(
+                    &mut call.invocation,
+                    NativeInvocation::Getter {
+                        this_value: JsValue::Undefined,
+                    },
+                );
+                invocation.release_in_state(&mut state, &self.0.poisoned)
+            };
             return call
                 .into_inner()
-                .finish_completion_reusing(&mut state, &self.0.poisoned, result)
+                .finish_completion_reusing(&mut state, &self.0.poisoned, released.and(result))
                 .0
                 .map(NativeInvokeOutcome::Completion);
         }

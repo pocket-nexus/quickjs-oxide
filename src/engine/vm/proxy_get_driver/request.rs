@@ -326,6 +326,13 @@ pub(in crate::engine::vm) enum Step {
         hint: Option<ToPrimitiveHint>,
         resume: Option<Resume>,
     },
+    RawValueReadRequest {
+        realm: crate::engine::heap::ContextId,
+        selected: Option<crate::engine::object::ReadStep>,
+        key: crate::engine::atom::Atom,
+        receiver: Option<JsValue>,
+        resume: Option<Resume>,
+    },
     RawReadRequest {
         selected: Option<crate::engine::object::ReadStep>,
         object: Option<crate::engine::heap::ObjectId>,
@@ -696,6 +703,7 @@ impl Step {
             | Self::CyclePublishedPrimitiveReply { .. }
             | Self::RawRead { .. }
             | Self::RawReadRequest { .. }
+            | Self::RawValueReadRequest { .. }
             | Self::CyclePublishedComplete(_)
             | Self::CyclePublishedPrimitive { .. }
             | Self::OrdinaryPrimitive { .. }
@@ -761,6 +769,30 @@ impl Step {
             | Self::CyclePublishedPrimitiveReply { value, resume } => {
                 if let Some(value) = value {
                     release_completion(value);
+                }
+                if let Some(resume) = resume {
+                    resume.release_owned(runtime);
+                }
+            }
+            Self::RawValueReadRequest {
+                selected,
+                receiver,
+                resume,
+                ..
+            } => {
+                if let Some(
+                    crate::engine::object::ReadStep::Ready(read)
+                    | crate::engine::object::ReadStep::CyclePublished(read),
+                ) = selected
+                {
+                    if read.retire_at_boundary(runtime).is_err() {
+                        return;
+                    }
+                }
+                if let Some(receiver) = receiver {
+                    if runtime.release_jsvalue(receiver).is_err() || runtime.is_poisoned() {
+                        return;
+                    }
                 }
                 if let Some(resume) = resume {
                     resume.release_owned(runtime);
@@ -1676,7 +1708,9 @@ impl Resume {
             | Self::ScalarText(_)
             | Self::DatePrototype(_)
             | Self::Arguments(_)
-            | Self::Invoke(_) => match std::mem::replace(self, Self::Identity) {
+            | Self::Invoke(_)
+            | Self::DateConstructor(_)
+            | Self::DateConstructorPrimitive(_) => match std::mem::replace(self, Self::Identity) {
                 Self::Primitive(resume) => resume.retire_in_state(state, poisoned),
                 Self::Number(resume) => resume.retire_in_state(state, poisoned),
                 Self::Numeric(resume) | Self::NumericPrimitive(resume) => {
@@ -1687,6 +1721,9 @@ impl Resume {
                 Self::DatePrototype(resume) => resume.retire_in_state(state, poisoned),
                 Self::Arguments(resume) => resume.retire_in_state(state, poisoned),
                 Self::Invoke(resume) => resume.retire_in_state(state, poisoned),
+                Self::DateConstructor(resume) | Self::DateConstructorPrimitive(resume) => {
+                    resume.retire_in_state(state, poisoned)
+                }
                 _ => unreachable!(),
             },
             Self::StringValue { resume, .. }
@@ -1714,7 +1751,9 @@ impl Resume {
             | Self::ScalarText(_)
             | Self::DatePrototype(_)
             | Self::Arguments(_)
-            | Self::Invoke(_) => match std::mem::replace(self, Self::Identity) {
+            | Self::Invoke(_)
+            | Self::DateConstructor(_)
+            | Self::DateConstructorPrimitive(_) => match std::mem::replace(self, Self::Identity) {
                 Self::Primitive(resume) => resume.retire_at_boundary(runtime),
                 Self::Number(resume) => resume.retire_at_boundary(runtime),
                 Self::Numeric(resume) | Self::NumericPrimitive(resume) => {
@@ -1725,6 +1764,9 @@ impl Resume {
                 Self::DatePrototype(resume) => resume.retire_at_boundary(runtime),
                 Self::Arguments(resume) => resume.retire_at_boundary(runtime),
                 Self::Invoke(resume) => resume.retire_at_boundary(runtime),
+                Self::DateConstructor(resume) | Self::DateConstructorPrimitive(resume) => {
+                    resume.retire_at_boundary(runtime)
+                }
                 _ => unreachable!(),
             },
             Self::StringValue { resume, .. }
@@ -1747,7 +1789,9 @@ impl Resume {
             | Self::ScalarText(_)
             | Self::DatePrototype(_)
             | Self::Arguments(_)
-            | Self::Invoke(_) => true,
+            | Self::Invoke(_)
+            | Self::DateConstructor(_)
+            | Self::DateConstructorPrimitive(_) => true,
             Self::StringValue { resume, .. }
             | Self::OwnFlagReply { resume, .. }
             | Self::PrototypeGetReply(resume)
@@ -1812,6 +1856,8 @@ impl Resume {
                 | Self::NumericPrimitive(_)
                 | Self::DatePrototype(_)
                 | Self::Arguments(_)
+                | Self::DateConstructor(_)
+                | Self::DateConstructorPrimitive(_)
                 | Self::Identity
                 | Self::ComputedKey
                 | Self::PropertyKeyValue
@@ -1821,6 +1867,7 @@ impl Resume {
         self,
         state: &mut crate::engine::heap::runtime::RuntimeState,
         poisoned: &std::cell::Cell<bool>,
+        host: &dyn crate::engine::host::HostServices,
         completion: Completion,
     ) -> Result<Step, crate::engine::api::RuntimeError> {
         match self {
@@ -1845,6 +1892,12 @@ impl Resume {
                 .and_then(Step::try_from),
             Self::DatePrototype(resume) => resume
                 .resume_in_state(state, poisoned, completion)
+                .and_then(Step::try_from),
+            Self::DateConstructor(resume) => resume
+                .resume_in_state(state, poisoned, completion)
+                .and_then(Step::try_from),
+            Self::DateConstructorPrimitive(resume) => resume
+                .primitive_in_state(state, poisoned, host, completion)
                 .and_then(Step::try_from),
             mut resume => {
                 let (Completion::Return(value) | Completion::Throw(value)) = completion;
@@ -1922,17 +1975,21 @@ impl Resume {
         }
     }
     pub(super) fn can_string_in_state(&self) -> bool {
-        matches!(self, Self::ScalarText(_))
+        matches!(self, Self::ScalarText(_) | Self::DateConstructor(_))
     }
     pub(super) fn string_in_state(
         self,
         state: &mut crate::engine::heap::runtime::RuntimeState,
         poisoned: &std::cell::Cell<bool>,
+        host: &dyn crate::engine::host::HostServices,
         result: NativeConversion<crate::engine::value::JsString>,
     ) -> Result<Step, crate::engine::api::RuntimeError> {
         match self {
             Self::ScalarText(resume) => resume
                 .string_in_state(state, poisoned, result)
+                .and_then(Step::try_from),
+            Self::DateConstructor(resume) => resume
+                .string_in_state(state, poisoned, host, result)
                 .and_then(Step::try_from),
             mut resume => {
                 if let NativeConversion::Throw(value) = result {
@@ -1953,6 +2010,7 @@ impl Resume {
                 | Self::ScalarText(_)
                 | Self::DatePrototype(_)
                 | Self::Arguments(_)
+                | Self::DateConstructor(_)
         )
     }
     pub(super) fn number_in_state(
@@ -1977,6 +2035,9 @@ impl Resume {
                 .and_then(Step::try_from),
             Self::Arguments(resume) => resume
                 .number_in_state(state, poisoned, result)
+                .and_then(Step::try_from),
+            Self::DateConstructor(resume) => resume
+                .number_in_state(state, poisoned, host, result)
                 .and_then(Step::try_from),
             mut resume => {
                 if let NativeConversion::Throw(value) = result {

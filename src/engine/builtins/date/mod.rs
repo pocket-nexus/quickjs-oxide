@@ -10,6 +10,7 @@ mod parse;
 mod prototype;
 mod state;
 
+pub(crate) use constructor::operation::finish as finish_constructor_operation;
 pub(crate) use prototype::operation::finish as finish_prototype_operation;
 
 use super::*;
@@ -253,14 +254,6 @@ impl Runtime {
             }
             _ => self.call_date_prototype_native(realm, kind, invocation, arguments),
         })
-    }
-
-    pub(crate) fn date_now_millis(&self) -> i64 {
-        self.0.host_services.now_millis()
-    }
-
-    pub(crate) fn date_timezone_offset_minutes(&self, epoch_millis: i64) -> i32 {
-        self.0.host_services.timezone_offset_minutes(epoch_millis)
     }
 }
 

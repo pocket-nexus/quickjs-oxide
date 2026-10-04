@@ -122,42 +122,35 @@ impl TryFrom<crate::engine::builtins::PrimitiveConstructorStep> for Step {
 impl TryFrom<crate::engine::builtins::DateConstructorStep> for Step {
     type Error = crate::engine::api::RuntimeError;
     fn try_from(step: crate::engine::builtins::DateConstructorStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::DateConstructorStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Number { mut resume } => {
-                    let value = resume.take_number_value();
-                    Self::Number {
-                        value: Some(value),
-                        resume: Some(Resume::DateConstructor(resume)),
-                    }
-                }
-                T::String { mut resume } => {
-                    let value = resume.take_string_value();
-                    Self::String {
-                        value: Some(value),
-                        resume: Some(Resume::DateConstructor(resume)),
-                    }
-                }
-                T::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    Self::ReadValue {
-                        receiver: Some(receiver),
-                        key: Some(key),
-                        resume: Some(Resume::DateConstructor(resume)),
-                    }
-                }
-                T::Primitive { mut resume } => {
-                    let value = resume.take_primitive_value();
-                    Self::Primitive {
-                        value: Some(value),
-                        hint: Some(ToPrimitiveHint::Default),
-                        resume: Some(Resume::DateConstructorPrimitive(resume)),
-                    }
-                }
-            }
+        use crate::engine::builtins::DateConstructorStep as T;
+        Ok(match step {
+            T::Complete(value) => Self::Complete(Some(value)),
+            T::CyclePublished(value) => Self::CyclePublishedComplete(Some(value)),
+            T::Number { value, resume } => Self::Number {
+                value: Some(value),
+                resume: Some(Resume::DateConstructor(resume)),
+            },
+            T::String { value, resume } => Self::String {
+                value: Some(value),
+                resume: Some(Resume::DateConstructor(resume)),
+            },
+            T::Primitive { value, resume } => Self::Primitive {
+                value: Some(value),
+                hint: Some(ToPrimitiveHint::Default),
+                resume: Some(Resume::DateConstructorPrimitive(resume)),
+            },
+            T::Read {
+                realm,
+                receiver,
+                key,
+                resume,
+            } => Self::RawValueReadRequest {
+                realm,
+                selected: None,
+                receiver: Some(receiver),
+                key,
+                resume: Some(Resume::DateConstructor(resume)),
+            },
         })
     }
 }

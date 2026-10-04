@@ -1086,6 +1086,7 @@ pub(crate) mod class_fields;
 pub(crate) mod home_object;
 
 pub(crate) mod internal_methods;
+pub(crate) use internal_methods::FunctionRealmOutcome;
 
 pub(crate) mod object_literal;
 

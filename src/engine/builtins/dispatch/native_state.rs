@@ -251,6 +251,9 @@ impl RuntimeState {
                 | NativeFunctionId::MathClz32
                 | NativeFunctionId::Date(
                     crate::engine::builtins::native::DateNativeKind::Now
+                        | crate::engine::builtins::native::DateNativeKind::Constructor
+                        | crate::engine::builtins::native::DateNativeKind::Parse
+                        | crate::engine::builtins::native::DateNativeKind::Utc
                         | crate::engine::builtins::native::DateNativeKind::TimeValue
                         | crate::engine::builtins::native::DateNativeKind::String(_)
                         | crate::engine::builtins::native::DateNativeKind::TimezoneOffset
@@ -386,6 +389,19 @@ impl RuntimeState {
                 Ok(NativeStep::Complete(Completion::Return(JsValue::Undefined)))
             }
             NativeFunctionId::Date(
+                kind @ (crate::engine::builtins::native::DateNativeKind::Constructor
+                | crate::engine::builtins::native::DateNativeKind::Parse
+                | crate::engine::builtins::native::DateNativeKind::Utc),
+            ) => crate::engine::builtins::DateConstructorStep::start_in_state(
+                self, poisoned, host, realm, kind, invocation, arguments,
+            )
+            .map(|step| match step {
+                crate::engine::builtins::DateConstructorStep::Complete(result) => {
+                    NativeStep::Complete(result)
+                }
+                step => NativeStep::DateConstructor(step),
+            }),
+            NativeFunctionId::Date(
                 kind @ (crate::engine::builtins::native::DateNativeKind::SetTime
                 | crate::engine::builtins::native::DateNativeKind::SetField(_)
                 | crate::engine::builtins::native::DateNativeKind::SetYear
@@ -455,6 +471,9 @@ impl crate::engine::api::runtime::Runtime {
             }
             NativeStep::ScalarText(step) => {
                 crate::engine::builtins::primitive::text::finish(self, realm, step)
+            }
+            NativeStep::DateConstructor(step) => {
+                crate::engine::builtins::date::finish_constructor_operation(self, realm, step)
             }
             NativeStep::DatePrototype(step) => {
                 crate::engine::builtins::date::finish_prototype_operation(self, realm, step)

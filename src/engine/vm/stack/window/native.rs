@@ -766,7 +766,12 @@ impl FrameExecution<'_> {
                             };
                             let resume = resume.take().expect("native callback parent");
                             owner.step = resume
-                                .resume_in_state(owner.state, &runtime.0.poisoned, completion)
+                                .resume_in_state(
+                                    owner.state,
+                                    &runtime.0.poisoned,
+                                    runtime.0.host_services.as_ref(),
+                                    completion,
+                                )
                                 .map_err(runtime_error_to_vm_error)?;
                         }
                         Ok(step) => {

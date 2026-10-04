@@ -16,10 +16,11 @@ use super::parse::ParsedDateString;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::heap::{ContextId, ObjectData};
-use crate::engine::object::ObjectRef;
+use crate::engine::heap::{ContextId, ObjectData, ObjectId, runtime::RuntimeState};
+use crate::engine::host::HostServices;
+use std::cell::Cell;
 
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsString, JsValue};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -47,73 +48,41 @@ impl Runtime {
             operation::DateConstructorStep::start(self, realm, kind, invocation, arguments)?,
         )
     }
+}
 
-    fn call_date_as_function(&self) -> Result<Completion, RuntimeError> {
-        let date_value = self.date_now_millis() as f64;
-        let fields = get_date_fields(date_value, true, false, |epoch_millis| {
-            self.date_timezone_offset_minutes(epoch_millis)
+impl RuntimeState {
+    fn call_date_as_function(
+        &mut self,
+        host: &dyn HostServices,
+    ) -> Result<Completion, RuntimeError> {
+        let date_value = host.now_millis() as f64;
+        let fields = get_date_fields(date_value, true, false, |instant| {
+            host.timezone_offset_minutes(instant)
         });
         let text = format_date_string(fields.as_ref(), DateStringKind::String).map_err(|_| {
             RuntimeError::Invariant("the host clock produced an invalid Date string")
         })?;
-        Ok(Completion::Return(self.unroot_value(&Value::String(
-            JsString::try_from_utf8(&text)?,
-        ))?))
+        Ok(Completion::Return(JsValue::String(
+            self.heap.allocate_string(JsString::try_from_utf8(&text)?)?,
+        )))
     }
 
-    fn call_date_now(&self, realm: ContextId) -> Result<Completion, RuntimeError> {
-        let _unwind = self.unwind_guard();
-        let step = self
-            .0
-            .state
-            .borrow_mut()
-            .call_date_readonly_native_with_publication(
-                &self.0.poisoned,
-                self.0.host_services.as_ref(),
-                realm,
-                DateNativeKind::Now,
-                &NativeInvocation::Call {
-                    this_value: JsValue::Undefined,
-                },
-            )?;
-        self.finish_state_native_body_step(realm, step)
-    }
-
-    fn genuine_date_value(&self, value: &JsValue) -> Result<Option<f64>, RuntimeError> {
-        self.0.state.borrow().genuine_date_value(value)
-    }
-
-    /// Allocate a genuine Date after the newTarget prototype lookup. Keeping
-    /// TimeClip at this final write boundary prevents a future caller from
-    /// publishing the deliberately un-clipped `Date.parse` result directly as
-    /// a Date payload.
+    /// The prototype input is borrowed from a real owned getter/fallback edge.
+    /// The shared allocator owns publication status and shape rollback.
     fn new_date_object(
-        &self,
-        prototype: &ObjectRef,
+        &mut self,
+        poisoned: &Cell<bool>,
+        prototype: ObjectId,
         value: f64,
-    ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation()?;
-        if !prototype.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("Date prototype"));
-        }
+    ) -> Result<ObjectId, RuntimeError> {
         let value = time_clip(value);
-        let mut state = self.0.state.borrow_mut();
-        let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
-        let object = match state
-            .heap
-            .allocate_object(ObjectData::date(shape, Vec::new(), value))
-        {
-            Ok(object) => object,
-            Err(error) => {
-                let cleanup = state.heap.release_shape(shape)?;
-                state.apply_cleanup(cleanup)?;
-                return Err(error.into());
-            }
-        };
-        let cleanup = state.heap.release_shape(shape)?;
-        state.apply_cleanup(cleanup)?;
-        drop(state);
-        Ok(ObjectRef::from_owned_handle(self.clone(), object))
+        self.allocate_object_with_layout(
+            poisoned,
+            Some(prototype),
+            &[],
+            Vec::new(),
+            |shape, slots| ObjectData::date(shape, slots, value),
+        )
     }
 }
 

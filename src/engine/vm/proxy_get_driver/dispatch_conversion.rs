@@ -39,6 +39,7 @@ pub(super) fn primitive(
                 | Step::NumberReply { .. }
                 | Step::RawRead { .. }
                 | Step::RawReadRequest { .. }
+                | Step::RawValueReadRequest { .. }
                 | Step::CyclePublishedPrimitive { .. }
                 | Step::OrdinaryPrimitive { .. }
                 | Step::RawCall { .. }
@@ -68,16 +69,6 @@ pub(super) fn primitive(
         crate::engine::api::profiling::record_owned_execution_event("conversion_transition");
         let realm = query.realm;
         match &mut *step {
-            Step::ArgumentsComplete(result) => {
-                let Some(parent) = query.parents.pop() else {
-                    return Err(Error::internal("argument list lost its continuation"));
-                };
-                let result = result.take().expect("selected Step field");
-                *step = parent
-                    .arguments(runtime, result)
-                    .map_err(runtime_error_to_vm_error)?;
-                continue;
-            }
             Step::NumberComplete(result) => {
                 let Some(resume) = query.parents.pop() else {
                     return Err(Error::internal(

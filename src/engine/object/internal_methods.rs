@@ -29,8 +29,10 @@ use crate::engine::vm::Completion;
 use crate::engine::vm::call::{ConstructNewTarget, ConstructorRef, DirectCallTarget};
 
 mod boolean;
+mod function_realm;
 mod prototype;
 mod reuse;
+pub(crate) use function_realm::FunctionRealmOutcome;
 
 pub(crate) use prototype::ProxyPrototypeResume;
 pub(crate) use prototype::{ProxyPrototypeKind, ProxyPrototypeStep};
@@ -193,13 +195,21 @@ impl Runtime {
     /// excluded revoked Proxy wrappers.
     #[cfg(test)]
     pub(crate) fn callable_realm(&self, callable: &CallableRef) -> Result<ContextId, RuntimeError> {
-        match self.function_realm_object_impl(
+        let _unwind = self.unwind_guard();
+        if !callable.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("function realm object"));
+        }
+        self.check_poison()?;
+        let outcome = self.0.state.borrow_mut().function_realm_object(
+            &self.0.poisoned,
             None,
-            callable.as_object().try_clone().expect("duplicate root"),
+            callable.as_object().object_id(),
             false,
-        )? {
-            NativeConversion::Value(realm) => Ok(realm),
-            NativeConversion::Throw(value) => {
+        );
+        self.check_poison()?;
+        match outcome? {
+            FunctionRealmOutcome::Value(realm) => Ok(realm),
+            FunctionRealmOutcome::CyclePublishedThrow(value) => {
                 self.release_jsvalue(value)?;
                 Err(RuntimeError::Invariant(
                     "raw callable realm lookup produced a JavaScript throw",
@@ -208,143 +218,44 @@ impl Runtime {
         }
     }
 
-    /// Completion-aware QuickJS `JS_GetFunctionRealm`.
-    ///
-    /// Bound functions and Proxy wrappers are unwrapped recursively. A revoked
-    /// Proxy throws in the caller's realm instead of leaking an engine error.
+    /// The actual CallableRef owner keeps the complete wrapper chain alive
+    /// during the single borrowed State walk; no temporary roots are created.
     pub(crate) fn function_realm(
         &self,
         caller_realm: ContextId,
         callable: &CallableRef,
     ) -> Result<NativeConversion<ContextId>, RuntimeError> {
-        self.function_realm_object_impl(
+        let _unwind = self.unwind_guard();
+        if !callable.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("function realm object"));
+        }
+        self.check_poison()?;
+        let outcome = self.0.state.borrow_mut().function_realm_object(
+            &self.0.poisoned,
             Some(caller_realm),
-            callable.as_object().try_clone()?,
+            callable.as_object().object_id(),
             false,
-        )
+        );
+        self.check_poison()?;
+        outcome.map(FunctionRealmOutcome::into_conversion)
     }
 
-    /// Raw-value form of QuickJS `JS_GetFunctionRealm`. Non-functions and
-    /// primitives fall back to the current realm; Proxy and bound wrappers are
-    /// still traversed so revocation and nested function realms remain
-    /// observable after a `newTarget.prototype` lookup.
+    /// Raw nonfunctions fall back to the caller realm; wrappers still expose
+    /// revocation and their final native/bytecode realm after prototype Get.
     pub(crate) fn function_realm_from_jsvalue(
         &self,
         caller_realm: ContextId,
         value: &JsValue,
     ) -> Result<NativeConversion<ContextId>, RuntimeError> {
-        self.0.state.borrow().heap.context(caller_realm)?;
-        let JsValue::Object(id) = value else {
-            return Ok(NativeConversion::Value(caller_realm));
-        };
-        let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
-        self.function_realm_object_impl(Some(caller_realm), object, true)
-    }
-
-    fn function_realm_object_impl(
-        &self,
-        caller_realm: Option<ContextId>,
-        object: ObjectRef,
-        allow_non_function: bool,
-    ) -> Result<NativeConversion<ContextId>, RuntimeError> {
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("function realm object"));
-        }
-        let mut object = object;
-        loop {
-            let state = self.0.state.borrow();
-            let object_data = state.heap.object(object.object_id())?;
-            match &object_data.payload {
-                ObjectPayload::NativeFunction { data, .. } if data.realm.is_some() => {
-                    if allow_non_function && data.target.uses_calling_realm() {
-                        let realm = caller_realm.ok_or(RuntimeError::Invariant(
-                            "raw function realm lookup had no fallback realm",
-                        ))?;
-                        state.heap.context(realm)?;
-                        return Ok(NativeConversion::Value(realm));
-                    }
-                    let realm = data
-                        .realm
-                        .expect("guard proved native function has a defining realm");
-                    state.heap.context(realm)?;
-                    return Ok(NativeConversion::Value(realm));
-                }
-                ObjectPayload::BytecodeFunction { bytecode, .. } => {
-                    let realm = state.heap.function_bytecode(*bytecode)?.realm;
-                    state.heap.context(realm)?;
-                    return Ok(NativeConversion::Value(realm));
-                }
-                ObjectPayload::BoundFunction { target, .. } => {
-                    let target = *target;
-                    drop(state);
-                    object = ObjectRef::from_borrowed_handle(self.clone(), target)?;
-                }
-                ObjectPayload::Proxy(data) => {
-                    let is_revoked = data.is_revoked;
-                    let target = data.target;
-                    drop(state);
-                    if is_revoked {
-                        return match caller_realm {
-                            Some(realm) => self.proxy_revoked_throw(realm),
-                            None => Err(RuntimeError::Engine(Error::new(
-                                ErrorKind::Type,
-                                "revoked proxy",
-                            ))),
-                        };
-                    }
-                    object = ObjectRef::from_borrowed_handle(self.clone(), target)?;
-                }
-                ObjectPayload::NativeFunction { .. } => {
-                    return Err(RuntimeError::Invariant(
-                        "native function has no defining realm",
-                    ));
-                }
-                ObjectPayload::Ordinary
-                | ObjectPayload::AsyncFunctionState(_)
-                | ObjectPayload::RawJson
-                | ObjectPayload::Promise(_)
-                | ObjectPayload::Date(_)
-                | ObjectPayload::RegExp(_)
-                | ObjectPayload::ArrayBuffer(_)
-                | ObjectPayload::SharedArrayBuffer(_)
-                | ObjectPayload::DataView(_)
-                | ObjectPayload::TypedArray(_)
-                | ObjectPayload::Array { .. }
-                | ObjectPayload::Arguments { .. }
-                | ObjectPayload::ArrayIterator { .. }
-                | ObjectPayload::IteratorHelper(_)
-                | ObjectPayload::IteratorWrap(_)
-                | ObjectPayload::AsyncFromSyncIterator(_)
-                | ObjectPayload::IteratorConcat(_)
-                | ObjectPayload::Map { .. }
-                | ObjectPayload::MapIterator { .. }
-                | ObjectPayload::Set { .. }
-                | ObjectPayload::WeakMap { .. }
-                | ObjectPayload::WeakSet { .. }
-                | ObjectPayload::WeakRef { .. }
-                | ObjectPayload::FinalizationRegistry(_)
-                | ObjectPayload::SetIterator { .. }
-                | ObjectPayload::ForInIterator(_)
-                | ObjectPayload::Primitive(_)
-                | ObjectPayload::GlobalObject { .. }
-                | ObjectPayload::Error
-                | ObjectPayload::StringIterator { .. }
-                | ObjectPayload::RegExpStringIterator { .. }
-                | ObjectPayload::Generator { .. }
-                | ObjectPayload::AsyncGenerator(_) => {
-                    if allow_non_function {
-                        let realm = caller_realm.ok_or(RuntimeError::Invariant(
-                            "raw function realm lookup had no fallback realm",
-                        ))?;
-                        return Ok(NativeConversion::Value(realm));
-                    }
-                    return Err(RuntimeError::Engine(Error::new(
-                        ErrorKind::Type,
-                        "not a function",
-                    )));
-                }
-            }
-        }
+        let _unwind = self.unwind_guard();
+        self.check_poison()?;
+        let outcome = self.0.state.borrow_mut().function_realm_from_jsvalue(
+            &self.0.poisoned,
+            caller_realm,
+            value,
+        );
+        self.check_poison()?;
+        outcome.map(FunctionRealmOutcome::into_conversion)
     }
 
     fn proxy_snapshot_if_any(&self, object: &ObjectRef) -> Result<Option<ProxyData>, RuntimeError> {

@@ -231,3 +231,70 @@ fn owned_date_release_failure_quarantines_before_remaining_native_owners() {
     assert_eq!(state.active_frames.len(), 1);
     assert_eq!(runtime.0.active_frame_depth.get(), 1);
 }
+
+#[test]
+fn owned_date_body_failure_preserves_original_invocation_and_activation_suffix() {
+    use crate::engine::heap::RawId;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let (callable, realm, target, minimum) = native_fixture(&runtime, &mut context, "Date");
+    let function = callable.as_object().object_id();
+    let new_target = runtime
+        .into_jsvalue(context.eval("Symbol('constructor-owner')").unwrap())
+        .unwrap();
+    let JsValue::Symbol(index) = new_target else {
+        panic!("unique Symbol newTarget");
+    };
+    let atom = runtime.0.state.borrow().atoms.brand(index).unwrap();
+    let ignored = runtime.new_object(None).unwrap().into_execution_handle();
+    let invalid = runtime.new_object(None).unwrap().into_execution_handle();
+    let later = runtime.new_object(None).unwrap().into_execution_handle();
+    // Warm the canonical Date layout through its real public consumer, before
+    // queuing the failure that belongs to the next constructor publication.
+    drop(context.eval("new Date(0)").unwrap());
+    let (function_count, nodes) = {
+        let mut state = runtime.0.state.borrow_mut();
+        assert_eq!(state.atoms.resolve(atom).unwrap().ref_count, Some(1));
+        let function_count = state.heap.object_strong_count(function).unwrap();
+        let nodes = state.heap.counts().object_nodes;
+        state
+            .heap
+            .queue_release_for_test(RawId::Object(invalid))
+            .unwrap();
+        state
+            .heap
+            .queue_release_for_test(RawId::Object(later))
+            .unwrap();
+        state
+            .heap
+            .set_strong_count_for_test(RawId::Object(invalid), 1);
+        (function_count, nodes)
+    };
+    let mut arguments = (0..7).map(|_| JsValue::Int(0)).collect::<Vec<_>>();
+    arguments.push(JsValue::Object(ignored));
+    let result = runtime.invoke_native_function_jsvalue(
+        &callable,
+        realm,
+        target,
+        minimum,
+        NativeInvocation::Construct { new_target },
+        arguments,
+        NativeInvokeMode::Ordinary,
+    );
+    assert!(matches!(result, Err(RuntimeError::Poisoned)));
+    assert!(runtime.is_poisoned());
+    let state = runtime.0.state.borrow();
+    assert_eq!(state.heap.counts().object_nodes, nodes + 1);
+    // Original invocation + Date snapshot. Atom retirement could still mutate
+    // this count after poison, so the prepared-call owner must remain intact.
+    assert_eq!(state.atoms.resolve(atom).unwrap().ref_count, Some(2));
+    assert_eq!(state.heap.object_strong_count(ignored), Ok(1));
+    assert_eq!(
+        state.heap.object_strong_count(function),
+        Ok(function_count + 1)
+    );
+    assert_eq!(state.heap.object_strong_count(later), Ok(0));
+    assert!(state.heap.has_pending_zero_cleanup());
+    assert_eq!(state.active_frames.len(), 1);
+    assert_eq!(runtime.0.active_frame_depth.get(), 1);
+}

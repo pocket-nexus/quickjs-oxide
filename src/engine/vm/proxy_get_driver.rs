@@ -1997,6 +1997,7 @@ fn advance_inner(
             | Step::CyclePublishedPrimitiveReply { .. }
             | Step::RawRead { .. }
             | Step::RawReadRequest { .. }
+            | Step::RawValueReadRequest { .. }
             | Step::CyclePublishedPrimitive { .. }
             | Step::RawCall { .. }
             | Step::CallbackBoundary(_)

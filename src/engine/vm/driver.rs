@@ -627,6 +627,20 @@ fn execute_owned_root_step(
     }
 }
 
+/// The public/cold Date entry delegates to Invoke's protected existing raw
+/// root entry. Resident native Date bodies publish into their current Query.
+/// Composition dependency: execute_owned_root_step from the frozen Invoke slice.
+pub(crate) fn execute_date_constructor_step(
+    runtime: &Runtime,
+    realm: crate::engine::heap::ContextId,
+    step: crate::engine::builtins::DateConstructorStep,
+) -> Result<Completion, Error> {
+    execute_owned_root_step(
+        runtime,
+        realm,
+        super::proxy_get_driver::Step::try_from(step).map_err(runtime_error_to_vm_error)?,
+    )
+}
 pub(super) fn execute_root_descriptor(
     runtime: Runtime,
     realm: crate::engine::heap::ContextId,

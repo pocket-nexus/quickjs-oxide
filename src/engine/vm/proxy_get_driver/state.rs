@@ -276,6 +276,7 @@ impl Query {
                     *step = resume.string_in_state(
                         state,
                         poisoned,
+                        runtime.0.host_services.as_ref(),
                         value.take().expect("string reply"),
                     )?;
                 }
@@ -384,6 +385,7 @@ impl Query {
                     *step = resume.resume_in_state(
                         state,
                         poisoned,
+                        runtime.0.host_services.as_ref(),
                         value.take().expect("primitive reply"),
                     )?;
                 }
@@ -454,6 +456,7 @@ impl Query {
                     *step = resume.resume_in_state(
                         state,
                         poisoned,
+                        runtime.0.host_services.as_ref(),
                         value.take().expect("completion reply"),
                     )?;
                 }
@@ -584,6 +587,34 @@ impl Query {
                         object.take().expect("ordinary primitive receiver"),
                         hint.take().expect("ordinary primitive hint"),
                     )?)?;
+                }
+                Step::RawValueReadRequest {
+                    realm,
+                    selected,
+                    key,
+                    receiver,
+                    resume,
+                } => {
+                    if selected.is_none() {
+                        *selected = Some(state.prepare_value_read_in_state(
+                            poisoned,
+                            runtime.domain_id(),
+                            *realm,
+                            receiver.as_ref().expect("raw value read receiver"),
+                            *key,
+                            None,
+                        )?);
+                    }
+                    // The actual selection owns its output before input retirement.
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        receiver.take().expect("raw value read receiver"),
+                    )?;
+                    *step = Step::RawRead {
+                        read: selected.take(),
+                        key: *key,
+                        resume: resume.take(),
+                    };
                 }
                 Step::RawReadRequest {
                     selected,
@@ -846,6 +877,24 @@ impl Step {
             Self::OrdinaryPrimitive { object, .. } => {
                 if let Some(object) = object.take() {
                     state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
+                }
+            }
+            Self::RawValueReadRequest {
+                selected,
+                receiver,
+                resume,
+                ..
+            } => {
+                if let Some(ReadStep::Ready(read) | ReadStep::CyclePublished(read)) =
+                    selected.take()
+                {
+                    read.retire(state, poisoned)?;
+                }
+                if let Some(receiver) = receiver.take() {
+                    state.release_owned_jsvalue(poisoned, receiver)?;
+                }
+                if let Some(resume) = resume {
+                    resume.retire_raw_in_state(state, poisoned)?;
                 }
             }
             Self::RawReadRequest {
@@ -1149,6 +1198,7 @@ impl RawNativeQuery<'_> {
                 self.step = scope.resume.resume_in_state(
                     self.state,
                     &self.runtime.0.poisoned,
+                    self.runtime.0.host_services.as_ref(),
                     completion,
                 )?
             }

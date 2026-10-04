@@ -38,7 +38,10 @@ mod driver;
 
 pub(crate) mod entry;
 
-pub(crate) use driver::{RootOperation, execute_invoke_step, execute_owned_call, execute_root};
+pub(crate) use driver::{
+    RootOperation, execute_date_constructor_step, execute_invoke_step, execute_owned_call,
+    execute_root,
+};
 
 mod execution;
 
