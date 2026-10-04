@@ -241,15 +241,15 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        match kind {
+        self.dispatch_borrowed_invocation(invocation, |invocation| match kind {
             DateNativeKind::Constructor
             | DateNativeKind::Now
             | DateNativeKind::Parse
             | DateNativeKind::Utc => {
                 self.call_date_constructor_native(realm, kind, invocation, arguments)
             }
-            _ => self.call_date_prototype_native(realm, kind, &invocation, arguments),
-        }
+            _ => self.call_date_prototype_native(realm, kind, invocation, arguments),
+        })
     }
 
     pub(crate) fn date_now_millis(&self) -> i64 {
@@ -264,6 +264,9 @@ impl Runtime {
 pub(crate) use constructor::operation::{DateConstructorResume, DateConstructorStep};
 
 pub(crate) use prototype::operation::{DatePrototypeResume, DatePrototypeStep};
+
+#[cfg(test)]
+mod owned_invocation_tests;
 
 #[cfg(test)]
 mod tests {
