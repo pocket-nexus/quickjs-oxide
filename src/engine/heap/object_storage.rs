@@ -1,11 +1,37 @@
 use super::*;
 use crate::engine::numeric_region_miss::NumericRegionMiss as Miss;
-use crate::engine::value::number::operations::Number;
+use crate::engine::value::{JsValue, number::operations::Number};
 
 /// The runtime may undo retained Atoms only before slot publication.
 pub(crate) struct SlotReplacementError {
     pub(crate) error: HeapError,
     pub(crate) published: bool,
+}
+
+/// Common numeric stores exchange their payloads directly. Other public value
+/// pairs keep one cold conversion boundary; neither path changes edge counts.
+#[inline]
+fn exchange_public_owner(previous: &mut RawValue, input: &mut JsValue) -> bool {
+    if let (RawValue::Int(previous), JsValue::Int(input)) = (&mut *previous, &mut *input) {
+        std::mem::swap(previous, input);
+        return true;
+    }
+    if let (RawValue::Float(previous), JsValue::Float(input)) = (&mut *previous, &mut *input) {
+        std::mem::swap(previous, input);
+        return true;
+    }
+    exchange_public_owner_cold(previous, input)
+}
+
+#[inline(never)]
+fn exchange_public_owner_cold(previous: &mut RawValue, input: &mut JsValue) -> bool {
+    if !is_map_storable_value(previous) {
+        return false;
+    }
+    let new = std::mem::replace(input, JsValue::Undefined);
+    let old = std::mem::replace(previous, new.into_raw());
+    *input = JsValue::from_raw(old).expect("exchanged public storage owner");
+    true
 }
 
 impl Heap {
@@ -15,11 +41,8 @@ impl Heap {
         &mut self,
         id: ObjectId,
         index: usize,
-        input: &mut RawValue,
+        input: &mut JsValue,
     ) -> Result<bool, HeapError> {
-        if !is_map_storable_value(input) {
-            return Ok(false);
-        }
         let slot = self
             .object_mut(id)?
             .slots
@@ -28,11 +51,7 @@ impl Heap {
         let PropertySlot::Data(previous) = slot else {
             return Ok(false);
         };
-        if !is_map_storable_value(previous) {
-            return Ok(false);
-        }
-        std::mem::swap(previous, input);
-        Ok(true)
+        Ok(exchange_public_owner(previous, input))
     }
 
     /// Dense entries have default writable data attributes. Descriptor changes
@@ -41,11 +60,8 @@ impl Heap {
         &mut self,
         id: ObjectId,
         index: u32,
-        input: &mut RawValue,
+        input: &mut JsValue,
     ) -> Result<bool, HeapError> {
-        if !is_map_storable_value(input) {
-            return Ok(false);
-        }
         let data = self.object_mut(id)?;
         if !matches!(data.kind, ObjectKind::Array) {
             return Ok(false);
@@ -59,11 +75,7 @@ impl Heap {
         let Some(previous) = values.get_mut(index as usize) else {
             return Ok(false);
         };
-        if !is_map_storable_value(previous) {
-            return Ok(false);
-        }
-        std::mem::swap(previous, input);
-        Ok(true)
+        Ok(exchange_public_owner(previous, input))
     }
 
     /// Replace an existing writable own Number without releasing an owner.

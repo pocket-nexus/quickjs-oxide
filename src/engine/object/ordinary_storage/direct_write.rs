@@ -1,13 +1,6 @@
 //! Exchange existing owners under one state access; no pending representation.
 use super::*;
 
-fn public_value(value: &RawValue) -> bool {
-    !matches!(
-        value,
-        RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception
-    )
-}
-
 impl RuntimeState {
     /// Resolve a static key owned by the current published executable, then
     /// consume the frame's existing value owner through the ordinary selector.
@@ -34,9 +27,6 @@ impl RuntimeState {
         atom: Atom,
         input: &mut JsValue,
     ) -> Result<bool, RuntimeError> {
-        if !public_value(&input.as_raw()) {
-            return Ok(false);
-        }
         let BorrowedSet::Data(selected) = select_set_slot(self, object, atom)? else {
             return Ok(false);
         };
@@ -46,14 +36,9 @@ impl RuntimeState {
         // Both locations already own their edges and atoms. Swapping their
         // representations neither retains nor releases either owner. The
         // consumer retires the old value while its receiver remains rooted.
-        let mut raw = input.as_raw();
-        let exchanged = self
+        Ok(self
             .heap
-            .exchange_owned_data_slot(object, selected.index, &mut raw)?;
-        if exchanged {
-            *input = JsValue::from_raw(raw).expect("exchanged public data owner");
-        }
-        Ok(exchanged)
+            .exchange_owned_data_slot(object, selected.index, input)?)
     }
 
     pub(crate) fn try_exchange_dense_value(
@@ -62,17 +47,7 @@ impl RuntimeState {
         index: u32,
         input: &mut JsValue,
     ) -> Result<bool, RuntimeError> {
-        if !public_value(&input.as_raw()) {
-            return Ok(false);
-        }
-        let mut raw = input.as_raw();
-        let exchanged = self
-            .heap
-            .exchange_owned_dense_value(object, index, &mut raw)?;
-        if exchanged {
-            *input = JsValue::from_raw(raw).expect("exchanged public dense owner");
-        }
-        Ok(exchanged)
+        Ok(self.heap.exchange_owned_dense_value(object, index, input)?)
     }
 
     /// Append only the next dense index. The existing shared prototype walk
@@ -83,9 +58,6 @@ impl RuntimeState {
         index: u32,
         input: &mut JsValue,
     ) -> Result<bool, RuntimeError> {
-        if !public_value(&input.as_raw()) {
-            return Ok(false);
-        }
         let data = self.heap.object(object)?;
         if !data.extensible || !matches!(data.kind, ObjectKind::Array) {
             return Ok(false);
