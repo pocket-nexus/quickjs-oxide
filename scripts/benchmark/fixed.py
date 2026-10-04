@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from run import binary_metadata, digest, machine_metadata, paired_order, run_sample, validate_paired_order
 from scaling import admit, summarize
+import callgrind
 
 
 DARWIN_COUNTERS = {
@@ -72,6 +73,11 @@ def main():
     parser.add_argument('--cpu', type=int)
     parser.add_argument('--darwin-counters', action='store_true',
                         help='wrap each sample in /usr/bin/time -l and retain whole-process counters')
+    parser.add_argument('--callgrind', type=Path, help='Valgrind executable; instrument fixed work instead of timing it')
+    parser.add_argument('--callgrind-cache-config', type=Path,
+                        help='frozen JSON with I1/D1/LL [bytes, associativity, line_bytes]')
+    parser.add_argument('--callgrind-instructions', action='store_true',
+                        help='retain instruction positions for code-generation attribution')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.repeat < 1 or args.timeout <= 0 or (args.cpu is not None and args.cpu < 0):
@@ -80,6 +86,12 @@ def main():
         parser.error('--darwin-counters requires macOS /usr/bin/time')
     if args.darwin_counters and args.cpu is not None:
         parser.error('--cpu uses taskset and cannot be combined with --darwin-counters')
+    if bool(args.callgrind) != bool(args.callgrind_cache_config):
+        parser.error('--callgrind and --callgrind-cache-config must be used together')
+    if args.callgrind_instructions and not args.callgrind:
+        parser.error('--callgrind-instructions requires --callgrind')
+    if args.callgrind and args.darwin_counters:
+        parser.error('Callgrind and native Darwin counters are separate measurements')
     engines = {}
     for entry in args.engine:
         name, separator, path = entry.partition('=')
@@ -91,6 +103,8 @@ def main():
     except ValueError as error:
         parser.error(str(error))
     workloads = load_workloads(args.manifest, args.workload_dir, args.case)
+    instrument = callgrind.tool_metadata(args.callgrind, args.callgrind_cache_config,
+                                        args.callgrind_instructions) if args.callgrind else None
     metadata = dict(
         machine=machine_metadata(),
         runner_sha256=digest(__file__),
@@ -103,7 +117,9 @@ def main():
         cpu=args.cpu,
         darwin_counters=args.darwin_counters,
         counter_scope='whole process including startup and teardown' if args.darwin_counters else None,
-        metric='whole-process wall nanoseconds; not adaptive scores',
+        callgrind=instrument,
+        metric='Callgrind whole-process event counts; instrumented times are not speed evidence'
+        if instrument else 'whole-process wall nanoseconds; not adaptive scores',
     )
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -123,6 +139,11 @@ def main():
                         raise ValueError('binary changed during measurement')
                     prefix = output / 'raw' / f"{workload['case']}-{name}-{repetition}"
                     cmd = [str(engines[name]), workload['path']]
+                    if instrument:
+                        if digest(instrument['path']) != instrument['sha256'] or any(
+                                digest(path) != sha for path, sha in instrument['library_objects'].items()):
+                            raise ValueError('Valgrind changed during measurement')
+                        cmd = callgrind.command(instrument, engines[name], workload['path'], prefix)
                     if args.cpu is not None:
                         cmd = ['taskset', '-c', str(args.cpu), *cmd]
                     counters_path = prefix.with_suffix('.time-l.txt')
@@ -133,6 +154,20 @@ def main():
                     if semantic_status == 'ok' and Path(sample['stderr']).read_bytes():
                         semantic_status = 'unexpected-stderr'
                     status = semantic_status
+                    if instrument:
+                        profile_path = prefix.with_suffix('.callgrind')
+                        log_path = prefix.with_suffix('.valgrind.log')
+                        record = dict(raw_path=str(profile_path), log_path=str(log_path))
+                        try:
+                            record['raw_sha256'] = digest(profile_path)
+                            record['log_sha256'] = digest(log_path)
+                            record['values'] = callgrind.parse_profile(profile_path.read_text(),
+                                                                      instrument['cache_config'])
+                        except (OSError, ValueError) as error:
+                            record['error'] = str(error)
+                            if status == 'ok':
+                                status = 'invalid-callgrind-counters'
+                        sample['callgrind'] = record
                     if args.darwin_counters:
                         counter_record = {'scope': 'whole process including startup and teardown',
                                           'raw_path': str(counters_path)}
@@ -152,7 +187,7 @@ def main():
                     journal.write(json.dumps(sample) + '\n')
                     journal.flush()
                     print(f'{prefix.name}: {status}', flush=True)
-    summary = summarize(samples)
+    summary = callgrind.summarize(samples) if instrument else summarize(samples)
     result = dict(metadata=metadata, summary=summary, samples=samples)
     (output / 'results.json').write_text(json.dumps(result, indent=2) + '\n')
     return 0 if all(row['eligible'] for row in summary) else 1
