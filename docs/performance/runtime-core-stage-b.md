@@ -31,6 +31,7 @@
 | `25c152d6` | ArrayBuffer、SharedArrayBuffer、DataView 的 owned native 入口复用既有 borrowed-handler 清理协议；所有成功、抛错和 handler error 路径都显式退休原 receiver/newTarget，十个内部 helper 改为借用 invocation。 |
 | `e49eba17` | 内部调用在 checked callee 认证之前登记 receiver 和 argv owner，认证拒绝也经过原清理路径。持有可用状态时直接释放并保留当前边释放后服务 FIFO 的顺序；状态忙碌时仍用协调队列，破坏性失败停止后缀并返回隔离错误。 |
 | `3b0ee61a` | GetField/GetField2、52 个 Numeric/Math selector、8 个 ScalarText selector 和 ToPrimitive/ToNumber/ToString 共用状态算法与原始 continuation；普通 getter/转换调用共用既有帧安装和 Query 消费，完成的选择及 PC 事实不重放。移除旧 Runtime conversion/body 实现，破坏性失败先隔离再停止 owner 后缀清理。 |
+| `55c154a8` | 完整 Bound CALL 链共用状态内 payload promotion 与参数合并算法；四种实际调用 opcode、getter/转换 callback 和旧边界消费者共用一次规范化及既有帧安装。删除逐 Bound 的旧调用循环，实际 overflow Error 携带发布事实，清理失败停止剩余 owner。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -60,6 +61,7 @@
 - Binary buffer invocation：7 个新见证和 45 个受影响用例在两种配置各通过 52 项；两种配置严格 workspace/all-targets Clippy、host 与源检查通过。971 项 Rust/Cargo 输入与采纳提交逐项相同。覆盖方法成功/brand 抛错、species 独立返回 owner、DataView.buffer、三类构造成功/Proxy prototype 抛错，以及清理失败先隔离并停止后续 owner。首次两个失败发生在进入 body 前的测试 ABI，修正为尚未适配的 Call 输入后通过；生产实现未改变。没有完整套件或性能运行。
 - 内部调用 admission：3 个新见证在普通和 profiling 配置各通过 3 项，覆盖 MAX 拒绝与别名、状态忙碌协调、真实破坏性清理后的后缀停止；严格 workspace/all-targets Clippy 两配置、host 和源检查通过。972 项 Rust/Cargo 输入与采纳提交逐项相同。保留第一次等价双重引用触发的 lint 失败；没有完整套件或性能运行。验收回执 SHA256 `188cd09d03ad024d51b15e1a15a63f9d6a57baa925687bb52828df74409ae988`。
 - 命名读取与 Numeric/Text 纵切：完整普通 library 2423 项通过。完整 profiling 运行有 2639 项通过、6 项旧机制断言失败；这些用例的 JS 结果断言已通过。最终仅修改 cfg(profiling) 的实际消费/边界计数及机制断言，181 项相关最终源码测试通过，包含这 6 项和真正 unhinted callee 的 absence 见证。普通完整结果在三处已认证的等价 lint 改写下复用，最终普通配置另重验 175 项并通过严格 Clippy；最终 profiling 严格 workspace/all-targets Clippy、profiling+test262-host 及源检查通过。983 项 Rust/Cargo 输入与采纳提交逐项相同。回执 SHA256 `b3fd4cccc07e0b6477a192afa7a3a5ce3c0d27824f89cdb5ad3cb13b2823ed35`。原始 28 个语义失败促成共同 PC/throw 修复；后续 cfg 断言、计数归属及 launcher 解析失败记录全部保留。没有性能运行，子进程和交叠测试数不合并。
+- Bound CALL：12 个新见证覆盖四种真实 opcode、各类 receiver/argv、普通/native/Proxy 回调、checked retain、overflow 与清理隔离。最终普通配置新编译的 433 项完整 VM 域通过；复用先前完整普通配置的 2434 项通过记录，该次唯一失败是新增 TailCall fixture 的指令生成假设。最终只改变该 fixture，以及经逐字变换证明等价的非迭代 loop→block；没有重跑完整普通套件。最终 profiling 完整 2657 项通过，严格 workspace/all-targets Clippy 两配置、host feature 和源检查通过。986 项 Rust/Cargo 输入与采纳提交逐项相同；回执 SHA256 `4ed18c08cfb33f0e70d41c53f8b2e1994ee4228d722184a817ca3f13f3ccc8c3`。首次生产借用检查、测试 API、fixture 与 lint 失败记录全部保留。没有性能运行，配置、交叠用例和子进程结果不相加。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
@@ -91,6 +93,14 @@ Date 的无 JS 转换方法按固定 selector 选择状态实现，覆盖普通�
 Cold Call 的回复进入 resident 消费前只恢复一次下一条 PC，并转为携带 committed PC 的 continuation。Resident Call 使用已经携带的 PC；getter 抛错不提前推进，lower slots 和 fault PC 保留。ABI 适配错误及清理错误在剩余 receiver、argv、callee 和帧清理之前返回隔离错误。
 
 机制断言按实际路径验收：20 次普通 getter 留在片段中，20 次 Proxy trap 复用原 Query 存储；三个混合用例分别确认 36/41/41 次 State Math body，以及 24/21/17 次无需参数存储的完成。第一个用例仍有一次 `Map.size` 的未迁移 native getter 边界，第三个有八次实际 Proxy 边界。边界原因计数记录 State dispatcher 返回的 effect，不等于解释循环退出次数；aggregate activation transport 也包含 helper scope，不能全部归给 Math。
+
+## 已采纳的 Bound CALL 规范化
+
+`55c154a8` 使用一套完整链算法：在当前状态中保留真正的 Bound target、receiver 和 argv owner，按 Bound 前缀后接调用参数的顺序合并，再把最终选择交给既有普通/native 安装器。Call、CallMethod、TailCall 和 TailCallMethod、getter 与转换回调均消费这套算法；旧 Runtime callback 和冷调用不再各自遍历 Bound 链。
+
+实际 payload、callback callee 和帧发布所需的 checked retain 保留。只为旧公共 header 临时包装产生的 bytecode/global owner 与相应 MAX 拒绝删除；最终 callee 的 heap 边保护代码、closure 和 realm，帧安装在退休选择之前取得所需 owner。overflow 清理先处理 Bound argv，再处理调用 argv；真正新建的 Error 在 owner 发布后才服务分配压力，传播的旧 throw 不标记为新分配。
+
+本提交保留真实 caller 的旧 materialization 时点，不创建 Bound 帧。Bound Construct、Function.call 的转发循环、Proxy、特殊 bytecode 与未迁移 native 的实际边界仍有后续工作；未声明所有调用成本消失或全局架构指标归零。
 
 ## 中途机制检查
 
