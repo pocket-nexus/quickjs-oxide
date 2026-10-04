@@ -32,6 +32,7 @@
 | `e49eba17` | 内部调用在 checked callee 认证之前登记 receiver 和 argv owner，认证拒绝也经过原清理路径。持有可用状态时直接释放并保留当前边释放后服务 FIFO 的顺序；状态忙碌时仍用协调队列，破坏性失败停止后缀并返回隔离错误。 |
 | `3b0ee61a` | GetField/GetField2、52 个 Numeric/Math selector、8 个 ScalarText selector 和 ToPrimitive/ToNumber/ToString 共用状态算法与原始 continuation；普通 getter/转换调用共用既有帧安装和 Query 消费，完成的选择及 PC 事实不重放。移除旧 Runtime conversion/body 实现，破坏性失败先隔离再停止 owner 后缀清理。 |
 | `55c154a8` | 完整 Bound CALL 链共用状态内 payload promotion 与参数合并算法；四种实际调用 opcode、getter/转换 callback 和旧边界消费者共用一次规范化及既有帧安装。删除逐 Bound 的旧调用循环，实际 overflow Error 携带发布事实，清理失败停止剩余 owner。 |
+| `d1e45524` | 18 个转换型 Date prototype selector 使用原始 continuation 与状态算法，普通/native 子调用共用既有 Query；ToObject 共用 checked prototype 准备和 primitive 工厂。getter 选择先进入 armed request，再退休输入；实际 boxing/Error 携带发布事实。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -63,6 +64,7 @@
 - 命名读取与 Numeric/Text 纵切：完整普通 library 2423 项通过。完整 profiling 运行有 2639 项通过、6 项旧机制断言失败；这些用例的 JS 结果断言已通过。最终仅修改 cfg(profiling) 的实际消费/边界计数及机制断言，181 项相关最终源码测试通过，包含这 6 项和真正 unhinted callee 的 absence 见证。普通完整结果在三处已认证的等价 lint 改写下复用，最终普通配置另重验 175 项并通过严格 Clippy；最终 profiling 严格 workspace/all-targets Clippy、profiling+test262-host 及源检查通过。983 项 Rust/Cargo 输入与采纳提交逐项相同。回执 SHA256 `b3fd4cccc07e0b6477a192afa7a3a5ce3c0d27824f89cdb5ad3cb13b2823ed35`。原始 28 个语义失败促成共同 PC/throw 修复；后续 cfg 断言、计数归属及 launcher 解析失败记录全部保留。没有性能运行，子进程和交叠测试数不合并。
 - Bound CALL：12 个新见证覆盖四种真实 opcode、各类 receiver/argv、普通/native/Proxy 回调、checked retain、overflow 与清理隔离。最终普通配置新编译的 433 项完整 VM 域通过；复用先前完整普通配置的 2434 项通过记录，该次唯一失败是新增 TailCall fixture 的指令生成假设。最终只改变该 fixture，以及经逐字变换证明等价的非迭代 loop→block；没有重跑完整普通套件。最终 profiling 完整 2657 项通过，严格 workspace/all-targets Clippy 两配置、host feature 和源检查通过。986 项 Rust/Cargo 输入与采纳提交逐项相同；回执 SHA256 `4ed18c08cfb33f0e70d41c53f8b2e1994ee4228d722184a817ca3f13f3ccc8c3`。首次生产借用检查、测试 API、fixture 与 lint 失败记录全部保留。没有性能运行，配置、交叠用例和子进程结果不相加。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
+- Date 转换与 ToObject：19 个新见证覆盖全部 16 个 setter、两种 hint、toJSON 的 primitive/Proxy、snapshot 与重读、host 调用顺序、PC/realm、checked retain、放弃及隔离。普通完整运行 2453 项通过，唯一失败是新增 ToObject 见证漏算已发布 shape 的 prototype 边；修正仅限该见证，最终新编译的 4 个 ToObject 用例通过，其余普通结果在逐项源码证明下复用。最终 profiling 完整 2676 项通过，严格 Clippy 两配置、host、源检查与 anti-special-casing 通过。990 项 Rust/Cargo 输入与采纳提交相同；回执 SHA256 `78072e2e82ed3ef8b4e10d413fc8854ea7712bd34ebbfb44543f2362f0a0aeca`。首次导入/可见性失败、原始见证失败均保留；没有性能运行。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
 
@@ -76,7 +78,7 @@ Own-property 内部迁移适配器先验证域，再统一完成一次 operation
 
 Native 的原始 activation 不携带 Runtime。生产 preparation 与消费者现在直接使用 borrowed guard；只有独立生命周期测试显式生成 rooted wrapper，没有公开的 prepared-call API。尚未迁移的 native body 通过显式边界临时转交同一 callee edge，不增加 retain 或重放算法。Query 在外部状态忙碌时仍保留原有协调队列兜底；resident 标量路径不创建 Query。其它 native family 和这些迁移边界仍需完成。
 
-Date 的无 JS 转换方法按固定 selector 选择状态实现，覆盖普通值、真实 Date、错误 brand 和忽略参数；不以输入种类决定是否迁移。保留 brand temporary 的 checked retain 与释放顺序。非重入 HostServices 直接借用，panic 标记同一 poison header。Constructor、Parse/Utc、setter、toJSON/toPrimitive 的转换协议仍是后续迁移范围。
+Date 的无 JS 转换方法按固定 selector 选择状态实现，覆盖普通值、真实 Date、错误 brand 和忽略参数；不以输入种类决定是否迁移。保留 brand temporary 的 checked retain 与释放顺序。非重入 HostServices 直接借用，panic 标记同一 poison header。`d1e45524` 完成 setter、toJSON/toPrimitive 的转换协议；Constructor、Parse/Utc 仍需迁移。
 
 普通属性读取的状态内原型遍历不产生中间 prototype owner，getter 不再提升未消费的 setter；相应内部 MAX 拒绝随不必要的 owner 一起消失。实际输出和 getter/receiver owner 仍使用 checked retain。命名 VM 读取和已迁移的转换消费者直接使用原始 owner 安装 getter；尚未迁移的公共读取、Proxy 与 legacy 外层消费者仍有显式 rooted 适配器。后续迁移必须删除这些适配器，当前未声明全局 owner 为零。
 
@@ -101,6 +103,14 @@ Cold Call 的回复进入 resident 消费前只恢复一次下一条 PC，并转
 实际 payload、callback callee 和帧发布所需的 checked retain 保留。只为旧公共 header 临时包装产生的 bytecode/global owner 与相应 MAX 拒绝删除；最终 callee 的 heap 边保护代码、closure 和 realm，帧安装在退休选择之前取得所需 owner。overflow 清理先处理 Bound argv，再处理调用 argv；真正新建的 Error 在 owner 发布后才服务分配压力，传播的旧 throw 不标记为新分配。
 
 本提交保留真实 caller 的旧 materialization 时点，不创建 Bound 帧。Bound Construct、Function.call 的转发循环、Proxy、特殊 bytecode 与未迁移 native 的实际边界仍有后续工作；未声明所有调用成本消失或全局架构指标归零。
+
+## 已采纳的 Date 转换与 ToObject
+
+`d1e45524` 覆盖全部 18 个转换型 Date prototype selector。字段 setter 在转换前保存原 calendar/timezone snapshot，仍按声明窗口完整转换；setYear 按原语义在转换后重读 receiver。continuation 只保存 raw owner、phase、参数和进展，不持有 Runtime、公共 root 或 HostServices。普通、native 和 Bound 子调用使用既有 Query 与 callback 安装器。
+
+ToObject 的公共与内部入口共用 prototype 准备和 primitive 工厂。公共入口保留 realm、checked prototype 与 operation admission 的优先级；内部使用当前状态。Existing、Boxed 和 Throw 明确区分实际生产结果。String wrapper 的空 shape 与 length successor 各有真正的 prototype 边，见证按实际已发布 shape 核对，不把它们误判成临时 retain 泄漏。
+
+Date fresh Error 与真实 toJSON boxing 在 owner 发布后向共同 Query 传递分配事实。原始属性请求保存已选 ReadStep，再按顺序退休 receiver/request owner；致命失败停止后缀。只在真实外部忙碌状态的放弃边界使用协调队列。Constructor、Parse/Utc 以及其它尚未迁移的 native 仍有后续工作。
 
 ## 中途机制检查
 
