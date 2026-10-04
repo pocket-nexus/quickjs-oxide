@@ -38,6 +38,7 @@
 | `6607cbfe` | Function.call/apply、Reflect.apply/construct、spread CALL 与 Arguments/rest 共用状态内 producer、raw continuation 和既有 Query；mapped/unmapped 工厂与帧 binding 读取共享实现。删除旧 Apply driver、同步转发循环与 Arguments 外层创建路径；公开边界恢复 VM 携带的原始错误类型。 |
 | `aecf0703` | Date Constructor、Parse/Utc 与 function realm 共用状态算法及原始 continuation；转换、prototype 读取和已完成进展进入既有 Query。原生调用的原 invocation 保留到 body 完成，致命失败后停止原 owner 与 activation 后缀退休。 |
 | `673e91ca` | 外层与嵌套 native scope 共用空 Parents 缓存；成功退休后才清空并归还，删除回收时的重复清空遍历。入栈前为全部未完成 scope 预留返回容量，修复串行调用的缓存增长与平方级回收。 |
+| `285d97a4` | 完整 Set、静态/计算 VM 写入、四种 Array mutation 与普通 Delete 共用当前状态和原始 continuation；setter、键转换及 typed/Array 长度等待交给既有 Query。删除旧标量写入退避和重复 Set 协议，实际 Proxy、shared backing 与 Copy 仍是明确边界。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -156,6 +157,18 @@ mapped/unmapped Arguments 与 rest 使用共享状态工厂及 binding 读取，
 新增 **25 个见证**通过，覆盖转换顺序、时钟与时区、realm、MAX 拒绝、alias、prototype 抛错、发布失败、typed error provenance，以及 body 致命失败时原 invocation/callee/argv/frame 后缀保持。最终源码完整 library：普通配置 **2546**、profiling 配置 **2768** 全部通过；严格 workspace/all-targets Clippy 两配置、profiling+test262-host 与格式/源检查通过。两种配置共享语义测试，不能相加为独立用例数。
 
 **1008 项 Rust/Cargo 输入与采纳提交逐项相同。** 回执：`/home/eric/.cache/oxide-runtime-core-20261003/b-date-construction-state/test-attempt-05/receipt.json`，SHA256 `4381c1b8d8c95f37e1502ff8e29296fe1dea72b00258d32e22cd3ea38b93f87c`。原有失败尝试、清理顺序修正和两个新增真实边界见证的来源均保留。未运行计时、原版 Score、A/A 或 Boa；GeneralConstruct 与其它 native family 的边界仍需迁移。
+
+## 已采纳的 Set 与 Array mutation
+
+`285d97a4` 迁移完整 Set producer 及静态/计算写入，而非增加一条只接受特定值的路径。原型选择、权限、descriptor、mapped Arguments、typed numeric 与 Array 长度提交使用同一状态算法。计算写入保留 String hint 与旧转换顺序；对象 key 的实际 displaced operands 才需要 boxed continuation。普通 setter 及恢复后的写入消费已经选定的进展，保留实际 fault PC 和严格模式诊断。
+
+Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete 共用当前状态；真实 Copy、Proxy 与共享 backing 仍保留选定边界。新建工厂事实只有在后续 owner 已登记后才交给共同 GC 消费者。数组长度的同步初始值判断与旧边界共用一次选择，保留两次 ToNumber 的语义顺序。
+
+完整验证发现并修复了冷 setter 回复类型与目标不一致、已完成 request header 被覆盖而遗漏释放、Array 发布后未继续、外层 Array SetChild 的预算计算和 continuation 体积问题。失败回执全部保留；没有扩大既有布局上限。两处 fixture 分别修正已有 immortal 饱和规则的期望、将嵌套 eval 移到活动执行登记之前；生产语义未随 fixture 修改。
+
+**48 个新见证**覆盖 Set 的全部值表示、setter/Proxy/Bound、拒绝与首个致命失败，四种数组操作、hole/prototype、typed/shared、发布/GC 和实际父子预算。移除一个失去消费者的旧 eligibility 测试。最终新编译完整 library 普通 **2595**、profiling **2817** 全部通过；严格 workspace/all-targets Clippy 两配置、profiling+test262-host 和格式/源检查通过。**1022 项 Rust/Cargo 输入与采纳提交逐项相同。** 回执 `b-set-array-state/test-attempt-06/receipt.json`，SHA256 `c2d34f04e005405db28fd53ce2462ca7809e9ea6138707b0a02aa73bcba17615`。
+
+该提交尚未获得时间结论，阶段 B 的性能门槛仍未通过。通用 Query 搬运和 dense endpoint 在尝试前创建 continuation 的成本须由短测和采样判断，不能仅凭旧协议已删除就宣布提速。
 
 ## 中途机制检查
 
