@@ -635,7 +635,7 @@ mod tests {
         let mut state = runtime.0.state.borrow_mut();
         assert!(
             state
-                .try_exchange_linked_field(
+                .try_store_owned_linked_field(
                     runtime.domain_id(),
                     object(&base),
                     &mut JsValue::Int(42),
@@ -643,10 +643,11 @@ mod tests {
                     key
                 )
                 .unwrap()
+                .committed()
         );
         assert!(
             !state
-                .try_exchange_linked_field(
+                .try_store_owned_linked_field(
                     runtime.domain_id(),
                     object(&frozen),
                     &mut JsValue::Int(42),
@@ -654,6 +655,7 @@ mod tests {
                     key
                 )
                 .unwrap()
+                .committed()
         );
         assert_eq!(
             state.select_linked_data_into(
@@ -741,7 +743,7 @@ mod tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_exchange_linked_field(
+                .try_store_owned_linked_field(
                     runtime.domain_id(),
                     object(&base),
                     &mut JsValue::Int(42),
@@ -749,6 +751,7 @@ mod tests {
                     key
                 )
                 .unwrap()
+                .committed()
         );
         assert_eq!(context.eval("scalarBase.x").unwrap(), Value::Int(42));
         assert_eq!(
@@ -772,7 +775,7 @@ mod tests {
         for source in [
             "Object.freeze({x:1})",
             "({get x(){throw 99}, set x(v){throw 98}})",
-            "Object.create({x:1})",
+            "Object.create(Object.freeze({x:1}))",
             "new Proxy({x:1},{set(){throw 97}})",
         ] {
             let base = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
@@ -782,14 +785,15 @@ mod tests {
                     .0
                     .state
                     .borrow_mut()
-                    .try_exchange_linked_field(
+                    .try_store_owned_linked_field(
                         runtime.domain_id(),
                         object(&base),
                         &mut JsValue::Int(42),
                         &code,
                         key
                     )
-                    .unwrap(),
+                    .unwrap()
+                    .committed(),
                 "{source}"
             );
             runtime.release_jsvalue(root).unwrap();
@@ -803,7 +807,7 @@ mod tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_exchange_linked_field(
+                .try_store_owned_linked_field(
                     runtime.domain_id(),
                     object(&base),
                     &mut JsValue::Int(42),
@@ -811,6 +815,7 @@ mod tests {
                     key,
                 )
                 .unwrap()
+                .committed()
         );
         runtime.release_jsvalue(base).unwrap();
     }

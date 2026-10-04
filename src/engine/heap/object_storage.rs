@@ -1014,6 +1014,7 @@ impl Heap {
             replacement,
             index,
             slot_count,
+            true,
         )
     }
 
@@ -1024,6 +1025,7 @@ impl Heap {
         selected: crate::engine::object::SelectedMissingAppend,
         flags: PropertyFlags,
         replacement: PropertySlot,
+        retain_value: bool,
     ) -> Result<(), HeapError> {
         let (id, shape_id, atom, selected_count) = selected.into_parts();
         let object = self.object(id)?;
@@ -1056,6 +1058,7 @@ impl Heap {
             replacement,
             index,
             selected_count,
+            retain_value,
         )
     }
 
@@ -1069,6 +1072,7 @@ impl Heap {
         replacement: PropertySlot,
         index: u32,
         slot_count: usize,
+        retain_value: bool,
     ) -> Result<(), HeapError> {
         if usize::try_from(index) != Ok(slot_count) {
             return Err(HeapError::Invariant(
@@ -1086,7 +1090,9 @@ impl Heap {
             ));
         }
 
-        self.retain_edges_transactionally(&property_slot_edges(&replacement))?;
+        if retain_value {
+            self.retain_edges_transactionally(&property_slot_edges(&replacement))?;
+        }
 
         self.invalidate_property_layout(id);
         let shape = match self.shape_mut(shape_id) {
@@ -1281,11 +1287,24 @@ impl Heap {
     /// Append a slot while moving the existing layout owners unchanged into a
     /// canonical successor shape. The caller supplies one owned reference for
     /// every Symbol atom in `replacement`, transferred only on publication.
+    #[cfg(test)]
     pub(crate) fn append_object_slot_with_shape(
         &mut self,
         id: ObjectId,
         shape: ShapeId,
         replacement: PropertySlot,
+    ) -> Result<HeapCleanup, SlotReplacementError> {
+        self.append_object_slot_with_shape_input(id, shape, replacement, true)
+    }
+
+    /// The enclosing state transaction transfers an existing value owner only
+    /// when this result reports publication. Shape ownership remains retained.
+    pub(crate) fn append_object_slot_with_shape_input(
+        &mut self,
+        id: ObjectId,
+        shape: ShapeId,
+        replacement: PropertySlot,
+        retain_value: bool,
     ) -> Result<HeapCleanup, SlotReplacementError> {
         let prepare = (|| {
             let object = self.object(id)?;
@@ -1314,7 +1333,11 @@ impl Heap {
                 .map_err(|_| HeapError::Allocation {
                     operation: "appending a canonical shape property",
                 })?;
-            let mut edges = property_slot_edges(&replacement);
+            let mut edges = if retain_value {
+                property_slot_edges(&replacement)
+            } else {
+                super::edges::Edges::new()
+            };
             edges.push(RawId::Shape(shape));
             self.retain_edges_transactionally(&edges)
         })();

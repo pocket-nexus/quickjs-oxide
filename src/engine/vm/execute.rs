@@ -2426,6 +2426,7 @@ pub(super) fn execute_frame_in_state(
                             slots.try_owned_field_write_in_state(
                                 state,
                                 &runtime.0.poisoned,
+                                &runtime.0.gc_pressure,
                                 runtime.domain_id(),
                                 executable,
                                 operand,

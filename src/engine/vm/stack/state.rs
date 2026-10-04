@@ -354,6 +354,7 @@ impl FrameSlots<'_> {
         &mut self,
         state: &mut RuntimeState,
         poisoned: &std::cell::Cell<bool>,
+        pressure: &crate::engine::heap::gc_pressure::GcPressure,
         domain: u64,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         key: u32,
@@ -363,10 +364,10 @@ impl FrameSlots<'_> {
         };
         let object = *object;
         let input = self.top_direct_mut()?;
-        if !state
-            .try_exchange_linked_field(domain, object, input, executable, key)
-            .map_err(runtime_error_to_vm_error)?
-        {
+        let stored = state
+            .try_store_owned_linked_field(domain, object, input, executable, key)
+            .map_err(runtime_error_to_vm_error)?;
+        if !stored.committed() {
             return Ok(false);
         }
         // Selection never moved the receiver. The input now owns the old slot
@@ -377,6 +378,13 @@ impl FrameSlots<'_> {
         state
             .release_owned_jsvalue(poisoned, self.pop()?)
             .map_err(runtime_error_to_vm_error)?;
+        if stored == crate::engine::object::FieldStore::LayoutPublished {
+            // New owners are now heap edges; retired frame operands are vacant.
+            // Shape allocation can request collection even without a driver exit.
+            state
+                .collect_if_requested(pressure, poisoned)
+                .map_err(runtime_error_to_vm_error)?;
+        }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "ordinary_owned_field_write_in_execute",

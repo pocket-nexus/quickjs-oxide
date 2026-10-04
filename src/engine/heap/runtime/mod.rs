@@ -588,13 +588,33 @@ impl RuntimeState {
 
     /// Consume the selected successor shape reference. Existing slots stay in
     /// place, so only the appended slot acquires new Atom and heap owners.
+    #[cfg(test)]
     pub(crate) fn append_slot_with_owned_shape(
         &mut self,
         object: ObjectId,
         shape: ShapeId,
         replacement: PropertySlot,
     ) -> Result<(), RuntimeError> {
-        let retained_atoms = match self.retain_slot_atoms(std::slice::from_ref(&replacement)) {
+        self.append_slot_with_owned_shape_input(
+            object,
+            shape,
+            crate::engine::object::SlotAppendInput::Borrowed(replacement),
+        )
+    }
+
+    pub(crate) fn append_slot_with_owned_shape_input(
+        &mut self,
+        object: ObjectId,
+        shape: ShapeId,
+        input: crate::engine::object::SlotAppendInput<'_>,
+    ) -> Result<(), RuntimeError> {
+        let (replacement, owner) = input.into_parts();
+        let retain_value = owner.is_none();
+        let retained_atoms = match if retain_value {
+            self.retain_slot_atoms(std::slice::from_ref(&replacement))
+        } else {
+            Ok(Vec::new())
+        } {
             Ok(atoms) => atoms,
             Err(error) => {
                 let cleanup = self.heap.release_shape(shape)?;
@@ -602,9 +622,14 @@ impl RuntimeState {
                 return Err(error);
             }
         };
-        let result = self
-            .heap
-            .append_object_slot_with_shape(object, shape, replacement);
+        let result =
+            self.heap
+                .append_object_slot_with_shape_input(object, shape, replacement, retain_value);
+        if (result.is_ok() || result.as_ref().is_err_and(|failure| failure.published))
+            && let Some(owner) = owner
+        {
+            *owner = crate::engine::value::JsValue::Undefined;
+        }
         // The caller's temporary shape owner is consumed even if preparation
         // failed. On a published error the new slot still owns its Atom edges.
         let shape_cleanup = self.heap.release_shape(shape)?;

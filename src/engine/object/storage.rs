@@ -36,6 +36,24 @@ impl SelectedMissingAppend {
     }
 }
 
+/// A storage input either borrows a descriptor payload or transfers an existing
+/// execution owner. It is consumed in the same state borrow as slot selection;
+/// it never enters a continuation or stores a Runtime.
+#[must_use]
+pub(crate) enum SlotAppendInput<'a> {
+    Borrowed(PropertySlot),
+    Owned(&'a mut JsValue),
+}
+
+impl<'a> SlotAppendInput<'a> {
+    pub(crate) fn into_parts(self) -> (PropertySlot, Option<&'a mut JsValue>) {
+        match self {
+            Self::Borrowed(slot) => (slot, None),
+            Self::Owned(owner) => (PropertySlot::Data(owner.as_raw()), Some(owner)),
+        }
+    }
+}
+
 impl Runtime {
     pub(crate) fn validate_object_and_key(
         &self,
@@ -523,14 +541,20 @@ impl RuntimeState {
         existing: Option<(usize, PropertyFlags)>,
     ) -> Result<(), RuntimeError> {
         let state = self;
-        let (shape_id, shape_len, dictionary) = {
+        if existing.is_none() {
+            return state
+                .append_selected_missing_slot(
+                    object_id,
+                    atom,
+                    flags,
+                    SlotAppendInput::Borrowed(replacement),
+                )
+                .map(drop);
+        }
+        let (shape_id, dictionary) = {
             let object_data = state.heap.object(object_id)?;
             let shape = state.heap.shape(object_data.shape)?;
-            (
-                object_data.shape,
-                shape.entries().len(),
-                shape.is_dictionary(),
-            )
+            (object_data.shape, shape.is_dictionary())
         };
 
         // Replacing a value does not change the layout. Resolve that case while
@@ -557,47 +581,6 @@ impl RuntimeState {
                 };
             }
         }
-        if existing.is_none() && !dictionary {
-            state.retain_construction_shape(shape_id)?;
-        }
-        // An exclusively owned layout may append in place only when no
-        // canonical successor already exists; otherwise the successor (and the
-        // sharing it enables) would be stranded by an equivalent duplicate.
-        if existing.is_none()
-            && (dictionary || shape_len >= properties::MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
-            && state.heap.shape_strong_count(shape_id)? == 1
-            && (dictionary
-                || state
-                    .canonical_successor(
-                        shape_id,
-                        ShapeEntry {
-                            atom: AtomIdx::from_raw(atom.raw()),
-                            flags,
-                        },
-                    )
-                    .is_none())
-        {
-            return state.append_selected_unique_layout(
-                SelectedMissingAppend {
-                    object: object_id,
-                    shape: shape_id,
-                    atom,
-                    slot_count: shape_len,
-                },
-                flags,
-                replacement,
-            );
-        }
-        if existing.is_none() && !dictionary {
-            let target = state.append_transition(
-                shape_id,
-                ShapeEntry {
-                    atom: AtomIdx::from_raw(atom.raw()),
-                    flags,
-                },
-            )?;
-            return state.append_slot_with_owned_shape(object_id, target, replacement);
-        }
         // Reconfiguration does not inherit append-only facts.
         state.unlink_shape_transitions(shape_id);
         let (prototype, mut entries, mut slots) = {
@@ -610,17 +593,98 @@ impl RuntimeState {
             )
         };
 
-        if let Some((index, _)) = existing {
-            entries[index].flags = flags;
-            slots[index] = replacement;
-        } else {
-            entries.push(ShapeEntry {
-                atom: AtomIdx::from_raw(atom.raw()),
-                flags,
-            });
-            slots.push(replacement);
-        }
+        let (index, _) = existing.expect("missing append returned before reconfiguration");
+        entries[index].flags = flags;
+        slots[index] = replacement;
         state.replace_layout(object_id, prototype, &entries, slots)
+    }
+    /// Append policy shared by ordinary descriptors and execution-owned stores.
+    /// The caller selected this missing property under the current state borrow.
+    pub(super) fn append_selected_missing_slot(
+        &mut self,
+        object_id: ObjectId,
+        atom: Atom,
+        flags: PropertyFlags,
+        input: SlotAppendInput<'_>,
+    ) -> Result<bool, RuntimeError> {
+        let state = self;
+        let object = state.heap.object(object_id)?;
+        let shape_id = object.shape;
+        let shape = state.heap.shape(shape_id)?;
+        let shape_len = shape.entries().len();
+        let dictionary = shape.is_dictionary();
+        // Decline before mutating caches/layout; the frame keeps its owner.
+        if dictionary
+            && matches!(&input, SlotAppendInput::Owned(_))
+            && state.heap.shape_strong_count(shape_id)? != 1
+        {
+            return Ok(false);
+        }
+        if !dictionary {
+            state.retain_construction_shape(shape_id)?;
+        }
+        // An exclusively owned layout may append in place only when no
+        // canonical successor already exists; otherwise the successor (and the
+        // sharing it enables) would be stranded by an equivalent duplicate.
+        if (dictionary || shape_len >= properties::MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
+            && state.heap.shape_strong_count(shape_id)? == 1
+            && (dictionary
+                || state
+                    .canonical_successor(
+                        shape_id,
+                        ShapeEntry {
+                            atom: AtomIdx::from_raw(atom.raw()),
+                            flags,
+                        },
+                    )
+                    .is_none())
+        {
+            return state
+                .append_selected_unique_layout_input(
+                    SelectedMissingAppend {
+                        object: object_id,
+                        shape: shape_id,
+                        atom,
+                        slot_count: shape_len,
+                    },
+                    flags,
+                    input,
+                )
+                .map(|()| true);
+        }
+        if !dictionary {
+            let target = state.append_transition(
+                shape_id,
+                ShapeEntry {
+                    atom: AtomIdx::from_raw(atom.raw()),
+                    flags,
+                },
+            )?;
+            return state
+                .append_slot_with_owned_shape_input(object_id, target, input)
+                .map(|()| true);
+        }
+        // Shared dictionaries require the complete rebuild algorithm. An
+        // owning VM store declines this case before calling this kernel.
+        let SlotAppendInput::Borrowed(replacement) = input else {
+            return Err(RuntimeError::Invariant(
+                "owned append reached shared dictionary",
+            ));
+        };
+        state.unlink_shape_transitions(shape_id);
+        let object = state.heap.object(object_id)?;
+        let shape = state.heap.shape(shape_id)?;
+        let prototype = shape.prototype();
+        let mut entries = shape.entries().to_vec();
+        let mut slots = object.slots.clone();
+        entries.push(ShapeEntry {
+            atom: AtomIdx::from_raw(atom.raw()),
+            flags,
+        });
+        slots.push(replacement);
+        state
+            .replace_layout(object_id, prototype, &entries, slots)
+            .map(|()| true)
     }
 }
 
@@ -734,10 +798,10 @@ mod selected_append_tests {
             slot_count: 0,
         };
         assert!(matches!(
-            state.append_selected_unique_layout(
+            state.append_selected_unique_layout_input(
                 selected,
                 PropertyFlags::data(true, true, true),
-                PropertySlot::Data(RawValue::Object(stale_id)),
+                SlotAppendInput::Borrowed(PropertySlot::Data(RawValue::Object(stale_id))),
             ),
             Err(RuntimeError::Heap(HeapError::Stale { .. }))
         ));

@@ -2,6 +2,7 @@
 //! leave this module and a write locates and commits under one state borrow.
 
 mod direct_write;
+pub(crate) use direct_write::FieldStore;
 mod ic;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;

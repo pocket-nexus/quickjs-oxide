@@ -46,20 +46,26 @@ impl RuntimeState {
         flags: PropertyFlags,
         replacement: PropertySlot,
     ) -> Result<(), RuntimeError> {
-        self.append_unique_layout_inner(object, atom, flags, replacement, None)
+        self.append_unique_layout_inner(
+            object,
+            atom,
+            flags,
+            super::SlotAppendInput::Borrowed(replacement),
+            None,
+        )
     }
 
-    pub(super) fn append_selected_unique_layout(
+    pub(super) fn append_selected_unique_layout_input(
         &mut self,
         selected: super::SelectedMissingAppend,
         flags: PropertyFlags,
-        replacement: PropertySlot,
+        input: super::SlotAppendInput<'_>,
     ) -> Result<(), RuntimeError> {
         self.append_unique_layout_inner(
             selected.object(),
             selected.atom(),
             flags,
-            replacement,
+            input,
             Some(selected),
         )
     }
@@ -69,9 +75,11 @@ impl RuntimeState {
         object: ObjectId,
         atom: Atom,
         flags: PropertyFlags,
-        replacement: PropertySlot,
+        input: super::SlotAppendInput<'_>,
         selected: Option<super::SelectedMissingAppend>,
     ) -> Result<(), RuntimeError> {
+        let (replacement, owner) = input.into_parts();
+        let retain_value = owner.is_none();
         let shape = self.heap.object(object)?.shape;
         if self.heap.shape_strong_count(shape)? != 1 {
             return Err(RuntimeError::Invariant(
@@ -80,7 +88,11 @@ impl RuntimeState {
         }
         self.atoms.resolve(atom)?;
         self.atoms.retain(atom)?;
-        let retained_slot_atoms = match self.retain_slot_atoms(std::slice::from_ref(&replacement)) {
+        let retained_slot_atoms = match if retain_value {
+            self.retain_slot_atoms(std::slice::from_ref(&replacement))
+        } else {
+            Ok(Vec::new())
+        } {
             Ok(atoms) => atoms,
             Err(error) => {
                 self.atoms.release(atom)?;
@@ -91,10 +103,12 @@ impl RuntimeState {
         self.unlink_shape_transitions(shape);
         let previous_hash = self.remove_shape_cache(shape);
         let result = match selected {
-            Some(selected) => {
-                self.heap
-                    .append_selected_missing_object_property(selected, flags, replacement)
-            }
+            Some(selected) => self.heap.append_selected_missing_object_property(
+                selected,
+                flags,
+                replacement,
+                retain_value,
+            ),
             None => self
                 .heap
                 .append_unique_object_property(object, atom, flags, replacement),
@@ -106,6 +120,10 @@ impl RuntimeState {
             self.release_atoms(retained_slot_atoms)?;
             self.atoms.release(atom)?;
             return Err(error.into());
+        }
+        if let Some(owner) = owner {
+            // The heap now owns the exact edge/atom previously held here.
+            *owner = JsValue::Undefined;
         }
         // Relink the mutated layout under its successor fingerprint, mirroring
         // QuickJS's in-place hashed-shape update, so later objects converge on

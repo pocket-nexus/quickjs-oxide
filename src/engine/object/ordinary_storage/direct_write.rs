@@ -1,44 +1,97 @@
 //! Exchange existing owners under one state access; no pending representation.
 use super::*;
 
+/// A named store publishes either an existing slot or a new layout. Only the
+/// latter can allocate cycle-collectable shapes and needs a publication safe
+/// point; ordinary replacements do not poll GC.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldStore {
+    Miss,
+    Existing,
+    LayoutPublished,
+}
+impl FieldStore {
+    pub(crate) fn committed(self) -> bool {
+        self != Self::Miss
+    }
+}
+
 impl RuntimeState {
     /// Resolve a static key owned by the current published executable, then
     /// consume the frame's existing value owner through the ordinary selector.
     #[inline]
-    pub(crate) fn try_exchange_linked_field(
+    pub(crate) fn try_store_owned_linked_field(
         &mut self,
         domain: u64,
         object: ObjectId,
         input: &mut JsValue,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         key: u32,
-    ) -> Result<bool, RuntimeError> {
+    ) -> Result<FieldStore, RuntimeError> {
         let Some(atom) = super::linked_field_atom_in_domain(domain, executable, key) else {
-            return Ok(false);
+            return Ok(FieldStore::Miss);
         };
-        self.try_exchange_own_data(object, atom, input)
+        self.try_store_owned_own_data(object, atom, input)
     }
 
-    /// The input owner becomes the old slot owner. A miss leaves it untouched.
-    /// Physical Set selection is shared with the ordinary semantic algorithm.
-    pub(crate) fn try_exchange_own_data(
+    /// A missing ordinary property consumes the same canonical append policy
+    /// as descriptors. Setter, exotic and shared-dictionary cases decline with
+    /// the input untouched; no continuation is constructed on local success.
+    #[inline]
+    fn try_store_owned_own_data(
         &mut self,
         object: ObjectId,
         atom: Atom,
         input: &mut JsValue,
-    ) -> Result<bool, RuntimeError> {
-        let BorrowedSet::Data(selected) = select_set_slot(self, object, atom)? else {
-            return Ok(false);
+    ) -> Result<FieldStore, RuntimeError> {
+        let prototype = match select_set_slot(self, object, atom)? {
+            BorrowedSet::Missing(prototype) => prototype,
+            BorrowedSet::Data(selected) if selected.flags.writable => {
+                return Ok(
+                    if self
+                        .heap
+                        .exchange_owned_data_slot(object, selected.index, input)?
+                    {
+                        FieldStore::Existing
+                    } else {
+                        FieldStore::Miss
+                    },
+                );
+            }
+            BorrowedSet::Data(_) | BorrowedSet::Setter(_) | BorrowedSet::Special(_) => {
+                return Ok(FieldStore::Miss);
+            }
         };
-        if !selected.flags.writable {
-            return Ok(false);
+        self.append_missing_owned_data(object, atom, prototype, input)
+    }
+
+    #[inline(never)]
+    fn append_missing_owned_data(
+        &mut self,
+        object: ObjectId,
+        atom: Atom,
+        prototype: Option<ObjectId>,
+        input: &mut JsValue,
+    ) -> Result<FieldStore, RuntimeError> {
+        if !matches!(
+            set_missing_local(self, object, atom, prototype)?,
+            MissingSelection::Define
+        ) {
+            return Ok(FieldStore::Miss);
         }
-        // Both locations already own their edges and atoms. Swapping their
-        // representations neither retains nor releases either owner. The
-        // consumer retires the old value while its receiver remains rooted.
-        Ok(self
-            .heap
-            .exchange_owned_data_slot(object, selected.index, input)?)
+        if !self.append_selected_missing_slot(
+            object,
+            atom,
+            crate::engine::object::shape::PropertyFlags::data(true, true, true),
+            crate::engine::object::SlotAppendInput::Owned(input),
+        )? {
+            return Ok(FieldStore::Miss);
+        }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "ordinary_owned_field_append_in_state",
+        );
+        Ok(FieldStore::LayoutPublished)
     }
 
     pub(crate) fn try_exchange_dense_value(
@@ -101,6 +154,190 @@ mod tests {
             panic!("object")
         };
         *id
+    }
+
+    #[test]
+    fn owned_append_transfers_heap_and_atom_edges_and_reuses_canonical_shapes() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let key = runtime.intern_property_key("x").unwrap();
+        for source in [
+            "({marker:1})",
+            "'owned string'",
+            "2n**90n",
+            "Symbol('owned')",
+        ] {
+            let first = runtime.into_jsvalue(context.eval("({})").unwrap()).unwrap();
+            let second = runtime.into_jsvalue(context.eval("({})").unwrap()).unwrap();
+            let mut input = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
+            let mut state = runtime.0.state.borrow_mut();
+            let raw = input.as_raw();
+            let before = match raw {
+                RawValue::Object(id) => Some(state.heap.object_strong_count(id).unwrap()),
+                RawValue::Symbol(id) => {
+                    state
+                        .atoms
+                        .resolve(state.atoms.brand(id).unwrap())
+                        .unwrap()
+                        .ref_count
+                }
+                _ => None,
+            };
+            assert!(matches!(
+                state
+                    .try_store_owned_own_data(object(&first), key.atom(), &mut input)
+                    .unwrap(),
+                FieldStore::LayoutPublished,
+            ));
+            assert!(matches!(input, JsValue::Undefined));
+            // This is the publication point consumed by the VM, including GC
+            // with the receiver/value protected only by their actual owners.
+            runtime.0.gc_pressure.remaining.set(0);
+            state
+                .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                .unwrap();
+            assert!(runtime.0.gc_pressure.remaining.get() > 0);
+            let first_shape = state.heap.object(object(&first)).unwrap().shape;
+            assert!(
+                matches!(&state.heap.object(object(&first)).unwrap().slots[0], PropertySlot::Data(value) if JsValue::from_raw(value.clone()) == JsValue::from_raw(raw.clone()))
+            );
+            match raw {
+                RawValue::Object(id) => {
+                    assert_eq!(Some(state.heap.object_strong_count(id).unwrap()), before)
+                }
+                RawValue::Symbol(id) => assert_eq!(
+                    state
+                        .atoms
+                        .resolve(state.atoms.brand(id).unwrap())
+                        .unwrap()
+                        .ref_count,
+                    before
+                ),
+                _ => {}
+            }
+            let mut other = JsValue::Null;
+            assert!(
+                state
+                    .try_store_owned_own_data(object(&second), key.atom(), &mut other)
+                    .unwrap()
+                    .committed()
+            );
+            assert_eq!(
+                state.heap.object(object(&second)).unwrap().shape,
+                first_shape
+            );
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, first)
+                .unwrap();
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, second)
+                .unwrap();
+            if let RawValue::Object(id) = raw {
+                assert!(state.heap.object(id).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn owned_append_declines_observable_prototypes_before_consuming_input() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let key = runtime.intern_property_key("x").unwrap();
+        for source in [
+            "Object.preventExtensions({})",
+            "Object.create({set x(v){throw v}})",
+            "Object.create(Object.freeze({x:1}))",
+            "Object.create(new Proxy({}, {getOwnPropertyDescriptor(){throw 7}}))",
+        ] {
+            let receiver = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
+            let mut input = runtime.into_jsvalue(context.eval("({})").unwrap()).unwrap();
+            let raw = input.as_raw();
+            let mut state = runtime.0.state.borrow_mut();
+            assert!(
+                !state
+                    .try_store_owned_own_data(object(&receiver), key.atom(), &mut input)
+                    .unwrap()
+                    .committed(),
+                "{source}"
+            );
+            assert_eq!(JsValue::from_raw(input.as_raw()), JsValue::from_raw(raw));
+            assert!(
+                state
+                    .heap
+                    .shape(state.heap.object(object(&receiver)).unwrap().shape)
+                    .unwrap()
+                    .find(crate::engine::atom::AtomIdx::from_raw(key.atom().raw()))
+                    .is_none()
+            );
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, input)
+                .unwrap();
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, receiver)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn rejected_owned_successor_restores_the_input_and_shape_owner() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let receiver = runtime
+            .into_jsvalue(context.eval("({x:1})").unwrap())
+            .unwrap();
+        let mut input = runtime
+            .into_jsvalue(context.eval("Symbol('rollback')").unwrap())
+            .unwrap();
+        let raw = input.as_raw();
+        let mut state = runtime.0.state.borrow_mut();
+        let shape = state.heap.object(object(&receiver)).unwrap().shape;
+        let count = state.heap.shape_strong_count(shape).unwrap();
+        state.heap.retain_shape(shape).unwrap();
+        assert!(
+            state
+                .append_slot_with_owned_shape_input(
+                    object(&receiver),
+                    shape,
+                    crate::engine::object::SlotAppendInput::Owned(&mut input)
+                )
+                .is_err()
+        );
+        assert_eq!(JsValue::from_raw(input.as_raw()), JsValue::from_raw(raw));
+        assert_eq!(state.heap.shape_strong_count(shape).unwrap(), count);
+        assert_eq!(state.heap.object(object(&receiver)).unwrap().slots.len(), 1);
+        state
+            .release_owned_jsvalue(&runtime.0.poisoned, input)
+            .unwrap();
+        state
+            .release_owned_jsvalue(&runtime.0.poisoned, receiver)
+            .unwrap();
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn constructors_append_in_state_and_keep_getter_and_proxy_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(context.eval(r#"(() => {
+            function C(v) {this.a=v;this.b=this;this.c=Symbol('field');}
+            const value={};const first=new C(value);const second=new C(value);
+            if(first.a!==value || first.b!==first || second.b!==second || typeof first.c!=='symbol')return false;
+            let calls=0;const proto={set x(v){calls++;if(v!==value)throw 7}};
+            const o=Object.create(proto);o.x=value;
+            const p=new Proxy({}, {set(t,k,v,r){calls++;return Reflect.set(t,k,v,r)}});p.x=value;
+            return calls===2 && !Object.hasOwn(o,'x') && p.x===value;
+        })()"#).unwrap(), Value::Bool(true));
+        assert!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("ordinary_owned_field_append_in_state")
+                .copied()
+                .unwrap_or(0)
+                >= 6
+        );
+        assert!(!runtime.0.poisoned.get());
     }
 
     #[test]
@@ -228,8 +465,9 @@ mod tests {
         assert_eq!(state.heap.object_strong_count(fresh), Ok(1));
         assert!(
             state
-                .try_exchange_own_data(object(&base), key.atom(), &mut input)
+                .try_store_owned_own_data(object(&base), key.atom(), &mut input)
                 .unwrap()
+                .committed()
         );
         let previous = object(&input);
         assert_eq!(state.heap.object_strong_count(fresh), Ok(1));
@@ -252,7 +490,6 @@ mod tests {
         for source in [
             "Object.freeze({x:1})",
             "({get x(){throw 1}})",
-            "({})",
             "new Proxy({x:1}, {set(){throw 2}})",
         ] {
             let base = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
@@ -263,8 +500,9 @@ mod tests {
             let mut state = runtime.0.state.borrow_mut();
             assert!(
                 !state
-                    .try_exchange_own_data(object(&base), key.atom(), &mut input)
+                    .try_store_owned_own_data(object(&base), key.atom(), &mut input)
                     .unwrap()
+                    .committed()
             );
             assert_eq!(object(&input), fresh);
             assert_eq!(state.heap.object_strong_count(fresh), Ok(1));
