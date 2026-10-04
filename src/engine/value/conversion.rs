@@ -1,5 +1,7 @@
 pub(crate) mod descriptor;
 pub(crate) mod number;
+mod object;
+pub(crate) use object::ToObjectOutcome;
 pub(crate) mod primitive;
 mod state;
 mod string;
@@ -10,7 +12,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::heap::ContextId;
 
-use crate::engine::object::{ObjectRef, PropertyKey, WellKnownSymbol};
+use crate::engine::object::{PropertyKey, WellKnownSymbol};
 #[cfg(any(test, feature = "test262-host"))]
 use crate::engine::value::Value;
 use crate::engine::value::{JsString, JsValue};
@@ -428,47 +430,6 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         let step = primitive::PrimitiveResume::start(self, realm, value, hint)?;
         self.finish_primitive_steps(realm, step)
-    }
-
-    /// Internal-value form of [`Runtime::native_to_object`]: consumes the value.
-    pub(crate) fn native_to_object_jsvalue(
-        &self,
-        realm: ContextId,
-        value: crate::engine::value::JsValue,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
-        use crate::engine::value::JsValue;
-        let (kind, value) = match value {
-            JsValue::Object(object) => {
-                return Ok(NativeConversion::Value(ObjectRef::from_owned_handle(
-                    self.clone(),
-                    object,
-                )));
-            }
-            JsValue::Undefined | JsValue::Null => {
-                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Type,
-                    "cannot convert to object",
-                )?));
-            }
-            value @ JsValue::Bool(_) => (PrimitiveKind::Boolean, value),
-            value @ (JsValue::Int(_) | JsValue::Float(_)) => (PrimitiveKind::Number, value),
-            value @ JsValue::String(_) => (PrimitiveKind::String, value),
-            value @ (JsValue::BigInt(_) | JsValue::ShortBigInt(_)) => {
-                (PrimitiveKind::BigInt, value)
-            }
-            value @ JsValue::Symbol(_) => (PrimitiveKind::Symbol, value),
-        };
-        let prototype = match self.primitive_prototype_for_realm(realm, kind) {
-            Ok(prototype) => prototype,
-            Err(error) => {
-                self.release_jsvalue(value)?;
-                return Err(error);
-            }
-        };
-        Ok(NativeConversion::Value(
-            self.new_primitive_object_jsvalue(&prototype, kind, value)?,
-        ))
     }
 }
 

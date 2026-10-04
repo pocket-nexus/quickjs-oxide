@@ -68,6 +68,9 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::PrimitiveReply { .. } | Step::CyclePublishedPrimitiveReply { .. } => {
             "query_dispatch.step.primitive_reply"
         }
+        Step::CyclePublishedComplete(_) => "query_dispatch.step.cycle_published_complete",
+        Step::CyclePublishedPrimitive { .. } => "query_dispatch.step.cycle_published_primitive",
+        Step::RawReadRequest { .. } => "query_dispatch.step.raw_read_request",
         Step::RawRead { .. } => "query_dispatch.step.raw_read",
         Step::RawCall { .. } => "query_dispatch.step.raw_call",
         Step::CallbackBoundary(_) => "query_dispatch.step.callback_boundary",

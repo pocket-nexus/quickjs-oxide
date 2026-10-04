@@ -28,6 +28,10 @@ pub(super) fn primitive(
                 | Step::CyclePublishedPrimitiveReply { .. }
                 | Step::NumberReply { .. }
                 | Step::RawRead { .. }
+                | Step::RawReadRequest { .. }
+                | Step::CyclePublishedComplete(_)
+                | Step::CyclePublishedPrimitive { .. }
+                | Step::OrdinaryPrimitive { .. }
                 | Step::RawCall { .. }
                 | Step::CallbackBoundary(_)
                 | Step::PreparedNativeBoundary(_)
@@ -55,17 +59,6 @@ pub(super) fn primitive(
         crate::engine::api::profiling::record_owned_execution_event("conversion_transition");
         let realm = query.realm;
         match &mut *step {
-            Step::OrdinaryPrimitive { object, hint } => {
-                let object = object.take().expect("selected Step field");
-                let hint = hint.take().expect("selected Step field");
-
-                *step = crate::engine::value::conversion::primitive::PrimitiveResume::ordinary(
-                    runtime, realm, object, hint,
-                )
-                .map_err(runtime_error_to_vm_error)?
-                .try_into()?;
-                continue;
-            }
             Step::Arguments { value, resume } => {
                 query
                     .parents

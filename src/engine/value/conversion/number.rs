@@ -7,7 +7,7 @@ use crate::engine::{
         ObjectId,
         runtime::{RuntimeState, owned_values::OwnedValueGuard},
     },
-    object::CallableRef,
+    object::{CallableRef, ObjectRef},
     value::JsValue,
 };
 use std::cell::Cell;

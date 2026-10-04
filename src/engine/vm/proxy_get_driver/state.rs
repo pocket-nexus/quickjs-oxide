@@ -2,7 +2,7 @@
 use super::{Completion, Query, Resume, Runtime, Step};
 use crate::engine::{
     api::runtime_error::RuntimeError,
-    heap::runtime::{RuntimeState, owned_values::OwnedValueGuard},
+    heap::runtime::RuntimeState,
     object::{OwnedRead, ReadStep},
     value::{
         JsValue,
@@ -141,6 +141,7 @@ impl Query {
                     *step = resume.number_in_state(
                         state,
                         poisoned,
+                        runtime.0.host_services.as_ref(),
                         value.take().expect("number reply"),
                     )?;
                 }
@@ -183,6 +184,7 @@ impl Query {
                     *step = resume.number_in_state(
                         state,
                         poisoned,
+                        runtime.0.host_services.as_ref(),
                         value.take().expect("number reply"),
                     )?;
                 }
@@ -242,57 +244,20 @@ impl Query {
                         }
                         PrimitiveStep::Get { resume } => {
                             let (object, key) = resume.get_in_state();
-                            // Preserve the request adapter's independent checked
-                            // receiver role before actual property selection.
                             let receiver = state.dup_jsvalue(&JsValue::Object(object))?;
-                            let mut receiver = OwnedValueGuard::new(state, poisoned, receiver);
-                            let (state, receiver_value) = receiver.parts();
-                            let selected = state.prepare_ordinary_read_in_state(
-                                poisoned,
-                                runtime.domain_id(),
-                                object,
-                                key,
-                                receiver_value.as_ref().expect("read receiver"),
-                                false,
-                                None,
-                            );
-                            if let Err(error) = selected {
-                                if poisoned.get() {
-                                    return Err(RuntimeError::Poisoned);
-                                }
-                                state.release_owned_jsvalue(
-                                    poisoned,
-                                    receiver_value.take().expect("read receiver"),
-                                )?;
-                                let (object, _) = resume.take_get_in_state();
-                                state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
-                                return Err(error);
-                            }
-                            let read = selected.expect("selected read");
-                            let PrimitiveStep::Get { resume } =
+                            let PrimitiveStep::Get { mut resume } =
                                 progress.take().expect("primitive progress")
                             else {
                                 unreachable!()
                             };
-                            *step = Step::RawRead {
-                                read: Some(read),
+                            let _ = resume.take_get_in_state();
+                            *step = Step::RawReadRequest {
+                                selected: None,
+                                object: Some(object),
                                 key,
+                                receiver: Some(receiver),
                                 resume: Some(Resume::Primitive(resume)),
                             };
-                            // Publish the selection before either temporary cleanup.
-                            state.release_owned_jsvalue(
-                                poisoned,
-                                receiver_value.take().expect("read receiver"),
-                            )?;
-                            let Step::RawRead {
-                                resume: Some(Resume::Primitive(resume)),
-                                ..
-                            } = step
-                            else {
-                                unreachable!()
-                            };
-                            let (object, _) = resume.take_get_in_state();
-                            state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
                         }
                         PrimitiveStep::Call { .. } => {
                             let PrimitiveStep::Call { mut resume } =
@@ -325,53 +290,19 @@ impl Query {
                         NumberStep::Read { resume } => {
                             let (object, key) = resume.read_in_state();
                             let receiver = state.dup_jsvalue(&JsValue::Object(object))?;
-                            let mut receiver = OwnedValueGuard::new(state, poisoned, receiver);
-                            let (state, receiver_value) = receiver.parts();
-                            let selected = state.prepare_ordinary_read_in_state(
-                                poisoned,
-                                runtime.domain_id(),
-                                object,
-                                key,
-                                receiver_value.as_ref().expect("read receiver"),
-                                false,
-                                None,
-                            );
-                            if let Err(error) = selected {
-                                if poisoned.get() {
-                                    return Err(RuntimeError::Poisoned);
-                                }
-                                state.release_owned_jsvalue(
-                                    poisoned,
-                                    receiver_value.take().expect("read receiver"),
-                                )?;
-                                let (object, _) = resume.take_read_in_state();
-                                state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
-                                return Err(error);
-                            }
-                            let read = selected.expect("selected read");
-                            let NumberStep::Read { resume } =
+                            let NumberStep::Read { mut resume } =
                                 progress.take().expect("number progress")
                             else {
                                 unreachable!()
                             };
-                            *step = Step::RawRead {
-                                read: Some(read),
+                            let _ = resume.take_read_in_state();
+                            *step = Step::RawReadRequest {
+                                selected: None,
+                                object: Some(object),
                                 key,
+                                receiver: Some(receiver),
                                 resume: Some(Resume::Number(resume)),
                             };
-                            state.release_owned_jsvalue(
-                                poisoned,
-                                receiver_value.take().expect("read receiver"),
-                            )?;
-                            let Step::RawRead {
-                                resume: Some(Resume::Number(resume)),
-                                ..
-                            } = step
-                            else {
-                                unreachable!()
-                            };
-                            let (object, _) = resume.take_read_in_state();
-                            state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
                         }
                         NumberStep::Call { .. } => {
                             let NumberStep::Call { mut resume } =
@@ -387,6 +318,82 @@ impl Query {
                             };
                         }
                     }
+                }
+                Step::CyclePublishedComplete(value) => {
+                    cycle_published = true;
+                    *step = Step::Complete(value.take());
+                }
+                Step::CyclePublishedPrimitive {
+                    value,
+                    hint,
+                    resume,
+                } => {
+                    cycle_published = true;
+                    *step = Step::Primitive {
+                        value: value.take(),
+                        hint: hint.take(),
+                        resume: resume.take(),
+                    };
+                }
+                Step::OrdinaryPrimitive { object, hint } => {
+                    *step = Step::try_from(PrimitiveResume::ordinary_in_state(
+                        state,
+                        poisoned,
+                        self.realm,
+                        object.take().expect("ordinary primitive receiver"),
+                        hint.take().expect("ordinary primitive hint"),
+                    )?)?;
+                }
+                Step::RawReadRequest {
+                    selected,
+                    object,
+                    key,
+                    receiver,
+                    resume,
+                } => {
+                    if selected.is_none() {
+                        let read = state.prepare_ordinary_read_in_state(
+                            poisoned,
+                            runtime.domain_id(),
+                            object.expect("raw read object"),
+                            *key,
+                            receiver.as_ref().expect("raw read receiver"),
+                            false,
+                            None,
+                        );
+                        match read {
+                            Ok(read) => *selected = Some(read),
+                            Err(error) => {
+                                if poisoned.get() {
+                                    return Err(RuntimeError::Poisoned);
+                                }
+                                state.release_owned_jsvalue(
+                                    poisoned,
+                                    receiver.take().expect("raw read receiver"),
+                                )?;
+                                state.release_owned_jsvalue(
+                                    poisoned,
+                                    JsValue::Object(object.take().expect("raw read object")),
+                                )?;
+                                return Err(error);
+                            }
+                        }
+                    }
+                    // Selection is published before cleanup, and each unconsumed
+                    // request role stays in this record until its actual retirement.
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        receiver.take().expect("raw read receiver"),
+                    )?;
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        JsValue::Object(object.take().expect("raw read object")),
+                    )?;
+                    *step = Step::RawRead {
+                        read: selected.take(),
+                        key: *key,
+                        resume: resume.take(),
+                    };
                 }
                 Step::RawRead { read, resume, .. } => {
                     // Preserve the allocation fact even when the selected effect
@@ -469,7 +476,7 @@ impl Step {
             state.release_owned_jsvalue(poisoned, value)
         };
         match self {
-            Self::Complete(value) => {
+            Self::Complete(value) | Self::CyclePublishedComplete(value) => {
                 if let Some(value) = value.take() {
                     completion(state, value)?;
                 }
@@ -516,7 +523,8 @@ impl Step {
             }
             Self::String { value, resume }
             | Self::Number { value, resume }
-            | Self::Primitive { value, resume, .. } => {
+            | Self::Primitive { value, resume, .. }
+            | Self::CyclePublishedPrimitive { value, resume, .. } => {
                 if let Some(value) = value.take() {
                     state.release_owned_jsvalue(poisoned, value)?;
                 }
@@ -534,6 +542,33 @@ impl Step {
                     return Err(RuntimeError::Poisoned);
                 }
                 value.resume.retire_raw_in_state(state, poisoned)?;
+            }
+            Self::OrdinaryPrimitive { object, .. } => {
+                if let Some(object) = object.take() {
+                    state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
+                }
+            }
+            Self::RawReadRequest {
+                selected,
+                object,
+                receiver,
+                resume,
+                ..
+            } => {
+                if let Some(ReadStep::Ready(read) | ReadStep::CyclePublished(read)) =
+                    selected.take()
+                {
+                    read.retire(state, poisoned)?;
+                }
+                if let Some(receiver) = receiver.take() {
+                    state.release_owned_jsvalue(poisoned, receiver)?;
+                }
+                if let Some(object) = object.take() {
+                    state.release_owned_jsvalue(poisoned, JsValue::Object(object))?;
+                }
+                if let Some(resume) = resume {
+                    resume.retire_raw_in_state(state, poisoned)?;
+                }
             }
             Self::RawRead { read, resume, .. } => {
                 if let Some(ReadStep::Ready(read) | ReadStep::CyclePublished(read)) = read.take() {

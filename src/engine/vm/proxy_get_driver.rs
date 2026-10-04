@@ -1921,6 +1921,9 @@ fn advance_inner(
             | Step::PrimitiveReply { .. }
             | Step::CyclePublishedPrimitiveReply { .. }
             | Step::RawRead { .. }
+            | Step::RawReadRequest { .. }
+            | Step::CyclePublishedComplete(_)
+            | Step::CyclePublishedPrimitive { .. }
             | Step::RawCall { .. }
             | Step::CallbackBoundary(_)
             | Step::PreparedNativeBoundary(_)

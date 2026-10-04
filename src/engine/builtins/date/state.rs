@@ -1,6 +1,7 @@
 //! Complete read-only Date bodies use their admitted State and borrowed host.
-use super::calendar::get_date_fields;
+use super::calendar::{get_date_fields, set_date_fields};
 use super::format::{DateStringKind, format_date_string};
+use super::prototype::date_input_fields;
 use crate::engine::{
     api::{
         error::{NativeErrorKind, NativeErrorMessage},
@@ -192,7 +193,47 @@ impl RuntimeState {
         Ok(Completion::Return(Number::compact(number).into()))
     }
 
-    fn date_error(
+    pub(super) fn set_date_this_time_value(
+        &mut self,
+        object: ObjectId,
+        value: f64,
+    ) -> Result<Completion, RuntimeError> {
+        self.heap.set_date_value(object, value)?;
+        Ok(Completion::Return(Number::compact(value).into()))
+    }
+
+    pub(super) fn finish_date_set_year(
+        &mut self,
+        host: &dyn HostServices,
+        object: ObjectId,
+        mut year: f64,
+    ) -> Result<Completion, RuntimeError> {
+        if year.is_finite() {
+            year = year.trunc();
+            if (0.0..100.0).contains(&year) {
+                year += 1900.0;
+            }
+        }
+        // setYear deliberately reads the receiver after conversion callbacks.
+        let current_value = self.heap.date_value(object)?;
+        let mut fields = get_date_fields(current_value, true, true, |instant| {
+            host.timezone_offset_minutes(instant)
+        })
+        .ok_or(RuntimeError::Invariant(
+            "forced Date decomposition unexpectedly rejected a time value",
+        ))?;
+        fields[0] = year;
+        let value = if year.is_finite() {
+            set_date_fields(&date_input_fields(&fields), true, |instant| {
+                host.timezone_offset_minutes(instant)
+            })
+        } else {
+            f64::NAN
+        };
+        self.set_date_this_time_value(object, value)
+    }
+
+    pub(super) fn date_error(
         &mut self,
         poisoned: &Cell<bool>,
         realm: ContextId,

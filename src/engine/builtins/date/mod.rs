@@ -10,6 +10,8 @@ mod parse;
 mod prototype;
 mod state;
 
+pub(crate) use prototype::operation::finish as finish_prototype_operation;
+
 use super::*;
 use crate::engine::object::builtin_properties::NativeBuiltinProperty;
 

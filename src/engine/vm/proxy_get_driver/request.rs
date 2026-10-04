@@ -310,6 +310,19 @@ pub(in crate::engine::vm) enum Step {
         key: crate::engine::atom::Atom,
         resume: Option<Resume>,
     },
+    CyclePublishedComplete(Option<Completion>),
+    CyclePublishedPrimitive {
+        value: Option<JsValue>,
+        hint: Option<ToPrimitiveHint>,
+        resume: Option<Resume>,
+    },
+    RawReadRequest {
+        selected: Option<crate::engine::object::ReadStep>,
+        object: Option<crate::engine::heap::ObjectId>,
+        key: crate::engine::atom::Atom,
+        receiver: Option<JsValue>,
+        resume: Option<Resume>,
+    },
     RawCall {
         inputs: Option<crate::engine::vm::call::ordinary::RawCallbackInputs>,
         resume: Option<Resume>,
@@ -393,7 +406,7 @@ pub(in crate::engine::vm) enum Step {
         resume: Option<Resume>,
     },
     OrdinaryPrimitive {
-        object: Option<ObjectRef>,
+        object: Option<crate::engine::heap::ObjectId>,
         hint: Option<ToPrimitiveHint>,
     },
     ConstructorSource {
@@ -662,6 +675,10 @@ impl Step {
             | Self::PrimitiveReply { .. }
             | Self::CyclePublishedPrimitiveReply { .. }
             | Self::RawRead { .. }
+            | Self::RawReadRequest { .. }
+            | Self::CyclePublishedComplete(_)
+            | Self::CyclePublishedPrimitive { .. }
+            | Self::OrdinaryPrimitive { .. }
             | Self::RawCall { .. }
             | Self::CallbackBoundary(_)
             | Self::PreparedNativeBoundary(_) => true,
@@ -719,6 +736,38 @@ impl Step {
             | Self::CyclePublishedPrimitiveReply { value, resume } => {
                 if let Some(value) = value {
                     release_completion(value);
+                }
+                if let Some(resume) = resume {
+                    resume.release_owned(runtime);
+                }
+            }
+            Self::RawReadRequest {
+                selected,
+                object,
+                receiver,
+                resume,
+                ..
+            } => {
+                if let Some(
+                    crate::engine::object::ReadStep::Ready(read)
+                    | crate::engine::object::ReadStep::CyclePublished(read),
+                ) = selected
+                {
+                    if read.retire_at_boundary(runtime).is_err() {
+                        return;
+                    }
+                }
+                if let Some(receiver) = receiver {
+                    if runtime.release_jsvalue(receiver).is_err() || runtime.is_poisoned() {
+                        return;
+                    }
+                }
+                if let Some(object) = object {
+                    if runtime.release_jsvalue(JsValue::Object(object)).is_err()
+                        || runtime.is_poisoned()
+                    {
+                        return;
+                    }
                 }
                 if let Some(resume) = resume {
                     resume.release_owned(runtime);
@@ -959,7 +1008,11 @@ impl Step {
                     value.release_owned(runtime);
                 }
             }
-            Self::OrdinaryPrimitive { object: _, hint: _ } => {}
+            Self::OrdinaryPrimitive { object, .. } => {
+                if let Some(object) = object {
+                    release(JsValue::Object(object));
+                }
+            }
             Self::ConstructorSource { new_target, resume } => {
                 if let Some(value) = new_target {
                     release(value);
@@ -1290,6 +1343,11 @@ impl Step {
                 value,
                 hint: _,
                 resume,
+            }
+            | Self::CyclePublishedPrimitive {
+                value,
+                hint: _,
+                resume,
             } => {
                 if let Some(value) = value {
                     release(value);
@@ -1460,7 +1518,7 @@ impl Step {
                     release(value);
                 }
             }
-            Self::Complete(value) => {
+            Self::Complete(value) | Self::CyclePublishedComplete(value) => {
                 if let Some(value) = value {
                     release_completion(value);
                 }
@@ -1560,7 +1618,8 @@ impl Resume {
             | Self::Numeric(_)
             | Self::NumericPrimitive(_)
             | Self::Math(_)
-            | Self::ScalarText(_) => match std::mem::replace(self, Self::Identity) {
+            | Self::ScalarText(_)
+            | Self::DatePrototype(_) => match std::mem::replace(self, Self::Identity) {
                 Self::Primitive(resume) => resume.retire_in_state(state, poisoned),
                 Self::Number(resume) => resume.retire_in_state(state, poisoned),
                 Self::Numeric(resume) | Self::NumericPrimitive(resume) => {
@@ -1568,6 +1627,7 @@ impl Resume {
                 }
                 Self::Math(resume) => resume.retire_in_state(state, poisoned),
                 Self::ScalarText(resume) => resume.retire_in_state(state, poisoned),
+                Self::DatePrototype(resume) => resume.retire_in_state(state, poisoned),
                 _ => unreachable!(),
             },
             Self::StringValue { resume, .. }
@@ -1592,7 +1652,8 @@ impl Resume {
             | Self::Numeric(_)
             | Self::NumericPrimitive(_)
             | Self::Math(_)
-            | Self::ScalarText(_) => match std::mem::replace(self, Self::Identity) {
+            | Self::ScalarText(_)
+            | Self::DatePrototype(_) => match std::mem::replace(self, Self::Identity) {
                 Self::Primitive(resume) => resume.retire_at_boundary(runtime),
                 Self::Number(resume) => resume.retire_at_boundary(runtime),
                 Self::Numeric(resume) | Self::NumericPrimitive(resume) => {
@@ -1600,6 +1661,7 @@ impl Resume {
                 }
                 Self::Math(resume) => resume.retire_at_boundary(runtime),
                 Self::ScalarText(resume) => resume.retire_at_boundary(runtime),
+                Self::DatePrototype(resume) => resume.retire_at_boundary(runtime),
                 _ => unreachable!(),
             },
             Self::StringValue { resume, .. }
@@ -1619,7 +1681,8 @@ impl Resume {
             | Self::Numeric(_)
             | Self::NumericPrimitive(_)
             | Self::Math(_)
-            | Self::ScalarText(_) => true,
+            | Self::ScalarText(_)
+            | Self::DatePrototype(_) => true,
             Self::StringValue { resume, .. }
             | Self::OwnFlagReply { resume, .. }
             | Self::PrototypeGetReply(resume)
@@ -1679,7 +1742,11 @@ impl Resume {
     pub(super) fn can_resume_in_state(&self) -> bool {
         matches!(
             self,
-            Self::Primitive(_) | Self::Number(_) | Self::NumericPrimitive(_) | Self::Identity
+            Self::Primitive(_)
+                | Self::Number(_)
+                | Self::NumericPrimitive(_)
+                | Self::DatePrototype(_)
+                | Self::Identity
         )
     }
     pub(in crate::engine::vm) fn resume_in_state(
@@ -1698,6 +1765,9 @@ impl Resume {
                 .and_then(Step::try_from),
             Self::NumericPrimitive(resume) => resume
                 .primitive_in_state(state, poisoned, completion)
+                .and_then(Step::try_from),
+            Self::DatePrototype(resume) => resume
+                .resume_in_state(state, poisoned, completion)
                 .and_then(Step::try_from),
             mut resume => {
                 let (Completion::Return(value) | Completion::Throw(value)) = completion;
@@ -1760,12 +1830,16 @@ impl Resume {
         }
     }
     pub(super) fn can_number_in_state(&self) -> bool {
-        matches!(self, Self::Math(_) | Self::Numeric(_) | Self::ScalarText(_))
+        matches!(
+            self,
+            Self::Math(_) | Self::Numeric(_) | Self::ScalarText(_) | Self::DatePrototype(_)
+        )
     }
     pub(super) fn number_in_state(
         self,
         state: &mut crate::engine::heap::runtime::RuntimeState,
         poisoned: &std::cell::Cell<bool>,
+        host: &dyn crate::engine::host::HostServices,
         result: NativeConversion<f64>,
     ) -> Result<Step, crate::engine::api::RuntimeError> {
         match self {
@@ -1777,6 +1851,9 @@ impl Resume {
                 .and_then(Step::try_from),
             Self::ScalarText(resume) => resume
                 .number_in_state(state, poisoned, result)
+                .and_then(Step::try_from),
+            Self::DatePrototype(resume) => resume
+                .number_in_state(state, poisoned, host, result)
                 .and_then(Step::try_from),
             mut resume => {
                 if let NativeConversion::Throw(value) = result {

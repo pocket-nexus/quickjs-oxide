@@ -994,7 +994,10 @@ mod held_state_call_tests {
 
     #[test]
     fn native_completes_in_state_and_proxy_preserves_declined_inputs() {
-        for source in ["Number.isFinite", "new Proxy(function(arg){return arg},{})"] {
+        for (source, native) in [
+            ("Number.isFinite", true),
+            ("new Proxy(function(arg){return arg},{})", false),
+        ] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context().unwrap();
             let callee = context.eval(source).unwrap();
@@ -1027,7 +1030,7 @@ mod held_state_call_tests {
             .unwrap();
             assert_eq!(execution.frames.current_id(), Some(parent));
             let frame = execution.frames.current_mut(parent).unwrap();
-            if source == "Number.isFinite" {
+            if native {
                 assert!(matches!(entry, Entry::NativeReady));
                 assert_eq!(frame.resume_pc, next.index());
                 assert_eq!(execution.slots.depth(&frame.window), 1);

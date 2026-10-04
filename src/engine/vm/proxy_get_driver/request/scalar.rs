@@ -1,5 +1,4 @@
 //! Mechanical adapters for scalar domain requests.
-use super::JsValue;
 use super::{DirectCallTarget, Resume, Step, ToPrimitiveHint};
 
 impl TryFrom<crate::engine::builtins::MathStep> for Step {
@@ -167,6 +166,16 @@ impl TryFrom<crate::engine::builtins::DatePrototypeStep> for Step {
             use crate::engine::builtins::DatePrototypeStep as T;
             match step {
                 T::Complete(result) => Self::Complete(Some(result)),
+                T::CyclePublished(result) => Self::CyclePublishedComplete(Some(result)),
+                T::CyclePublishedPrimitive {
+                    value,
+                    hint,
+                    resume,
+                } => Self::CyclePublishedPrimitive {
+                    value: Some(value),
+                    hint: Some(hint),
+                    resume: Some(Resume::DatePrototype(resume)),
+                },
                 T::Number { value, resume } => Self::Number {
                     value: Some(value),
                     resume: Some(Resume::DatePrototype(resume)),
@@ -187,17 +196,21 @@ impl TryFrom<crate::engine::builtins::DatePrototypeStep> for Step {
                 T::Read {
                     object,
                     key,
+                    receiver,
                     resume,
-                } => Self::Read {
-                    receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
+                } => Self::RawReadRequest {
+                    selected: None,
                     object: Some(object),
-                    key: Some(key),
+                    key,
+                    receiver: Some(receiver),
                     resume: Some(Resume::DatePrototype(resume)),
                 },
-                T::Call { callable, receiver } => Self::Call {
-                    target: Some(DirectCallTarget::Callable(callable)),
-                    receiver: Some(receiver),
-                    arguments: Some(Vec::new()),
+                T::Call { function, receiver } => Self::RawCall {
+                    inputs: Some(crate::engine::vm::call::ordinary::RawCallbackInputs::new(
+                        function,
+                        receiver,
+                        Vec::new(),
+                    )),
                     resume: Some(Resume::Identity),
                 },
             }

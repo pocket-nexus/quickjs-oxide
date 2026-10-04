@@ -246,6 +246,11 @@ impl RuntimeState {
                         | crate::engine::builtins::native::DateNativeKind::String(_)
                         | crate::engine::builtins::native::DateNativeKind::TimezoneOffset
                         | crate::engine::builtins::native::DateNativeKind::GetField(_)
+                        | crate::engine::builtins::native::DateNativeKind::SetTime
+                        | crate::engine::builtins::native::DateNativeKind::SetField(_)
+                        | crate::engine::builtins::native::DateNativeKind::SetYear
+                        | crate::engine::builtins::native::DateNativeKind::ToPrimitive
+                        | crate::engine::builtins::native::DateNativeKind::ToJson
                 )
         )
     }
@@ -346,6 +351,21 @@ impl RuntimeState {
             NativeFunctionId::FunctionPrototype => {
                 Ok(NativeStep::Complete(Completion::Return(JsValue::Undefined)))
             }
+            NativeFunctionId::Date(
+                kind @ (crate::engine::builtins::native::DateNativeKind::SetTime
+                | crate::engine::builtins::native::DateNativeKind::SetField(_)
+                | crate::engine::builtins::native::DateNativeKind::SetYear
+                | crate::engine::builtins::native::DateNativeKind::ToPrimitive
+                | crate::engine::builtins::native::DateNativeKind::ToJson),
+            ) => crate::engine::builtins::DatePrototypeStep::start_in_state(
+                self, poisoned, host, realm, kind, invocation, arguments,
+            )
+            .map(|step| match step {
+                crate::engine::builtins::DatePrototypeStep::Complete(result) => {
+                    NativeStep::Complete(result)
+                }
+                step => NativeStep::DatePrototype(step),
+            }),
             NativeFunctionId::Date(kind) => self
                 .call_date_readonly_native(poisoned, host, realm, kind, invocation)
                 .map(NativeStep::Complete),
@@ -377,6 +397,9 @@ impl crate::engine::api::runtime::Runtime {
             }
             NativeStep::ScalarText(step) => {
                 crate::engine::builtins::primitive::text::finish(self, realm, step)
+            }
+            NativeStep::DatePrototype(step) => {
+                crate::engine::builtins::date::finish_prototype_operation(self, realm, step)
             }
             NativeStep::Numeric(step) => {
                 crate::engine::builtins::primitive::numeric::finish(self, realm, step)
