@@ -115,10 +115,10 @@ Cold Call 的回复进入 resident 消费前只恢复一次下一条 PC，并转
 | 累计已迁移的 State native body | 4,961 | 21,262 |
 | ScalarText State body | 3,441 | 未记录 |
 | 仍进入旧路径的属性写入 | 417,047 | 394,739 |
-| 仍进入旧路径的参数展开 | 未记录 | 133,190 |
+| 仍进入旧路径的 arguments 对象创建（`OP_arguments`） | 未记录 | 133,190 |
 | 仍进入旧路径的计算属性读取 | 21,854 | 23,064 |
 
-这些事件确认真实负载使用了 State native 消费，也说明通用写入与参数展开仍有较大迁移覆盖。State body 包含此前已迁移的 selector，不能全归给 `3b0ee61a`。未记录表示计数器没有该字段；边界次数不表示耗时占比。未重跑原版 Score、A/A 或 Boa。
+这些事件确认真实负载使用了 State native 消费，也说明通用写入与 arguments 对象创建仍有较大迁移覆盖；arguments 对象创建和 CreateListFromArrayLike 的展开协议是不同消费者。State body 包含此前已迁移的 selector，不能全归给 `3b0ee61a`。未记录表示计数器没有该字段；边界次数不表示耗时占比。未重跑原版 Score、A/A 或 Boa。
 
 回执：`/home/eric/.cache/oxide-runtime-core-20261003/b-interim-3b0ee61a-coverage/summary.json`，SHA256 `f32ae5815e20e71a7e462fe7510b98eb9ae54c21964fb8a24091cfe7f3241518`。保留独立的受测二进制、构建回执和原始输出。
 
