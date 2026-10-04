@@ -39,6 +39,7 @@
 | `aecf0703` | Date Constructor、Parse/Utc 与 function realm 共用状态算法及原始 continuation；转换、prototype 读取和已完成进展进入既有 Query。原生调用的原 invocation 保留到 body 完成，致命失败后停止原 owner 与 activation 后缀退休。 |
 | `673e91ca` | 外层与嵌套 native scope 共用空 Parents 缓存；成功退休后才清空并归还，删除回收时的重复清空遍历。入栈前为全部未完成 scope 预留返回容量，修复串行调用的缓存增长与平方级回收。 |
 | `285d97a4` | 完整 Set、静态/计算 VM 写入、四种 Array mutation 与普通 Delete 共用当前状态和原始 continuation；setter、键转换及 typed/Array 长度等待交给既有 Query。删除旧标量写入退避和重复 Set 协议，实际 Proxy、shared backing 与 Copy 仍是明确边界。 |
+| `f80b91ed` | 完整 Set 选择器只保存实际输入；选出等待后才创建 durable resume。本地静态及 primitive-key 写入使用具体 State guard，只有实际 callback、等待、诊断或发布边界才创建 Step/Query。既有选择、严格诊断、MAX、失败清理及发布消费者共用同一主体。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -291,6 +292,32 @@ RegExp 两对为 −11.94% / −11.99%，Combined 为 −3.01% / −3.50%。针�
 这些事件确认真实负载使用了 State native 消费，也说明通用写入与 arguments 对象创建仍有较大迁移覆盖；arguments 对象创建和 CreateListFromArrayLike 的展开协议是不同消费者。State body 包含此前已迁移的 selector，不能全归给 `3b0ee61a`。未记录表示计数器没有该字段；边界次数不表示耗时占比。未重跑原版 Score、A/A 或 Boa。
 
 回执：`/home/eric/.cache/oxide-runtime-core-20261003/b-interim-3b0ee61a-coverage/summary.json`，SHA256 `f32ae5815e20e71a7e462fe7510b98eb9ae54c21964fb8a24091cfe7f3241518`。保留独立的受测二进制、构建回执和原始输出。
+
+## 已采纳的同步 Set 输入与消费生命周期
+
+`f80b91ed` 是完整 Set 输入生命周期与本地消费的组合。同步选择只初始化八个实际输入角色；选出需要跨边界的效果后才建立 phase/request resume。本地消费者直接保护实际 receiver/value、SetProgress 和最终结果，不先构造整个 Step/RawNativeQuery。primitive key 仍在原窗口保持操作数直到真实 checked duplicate 与键转换成功；对象 key 保留原有 identity、String hint 和 Query。所有输入使用同一选择器，真实 setter、Proxy、typed/shared、Array length、严格诊断与 AutoInit 发布继续进入既有消费者。
+
+新增四项见证，另三项既有见证加入真实 Query guard 构造计数（仅 cfg(test)）。覆盖局部失败的 value→receiver→atom 退休、首个致命失败后的后缀隔离、Set 输入/结果别名、全部值表示及真实等待。普通配置新编译完整 **2633** 项通过；随后仅删除无消费者的 `WriteKeyInputs::primitive`，重编译相关域与见证，按可达函数/全部 fixture 字节相同证明继承该完整结果，**不称为修正后再次新跑完整普通套件**。新编译 profiling 完整 **2855** 项通过，严格 workspace/all-targets Clippy 两配置、profiling+test262-host 与源检查均通过。最后修正仅为 fixture 断言的 rustfmt 换行，不改变生产输入。
+
+全部 **1024 项** Rust/Cargo 输入与采纳提交逐项相同。最终正确性/源证明回执 `b-set-local-guard-state/final-format-and-source-gate-20261004/receipt.json`，SHA256 `84b4b1fb3c40b7b5fe9d1cd7ac5ef583cd8e0d4f5ecb9cf6fb5112414c16cece`；采纳证明 `adoption-receipt.json`，SHA256 `5c22163d0783f858e1700adf430a8efbbbd3de4b05987da3e3437236a4ec1c88`。这些相对路径位于 `/home/eric/.cache/oxide-runtime-core-20261003/`。
+
+普通 Rust 1.88 release、无 PGO、CPU 2、冻结固定工作量，每项只运行一个 ABBA 块、两对，计时期间无并行构建/测试。基线为此前已采纳的 RegExp+共享发布服务，候选为完整同步 Set 组合；全部 36 个进程和语义输出通过。**这是独立筛查，不是原版 Score、正式置信区间或相对阶段 A 的累计验收。** 不分别给输入拆分、具体 guard 或消费方式编造独立收益。
+
+| 工作量 | 基线中位耗时 ms | 同步 Set 中位耗时 ms | 配对耗时变化 |
+|---|---:|---:|---:|
+| Richards | 775.37 | 730.43 | −5.78% |
+| DeltaBlue | 782.66 | 784.50 | +0.24%（两对方向混合） |
+| Crypto | 662.82 | 566.13 | −14.59% |
+| RayTrace | 798.75 | 763.68 | −4.39% |
+| EarleyBoyer | 1175.20 | 1146.41 | −2.45% |
+| RegExp | 2226.80 | 2148.36 | −3.52% |
+| Splay | 1622.84 | 1614.63 | −0.51% |
+| NavierStokes | 657.69 | 576.58 | −12.33% |
+| Combined | 8779.75 | 8366.00 | −4.71% |
+
+Combined 两对为 −4.25% / −5.17%；Crypto、NavierStokes 和 Richards 两对均改善。Splay 两对为 −0.31% / −0.70%，没有同向回归信号，但不据此宣称显著提速。DeltaBlue 未分辨。回执 `b-set-local-guard-state/interim/paired-screen-summary.json`，SHA256 `db3292e08909977483d10e3b188757a670faead31cc1404b29ad76717ec82df7`。候选实验提交 `4a63e161` 的计时二进制 SHA256 `00b90b12d15342f9e6cef5dcd08778cdadce3caadfcc5f6cb5d05177e184c349`；其全部运行时输入与 `f80b91ed` 相同。
+
+实际汇编中的本地消费直接进入 Set 选择/终结，RawNativeQuery 的退休留在实际边界 helper；真实调用及等待成本仍保留。`property_write::complete` 从 5772 到 2987 字节，同时新增 4476 字节的 `run_local_assignment` 和 1076 字节的 `run_boundary`，不能只看入口缩短就宣布代码变小。全二进制 text+rodata **增加 0.0176%**，文件增加 200 字节；主解释函数大小维持 56945 字节。代码生成回执 `b-set-local-guard-state/codegen/receipt.json`，SHA256 `d6b8b5c17c12c09318865ab3a987e8af07314695f2c84de3261f81f69f9a5468`。局部 guard 的 panic/poison 检查仍在；本次未测 RSS、停顿、编译成本或原版 Score，也未重跑 Boa/A/A。阶段 B 累计门槛仍待实际测量与剩余迁移完成。
 
 ## 性能归因与剩余验收
 
