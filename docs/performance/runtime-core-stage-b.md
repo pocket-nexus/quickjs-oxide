@@ -106,6 +106,22 @@ Cold Call 的回复进入 resident 消费前只恢复一次下一条 PC，并转
 
 回执：`/home/eric/.cache/oxide-runtime-core-20261003/b-interim-25c152d6-mechanism/summary.json`，SHA256 `4259a7d3bf701c74dc97e73351aa3b2fc859fc5c49d54d40013ce98a994bae94`。保存原始 JSONL、受测二进制和构建配置。第一次收集器读取了错误 schema 名；Richards 执行已成功，修正解析后复用其原始输出，仅继续 DeltaBlue，没有重跑 Richards。未运行原版 Score、A/A、Boa 或性能验收。
 
+### 连续 native 消费的其他负载覆盖
+
+在 runtime 提交 `3b0ee61a`、源码提交 `48332958` 上，以 Rust 1.88 release、profiling feature、无 PGO，对冻结的 Crypto 和 RayTrace 工作量各执行一次。二进制、构建参数、输入摘要和完成标志均核对；两项此前没有同范围的阶段 A 计数，因此不计算变化比例。
+
+| 实际记录的事件 | Crypto | RayTrace |
+| --- | ---: | ---: |
+| 累计已迁移的 State native body | 4,961 | 21,262 |
+| ScalarText State body | 3,441 | 未记录 |
+| 仍进入旧路径的属性写入 | 417,047 | 394,739 |
+| 仍进入旧路径的参数展开 | 未记录 | 133,190 |
+| 仍进入旧路径的计算属性读取 | 21,854 | 23,064 |
+
+这些事件确认真实负载使用了 State native 消费，也说明通用写入与参数展开仍有较大迁移覆盖。State body 包含此前已迁移的 selector，不能全归给 `3b0ee61a`。未记录表示计数器没有该字段；边界次数不表示耗时占比。未重跑原版 Score、A/A 或 Boa。
+
+回执：`/home/eric/.cache/oxide-runtime-core-20261003/b-interim-3b0ee61a-coverage/summary.json`，SHA256 `f32ae5815e20e71a7e462fe7510b98eb9ae54c21964fb8a24091cfe7f3241518`。保留独立的受测二进制、构建回执和原始输出。
+
 ## 性能归因与剩余验收
 
 **阶段 B 尚无性能结论。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
