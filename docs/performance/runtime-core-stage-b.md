@@ -186,6 +186,28 @@ Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete �
 
 这是阶段 B 的旧协议清理，未单独构建计时，不声称性能收益。其余真实 conversion、Proxy、native 和挂起通道仍有迁移缺口；本提交不能替代阶段 B 的最终零指标及整体验收。
 
+## 已采纳的本地写入与按需 Query
+
+`fdb7dee0` 在同一完整 Set producer 中完成无需挂起的静态和计算写入，消费者只在实际等待、setter、诊断或发布边界建立原有 Query。原始窗口已持有的 base/value 直接移动；primitive key 仍保留真实 checked duplicate 与 String hint，对象 key 仍在转换前保存原始操作数和身份。状态推进使用唯一 Continue 主体，终结 owner 留在实际 SetProgress 中，State 父消费者直接接受它；旧边界仅构造一次带真实父记录的 reply。没有新增选择算法、owning Runtime 或缓存。
+
+八个新增见证覆盖全部值表示与别名、本地 Query 未使用、实际 setter/Proxy/typed wait、MAX 失败后窗口保存、致命失败的 atom 后缀隔离，以及实际 AutoInit 发布、setter owner 和旧 RegExp 父记录。组合保留 B35 安装器、B33 缓冲生命周期和 B36 删除的旧协议。完整 **1021 项** Rust/Cargo 输入逐项对应新编译完整 library：普通 **2606**、profiling **2828** 全过；严格 workspace/all-targets Clippy 两配置、profiling+test262-host 与全部源检查通过。回执 `b-set-terminal-transport/b5-test-attempt-01/receipt.json`，SHA256 `99705e9a0fa88b1af9ccfb3b49cdfb16c510f55f699749ffad6bb09962ed0755`。
+
+独立无 PGO 测量使用实验提交 `4fb82794`，即本地写入与终结搬运的完整组合，尚未加入 B35/B36；相对 B34 各运行一个 ABBA 块、两对。36 个进程与冻结语义输出全部通过，计时期间没有并行构建或测试。这是筛查，**不是原版 Score、正式区间或阶段 B 验收**，也不能分别归给组合中的两个机制。
+
+| 固定工作量 | B34 中位耗时 ms | 候选中位耗时 ms | 配对耗时变化 |
+|---|---:|---:|---:|
+| Richards | 852.75 | 774.37 | −9.20% |
+| DeltaBlue | 806.60 | 781.28 | −3.14% |
+| Crypto | 771.22 | 661.06 | −14.28% |
+| RayTrace | 834.64 | 804.60 | −3.60% |
+| EarleyBoyer | 1245.00 | 1200.24 | −3.59% |
+| RegExp | 2510.04 | 2471.30 | −1.54% |
+| Splay | 1684.84 | 1669.35 | −0.92% |
+| NavierStokes | 737.62 | 641.91 | −12.98% |
+| Combined | 9481.44 | 9056.66 | −4.48% |
+
+每项两对均向改善方向；Combined 两对为 −4.32% / −4.64%。实际 release 中共享 Query advance 从 32971 到 30078 字节，全二进制 text+rodata 增长 **0.0665%**；静态调用数不是动态指令或耗时归因。受测二进制 SHA256 `85b631b901f8e87488a491aa74f1649ee458f814e2c403b5bbf27b945c9e1a5e`，测量回执 `b-set-terminal-transport/interim/summary.json`，SHA256 `20e6f5d8d842edb0809800e787a6294673e40f277fa44cbd3ca39fb13fc78910`。未重跑 Boa、A/A 或原版 Score；当前累计版本相对阶段 A 的门槛仍待验证。
+
 ## 中途机制检查
 
 在 runtime 提交 `25c152d6` 上，仅对冻结的 Richards/DeltaBlue 固定工作量各执行一次诊断运行。Rust 1.88、release、profiling feature、无 PGO；两项完成标志与冻结输入逐项核对。对照复用阶段 A 的相同诊断工作量。
