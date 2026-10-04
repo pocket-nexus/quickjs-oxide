@@ -27,6 +27,7 @@
 | `344ecc1f` | native preparation 直接返回借用 Runtime 的 guard，调用消费者直接使用它；删除生产路径的临时 Runtime 强 owner。只有确实跨越 Runtime binding 生命周期的独立测试使用显式 standalone 适配器。 |
 | `2706caae` | 静态属性读取直接借用已发布代码持有的 linked Atom，删除每帧 owning key 缓存及由该缓存导致的返回退避。只有实际挂起的 Proxy 请求提升 key；选择结果的 guard 持续保护到 key 和 receiver 的 fallible handoff 完成。 |
 | `2cb1eb5e` | Date 的旧 owned native 入口统一借用处理并显式退休 invocation；修复成功、抛错和 handler error 时遗漏原 receiver/newTarget owner。构造 helper 改为借用 invocation，仍复用既有算法与清理适配器。 |
+| `38a50c79` | 28 个 read-only Date selector 的全部输入共用状态实现，真实 VM 调用在当前循环完成。时钟和时区直接借用 HostServices；checked brand 临时引用在原来的观察点释放，公共与 Query 消费者复用同一 body，删除旧 readonly Runtime 实现。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -52,6 +53,7 @@
 - Native preparation：3 个新生命周期与别名见证；普通配置 57 个、诊断配置 77 个不重叠的选定用例通过，两种配置严格 workspace/all-targets Clippy、host feature 和源检查通过。965 项 Rust/Cargo 输入与采纳提交逐项相同；没有重跑完整 library 套件。
 - Linked key 消费：4 个新见证，覆盖七种 primitive 表示、静态 String index、MAX 借用、Proxy key 提升拒绝和 getter receiver 交接拒绝。普通配置 93 个、诊断配置 105 个不重叠的选定用例通过，严格 Clippy 两配置、host 和源检查通过；没有完整套件或性能运行。保留一个 cfg-only 过滤器错误及两个 fixture 入口修正记录，生产源码在验收中没有变化。
 - Date invocation：5 个新见证，两种配置各通过 68 个不重叠的选定用例；严格 workspace/all-targets Clippy、host 与源检查通过。967 项 Rust/Cargo 输入与采纳提交逐项相同。覆盖 receiver/newTarget 正常释放、constructor prototype 抛错，以及清理失败先隔离、停止后续 callee/argv/frame 清理。
+- Date 状态执行：9 个新见证，普通配置 165 项、最终源码诊断配置 189 项相关用例通过；970 项 Rust/Cargo 输入与采纳提交逐项相同。两种配置严格 workspace/all-targets Clippy、host 与源检查通过。普通配置的 159 项复用通过记录，最终仅有一个测试 tuple 的等价 type alias lint 修正，六个使用该 fixture 的新见证重新编译验收。56 个内部 Call/TailCall 场景覆盖 28 个 selector，不计为独立测试；另覆盖真实 Query、忽略参数、backtrace、host panic 与发布后 GC。保留私有测试 API 和 type-complexity lint 的失败记录；生产实现未因这些失败改变。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
@@ -65,6 +67,8 @@ AutoInit 的旧内部入口会在工厂步骤中多次取得状态并选择性�
 Own-property 内部迁移适配器先验证域，再统一完成一次 operation admission；公共入口保留原来的 operation-first 顺序。状态选择器不排空 Runtime 协调队列。此调整替代旧的虚拟值/TDZ 选择性 admission，并由优先级、无 pending 与清理失败用例验证；最终状态消费者将直接使用选择器，删除迁移适配器。
 
 Native 的原始 activation 不携带 Runtime。生产 preparation 与消费者现在直接使用 borrowed guard；只有独立生命周期测试显式生成 rooted wrapper，没有公开的 prepared-call API。尚未迁移的 native body 通过显式边界临时转交同一 callee edge，不增加 retain 或重放算法。Query 在外部状态忙碌时仍保留原有协调队列兜底；resident 标量路径不创建 Query。其它 native family 和这些迁移边界仍需完成。
+
+Date 的无 JS 转换方法按固定 selector 选择状态实现，覆盖普通值、真实 Date、错误 brand 和忽略参数；不以输入种类决定是否迁移。保留 brand temporary 的 checked retain 与释放顺序。非重入 HostServices 直接借用，panic 标记同一 poison header。Constructor、Parse/Utc、setter、toJSON/toPrimitive 的转换协议仍是后续迁移范围。
 
 普通属性读取的状态内原型遍历不产生中间 prototype owner，getter 不再提升未消费的 setter；相应内部 MAX 拒绝随不必要的 owner 一起消失。实际输出和 getter/receiver owner 仍使用 checked retain。现有 getter/Proxy 消费者仍经过显式 rooted 适配器，后续 VM 与 Proxy 的 raw 消费迁移必须删除这些适配器，当前未声明全局 owner 为零。
 
