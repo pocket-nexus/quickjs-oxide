@@ -81,3 +81,67 @@ Score 验收。用户提供的 10/10/15 迭代报告保留为独立证据，不�
 计数。回执位于 `/home/eric/.cache/oxide-runtime-core-20261003/
 r0-a-b40-callgrind-20261005/comparison.json`，SHA256
 `d06617245f7a3e4cbbb4054250440cbafd6bf08b4f91525dbfb087adf4029457`。
+
+
+### R1a：现有字段与 dense 写入消费者
+
+恢复分支 `perf/runtime-core-recovery` 从 A 建立，正式 PR #89。运行时代码提交：
+`7cbb1f31`（存储 owner 交换）、`3fe796c5`（VM 字段消费者）、
+`800d0546`（VM dense 替换和追加）、`8e5eb207`（数字 payload 直接交换）。
+接收者在帧中保持拥有，源 owner 转到 heap，旧目标 owner 回到源槽后由当前
+State 释放；miss 不改变操作数。物理选择复用 ordinary Set 和 prototype
+选择，getter、Proxy、冻结、hole、length 等仍按共享语义回退。
+数字同类替换直接交换 payload，其他类型共用转换 leaf；不新增运行期模式。
+旧的仅标量字段和 dense 写入实现已经删除。
+
+新字段追加、Array 方法和其余通用 Set/读取消费者尚未迁移；本批不宣称
+B1–B5 完成或架构零残留。最初候选的 DeltaBlue 同向回退由数字表示搬运
+修复；以下只记录最终组合，不给基础 kernel 编造单独收益。
+
+2026-10-05，Rust 1.88 普通 release、无 PGO，相同冻结工作量，一个 ABBA
+块，A 对 `8e5eb207`；36/36 进程完整输出通过。数值为配对耗时变化的
+中位数，负数表示更快；这是日常短测，非原版 Score / 正式置信区间。
+
+| 子项 | 耗时变化 | 两对变化 |
+| --- | ---: | --- |
+| Richards | −20.05% | −19.78% / −20.31% |
+| DeltaBlue | +0.39% | +0.88% / −0.09% |
+| Crypto | −1.19% | +0.86% / −3.25% |
+| RayTrace | +1.08% | +1.80% / +0.36% |
+| EarleyBoyer | +3.06% | +2.11% / +4.01% |
+| RegExp | +0.41% | +0.72% / +0.10% |
+| Splay | −7.20% | −7.16% / −7.23% |
+| NavierStokes | −0.78% | −1.08% / −0.49% |
+| Combined | −2.67% | −2.99% / −2.36% |
+
+EarleyBoyer 的初次同向回退触发单项复核：修复前后局部 ABBA 为
++1.99% / −1.94%；A 对最终候选复核为 −1.08% / +0.81%。此前回退未复现，
+当前结论为未分辨，不能把首次 +3.06% 当作稳定回退或宣称该项已经提速。
+RayTrace 处在既有 A/A 边缘且两对幅度不同，保留为未分辨。Combined 不能
+代替这些单项结论。A/A 的部分工作量迭代数与本轮不同，仅作噪声背景。
+
+同二进制固定 callgrind（各项一次，模拟缓存）：
+
+| 工作量 | Ir | Dw | I1mr | D1mw |
+| --- | ---: | ---: | ---: | ---: |
+| Richards | −16.48% | −19.91% | −68.31% | −7.94% |
+| DeltaBlue | −0.96% | −1.15% | −0.12% | +0.75% |
+| NavierStokes | +1.09% | +0.65% | −3.74% | −0.63% |
+
+同一指令路径的缓存模拟仍受地址布局影响；没有把模拟缓存变化当作硬件
+计数或把指令比例折算成耗时。三个运行时提交各自的 R/D/NS profile 和
+未接入消费者的 kernel profile 都已保存。诊断 release（不用于计时）记录
+Richards / DeltaBlue 在片段内字段写入 1,062,369 / 234,780 次，dense 写入
+19,488 / 2,639 次；NavierStokes dense 写入 516,104 次。
+
+正确性：最终运行时代码通过 workspace all-targets、CI fast 其余全部检查、
+profiling 相关测试和 focused Test262，6844/6844 pass。ELF 的 text+RO
+观察未接近 10% 上限；完整 RSS、停顿和阶段原版 Score 留到阶段验收。
+
+回执目录统一为 `/home/eric/.cache/oxide-runtime-core-20261003/`：
+- `recovery-r1-payload-vs-A-abba-20261005/{results,screen}.json`
+- `recovery-r1-payload-vs-A-EB-check-20261005/{results,screen}.json`
+- `recovery-r1-payload-local-EB-abba-20261005/results.json`
+- `recovery-r1-callgrind-comparison.json` 与各 `recovery-callgrind-*` 原始文件
+- `recovery-r1-ci-fast-gates.json`、`recovery-r1-final-workspace-tests.log`
+- `recovery-r1-payload-focused.log`、`recovery-r1-mechanism-8e5eb207/`
