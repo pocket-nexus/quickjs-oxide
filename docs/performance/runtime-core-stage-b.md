@@ -24,6 +24,7 @@
 | `089ab186` | 五类 primitive wrapper 的公共、内部和 String bootstrap 入口共用状态工厂；flat String 保留原 ID，rope 先规范化，length 使用共享原始描述符算法。对象布局沿用共享 atom visitor，统一保留 slot/payload/private-home 边一次，删除 Symbol 单独保留协议。 |
 | `7ecbf50a` | 普通属性读取、primitive/String 读取及 linked own-read 共用完整状态算法。原型链使用当前借用，getter 仅取得 callee/receiver owner；TypedArray 数字终结缺失不再查原型，共享 backing 仅在实际 mutex 读取时离开状态。移除旧 Runtime walker，raw 结果携带已有 native 选择事实。 |
 | `a66f422b` | 普通与 exotic 的 callback-free 属性定义共用状态算法；完整覆盖 Array index/长度提交与回滚、mapped Arguments、String virtual、Namespace 和 typed postconversion write。Define、selected Set、VM 与 public-field 消费者直接使用同一存储算法；实际 layout/owner 发布处报告失败阶段，删除旧 Runtime 定义与 Array 表示变更实现。 |
+| `344ecc1f` | native preparation 直接返回借用 Runtime 的 guard，调用消费者直接使用它；删除生产路径的临时 Runtime 强 owner。只有确实跨越 Runtime binding 生命周期的独立测试使用显式 standalone 适配器。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -46,6 +47,7 @@
 - Primitive wrapper：16 个新见证；完整 library 普通配置 2302 项、profiling 配置 2524 项通过。两种配置严格 workspace/all-targets Clippy 和 host feature 构建通过。覆盖 flat/rope String、短/heap BigInt、Symbol retain 顺序与 overflow、class/domain 拒绝、slot/payload/private-home 原子边、发布及回滚失败先隔离。
 - 普通属性读取：14 个新见证；完整 library 普通配置 2316 项、profiling 配置 2538 项通过，两种配置严格 workspace/all-targets Clippy 及 host feature 检查通过。覆盖原型链借用、getter/receiver 别名及 checked overflow、未消费 setter、TypedArray 终结缺失与 shared BigInt、primitive receiver、AutoInit、既选 Proxy 与 native fact。完整测试后仅修正 cfg(profiling) 测试中的等价 absence 断言；复跑 14 个相关见证和最终编译检查，完整测试记录复用并明确记录该差异。
 - 属性定义：37 个新见证通过；普通配置完整 2353 项复用已通过的记录，最终仅有一个测试等价 lint 写法变化，该 fixture 单独重验；最终诊断配置完整 2575 项通过。两种配置各有 40 个成功子进程运行另列。严格 workspace/all-targets Clippy 两配置、host feature 与源检查通过；964 项 Rust/Cargo 输入与采纳提交逐项相同。覆盖 TDZ/lazy 权限、public mapped checked owner 与 String/BigInt producer、Array partial publication/回滚停止、typed resize/shared growth、Proxy 输入和域/admission 优先级。
+- Native preparation：3 个新生命周期与别名见证；普通配置 57 个、诊断配置 77 个不重叠的选定用例通过，两种配置严格 workspace/all-targets Clippy、host feature 和源检查通过。965 项 Rust/Cargo 输入与采纳提交逐项相同；没有重跑完整 library 套件。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
@@ -58,7 +60,7 @@ AutoInit 的旧内部入口会在工厂步骤中多次取得状态并选择性�
 
 Own-property 内部迁移适配器先验证域，再统一完成一次 operation admission；公共入口保留原来的 operation-first 顺序。状态选择器不排空 Runtime 协调队列。此调整替代旧的虚拟值/TDZ 选择性 admission，并由优先级、无 pending 与清理失败用例验证；最终状态消费者将直接使用选择器，删除迁移适配器。
 
-Native 的原始 activation 不携带 Runtime。现有独立 prepared-call 测试所需的 rooted wrapper 暂时保留；生产入口会立即转为 borrowed guard，没有公开的 prepared-call API，这个临时 Runtime owner 仍应在边界清理中删除。尚未迁移的 native body 通过显式边界临时转交同一 callee edge，不增加 retain 或重放算法。Query 在外部状态忙碌时仍保留原有协调队列兜底；resident 标量路径不创建 Query。其它 native family 和这些迁移边界仍需完成。
+Native 的原始 activation 不携带 Runtime。生产 preparation 与消费者现在直接使用 borrowed guard；只有独立生命周期测试显式生成 rooted wrapper，没有公开的 prepared-call API。尚未迁移的 native body 通过显式边界临时转交同一 callee edge，不增加 retain 或重放算法。Query 在外部状态忙碌时仍保留原有协调队列兜底；resident 标量路径不创建 Query。其它 native family 和这些迁移边界仍需完成。
 
 普通属性读取的状态内原型遍历不产生中间 prototype owner，getter 不再提升未消费的 setter；相应内部 MAX 拒绝随不必要的 owner 一起消失。实际输出和 getter/receiver owner 仍使用 checked retain。现有 getter/Proxy 消费者仍经过显式 rooted 适配器，后续 VM 与 Proxy 的 raw 消费迁移必须删除这些适配器，当前未声明全局 owner 为零。
 
