@@ -32,6 +32,8 @@ pub(crate) enum ReadyOwnProperty {
 /// transitions finish inside the canonical State selector before this reply.
 pub(crate) enum OwnPropertySelection {
     Missing,
+    /// Numeric TypedArray misses terminate Get before prototype lookup.
+    TerminalMissing,
     Ready(ReadyOwnProperty),
     Shared(SharedTypedOwnWord),
 }
@@ -100,10 +102,10 @@ impl RuntimeState {
                 let key = self.typed_own_key(atom)?;
                 if let Some(numeric) = self.typed_canonical_numeric_index(atom, key)? {
                     return match numeric {
-                        CanonicalNumericIndex::Invalid => Ok(OwnPropertySelection::Missing),
+                        CanonicalNumericIndex::Invalid => Ok(OwnPropertySelection::TerminalMissing),
                         CanonicalNumericIndex::Valid(index) => {
                             Ok(match self.select_typed_own_property(object, index)? {
-                                TypedOwnProperty::Missing => OwnPropertySelection::Missing,
+                                TypedOwnProperty::Missing => OwnPropertySelection::TerminalMissing,
                                 TypedOwnProperty::Word(word) => {
                                     OwnPropertySelection::Ready(ReadyOwnProperty::TypedWord(word))
                                 }
@@ -294,7 +296,9 @@ impl Runtime {
         let record = {
             let mut state = self.0.state.borrow_mut();
             match state.select_own_property(&self.0.poisoned, object.object_id(), key.atom())? {
-                OwnPropertySelection::Missing => return Ok(None),
+                OwnPropertySelection::Missing | OwnPropertySelection::TerminalMissing => {
+                    return Ok(None);
+                }
                 OwnPropertySelection::Ready(ready) => {
                     state.own_selected_property_descriptor(&self.0.poisoned, ready)?
                 }
@@ -327,7 +331,7 @@ impl Runtime {
             key.atom(),
         )?;
         match selected {
-            OwnPropertySelection::Missing => Ok(None),
+            OwnPropertySelection::Missing | OwnPropertySelection::TerminalMissing => Ok(None),
             OwnPropertySelection::Ready(ready) => Ok(Some(ready)),
             OwnPropertySelection::Shared(word) => {
                 Ok(Some(ReadyOwnProperty::TypedWord(word.read()?)))

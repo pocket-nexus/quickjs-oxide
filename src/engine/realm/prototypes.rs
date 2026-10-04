@@ -25,12 +25,19 @@ impl Runtime {
             .0
             .state
             .borrow()
-            .heap
-            .context(realm)?
-            .primitive_prototypes[kind.index()]
-        .ok_or(RuntimeError::Invariant(
-            "primitive prototype is not implemented in this realm",
-        ))?;
+            .primitive_prototype_id_for_realm(realm, kind)?;
         Ok(ObjectRef::from_borrowed_handle(self.clone(), prototype)?)
+    }
+}
+
+impl crate::engine::heap::runtime::RuntimeState {
+    pub(crate) fn primitive_prototype_id_for_realm(
+        &self,
+        realm: ContextId,
+        kind: PrimitiveKind,
+    ) -> Result<crate::engine::heap::ObjectId, RuntimeError> {
+        self.heap.context(realm)?.primitive_prototypes[kind.index()].ok_or(RuntimeError::Invariant(
+            "primitive prototype is not implemented in this realm",
+        ))
     }
 }

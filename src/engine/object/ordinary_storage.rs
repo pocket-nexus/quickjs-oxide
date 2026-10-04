@@ -544,11 +544,10 @@ impl Runtime {
     }
 }
 
+#[cfg(test)]
 pub(super) enum ReadProbe {
     Value(JsValue),
-    Getter(Option<crate::engine::object::CallableRef>),
-    Missing(Option<ObjectRef>),
-    Special(SpecialKind),
+    Unsupported,
 }
 
 pub(super) struct OwnFlags {
@@ -583,123 +582,18 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<ReadProbe, RuntimeError> {
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("property object"));
-        }
-        self.ordinary_read_probe_atom(object.object_id(), key.atom(), false, None)
-    }
-
-    pub(super) fn ordinary_read_probe_selected_id(
-        &self,
-        object: ObjectId,
-        key: &PropertyKey,
-        native: Option<&mut Option<LinkedNativeSelection>>,
-    ) -> Result<ReadProbe, RuntimeError> {
-        self.ordinary_read_probe_atom(object, key.atom(), false, native)
-    }
-
-    // The caller owns the receiver throughout this non-reentrant probe.
-    // Output values/getters/prototypes acquire their own edges below.
-    fn ordinary_read_probe_atom(
-        &self,
-        id: ObjectId,
-        atom: Atom,
-        own_only: bool,
-        mut native: Option<&mut Option<LinkedNativeSelection>>,
-    ) -> Result<ReadProbe, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("property_storage_read_probe");
-        enum Selected {
-            Value(crate::engine::heap::RawValue),
-            Getter(Option<ObjectId>),
-            Missing(Option<ObjectId>),
-        }
-        let mut native_data = None;
-        let selected = {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(id)?;
-            let is_array = matches!(
-                (data.kind, &data.payload),
-                (ObjectKind::Array, ObjectPayload::Array { .. })
-            );
-            // Dense elements are own data properties. Read the value under
-            // this same classification borrow. Other own Array slots share
-            // value/getter selection; exotic misses retain their fallback.
-            let selected = if let Some(index) = atom.immediate_integer()
-                && let Some(value) = data.dense_array_value(index)
-            {
-                Selected::Value(value.clone())
-            } else if !is_ordinary(data) && !is_array && !reads_are_slot_faithful(data) {
-                return Ok(ReadProbe::Special(special_kind(data)));
-            } else {
-                match locate(&state, id, atom)? {
-                    // Numeric misses may still select non-immediate dense indices.
-                    // Named/symbol misses have ordinary prototype lookup and need no exotic call.
-                    None if is_array && state.atoms.array_index(atom)?.is_some() => {
-                        return Ok(ReadProbe::Special(SpecialKind::Other));
-                    }
-                    None => Selected::Missing(if own_only {
-                        None
-                    } else {
-                        state.heap.shape(data.shape)?.prototype()
-                    }),
-                    Some(slot) => match &data.slots[slot.index] {
-                        PropertySlot::Data(value) => Selected::Value(value.clone()),
-                        PropertySlot::Accessor { get, .. } => Selected::Getter(get.option()),
-                        PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
-                            return Ok(ReadProbe::Special(SpecialKind::Other));
-                        }
-                    },
-                }
-            };
-
-            if native.is_some()
-                && let Selected::Value(crate::engine::heap::RawValue::Object(id)) = &selected
-            {
-                // Invalid native metadata must still fail at the original Call,
-                // not during this GetField. Such payloads simply get no hint.
-                native_data = state.heap.object(*id).ok().and_then(|object| {
-                    let ObjectPayload::NativeFunction { data, .. } = &object.payload else {
-                        return None;
-                    };
-                    let realm = data.realm?;
-                    (data.operation().is_some() && state.heap.context(realm).is_ok())
-                        .then_some(*data)
-                });
+        let read = self.prepare_ordinary_read_selected(
+            object,
+            key,
+            &JsValue::Object(object.object_id()),
+            None,
+        )?;
+        Ok(match read {
+            super::OrdinaryRead::Complete(Some(value)) => ReadProbe::Value(value),
+            read => {
+                read.release(self);
+                ReadProbe::Unsupported
             }
-            selected
-        };
-        Ok(match selected {
-            Selected::Value(value) => {
-                // The slot owns the borrowed handle until this retain completes.
-                // No callback or mutation occurs between selection and duplication.
-                let borrowed = JsValue::from_raw(value).ok_or(RuntimeError::Invariant(
-                    "internal sentinel in ordinary data property",
-                ))?;
-                let value = self.dup_jsvalue(&borrowed)?;
-                if let (Some(output), Some(data), JsValue::Object(function)) =
-                    (native.as_mut(), native_data, &value)
-                {
-                    **output = Some(LinkedNativeSelection {
-                        domain_id: self.domain_id(),
-                        function: *function,
-                        data,
-                    });
-                }
-                ReadProbe::Value(value)
-            }
-            Selected::Getter(get) => ReadProbe::Getter(
-                get.map(|id| {
-                    ObjectRef::from_borrowed_handle(self.clone(), id)
-                        .map(crate::engine::object::CallableRef::from_validated_object)
-                })
-                .transpose()?,
-            ),
-            Selected::Missing(prototype) => ReadProbe::Missing(
-                prototype
-                    .map(|id| ObjectRef::from_borrowed_handle(self.clone(), id))
-                    .transpose()?,
-            ),
         })
     }
 }
@@ -1343,26 +1237,26 @@ impl Runtime {
             return Ok(None);
         };
         let _operation = self.operation()?;
-        // The borrowed base already pins this object until probing finishes.
-        Ok(
-            match self.ordinary_read_probe_atom(*object, atom, true, native)? {
-                ReadProbe::Value(value) => {
-                    Some(crate::engine::object::OrdinaryRead::Complete(Some(value)))
-                }
-                ReadProbe::Getter(None) => Some(crate::engine::object::OrdinaryRead::Complete(
-                    Some(JsValue::Undefined),
-                )),
-                ReadProbe::Getter(Some(getter)) => {
-                    let receiver = self.dup_jsvalue(base)?;
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "linked_read_owner_clone.ReceiverObject",
-                    );
-                    Some(crate::engine::object::OrdinaryRead::Call { getter, receiver })
-                }
-                ReadProbe::Missing(_) | ReadProbe::Special(_) => None,
-            },
-        )
+        let step = self.0.state.borrow_mut().prepare_ordinary_read_in_state(
+            &self.0.poisoned,
+            self.domain_id(),
+            *object,
+            atom,
+            base,
+            true,
+            native,
+        )?;
+        let read = self.finish_read_boundary(step)?;
+        #[cfg(feature = "profiling")]
+        if matches!(read, super::OrdinaryRead::Call { .. }) {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "linked_read_owner_clone.ReceiverObject",
+            );
+        }
+        Ok(match read {
+            super::OrdinaryRead::Complete(None) => None,
+            read => Some(read),
+        })
     }
 
     /// Only an existing writable own scalar slot reaches the ordinary Set
@@ -2846,5 +2740,35 @@ impl RuntimeState {
         index: u32,
     ) -> Option<JsValue> {
         self.try_array_immediate_read_kind(base, index, true)
+    }
+}
+
+impl RuntimeState {
+    pub(super) fn link_native_read_fact(
+        &self,
+        domain: u64,
+        value: &JsValue,
+        output: Option<&mut Option<LinkedNativeSelection>>,
+    ) {
+        let Some(output) = output else {
+            return;
+        };
+        let JsValue::Object(function) = value else {
+            return;
+        };
+        let Some(data) = self.heap.object(*function).ok().and_then(|object| {
+            let ObjectPayload::NativeFunction { data, .. } = &object.payload else {
+                return None;
+            };
+            let realm = data.realm?;
+            (data.operation().is_some() && self.heap.context(realm).is_ok()).then_some(*data)
+        }) else {
+            return;
+        };
+        *output = Some(LinkedNativeSelection {
+            domain_id: domain,
+            function: *function,
+            data,
+        });
     }
 }

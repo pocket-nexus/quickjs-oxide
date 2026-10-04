@@ -2,7 +2,6 @@ use crate::engine::api::error::{ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx};
-use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::heap::runtime::RuntimeState;
 
 use crate::engine::heap::{ContextId, ObjectId, PropertySlot, RawValue};
@@ -75,48 +74,11 @@ impl Runtime {
         self.internal_get(realm, object, key, Value::Object(object.try_clone()?))
     }
 
-    fn prepare_string_property_read(
-        &self,
-        realm: ContextId,
-        string: &JsString,
-        key: &PropertyKey,
-        receiver: &JsValue,
-        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
-    ) -> Result<OrdinaryRead, RuntimeError> {
-        let index = self.0.state.borrow().atoms.array_index(key.atom())?;
-        if let Some(index) = index
-            && let Ok(index) = usize::try_from(index)
-            && let Some(unit) = string.code_unit_at(index)
-        {
-            // A fresh string payload is a genuine creation point: publish it
-            // as one owned arena node.
-            let id = self
-                .0
-                .state
-                .borrow_mut()
-                .heap
-                .allocate_string(JsString::from_code_unit(unit))?;
-            return Ok(OrdinaryRead::Complete(Some(
-                crate::engine::value::JsValue::String(id),
-            )));
-        }
-        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-        if key == &length {
-            let length = i32::try_from(string.len())
-                .map(crate::engine::value::JsValue::Int)
-                .unwrap_or_else(|_| crate::engine::value::JsValue::Float(string.len() as f64));
-            return Ok(OrdinaryRead::Complete(Some(length)));
-        }
-        let prototype = self.primitive_prototype_for_realm(realm, PrimitiveKind::String)?;
-        self.prepare_ordinary_read_selected(&prototype, key, receiver, native)
-    }
-
-    /// Select a read without invoking its getter. Primitive receivers stay
-    /// primitive; String own units/length retain the existing unboxed kernel.
+    /// Primitive inputs and prototype lookup use one shared State algorithm.
     pub(crate) fn prepare_value_property_read_borrowed_jsvalue(
         &self,
         realm: ContextId,
-        receiver: &crate::engine::value::JsValue,
+        receiver: &JsValue,
         key: &PropertyKey,
     ) -> Result<OrdinaryRead, RuntimeError> {
         self.prepare_value_property_read_selected_jsvalue(realm, receiver, key, None)
@@ -129,44 +91,21 @@ impl Runtime {
         key: &PropertyKey,
         native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        match receiver {
-            JsValue::Object(object) => {
-                self.prepare_ordinary_read_selected_id(*object, key, receiver, native)
-            }
-            JsValue::String(id) => {
-                let string = self.0.state.borrow().heap.string(*id)?.clone();
-                self.prepare_string_property_read(realm, &string, key, receiver, native)
-            }
-            JsValue::Bool(_)
-            | JsValue::Int(_)
-            | JsValue::Float(_)
-            | JsValue::BigInt(_)
-            | JsValue::ShortBigInt(_)
-            | JsValue::Symbol(_) => {
-                let kind = match &receiver {
-                    JsValue::Bool(_) => PrimitiveKind::Boolean,
-                    JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
-                    JsValue::BigInt(_) | JsValue::ShortBigInt(_) => PrimitiveKind::BigInt,
-                    JsValue::Symbol(_) => PrimitiveKind::Symbol,
-                    _ => unreachable!(),
-                };
-                let prototype = self.primitive_prototype_for_realm(realm, kind)?;
-                self.prepare_ordinary_read_selected(&prototype, key, receiver, native)
-            }
-            JsValue::Undefined | JsValue::Null => {
-                let suffix = if matches!(receiver, JsValue::Null) {
-                    "' of null"
-                } else {
-                    "' of undefined"
-                };
-                Err(RuntimeError::Engine(self.native_atom_error(
-                    ErrorKind::Type,
-                    "cannot read property '",
-                    key,
-                    suffix,
-                )?))
-            }
+        // Internal read admission is operation-first for every value kind.
+        // State owns the complete algorithm; Runtime alone owns its FIFO.
+        let _operation = self.operation()?;
+        if !key.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("property key"));
         }
+        let step = self.0.state.borrow_mut().prepare_value_read_in_state(
+            &self.0.poisoned,
+            self.domain_id(),
+            realm,
+            receiver,
+            key.atom(),
+            native,
+        )?;
+        self.finish_read_boundary(step)
     }
 
     fn finish_value_property_read(

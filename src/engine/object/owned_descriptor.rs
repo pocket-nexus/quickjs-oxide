@@ -283,6 +283,7 @@ impl OwnedCompletePropertyDescriptor {
     /// queued release on ordinary data reads. The vacated slot is left as an
     /// immediate so this descriptor's `Drop` releases nothing for it.
     /// Accessor records return `None` and stay untouched.
+    #[cfg(test)]
     pub(crate) fn into_data_value(mut self) -> Option<JsValue> {
         use super::property::CompletePropertyDescriptor;
         match &mut self.record {
