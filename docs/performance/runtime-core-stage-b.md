@@ -30,6 +30,7 @@
 | `38a50c79` | 28 个 read-only Date selector 的全部输入共用状态实现，真实 VM 调用在当前循环完成。时钟和时区直接借用 HostServices；checked brand 临时引用在原来的观察点释放，公共与 Query 消费者复用同一 body，删除旧 readonly Runtime 实现。 |
 | `25c152d6` | ArrayBuffer、SharedArrayBuffer、DataView 的 owned native 入口复用既有 borrowed-handler 清理协议；所有成功、抛错和 handler error 路径都显式退休原 receiver/newTarget，十个内部 helper 改为借用 invocation。 |
 | `e49eba17` | 内部调用在 checked callee 认证之前登记 receiver 和 argv owner，认证拒绝也经过原清理路径。持有可用状态时直接释放并保留当前边释放后服务 FIFO 的顺序；状态忙碌时仍用协调队列，破坏性失败停止后缀并返回隔离错误。 |
+| `3b0ee61a` | GetField/GetField2、52 个 Numeric/Math selector、8 个 ScalarText selector 和 ToPrimitive/ToNumber/ToString 共用状态算法与原始 continuation；普通 getter/转换调用共用既有帧安装和 Query 消费，完成的选择及 PC 事实不重放。移除旧 Runtime conversion/body 实现，破坏性失败先隔离再停止 owner 后缀清理。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -58,6 +59,7 @@
 - Date 状态执行：9 个新见证，普通配置 165 项、最终源码诊断配置 189 项相关用例通过；970 项 Rust/Cargo 输入与采纳提交逐项相同。两种配置严格 workspace/all-targets Clippy、host 与源检查通过。普通配置的 159 项复用通过记录，最终仅有一个测试 tuple 的等价 type alias lint 修正，六个使用该 fixture 的新见证重新编译验收。56 个内部 Call/TailCall 场景覆盖 28 个 selector，不计为独立测试；另覆盖真实 Query、忽略参数、backtrace、host panic 与发布后 GC。保留私有测试 API 和 type-complexity lint 的失败记录；生产实现未因这些失败改变。
 - Binary buffer invocation：7 个新见证和 45 个受影响用例在两种配置各通过 52 项；两种配置严格 workspace/all-targets Clippy、host 与源检查通过。971 项 Rust/Cargo 输入与采纳提交逐项相同。覆盖方法成功/brand 抛错、species 独立返回 owner、DataView.buffer、三类构造成功/Proxy prototype 抛错，以及清理失败先隔离并停止后续 owner。首次两个失败发生在进入 body 前的测试 ABI，修正为尚未适配的 Call 输入后通过；生产实现未改变。没有完整套件或性能运行。
 - 内部调用 admission：3 个新见证在普通和 profiling 配置各通过 3 项，覆盖 MAX 拒绝与别名、状态忙碌协调、真实破坏性清理后的后缀停止；严格 workspace/all-targets Clippy 两配置、host 和源检查通过。972 项 Rust/Cargo 输入与采纳提交逐项相同。保留第一次等价双重引用触发的 lint 失败；没有完整套件或性能运行。验收回执 SHA256 `188cd09d03ad024d51b15e1a15a63f9d6a57baa925687bb52828df74409ae988`。
+- 命名读取与 Numeric/Text 纵切：完整普通 library 2423 项通过。完整 profiling 运行有 2639 项通过、6 项旧机制断言失败；这些用例的 JS 结果断言已通过。最终仅修改 cfg(profiling) 的实际消费/边界计数及机制断言，181 项相关最终源码测试通过，包含这 6 项和真正 unhinted callee 的 absence 见证。普通完整结果在三处已认证的等价 lint 改写下复用，最终普通配置另重验 175 项并通过严格 Clippy；最终 profiling 严格 workspace/all-targets Clippy、profiling+test262-host 及源检查通过。983 项 Rust/Cargo 输入与采纳提交逐项相同。回执 SHA256 `b3fd4cccc07e0b6477a192afa7a3a5ce3c0d27824f89cdb5ad3cb13b2823ed35`。原始 28 个语义失败促成共同 PC/throw 修复；后续 cfg 断言、计数归属及 launcher 解析失败记录全部保留。没有性能运行，子进程和交叠测试数不合并。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
@@ -74,11 +76,21 @@ Native 的原始 activation 不携带 Runtime。生产 preparation 与消费者�
 
 Date 的无 JS 转换方法按固定 selector 选择状态实现，覆盖普通值、真实 Date、错误 brand 和忽略参数；不以输入种类决定是否迁移。保留 brand temporary 的 checked retain 与释放顺序。非重入 HostServices 直接借用，panic 标记同一 poison header。Constructor、Parse/Utc、setter、toJSON/toPrimitive 的转换协议仍是后续迁移范围。
 
-普通属性读取的状态内原型遍历不产生中间 prototype owner，getter 不再提升未消费的 setter；相应内部 MAX 拒绝随不必要的 owner 一起消失。实际输出和 getter/receiver owner 仍使用 checked retain。现有 getter/Proxy 消费者仍经过显式 rooted 适配器，后续 VM 与 Proxy 的 raw 消费迁移必须删除这些适配器，当前未声明全局 owner 为零。
+普通属性读取的状态内原型遍历不产生中间 prototype owner，getter 不再提升未消费的 setter；相应内部 MAX 拒绝随不必要的 owner 一起消失。实际输出和 getter/receiver owner 仍使用 checked retain。命名 VM 读取和已迁移的转换消费者直接使用原始 owner 安装 getter；尚未迁移的公共读取、Proxy 与 legacy 外层消费者仍有显式 rooted 适配器。后续迁移必须删除这些适配器，当前未声明全局 owner 为零。
 
 静态读取的 key 由执行中的已发布代码持有，完成值与 getter 不需要独立 key owner。Proxy 挂起在已完成选择之后取得 checked key owner；该步骤和旧 receiver preservation 拒绝时，有限 guard 清理已选 callee/Proxy 与 raw receiver，并保留原帧输入。删除 key 缓存后，普通返回不再仅因缓存非空而退出内部返回路径；其它实际等待条件仍保留。
 
 属性定义的内部 current descriptor 在同一状态访问与 receiver owner 保护下借用；删除它的独立 promotion，因此内部 mapped Arguments/Namespace 的 current MAX 拒绝不再发生。公共 mapped 路径保留 current/completion/cell 的 checked 角色和清理顺序，String/BigInt 的 cell 与只读 slot 仍使用独立 producer。Array 长度转换、typed numeric 转换和共享 backing mutex 保持真实边界，不重放已经完成的转换。迁移适配器退出后先确认 poison，再返回成功。
+
+## 已采纳的连续读取与转换
+
+`3b0ee61a` 的 body 选择由固定 selector 决定，覆盖该 body 的全部输入；Math 对原始值借用转换，只在对象转换实际需要恢复时保存剩余参数。52 个新增 selector 包含五类 primitive 的 valueOf/toString、Symbol.description、四类 Number 格式、两个 BigInt.AsN 和 35 类 Math；8 个 ScalarText 包含 charAt/at、charCodeAt、codePointAt、concat、两种 well-formed 方法和 iterator。它们复用原数值/字符串 kernel。
+
+普通 getter 和转换方法使用同一个已认证的 callback 安装器，getter/Proxy/native 选择在进入消费者后不重新查找。实际 Proxy、Shared mutex、General 调用、未迁移 body 和 legacy 外层回复仍是已标记的边界。Query 在真实等待或边界发布时才登记 Weak，完全 resident 的转换不生成 Runtime 强 owner 或 Query 生命周期登记。
+
+Cold Call 的回复进入 resident 消费前只恢复一次下一条 PC，并转为携带 committed PC 的 continuation。Resident Call 使用已经携带的 PC；getter 抛错不提前推进，lower slots 和 fault PC 保留。ABI 适配错误及清理错误在剩余 receiver、argv、callee 和帧清理之前返回隔离错误。
+
+机制断言按实际路径验收：20 次普通 getter 留在片段中，20 次 Proxy trap 复用原 Query 存储；三个混合用例分别确认 36/41/41 次 State Math body，以及 24/21/17 次无需参数存储的完成。第一个用例仍有一次 `Map.size` 的未迁移 native getter 边界，第三个有八次实际 Proxy 边界。边界原因计数记录 State dispatcher 返回的 effect，不等于解释循环退出次数；aggregate activation transport 也包含 helper scope，不能全部归给 Math。
 
 ## 中途机制检查
 
