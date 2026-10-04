@@ -59,3 +59,25 @@ FILE 含 I1/D1/LL 的 `[bytes, associativity, line_bytes]`。模拟耗时不进�
 R0 已为 fixed.py 增加 callgrind 模式。计数按事件名解析最终 totals，拒绝
 缺失、重复、负数、缓存模型不一致或不完整报告。错误语义输出即使有
 有效计数也不能通过。当前工具改动只交付证据能力，不声称运行时提速。
+
+### A/B40 固定工作量 callgrind
+
+2026-10-05，复用既有冻结工作量，Richards 21、DeltaBlue 13、NavierStokes 2
+次，warmup 0。各二进制每项一次，六个进程完整语义输出通过。Valgrind
+3.25.1，I1/D1 均为 32768/8/64，LL 为 16777216/1/64；缓存为模拟模型。
+普通 Rust 1.88 release 二进制、features 空、无 PGO，实际 compiler/target/
+Cargo 配置与最终 qjs codegen 相同。A 构建回执的首次 rustup 安装 stderr
+和工具链别名与 B40 不同，此处只核对实际编译器身份及生效构建参数，
+原始回执没有改写。
+
+| 工作量 | Ir | Dw | D1mw | I1mr | Bim |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Richards | +4.50% | +13.47% | +71.60% | +2.91% | +15.88% |
+| DeltaBlue | +5.35% | +11.23% | +118.09% | +34.03% | +30.40% |
+| NavierStokes | +5.76% | +16.89% | +23.05% | +120.11% | +10.85% |
+
+这证明该配置下 B40 的写入和模拟缓存费用增加，不是原生耗时或原版
+Score 验收。用户提供的 10/10/15 迭代报告保留为独立证据，不混合绝对
+计数。回执位于 `/home/eric/.cache/oxide-runtime-core-20261003/
+r0-a-b40-callgrind-20261005/comparison.json`，SHA256
+`d06617245f7a3e4cbbb4054250440cbafd6bf08b4f91525dbfb087adf4029457`。
