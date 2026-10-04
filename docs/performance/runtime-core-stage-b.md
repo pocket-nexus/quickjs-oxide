@@ -33,6 +33,7 @@
 | `3b0ee61a` | GetField/GetField2、52 个 Numeric/Math selector、8 个 ScalarText selector 和 ToPrimitive/ToNumber/ToString 共用状态算法与原始 continuation；普通 getter/转换调用共用既有帧安装和 Query 消费，完成的选择及 PC 事实不重放。移除旧 Runtime conversion/body 实现，破坏性失败先隔离再停止 owner 后缀清理。 |
 | `55c154a8` | 完整 Bound CALL 链共用状态内 payload promotion 与参数合并算法；四种实际调用 opcode、getter/转换 callback 和旧边界消费者共用一次规范化及既有帧安装。删除逐 Bound 的旧调用循环，实际 overflow Error 携带发布事实，清理失败停止剩余 owner。 |
 | `d1e45524` | 18 个转换型 Date prototype selector 使用原始 continuation 与状态算法，普通/native 子调用共用既有 Query；ToObject 共用 checked prototype 准备和 primitive 工厂。getter 选择先进入 armed request，再退休输入；实际 boxing/Error 携带发布事实。 |
+| `82e107ff` | GetArrayEl/2/3、dense miss 与 ToPropKey 共用完整状态内键转换和读取；保留原 key/receiver 的实际 keeper，复用 Query、callback 和帧发布。直接抛错通过同一 guarded 前缀提交释放原操作数，再发布 Error，修复 verified capacity 耗尽时错误被覆盖的问题。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -65,6 +66,7 @@
 - Bound CALL：12 个新见证覆盖四种真实 opcode、各类 receiver/argv、普通/native/Proxy 回调、checked retain、overflow 与清理隔离。最终普通配置新编译的 433 项完整 VM 域通过；复用先前完整普通配置的 2434 项通过记录，该次唯一失败是新增 TailCall fixture 的指令生成假设。最终只改变该 fixture，以及经逐字变换证明等价的非迭代 loop→block；没有重跑完整普通套件。最终 profiling 完整 2657 项通过，严格 workspace/all-targets Clippy 两配置、host feature 和源检查通过。986 项 Rust/Cargo 输入与采纳提交逐项相同；回执 SHA256 `4ed18c08cfb33f0e70d41c53f8b2e1994ee4228d722184a817ca3f13f3ccc8c3`。首次生产借用检查、测试 API、fixture 与 lint 失败记录全部保留。没有性能运行，配置、交叠用例和子进程结果不相加。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 - Date 转换与 ToObject：19 个新见证覆盖全部 16 个 setter、两种 hint、toJSON 的 primitive/Proxy、snapshot 与重读、host 调用顺序、PC/realm、checked retain、放弃及隔离。普通完整运行 2453 项通过，唯一失败是新增 ToObject 见证漏算已发布 shape 的 prototype 边；修正仅限该见证，最终新编译的 4 个 ToObject 用例通过，其余普通结果在逐项源码证明下复用。最终 profiling 完整 2676 项通过，严格 Clippy 两配置、host、源检查与 anti-special-casing 通过。990 项 Rust/Cargo 输入与采纳提交相同；回执 SHA256 `78072e2e82ed3ef8b4e10d413fc8854ea7712bd34ebbfb44543f2362f0a0aeca`。首次导入/可见性失败、原始见证失败均保留；没有性能运行。
+- 计算读取与键转换：27 个新见证覆盖键表示、转换与 getter/Proxy 顺序、三种 opcode 的 keeper、别名、真实 slot budget、checked retain、fault PC、GC 与隔离。普通完整 2481 项通过；之后只有 cfg(test) 的等价 expect_err 改写和 cfg(profiling,test) 的旧机制断言更新，最终重新编译并验证清单，复用完整结果及 7 项 key-value 重验记录，没有再跑完整普通套件。完整 profiling 有 2702 项通过、1 项旧边界计数断言失败；最终编译的 28 项相关用例全部通过，复用其余完整通过记录。两配置严格 Clippy、host、格式与源检查通过，999 项 Rust/Cargo 输入与采纳提交相同；回执 SHA256 `8a64309033ab083ec0a19489583f0872c18492b2d4bb3bcb99b39752e7acc0ad`。原始编译、fixture、真实 throw 发布和机制断言失败均保留；没有性能运行。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
 
@@ -111,6 +113,14 @@ Cold Call 的回复进入 resident 消费前只恢复一次下一条 PC，并转
 ToObject 的公共与内部入口共用 prototype 准备和 primitive 工厂。公共入口保留 realm、checked prototype 与 operation admission 的优先级；内部使用当前状态。Existing、Boxed 和 Throw 明确区分实际生产结果。String wrapper 的空 shape 与 length successor 各有真正的 prototype 边，见证按实际已发布 shape 核对，不把它们误判成临时 retain 泄漏。
 
 Date fresh Error 与真实 toJSON boxing 在 owner 发布后向共同 Query 传递分配事实。原始属性请求保存已选 ReadStep，再按顺序退休 receiver/request owner；致命失败停止后缀。只在真实外部忙碌状态的放弃边界使用协调队列。Constructor、Parse/Utc 以及其它尚未迁移的 native 仍有后续工作。
+
+## 已采纳的计算读取与键转换
+
+`82e107ff` 的固定 opcode 消费者覆盖全部输入表示。primitive key 共用 canonical atom 生产者；对象 key 按 String hint 完成转换，选择过的 getter、Proxy 或 native 直接交给共同 Query。原 receiver 与需保留的 key 在父帧仍为当前帧时，通过同一次 FramePush 事务发布，再安装子调用。没有新增解释循环、转换器或 Runtime 强 owner。
+
+nullish receiver 的检查仍先于计算 key 的 JS 转换，GetArrayEl3 的类型错误顺序保持。故障见证发现直接 throw 时 base/key 已占满 verifier 允许的 operand 容量，追加 Error 会产生 Internal 错误。现在在 Error owner 受 guard 保护期间消费真实源前缀，再发布 throw；保留原故障 PC，未扩大栈容量。实际 fresh Error 的分配事实在结果或 pending owner 发布后消费，传播的旧 throw 不标记为新分配。
+
+旧计算读取与键转换外层任务已删除。Shared backing、实际 Proxy/General 调用以及未迁移的 native family 仍经过现有明确边界；其它数值、字符串和 native 分配事实继续迁移，本提交不宣称所有生产者或全局架构指标已完成。
 
 ## 中途机制检查
 
