@@ -168,7 +168,7 @@ Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete �
 
 **48 个新见证**覆盖 Set 的全部值表示、setter/Proxy/Bound、拒绝与首个致命失败，四种数组操作、hole/prototype、typed/shared、发布/GC 和实际父子预算。移除一个失去消费者的旧 eligibility 测试。最终新编译完整 library 普通 **2595**、profiling **2817** 全部通过；严格 workspace/all-targets Clippy 两配置、profiling+test262-host 和格式/源检查通过。**1022 项 Rust/Cargo 输入与采纳提交逐项相同。** 回执 `b-set-array-state/test-attempt-06/receipt.json`，SHA256 `c2d34f04e005405db28fd53ce2462ca7809e9ea6138707b0a02aa73bcba17615`。
 
-该提交尚未获得时间结论，阶段 B 的性能门槛仍未通过。通用 Query 搬运和 dense endpoint 在尝试前创建 continuation 的成本须由短测和采样判断，不能仅凭旧协议已删除就宣布提速。
+该提交的短测随后发现新增回归，详见后面的 B34 筛查；阶段 B 的性能门槛仍未通过。不能仅凭旧协议已删除就宣布提速。
 
 ## 中途机制检查
 
@@ -243,5 +243,25 @@ Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete �
 | Combined | 8127.36 | 8489.48 | +4.46% |
 
 全部 36 个进程与语义输出通过。RayTrace 的巨大回归已消失，Richards/DeltaBlue、RegExp 和 Combined 仍需排查；**阶段 B 未通过相对阶段 A 的性能门槛**。回执 `b-native-parent-reuse/interim/summary.json`，SHA256 `d2377c5ddf0d7d9c30541ebb94e99fe19d230bb41d1f5689ec57084aab1e2320`；候选二进制 SHA256 `cb101d1aed2645250f165943ce97671ee1a76a3fa53373bac61ac13a49c4acdc`。未运行原版 Score、A/A 或 Boa，也没有把 profiling 构建当作计时二进制。
+
+### Set/Array 迁移后的累计 B34 筛查
+
+`285d97a4` 使用相同普通无 PGO release、CPU 2、冻结输入与一个 ABBA 块。每项两对，仅作回归筛查；全部 36 个进程成功且语义输出一致。未运行原版 Score、A/A 或 Boa。
+
+| 工作量 | 本次阶段 A 中位耗时 ms | B34 中位耗时 ms | 配对耗时变化 |
+|---|---:|---:|---:|
+| Richards | 626.84 | 857.37 | +36.78% |
+| DeltaBlue | 656.96 | 794.81 | +20.98% |
+| Crypto | 519.94 | 774.00 | +48.87% |
+| RayTrace | 866.25 | 834.65 | −3.65% |
+| EarleyBoyer | 1130.50 | 1274.46 | +12.75% |
+| RegExp | 2200.48 | 2516.96 | +14.38% |
+| Splay | 1634.18 | 1702.52 | +4.18% |
+| NavierStokes | 525.44 | 769.01 | +46.51% |
+| Combined | 8192.54 | 9491.23 | +15.85% |
+
+**这份实现不通过性能门槛。** 回执 `b-set-array-state/interim/summary.json`，SHA256 `1b51281e7bf5463b793b4dc1c6afe283a3ba2116b557c360b6dc8d8715a823fc`；二进制 SHA256 `012a876a50c36aa3942b6fa11b39111c7c9976aa0e12d3817867f0ccb3cc1ade`。各累计版本使用各自的配对运行，不据此给单个 commit 计算配对收益。
+
+实际 Crypto/NavierStokes 周期采样分别取得 799/744 个样本，未丢样；`Query::advance_raw_in_state` 自身为 11.96%/8.98%，调用栈进入实际属性写入。Query acquire/recycle、搬运和计算写入 publication 同样出现在热路径。源码确认，即使写入完全本地完成，也先取得 Query、再搬运与回收。下一项区分实验让同一 canonical producer 先执行，只在实际等待或边界需要时建立 Query。采样比例不能直接换算成回归份额或预计提速；dense endpoint 的 continuation 创建成本也尚未单独分辨。
 
 内部 native、Proxy、模块/job、eval 和挂起路径仍有迁移工作。最终需要同时确认内部 Runtime 强 owner、状态重借用、deferred release/restore、公共 root 中间转换和迁移适配器全部为零，再执行完整 CI、native/wasm、冻结 Test262、QuickJS 差分和相对阶段 A 的全项性能验收。当前已删除的局部协议不代表这些全局指标已达成。
