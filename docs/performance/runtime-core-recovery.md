@@ -94,7 +94,7 @@ State 释放；miss 不改变操作数。物理选择复用 ordinary Set 和 pro
 数字同类替换直接交换 payload，其他类型共用转换 leaf；不新增运行期模式。
 旧的仅标量字段和 dense 写入实现已经删除。
 
-新字段追加、Array 方法和其余通用 Set/读取消费者尚未迁移；本批不宣称
+此批完成时，新字段追加、Array 方法和其余通用 Set/读取消费者尚未迁移；本批不宣称
 B1–B5 完成或架构零残留。最初候选的 DeltaBlue 同向回退由数字表示搬运
 修复；以下只记录最终组合，不给基础 kernel 编造单独收益。
 
@@ -145,3 +145,62 @@ profiling 相关测试和 focused Test262，6844/6844 pass。ELF 的 text+RO
 - `recovery-r1-callgrind-comparison.json` 与各 `recovery-callgrind-*` 原始文件
 - `recovery-r1-ci-fast-gates.json`、`recovery-r1-final-workspace-tests.log`
 - `recovery-r1-payload-focused.log`、`recovery-r1-mechanism-8e5eb207/`
+
+
+### R1b：新增字段的共享发布与直接 owner 转移
+
+运行时代码 `8e732550` 复用 missing-property 的 prototype 选择和 canonical
+shape successor 发布；描述符与 VM 消费者共享同一 append 主体。VM 源槽
+拥有的 JS 边直接转移到 heap，不先建立 SetOperands、Query 或 continuation。
+setter、Proxy、不可扩展和需要独立 dictionary 重建的对象保持语义回退，
+miss 不消费源 owner；失败回滚、atom 与 shape owner 沿用共享发布责任。
+
+新增 shape 会消耗 GC 分配预算。`1c49652f` 将新增布局的收尾独立出来，
+在 owner 转移和原有释放顺序完成后服务 GC；已有字段替换只执行直接清理。
+最终汇编中，普通清理函数没有 GC 调用，新增布局收尾函数才检查预算。
+
+初版相对上一验收运行时 `8e5eb207` 的局部 ABBA：Richards +3.53%、
+DeltaBlue −3.16%、EarleyBoyer −6.50%。Richards 的同向回退触发收尾拆分；
+修订后同一局部比较为 +1.35%、−1.36%、−7.65%。前两项幅度小，暂不作
+独立收益结论。硬件 perf 仅用于解释初版：Richards 指令约 +0.093%，两对
+user cycles +3.16% / +4.49%，branch-misses 变化混合；没有把模拟间接跳转
+预测当成硬件结果，也没有断言已定位全部周期增加的原因。
+
+最终组合 `1c49652f` 对阶段 A 的全九项日常 ABBA（2026-10-05），36/36
+进程完整语义输出通过。相同 Rust 1.88 普通 release、无 PGO、冻结工作量。
+以下为配对耗时变化中位数，非原版 Score 或正式置信区间。
+
+| 子项 | 耗时变化 | 两对变化 |
+| --- | ---: | --- |
+| Richards | −18.64% | −16.50% / −20.79% |
+| DeltaBlue | −0.01% | −0.42% / +0.39% |
+| Crypto | −0.80% | −0.27% / −1.32% |
+| RayTrace | −7.35% | −6.94% / −7.76% |
+| EarleyBoyer | −9.07% | −11.12% / −7.02% |
+| RegExp | +1.37% | +1.66% / +1.08% |
+| Splay | −7.22% | −6.91% / −7.54% |
+| NavierStokes | −0.37% | +0.06% / −0.80% |
+| Combined | −4.11% | −4.06% / −4.16% |
+
+小幅项保留为未分辨；Combined 不代替单项结论。新增字段的 heap/atom
+转移、canonical shape 复用、setter/Proxy 回退、发布失败和发布后 GC 有
+针对性测试。Array 方法及通用 Set 的内部所有权迁移仍未完成。
+
+本批最终 workspace all-targets、CI fast 各检查及 focused Test262 已通过，
+6844/6844 pass。两个运行时 commit 的 R/D/NS callgrind 均通过完整语义
+输出校验。最终组合相对 A：Richards Ir −16.34%、Dw −19.97%；DeltaBlue
+Ir −2.43%、Dw −2.65%；NavierStokes Ir +1.10%、Dw +0.68%。相对前一
+运行时 DeltaBlue Ir / Dw 下降 1.49% / 1.52%，其时间变化仍未分辨。
+模拟缓存变化不替代硬件或原生时间。完整资源和原版 Score 仍待阶段验收。
+
+原始记录目录仍为
+`/home/eric/.cache/oxide-runtime-core-20261003/`：
+- `recovery-r1-owned-append-local-abba-20261005/`
+- `recovery-r1-append-retirement-local-abba-20261005/`
+- `recovery-r1-append-retirement-vs-A-abba-20261005/`
+- `recovery-r1-owned-append-hardware-profile/results.json`
+- `recovery-r1-append-retirement-asm.txt`
+- `recovery-callgrind-8e732550/`、`recovery-callgrind-1c49652f/`
+- `recovery-r1-append-callgrind-comparison.json`
+- `recovery-r1-append-ci-fast-gates.json` 及四个 gate 日志
+- `recovery-r1-append-focused.log`
