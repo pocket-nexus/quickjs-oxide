@@ -794,6 +794,8 @@ mod local_set_tests {
             native_runtime: std::rc::Weak::new(),
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            transport: crate::engine::vm::proxy_get_driver::transport::QueryTransport::default(),
             realm: context.realm,
             parents: Parents::default(),
             natives: Vec::new(),
@@ -886,6 +888,8 @@ mod local_set_tests {
             native_runtime: std::rc::Weak::new(),
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            transport: crate::engine::vm::proxy_get_driver::transport::QueryTransport::default(),
             realm: context.realm,
             parents: Parents::default(),
             natives: Vec::new(),
@@ -1027,6 +1031,8 @@ mod local_set_tests {
             native_runtime: std::rc::Weak::new(),
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            transport: crate::engine::vm::proxy_get_driver::transport::QueryTransport::default(),
             realm: context.realm,
             parents: Parents::default(),
             natives: Vec::new(),

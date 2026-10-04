@@ -376,6 +376,8 @@ pub(super) fn resume_at_boundary(
         native_runtime: std::rc::Weak::new(),
         #[cfg(feature = "profiling")]
         had_callback: false,
+        #[cfg(feature = "profiling")]
+        transport: super::transport::QueryTransport::default(),
         realm: query.realm,
         parents: super::Parents::default(),
         natives: Vec::new(),

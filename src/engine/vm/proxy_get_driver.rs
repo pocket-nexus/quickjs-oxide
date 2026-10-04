@@ -39,6 +39,8 @@ mod request;
 mod resident_publication_tests;
 mod state;
 mod storage;
+#[cfg(feature = "profiling")]
+mod transport;
 pub(super) use native::NativeStepGuard;
 use native::start_into as native_scope;
 pub(in crate::engine::vm) use request::{
@@ -84,6 +86,8 @@ impl PendingProxyGet {
                 native_runtime: std::rc::Weak::new(),
                 #[cfg(feature = "profiling")]
                 had_callback: false,
+                #[cfg(feature = "profiling")]
+                transport: transport::QueryTransport::default(),
                 realm,
                 parents: Parents((0..depth).map(|_| Resume::Identity).collect()),
                 natives: Vec::new(),
@@ -142,6 +146,8 @@ pub(in crate::engine::vm) struct Query {
     native_runtime: std::rc::Weak<crate::engine::heap::runtime::RuntimeInner>,
     #[cfg(feature = "profiling")]
     had_callback: bool,
+    #[cfg(feature = "profiling")]
+    transport: transport::QueryTransport,
     realm: crate::engine::heap::ContextId,
     parents: Parents,
     natives: Vec<NativeScope>,
@@ -1858,6 +1864,8 @@ fn drive_inner(
             }
             Ok(Next::Call { entry, pc, resume }) => {
                 #[cfg(feature = "profiling")]
+                query.record_transport_effect("query_transport.effect.js_child");
+                #[cfg(feature = "profiling")]
                 let had_callback = std::mem::replace(&mut query.had_callback, true);
                 let pending = execution.query_storage.pending(identity, query, resume);
                 put_pending(execution, owner, pending)?;
@@ -2972,6 +2980,8 @@ mod native_scope_tests {
             native_runtime: runtime.register_raw_execution_owner().unwrap(),
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            transport: transport::QueryTransport::default(),
             realm: inner.realm,
             parents: Parents(vec![Resume::Identity]),
             saved_native_depth: 4,

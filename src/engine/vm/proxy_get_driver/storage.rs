@@ -79,6 +79,8 @@ impl QueryStorage {
             native_runtime: std::rc::Weak::new(),
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            transport: super::transport::QueryTransport::default(),
             realm: pending.query.realm,
             parents: Parents::default(),
             natives: Vec::new(),
@@ -177,6 +179,8 @@ impl QueryStorage {
             native_runtime: std::rc::Weak::new(),
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            transport: super::transport::QueryTransport::acquired(&finish),
             realm,
             parents: buffers.parents,
             natives: buffers.natives,
@@ -213,6 +217,8 @@ impl Query {
         Ok(())
     }
     fn recycle_empty(mut self, storage: &mut QueryStorage) {
+        #[cfg(feature = "profiling")]
+        self.transport.complete();
         debug_assert!(self.spare_parents.iter().all(Parents::is_empty));
         let buffers = Buffers {
             parents: std::mem::take(&mut self.parents),

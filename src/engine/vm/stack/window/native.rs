@@ -354,6 +354,12 @@ impl FrameExecution<'_> {
         };
         // Every recoverable check precedes owner transfer. The existing Query
         // protects the selected Step across this actual boundary; no new lookup.
+        #[cfg(feature = "profiling")]
+        owner
+            .query
+            .as_mut()
+            .expect("boundary query")
+            .record_transport_effect("query_transport.effect.state_boundary");
         let query = owner.take_query();
         let step = owner.take_step();
         let turn = self.frame();
@@ -797,6 +803,12 @@ impl FrameExecution<'_> {
                         .retire_selection(owner.state, &runtime.0.poisoned)
                         .map_err(runtime_error_to_vm_error)?;
                     let resume = resume.take().expect("callback parent");
+                    #[cfg(feature = "profiling")]
+                    owner
+                        .query
+                        .as_mut()
+                        .expect("callback query")
+                        .record_transport_effect("query_transport.effect.js_child");
                     let query = owner.take_query();
                     let mut pending = Some(
                         self.execution
