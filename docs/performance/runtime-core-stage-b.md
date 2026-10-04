@@ -178,6 +178,14 @@ Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete �
 
 实际 Rust 1.88 无 PGO release 的共同安装函数从 6083 到 5633 字节，栈预留从 1080 到 1000 字节；全二进制 text+rodata 增长 **0.0028%**。共同函数仍被 outline，不能宣称 caller 的全部来源分派消失。两种参数迭代分别实例化，代码生成与新增成本已纳入实际短测。
 
+## 已采纳的无生产者写入协议删除
+
+`d0cd8f34` 删除 `VmAction::SetProperty`、旧 ready/cold 写入处理、`ConvertedWrite` 及其唯一 `property_write_driver` 模块。解释循环已经无条件让 PutField/PutArrayEl 进入同一 State 写入入口；旧 deferred 映射没有可达生产者。Super、Reflect、Proxy 和 native 的真实 Set 消费者保留，规范选择、严格模式诊断、释放与发布算法不变。两个原有端到端测试原样移至 State 写入测试模块，十个既有 State 写入见证保持字节相同。
+
+净减少 **344 行**，Rust/Cargo 输入从 1022 到 **1021 项**。新编译完整 library 普通 **2598**、profiling **2820** 项全部通过；严格 workspace/all-targets Clippy 两配置、profiling+test262-host，以及格式、源布局与边界检查通过。采纳源码与已验证输入逐项相同。回执 `b-obsolete-set-protocol-removal/test-attempt-01/receipt.json`，SHA256 `8624c92f799249af1fc192ac9f922c2f9e928219ad0624682967a5db972d6bd3`；生产者闭包及实际消费者保留证明见对应 source-preparation 回执。
+
+这是阶段 B 的旧协议清理，未单独构建计时，不声称性能收益。其余真实 conversion、Proxy、native 和挂起通道仍有迁移缺口；本提交不能替代阶段 B 的最终零指标及整体验收。
+
 ## 中途机制检查
 
 在 runtime 提交 `25c152d6` 上，仅对冻结的 Richards/DeltaBlue 固定工作量各执行一次诊断运行。Rust 1.88、release、profiling feature、无 PGO；两项完成标志与冻结输入逐项核对。对照复用阶段 A 的相同诊断工作量。
