@@ -32,6 +32,7 @@ use crate::engine::object::{
 };
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
+use std::cell::Cell;
 
 /// Empty layouts stay canonical. After the first property, exclusively owned
 /// layouts append in place; shared layouts converge through weak transitions.
@@ -47,6 +48,7 @@ impl RuntimeState {
         replacement: PropertySlot,
     ) -> Result<(), RuntimeError> {
         self.append_unique_layout_inner(
+            None,
             object,
             atom,
             flags,
@@ -57,11 +59,13 @@ impl RuntimeState {
 
     pub(super) fn append_selected_unique_layout_input(
         &mut self,
+        poisoned: Option<&Cell<bool>>,
         selected: super::SelectedMissingAppend,
         flags: PropertyFlags,
         input: super::SlotAppendInput<'_>,
     ) -> Result<(), RuntimeError> {
         self.append_unique_layout_inner(
+            poisoned,
             selected.object(),
             selected.atom(),
             flags,
@@ -72,6 +76,7 @@ impl RuntimeState {
 
     fn append_unique_layout_inner(
         &mut self,
+        poisoned: Option<&Cell<bool>>,
         object: ObjectId,
         atom: Atom,
         flags: PropertyFlags,
@@ -95,7 +100,11 @@ impl RuntimeState {
         } {
             Ok(atoms) => atoms,
             Err(error) => {
-                self.atoms.release(atom)?;
+                self.atoms.release(atom).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
                 return Err(error);
             }
         };
@@ -117,8 +126,18 @@ impl RuntimeState {
             if let Some(hash) = previous_hash {
                 self.insert_shape_cache(shape, hash);
             }
-            self.release_atoms(retained_slot_atoms)?;
-            self.atoms.release(atom)?;
+            // Unique append has no fallible cleanup after publication. These
+            // errors are preparation failures; only failed rollback quarantines.
+            self.release_atoms(retained_slot_atoms).inspect_err(|_| {
+                if let Some(poisoned) = poisoned {
+                    poisoned.set(true);
+                }
+            })?;
+            self.atoms.release(atom).inspect_err(|_| {
+                if let Some(poisoned) = poisoned {
+                    poisoned.set(true);
+                }
+            })?;
             return Err(error.into());
         }
         if let Some(owner) = owner {
@@ -1119,8 +1138,13 @@ impl Runtime {
         if let ObjectPayload::GlobalObject { uninitialized_vars } =
             state.heap.object(object.object_id())?.payload
         {
-            drop(state);
-            self.store_complete_global_raw_property(object, uninitialized_vars, key, complete)?;
+            state.store_complete_global_raw_property(
+                &self.0.poisoned,
+                object.object_id(),
+                uninitialized_vars,
+                key.atom(),
+                complete,
+            )?;
         } else {
             state.store_complete_raw_property(object.object_id(), key.atom(), complete)?;
         }
@@ -2156,78 +2180,11 @@ impl Runtime {
             self.reset_var_ref_uninitialized(&root)?;
             self.set_var_ref_metadata(&root, false, false, ClosureVariableKind::Normal)?;
         }
-        let mut state = self.0.state.borrow_mut();
-        let object_id = object.object_id();
-        let dictionary_eligible = {
-            let data = state.heap.object(object_id)?;
-            let shape = state.heap.shape(data.shape)?;
-            data.supports_dictionary_layout()
-                && (shape.is_dictionary()
-                    || shape.entries().len() >= MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
-        };
-        if dictionary_eligible {
-            let shape = state.heap.shape(state.heap.object(object_id)?.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(true);
-            };
-            if !shape.entries()[index as usize].flags.configurable {
-                return Ok(false);
-            }
-            state.ensure_dictionary_layout(object_id)?;
-            let cleanup = state
-                .heap
-                .delete_dictionary_property(object_id, key.atom())?;
-            state.apply_cleanup(cleanup)?;
-            return Ok(true);
-        }
-        let (prototype, entries, mut slots, index, configurable) = {
-            let object_data = state.heap.object(object_id)?;
-            let shape = state.heap.shape(object_data.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(true);
-            };
-            let index = usize::try_from(index)
-                .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
-            let entry = *shape.entries().get(index).ok_or(RuntimeError::Invariant(
-                "shape lookup index was out of bounds",
-            ))?;
-            (
-                shape.prototype(),
-                shape.entries().to_vec(),
-                object_data.slots.clone(),
-                index,
-                entry.flags.configurable,
-            )
-        };
-        if !configurable {
-            return Ok(false);
-        }
-
-        let arguments_fast_update = if let Some(arguments_index) = arguments_index {
-            match state.heap.arguments_state(object_id)?.1 {
-                Some(fast_len) if arguments_index < fast_len => {
-                    Some(if arguments_index + 1 == fast_len {
-                        Some(arguments_index)
-                    } else {
-                        None
-                    })
-                }
-                Some(_) | None => None,
-            }
-        } else {
-            None
-        };
-
-        let mut next_entries = entries;
-        next_entries.remove(index);
-        slots.remove(index);
-        state.replace_layout(object_id, prototype, &next_entries, slots)?;
-        if let Some(next_fast_len) = arguments_fast_update {
-            state
-                .heap
-                .set_arguments_fast_len(object_id, next_fast_len)?;
-        }
-        Ok(true)
+        self.0.state.borrow_mut().delete_ordinary_property(
+            object.object_id(),
+            key.atom(),
+            arguments_index,
+        )
     }
 
     /// Return a rooted own-key snapshot in ECMAScript order.
@@ -2406,6 +2363,135 @@ impl Runtime {
 }
 
 impl RuntimeState {
+    /// Delete a selected ordinary own-slot property after the public entry
+    /// handled exotic and Global binding behavior. Hidden Global tables use
+    /// the same dictionary/shape algorithm with no Arguments index update.
+    pub(super) fn delete_ordinary_property(
+        &mut self,
+        object_id: ObjectId,
+        atom: Atom,
+        arguments_index: Option<u32>,
+    ) -> Result<bool, RuntimeError> {
+        // Legacy entry remains for unconverted consumers; remove in B5.
+        self.delete_ordinary_property_inner(None, object_id, atom, arguments_index)
+    }
+
+    pub(super) fn delete_ordinary_property_with_poison(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object_id: ObjectId,
+        atom: Atom,
+        arguments_index: Option<u32>,
+    ) -> Result<bool, RuntimeError> {
+        self.delete_ordinary_property_inner(Some(poisoned), object_id, atom, arguments_index)
+    }
+
+    fn delete_ordinary_property_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
+        object_id: ObjectId,
+        atom: Atom,
+        arguments_index: Option<u32>,
+    ) -> Result<bool, RuntimeError> {
+        let state = self;
+        let dictionary_eligible = {
+            let data = state.heap.object(object_id)?;
+            let shape = state.heap.shape(data.shape)?;
+            data.supports_dictionary_layout()
+                && (shape.is_dictionary()
+                    || shape.entries().len() >= MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
+        };
+        if dictionary_eligible {
+            let shape = state.heap.shape(state.heap.object(object_id)?.shape)?;
+            let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+                return Ok(true);
+            };
+            if !shape.entries()[index as usize].flags.configurable {
+                return Ok(false);
+            }
+            if let Some(poisoned) = poisoned {
+                state.ensure_dictionary_layout_with_poison(poisoned, object_id)?;
+            } else {
+                state.ensure_dictionary_layout(object_id)?;
+            }
+            let cleanup = state
+                .heap
+                .delete_dictionary_property_with_status(object_id, atom)
+                .map_err(|failure| {
+                    if failure.published {
+                        if let Some(poisoned) = poisoned {
+                            poisoned.set(true);
+                        }
+                    }
+                    RuntimeError::from(failure.error)
+                })?;
+            state.apply_cleanup(cleanup).inspect_err(|_| {
+                if let Some(poisoned) = poisoned {
+                    poisoned.set(true);
+                }
+            })?;
+            return Ok(true);
+        }
+        let (prototype, entries, mut slots, index, configurable) = {
+            let object_data = state.heap.object(object_id)?;
+            let shape = state.heap.shape(object_data.shape)?;
+            let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+                return Ok(true);
+            };
+            let index = usize::try_from(index)
+                .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
+            let entry = *shape.entries().get(index).ok_or(RuntimeError::Invariant(
+                "shape lookup index was out of bounds",
+            ))?;
+            (
+                shape.prototype(),
+                shape.entries().to_vec(),
+                object_data.slots.clone(),
+                index,
+                entry.flags.configurable,
+            )
+        };
+        if !configurable {
+            return Ok(false);
+        }
+
+        let arguments_fast_update = if let Some(arguments_index) = arguments_index {
+            match state.heap.arguments_state(object_id)?.1 {
+                Some(fast_len) if arguments_index < fast_len => {
+                    Some(if arguments_index + 1 == fast_len {
+                        Some(arguments_index)
+                    } else {
+                        None
+                    })
+                }
+                Some(_) | None => None,
+            }
+        } else {
+            None
+        };
+
+        let mut next_entries = entries;
+        next_entries.remove(index);
+        slots.remove(index);
+        if let Some(poisoned) = poisoned {
+            state.replace_layout_with_poison(
+                poisoned,
+                object_id,
+                prototype,
+                &next_entries,
+                slots,
+            )?;
+        } else {
+            state.replace_layout(object_id, prototype, &next_entries, slots)?;
+        }
+        if let Some(next_fast_len) = arguments_fast_update {
+            state
+                .heap
+                .set_arguments_fast_len(object_id, next_fast_len)?;
+        }
+        Ok(true)
+    }
+
     /// Validate and commit a callback-free descriptor under the same state access.
     /// The caller admits a non-global object with ordinary slot semantics,
     /// handles AutoInit/exotic preconditions, and keeps descriptor edges owned.
@@ -2415,10 +2501,36 @@ impl RuntimeState {
         atom: Atom,
         descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
     ) -> Result<bool, RuntimeError> {
+        // Legacy entry remains for unconverted consumers; remove in B5.
+        self.define_raw_property_inner(None, object, atom, descriptor)
+    }
+
+    /// Fresh ordinary-state consumers supply the header flag so a published
+    /// cleanup error quarantines before their temporary owners can retire.
+    // The next fresh Error slice adopts this companion without changing the
+    // existing ABI. Remove this temporary allowance with that migration.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn define_raw_property_with_poison(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        atom: Atom,
+        descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<bool, RuntimeError> {
+        self.define_raw_property_inner(Some(poisoned), object, atom, descriptor)
+    }
+
+    fn define_raw_property_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
+        object: ObjectId,
+        atom: Atom,
+        descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<bool, RuntimeError> {
         let Some(complete) = self.validate_raw_property(object, atom, descriptor)? else {
             return Ok(false);
         };
-        self.store_complete_raw_property(object, atom, complete)?;
+        self.store_complete_raw_property_inner(poisoned, object, atom, complete)?;
         Ok(true)
     }
 

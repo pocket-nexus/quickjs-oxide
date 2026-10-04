@@ -3,6 +3,7 @@ use crate::engine::numeric_region_miss::NumericRegionMiss as Miss;
 use crate::engine::value::{JsValue, number::operations::Number};
 
 /// The runtime may undo retained Atoms only before slot publication.
+#[derive(Debug)]
 pub(crate) struct SlotReplacementError {
     pub(crate) error: HeapError,
     pub(crate) published: bool,
@@ -1371,28 +1372,48 @@ impl Heap {
     /// The caller must already own atom references for symbol values in
     /// `slots`; on success those references transfer to the heap.  The returned
     /// cleanup contains every symbol atom detached from the previous slots.
+    // Production state consumers preserve publication status. Heap-only tests
+    // keep the original cleanup-returning ABI through the same algorithm.
+    #[cfg(test)]
     pub fn replace_object_layout(
         &mut self,
         id: ObjectId,
         shape: ShapeId,
         slots: Slots,
     ) -> Result<HeapCleanup, HeapError> {
-        self.validate_property_layout(shape, &slots)?;
-        let replacement_prototype = self.shape(shape)?.prototype();
-        if matches!(self.object(id)?.payload, ObjectPayload::Proxy(_))
-            && replacement_prototype.is_some()
-        {
-            return Err(HeapError::Invariant(
-                "Proxy has invalid null-prototype layout or cached target capabilities",
-            ));
-        }
+        self.replace_object_layout_with_status(id, shape, slots)
+            .map_err(|failure| failure.error)
+    }
 
-        // The class payload, private brand, and capability bits are unchanged.
-        // Retaining and releasing only the replacement layout edges keeps that
-        // payload in place instead of cloning potentially large non-GC state
-        // such as an ArrayBuffer backing store.
-        let new_edges = object_layout_edges(shape, &slots);
-        self.retain_edges_transactionally(&new_edges)?;
+    pub(crate) fn replace_object_layout_with_status(
+        &mut self,
+        id: ObjectId,
+        shape: ShapeId,
+        slots: Slots,
+    ) -> Result<HeapCleanup, SlotReplacementError> {
+        let prepare = (|| {
+            self.validate_property_layout(shape, &slots)?;
+            let replacement_prototype = self.shape(shape)?.prototype();
+            if matches!(self.object(id)?.payload, ObjectPayload::Proxy(_))
+                && replacement_prototype.is_some()
+            {
+                return Err(HeapError::Invariant(
+                    "Proxy has invalid null-prototype layout or cached target capabilities",
+                ));
+            }
+
+            // The class payload, private brand, and capability bits are unchanged.
+            // Retaining and releasing only the replacement layout edges keeps that
+            // payload in place instead of cloning potentially large non-GC state
+            // such as an ArrayBuffer backing store.
+            let new_edges = object_layout_edges(shape, &slots);
+            self.retain_edges_transactionally(&new_edges)?;
+            Ok(())
+        })();
+        prepare.map_err(|error| SlotReplacementError {
+            error,
+            published: false,
+        })?;
 
         self.invalidate_property_layout(id);
         let (previous_shape, previous_slots) = {
@@ -1405,15 +1426,21 @@ impl Heap {
             )
         };
 
-        let mut cleanup = HeapCleanup::default();
-        cleanup
-            .atoms
-            .extend(previous_slots.iter().flat_map(property_slot_atoms));
-        for edge in object_layout_edges(previous_shape, &previous_slots) {
-            self.release_raw_no_drain(edge)?;
-        }
-        cleanup.merge(self.drain_zero_queue()?);
-        Ok(cleanup)
+        let cleanup = (|| {
+            let mut cleanup = HeapCleanup::default();
+            cleanup
+                .atoms
+                .extend(previous_slots.iter().flat_map(property_slot_atoms));
+            for edge in object_layout_edges(previous_shape, &previous_slots) {
+                self.release_raw_no_drain(edge)?;
+            }
+            cleanup.merge(self.drain_zero_queue()?);
+            Ok(cleanup)
+        })();
+        cleanup.map_err(|error| SlotReplacementError {
+            error,
+            published: true,
+        })
     }
 
     /// Atomically materialize a fast Array's dense prefix into the indexed

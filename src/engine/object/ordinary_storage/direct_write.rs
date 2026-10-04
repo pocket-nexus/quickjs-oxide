@@ -23,6 +23,7 @@ impl RuntimeState {
     #[inline]
     pub(crate) fn try_store_owned_linked_field(
         &mut self,
+        poisoned: &std::cell::Cell<bool>,
         domain: u64,
         object: ObjectId,
         input: &mut JsValue,
@@ -32,7 +33,7 @@ impl RuntimeState {
         let Some(atom) = super::linked_field_atom_in_domain(domain, executable, key) else {
             return Ok(FieldStore::Miss);
         };
-        self.try_store_owned_own_data(object, atom, input)
+        self.try_store_owned_own_data(poisoned, object, atom, input)
     }
 
     /// A missing ordinary property consumes the same canonical append policy
@@ -41,6 +42,7 @@ impl RuntimeState {
     #[inline]
     fn try_store_owned_own_data(
         &mut self,
+        poisoned: &std::cell::Cell<bool>,
         object: ObjectId,
         atom: Atom,
         input: &mut JsValue,
@@ -63,12 +65,13 @@ impl RuntimeState {
                 return Ok(FieldStore::Miss);
             }
         };
-        self.append_missing_owned_data(object, atom, prototype, input)
+        self.append_missing_owned_data(poisoned, object, atom, prototype, input)
     }
 
     #[inline(never)]
     fn append_missing_owned_data(
         &mut self,
+        poisoned: &std::cell::Cell<bool>,
         object: ObjectId,
         atom: Atom,
         prototype: Option<ObjectId>,
@@ -81,6 +84,7 @@ impl RuntimeState {
             return Ok(FieldStore::Miss);
         }
         if !self.append_selected_missing_slot(
+            Some(poisoned),
             object,
             atom,
             crate::engine::object::shape::PropertyFlags::data(true, true, true),
@@ -186,7 +190,12 @@ mod tests {
             };
             assert!(matches!(
                 state
-                    .try_store_owned_own_data(object(&first), key.atom(), &mut input)
+                    .try_store_owned_own_data(
+                        &runtime.0.poisoned,
+                        object(&first),
+                        key.atom(),
+                        &mut input
+                    )
                     .unwrap(),
                 FieldStore::LayoutPublished,
             ));
@@ -219,7 +228,12 @@ mod tests {
             let mut other = JsValue::Null;
             assert!(
                 state
-                    .try_store_owned_own_data(object(&second), key.atom(), &mut other)
+                    .try_store_owned_own_data(
+                        &runtime.0.poisoned,
+                        object(&second),
+                        key.atom(),
+                        &mut other
+                    )
                     .unwrap()
                     .committed()
             );
@@ -256,7 +270,12 @@ mod tests {
             let mut state = runtime.0.state.borrow_mut();
             assert!(
                 !state
-                    .try_store_owned_own_data(object(&receiver), key.atom(), &mut input)
+                    .try_store_owned_own_data(
+                        &runtime.0.poisoned,
+                        object(&receiver),
+                        key.atom(),
+                        &mut input
+                    )
                     .unwrap()
                     .committed(),
                 "{source}"
@@ -297,6 +316,7 @@ mod tests {
         assert!(
             state
                 .append_slot_with_owned_shape_input(
+                    None,
                     object(&receiver),
                     shape,
                     crate::engine::object::SlotAppendInput::Owned(&mut input)
@@ -312,6 +332,59 @@ mod tests {
         state
             .release_owned_jsvalue(&runtime.0.poisoned, receiver)
             .unwrap();
+    }
+
+    #[test]
+    fn published_owned_append_consumes_the_atom_edge_before_poison_cleanup() {
+        use crate::engine::heap::RawId;
+
+        let runtime = Runtime::new();
+        let receiver = runtime.new_object(None).unwrap();
+        let key = runtime.intern_property_key("published").unwrap();
+        let _unwind = runtime.unwind_guard();
+        let mut state = runtime.0.state.borrow_mut();
+        let previous = state.heap.object(receiver.object_id()).unwrap().shape;
+        let successor = state
+            .append_transition(
+                previous,
+                crate::engine::object::shape::ShapeEntry {
+                    atom: crate::engine::atom::AtomIdx::from_raw(key.atom().raw()),
+                    flags: crate::engine::object::shape::PropertyFlags::data(true, true, true),
+                },
+            )
+            .unwrap();
+        let atom = state.atoms.new_symbol(Some("transferred")).unwrap();
+        let index = state.atoms.unbrand(atom).unwrap();
+        let mut input = JsValue::Symbol(index);
+        // The publication itself is valid. Retiring the old shape is the
+        // failing operation, after the slot acquired this exact atom owner.
+        state
+            .heap
+            .set_strong_count_for_test(RawId::Shape(previous), 0);
+        assert!(
+            state
+                .append_slot_with_owned_shape_input(
+                    Some(&runtime.0.poisoned),
+                    receiver.object_id(),
+                    successor,
+                    crate::engine::object::SlotAppendInput::Owned(&mut input),
+                )
+                .is_err()
+        );
+        assert!(runtime.is_poisoned());
+        assert!(matches!(input, JsValue::Undefined));
+        assert!(matches!(
+            state.heap.object(receiver.object_id()).unwrap().slots[0],
+            PropertySlot::Data(RawValue::Symbol(stored)) if stored == index
+        ));
+        assert_eq!(state.atoms.resolve(atom).unwrap().ref_count, Some(1));
+        // Public roots abandon cleanup in a poisoned runtime; teardown must
+        // neither release the transferred atom twice nor attempt recovery.
+        drop(state);
+        drop(receiver);
+        drop(key);
+        drop(_unwind);
+        drop(runtime);
     }
 
     #[cfg(feature = "profiling")]
@@ -466,7 +539,12 @@ mod tests {
         assert_eq!(state.heap.object_strong_count(fresh), Ok(1));
         assert!(
             state
-                .try_store_owned_own_data(object(&base), key.atom(), &mut input)
+                .try_store_owned_own_data(
+                    &runtime.0.poisoned,
+                    object(&base),
+                    key.atom(),
+                    &mut input
+                )
                 .unwrap()
                 .committed()
         );
@@ -501,7 +579,12 @@ mod tests {
             let mut state = runtime.0.state.borrow_mut();
             assert!(
                 !state
-                    .try_store_owned_own_data(object(&base), key.atom(), &mut input)
+                    .try_store_owned_own_data(
+                        &runtime.0.poisoned,
+                        object(&base),
+                        key.atom(),
+                        &mut input
+                    )
                     .unwrap()
                     .committed()
             );

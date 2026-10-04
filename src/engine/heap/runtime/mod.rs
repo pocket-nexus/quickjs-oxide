@@ -558,8 +558,31 @@ impl RuntimeState {
         Ok(retained)
     }
 
+    // Legacy entry remains for unconverted consumers; remove in B5.
     pub(crate) fn replace_layout(
         &mut self,
+        object: ObjectId,
+        prototype: Option<ObjectId>,
+        entries: &[ShapeEntry],
+        slots: Slots,
+    ) -> Result<(), RuntimeError> {
+        self.replace_layout_inner(None, object, prototype, entries, slots)
+    }
+
+    pub(crate) fn replace_layout_with_poison(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        prototype: Option<ObjectId>,
+        entries: &[ShapeEntry],
+        slots: Slots,
+    ) -> Result<(), RuntimeError> {
+        self.replace_layout_inner(Some(poisoned), object, prototype, entries, slots)
+    }
+
+    fn replace_layout_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
         object: ObjectId,
         prototype: Option<ObjectId>,
         entries: &[ShapeEntry],
@@ -570,7 +593,13 @@ impl RuntimeState {
             .shape(self.heap.object(object)?.shape)?
             .is_dictionary()
         {
-            return self.replace_dictionary_layout(object, prototype, entries, slots);
+            return if let Some(poisoned) = poisoned {
+                self.replace_dictionary_layout_with_poison(
+                    poisoned, object, prototype, entries, slots,
+                )
+            } else {
+                self.replace_dictionary_layout(object, prototype, entries, slots)
+            };
         }
         let previous = self.heap.object(object)?.shape;
         let source = self.heap.shape(previous)?;
@@ -583,7 +612,7 @@ impl RuntimeState {
             self.unlink_shape_transitions(previous);
             self.get_or_create_shape(prototype, entries)?
         };
-        self.replace_layout_with_owned_shape(object, shape, slots)
+        self.replace_layout_with_owned_shape_inner(poisoned, object, shape, slots)
     }
 
     /// Consume the selected successor shape reference. Existing slots stay in
@@ -596,6 +625,7 @@ impl RuntimeState {
         replacement: PropertySlot,
     ) -> Result<(), RuntimeError> {
         self.append_slot_with_owned_shape_input(
+            None,
             object,
             shape,
             crate::engine::object::SlotAppendInput::Borrowed(replacement),
@@ -604,6 +634,7 @@ impl RuntimeState {
 
     pub(crate) fn append_slot_with_owned_shape_input(
         &mut self,
+        poisoned: Option<&Cell<bool>>,
         object: ObjectId,
         shape: ShapeId,
         input: crate::engine::object::SlotAppendInput<'_>,
@@ -617,8 +648,16 @@ impl RuntimeState {
         } {
             Ok(atoms) => atoms,
             Err(error) => {
-                let cleanup = self.heap.release_shape(shape)?;
-                self.apply_cleanup(cleanup)?;
+                let cleanup = self.heap.release_shape(shape).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
+                self.apply_cleanup(cleanup).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
                 return Err(error);
             }
         };
@@ -630,27 +669,77 @@ impl RuntimeState {
         {
             *owner = crate::engine::value::JsValue::Undefined;
         }
+        let result = match result {
+            Err(failure) if failure.published && poisoned.is_some() => {
+                // Publication consumed the source owner above. Quarantine
+                // before attempting cleanup against an inconsistent heap.
+                poisoned.expect("publication poison flag").set(true);
+                return Err(failure.error.into());
+            }
+            result => result,
+        };
         // The caller's temporary shape owner is consumed even if preparation
         // failed. On a published error the new slot still owns its Atom edges.
-        let shape_cleanup = self.heap.release_shape(shape)?;
+        let shape_cleanup = self.heap.release_shape(shape).inspect_err(|_| {
+            if let Some(poisoned) = poisoned {
+                poisoned.set(true);
+            }
+        })?;
         match result {
             Ok(cleanup) => {
-                self.apply_cleanup(cleanup)?;
-                self.apply_cleanup(shape_cleanup)
+                self.apply_cleanup(cleanup).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
+                self.apply_cleanup(shape_cleanup).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })
             }
             Err(failure) => {
                 if !failure.published {
-                    self.release_atoms(retained_atoms)?;
+                    self.release_atoms(retained_atoms).inspect_err(|_| {
+                        if let Some(poisoned) = poisoned {
+                            poisoned.set(true);
+                        }
+                    })?;
                 }
-                self.apply_cleanup(shape_cleanup)?;
+                self.apply_cleanup(shape_cleanup).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
                 Err(failure.error.into())
             }
         }
     }
 
     /// Consume the caller's shape reference on both success and rollback.
+    // Legacy entry remains for unconverted consumers; remove in B5.
     pub(crate) fn replace_layout_with_owned_shape(
         &mut self,
+        object: ObjectId,
+        shape: ShapeId,
+        slots: Slots,
+    ) -> Result<(), RuntimeError> {
+        self.replace_layout_with_owned_shape_inner(None, object, shape, slots)
+    }
+
+    pub(crate) fn replace_layout_with_owned_shape_with_poison(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        shape: ShapeId,
+        slots: Slots,
+    ) -> Result<(), RuntimeError> {
+        self.replace_layout_with_owned_shape_inner(Some(poisoned), object, shape, slots)
+    }
+
+    fn replace_layout_with_owned_shape_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
         object: ObjectId,
         shape: ShapeId,
         slots: Slots,
@@ -658,24 +747,66 @@ impl RuntimeState {
         let retained_atoms = match self.retain_slot_atoms(&slots) {
             Ok(atoms) => atoms,
             Err(error) => {
-                let cleanup = self.heap.release_shape(shape)?;
-                self.apply_cleanup(cleanup)?;
+                let cleanup = self.heap.release_shape(shape).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
+                self.apply_cleanup(cleanup).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
                 return Err(error);
             }
         };
 
-        let layout_cleanup = match self.heap.replace_object_layout(object, shape, slots) {
+        let layout_cleanup = match self
+            .heap
+            .replace_object_layout_with_status(object, shape, slots)
+        {
             Ok(cleanup) => cleanup,
-            Err(error) => {
-                self.release_atoms(retained_atoms)?;
-                let cleanup = self.heap.release_shape(shape)?;
-                self.apply_cleanup(cleanup)?;
-                return Err(error.into());
+            Err(failure) => {
+                if failure.published {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                        return Err(failure.error.into());
+                    }
+                } else {
+                    self.release_atoms(retained_atoms).inspect_err(|_| {
+                        if let Some(poisoned) = poisoned {
+                            poisoned.set(true);
+                        }
+                    })?;
+                }
+                let cleanup = self.heap.release_shape(shape).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
+                self.apply_cleanup(cleanup).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
+                return Err(failure.error.into());
             }
         };
-        let shape_cleanup = self.heap.release_shape(shape)?;
-        self.apply_cleanup(layout_cleanup)?;
-        self.apply_cleanup(shape_cleanup)
+        let shape_cleanup = self.heap.release_shape(shape).inspect_err(|_| {
+            if let Some(poisoned) = poisoned {
+                poisoned.set(true);
+            }
+        })?;
+        self.apply_cleanup(layout_cleanup).inspect_err(|_| {
+            if let Some(poisoned) = poisoned {
+                poisoned.set(true);
+            }
+        })?;
+        self.apply_cleanup(shape_cleanup).inspect_err(|_| {
+            if let Some(poisoned) = poisoned {
+                poisoned.set(true);
+            }
+        })
     }
 
     pub(crate) fn materialize_array_layout(
@@ -704,8 +835,29 @@ impl RuntimeState {
 
     /// One slot transaction, including Atom ownership. Once published, a
     /// cleanup failure cannot roll back the new slot's Atom references.
+    // Legacy entry remains for unconverted consumers; remove in B5.
     pub(crate) fn replace_property_slot(
         &mut self,
+        object: ObjectId,
+        index: usize,
+        replacement: PropertySlot,
+    ) -> Result<(), RuntimeError> {
+        self.replace_property_slot_inner(None, object, index, replacement)
+    }
+
+    pub(crate) fn replace_property_slot_with_poison(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        index: usize,
+        replacement: PropertySlot,
+    ) -> Result<(), RuntimeError> {
+        self.replace_property_slot_inner(Some(poisoned), object, index, replacement)
+    }
+
+    fn replace_property_slot_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
         object: ObjectId,
         index: usize,
         replacement: PropertySlot,
@@ -722,10 +874,22 @@ impl RuntimeState {
             .heap
             .replace_object_slot_with_status(object, index, replacement)
         {
-            Ok(cleanup) => self.apply_cleanup(cleanup),
+            Ok(cleanup) => self.apply_cleanup(cleanup).inspect_err(|_| {
+                if let Some(poisoned) = poisoned {
+                    poisoned.set(true);
+                }
+            }),
             Err(failure) => {
-                if !failure.published {
-                    self.release_atoms(atoms)?;
+                if failure.published {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                } else {
+                    self.release_atoms(atoms).inspect_err(|_| {
+                        if let Some(poisoned) = poisoned {
+                            poisoned.set(true);
+                        }
+                    })?;
                 }
                 Err(failure.error.into())
             }

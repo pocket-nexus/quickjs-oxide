@@ -6,11 +6,29 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ShapeId, Slots};
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 impl RuntimeState {
+    // Legacy entry remains for unconverted consumers; remove in B5.
     pub(crate) fn ensure_dictionary_layout(
         &mut self,
+        object: ObjectId,
+    ) -> Result<(), RuntimeError> {
+        self.ensure_dictionary_layout_inner(None, object)
+    }
+
+    pub(crate) fn ensure_dictionary_layout_with_poison(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+    ) -> Result<(), RuntimeError> {
+        self.ensure_dictionary_layout_inner(Some(poisoned), object)
+    }
+
+    fn ensure_dictionary_layout_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
         object: ObjectId,
     ) -> Result<(), RuntimeError> {
         let shape_id = self.heap.object(object)?.shape;
@@ -25,7 +43,11 @@ impl RuntimeState {
         shape.enable_dictionary();
         let slots = self.heap.object(object)?.slots.clone();
         let shape_id = self.allocate_uncached_shape(shape)?;
-        self.replace_layout_with_owned_shape(object, shape_id, slots)
+        if let Some(poisoned) = poisoned {
+            self.replace_layout_with_owned_shape_with_poison(poisoned, object, shape_id, slots)
+        } else {
+            self.replace_layout_with_owned_shape(object, shape_id, slots)
+        }
     }
 
     fn allocate_uncached_shape(&mut self, shape: Shape) -> Result<ShapeId, RuntimeError> {
@@ -42,8 +64,31 @@ impl RuntimeState {
     /// Rare whole-layout operations supply physical entries and parallel slots.
     /// Restore semantic insertion order before rebuilding, preserving dictionary
     /// mode through prototype/private-element changes and shared-shape detaches.
+    // Legacy entry remains for unconverted consumers; remove in B5.
     pub(crate) fn replace_dictionary_layout(
         &mut self,
+        object: ObjectId,
+        prototype: Option<ObjectId>,
+        entries: &[ShapeEntry],
+        slots: Slots,
+    ) -> Result<(), RuntimeError> {
+        self.replace_dictionary_layout_inner(None, object, prototype, entries, slots)
+    }
+
+    pub(crate) fn replace_dictionary_layout_with_poison(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        prototype: Option<ObjectId>,
+        entries: &[ShapeEntry],
+        slots: Slots,
+    ) -> Result<(), RuntimeError> {
+        self.replace_dictionary_layout_inner(Some(poisoned), object, prototype, entries, slots)
+    }
+
+    fn replace_dictionary_layout_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
         object: ObjectId,
         prototype: Option<ObjectId>,
         entries: &[ShapeEntry],
@@ -83,7 +128,16 @@ impl RuntimeState {
         let mut shape = Shape::new(prototype, entries)?;
         shape.enable_dictionary();
         let shape_id = self.allocate_uncached_shape(shape)?;
-        self.replace_layout_with_owned_shape(object, shape_id, Slots::from_vec(slots))
+        if let Some(poisoned) = poisoned {
+            self.replace_layout_with_owned_shape_with_poison(
+                poisoned,
+                object,
+                shape_id,
+                Slots::from_vec(slots),
+            )
+        } else {
+            self.replace_layout_with_owned_shape(object, shape_id, Slots::from_vec(slots))
+        }
     }
 }
 

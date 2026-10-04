@@ -636,6 +636,7 @@ mod tests {
         assert!(
             state
                 .try_store_owned_linked_field(
+                    &runtime.0.poisoned,
                     runtime.domain_id(),
                     object(&base),
                     &mut JsValue::Int(42),
@@ -648,6 +649,7 @@ mod tests {
         assert!(
             !state
                 .try_store_owned_linked_field(
+                    &runtime.0.poisoned,
                     runtime.domain_id(),
                     object(&frozen),
                     &mut JsValue::Int(42),
@@ -744,6 +746,7 @@ mod tests {
                 .state
                 .borrow_mut()
                 .try_store_owned_linked_field(
+                    &runtime.0.poisoned,
                     runtime.domain_id(),
                     object(&base),
                     &mut JsValue::Int(42),
@@ -786,6 +789,7 @@ mod tests {
                     .state
                     .borrow_mut()
                     .try_store_owned_linked_field(
+                        &runtime.0.poisoned,
                         runtime.domain_id(),
                         object(&base),
                         &mut JsValue::Int(42),
@@ -808,6 +812,7 @@ mod tests {
                 .state
                 .borrow_mut()
                 .try_store_owned_linked_field(
+                    &runtime.0.poisoned,
                     runtime.domain_id(),
                     object(&base),
                     &mut JsValue::Int(42),
