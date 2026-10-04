@@ -37,6 +37,8 @@
 | `620ecfe4` | 已迁移的 Number/BigInt/Index/String、Math/Numeric/Text、Date brand/ISO 与 constructor-only ABI 拒绝携带实际新建 Error/iterator 的发布事实；共同 Query 在 owner 发布后服务 GC。同步 Number 边界通过原 guarded finisher 消费事实，保留旧 Complete ABI。 |
 | `6607cbfe` | Function.call/apply、Reflect.apply/construct、spread CALL 与 Arguments/rest 共用状态内 producer、raw continuation 和既有 Query；mapped/unmapped 工厂与帧 binding 读取共享实现。删除旧 Apply driver、同步转发循环与 Arguments 外层创建路径；公开边界恢复 VM 携带的原始错误类型。 |
 
+| `aecf0703` | Date Constructor、Parse/Utc 与 function realm 共用状态算法及原始 continuation；转换、prototype 读取和已完成进展进入既有 Query。原生调用的原 invocation 保留到 body 完成，致命失败后停止原 owner 与 activation 后缀退休。 |
+
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
 ## 已完成的验证
@@ -85,7 +87,7 @@ Own-property 内部迁移适配器先验证域，再统一完成一次 operation
 
 Native 的原始 activation 不携带 Runtime。生产 preparation 与消费者现在直接使用 borrowed guard；只有独立生命周期测试显式生成 rooted wrapper，没有公开的 prepared-call API。尚未迁移的 native body 通过显式边界临时转交同一 callee edge，不增加 retain 或重放算法。Query 在外部状态忙碌时仍保留原有协调队列兜底；resident 标量路径不创建 Query。其它 native family 和这些迁移边界仍需完成。
 
-Date 的无 JS 转换方法按固定 selector 选择状态实现，覆盖普通值、真实 Date、错误 brand 和忽略参数；不以输入种类决定是否迁移。保留 brand temporary 的 checked retain 与释放顺序。非重入 HostServices 直接借用，panic 标记同一 poison header。`d1e45524` 完成 setter、toJSON/toPrimitive 的转换协议；Constructor、Parse/Utc 仍需迁移。
+Date 的无 JS 转换方法按固定 selector 选择状态实现，覆盖普通值、真实 Date、错误 brand 和忽略参数；不以输入种类决定是否迁移。保留 brand temporary 的 checked retain 与释放顺序。非重入 HostServices 直接借用，panic 标记同一 poison header。`d1e45524` 完成 setter、toJSON/toPrimitive 的转换协议；构造和静态方法随后在 `aecf0703` 中迁移。
 
 普通属性读取的状态内原型遍历不产生中间 prototype owner，getter 不再提升未消费的 setter；相应内部 MAX 拒绝随不必要的 owner 一起消失。实际输出和 getter/receiver owner 仍使用 checked retain。命名 VM 读取和已迁移的转换消费者直接使用原始 owner 安装 getter；尚未迁移的公共读取、Proxy 与 legacy 外层消费者仍有显式 rooted 适配器。后续迁移必须删除这些适配器，当前未声明全局 owner 为零。
 
@@ -109,7 +111,7 @@ Cold Call 的回复进入 resident 消费前只恢复一次下一条 PC，并转
 
 实际 payload、callback callee 和帧发布所需的 checked retain 保留。只为旧公共 header 临时包装产生的 bytecode/global owner 与相应 MAX 拒绝删除；最终 callee 的 heap 边保护代码、closure 和 realm，帧安装在退休选择之前取得所需 owner。overflow 清理先处理 Bound argv，再处理调用 argv；真正新建的 Error 在 owner 发布后才服务分配压力，传播的旧 throw 不标记为新分配。
 
-本提交保留真实 caller 的旧 materialization 时点，不创建 Bound 帧。Bound Construct、Function.call 的转发循环、Proxy、特殊 bytecode 与未迁移 native 的实际边界仍有后续工作；未声明所有调用成本消失或全局架构指标归零。
+本提交保留真实 caller 的旧 materialization 时点，不创建 Bound 帧。Function.call 的转发随后在 `6607cbfe` 中迁移；Bound Construct、Proxy、特殊 bytecode 与未迁移 native 的实际边界仍有后续工作；未声明所有调用成本消失或全局架构指标归零。
 
 ## 已采纳的 Date 转换与 ToObject
 
@@ -117,7 +119,7 @@ Cold Call 的回复进入 resident 消费前只恢复一次下一条 PC，并转
 
 ToObject 的公共与内部入口共用 prototype 准备和 primitive 工厂。公共入口保留 realm、checked prototype 与 operation admission 的优先级；内部使用当前状态。Existing、Boxed 和 Throw 明确区分实际生产结果。String wrapper 的空 shape 与 length successor 各有真正的 prototype 边，见证按实际已发布 shape 核对，不把它们误判成临时 retain 泄漏。
 
-Date fresh Error 与真实 toJSON boxing 在 owner 发布后向共同 Query 传递分配事实。原始属性请求保存已选 ReadStep，再按顺序退休 receiver/request owner；致命失败停止后缀。只在真实外部忙碌状态的放弃边界使用协调队列。Constructor、Parse/Utc 以及其它尚未迁移的 native 仍有后续工作。
+Date fresh Error 与真实 toJSON boxing 在 owner 发布后向共同 Query 传递分配事实。原始属性请求保存已选 ReadStep，再按顺序退休 receiver/request owner；致命失败停止后缀。只在真实外部忙碌状态的放弃边界使用协调队列。构造和静态方法随后在 `aecf0703` 中迁移；其它 native family 仍有后续工作。
 
 ## 已采纳的计算读取与键转换
 
@@ -142,6 +144,16 @@ Math 的无参数存储事件和 `core.internal_native_body` 是关联计数。�
 mapped/unmapped Arguments 与 rest 使用共享状态工厂及 binding 读取，保留真实 callee/cell/输出 owner。`OP_arguments` 是 Arguments 对象创建，不能把它的覆盖算成列表展开。构造、非 callable Proxy、共享缓冲读取和未迁移 native body 仍经实际选中的旧边界，当前未声明全部调用域迁移完成。
 
 完整参数 snapshot 不再因 pending cleanup 退避，也不要求虚拟的 length+2 receiver 引用余量；实际输出按顺序 checked retain。完全即时的 spread CALL 不再取得无消费者的请求身份；真正挂起的请求仍在发布前检查身份。失败时先保护选定请求，再退休原三项操作数，保持真实 fault PC 和首个破坏性失败后的隔离。上述内部契约变动有对应见证，不能宣称保留已删除的中间 owner 拒绝。
+
+## 已采纳的 Date 构造与静态方法
+
+`aecf0703` 覆盖 Constructor、Parse/Utc 的全部输入，并复用已有 Now 状态实现。函数形式忽略参数并读取一次时钟；单参数构造保留 Date brand 特例与 Default hint，多参数完整转换声明的七个字段。转换和时钟读取仍先于 newTarget.prototype；selected getter、Proxy 与 native 恢复交给既有 Query，不重放选择。function realm 借用 Bound/Proxy 链，真实 newTarget、prototype 和输出仍 checked retain。
+
+原生 public/冷调用的原 invocation 由现有 call guard 保护到 body 终结，然后在 activation 后缀之前退休。body 已发生致命失败时保持该 owner 完整，避免 Symbol atom 等仍可修改的计数继续变化；既有 finisher 隔离整个后缀。真实 Date/Error 发布事实在结果或 continuation 已保护后由共同消费者处理。
+
+新增 **25 个见证**通过，覆盖转换顺序、时钟与时区、realm、MAX 拒绝、alias、prototype 抛错、发布失败、typed error provenance，以及 body 致命失败时原 invocation/callee/argv/frame 后缀保持。最终源码完整 library：普通配置 **2546**、profiling 配置 **2768** 全部通过；严格 workspace/all-targets Clippy 两配置、profiling+test262-host 与格式/源检查通过。两种配置共享语义测试，不能相加为独立用例数。
+
+**1008 项 Rust/Cargo 输入与采纳提交逐项相同。** 回执：`/home/eric/.cache/oxide-runtime-core-20261003/b-date-construction-state/test-attempt-05/receipt.json`，SHA256 `4381c1b8d8c95f37e1502ff8e29296fe1dea72b00258d32e22cd3ea38b93f87c`。原有失败尝试、清理顺序修正和两个新增真实边界见证的来源均保留。未运行计时、原版 Score、A/A 或 Boa；GeneralConstruct 与其它 native family 的边界仍需迁移。
 
 ## 中途机制检查
 
