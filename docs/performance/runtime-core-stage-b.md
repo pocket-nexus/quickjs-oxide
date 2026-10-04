@@ -206,7 +206,35 @@ Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete �
 | NavierStokes | 737.62 | 641.91 | −12.98% |
 | Combined | 9481.44 | 9056.66 | −4.48% |
 
-每项两对均向改善方向；Combined 两对为 −4.32% / −4.64%。实际 release 中共享 Query advance 从 32971 到 30078 字节，全二进制 text+rodata 增长 **0.0665%**；静态调用数不是动态指令或耗时归因。受测二进制 SHA256 `85b631b901f8e87488a491aa74f1649ee458f814e2c403b5bbf27b945c9e1a5e`，测量回执 `b-set-terminal-transport/interim/summary.json`，SHA256 `20e6f5d8d842edb0809800e787a6294673e40f277fa44cbd3ca39fb13fc78910`。未重跑 Boa、A/A 或原版 Score；当前累计版本相对阶段 A 的门槛仍待验证。
+每项两对均向改善方向；Combined 两对为 −4.32% / −4.64%。实际 release 中共享 Query advance 从 32971 到 30078 字节，全二进制 text+rodata 增长 **0.0665%**；静态调用数不是动态指令或耗时归因。受测二进制 SHA256 `85b631b901f8e87488a491aa74f1649ee458f814e2c403b5bbf27b945c9e1a5e`，测量回执 `b-set-terminal-transport/interim/summary.json`，SHA256 `20e6f5d8d842edb0809800e787a6294673e40f277fa44cbd3ca39fb13fc78910`。未重跑 Boa、A/A 或原版 Score；相对阶段 A 的累计筛查见下表，阶段 B 门槛仍未通过。
+
+### B37 累计版本相对阶段 A 的筛查
+
+运行时 `fdb7dee0`（源码提交 `da564489`）使用实际集成的 B35/B36/B37，不相加此前独立收益。冻结固定工作量、CPU 2、Rust 1.88 普通 release、无 PGO；每项一个 ABBA 块、两对，36 个进程和语义输出全部通过，计时期间没有并行构建或测试。**这仍是短测，不是原版 Score、正式置信区间或阶段验收。**
+
+| 固定工作量 | 阶段 A 中位耗时 ms | 累计 B37 中位耗时 ms | 配对耗时变化 |
+|---|---:|---:|---:|
+| Richards | 621.08 | 766.55 | +23.42% |
+| DeltaBlue | 664.52 | 768.82 | +15.70% |
+| Crypto | 524.29 | 671.97 | +28.17% |
+| RayTrace | 868.14 | 801.39 | −7.69% |
+| EarleyBoyer | 1140.86 | 1187.06 | +4.05% |
+| RegExp | 2191.41 | 2525.52 | +15.25% |
+| Splay | 1631.77 | 1638.48 | +0.41% |
+| NavierStokes | 503.64 | 637.48 | +26.57% |
+| Combined | 8191.95 | 8967.30 | +9.46% |
+
+Combined 两对为 +9.14% / +9.79%；Splay 两对为 +0.89% / −0.06%，该项未分辨。其余回归项两对都慢于阶段 A。阶段 B 尚未达到性能门槛，不能用局部收益或协议删除替代累计验收。候选二进制 SHA256 `4df4c86969ba114e8f8a43c482240c2a4ac4dcc9d95ee343c942f4fda46723f9`；回执 `b-set-terminal-transport/b37-cumulative-interim/paired-screen-summary.json`，SHA256 `4da425676c0fe7fcbf4f82736ea2161b7d9d87d41b61105e5383b13cb8460fa5`。未重跑 Boa、A/A 或原版 Score。
+
+实际累计 Combined 周期采样共 8874 个样本，未丢样；解释循环自身 16.94%，通用 Set 的创建、推进、清理和写入消费者都出现在实际调用栈。采样定位下一步调查，不换算成某提交的耗时归因，也不与不同工作量的历史采样比例直接比较。
+
+## 已采纳的本地内建终结服务
+
+`e15ea1b6` 把实际新建结果的 GC 服务放入共享 State 叶函数，结果由原有 OwnedValueGuard 保护。resident native 和真正的冷本地 native 消费者在建立 Query 前接受 Complete/CyclePublishedComplete；实际分配事实才服务 GC，纯 Complete 不增加轮询。服务期间原 invocation、参数、callee 和活动 descriptor 仍有真实 owner，之后由原有 finisher 按原顺序退休。实际等待以及已经有父记录的 callback/computed Query 保留原来的发布策略，没有新增模式开关或第二套算法。
+
+六项新增见证覆盖实际 CallMethod/TailCallMethod 返回与抛出、无 Query 的冷完成、GC 前后的循环 callee/receiver 存活、结果别名、服务失败隔离，以及服务后 callee 清理失败时的参数后缀。弱引用快照按既有契约验收：先检查对象句柄失效，再检查下一次弱扫描清除身份，GC 期间的存活断言保留。
+
+完整 **1022 项**输入与采纳源码逐项相同；新编译完整 library 普通 **2612**、profiling **2834** 全过，严格 Clippy 两配置、profiling+test262-host 与全部源检查通过。回执 `b-native-local-publication/test-attempt-03/receipt.json`，SHA256 `a94f203051260ef8a446cc5f135d1c6778ee21c1e6552ae956cdd3485a706ec1`。此层未单独计时，不声称性能收益；上面的累计测量对应 B37，尚未包含本提交。
 
 ## 中途机制检查
 
@@ -240,7 +268,7 @@ Push/Pop/Shift/Unshift 使用无 Runtime owner 的原始状态，普通 Delete �
 
 ## 性能归因与剩余验收
 
-**阶段 B 尚未通过性能验收；累计 B34 的短测仍有明显回归。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
+**阶段 B 尚未通过性能验收；最新累计 B37 短测 Combined 耗时仍高约 9.46%。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
 
 ### B32 累计版本的回归筛查
 
