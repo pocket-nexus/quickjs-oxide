@@ -38,6 +38,7 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::ArrayCopy { .. } => "query_dispatch.step.array_copy",
         Step::OrdinaryInstance { .. } => "query_dispatch.step.ordinary_instance",
         Step::ParseIterator { .. } => "query_dispatch.step.parse_iterator",
+        Step::StringReply { .. } => "query_dispatch.step.string_reply",
         Step::String { .. } => "query_dispatch.step.string",
         Step::ObjectTag { .. } => "query_dispatch.step.object_tag",
         Step::RegExpExec { .. } => "query_dispatch.step.reg_exp_exec",
@@ -63,6 +64,14 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::PreparedHas { .. } => "query_dispatch.step.prepared_has",
         Step::PreparedRead { .. } => "query_dispatch.step.prepared_read",
         Step::Primitive { .. } => "query_dispatch.step.primitive",
+        Step::NumberReply { .. } => "query_dispatch.step.number_reply",
+        Step::PrimitiveReply { .. } => "query_dispatch.step.primitive_reply",
+        Step::RawRead { .. } => "query_dispatch.step.raw_read",
+        Step::RawCall { .. } => "query_dispatch.step.raw_call",
+        Step::CallbackBoundary(_) => "query_dispatch.step.callback_boundary",
+        Step::PreparedNativeBoundary(_) => "query_dispatch.step.prepared_native_boundary",
+        Step::PrimitiveProgress(_) => "query_dispatch.step.primitive_progress",
+        Step::NumberProgress(_) => "query_dispatch.step.number_progress",
         Step::GetPrototype { .. } => "query_dispatch.step.get_prototype",
         Step::SetPrototype { .. } => "query_dispatch.step.set_prototype",
         Step::Delete { .. } => "query_dispatch.step.delete",
@@ -95,7 +104,12 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::Convert { .. } => "query_dispatch.step.convert",
     });
     let resume = match step {
-        Step::Read { resume, .. }
+        Step::NumberReply { resume, .. }
+        | Step::StringReply { resume, .. }
+        | Step::PrimitiveReply { resume, .. }
+        | Step::RawRead { resume, .. }
+        | Step::RawCall { resume, .. }
+        | Step::Read { resume, .. }
         | Step::PreparedRead { resume, .. }
         | Step::Set { resume, .. }
         | Step::PreparedSet { resume, .. }

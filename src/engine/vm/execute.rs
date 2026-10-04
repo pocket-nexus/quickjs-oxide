@@ -25,6 +25,8 @@ use crate::engine::vm::stack::{
     PropertyReadProgress, StoreProgress, copy_value_in_state,
 };
 
+pub(in crate::engine::vm) mod named_read;
+
 #[cfg(test)]
 thread_local! {
     static NUMERIC_REGION_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -214,6 +216,11 @@ impl FallthroughPc {
     pub(super) fn index(self) -> usize {
         self.0 as usize
     }
+    pub(in crate::engine::vm) fn from_committed_index(index: usize) -> Result<Self, Error> {
+        u32::try_from(index)
+            .map(Self)
+            .map_err(|_| Error::internal("committed PC exceeds executable width"))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -235,6 +242,8 @@ impl PendingNamedRead {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum VmAction {
+    /// The execution owns the selected request; the boundary consumes it once.
+    NativeProgress,
     Import,
     Pure(super::pure_operations::PureOperation),
     ApplyEval(u16),
@@ -354,6 +363,7 @@ impl VmAction {
     #[cfg(feature = "profiling")]
     pub(super) fn diagnostic_name(self) -> &'static str {
         match self {
+            Self::NativeProgress => "execute.action.native_progress",
             Self::Import => "execute.action.import",
             Self::Pure(_) => "execute.action.pure",
             Self::ApplyEval(_) => "execute.action.apply_eval",
@@ -2356,6 +2366,9 @@ pub(super) fn execute_frame_in_state(
                             keep_receiver,
                             fallthrough: FallthroughPc::from_decoded(decoded),
                         };
+                        if selected_named_read.is_some() {
+                            break 'dispatch Ok(pending.action());
+                        }
                         let step = cursor.with_slots(|slots| {
                             slots.property_ic_read_in_state(
                                 state,
@@ -2607,6 +2620,34 @@ pub(super) fn execute_frame_in_state(
             }
         }?;
         match action {
+            VmAction::GetField {
+                index,
+                keep_receiver,
+                fallthrough,
+            } => {
+                match named_read::complete(
+                    runtime,
+                    state,
+                    &mut segment,
+                    index,
+                    keep_receiver,
+                    fallthrough,
+                )? {
+                    named_read::Progress::Completed | named_read::Progress::Entered => continue,
+                    named_read::Progress::CyclePublished => {
+                        // Exact AutoInit Object publication, not a pressure
+                        // poll on retained objects or allocated leaf outputs.
+                        segment.materialize_in_state(state)?;
+                        state
+                            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                            .map_err(runtime_error_to_vm_error)?;
+                        continue;
+                    }
+                    named_read::Progress::Boundary => return Ok(action),
+                    named_read::Progress::NativeBoundary => return Ok(VmAction::NativeProgress),
+                    named_read::Progress::Throw => return Ok(VmAction::Throw),
+                }
+            }
             VmAction::Object { fallthrough } => {
                 // FrameCursor has published the allocation's fault PC. Use
                 // the one suffix protocol before allocation can be observed.
@@ -2755,6 +2796,9 @@ pub(super) fn execute_frame_in_state(
                         continue;
                     }
                     super::driver::ordinary::Entry::General => return Ok(action),
+                    super::driver::ordinary::Entry::NativeBoundary => {
+                        return Ok(VmAction::NativeProgress);
+                    }
                     super::driver::ordinary::Entry::NativeReady => {
                         state
                             .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
@@ -2767,6 +2811,12 @@ pub(super) fn execute_frame_in_state(
                             .map_err(runtime_error_to_vm_error)?;
                         match segment.finish_ordinary(runtime, state)? {
                             super::driver::ordinary::ReturnProgress::Returned => continue,
+                            super::driver::ordinary::ReturnProgress::NativeThrow => {
+                                return Ok(VmAction::Throw);
+                            }
+                            super::driver::ordinary::ReturnProgress::NativeBoundary => {
+                                return Ok(VmAction::NativeProgress);
+                            }
                             super::driver::ordinary::ReturnProgress::Declined => {
                                 return Ok(VmAction::Complete);
                             }
@@ -2812,6 +2862,10 @@ pub(super) fn execute_frame_in_state(
                     continue;
                 }
                 super::driver::ordinary::ReturnProgress::Declined => return Ok(action),
+                super::driver::ordinary::ReturnProgress::NativeThrow => return Ok(VmAction::Throw),
+                super::driver::ordinary::ReturnProgress::NativeBoundary => {
+                    return Ok(VmAction::NativeProgress);
+                }
                 super::driver::ordinary::ReturnProgress::Property(_) => {
                     return Err(Error::internal(
                         "ordinary segment entered a property continuation",

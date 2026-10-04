@@ -1,20 +1,51 @@
 //! Bounded native-stack dispatch for conversion requests.
+mod boundary;
 use super::{
-    Error, Next, Query, Resume, ReturnOwner, RunningExecution, Runtime, Step,
-    runtime_error_to_vm_error,
+    Error, Next, Query, ReturnOwner, RunningExecution, Runtime, Step, runtime_error_to_vm_error,
 };
 
 #[inline(never)]
 pub(super) fn primitive(
     runtime: &Runtime,
-    _execution: &mut RunningExecution,
-    _owner: ReturnOwner,
-    _identity: u64,
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    identity: u64,
     query: &mut Query,
     pending: &mut Step,
 ) -> Result<Next, Error> {
+    let _operation = runtime.operation().map_err(runtime_error_to_vm_error)?;
     let step = pending;
     loop {
+        if matches!(
+            step,
+            Step::Primitive { .. }
+                | Step::String { .. }
+                | Step::StringReply { .. }
+                | Step::Number { .. }
+                | Step::PrimitiveProgress(_)
+                | Step::NumberProgress(_)
+                | Step::PrimitiveReply { .. }
+                | Step::NumberReply { .. }
+                | Step::RawRead { .. }
+                | Step::RawCall { .. }
+                | Step::CallbackBoundary(_)
+                | Step::PreparedNativeBoundary(_)
+        ) {
+            query.ensure_raw_owner_registration(runtime)?;
+            let progress = {
+                let mut state = runtime.0.state.borrow_mut();
+                query
+                    .advance_raw_in_state(runtime, &mut state, step)
+                    .map_err(runtime_error_to_vm_error)?
+            };
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+            if progress.cycle_published {
+                runtime
+                    .collect_if_requested()
+                    .map_err(runtime_error_to_vm_error)?;
+            }
+            return boundary::consume(runtime, execution, owner, identity, query, step);
+        }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "dispatch_conversion.primitive.visit",
@@ -23,20 +54,6 @@ pub(super) fn primitive(
         crate::engine::api::profiling::record_owned_execution_event("conversion_transition");
         let realm = query.realm;
         match &mut *step {
-            Step::String { value, resume } => {
-                let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
-                *step = Step::Primitive {
-                    value: Some(value),
-                    hint: Some(crate::engine::vm::ToPrimitiveHint::String),
-                    resume: Some(Resume::StringValue {
-                        realm,
-                        resume: Box::new(resume),
-                    }),
-                };
-                continue;
-            }
             Step::OrdinaryPrimitive { object, hint } => {
                 let object = object.take().expect("selected Step field");
                 let hint = hint.take().expect("selected Step field");
@@ -70,72 +87,6 @@ pub(super) fn primitive(
                 *step = parent
                     .arguments(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
-                continue;
-            }
-            Step::Primitive {
-                value,
-                hint,
-                resume,
-            } => {
-                let value = value.take().expect("selected Step field");
-                let hint = hint.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
-                let next = crate::engine::value::conversion::primitive::PrimitiveResume::start(
-                    runtime, realm, value, hint,
-                )?;
-                *step = match next {
-                    crate::engine::value::conversion::primitive::PrimitiveStep::Complete(
-                        result,
-                    ) => resume
-                        .resume(runtime, result)
-                        .map_err(runtime_error_to_vm_error)?,
-                    next => {
-                        if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = next.try_into()?;
-                            abandoned.release_owned(runtime);
-                            resume.release_owned();
-                            return Err(Error::internal(
-                                "primitive continuation allocation failed",
-                            ));
-                        }
-                        query.parents.push(resume);
-                        next.try_into()?
-                    }
-                };
-                continue;
-            }
-            Step::Number { value, resume } => {
-                let value = value.take().expect("selected Step field");
-
-                // Only a request which can suspend needs a parent owner. Complete
-                // results (including JS throws) use the same typed reply consumer.
-                let next = crate::engine::value::conversion::number::NumberStep::start_jsvalue(
-                    runtime, realm, value,
-                )
-                .map_err(runtime_error_to_vm_error)?;
-                let resume = resume.take().expect("selected Step field");
-                *step = match next {
-                    crate::engine::value::conversion::number::NumberStep::Complete(result) => {
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "conversion_immediate",
-                        );
-                        resume
-                            .number(runtime, result)
-                            .map_err(runtime_error_to_vm_error)?
-                    }
-                    next => {
-                        if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = next.try_into()?;
-                            abandoned.release_owned(runtime);
-                            resume.release_owned();
-                            return Err(Error::internal("property continuation allocation failed"));
-                        }
-                        query.parents.push(resume);
-                        next.try_into()?
-                    }
-                };
                 continue;
             }
             Step::NumberComplete(result) => {
@@ -183,7 +134,7 @@ pub(super) fn primitive(
                         if query.parents.try_reserve(1).is_err() {
                             let mut abandoned: Step = next.try_into()?;
                             abandoned.release_owned(runtime);
-                            resume.release_owned();
+                            resume.release_owned(runtime);
                             return Err(Error::internal("property continuation allocation failed"));
                         }
                         query.parents.push(resume);

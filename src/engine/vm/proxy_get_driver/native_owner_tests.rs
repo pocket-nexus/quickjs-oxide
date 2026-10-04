@@ -240,3 +240,126 @@ fn native_query_drop_during_external_state_borrow_defers_restore_and_owned_relea
     assert!(!runtime.0.deferred_references.has_pending());
     assert_eq!(context.eval("6*7").unwrap(), Value::Int(42));
 }
+
+#[test]
+fn published_native_body_error_waits_for_raw_parent_retirement_before_returning() {
+    use crate::engine::{
+        api::RuntimeError,
+        builtins::{continuation::NativeOperation, native::NativeFunctionId},
+        heap::{GcPolicy, PropertySlot, RawId, RawValue},
+        value::conversion::primitive::{PrimitiveResume, PrimitiveStep},
+        vm::ToPrimitiveHint,
+    };
+
+    for malformed in [false, true] {
+        let runtime = Runtime::new();
+        runtime.set_gc_policy(GcPolicy::Manual).unwrap();
+        let mut context = runtime.new_context().unwrap();
+        let prototype = context.function_prototype().unwrap();
+        let probe = runtime
+            .new_bound_native_function(
+                &prototype,
+                context.realm,
+                NativeFunctionId::ActiveFrameProbe,
+                1,
+            )
+            .unwrap();
+        // The existing probe rejects Bool(true) without poisoning the Runtime.
+        // Its activation owns no edge to the parent retired below.
+        let call = runtime
+            .prepare_native_invocation_jsvalue(
+                &probe,
+                context.realm,
+                NativeFunctionId::ActiveFrameProbe,
+                1,
+                NativeInvocation::Call {
+                    this_value: JsValue::Undefined,
+                },
+                vec![JsValue::Bool(true)],
+                NativeInvokeMode::Ordinary,
+            )
+            .unwrap()
+            .into_inner();
+        let Value::Object(parent) = context.eval("({bad:{},suffix:{}})").unwrap() else {
+            panic!("raw parent fixture")
+        };
+        let parent = parent.into_handle();
+        let mut execution = RunningExecution::new(
+            &runtime,
+            super::super::execution::ExecutionLimits::default(),
+        )
+        .unwrap();
+        let mut storage = QueryStorage::default();
+        let mut query = storage.acquire(context.realm, Vec::new(), Finish::Root);
+        let (resume, bad, suffix) = {
+            let mut state = runtime.0.state.borrow_mut();
+            let PrimitiveStep::Get { mut resume } = PrimitiveResume::start_in_state(
+                &mut state,
+                &runtime.0.poisoned,
+                context.realm,
+                JsValue::Object(parent),
+                ToPrimitiveHint::Number,
+            )
+            .unwrap() else {
+                panic!("raw primitive parent")
+            };
+            let (requested, _) = resume.take_get_in_state();
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, JsValue::Object(requested))
+                .unwrap();
+            assert_eq!(state.heap.object_strong_count(parent), Ok(1));
+            let [
+                PropertySlot::Data(RawValue::Object(bad)),
+                PropertySlot::Data(RawValue::Object(suffix)),
+            ] = state.heap.object(parent).unwrap().slots.as_slice()
+            else {
+                panic!("ordered parent edges")
+            };
+            let (bad, suffix) = (*bad, *suffix);
+            assert_eq!(state.heap.object_strong_count(bad), Ok(1));
+            assert_eq!(state.heap.object_strong_count(suffix), Ok(1));
+            if malformed {
+                // Only the final parent release reaches this broken edge.
+                // The next stored child proves cleanup stops at that failure.
+                state.heap.set_strong_count_for_test(RawId::Object(bad), 0);
+            }
+            (resume, bad, suffix)
+        };
+        let mut pending =
+            Step::PreparedNativeBoundary(Some(Box::new(super::request::PreparedNativeBoundary {
+                call,
+                kind: NativeOperation::ActiveFrameProbe,
+                resume: Resume::Primitive(resume),
+            })));
+        let error =
+            native::start_published_boundary(&runtime, &mut execution, &mut query, &mut pending)
+                .unwrap_err();
+        assert!(matches!(pending, Step::PreparedNativeBoundary(None)));
+        assert!(query.natives.is_empty());
+        let state = runtime.0.state.borrow();
+        assert!(
+            state.active_frames.is_empty(),
+            "native activation retired first"
+        );
+        assert!(state.heap.object(parent).is_err());
+        if malformed {
+            assert_eq!(error.message(), RuntimeError::Poisoned.to_string());
+            assert!(runtime.is_poisoned());
+            assert_eq!(state.heap.object_strong_count(bad), Ok(0));
+            assert_eq!(state.heap.object_strong_count(suffix), Ok(1));
+        } else {
+            assert_eq!(
+                error.message(),
+                "runtime invariant failed: active frame probe engine error"
+            );
+            assert!(!runtime.is_poisoned());
+            assert!(state.heap.object(bad).is_err());
+            assert!(state.heap.object(suffix).is_err());
+            drop(state);
+            drop(pending);
+            drop(query);
+            drop(execution);
+            assert_eq!(context.eval("6*7").unwrap(), Value::Int(42));
+        }
+    }
+}

@@ -162,20 +162,7 @@ impl Runtime {
         if !symbol.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("symbol"));
         }
-        let state = self.0.state.borrow();
-        let info = state.atoms.resolve(symbol.atom())?;
-        if !matches!(info.kind, AtomKind::Symbol | AtomKind::GlobalSymbol) {
-            return Err(RuntimeError::Invariant(
-                "SymbolRef did not refer to a public symbol atom",
-            ));
-        }
-        match info.spelling {
-            AtomSpelling::Text(text) => Ok(Some(text.clone())),
-            AtomSpelling::NoDescription => Ok(None),
-            AtomSpelling::Integer(_) => Err(RuntimeError::Invariant(
-                "symbol atom had an immediate-integer spelling",
-            )),
-        }
+        self.0.state.borrow().symbol_description_atom(symbol.atom())
     }
 
     /// Return the exact UTF-16 spelling or symbol description of a key.
@@ -206,6 +193,26 @@ impl Runtime {
 }
 
 impl RuntimeState {
+    /// Borrow one admitted public symbol atom without manufacturing a root.
+    pub(crate) fn symbol_description_atom(
+        &self,
+        atom: Atom,
+    ) -> Result<Option<JsString>, RuntimeError> {
+        let info = self.atoms.resolve(atom)?;
+        if !matches!(info.kind, AtomKind::Symbol | AtomKind::GlobalSymbol) {
+            return Err(RuntimeError::Invariant(
+                "SymbolRef did not refer to a public symbol atom",
+            ));
+        }
+        match info.spelling {
+            AtomSpelling::Text(text) => Ok(Some(text.clone())),
+            AtomSpelling::NoDescription => Ok(None),
+            AtomSpelling::Integer(_) => Err(RuntimeError::Invariant(
+                "symbol atom had an immediate-integer spelling",
+            )),
+        }
+    }
+
     /// Return one owned atom. Public roots are constructed after the state borrow ends.
     pub(crate) fn intern_property_key_js_string(
         &mut self,

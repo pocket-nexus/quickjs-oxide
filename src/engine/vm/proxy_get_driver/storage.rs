@@ -43,7 +43,7 @@ pub(in crate::engine::vm) struct QueryStorage {
 }
 
 impl QueryStorage {
-    pub(super) fn pending(
+    pub(in crate::engine::vm) fn pending(
         &mut self,
         identity: u64,
         query: Query,
@@ -52,7 +52,9 @@ impl QueryStorage {
         if let Some(mut pending) = self.pending.pop() {
             pending.identity = identity;
             pending.query = query;
-            std::mem::replace(&mut pending.resume, resume).release_owned();
+            // release_pending caches only the inert replacement record.
+            debug_assert!(matches!(pending.resume, Resume::Identity));
+            pending.resume = resume;
             return pending;
         }
         #[cfg(feature = "profiling")]
@@ -69,7 +71,7 @@ impl QueryStorage {
         })
     }
 
-    pub(super) fn release_pending(
+    pub(in crate::engine::vm) fn release_pending(
         &mut self,
         mut pending: Box<super::PendingProxyGet>,
     ) -> (u64, Query, Resume) {
@@ -188,6 +190,32 @@ impl QueryStorage {
 impl Query {
     pub(super) fn recycle(mut self, storage: &mut QueryStorage) {
         self.release_native_members(true);
+        self.recycle_empty(storage);
+    }
+    pub(in crate::engine::vm) fn recycle_in_state(
+        mut self,
+        runtime: &crate::engine::api::runtime::Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        storage: &mut QueryStorage,
+    ) -> Result<(), crate::engine::api::RuntimeError> {
+        let retired = self.retire_raw_in_state(runtime, state);
+        // Keep registration through all direct retirement or quarantine, then
+        // disarm the boundary fallback before this Query can drop under State.
+        let capability = std::mem::take(&mut self.native_runtime);
+        if capability.strong_count() != 0 {
+            runtime.unregister_raw_execution_owner();
+        }
+        retired?;
+        self.parents.0.clear();
+        self.natives.clear();
+        for parents in &mut self.spare_parents {
+            parents.0.clear();
+        }
+        self.saved_native_depth = 0;
+        self.recycle_empty(storage);
+        Ok(())
+    }
+    fn recycle_empty(mut self, storage: &mut QueryStorage) {
         debug_assert!(self.spare_parents.iter().all(Parents::is_empty));
         let buffers = Buffers {
             parents: std::mem::take(&mut self.parents),

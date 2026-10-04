@@ -12,10 +12,117 @@ fn object(context: &mut Context, source: &str) -> ObjectRef {
     object
 }
 fn ready(step: ReadStep) -> OwnedRead {
-    let ReadStep::Ready(read) = step else {
-        panic!("unexpected shared mutex boundary")
+    match step {
+        ReadStep::Ready(read) | ReadStep::CyclePublished(read) => read,
+        ReadStep::Shared(_) => panic!("unexpected shared mutex boundary"),
+    }
+}
+
+#[test]
+fn inherited_autoinit_carries_only_actual_object_publication_through_the_shared_read() {
+    use crate::engine::{
+        atom::AtomIdx,
+        heap::AutoInitProperty,
+        object::shape::{PropertyFlags, ShapeEntry},
     };
-    read
+    let runtime = Runtime::new();
+    let context = runtime.new_context().unwrap();
+    let realm = context.realm;
+    let initializers = [
+        AutoInitProperty::FunctionPrototype { realm },
+        AutoInitProperty::NativeBuiltin {
+            realm,
+            target: crate::engine::builtins::native::NativeFunctionId::MathClz32,
+            name: "read-fact",
+            length: 1,
+            min_readable_args: 1,
+        },
+        AutoInitProperty::String {
+            realm,
+            value: "leaf",
+        },
+        AutoInitProperty::ArrayUnscopables { realm },
+        AutoInitProperty::Math { realm },
+        AutoInitProperty::Reflect { realm },
+        AutoInitProperty::Json { realm },
+        AutoInitProperty::Atomics { realm },
+    ];
+    for initializer in initializers {
+        let prototype = runtime.new_object(None).unwrap();
+        let receiver = runtime.new_object(Some(&prototype)).unwrap();
+        let key = runtime.intern_property_key("lazyReadFact").unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        state
+            .replace_layout_with_poison(
+                &runtime.0.poisoned,
+                prototype.object_id(),
+                None,
+                &[ShapeEntry {
+                    atom: AtomIdx::from_raw(key.atom().raw()),
+                    flags: PropertyFlags::data(true, false, true),
+                }],
+                vec![PropertySlot::auto_init(initializer)].into(),
+            )
+            .unwrap();
+        let mut native = None;
+        let first = state
+            .prepare_ordinary_read_in_state(
+                &runtime.0.poisoned,
+                runtime.domain_id(),
+                receiver.object_id(),
+                key.atom(),
+                &JsValue::Object(receiver.object_id()),
+                false,
+                Some(&mut native),
+            )
+            .unwrap();
+        assert_eq!(
+            matches!(first, ReadStep::CyclePublished(_)),
+            !matches!(initializer, AutoInitProperty::String { .. })
+        );
+        if matches!(initializer, AutoInitProperty::NativeBuiltin { .. }) {
+            assert!(
+                native.is_some(),
+                "the actual factory result carries its native fact"
+            );
+        }
+        let first = ready(first);
+        let OwnedRead::Complete(Some(value)) = &first else {
+            panic!("factory value")
+        };
+        let identity = match value {
+            JsValue::Object(id) => RawId::Object(*id),
+            JsValue::String(id) => RawId::String(*id),
+            _ => panic!("AutoInit factory result"),
+        };
+        let before = state.heap.counts();
+        let second = state
+            .prepare_ordinary_read_in_state(
+                &runtime.0.poisoned,
+                runtime.domain_id(),
+                receiver.object_id(),
+                key.atom(),
+                &JsValue::Object(receiver.object_id()),
+                false,
+                None,
+            )
+            .unwrap();
+        assert!(
+            matches!(second, ReadStep::Ready(_)),
+            "stored result is not a new publication"
+        );
+        let second = ready(second);
+        let second_identity = match &second {
+            OwnedRead::Complete(Some(JsValue::Object(id))) => RawId::Object(*id),
+            OwnedRead::Complete(Some(JsValue::String(id))) => RawId::String(*id),
+            _ => panic!("stored AutoInit result"),
+        };
+        assert_eq!(second_identity, identity);
+        assert_eq!(state.heap.counts().object_nodes, before.object_nodes);
+        first.retire(&mut state, &runtime.0.poisoned).unwrap();
+        second.retire(&mut state, &runtime.0.poisoned).unwrap();
+    }
+    assert!(!runtime.is_poisoned());
 }
 
 #[test]

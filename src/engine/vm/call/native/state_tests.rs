@@ -91,6 +91,9 @@ fn raw_native_activation_keeps_aliases_and_padding_without_runtime_owners() {
         }
         _ => panic!("generic predicate invocation"),
     };
+    let crate::engine::builtins::continuation::NativeStep::Complete(result) = result else {
+        panic!("predicate has no conversion effect")
+    };
     let (result, empty) =
         call.finish_completion_reusing(&mut state, &runtime.0.poisoned, Ok(result));
     assert!(matches!(
@@ -392,4 +395,120 @@ fn migrated_body_does_not_bypass_raw_iterator_cproto_rejection() {
     assert!(runtime.0.state.borrow().heap.object(marker).is_err());
     assert!(runtime.0.state.borrow().active_frames.is_empty());
     assert!(!runtime.is_poisoned());
+}
+
+#[test]
+fn changed_native_abi_quarantines_before_adapted_receiver_and_activation_suffix() {
+    // The first case fails after publishing a TypeError; the second completes
+    // the body but fails while retiring the independently adapted receiver.
+    for wrong_brand in [true, false] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let (function, target, realm, minimum) = metadata(
+            &runtime,
+            &mut context,
+            "Object.getOwnPropertyDescriptor(Symbol.prototype,'description').get",
+        );
+        assert_eq!(target, NativeFunctionId::SymbolPrototypeDescription);
+        let ordinary_receiver = runtime.new_object(None).unwrap().into_handle();
+        let first = runtime.new_object(None).unwrap().into_handle();
+        let later = runtime.new_object(None).unwrap().into_handle();
+        let suffix = runtime.new_object(None).unwrap().into_handle();
+        let _unwind = runtime.unwind_guard();
+        let mut state = runtime.0.state.borrow_mut();
+        let prototype = state.heap.context(realm).unwrap().native_error_prototypes
+            [crate::engine::api::error::NativeErrorKind::Type.index()]
+        .unwrap();
+        // Keep an admitted empty Error shape alive so the first failure is
+        // actual object publication cleanup, not a prepublication shape miss.
+        let _warm_error = state
+            .allocate_object_with_layout(
+                &runtime.0.poisoned,
+                Some(prototype),
+                &[],
+                Vec::new(),
+                crate::engine::heap::ObjectData::error,
+            )
+            .unwrap();
+        let receiver = if wrong_brand {
+            ordinary_receiver
+        } else {
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, JsValue::Object(ordinary_receiver))
+                .unwrap();
+            let symbol = state.atoms.new_symbol(None).unwrap();
+            let index = state.atoms.unbrand(symbol).unwrap();
+            let prototype = state.heap.context(realm).unwrap().primitive_prototypes
+                [crate::engine::builtins::native::PrimitiveKind::Symbol.index()]
+            .unwrap();
+            state
+                .new_primitive_object_jsvalue(
+                    &runtime.0.poisoned,
+                    prototype,
+                    crate::engine::builtins::native::PrimitiveKind::Symbol,
+                    JsValue::Symbol(index),
+                    false,
+                )
+                .unwrap()
+        };
+        let mut call = state
+            .prepare_native_call(
+                &runtime.0.poisoned,
+                runtime.domain_id(),
+                function,
+                realm,
+                target,
+                minimum,
+                NativeInvocation::Call {
+                    this_value: JsValue::Object(receiver),
+                },
+                vec![JsValue::Object(suffix)],
+                NativeInvokeMode::Ordinary,
+                true,
+                None,
+            )
+            .unwrap();
+        let objects = state.heap.counts().object_nodes;
+        let callee_count = state.heap.object_strong_count(function).unwrap();
+        state
+            .heap
+            .queue_release_for_test(RawId::Object(first))
+            .unwrap();
+        state
+            .heap
+            .queue_release_for_test(RawId::Object(later))
+            .unwrap();
+        state
+            .heap
+            .set_strong_count_for_test(RawId::Object(first), 1);
+        assert!(matches!(
+            state.invoke_state_native_body(
+                &runtime.0.poisoned,
+                runtime.0.host_services.as_ref(),
+                target,
+                realm,
+                &call.invocation,
+                &call.activation.arguments,
+            ),
+            Err(RuntimeError::Poisoned)
+        ));
+        assert!(runtime.is_poisoned());
+        assert_eq!(
+            state.heap.counts().object_nodes,
+            objects + usize::from(wrong_brand)
+        );
+        // Changed getter ABI added its checked receiver edge. The published
+        // Error failure must keep it; retirement failure consumed only that edge.
+        assert_eq!(
+            state.heap.object_strong_count(receiver),
+            Ok(if wrong_brand { 2 } else { 1 })
+        );
+        call.abandon(&mut state, &runtime.0.poisoned);
+        assert_eq!(state.heap.object_strong_count(suffix), Ok(1));
+        assert_eq!(state.heap.object_strong_count(function), Ok(callee_count));
+        assert_eq!(state.heap.object_strong_count(first), Ok(1));
+        assert_eq!(state.heap.object_strong_count(later), Ok(0));
+        assert_eq!(state.active_frames.len(), 1);
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
 }

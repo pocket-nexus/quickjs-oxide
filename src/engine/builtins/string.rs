@@ -492,14 +492,14 @@ impl Runtime {
         &self,
         symbol: &SymbolRef,
     ) -> Result<JsString, RuntimeError> {
-        let description = self
-            .symbol_description(symbol)?
-            .unwrap_or_else(|| JsString::from_static(""));
-        let mut builder = JsStringBuilder::new(8);
-        builder.push_utf8("Symbol(")?;
-        builder.push_js_string(&description)?;
-        builder.push_utf8(")")?;
-        Ok(builder.finish()?)
+        let _operation = self.operation()?;
+        if !symbol.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("symbol"));
+        }
+        self.0
+            .state
+            .borrow()
+            .symbol_descriptive_string_atom(symbol.atom())
     }
 
     /// Dispatch the three generic C functions in pinned `js_string_funcs`.
@@ -1538,5 +1538,21 @@ impl Runtime {
         Ok(Completion::Return(
             self.into_jsvalue(Value::String(result))?,
         ))
+    }
+}
+
+impl crate::engine::heap::runtime::RuntimeState {
+    pub(crate) fn symbol_descriptive_string_atom(
+        &self,
+        atom: crate::engine::atom::Atom,
+    ) -> Result<JsString, RuntimeError> {
+        let description = self
+            .symbol_description_atom(atom)?
+            .unwrap_or_else(|| JsString::from_static(""));
+        let mut builder = JsStringBuilder::new(8);
+        builder.push_utf8("Symbol(")?;
+        builder.push_js_string(&description)?;
+        builder.push_utf8(")")?;
+        Ok(builder.finish()?)
     }
 }

@@ -34,28 +34,55 @@ pub(crate) enum OwnedRead {
 #[must_use]
 pub(crate) enum ReadStep {
     Ready(OwnedRead),
+    /// An AutoInit Object edge is committed and owned in this reply. The
+    /// consumer publishes it in execution storage before servicing pressure.
+    CyclePublished(OwnedRead),
     /// This owns the actual shared backing Arc and selected word bounds.
     /// Only the mutex read leaves State; no property or prototype is replayed.
     Shared(SharedTypedOwnWord),
 }
 
 impl OwnedRead {
-    #[cfg(test)]
     pub(crate) fn retire(
         self,
         state: &mut RuntimeState,
         poisoned: &Cell<bool>,
     ) -> Result<(), RuntimeError> {
+        let _unwind = crate::engine::api::runtime::RuntimeUnwindGuard::from_flag(poisoned);
+        self.retire_with(|value| state.release_owned_jsvalue(poisoned, value))
+    }
+
+    /// Abandoned selected effects leave State through an actual pending
+    /// boundary. A conflicting borrow uses the existing Runtime coordinator.
+    pub(crate) fn retire_at_boundary(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        if runtime.skip_cleanup() {
+            return Err(RuntimeError::Poisoned);
+        }
+        let _unwind = runtime.unwind_guard();
+        if let Ok(mut state) = runtime.0.state.try_borrow_mut() {
+            self.retire(&mut state, &runtime.0.poisoned)
+        } else {
+            self.retire_with(|value| {
+                runtime.release_jsvalue(value)?;
+                runtime.check_poison()
+            })
+        }
+    }
+
+    fn retire_with(
+        self,
+        mut release: impl FnMut(JsValue) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
         match self {
-            Self::Complete(Some(value)) => state.release_owned_jsvalue(poisoned, value),
+            Self::Complete(Some(value)) => release(value),
             Self::Complete(None) => Ok(()),
             Self::Getter { function, receiver }
             | Self::Proxy {
                 object: function,
                 receiver,
             } => {
-                state.release_owned_jsvalue(poisoned, JsValue::Object(function))?;
-                state.release_owned_jsvalue(poisoned, receiver)
+                release(JsValue::Object(function))?;
+                release(receiver)
             }
         }
     }
@@ -145,7 +172,7 @@ impl RuntimeState {
                     self.own_read_effect(poisoned, object, receiver, true)?,
                 ));
             }
-            match self.select_own_property(poisoned, object, atom)? {
+            let (ready, cycle_published) = match self.select_own_property(poisoned, object, atom)? {
                 OwnPropertySelection::TerminalMissing => {
                     return Ok(ReadStep::Ready(OwnedRead::Complete(Some(
                         JsValue::Undefined,
@@ -164,28 +191,24 @@ impl RuntimeState {
                     return Ok(ReadStep::Ready(OwnedRead::Complete(None)));
                 }
                 OwnPropertySelection::Shared(word) => return Ok(ReadStep::Shared(word)),
-                OwnPropertySelection::Ready(ReadyOwnProperty::StringIndex(value)) => {
-                    return Ok(ReadStep::Ready(OwnedRead::Complete(Some(
-                        self.own_read_primitive(Value::String(value))?,
-                    ))));
+                OwnPropertySelection::Ready(ready) => (ready, false),
+                OwnPropertySelection::CyclePublished(ready) => (ready, true),
+            };
+            let read = match ready {
+                ReadyOwnProperty::StringIndex(value) => {
+                    OwnedRead::Complete(Some(self.own_read_primitive(Value::String(value))?))
                 }
-                OwnPropertySelection::Ready(ReadyOwnProperty::TypedWord(word)) => {
-                    return Ok(ReadStep::Ready(self.own_typed_read_word(word)?));
-                }
-                OwnPropertySelection::Ready(ReadyOwnProperty::Stored(
-                    CompletePropertyDescriptor::Data { value, .. },
-                )) => {
+                ReadyOwnProperty::TypedWord(word) => self.own_typed_read_word(word)?,
+                ReadyOwnProperty::Stored(CompletePropertyDescriptor::Data { value, .. }) => {
                     let borrowed = JsValue::from_raw(value).ok_or(RuntimeError::Invariant(
                         "internal sentinel in ordinary data property",
                     ))?;
                     let owned = self.dup_jsvalue(&borrowed)?;
                     self.link_native_read_fact(domain, &owned, native.as_deref_mut());
-                    return Ok(ReadStep::Ready(OwnedRead::Complete(Some(owned))));
+                    OwnedRead::Complete(Some(owned))
                 }
-                OwnPropertySelection::Ready(ReadyOwnProperty::Stored(
-                    CompletePropertyDescriptor::Accessor { get, .. },
-                )) => {
-                    return Ok(ReadStep::Ready(match get {
+                ReadyOwnProperty::Stored(CompletePropertyDescriptor::Accessor { get, .. }) => {
+                    match get {
                         Some(RawValue::Object(function)) => {
                             self.own_read_effect(poisoned, function, receiver, false)?
                         }
@@ -195,9 +218,14 @@ impl RuntimeState {
                                 "stored accessor getter was not an object",
                             ));
                         }
-                    }));
+                    }
                 }
-            }
+            };
+            return Ok(if cycle_published {
+                ReadStep::CyclePublished(read)
+            } else {
+                ReadStep::Ready(read)
+            });
         }
     }
 
@@ -266,7 +294,7 @@ impl RuntimeState {
 impl Runtime {
     /// Migration boundary for existing rooted effect consumers. The State
     /// body never creates these wrappers; no retain follows the owned handoff.
-    pub(super) fn adopt_prepared_read(&self, read: OwnedRead) -> super::OrdinaryRead {
+    pub(crate) fn adopt_prepared_read(&self, read: OwnedRead) -> super::OrdinaryRead {
         match read {
             OwnedRead::Complete(value) => super::OrdinaryRead::Complete(value),
             OwnedRead::Getter { function, receiver } => super::OrdinaryRead::Call {
@@ -289,7 +317,7 @@ impl Runtime {
         step: ReadStep,
     ) -> Result<super::OrdinaryRead, RuntimeError> {
         let owned = match step {
-            ReadStep::Ready(read) => read,
+            ReadStep::Ready(read) | ReadStep::CyclePublished(read) => read,
             ReadStep::Shared(word) => {
                 let word = word.read()?;
                 self.0.state.borrow_mut().own_typed_read_word(word)?

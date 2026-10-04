@@ -28,8 +28,12 @@ fn lazy_getters_and_proxy_traps_reuse_storage_and_return_directly() {
     );
     let costs = profile.snapshot();
     let event = |name| costs.owned_execution_events.get(name).copied().unwrap_or(0);
+    // Named ordinary getters now install and return inside the state lease.
+    // Proxy traps still use the selected cold query and reuse its storage.
+    assert_eq!(event("core.internal_named_getter"), 20);
+    assert_eq!(event("core.internal_return"), 20);
     assert!(
-        event("property_callback_lazy_install") >= 40,
+        event("property_callback_lazy_install") >= 20,
         "{:?}",
         costs.owned_execution_events
     );

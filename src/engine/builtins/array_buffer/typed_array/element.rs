@@ -121,7 +121,7 @@ fn from_primitive(
             ElementStep::Complete(bytes)
         }
         PrimitiveStep::Get { mut resume } => {
-            let (object, key) = resume.take_get();
+            let (object, key) = resume.take_get(runtime);
             ElementStep::request_read(
                 object,
                 key,
@@ -134,7 +134,7 @@ fn from_primitive(
             )
         }
         PrimitiveStep::Call { mut resume } => {
-            let callable = resume.take_callable();
+            let callable = resume.take_callable(runtime);
             let receiver = resume.take_receiver();
             let arguments = resume.take_arguments();
             ElementStep::request_call(

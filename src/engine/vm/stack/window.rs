@@ -1,6 +1,9 @@
 //! One authenticated continuous execution borrow. No arena mutation API escapes.
+mod native;
 use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
 use crate::engine::value::number::operations::Number;
+pub(in crate::engine::vm) use crate::engine::vm::proxy_get_driver::StateNativeProgress;
+pub(in crate::engine::vm) use native::NativeInputSource;
 
 /// One checked external entry followed by ordinary frame transitions.
 ///
@@ -29,6 +32,17 @@ pub(in crate::engine::vm) struct FrameTurn<'a> {
     pub pending: &'a mut Option<JsValue>,
     pub selected_native: &'a mut Option<crate::engine::object::LinkedNativeSelection>,
     pub selected_named_read: &'a mut Option<crate::engine::vm::property_driver::SelectedNamedRead>,
+}
+
+/// The ordinary frame publisher differs only in its concrete input source.
+/// Callback owners never require synthetic caller operand slots.
+enum OrdinaryFrameInput<'a> {
+    Caller(CheckedOrdinaryCallOperands),
+    Callback {
+        inputs: &'a mut crate::engine::vm::call::ordinary::RawCallbackInputs,
+        return_to: crate::engine::vm::frame::ReturnTarget,
+        named_receiver: Option<bool>,
+    },
 }
 
 impl<'a> FrameExecution<'a> {
@@ -158,142 +172,6 @@ impl<'a> FrameExecution<'a> {
         Ok(Entry::Ordinary)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn enter_state_native(
-        &mut self,
-        runtime: &Runtime,
-        state: &mut crate::engine::heap::runtime::RuntimeState,
-        selected: crate::engine::vm::frames::NativeClassification,
-        count: usize,
-        method: bool,
-        tail: bool,
-        fallthrough: crate::engine::vm::execute::FallthroughPc,
-        depth: usize,
-    ) -> Result<crate::engine::vm::driver::ordinary::Entry, Error> {
-        use crate::engine::vm::{
-            Completion,
-            call::{NativeInvocation, NativeInvokeMode, NativeStateGuard},
-            driver::ordinary::Entry,
-        };
-        // Genuine stack overflow still uses the existing error bridge and its
-        // diagnostic scheduling. A fixed family decision never inspects argv.
-        if !self.execution.frames.can_push_with_continuations(0)
-            || runtime.host_stack_would_overflow()
-        {
-            self.execution.selected_native = Some(
-                crate::engine::object::LinkedNativeSelection::from_classified_parts(
-                    selected.into_linked_parts(),
-                ),
-            );
-            return Ok(Entry::General);
-        }
-        let logical_depth = self.execution.frames.logical_active_depth(runtime);
-        let (arguments, receiver, function) = self
-            .frame()
-            .transaction
-            .take_validated_native_call_operands_in_state(
-                runtime,
-                state,
-                logical_depth,
-                count,
-                method,
-            )?;
-        let target = selected.target();
-        let realm = if target.uses_calling_realm() {
-            self.frame().executable.realm
-        } else {
-            selected.defining_realm()
-        };
-        let mut owner = NativeStateGuard::from_operands(
-            state,
-            &runtime.0.poisoned,
-            function,
-            realm,
-            target,
-            NativeInvokeMode::Ordinary,
-            NativeInvocation::Call {
-                this_value: receiver,
-            },
-            arguments,
-        );
-        {
-            let (state, call) = owner.parts();
-            let NativeInvocation::Call { this_value } = &call.invocation else {
-                unreachable!("ordinary native receiver")
-            };
-            if runtime.0.deferred_references.has_pending()
-                || crate::engine::vm::driver::ordinary::native_observes_activation_in_state(
-                    state,
-                    target,
-                    this_value,
-                    &call.activation.arguments.readable,
-                )
-            {
-                self.execution.frames.materialize_in_state(state)?;
-            } else {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "native_unobserved_entry",
-                );
-            }
-        }
-        owner
-            .publish(
-                runtime.domain_id(),
-                selected.minimum(),
-                true,
-                Some(&selected),
-            )
-            .map_err(super::runtime_error_to_vm_error)?;
-        let result = {
-            let (state, call) = owner.parts();
-            state.invoke_state_native_body(
-                &runtime.0.poisoned,
-                runtime.0.host_services.as_ref(),
-                target,
-                realm,
-                &call.invocation,
-                &call.activation.arguments,
-            )
-        };
-        let call = owner.into_inner();
-        let (result, arguments) =
-            call.finish_completion_reusing(state, &runtime.0.poisoned, result);
-        self.execution
-            .slots
-            .recycle_native_argument_buffer(arguments);
-        let completion = result.map_err(super::runtime_error_to_vm_error)?;
-        let (value, action) = match completion {
-            Completion::Return(value) => (
-                value,
-                if tail {
-                    Entry::NativeComplete
-                } else {
-                    Entry::NativeReady
-                },
-            ),
-            Completion::Throw(value) => (value, Entry::NativeThrow),
-        };
-        self.execution.pending = Some(value);
-        if !matches!(action, Entry::NativeComplete) {
-            let mut turn = self.frame();
-            turn.transaction.slots().push_pending(turn.pending)?;
-            if matches!(action, Entry::NativeReady) {
-                *turn.resume_pc = fallthrough.index();
-            }
-        }
-        #[cfg(feature = "profiling")]
-        {
-            crate::engine::api::profiling::record_owned_instruction(depth);
-            crate::engine::api::profiling::record_owned_execution_event(
-                "core.internal_native_body",
-            );
-        }
-        #[cfg(not(feature = "profiling"))]
-        let _ = depth;
-        Ok(action)
-    }
-
     pub(in crate::engine::vm) fn enter_constructor(
         &mut self,
         runtime: &Runtime,
@@ -388,14 +266,129 @@ impl<'a> FrameExecution<'a> {
         tail: bool,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<(), Error> {
+        self.install_current_ordinary_with_input(
+            runtime,
+            state,
+            call,
+            OrdinaryFrameInput::Caller(checked),
+            tail,
+            fallthrough,
+        )
+    }
+
+    /// The native callback entry publishes its selected this owner first;
+    /// ordinary callback entry uses this same current-window retirement body.
+    pub(in crate::engine::vm) fn commit_named_getter_receiver(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        preserved_receiver: &mut Option<JsValue>,
+        keep_receiver: bool,
+    ) -> Result<(), Error> {
+        let turn = self.frame();
+        turn.transaction
+            .store
+            .commit_named_getter_receiver_in_state(
+                state,
+                poisoned,
+                turn.transaction.window,
+                preserved_receiver,
+                keep_receiver,
+            )
+    }
+
+    pub(in crate::engine::vm) fn can_push_ordinary_callback(&self) -> bool {
+        self.execution.frames.can_push()
+    }
+
+    /// A named ordinary getter uses the same callback input projection and
+    /// canonical installer, with its actual caller's normal Push destination.
+    pub(in crate::engine::vm) fn named_getter_return_target(
+        &self,
+    ) -> crate::engine::vm::frame::ReturnTarget {
+        crate::engine::vm::frame::ReturnTarget {
+            value_use: crate::engine::vm::frame::ReturnValue::Push,
+            owner: crate::engine::vm::frame::ReturnOwner::Frame(
+                self.execution
+                    .frames
+                    .current_id()
+                    .expect("admitted named getter parent"),
+            ),
+            tail: false,
+            operation: None,
+        }
+    }
+
+    pub(in crate::engine::vm) fn install_named_ordinary_getter(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        call: crate::engine::vm::call::ordinary::OrdinaryCall,
+        inputs: &mut crate::engine::vm::call::ordinary::RawCallbackInputs,
+        keep_receiver: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<(), Error> {
+        let return_to = self.named_getter_return_target();
+        self.install_current_ordinary_with_input(
+            runtime,
+            state,
+            call,
+            OrdinaryFrameInput::Callback {
+                inputs,
+                return_to,
+                named_receiver: Some(keep_receiver),
+            },
+            false,
+            fallthrough,
+        )
+    }
+
+    /// Selected raw callbacks use the same reservation, suffix initialization,
+    /// cold frame publication and return protocol as an ordinary Call.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn install_raw_ordinary_callback(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        call: crate::engine::vm::call::ordinary::OrdinaryCall,
+        inputs: &mut crate::engine::vm::call::ordinary::RawCallbackInputs,
+        return_to: crate::engine::vm::frame::ReturnTarget,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<(), Error> {
+        self.install_current_ordinary_with_input(
+            runtime,
+            state,
+            call,
+            OrdinaryFrameInput::Callback {
+                inputs,
+                return_to,
+                named_receiver: None,
+            },
+            false,
+            fallthrough,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn install_current_ordinary_with_input(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        call: crate::engine::vm::call::ordinary::OrdinaryCall,
+        source: OrdinaryFrameInput<'_>,
+        tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<(), Error> {
         #[cfg(feature = "profiling")]
         let _timer =
             crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
         use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
         #[cfg(feature = "profiling")]
         {
-            let count = checked.count();
-            let method = checked.method();
+            let (count, method) = match &source {
+                OrdinaryFrameInput::Caller(checked) => (checked.count(), checked.method()),
+                OrdinaryFrameInput::Callback { inputs, .. } => (inputs.arguments.len(), true),
+            };
             use crate::engine::api::profiling::record_owned_execution_event as record;
             record(if method {
                 "ordinary_install.method"
@@ -414,11 +407,22 @@ impl<'a> FrameExecution<'a> {
         let (function, executable, closure) = call.into_slot_parts();
         let depth = execution.frames.depth() + 1;
         execution.call_storage.reserve_depth(depth)?;
+        let callback_target = match &source {
+            OrdinaryFrameInput::Caller(_) => None,
+            OrdinaryFrameInput::Callback { return_to, .. } => Some(*return_to),
+        };
         let (parent, frame) = execution
             .frames
             .current_frame_mut()
             .expect("an admitted ordinary call has a caller");
         let caller_realm = frame.executable.realm;
+        if callback_target
+            .is_some_and(|target| !matches!(target.owner, ReturnOwner::Frame(id) if id == parent))
+        {
+            return Err(Error::internal(
+                "raw callback return target is not its current parent",
+            ));
+        }
         // The private continuation comes from the instruction that produced
         // this Call. No caller instruction or slot changed during preflight.
         let resume = fallthrough.index();
@@ -439,27 +443,43 @@ impl<'a> FrameExecution<'a> {
             let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
                 "ordinary.install.slots.sampled",
             );
-            FrameTransaction {
+            let transaction = FrameTransaction {
                 store: &mut execution.slots,
                 window: &mut frame.cold.window,
+            };
+            match source {
+                OrdinaryFrameInput::Caller(checked) => transaction.install_ordinary_window(
+                    runtime,
+                    state,
+                    &executable.frame_layout(),
+                    checked,
+                    function,
+                    executable.observes_arguments,
+                )?,
+                OrdinaryFrameInput::Callback {
+                    inputs,
+                    named_receiver,
+                    ..
+                } => transaction.store.push_current_callback_frame_in_state(
+                    runtime,
+                    state,
+                    &executable.frame_layout(),
+                    transaction.window,
+                    inputs,
+                    function,
+                    executable.observes_arguments,
+                    named_receiver,
+                )?,
             }
-            .install_ordinary_window(
-                runtime,
-                state,
-                &executable.frame_layout(),
-                checked,
-                function,
-                executable.observes_arguments,
-            )?
         };
         frame.resume_pc = resume;
         let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(ReturnTarget {
+        cold.return_to = Some(callback_target.unwrap_or(ReturnTarget {
             value_use: ReturnValue::Push,
             owner: ReturnOwner::Frame(parent),
             tail,
             operation: None,
-        });
+        }));
         cold.entry_guard = None;
         cold.function =
             crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure)
@@ -588,8 +608,8 @@ impl<'a> FrameExecution<'a> {
         state: &mut crate::engine::heap::runtime::RuntimeState,
     ) -> Result<crate::engine::vm::driver::ordinary::ReturnProgress, Error> {
         use crate::engine::vm::{driver::ordinary::ReturnProgress, frame::ReturnValue};
-        let execution = &mut *self.execution;
         loop {
+            let execution = &mut *self.execution;
             let (_, frame) = execution
                 .frames
                 .current_frame_mut()
@@ -599,13 +619,18 @@ impl<'a> FrameExecution<'a> {
                 frame.cold.record_state_return_decline();
                 return Ok(ReturnProgress::Declined);
             };
-            if target.operation.is_some() {
+            if target.operation.is_some() && !execution.frames.can_reply_raw_query_in_state(target)
+            {
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "core.return_decline.operation",
                 );
                 return Ok(ReturnProgress::Declined);
             }
+            let (_, frame) = execution
+                .frames
+                .current_frame_mut()
+                .expect("ordinary return retains its current frame");
             if frame.executable.root().is_some() {
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
@@ -646,13 +671,33 @@ impl<'a> FrameExecution<'a> {
             // Return destinations may originate in a legacy/materialized entry;
             // preserve this semantic routing check, independently of admission.
             let destination = target.frame()?;
-            let (current, parent) = execution.frames.current_frame_mut().ok_or_else(|| {
+            let current = execution.frames.current_id().ok_or_else(|| {
                 Error::internal("frame identity is not the current execution frame")
             })?;
             if current != destination {
                 return Err(Error::internal(
                     "frame identity is not the current execution frame",
                 ));
+            }
+            if target.operation.is_some() {
+                match self.resume_native_query_after_return(runtime, state, target)? {
+                    crate::engine::vm::driver::ordinary::Entry::NativeComplete => continue,
+                    crate::engine::vm::driver::ordinary::Entry::NativeReady
+                    | crate::engine::vm::driver::ordinary::Entry::Ordinary => {
+                        return Ok(ReturnProgress::Returned);
+                    }
+                    crate::engine::vm::driver::ordinary::Entry::NativeThrow => {
+                        return Ok(ReturnProgress::NativeThrow);
+                    }
+                    crate::engine::vm::driver::ordinary::Entry::NativeBoundary => {
+                        return Ok(ReturnProgress::NativeBoundary);
+                    }
+                    _ => {
+                        return Err(Error::internal(
+                            "raw native reply used unrelated return entry",
+                        ));
+                    }
+                }
             }
             if target.tail {
                 #[cfg(feature = "profiling")]
@@ -661,6 +706,10 @@ impl<'a> FrameExecution<'a> {
                 );
                 continue;
             }
+            let (_, parent) = execution
+                .frames
+                .current_frame_mut()
+                .expect("ordinary return has its checked destination");
             if matches!(target.value_use, ReturnValue::Push) {
                 FrameTransaction {
                     store: &mut execution.slots,

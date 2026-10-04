@@ -45,15 +45,21 @@ impl Drop for ConversionState {
     /// Consumption uses `Option::take`/`mem::replace`, so a drained slot is
     /// `Undefined` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
-        if let Some(PrimitiveStep::Complete(Completion::Return(value) | Completion::Throw(value))) =
-            self.step.take()
-        {
-            let _ = self.runtime.release_jsvalue(value);
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        if let Some(step) = self.step.take() {
+            let _unwind = self.runtime.unwind_guard();
+            if step.retire_at_boundary(&self.runtime).is_err() {
+                return;
+            }
         }
         let finish = std::mem::replace(&mut self.finish, Finish::Plus);
         match finish {
             Finish::PropertyWrite { base, value } => {
-                let _ = self.runtime.release_jsvalue(base);
+                if self.runtime.release_jsvalue(base).is_err() || self.runtime.is_poisoned() {
+                    return;
+                }
                 let _ = self.runtime.release_jsvalue(value);
             }
             Finish::PropertyRead { base, .. } => {
@@ -68,6 +74,11 @@ impl Drop for ConversionState {
                 }
             }
             Finish::Predicate(_) | Finish::Plus | Finish::PropertyKey => {}
+        }
+        if !self.runtime.skip_cleanup() {
+            if let Some(resume) = self.resume.take() {
+                resume.release_owned(&self.runtime);
+            }
         }
     }
 }
@@ -602,11 +613,17 @@ impl ConversionTask {
                 };
                 Ok(Progress::Complete(completion))
             }
-            PrimitiveStep::Get { mut resume } => {
-                let (object, key) = resume.take_get();
+            PrimitiveStep::Get { resume } => {
+                self.resume = Some(resume);
+                let (object, key) = self
+                    .resume
+                    .as_mut()
+                    .expect("conversion read owner")
+                    .take_get(runtime);
                 let read = runtime
                     .prepare_ordinary_read(&object, &key, Value::Object(object.try_clone()?))
                     .map_err(runtime_error_to_vm_error)?;
+                let resume = self.resume.take().expect("conversion read owner");
                 match read {
                     OrdinaryRead::Call { getter, receiver } => invoke(
                         runtime,
@@ -657,10 +674,13 @@ impl ConversionTask {
                     }
                 }
             }
-            PrimitiveStep::Call { mut resume } => {
-                let callable = resume.take_callable();
+            PrimitiveStep::Call { resume } => {
+                self.resume = Some(resume);
+                let resume = self.resume.as_mut().expect("conversion call owner");
+                let callable = resume.take_callable(runtime);
                 let receiver = resume.take_receiver();
                 let arguments = resume.take_arguments();
+                let resume = self.resume.take().expect("conversion call owner");
                 invoke(
                     runtime, execution, self, callable, receiver, arguments, resume,
                 )
@@ -703,6 +723,8 @@ fn invoke(
     arguments: Vec<JsValue>,
     resume: PrimitiveResume,
 ) -> Result<Progress, Error> {
+    let mut task = task;
+    task.resume = Some(resume);
     let mut operands = ConversionInvocation {
         runtime: runtime.clone(),
         receiver,
@@ -726,6 +748,7 @@ fn invoke(
         crate::engine::value::conversion::NativeConversion::Value(call) => call,
         crate::engine::value::conversion::NativeConversion::Throw(value) => {
             // Transfer the callback's owned exception directly to the continuation.
+            let resume = task.resume.take().expect("conversion callback owner");
             return Ok(Progress::Ready(
                 task.with_step(
                     resume
@@ -754,6 +777,7 @@ fn invoke(
         false
     };
     if is_proxy || is_native || is_resumable {
+        let resume = task.resume.take().expect("conversion callback owner");
         let wait = task.waiting(resume);
         let progress = if is_proxy {
             super::proxy_get_driver::start_conversion_call(
@@ -808,6 +832,7 @@ fn invoke(
                 let completion = runtime
                     .bytecode_stack_overflow_completion(realm, &bytecode)
                     .map_err(runtime_error_to_vm_error)?;
+                let resume = task.resume.take().expect("conversion callback owner");
                 return Ok(Progress::Ready(
                     task.with_step(
                         resume
@@ -838,6 +863,7 @@ fn invoke(
                     "conversion overwrote an unanswered request",
                 ));
             }
+            let resume = task.resume.take().expect("conversion callback owner");
             parent.cold.conversion = Some(task.waiting(resume));
             super::driver::push_frame(runtime, execution, entry)?;
             return Ok(Progress::Entered);

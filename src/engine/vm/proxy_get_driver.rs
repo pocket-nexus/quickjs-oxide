@@ -33,9 +33,16 @@ mod native_owner_tests;
 #[cfg(feature = "profiling")]
 mod profiling;
 mod request;
+mod state;
 mod storage;
 use native::start_into as native_scope;
-use request::{Resume, Step};
+pub(in crate::engine::vm) use request::{
+    PreparedNativeBoundary, Resume, SelectedRawCallback, Step,
+};
+pub(in crate::engine::vm) use state::{
+    RawNativeQuery, ResidentQueryBoundary, StateEffect, StateNativeProgress,
+    recycle_resident_query, resident_query,
+};
 pub(super) use storage::QueryStorage;
 
 pub(super) struct PendingProxyGet {
@@ -47,7 +54,8 @@ pub(super) struct PendingProxyGet {
 
 impl Drop for PendingProxyGet {
     fn drop(&mut self) {
-        std::mem::replace(&mut self.resume, Resume::Identity).release_owned();
+        let resume = std::mem::replace(&mut self.resume, Resume::Identity);
+        self.query.release_boundary_resume(resume);
     }
 }
 
@@ -121,7 +129,7 @@ impl Parents {
     }
 }
 
-struct Query {
+pub(in crate::engine::vm) struct Query {
     // One boundary capability for standalone teardown; no native scope owns
     // Runtime lifetime. Upgrade before any legacy domain root is released.
     native_runtime: std::rc::Weak<crate::engine::heap::runtime::RuntimeInner>,
@@ -172,7 +180,7 @@ impl Query {
         let call = super::call::NativeCallGuard::new(runtime, scope.call);
         self.saved_native_depth -= 1 + scope.parents.len() as u128;
         while let Some(resume) = self.parents.pop() {
-            resume.release_owned();
+            resume.release_owned(runtime);
         }
         let empty = std::mem::replace(&mut self.parents, scope.parents);
         // Reservation happens before installing the native scope.
@@ -182,31 +190,49 @@ impl Query {
     }
 }
 impl Query {
+    pub(in crate::engine::vm) fn ensure_raw_owner_registration(
+        &mut self,
+        runtime: &Runtime,
+    ) -> Result<(), Error> {
+        if self.native_runtime.strong_count() == 0 {
+            self.native_runtime = runtime
+                .register_raw_execution_owner()
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        Ok(())
+    }
+    fn release_boundary_resume(&self, resume: Resume) {
+        let runtime = self.native_runtime.upgrade().map(Runtime);
+        resume.release_owned_at_boundary(runtime.as_ref());
+    }
     fn release_native_members(&mut self, cache: bool) {
         let capability = std::mem::take(&mut self.native_runtime);
         let runtime = capability.upgrade().map(Runtime);
         let _unwind = runtime.as_ref().map(Runtime::unwind_guard);
         while let Some(resume) = self.parents.pop() {
-            resume.release_owned();
+            resume.release_owned_at_boundary(runtime.as_ref());
         }
         while let Some(mut scope) = self.natives.pop() {
             if let Some(runtime) = &runtime {
                 scope.call.abandon_at_boundary(runtime);
             }
-            scope.resume.release_owned();
+            scope.resume.release_owned_at_boundary(runtime.as_ref());
             while let Some(resume) = scope.parents.pop() {
-                resume.release_owned();
+                resume.release_owned_at_boundary(runtime.as_ref());
             }
             if cache && storage::reserve(&mut self.spare_parents, 1, "query.spare_parents").is_ok()
             {
                 self.spare_parents.push(scope.parents);
             }
         }
+        // Raw parent-only queries use the same single registration as native
+        // scopes. Keep it until every scope/pending domain has been retired.
         if let Some(runtime) = &runtime {
             runtime.unregister_raw_execution_owner();
         }
     }
 }
+
 impl Drop for Query {
     fn drop(&mut self) {
         self.release_native_members(false);
@@ -240,6 +266,12 @@ enum Finish {
     },
     PropertyRead(usize),
     Call {
+        depth: usize,
+        tail: bool,
+    },
+    /// The resident entry already published its verified continuation PC.
+    /// Completion must not decode/advance that same instruction again.
+    ResidentCall {
         depth: usize,
         tail: bool,
     },
@@ -281,11 +313,28 @@ fn finish_instruction_call(
     push: bool,
     _depth: usize,
 ) -> Result<CallStep, Error> {
+    finish_instruction_call_with_continuation::<false>(
+        runtime, execution, owner, completion, push, _depth,
+    )
+}
+
+fn finish_instruction_call_with_continuation<const PC_COMMITTED: bool>(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    completion: Completion,
+    push: bool,
+    _depth: usize,
+) -> Result<CallStep, Error> {
     match completion {
         Completion::Return(mut value) => {
             let result: Result<CallStep, Error> = (|| {
                 let parent = execution.frames.current_mut(owner.frame()?)?;
-                let resume_pc = parent.next_pc()?;
+                let resume_pc = if PC_COMMITTED {
+                    parent.resume_pc
+                } else {
+                    parent.next_pc()?
+                };
                 if push {
                     execution.slots.push_owned(&mut parent.window, &mut value)?;
                 }
@@ -938,12 +987,41 @@ fn finish_call_instruction_call(
     depth: usize,
     tail: bool,
 ) -> Result<CallStep, Error> {
+    finish_call_instruction_call_with_continuation::<false>(
+        runtime, execution, owner, completion, depth, tail,
+    )
+}
+
+fn finish_resident_call_instruction(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    completion: Completion,
+    depth: usize,
+    tail: bool,
+) -> Result<Progress, Error> {
+    finish_call_instruction_call_with_continuation::<true>(
+        runtime, execution, owner, completion, depth, tail,
+    )
+    .map(Progress::Call)
+}
+
+fn finish_call_instruction_call_with_continuation<const PC_COMMITTED: bool>(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    completion: Completion,
+    depth: usize,
+    tail: bool,
+) -> Result<CallStep, Error> {
     if tail {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(depth);
         return Ok(CallStep::Complete(completion));
     }
-    finish_instruction_call(runtime, execution, owner, completion, true, depth)
+    finish_instruction_call_with_continuation::<PC_COMMITTED>(
+        runtime, execution, owner, completion, true, depth,
+    )
 }
 
 #[inline(never)]
@@ -1653,6 +1731,17 @@ fn advance(
     )
 }
 
+/// Consume the actual resident request at an unmigrated effect. Selection,
+/// conversion progress and published activations travel with this packet.
+pub(in crate::engine::vm) fn resume_resident_boundary(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    packet: Box<ResidentQueryBoundary>,
+) -> Result<Progress, Error> {
+    let (query, step, owner, identity) = packet.into_parts();
+    drive(runtime, execution, owner, identity, query, Ok(step))
+}
+
 fn drive(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -1682,6 +1771,20 @@ fn drive_inner(
     step: Result<Step, Error>,
 ) -> Result<Progress, Error> {
     let mut step = step.map_err(Some);
+    if step.as_ref().is_ok_and(Step::has_raw_owner)
+        || query.parents.0.iter().any(Resume::has_raw_owner)
+    {
+        if let Err(error) = query.ensure_raw_owner_registration(runtime) {
+            if let Ok(step) = &mut step {
+                step.release_owned(runtime);
+            }
+            while let Some(resume) = query.parents.pop() {
+                resume.release_owned(runtime);
+            }
+            return Err(error);
+        }
+    }
+
     #[cfg(feature = "profiling")]
     {
         use crate::engine::api::profiling::record_owned_execution_layout as layout;
@@ -1733,7 +1836,7 @@ fn drive_inner(
                         let pending = take_pending(execution, owner)?;
                         let (_, restored, resume) =
                             execution.query_storage.release_pending(pending);
-                        resume.release_owned();
+                        resume.release_owned(runtime);
                         query = restored;
                         #[cfg(feature = "profiling")]
                         {
@@ -1814,7 +1917,16 @@ fn advance_inner(
             | Step::OrdinaryInstance { .. }
             | Step::ParseIterator { .. }
             | Step::ArrayCopy { .. } => dispatch_iteration::advance,
-            Step::String { .. }
+            Step::NumberReply { .. }
+            | Step::PrimitiveReply { .. }
+            | Step::RawRead { .. }
+            | Step::RawCall { .. }
+            | Step::CallbackBoundary(_)
+            | Step::PreparedNativeBoundary(_)
+            | Step::PrimitiveProgress(_)
+            | Step::NumberProgress(_)
+            | Step::StringReply { .. }
+            | Step::String { .. }
             | Step::OrdinaryPrimitive { .. }
             | Step::Arguments { .. }
             | Step::ArgumentsComplete { .. }
@@ -1869,34 +1981,16 @@ fn advance_inner(
         #[cfg(feature = "profiling")]
         profiling::record_dispatch(step);
         let next = dispatch(runtime, execution, owner, identity, query, step)?;
-        let (target, receiver, arguments, resume) = match next {
+        match next {
             Next::Continue => {
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event("query_continue");
                 continue;
             }
-            Next::Invoke => {
-                let Step::Call {
-                    target,
-                    receiver,
-                    arguments,
-                    resume,
-                } = step
-                else {
-                    return Err(Error::internal("invoke marker lost resident call request"));
-                };
-                (
-                    target.take().expect("selected call target"),
-                    receiver.take().expect("selected call receiver"),
-                    arguments.take().expect("selected call arguments"),
-                    resume.take().expect("selected call continuation"),
-                )
-            }
+            Next::Invoke => {}
             next => return Ok(next),
-        };
-        match invoke(
-            runtime, execution, owner, identity, query, target, receiver, arguments, resume, step,
-        )? {
+        }
+        match invoke(runtime, execution, owner, identity, query, step)? {
             Next::Continue => {}
             next => return Ok(next),
         }
@@ -1911,47 +2005,71 @@ fn release_call_operands(runtime: &Runtime, receiver: JsValue, arguments: Vec<Js
     }
 }
 
+// Transfer inputs only to their actual consumer; reply ownership stays armed.
 #[inline(never)]
-// Transfer the selected callable and its reply ownership directly; a bundled request would add a second transport.
-#[allow(clippy::too_many_arguments)]
 fn invoke(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     identity: u64,
     query: &mut Query,
-    target: DirectCallTarget,
-    receiver: JsValue,
-    arguments: Vec<JsValue>,
-    resume: Resume,
-    next_step: &mut Step,
+    pending: &mut Step,
 ) -> Result<Next, Error> {
     let realm = query.realm;
-    let step;
-    let callable = match target {
+    let Step::Call {
+        target,
+        receiver,
+        arguments,
+        resume,
+    } = pending
+    else {
+        return Err(Error::internal("invoke marker lost resident call request"));
+    };
+    let callable = match target.as_ref().expect("selected call target") {
         DirectCallTarget::Callable(callable) => callable,
-        DirectCallTarget::NonCallableProxy(proxy) => {
+        DirectCallTarget::NonCallableProxy(_) => {
             if !execution
                 .frames
                 .can_push_with_continuations(query.continuation_depth())
             {
-                step = resume
-                    .resume(runtime, overflow(runtime, realm)?)
-                    .map_err(runtime_error_to_vm_error)?;
-                *next_step = step;
+                let completion = overflow(runtime, realm)?;
+                let receiver = receiver.take().expect("selected call receiver");
+                let arguments = arguments.take().expect("selected call arguments");
+                let target = target.take();
+                *pending = Step::PrimitiveReply {
+                    value: Some(completion),
+                    resume: resume.take(),
+                };
+                release_call_operands(runtime, receiver, arguments);
+                drop(target);
+                runtime.check_poison().map_err(runtime_error_to_vm_error)?;
                 return Ok(Next::Continue);
             }
             query
                 .parents
                 .try_reserve(1)
                 .map_err(|_| Error::internal("property continuation allocation failed"))?;
-            query.parents.push(resume);
-            step = crate::engine::object::ProxyCallStep::start(
-                runtime, realm, proxy, receiver, arguments,
+            let DirectCallTarget::NonCallableProxy(proxy) =
+                target.take().expect("selected call target")
+            else {
+                unreachable!()
+            };
+            let next = crate::engine::object::ProxyCallStep::start(
+                runtime,
+                realm,
+                proxy,
+                receiver.take().expect("selected call receiver"),
+                arguments.take().expect("selected call arguments"),
             )
             .map_err(runtime_error_to_vm_error)?
             .try_into()?;
-            *next_step = step;
+            // The Proxy consumer now owns all inputs. Its outer parent was
+            // still in the request through every fallible startup operation.
+            query
+                .parents
+                .push(resume.take().expect("selected call continuation"));
+            *pending = next;
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
             return Ok(Next::Continue);
         }
     };
@@ -1964,7 +2082,12 @@ fn invoke(
             .can_push_with_continuations(query.continuation_depth())
             || runtime.bytecode_call_would_overflow()
         {
-            release_call_operands(runtime, receiver, arguments);
+            release_call_operands(
+                runtime,
+                receiver.take().expect("selected call receiver"),
+                arguments.take().expect("selected call arguments"),
+            );
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
             call.executable()
                 .ensure_root(runtime)
                 .map_err(runtime_error_to_vm_error)?;
@@ -1974,16 +2097,18 @@ fn invoke(
                     call.executable().root().expect("rooted overflow frame"),
                 )
                 .map_err(runtime_error_to_vm_error)?;
-            *next_step = resume
-                .resume(runtime, completion)
-                .map_err(runtime_error_to_vm_error)?;
+            *pending = Step::PrimitiveReply {
+                value: Some(completion),
+                resume: resume.take(),
+            };
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
             return Ok(Next::Continue);
         }
         let entry = call.prepare_callback(
             runtime,
             &mut execution.call_storage,
-            receiver,
-            arguments,
+            receiver.take().expect("selected call receiver"),
+            arguments.take().expect("selected call arguments"),
             realm,
             ReturnTarget {
                 owner,
@@ -1995,81 +2120,151 @@ fn invoke(
         return Ok(Next::Call {
             entry: Box::new(entry),
             pc: 0,
-            resume,
+            resume: resume.take().expect("selected call continuation"),
         });
     }
-    let super::call::NormalizedCallback {
-        callable,
+    invoke_general_callback(runtime, execution, owner, identity, query, pending)
+}
+
+// A carried General choice has already ruled out direct ordinary/native entry.
+// Bound/Proxy normalization still classifies the resulting target as required.
+#[inline(never)]
+fn invoke_general_callback(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    owner: ReturnOwner,
+    identity: u64,
+    query: &mut Query,
+    pending: &mut Step,
+) -> Result<Next, Error> {
+    let realm = query.realm;
+    let Step::Call {
+        target,
         receiver,
         arguments,
+        resume,
+    } = pending
+    else {
+        return Err(Error::internal(
+            "general callback lost resident call request",
+        ));
+    };
+    if !matches!(target, Some(DirectCallTarget::Callable(_))) {
+        return Err(Error::internal(
+            "general callback requires a callable target",
+        ));
+    }
+    let DirectCallTarget::Callable(callable) = target.take().expect("selected call target") else {
+        unreachable!()
+    };
+    let super::call::NormalizedCallback {
+        callable,
+        receiver: normalized_receiver,
+        arguments: normalized_arguments,
         classification,
-    } = match super::call::normalize_callback(runtime, realm, callable, receiver, arguments)? {
+    } = match super::call::normalize_callback(
+        runtime,
+        realm,
+        callable,
+        receiver.take().expect("selected call receiver"),
+        arguments.take().expect("selected call arguments"),
+    )? {
         NativeConversion::Value(call) => call,
         NativeConversion::Throw(value) => {
-            // The normalization boundary threw a public root; transfer it into
-            // the internal completion without a retain/release pair.
-            step = resume
-                .resume(runtime, Completion::Throw(value))
-                .map_err(runtime_error_to_vm_error)?;
-            *next_step = step;
+            *pending = Step::PrimitiveReply {
+                value: Some(Completion::Throw(value)),
+                resume: resume.take(),
+            };
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
             return Ok(Next::Continue);
         }
     };
+    // Normalize consumed the previous inputs. Publish its exact owners back
+    // into their existing request before the next classification/retain/reserve.
+    *target = Some(DirectCallTarget::Callable(callable));
+    *receiver = Some(normalized_receiver);
+    *arguments = Some(normalized_arguments);
     if matches!(classification, CallableExecution::Proxy) {
         if !execution
             .frames
             .can_push_with_continuations(query.continuation_depth())
         {
-            release_call_operands(runtime, receiver, arguments);
-            step = resume
-                .resume(runtime, overflow(runtime, realm)?)
-                .map_err(runtime_error_to_vm_error)?;
-            *next_step = step;
+            release_call_operands(
+                runtime,
+                receiver.take().expect("normalized receiver"),
+                arguments.take().expect("normalized arguments"),
+            );
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+            let completion = overflow(runtime, realm)?;
+            *pending = Step::PrimitiveReply {
+                value: Some(completion),
+                resume: resume.take(),
+            };
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
             return Ok(Next::Continue);
         }
         query
             .parents
             .try_reserve(1)
             .map_err(|_| Error::internal("property continuation allocation failed"))?;
-        query.parents.push(resume);
-        step = crate::engine::object::ProxyCallStep::start(
+        let Some(DirectCallTarget::Callable(callable)) = target.as_ref() else {
+            unreachable!()
+        };
+        let proxy = callable.as_object().try_clone()?;
+        let next = crate::engine::object::ProxyCallStep::start(
             runtime,
             realm,
-            callable.as_object().try_clone()?,
-            receiver,
-            arguments,
+            proxy,
+            receiver.take().expect("normalized receiver"),
+            arguments.take().expect("normalized arguments"),
         )
         .map_err(runtime_error_to_vm_error)?
         .try_into()?;
-        *next_step = step;
+        query
+            .parents
+            .push(resume.take().expect("selected call continuation"));
+        *pending = next;
+        runtime.check_poison().map_err(runtime_error_to_vm_error)?;
         return Ok(Next::Continue);
     }
     if let CallableExecution::Native {
-        target,
+        target: native_target,
         realm: defining_realm,
         min_readable_args,
     } = classification
-        && super::frames::native_operation(runtime, &callable)
+    {
+        let Some(DirectCallTarget::Callable(callable)) = target.as_ref() else {
+            unreachable!()
+        };
+        if super::frames::native_operation(runtime, callable)
             .map_err(runtime_error_to_vm_error)?
             .is_some()
-    {
-        native_scope(
-            runtime,
-            execution,
-            query,
-            callable,
-            target,
-            defining_realm,
-            min_readable_args,
-            super::call::NativeInvokeMode::Ordinary,
-            super::call::NativeInvocation::Call {
-                this_value: receiver,
-            },
-            arguments,
-            resume,
-            next_step,
-        )?;
-        return Ok(Next::Continue);
+        {
+            let DirectCallTarget::Callable(callable) = target.take().expect("normalized callable")
+            else {
+                unreachable!()
+            };
+            let this_value = receiver.take().expect("normalized receiver");
+            let arguments = arguments.take().expect("normalized arguments");
+            let resume = resume.take().expect("selected call continuation");
+            // The existing native scope owns its inputs and continuation on
+            // both startup failure and successful waiting publication.
+            native_scope(
+                runtime,
+                execution,
+                query,
+                callable,
+                native_target,
+                defining_realm,
+                min_readable_args,
+                super::call::NativeInvokeMode::Ordinary,
+                super::call::NativeInvocation::Call { this_value },
+                arguments,
+                resume,
+                pending,
+            )?;
+            return Ok(Next::Continue);
+        }
     }
     if let CallableExecution::Bytecode {
         bytecode,
@@ -2086,79 +2281,99 @@ fn invoke(
             .metadata;
         let kind = metadata.function_kind;
         let module_link =
-            metadata.is_module && matches!(receiver, crate::engine::value::JsValue::Bool(true));
+            metadata.is_module && matches!(receiver.as_ref(), Some(JsValue::Bool(true)));
+        if !execution
+            .frames
+            .can_push_with_continuations(query.continuation_depth())
+            || runtime.bytecode_call_would_overflow()
         {
-            if !execution
-                .frames
-                .can_push_with_continuations(query.continuation_depth())
-                || runtime.bytecode_call_would_overflow()
-            {
-                release_call_operands(runtime, receiver, arguments);
-                let completion = runtime
-                    .bytecode_stack_overflow_completion(realm, &bytecode)
-                    .map_err(runtime_error_to_vm_error)?;
-                step = resume
-                    .resume(runtime, completion)
-                    .map_err(runtime_error_to_vm_error)?;
-                *next_step = step;
-                return Ok(Next::Continue);
-            }
-            let resume = if matches!(kind, FunctionKind::Normal | FunctionKind::Async) {
-                resume
-            } else {
-                query.parents.try_reserve(1).map_err(|_| {
-                    Error::internal("generator creation continuation allocation failed")
-                })?;
-                query.parents.push(resume);
-                Resume::GeneratorCreate(super::suspend::creation::GeneratorCreation {
-                    realm,
-                    callable: callable.try_clone()?,
-                    asynchronous: kind == FunctionKind::AsyncGenerator,
-                })
+            release_call_operands(
+                runtime,
+                receiver.take().expect("normalized receiver"),
+                arguments.take().expect("normalized arguments"),
+            );
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+            let completion = runtime
+                .bytecode_stack_overflow_completion(realm, &bytecode)
+                .map_err(runtime_error_to_vm_error)?;
+            *pending = Step::PrimitiveReply {
+                value: Some(completion),
+                resume: resume.take(),
             };
-            let request = BytecodeCallRequest {
-                callable,
-                receiver,
-                arguments,
-                bytecode,
-                closure_slots,
-                new_target: crate::engine::value::JsValue::Undefined,
-                caller_realm: realm,
-                return_to: ReturnTarget {
-                    owner,
-                    value_use: ReturnValue::Push,
-                    tail: false,
-                    operation: Some(OperationTarget::PropertyGet(identity)),
-                },
-            };
-            let entry = request.prepare(runtime, &mut execution.call_storage)?;
-            let resume = if kind == FunctionKind::Async && !module_link {
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("async body continuation allocation failed"))?;
-                query.parents.push(resume);
-                Resume::Async(
-                    super::async_function::AsyncResume::start(runtime, realm)
-                        .map_err(runtime_error_to_vm_error)?,
-                )
-            } else {
-                resume
-            };
-            return Ok(Next::Call {
-                entry: Box::new(entry),
-                pc: 0,
-                resume,
-            });
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+            return Ok(Next::Continue);
         }
+        let generator = if matches!(kind, FunctionKind::Normal | FunctionKind::Async) {
+            None
+        } else {
+            query.parents.try_reserve(1).map_err(|_| {
+                Error::internal("generator creation continuation allocation failed")
+            })?;
+            let Some(DirectCallTarget::Callable(callable)) = target.as_ref() else {
+                unreachable!()
+            };
+            let callable = callable.try_clone()?;
+            Some(Resume::GeneratorCreate(
+                super::suspend::creation::GeneratorCreation {
+                    realm,
+                    callable,
+                    asynchronous: kind == FunctionKind::AsyncGenerator,
+                },
+            ))
+        };
+        let generator = generator.inspect(|_| {
+            query
+                .parents
+                .push(resume.take().expect("selected call continuation"));
+        });
+        let DirectCallTarget::Callable(callable) = target.take().expect("normalized callable")
+        else {
+            unreachable!()
+        };
+        let request = BytecodeCallRequest {
+            callable,
+            receiver: receiver.take().expect("normalized receiver"),
+            arguments: arguments.take().expect("normalized arguments"),
+            bytecode,
+            closure_slots,
+            new_target: JsValue::Undefined,
+            caller_realm: realm,
+            return_to: ReturnTarget {
+                owner,
+                value_use: ReturnValue::Push,
+                tail: false,
+                operation: Some(OperationTarget::PropertyGet(identity)),
+            },
+        };
+        let entry = request.prepare(runtime, &mut execution.call_storage)?;
+        // Async wrapper setup is fallible after the bytecode input consumer
+        // has produced an uninstalled entry. Reuse its existing borrowed guard.
+        let mut entry = super::frame::FrameEntryGuard::new(runtime, entry);
+        let resume = if kind == FunctionKind::Async && !module_link {
+            query
+                .parents
+                .try_reserve(1)
+                .map_err(|_| Error::internal("async body continuation allocation failed"))?;
+            query
+                .parents
+                .push(resume.take().expect("selected call continuation"));
+            Resume::Async(
+                super::async_function::AsyncResume::start(runtime, realm)
+                    .map_err(runtime_error_to_vm_error)?,
+            )
+        } else {
+            generator.unwrap_or_else(|| resume.take().expect("selected call continuation"))
+        };
+        return Ok(Next::Call {
+            entry: Box::new(entry.take()),
+            pc: 0,
+            resume,
+        });
     }
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("native_leaf_completion");
-    // Normalization has consumed Bound and Proxy targets; bytecode always
-    // installs an explicit child above. Only a classified native leaf can
-    // reach this synchronous ABI, never a generic JS-call dispatcher.
     let CallableExecution::Native {
-        target,
+        target: native_target,
         realm: defining_realm,
         min_readable_args,
     } = classification
@@ -2174,10 +2389,21 @@ fn invoke(
         .heap
         .context(realm)
         .map_err(|error| Error::internal(error.to_string()))?;
-    // Internal values carry no runtime branding; the slot authentication
-    // above already proved every operand owner.
-    let completion = if runtime.native_call_would_overflow(target) {
+    if runtime.native_call_would_overflow(native_target) {
+        // Preserve native overflow Error construction before checked operand
+        // retirement. Publish both success/error parent ownership first.
         let overflowed = overflow(runtime, realm);
+        let receiver = receiver.take().expect("normalized receiver");
+        let arguments = arguments.take().expect("normalized arguments");
+        let callable = target.take().expect("normalized callable");
+        let (value, error) = match overflowed {
+            Ok(value) => (Some(value), None),
+            Err(error) => (None, Some(error)),
+        };
+        *pending = Step::PrimitiveReply {
+            value,
+            resume: resume.take(),
+        };
         runtime
             .release_jsvalue(receiver)
             .map_err(runtime_error_to_vm_error)?;
@@ -2186,35 +2412,43 @@ fn invoke(
                 .release_jsvalue(argument)
                 .map_err(runtime_error_to_vm_error)?;
         }
-        overflowed?
+        drop(callable);
+        if let Some(error) = error {
+            return Err(error);
+        }
+        runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+        return Ok(Next::Continue);
+    }
+    let execution_realm = if native_target.uses_calling_realm() {
+        realm
     } else {
-        let execution_realm = if target.uses_calling_realm() {
-            realm
-        } else {
-            defining_realm
-        };
-        let outcome = runtime
-            .invoke_native_function_jsvalue(
-                &callable,
-                execution_realm,
-                target,
-                min_readable_args,
-                super::call::NativeInvocation::Call {
-                    this_value: receiver,
-                },
-                arguments,
-                super::call::NativeInvokeMode::Ordinary,
-            )
-            .map_err(runtime_error_to_vm_error)?;
-        Runtime::ordinary_native_completion(outcome).map_err(runtime_error_to_vm_error)?
+        defining_realm
     };
-    step = resume
-        .resume(runtime, completion)
+    let Some(DirectCallTarget::Callable(callable)) = target.as_ref() else {
+        unreachable!()
+    };
+    let outcome = runtime
+        .invoke_native_function_jsvalue(
+            callable,
+            execution_realm,
+            native_target,
+            min_readable_args,
+            super::call::NativeInvocation::Call {
+                this_value: receiver.take().expect("normalized receiver"),
+            },
+            arguments.take().expect("normalized arguments"),
+            super::call::NativeInvokeMode::Ordinary,
+        )
         .map_err(runtime_error_to_vm_error)?;
-    *next_step = step;
+    let completion =
+        Runtime::ordinary_native_completion(outcome).map_err(runtime_error_to_vm_error)?;
+    *pending = Step::PrimitiveReply {
+        value: Some(completion),
+        resume: resume.take(),
+    };
+    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
     Ok(Next::Continue)
 }
-
 fn overflow(runtime: &Runtime, realm: crate::engine::heap::ContextId) -> Result<Completion, Error> {
     Ok(Completion::Throw(
         runtime
@@ -2256,24 +2490,23 @@ mod native_scope_tests {
         })()"#).unwrap();
         assert_eq!(value, Value::Int(42));
         let costs = profile.snapshot();
-        assert!(
-            costs
-                .owned_execution_events
-                .get("native_call_completed_without_query")
-                .copied()
-                .unwrap_or(0)
-                > 20,
-            "{costs:?}"
-        );
-        assert!(
-            costs
-                .owned_execution_events
-                .get("native_call_direct_wait")
-                .copied()
-                .unwrap_or(0)
-                > 0,
-            "{costs:?}"
-        );
+        let count = |name| costs.owned_execution_events.get(name).copied().unwrap_or(0);
+        // Five Math bodies per iteration plus the final tail call. Seventeen
+        // primitive calls finish at entry; twenty-four calls own a suffix.
+        assert_eq!(count("native_state_body"), 41, "{costs:?}");
+        assert_eq!(count("math_completed_without_argument_storage"), 17);
+        assert_eq!(count("math_remaining_arguments_owned"), 24);
+        assert_eq!(count("core.internal_native_body"), 17);
+        // Only the eight actual Proxy selections leave resident Query progress.
+        // Their boundary carries the published activation instead of replaying
+        // cold native entry; ordinary getters and coercion callbacks stay local.
+        assert_eq!(count("execute.action.native_progress"), 8, "{costs:?}");
+        assert_eq!(count("native_call_direct_wait"), 0);
+        assert_eq!(count("ordinary_install.method"), 24);
+        assert!(count("native_activation_prepared") >= 41);
+        assert_eq!(runtime.0.raw_execution_owners.get(), 0);
+        assert_eq!(runtime.0.active_frame_depth.get(), 0);
+        assert!(!runtime.is_poisoned());
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 

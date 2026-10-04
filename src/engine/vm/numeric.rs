@@ -2,7 +2,7 @@ pub(super) mod operation;
 use crate::engine::{
     api::runtime::Runtime,
     api::{Error, ErrorKind},
-    heap::{BigIntId, StringId},
+    heap::{BigIntId, StringId, runtime::RuntimeState},
     value::{
         JsString, JsValue,
         bigint::{BigIntError, JsBigInt},
@@ -21,14 +21,7 @@ pub(in crate::engine::vm) fn string_payload(
     runtime: &Runtime,
     id: StringId,
 ) -> Result<JsString, Error> {
-    Ok(runtime
-        .0
-        .state
-        .borrow()
-        .heap
-        .string(id)
-        .map_err(|error| Error::internal(error.to_string()))?
-        .clone())
+    runtime.0.state.borrow().string_payload(id)
 }
 
 /// Read one BigInt node's payload. The borrowed value keeps its edge.
@@ -36,14 +29,25 @@ pub(in crate::engine::vm) fn bigint_payload(
     runtime: &Runtime,
     id: BigIntId,
 ) -> Result<JsBigInt, Error> {
-    Ok(runtime
-        .0
-        .state
-        .borrow()
-        .heap
-        .bigint(id)
-        .map_err(|error| Error::internal(error.to_string()))?
-        .clone())
+    runtime.0.state.borrow().bigint_payload(id)
+}
+
+impl RuntimeState {
+    fn string_payload(&self, id: StringId) -> Result<JsString, Error> {
+        Ok(self
+            .heap
+            .string(id)
+            .map_err(|error| Error::internal(error.to_string()))?
+            .clone())
+    }
+
+    fn bigint_payload(&self, id: BigIntId) -> Result<JsBigInt, Error> {
+        Ok(self
+            .heap
+            .bigint(id)
+            .map_err(|error| Error::internal(error.to_string()))?
+            .clone())
+    }
 }
 
 pub(in crate::engine::vm) fn bigint_value_payload(
@@ -211,76 +215,53 @@ pub(in crate::engine::vm) fn allocate_bigint_jsvalue(
 /// Representation-only `ToNumber` for internal values. Object conversion must
 /// be routed through a context; Symbol and BigInt conversion throw here.
 pub(crate) fn to_number_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<f64, Error> {
-    Ok(match value {
-        JsValue::Undefined => f64::NAN,
-        JsValue::Null => 0.0,
-        JsValue::Bool(value) => {
-            if *value {
-                1.0
-            } else {
-                0.0
-            }
-        }
-        JsValue::Int(value) => f64::from(*value),
-        JsValue::Float(value) => *value,
-        JsValue::String(id) => {
-            crate::engine::value::string_to_number(&string_payload(runtime, *id)?)
-        }
-        JsValue::BigInt(_) | JsValue::ShortBigInt(_) => {
-            return Err(Error::new(
-                ErrorKind::Type,
-                "cannot convert bigint to number",
-            ));
-        }
-        JsValue::Symbol(_) => {
-            return Err(Error::new(
-                ErrorKind::Type,
-                "cannot convert symbol to number",
-            ));
-        }
-        JsValue::Object(_) => {
-            return Err(Error::internal(
-                "object ToNumber requires an execution context",
-            ));
-        }
-    })
+    runtime.0.state.borrow().to_number_primitive_jsvalue(value)
 }
 
 /// Primitive `ToString` payload for internal values (no object conversion).
 pub(crate) fn to_js_string_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<JsString, Error> {
-    Ok(match value {
-        JsValue::String(id) => string_payload(runtime, *id)?,
-        JsValue::Undefined => JsString::from_static("undefined"),
-        JsValue::Null => JsString::from_static("null"),
-        JsValue::Bool(true) => JsString::from_static("true"),
-        JsValue::Bool(false) => JsString::from_static("false"),
-        JsValue::Int(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
-        JsValue::Float(value) => {
-            JsString::from_owned_latin1(crate::engine::value::number_to_string(*value).into_bytes())
-        }
-        JsValue::ShortBigInt(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
-        JsValue::BigInt(id) => {
-            let bigint = bigint_payload(runtime, *id)?;
-            if bigint.exceeds_allocation_limit() {
+    runtime.0.state.borrow().to_js_string_jsvalue(value)
+}
+
+impl RuntimeState {
+    /// The primitive payload algorithm is shared by VM and native conversion.
+    pub(crate) fn to_js_string_jsvalue(&self, value: &JsValue) -> Result<JsString, Error> {
+        Ok(match value {
+            JsValue::String(id) => self.string_payload(*id)?,
+            JsValue::Undefined => JsString::from_static("undefined"),
+            JsValue::Null => JsString::from_static("null"),
+            JsValue::Bool(true) => JsString::from_static("true"),
+            JsValue::Bool(false) => JsString::from_static("false"),
+            JsValue::Int(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
+            JsValue::Float(value) => JsString::from_owned_latin1(
+                crate::engine::value::number_to_string(*value).into_bytes(),
+            ),
+            JsValue::ShortBigInt(value) => {
+                JsString::from_owned_latin1(value.to_string().into_bytes())
+            }
+            JsValue::BigInt(id) => {
+                let bigint = self.bigint_payload(*id)?;
+                if bigint.exceeds_allocation_limit() {
+                    return Err(Error::new(
+                        ErrorKind::Range,
+                        "BigInt is too large to allocate",
+                    ));
+                }
+                JsString::from_owned_latin1(bigint.to_string().into_bytes())
+            }
+            JsValue::Symbol(_) => {
                 return Err(Error::new(
-                    ErrorKind::Range,
-                    "BigInt is too large to allocate",
+                    ErrorKind::Type,
+                    "cannot convert symbol to string",
                 ));
             }
-            JsString::from_owned_latin1(bigint.to_string().into_bytes())
-        }
-        JsValue::Symbol(_) => {
-            return Err(Error::new(
-                ErrorKind::Type,
-                "cannot convert symbol to string",
-            ));
-        }
-        JsValue::Object(_) => {
-            return Err(Error::internal(
-                "object ToPrimitive requires an execution context",
-            ));
-        }
-    })
+            JsValue::Object(_) => {
+                return Err(Error::internal(
+                    "object ToPrimitive requires an execution context",
+                ));
+            }
+        })
+    }
 }
 
 pub(in crate::engine::vm) fn to_numeric_primitive(
@@ -526,3 +507,44 @@ pub(in crate::engine::vm) fn add_primitives_ref(
 #[cfg(test)]
 #[path = "numeric/string_tests.rs"]
 mod string_tests;
+
+impl crate::engine::heap::runtime::RuntimeState {
+    /// Representation-only conversion; an owned caller keeps each payload live.
+    pub(crate) fn to_number_primitive_jsvalue(&self, value: &JsValue) -> Result<f64, Error> {
+        Ok(match value {
+            JsValue::Undefined => f64::NAN,
+            JsValue::Null => 0.0,
+            JsValue::Bool(value) => {
+                if *value {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            JsValue::Int(value) => f64::from(*value),
+            JsValue::Float(value) => *value,
+            JsValue::String(id) => crate::engine::value::string_to_number(
+                self.heap
+                    .string(*id)
+                    .map_err(|error| Error::internal(error.to_string()))?,
+            ),
+            JsValue::BigInt(_) | JsValue::ShortBigInt(_) => {
+                return Err(Error::new(
+                    ErrorKind::Type,
+                    "cannot convert bigint to number",
+                ));
+            }
+            JsValue::Symbol(_) => {
+                return Err(Error::new(
+                    ErrorKind::Type,
+                    "cannot convert symbol to number",
+                ));
+            }
+            JsValue::Object(_) => {
+                return Err(Error::internal(
+                    "object ToNumber requires an execution context",
+                ));
+            }
+        })
+    }
+}

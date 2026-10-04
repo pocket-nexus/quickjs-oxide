@@ -15,6 +15,8 @@ pub(super) enum Boundary {
     /// Operand domains were checked and next_operation was advanced once.
     /// The outer driver constructs the waiting task without repeating either.
     Conversion(VmAction),
+    /// An actual resident Query boundary already produced this conversion task.
+    QueryConversion(crate::engine::vm::conversion_driver::ConversionTask),
     Complete(Completion),
 }
 
@@ -28,9 +30,20 @@ pub(super) fn run(
     #[cfg(feature = "profiling")]
     let mut entered = false;
     loop {
-        runtime
-            .collect_if_requested()
-            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+        // The concrete shared mutex seed/reply already selected a leaf word. Its
+        // resident commit is not a new allocation/scheduler pressure boundary.
+        // Remaining legacy producer boundaries keep their original service.
+        if !matches!(
+            execution.selected_named_read,
+            Some(
+                crate::engine::vm::property_driver::SelectedNamedRead::Shared(_)
+                    | crate::engine::vm::property_driver::SelectedNamedRead::SharedReady(_)
+            )
+        ) {
+            runtime
+                .collect_if_requested()
+                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+        }
         #[cfg(feature = "profiling")]
         {
             if entered {
@@ -68,7 +81,12 @@ pub(super) fn run(
         record_exit(&result);
         // Ordinary Call/Return need no observable activation. Cold operations
         // may allocate an error, release an observable owner or invoke code.
-        if result.as_ref().map_or(true, VmAction::observes_activation) {
+        if result.as_ref().map_or(true, VmAction::observes_activation)
+            && !matches!(
+                execution.selected_named_read,
+                Some(crate::engine::vm::property_driver::SelectedNamedRead::Shared(_))
+            )
+        {
             execution.frames.materialize(runtime)?;
         }
         let exit = result?;
@@ -108,7 +126,18 @@ pub(super) fn run(
                     return Ok(boundary);
                 }
             }
+            VmAction::NativeProgress => {
+                return resume_native_boundary(runtime, execution);
+            }
             VmAction::Complete => match super::ordinary::finish(runtime, execution, id)? {
+                super::ordinary::ReturnProgress::NativeThrow => {
+                    execution.frames.materialize(runtime)?;
+                    return Ok(Boundary::Exit(VmAction::Throw));
+                }
+                super::ordinary::ReturnProgress::NativeBoundary => {
+                    execution.frames.materialize(runtime)?;
+                    return resume_native_boundary(runtime, execution);
+                }
                 super::ordinary::ReturnProgress::Declined => return Ok(Boundary::Exit(exit)),
                 super::ordinary::ReturnProgress::Returned => {
                     id = execution.frames.current_id().unwrap()
@@ -195,6 +224,30 @@ pub(super) fn run(
                 #[cfg(feature = "profiling")]
                 record_event("driver_handoff.named_read");
                 let selected = execution.selected_named_read.take();
+                let selected = match selected {
+                    Some(crate::engine::vm::property_driver::SelectedNamedRead::Shared(word)) => {
+                        // Ended State before this actual mutex. The seed owns
+                        // exact backing/index/word; no Get selection is replayed.
+                        let word = word
+                            .read()
+                            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+                        let read = runtime
+                            .0
+                            .state
+                            .borrow_mut()
+                            .own_typed_read_word(word)
+                            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+                        execution.selected_named_read = Some(
+                            crate::engine::vm::property_driver::SelectedNamedRead::SharedReady(
+                                read,
+                            ),
+                        );
+                        #[cfg(feature = "profiling")]
+                        record_event("core.named_read_shared_mutex");
+                        continue;
+                    }
+                    selected => selected,
+                };
                 let progress = crate::engine::vm::property_driver::read_progress_selected(
                     runtime,
                     execution,
@@ -273,6 +326,31 @@ pub(super) fn run(
     }
 }
 
+fn resume_native_boundary(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+) -> Result<Boundary, Error> {
+    let packet = execution
+        .selected_native_query
+        .take()
+        .ok_or_else(|| invariant("resident native action lost its selected query"))?;
+    match crate::engine::vm::proxy_get_driver::resume_resident_boundary(runtime, execution, packet)?
+    {
+        crate::engine::vm::proxy_get_driver::Progress::Call(CallStep::Entered) => {
+            Ok(Boundary::Entered)
+        }
+        crate::engine::vm::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
+            Ok(Boundary::Complete(completion))
+        }
+        crate::engine::vm::proxy_get_driver::Progress::Call(CallStep::Bridge) => {
+            Err(invariant("resident native query attempted replay"))
+        }
+        crate::engine::vm::proxy_get_driver::Progress::Conversion(task) => {
+            Ok(Boundary::QueryConversion(task))
+        }
+    }
+}
+
 fn property_boundary(
     progress: crate::engine::vm::property_driver::PropertyProgress,
 ) -> Option<Boundary> {
@@ -315,6 +393,9 @@ fn enter_call(
                 None
             }
             super::ordinary::Entry::NativeReady => None,
+            super::ordinary::Entry::NativeBoundary => {
+                Some(resume_native_boundary(runtime, execution)?)
+            }
             super::ordinary::Entry::NativeComplete | super::ordinary::Entry::NativeThrow => {
                 return Err(invariant(
                     "legacy entry received resident native completion",
@@ -447,5 +528,75 @@ mod tests {
             );
         }
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod shared_named_read_tests {
+    use crate::engine::{
+        api::{Runtime, Value},
+        code::exec_opcode::Opcode,
+        heap::GcPolicy,
+        value::JsValue,
+        vm::{
+            execute::{VmAction, execute_frame},
+            property_driver::{SelectedNamedRead, read_completion_tests::read_fixture},
+        },
+    };
+    #[test]
+    fn shared_named_word_crosses_its_mutex_then_commits_once_without_leaf_pressure_service() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        runtime.set_gc_policy(GcPolicy::Manual).unwrap();
+        let Value::Object(cycle) = context
+            .eval("(()=>{let o={};o.self=o;return o})()")
+            .unwrap()
+        else {
+            panic!("cycle")
+        };
+        let cycle = cycle.into_handle();
+        runtime.release_jsvalue(JsValue::Object(cycle)).unwrap();
+        let input = context.eval("(()=>{let a=new BigUint64Array(new SharedArrayBuffer(8));a[0]=18446744073709551615n;return a})()").unwrap();
+        let input = runtime.into_jsvalue(input).unwrap();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o){const {'0':v}=o;return v})",
+            Opcode::GetField2Cached,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution.slots.push(&mut frame.window, input).unwrap();
+        assert!(matches!(
+            execute_frame(&runtime, &mut execution, id).unwrap(),
+            VmAction::GetField { .. }
+        ));
+        assert!(matches!(
+            &execution.selected_named_read,
+            Some(SelectedNamedRead::Shared(_))
+        ));
+        runtime.0.gc_pressure.policy.set(GcPolicy::Automatic);
+        runtime.0.gc_pressure.remaining.set(0);
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let mut operation = 0;
+        let result = super::run(&runtime, &mut execution, id, &mut operation).unwrap();
+        assert!(matches!(result, super::Boundary::Exit(VmAction::Complete)));
+        assert!(execution.selected_named_read.is_none());
+        let state = runtime.0.state.borrow();
+        let Some(JsValue::BigInt(output)) = execution.pending.as_ref() else {
+            panic!("owned bigint word")
+        };
+        assert_eq!(
+            state.heap.bigint(*output).unwrap().to_string(),
+            "18446744073709551615"
+        );
+        assert!(state.heap.object(cycle).is_ok());
+        assert!(runtime.0.gc_pressure.requested());
+        #[cfg(feature = "profiling")]
+        {
+            let events = profile.snapshot().owned_execution_events;
+            assert_eq!(events.get("core.named_read_shared_mutex"), Some(&1));
+            assert!(!events.contains_key("gc.automatic.started"));
+        }
     }
 }

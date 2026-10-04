@@ -34,9 +34,15 @@ impl Input {
 
     /// Release the owned internal edges an abandoned conversion still holds.
     pub(super) fn release_edges(self, runtime: &Runtime) {
-        let _ = runtime.release_jsvalue(self.receiver);
-        let _ = runtime.release_jsvalue(self.base);
-        let _ = runtime.release_jsvalue(self.key);
+        if runtime.release_jsvalue(self.receiver).is_err() || runtime.is_poisoned() {
+            return;
+        }
+        if runtime.release_jsvalue(self.base).is_err() || runtime.is_poisoned() {
+            return;
+        }
+        if runtime.release_jsvalue(self.key).is_err() || runtime.is_poisoned() {
+            return;
+        }
         if let Some(value) = self.value {
             let _ = runtime.release_jsvalue(value);
         }

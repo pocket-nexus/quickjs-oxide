@@ -1584,10 +1584,22 @@ impl RuntimeState {
         object: ObjectId,
         key: Atom,
     ) -> Result<(), RuntimeError> {
+        self.materialize_auto_init_property_with_publication(poisoned, object, key)
+            .map(|_| ())
+    }
+
+    /// True only after an Object-producing initializer's slot publication and
+    /// producer retirement both succeed. Leaf publications cannot form cycles.
+    pub(crate) fn materialize_auto_init_property_with_publication(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        key: Atom,
+    ) -> Result<bool, RuntimeError> {
         let Some((slot_index, initializer)) =
             self.auto_init_property_for_materialization(object, key)?
         else {
-            return Ok(());
+            return Ok(false);
         };
         let initialized: Result<AutoInitValue, RuntimeError> = (|| {
             Ok(match initializer {
@@ -1716,6 +1728,7 @@ impl RuntimeState {
                 return Err(initializer_error);
             }
         };
+        let cycle_published = matches!(initialized, AutoInitValue::Object(_));
         let initialized = match initialized {
             AutoInitValue::String(value) => JsValue::String(self.heap.allocate_string(value)?),
             AutoInitValue::Object(object) => JsValue::Object(object),
@@ -1728,6 +1741,7 @@ impl RuntimeState {
             slot_index,
             PropertySlot::Data(producer.as_ref().expect("AutoInit producer").as_raw()),
         )?;
-        state.release_owned_jsvalue(poisoned, producer.take().expect("AutoInit producer"))
+        state.release_owned_jsvalue(poisoned, producer.take().expect("AutoInit producer"))?;
+        Ok(cycle_published)
     }
 }

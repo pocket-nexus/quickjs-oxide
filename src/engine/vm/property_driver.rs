@@ -36,16 +36,46 @@ pub(super) enum PropertyProgress {
 pub(super) enum SelectedNamedRead {
     Getter(OwnedGetterSelection),
     LookupError(Error),
+    /// Chosen raw edges cross only this actual getter/Proxy boundary.
+    Prepared(crate::engine::object::OwnedRead),
+    /// The selected backing word leaves State exactly once for its mutex.
+    Shared(crate::engine::builtins::SharedTypedOwnWord),
+    /// A decoded shared word producer is already owned; reentry must commit it
+    /// without repeating selection or polling allocation pressure.
+    SharedReady(crate::engine::object::OwnedRead),
+    RawGetter(super::call::ordinary::RawCallbackInputs),
+    OrdinaryOverflow(Box<NamedGetterOverflow>),
+}
+
+/// Rare overflow carries its authenticated facts without widening the common
+/// selected-read slot to the size of a complete executable snapshot.
+pub(super) struct NamedGetterOverflow {
+    pub(super) call: super::call::ordinary::OrdinaryCall,
+    pub(super) inputs: super::call::ordinary::RawCallbackInputs,
 }
 
 impl SelectedNamedRead {
     pub(super) fn release(self, runtime: &Runtime) {
+        if runtime.skip_cleanup() {
+            return;
+        }
         match self {
             Self::Getter(OwnedGetterSelection { getter, receiver }) => {
                 let _ = runtime.release_jsvalue(getter);
                 let _ = runtime.release_jsvalue(receiver);
             }
-            Self::LookupError(_) => {}
+            Self::LookupError(_) | Self::Shared(_) => {}
+            Self::Prepared(read) | Self::SharedReady(read) => {
+                let _ = read.retire_at_boundary(runtime);
+            }
+            Self::RawGetter(mut inputs) => {
+                let _ = inputs.retire_at_boundary(runtime);
+            }
+            Self::OrdinaryOverflow(overflow) => {
+                let NamedGetterOverflow { call, mut inputs } = *overflow;
+                let _ = inputs.retire_at_boundary(runtime);
+                drop(call);
+            }
         }
     }
 }
@@ -93,6 +123,16 @@ impl OwnedGetterSelection {
             .map_err(runtime_error_to_vm_error)
     }
 
+    pub(super) fn into_owned_read(self) -> crate::engine::object::OwnedRead {
+        let JsValue::Object(function) = self.getter else {
+            unreachable!("selected getter is an object")
+        };
+        crate::engine::object::OwnedRead::Getter {
+            function,
+            receiver: self.receiver,
+        }
+    }
+
     fn into_legacy_read(self, runtime: &Runtime) -> OrdinaryRead {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
@@ -113,6 +153,7 @@ impl OwnedGetterSelection {
 struct SelectedReadGuard<'a> {
     runtime: &'a Runtime,
     read: Option<OrdinaryRead>,
+    preserved_receiver: Option<JsValue>,
 }
 
 struct NamedHandoffGuard<'a> {
@@ -132,6 +173,9 @@ impl Drop for SelectedReadGuard<'_> {
     fn drop(&mut self) {
         if let Some(read) = self.read.take() {
             read.release(self.runtime);
+        }
+        if let Some(receiver) = self.preserved_receiver.take() {
+            let _ = self.runtime.release_jsvalue(receiver);
         }
     }
 }
@@ -216,16 +260,46 @@ pub(super) fn read_progress_selected(
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let realm = frame.executable.realm;
     let next_pc = fallthrough.index();
+    let mut selected_preserved = None;
     let selected_read = match selected.selected.take() {
         Some(SelectedNamedRead::Getter(read)) => Some(read.into_legacy_read(runtime)),
         Some(SelectedNamedRead::LookupError(error)) => {
             return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
+        }
+        Some(SelectedNamedRead::Prepared(read) | SelectedNamedRead::SharedReady(read)) => {
+            Some(runtime.adopt_prepared_read(read))
+        }
+        Some(SelectedNamedRead::RawGetter(mut inputs)) => {
+            selected_preserved = inputs.preserved_receiver.take();
+            let function = inputs
+                .selected_callee
+                .take()
+                .expect("selected getter callee");
+            let receiver = inputs.receiver.take().expect("selected getter receiver");
+            debug_assert!(inputs.callback_callee.is_none() && inputs.arguments.is_empty());
+            Some(
+                runtime.adopt_prepared_read(crate::engine::object::OwnedRead::Getter {
+                    function,
+                    receiver,
+                }),
+            )
+        }
+        Some(SelectedNamedRead::OrdinaryOverflow(overflow)) => {
+            let NamedGetterOverflow { call, inputs } = *overflow;
+            return finish_named_getter_overflow(runtime, realm, call, inputs)
+                .map(PropertyProgress::Deferred);
+        }
+        Some(SelectedNamedRead::Shared(_)) => {
+            return Err(Error::internal(
+                "shared read mutex boundary was not finished",
+            ));
         }
         None => None,
     };
     let mut selected_read = SelectedReadGuard {
         runtime,
         read: selected_read,
+        preserved_receiver: selected_preserved,
     };
     if let ReadKey::Static(index) = key_kind
         && selected_read.read.is_none()
@@ -489,9 +563,12 @@ pub(super) fn read_progress_selected(
         // The selected read's raw receiver also needs explicit retirement if
         // this second, legacy preservation role is rejected. JsValue has no
         // Drop; keep the finite guard armed until every handoff role exists.
-        let preserved_receiver = runtime
-            .dup_jsvalue(base)
-            .map_err(runtime_error_to_vm_error)?;
+        let preserved_receiver = match selected_read.preserved_receiver.take() {
+            Some(receiver) => receiver,
+            None => runtime
+                .dup_jsvalue(base)
+                .map_err(runtime_error_to_vm_error)?,
+        };
         let read = selected_read
             .read
             .take()
@@ -510,6 +587,104 @@ pub(super) fn read_progress_selected(
         )
         .map(PropertyProgress::Deferred)
     }
+}
+
+/// Concrete overflow boundary owners survive public bytecode rooting and
+/// diagnostic construction without holding State or a Runtime Rc.
+struct NamedOverflowGuard<'a> {
+    runtime: &'a Runtime,
+    inputs: Option<super::call::ordinary::RawCallbackInputs>,
+    result: Option<JsValue>,
+}
+impl NamedOverflowGuard<'_> {
+    fn retire_inputs(&mut self) -> Result<(), Error> {
+        let _unwind = self.runtime.unwind_guard();
+        if let Some(inputs) = &mut self.inputs {
+            inputs
+                .retire(
+                    &mut self.runtime.0.state.borrow_mut(),
+                    &self.runtime.0.poisoned,
+                )
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        self.inputs = None;
+        Ok(())
+    }
+    fn retire_result(&mut self) -> Result<(), Error> {
+        let _unwind = self.runtime.unwind_guard();
+        if let Some(value) = self.result.take() {
+            self.runtime
+                .0
+                .state
+                .borrow_mut()
+                .release_owned_jsvalue(&self.runtime.0.poisoned, value)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        Ok(())
+    }
+}
+impl Drop for NamedOverflowGuard<'_> {
+    fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        if self.retire_inputs().is_err() {
+            return;
+        }
+        let _ = self.retire_result();
+    }
+}
+
+/// Authentication and its checked roles already happened under State. The
+/// existing overflow diagnostic must not reauthenticate or consume base slots.
+fn finish_named_getter_overflow(
+    runtime: &Runtime,
+    realm: ContextId,
+    call: super::call::ordinary::OrdinaryCall,
+    inputs: super::call::ordinary::RawCallbackInputs,
+) -> Result<CallStep, Error> {
+    let mut owner = NamedOverflowGuard {
+        runtime,
+        inputs: Some(inputs),
+        result: None,
+    };
+    let diagnostic = (|| {
+        call.executable()
+            .ensure_root(runtime)
+            .map_err(runtime_error_to_vm_error)?;
+        runtime
+            .bytecode_stack_overflow_completion(
+                realm,
+                call.executable().root().expect("rooted overflow frame"),
+            )
+            .map_err(runtime_error_to_vm_error)
+    })();
+    let threw = match diagnostic {
+        Ok(Completion::Throw(value)) => {
+            owner.result = Some(value);
+            true
+        }
+        Ok(Completion::Return(value)) => {
+            owner.result = Some(value);
+            false
+        }
+        Err(error) => {
+            owner.retire_inputs()?;
+            return Err(error);
+        }
+    };
+    owner.retire_inputs()?;
+    // ensure_root created an actual public bytecode temporary. Its Drop must
+    // finish before a successful throw owner leaves this boundary.
+    drop(call);
+    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+    if !threw {
+        owner.retire_result()?;
+        return Err(Error::internal("bytecode overflow returned normally"));
+    }
+    Ok(CallStep::Complete(Completion::Throw(
+        owner.result.take().expect("overflow throw owner"),
+    )))
 }
 
 // The conversion reply already owns this boxed operand bundle; avoid moving it through the driver stack.
@@ -1039,7 +1214,7 @@ fn read_pending(
 }
 
 #[cfg(test)]
-mod read_completion_tests {
+pub(super) mod read_completion_tests {
     use crate::engine::api::{Runtime, Value};
 
     use super::*;
@@ -1054,7 +1229,7 @@ mod read_completion_tests {
         },
     };
 
-    pub(super) fn read_fixture(
+    pub(in crate::engine::vm) fn read_fixture(
         runtime: &Runtime,
         context: &mut crate::engine::api::Context,
         source: &str,
@@ -1146,7 +1321,7 @@ mod read_completion_tests {
     }
 
     #[test]
-    fn selected_named_getter_survives_the_frame_scope_handoff() {
+    fn selected_named_getter_completes_in_the_resident_frame_scope() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context
@@ -1169,12 +1344,11 @@ mod read_completion_tests {
             .unwrap();
         assert!(matches!(
             execute_frame(&runtime, &mut execution, id).unwrap(),
-            VmAction::GetField { .. }
+            VmAction::Complete
         ));
-        assert!(matches!(
-            execution.selected_named_read,
-            Some(SelectedNamedRead::Getter(_))
-        ));
+        assert!(execution.selected_named_read.is_none());
+        assert_eq!(execution.pending, Some(JsValue::Int(7)));
+        assert_eq!(execution.frames.current_id(), Some(id));
     }
 
     #[test]
@@ -1203,7 +1377,12 @@ mod read_completion_tests {
             execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::GetField { .. }
         ));
-        assert!(execution.selected_named_read.is_none());
+        assert!(matches!(
+            execution.selected_named_read,
+            Some(SelectedNamedRead::Prepared(
+                crate::engine::object::OwnedRead::Proxy { .. }
+            ))
+        ));
     }
 
     #[test]
@@ -1362,26 +1541,16 @@ mod read_completion_tests {
             .slots
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
-        let VmAction::GetField {
-            index,
-            keep_receiver,
-            fallthrough,
-        } = execute_frame(&runtime, &mut execution, id).unwrap()
-        else {
-            panic!("fixture must produce a retained field action");
-        };
-        assert!(keep_receiver);
-        let fault = execution.frames.current_mut(id).unwrap().fault_pc;
-        let (result, recovery_calls) = count_next_pc_calls(|| {
-            read_progress(
-                &runtime,
-                &mut execution,
-                id,
-                ReadKey::Static(index),
-                keep_receiver,
-                fallthrough,
-            )
-        });
+        let frame = execution.frames.current_mut(id).unwrap();
+        let fault = frame.resume_pc;
+        let decoded = frame
+            .executable
+            .exec
+            .decode_published(fault as u32)
+            .unwrap();
+        let fallthrough = FallthroughPc::from_decoded(decoded);
+        let (result, recovery_calls) =
+            count_next_pc_calls(|| execute_frame(&runtime, &mut execution, id));
         assert!(result.is_err());
         assert_eq!(recovery_calls, 0);
         let frame = execution.frames.current_mut(id).unwrap();
@@ -1565,3 +1734,5 @@ mod read_completion_tests {
 
 #[cfg(test)]
 mod linked_key_tests;
+#[cfg(test)]
+mod named_read_tests;

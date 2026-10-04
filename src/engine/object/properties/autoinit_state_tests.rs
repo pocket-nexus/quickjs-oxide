@@ -104,9 +104,17 @@ fn all_eight_autoinit_families_complete_in_one_state_borrow() {
             initializer,
         );
         let realm_before = state.heap.context_strong_count(realm).unwrap();
-        state
-            .materialize_auto_init_property(&runtime.0.poisoned, object.object_id(), key.atom())
+        let published = state
+            .materialize_auto_init_property_with_publication(
+                &runtime.0.poisoned,
+                object.object_id(),
+                key.atom(),
+            )
             .unwrap();
+        assert_eq!(
+            published,
+            !matches!(initializer, AutoInitProperty::String { .. })
+        );
         assert_eq!(
             own_slot(&state, object.object_id(), key.atom()).1,
             PropertyFlags::data(true, false, true)
@@ -215,9 +223,15 @@ fn all_eight_autoinit_families_complete_in_one_state_borrow() {
             Ok(realm_before - 1 + realm_added)
         );
         let counts = state.heap.counts();
-        state
-            .materialize_auto_init_property(&runtime.0.poisoned, object.object_id(), key.atom())
-            .unwrap();
+        assert!(
+            !state
+                .materialize_auto_init_property_with_publication(
+                    &runtime.0.poisoned,
+                    object.object_id(),
+                    key.atom()
+                )
+                .unwrap()
+        );
         assert_eq!(state.heap.counts(), counts, "completion is idempotent");
     }
     assert!(!runtime.is_poisoned());

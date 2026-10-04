@@ -356,6 +356,19 @@ impl FrameStore {
                 .is_some_and(|pending| pending.is_direct_property_read(target.operation))
     }
 
+    pub(super) fn can_reply_raw_query_in_state(&self, target: ReturnTarget) -> bool {
+        let Some((id, parent)) = self.frames.get(self.frames.len().saturating_sub(2)) else {
+            return false;
+        };
+        target.frame().ok() == Some(*id)
+            && parent
+                .cold
+                .rare
+                .get()
+                .and_then(|rare| rare.property_wait.as_ref())
+                .is_some_and(|pending| pending.can_resume_raw_in_state(target.operation))
+    }
+
     pub(super) fn depth(&self) -> usize {
         self.frames.len()
     }

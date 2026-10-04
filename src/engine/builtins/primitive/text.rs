@@ -3,18 +3,26 @@
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{
-        error::{Error, NativeErrorKind},
+        error::{Error, NativeErrorKind, NativeErrorMessage},
         runtime::Runtime,
         runtime_error::RuntimeError,
     },
     builtins::native::{StringCharAtKind, StringWellFormedKind},
-    heap::ContextId,
-    value::{JsString, JsValue, Value, conversion::NativeConversion},
+    heap::{
+        ContextId,
+        runtime::{
+            RuntimeState,
+            owned_values::{OwnedValueGuard, OwnedValuesGuard},
+        },
+    },
+    value::{JsString, JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
     },
 };
+use std::cell::Cell;
+
 #[derive(Clone, Copy)]
 pub(crate) enum ScalarTextKind {
     CharAt(StringCharAtKind),
@@ -67,25 +75,37 @@ impl std::ops::DerefMut for ScalarTextResume {
 }
 const _: () = assert!(std::mem::size_of::<ScalarTextResume>() <= 8);
 pub(crate) struct ScalarTextResumeState {
-    runtime: Runtime,
     realm: ContextId,
     kind: ScalarTextKind,
     phase: Phase,
     string: JsString,
     arguments: std::vec::IntoIter<JsValue>,
 }
-impl Drop for ScalarTextResumeState {
-    /// Release argument edges still owned when conversion abandons the call.
-    /// Consumption drains the iterator; releases are defer-safe and nothrow.
-    fn drop(&mut self) {
-        for value in self.arguments.by_ref() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-    }
-}
 impl ScalarTextStep {
     pub(crate) fn start(
         runtime: &Runtime,
+        realm: ContextId,
+        kind: ScalarTextKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Self, RuntimeError> {
+        let _unwind = runtime.unwind_guard();
+        let result = Self::start_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            realm,
+            kind,
+            invocation,
+            arguments,
+        );
+        if result.is_ok() {
+            runtime.check_poison()?;
+        }
+        result
+    }
+    pub(crate) fn start_in_state(
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
         realm: ContextId,
         kind: ScalarTextKind,
         invocation: &NativeInvocation,
@@ -97,15 +117,18 @@ impl ScalarTextStep {
             ));
         };
         if matches!(this_value, JsValue::Null | JsValue::Undefined) {
-            return Ok(Self::Complete(Completion::Throw(
-                runtime.new_native_error_jsvalue(
+            return Ok(Self::Complete(Completion::Throw(JsValue::Object(
+                state.new_native_error_from_message(
+                    poisoned,
                     realm,
                     NativeErrorKind::Type,
-                    "null or undefined are forbidden",
+                    NativeErrorMessage::from_utf8("null or undefined are forbidden"),
                 )?,
-            )));
+            ))));
         }
-        if let Some(result) = complete_primitive(runtime, realm, kind, this_value, arguments)? {
+        if let Some(result) =
+            complete_primitive(state, poisoned, realm, kind, this_value, arguments)?
+        {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
                 "string_scalar_completed_without_state",
@@ -116,97 +139,108 @@ impl ScalarTextStep {
         crate::engine::api::profiling::record_owned_execution_event(
             "string_scalar_resident_allocated",
         );
-        let arguments = match kind {
+        let mut values = Vec::new();
+        if matches!(kind, ScalarTextKind::Concat) {
+            values
+                .try_reserve_exact(arguments.actual_arg_count)
+                .map_err(|_| RuntimeError::Invariant("String concat argv allocation failed"))?;
+        }
+        let mut snapshots = OwnedValuesGuard::new(state, poisoned, values);
+        let (state, values) = snapshots.parts();
+        match kind {
             ScalarTextKind::Concat => {
-                let mut values = Vec::new();
-                values
-                    .try_reserve_exact(arguments.actual_arg_count)
-                    .map_err(|_| RuntimeError::Invariant("String concat argv allocation failed"))?;
                 for value in &arguments.readable[..arguments.actual_arg_count] {
-                    match runtime.dup_jsvalue(value) {
-                        Ok(value) => values.push(value),
-                        Err(error) => {
-                            for value in values {
-                                let _ = runtime.release_jsvalue(value);
-                            }
-                            return Err(error);
-                        }
-                    }
+                    values.push(state.dup_jsvalue(value)?);
                 }
-                values
             }
-            _ => vec![match arguments.readable.first() {
-                Some(value) => runtime.dup_jsvalue(value)?,
+            _ => values.push(match arguments.readable.first() {
+                Some(value) => state.dup_jsvalue(value)?,
                 None => JsValue::Undefined,
-            }],
-        };
-        let this_value = match runtime.dup_jsvalue(this_value) {
-            Ok(value) => value,
-            Err(error) => {
-                for value in arguments {
-                    let _ = runtime.release_jsvalue(value);
-                }
-                return Err(error);
-            }
-        };
+            }),
+        }
+        // The complete argument snapshot precedes the independent receiver edge.
+        let this_value = state.dup_jsvalue(this_value)?;
         Ok(Self::String {
             value: this_value,
             resume: ScalarTextResume(Box::new(ScalarTextResumeState {
-                runtime: runtime.clone(),
                 realm,
                 kind,
                 phase: Phase::Source,
                 string: JsString::from_static(""),
-                arguments: arguments.into_iter(),
+                arguments: std::mem::take(values).into_iter(),
             })),
         })
     }
 }
 impl ScalarTextResume {
     pub(crate) fn string(
-        mut self,
+        self,
         runtime: &Runtime,
         result: NativeConversion<JsString>,
     ) -> Result<ScalarTextStep, RuntimeError> {
+        let _unwind = runtime.unwind_guard();
+        let result = self.string_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            result,
+        );
+        if result.is_ok() {
+            runtime.check_poison()?;
+        }
+        result
+    }
+    pub(crate) fn string_in_state(
+        mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        result: NativeConversion<JsString>,
+    ) -> Result<ScalarTextStep, RuntimeError> {
+        // A throw is transferred before checking the phase, as in the general adapter.
         let string = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ScalarTextStep::Complete(Completion::Throw(value)));
+                return self.complete(state, poisoned, Completion::Throw(value));
             }
         };
         match self.0.phase {
             Phase::Source => self.0.string = string,
-            Phase::Chunk => {
-                self.0.string = self.0.string.try_concat(&string).map_err(Error::from)?
-            }
+            Phase::Chunk => match self.0.string.try_concat(&string).map_err(Error::from) {
+                Ok(string) => self.0.string = string,
+                Err(error) => return self.fail(state, poisoned, error.into()),
+            },
             _ => {
-                return Err(RuntimeError::Invariant(
-                    "String scalar string phase mismatch",
-                ));
+                return self.fail(
+                    state,
+                    poisoned,
+                    RuntimeError::Invariant("String scalar string phase mismatch"),
+                );
             }
         }
         match self.0.kind {
             ScalarTextKind::WellFormed(kind) => {
-                Ok(ScalarTextStep::Complete(Completion::Return(match kind {
+                let value = match kind {
                     StringWellFormedKind::IsWellFormed => {
                         JsValue::Bool(self.0.string.is_well_formed())
                     }
                     StringWellFormedKind::ToWellFormed => {
-                        runtime.unroot_value(&Value::String(self.0.string.to_well_formed()))?
+                        match state.heap.allocate_string(self.0.string.to_well_formed()) {
+                            Ok(id) => JsValue::String(id),
+                            Err(error) => return self.fail(state, poisoned, error.into()),
+                        }
                     }
-                })))
+                };
+                self.complete(state, poisoned, Completion::Return(value))
             }
-            ScalarTextKind::Iterator => Ok(ScalarTextStep::Complete(Completion::Return(
-                JsValue::Object(
-                    runtime
-                        .new_string_iterator(
-                            self.0.realm,
-                            std::mem::replace(&mut self.0.string, JsString::from_static("")),
-                        )?
-                        .into_handle(),
-                ),
-            ))),
-            ScalarTextKind::Concat => self.concat(runtime),
+            ScalarTextKind::Iterator => {
+                let string = std::mem::replace(&mut self.0.string, JsString::from_static(""));
+                match state.new_string_iterator(poisoned, self.0.realm, string) {
+                    Ok(id) => {
+                        self.complete(state, poisoned, Completion::Return(JsValue::Object(id)))
+                    }
+                    Err(error) => self.fail(state, poisoned, error),
+                }
+            }
+            ScalarTextKind::Concat => self.concat(state, poisoned),
             _ => {
                 self.0.phase = Phase::Index;
                 Ok(ScalarTextStep::Number {
@@ -216,19 +250,37 @@ impl ScalarTextResume {
             }
         }
     }
-    fn concat(mut self, runtime: &Runtime) -> Result<ScalarTextStep, RuntimeError> {
+    fn concat(
+        mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<ScalarTextStep, RuntimeError> {
         loop {
             match self.0.arguments.next() {
                 None => {
                     let string = std::mem::replace(&mut self.0.string, JsString::from_static(""));
-                    return Ok(ScalarTextStep::Complete(Completion::Return(
-                        runtime.unroot_value(&Value::String(string))?,
-                    )));
+                    return match state.heap.allocate_string(string) {
+                        Ok(id) => {
+                            self.complete(state, poisoned, Completion::Return(JsValue::String(id)))
+                        }
+                        Err(error) => self.fail(state, poisoned, error.into()),
+                    };
                 }
                 Some(JsValue::String(id)) => {
-                    let chunk = runtime.0.state.borrow().heap.string(id).cloned();
-                    runtime.release_jsvalue(JsValue::String(id))?;
-                    self.0.string = self.0.string.try_concat(&chunk?).map_err(Error::from)?;
+                    let chunk = state.heap.string(id).cloned();
+                    // The raw chunk owner is retired before concatenation, even
+                    // when payload lookup failed; existing chunks remain ropes.
+                    if let Err(error) = state.release_owned_jsvalue(poisoned, JsValue::String(id)) {
+                        return self.fail(state, poisoned, error);
+                    }
+                    let chunk = match chunk {
+                        Ok(chunk) => chunk,
+                        Err(error) => return self.fail(state, poisoned, error.into()),
+                    };
+                    match self.0.string.try_concat(&chunk).map_err(Error::from) {
+                        Ok(string) => self.0.string = string,
+                        Err(error) => return self.fail(state, poisoned, error.into()),
+                    }
                 }
                 Some(value) => {
                     self.0.phase = Phase::Chunk;
@@ -245,21 +297,115 @@ impl ScalarTextResume {
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<ScalarTextStep, RuntimeError> {
+        let _unwind = runtime.unwind_guard();
+        let result = self.number_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            result,
+        );
+        if result.is_ok() {
+            runtime.check_poison()?;
+        }
+        result
+    }
+    pub(crate) fn number_in_state(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        result: NativeConversion<f64>,
+    ) -> Result<ScalarTextStep, RuntimeError> {
+        // Number validates Index before considering a supplied throw. This is
+        // deliberately different from the string reply's phase rule.
         if !matches!(self.0.phase, Phase::Index) {
             if let NativeConversion::Throw(value) = result {
-                let _ = runtime.release_jsvalue(value);
+                let _ = state.release_owned_jsvalue(poisoned, value);
             }
-            return Err(RuntimeError::Invariant(
-                "String scalar index phase mismatch",
-            ));
+            return self.fail(
+                state,
+                poisoned,
+                RuntimeError::Invariant("String scalar index phase mismatch"),
+            );
         }
-        let number = match result {
-            NativeConversion::Value(value) => value,
+        match result {
             NativeConversion::Throw(value) => {
-                return Ok(ScalarTextStep::Complete(Completion::Throw(value)));
+                self.complete(state, poisoned, Completion::Throw(value))
             }
+            NativeConversion::Value(number) => {
+                match finish_index(state, self.kind, &self.string, number) {
+                    Ok(completion) => self.complete(state, poisoned, completion),
+                    Err(error) => self.fail(state, poisoned, error),
+                }
+            }
+        }
+    }
+    fn complete(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        completion: Completion,
+    ) -> Result<ScalarTextStep, RuntimeError> {
+        let (value, thrown) = match completion {
+            Completion::Return(value) => (value, false),
+            Completion::Throw(value) => (value, true),
         };
-        finish_index(runtime, self.kind, &self.string, number).map(ScalarTextStep::Complete)
+        let mut output = OwnedValueGuard::new(state, poisoned, value);
+        let (state, output) = output.parts();
+        self.retire_in_state(state, poisoned)?;
+        let value = output.take().expect("ScalarText completion owner");
+        Ok(ScalarTextStep::Complete(if thrown {
+            Completion::Throw(value)
+        } else {
+            Completion::Return(value)
+        }))
+    }
+    fn fail(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        error: RuntimeError,
+    ) -> Result<ScalarTextStep, RuntimeError> {
+        self.retire_in_state(state, poisoned)?;
+        Err(error)
+    }
+    pub(crate) fn retire_in_state(
+        mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        if poisoned.get() {
+            return Ok(());
+        }
+        self.0
+            .retire_with(&mut |value| state.release_owned_jsvalue(poisoned, value))
+    }
+    pub(crate) fn retire_at_boundary(mut self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        self.0.retire_with(&mut |value| {
+            if runtime.skip_cleanup() {
+                return Err(RuntimeError::Poisoned);
+            }
+            runtime.release_jsvalue(value)?;
+            if runtime.is_poisoned() {
+                Err(RuntimeError::Poisoned)
+            } else {
+                Ok(())
+            }
+        })
+    }
+    pub(crate) fn release_owned(self, runtime: &Runtime) {
+        // Legacy teardown already owns its operation boundary. Runtime's
+        // release coordinator handles an unavailable State borrow here.
+        let _ = self.retire_at_boundary(runtime);
+    }
+}
+impl ScalarTextResumeState {
+    fn retire_with(
+        &mut self,
+        release: &mut impl FnMut(JsValue) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        for value in self.arguments.by_ref() {
+            release(value)?;
+        }
+        Ok(())
     }
 }
 
@@ -267,7 +413,8 @@ impl ScalarTextResume {
 /// Objects take the existing ordered conversion path; no JavaScript can run
 /// between these primitive conversions, so no argument snapshot is required.
 fn complete_primitive(
-    runtime: &Runtime,
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
     realm: ContextId,
     kind: ScalarTextKind,
     receiver: &JsValue,
@@ -290,26 +437,24 @@ fn complete_primitive(
     {
         return Ok(None);
     }
-    let mut string = match runtime.string_from_primitive_jsvalue(realm, receiver)? {
+    let mut string = match state.string_from_primitive_jsvalue(poisoned, realm, receiver)? {
         NativeConversion::Value(value) => value,
         NativeConversion::Throw(value) => return Ok(Some(Completion::Throw(value))),
     };
     let value = match kind {
         ScalarTextKind::CharAt(_) | ScalarTextKind::CharCodeAt | ScalarTextKind::CodePointAt => {
-            let number = match runtime.number_from_primitive_jsvalue(realm, first)? {
+            let number = match state.number_from_primitive_jsvalue(poisoned, realm, first)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => return Ok(Some(Completion::Throw(value))),
             };
-            return finish_index(runtime, kind, &string, number).map(Some);
+            return finish_index(state, kind, &string, number).map(Some);
         }
         ScalarTextKind::Concat => {
             for argument in inputs {
-                // Match the resumed concat path: existing string chunks can
-                // remain ropes, without flattening them for conversion.
                 let chunk = if let JsValue::String(id) = argument {
-                    runtime.0.state.borrow().heap.string(*id)?.clone()
+                    state.heap.string(*id)?.clone()
                 } else {
-                    match runtime.string_from_primitive_jsvalue(realm, argument)? {
+                    match state.string_from_primitive_jsvalue(poisoned, realm, argument)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
                             return Ok(Some(Completion::Throw(value)));
@@ -318,16 +463,16 @@ fn complete_primitive(
                 };
                 string = string.try_concat(&chunk).map_err(Error::from)?;
             }
-            runtime.into_jsvalue(Value::String(string))?
+            JsValue::String(state.heap.allocate_string(string)?)
         }
         ScalarTextKind::WellFormed(StringWellFormedKind::IsWellFormed) => {
             JsValue::Bool(string.is_well_formed())
         }
         ScalarTextKind::WellFormed(StringWellFormedKind::ToWellFormed) => {
-            runtime.into_jsvalue(Value::String(string.to_well_formed()))?
+            JsValue::String(state.heap.allocate_string(string.to_well_formed())?)
         }
         ScalarTextKind::Iterator => {
-            JsValue::Object(runtime.new_string_iterator(realm, string)?.into_handle())
+            JsValue::Object(state.new_string_iterator(poisoned, realm, string)?)
         }
     };
     Ok(Some(Completion::Return(value)))
@@ -335,7 +480,7 @@ fn complete_primitive(
 
 /// The callback-free scalar kernel is shared by local and resumed execution.
 fn finish_index(
-    runtime: &Runtime,
+    state: &mut RuntimeState,
     kind: ScalarTextKind,
     string: &JsString,
     number: f64,
@@ -351,30 +496,32 @@ fn finish_index(
             }
             if index < 0 || index >= length {
                 match kind {
-                    StringCharAtKind::At => Value::Undefined,
-                    StringCharAtKind::CharAt => Value::String(JsString::from_static("")),
+                    StringCharAtKind::At => JsValue::Undefined,
+                    StringCharAtKind::CharAt => {
+                        JsValue::String(state.heap.allocate_string(JsString::from_static(""))?)
+                    }
                 }
             } else {
-                Value::String(JsString::from_code_unit(
-                    string
-                        .code_unit_at(index as usize)
-                        .ok_or(RuntimeError::Invariant(
-                            "validated String index missing code unit",
-                        ))?,
-                ))
+                JsValue::String(state.heap.allocate_string(
+                    JsString::from_code_unit(string.code_unit_at(index as usize).ok_or(
+                        RuntimeError::Invariant("validated String index missing code unit"),
+                    )?),
+                )?)
             }
         }
         ScalarTextKind::CharCodeAt => usize::try_from(index)
             .ok()
             .and_then(|index| string.code_unit_at(index))
-            .map_or(Value::Float(f64::NAN), |unit| Value::Int(i32::from(unit))),
+            .map_or(JsValue::Float(f64::NAN), |unit| {
+                JsValue::Int(i32::from(unit))
+            }),
         ScalarTextKind::CodePointAt => usize::try_from(index)
             .ok()
             .and_then(|index| string.code_point_at(index))
-            .map_or(Value::Undefined, |point| Value::Int(point as i32)),
+            .map_or(JsValue::Undefined, |point| JsValue::Int(point as i32)),
         _ => return Err(RuntimeError::Invariant("String scalar index kind mismatch")),
     };
-    Ok(Completion::Return(runtime.into_jsvalue(value)?))
+    Ok(Completion::Return(value))
 }
 
 pub(crate) fn finish(
@@ -386,10 +533,22 @@ pub(crate) fn finish(
         step = match step {
             ScalarTextStep::Complete(result) => return Ok(result),
             ScalarTextStep::String { value, resume } => {
-                resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
+                match runtime.native_to_js_string_jsvalue(realm, value) {
+                    Ok(result) => resume.string(runtime, result)?,
+                    Err(error) => {
+                        resume.release_owned(runtime);
+                        return Err(error);
+                    }
+                }
             }
             ScalarTextStep::Number { value, resume } => {
-                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
+                match runtime.native_to_number_jsvalue(realm, value) {
+                    Ok(result) => resume.number(runtime, result)?,
+                    Err(error) => {
+                        resume.release_owned(runtime);
+                        return Err(error);
+                    }
+                }
             }
         };
     }
@@ -401,6 +560,7 @@ const _: () = assert!(std::mem::size_of::<ScalarTextStep>() <= 64);
 #[cfg(test)]
 mod local_completion_tests {
     use super::*;
+    use crate::engine::value::Value;
 
     #[test]
     fn scalar_text_primitives_complete_without_conversion_requests() {
@@ -519,3 +679,6 @@ mod local_completion_tests {
         })()"#).unwrap(), Value::Bool(true));
     }
 }
+
+#[cfg(test)]
+mod state_tests;

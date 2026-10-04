@@ -20,7 +20,6 @@ mod output;
 pub(crate) enum SynchronousNative {
     Pure(NativeFunctionId),
     PrimitiveConstructor(super::native::PrimitiveKind),
-    Math(super::math::operation::MathKind),
 }
 impl SynchronousNative {
     pub(crate) fn start(
@@ -43,14 +42,6 @@ impl SynchronousNative {
                     "synchronous primitive constructor unexpectedly waited",
                 )),
             },
-            Self::Math(kind) => {
-                match super::MathStep::start(runtime, realm, kind, invocation, arguments)? {
-                    super::MathStep::Complete(result) => Ok(result),
-                    _ => Err(RuntimeError::Invariant(
-                        "synchronous Math unexpectedly required conversion",
-                    )),
-                }
-            }
         }
     }
 }
@@ -295,19 +286,7 @@ impl NativeOperation {
             {
                 Some(SynchronousNative::PrimitiveConstructor(*kind))
             }
-            Self::Math(kind) => {
-                use super::math::operation::MathKind;
-                let count = match kind {
-                    MathKind::Unary(_) | MathKind::Clz32 => 1,
-                    MathKind::Binary(_) | MathKind::Imul => 2,
-                    _ => arguments.len(),
-                };
-                arguments
-                    .iter()
-                    .take(count)
-                    .all(|value| !matches!(value, crate::engine::value::JsValue::Object(_)))
-                    .then_some(SynchronousNative::Math(*kind))
-            }
+
             _ => None,
         }
     }

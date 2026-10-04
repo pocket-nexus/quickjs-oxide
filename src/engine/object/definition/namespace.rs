@@ -49,6 +49,9 @@ impl RuntimeState {
         match self.select_stored_own_property(poisoned, object, atom)? {
             OwnPropertySelection::Ready(ReadyOwnProperty::Stored(
                 record @ CompletePropertyDescriptor::Data { .. },
+            ))
+            | OwnPropertySelection::CyclePublished(ReadyOwnProperty::Stored(
+                record @ CompletePropertyDescriptor::Data { .. },
             )) => Ok(record),
             OwnPropertySelection::Missing => Err(RuntimeError::Invariant(
                 "module namespace export slot has no own descriptor",

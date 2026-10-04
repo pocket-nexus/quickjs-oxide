@@ -4,7 +4,10 @@ use crate::engine::{
         error::{NativeErrorKind, NativeErrorMessage},
         runtime_error::RuntimeError,
     },
-    builtins::native::{NativeCProto, NativeFunctionId},
+    builtins::{
+        continuation::NativeStep,
+        native::{NativeCProto, NativeFunctionId},
+    },
     heap::{ContextId, runtime::RuntimeState},
     value::JsValue,
     vm::{
@@ -220,6 +223,23 @@ impl RuntimeState {
             NativeFunctionId::NumberPredicate(_)
                 | NativeFunctionId::MathRandom
                 | NativeFunctionId::FunctionPrototype
+                | NativeFunctionId::PrimitivePrototypeValueOf(_)
+                | NativeFunctionId::PrimitivePrototypeToString(_)
+                | NativeFunctionId::StringPrototypeCharAt(_)
+                | NativeFunctionId::StringPrototypeCharCodeAt
+                | NativeFunctionId::StringPrototypeCodePointAt
+                | NativeFunctionId::StringPrototypeConcat
+                | NativeFunctionId::StringPrototypeWellFormed(_)
+                | NativeFunctionId::StringPrototypeIterator
+                | NativeFunctionId::SymbolPrototypeDescription
+                | NativeFunctionId::NumberPrototypeFormat(_)
+                | NativeFunctionId::BigIntAsN(_)
+                | NativeFunctionId::MathUnary(_)
+                | NativeFunctionId::MathBinary(_)
+                | NativeFunctionId::MathMinMax(_)
+                | NativeFunctionId::MathHypot
+                | NativeFunctionId::MathImul
+                | NativeFunctionId::MathClz32
                 | NativeFunctionId::Date(
                     crate::engine::builtins::native::DateNativeKind::Now
                         | crate::engine::builtins::native::DateNativeKind::TimeValue
@@ -237,11 +257,13 @@ impl RuntimeState {
         realm: ContextId,
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<NativeStep, RuntimeError> {
         match self
             .adapt_native_invocation_borrowed(poisoned, target, realm, invocation, arguments)?
         {
-            NativeInvocationAdaptation::Complete(completion) => Ok(completion),
+            NativeInvocationAdaptation::Complete(completion) => {
+                Ok(NativeStep::Complete(completion))
+            }
             NativeInvocationAdaptation::Invoke(invocation) => {
                 let result = self.dispatch_state_native_body(
                     poisoned,
@@ -251,7 +273,14 @@ impl RuntimeState {
                     invocation.as_ref(),
                     arguments,
                 );
-                invocation.release_in_state(self, poisoned).and(result)
+                if poisoned.get() {
+                    return Err(RuntimeError::Poisoned);
+                }
+                let retired = invocation.release_in_state(self, poisoned);
+                if poisoned.get() {
+                    return Err(RuntimeError::Poisoned);
+                }
+                retired.and(result)
             }
         }
     }
@@ -263,20 +292,97 @@ impl RuntimeState {
         realm: ContextId,
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
-    ) -> Result<Completion, RuntimeError> {
+    ) -> Result<NativeStep, RuntimeError> {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_state_body");
+        if let Some(kind) = crate::engine::builtins::math::operation::MathKind::for_target(target) {
+            return crate::engine::builtins::MathStep::start_in_state(
+                self, poisoned, realm, kind, invocation, arguments,
+            )
+            .map(|step| match step {
+                crate::engine::builtins::MathStep::Complete(completion) => {
+                    NativeStep::Complete(completion)
+                }
+                step => NativeStep::Math(step),
+            });
+        }
+        if let Some(kind) =
+            crate::engine::builtins::primitive::numeric::NumericKind::for_target(target)
+        {
+            return crate::engine::builtins::NumericStep::start_in_state(
+                self, poisoned, realm, kind, invocation, arguments,
+            )
+            .map(|step| match step {
+                crate::engine::builtins::NumericStep::Complete(completion) => {
+                    NativeStep::Complete(completion)
+                }
+                step => NativeStep::Numeric(step),
+            });
+        }
+        if let Some(kind) =
+            crate::engine::builtins::primitive::text::ScalarTextKind::for_target(target)
+        {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "native_scalar_text_state_body",
+            );
+            return crate::engine::builtins::ScalarTextStep::start_in_state(
+                self, poisoned, realm, kind, invocation, arguments,
+            )
+            .map(|step| match step {
+                crate::engine::builtins::ScalarTextStep::Complete(completion) => {
+                    NativeStep::Complete(completion)
+                }
+                step => NativeStep::ScalarText(step),
+            });
+        }
         match target {
-            NativeFunctionId::NumberPredicate(kind) => {
-                self.call_number_predicate(kind, invocation, arguments)
+            NativeFunctionId::NumberPredicate(kind) => self
+                .call_number_predicate(kind, invocation, arguments)
+                .map(NativeStep::Complete),
+            NativeFunctionId::MathRandom => self
+                .call_math_random(realm, invocation)
+                .map(NativeStep::Complete),
+            NativeFunctionId::FunctionPrototype => {
+                Ok(NativeStep::Complete(Completion::Return(JsValue::Undefined)))
             }
-            NativeFunctionId::MathRandom => self.call_math_random(realm, invocation),
-            NativeFunctionId::FunctionPrototype => Ok(Completion::Return(JsValue::Undefined)),
-            NativeFunctionId::Date(kind) => {
-                self.call_date_readonly_native(poisoned, host, realm, kind, invocation)
-            }
+            NativeFunctionId::Date(kind) => self
+                .call_date_readonly_native(poisoned, host, realm, kind, invocation)
+                .map(NativeStep::Complete),
+            NativeFunctionId::PrimitivePrototypeValueOf(kind) => self
+                .call_primitive_prototype_value_of(poisoned, realm, kind, invocation)
+                .map(NativeStep::Complete),
+            NativeFunctionId::SymbolPrototypeDescription => self
+                .call_symbol_prototype_description(poisoned, realm, invocation)
+                .map(NativeStep::Complete),
             _ => Err(RuntimeError::Invariant(
                 "native body has not migrated to state",
+            )),
+        }
+    }
+}
+
+impl crate::engine::api::runtime::Runtime {
+    /// Public and unmigrated consumers cross actual Get/Call boundaries here.
+    /// The semantic phase and numerical kernel remain the State algorithms.
+    pub(crate) fn finish_state_native_body_step(
+        &self,
+        realm: ContextId,
+        step: NativeStep,
+    ) -> Result<Completion, RuntimeError> {
+        match step {
+            NativeStep::Complete(completion) => Ok(completion),
+            NativeStep::Math(step) => {
+                crate::engine::builtins::math::operation::finish(self, realm, step)
+            }
+            NativeStep::ScalarText(step) => {
+                crate::engine::builtins::primitive::text::finish(self, realm, step)
+            }
+            NativeStep::Numeric(step) => {
+                crate::engine::builtins::primitive::numeric::finish(self, realm, step)
+            }
+            _ => Err(RuntimeError::Invariant(
+                "State native body returned an unmigrated domain",
             )),
         }
     }

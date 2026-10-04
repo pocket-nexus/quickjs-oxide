@@ -11,6 +11,9 @@ use crate::engine::{
     vm::closure::FrameFunction,
 };
 
+mod callback;
+pub(in crate::engine::vm) use callback::{CallbackSelection, RawCallbackGuard, RawCallbackInputs};
+
 #[cfg(test)]
 use crate::engine::value::Value;
 

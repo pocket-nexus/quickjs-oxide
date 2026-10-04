@@ -55,7 +55,8 @@ impl RuntimeState {
         atom: Atom,
     ) -> Result<CompletePropertyDescriptor<RawValue>, RuntimeError> {
         match self.select_stored_own_property(poisoned, object, atom)? {
-            OwnPropertySelection::Ready(ReadyOwnProperty::Stored(record)) => Ok(record),
+            OwnPropertySelection::Ready(ReadyOwnProperty::Stored(record))
+            | OwnPropertySelection::CyclePublished(ReadyOwnProperty::Stored(record)) => Ok(record),
             _ => Err(RuntimeError::Invariant(
                 "mapped Arguments VarRef lost its property",
             )),

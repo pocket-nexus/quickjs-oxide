@@ -100,7 +100,10 @@ impl RuntimeState {
         }
         let current = match self.select_stored_own_property(poisoned, object, atom)? {
             OwnPropertySelection::Missing => None,
-            OwnPropertySelection::Ready(ReadyOwnProperty::Stored(record)) => Some(record),
+            OwnPropertySelection::Ready(ReadyOwnProperty::Stored(record))
+            | OwnPropertySelection::CyclePublished(ReadyOwnProperty::Stored(record)) => {
+                Some(record)
+            }
             _ => {
                 return Err(RuntimeError::Invariant(
                     "stored selection produced a virtual descriptor",

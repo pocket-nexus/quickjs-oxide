@@ -35,6 +35,9 @@ pub(crate) enum OwnPropertySelection {
     /// Numeric TypedArray misses terminate Get before prototype lookup.
     TerminalMissing,
     Ready(ReadyOwnProperty),
+    /// The selected stored Object was just published by AutoInit. Consume the
+    /// descriptor under State; only its actual execution consumer may service GC.
+    CyclePublished(ReadyOwnProperty),
     Shared(SharedTypedOwnWord),
 }
 
@@ -195,6 +198,7 @@ impl RuntimeState {
         object: ObjectId,
         atom: Atom,
     ) -> Result<OwnPropertySelection, RuntimeError> {
+        let mut cycle_published = false;
         loop {
             let Some(selected) = self.stored_own_property(object, atom)? else {
                 return Ok(OwnPropertySelection::Missing);
@@ -224,13 +228,17 @@ impl RuntimeState {
                     // The complete State materializer performs the canonical
                     // factory and slot transition. Reselect only after that
                     // mutation, with no Runtime or public descriptor roundtrip.
-                    self.materialize_auto_init_property(poisoned, object, atom)?;
+                    cycle_published |= self
+                        .materialize_auto_init_property_with_publication(poisoned, object, atom)?;
                     continue;
                 }
             };
-            return Ok(OwnPropertySelection::Ready(ReadyOwnProperty::Stored(
-                record,
-            )));
+            let ready = ReadyOwnProperty::Stored(record);
+            return Ok(if cycle_published {
+                OwnPropertySelection::CyclePublished(ready)
+            } else {
+                OwnPropertySelection::Ready(ready)
+            });
         }
     }
 
@@ -321,7 +329,8 @@ impl Runtime {
                 OwnPropertySelection::Missing | OwnPropertySelection::TerminalMissing => {
                     return Ok(None);
                 }
-                OwnPropertySelection::Ready(ready) => {
+                OwnPropertySelection::Ready(ready)
+                | OwnPropertySelection::CyclePublished(ready) => {
                     state.own_selected_property_descriptor(&self.0.poisoned, ready)?
                 }
                 OwnPropertySelection::Shared(word) => {
@@ -354,7 +363,9 @@ impl Runtime {
         )?;
         match selected {
             OwnPropertySelection::Missing | OwnPropertySelection::TerminalMissing => Ok(None),
-            OwnPropertySelection::Ready(ready) => Ok(Some(ready)),
+            OwnPropertySelection::Ready(ready) | OwnPropertySelection::CyclePublished(ready) => {
+                Ok(Some(ready))
+            }
             OwnPropertySelection::Shared(word) => {
                 Ok(Some(ReadyOwnProperty::TypedWord(word.read()?)))
             }

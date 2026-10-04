@@ -1130,6 +1130,7 @@ pub(crate) use ordinary_storage::NamedSelectionMiss;
 
 mod ordinary;
 pub(crate) use ordinary::OrdinaryRead;
+pub(crate) use ordinary::read::{OwnedRead, ReadStep};
 
 #[cfg(test)]
 mod ordinary_tests;

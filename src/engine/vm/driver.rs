@@ -818,6 +818,10 @@ fn run_frames_with_state(
                     conversion_prepared = true;
                     exit
                 }
+                ready::Boundary::QueryConversion(task) => {
+                    conversion = Some(task);
+                    continue;
+                }
                 ready::Boundary::Complete(completion) => {
                     forwarded = Some(completion);
                     VmAction::Complete

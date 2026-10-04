@@ -23,7 +23,24 @@ pub(super) struct PreparedOrdinaryWindow {
     roots: usize,
     #[cfg(feature = "profiling")]
     function_name: bool,
+    #[cfg(feature = "profiling")]
+    callback_arguments: bool,
 }
+/// Only the argument input differs between a current Call and an already
+/// selected callback. Both share one unpublished suffix initializer.
+enum OrdinaryArgumentSource<'a> {
+    Caller(usize),
+    Callback(&'a [JsValue]),
+}
+impl OrdinaryArgumentSource<'_> {
+    fn count(&self) -> usize {
+        match self {
+            Self::Caller(count) => *count,
+            Self::Callback(values) => values.len(),
+        }
+    }
+}
+
 impl SlotStore {
     #[cfg(test)]
     pub(in crate::engine::vm) fn push_ordinary_frame(
@@ -133,6 +150,107 @@ impl SlotStore {
         })
     }
 
+    /// Raw selected callback input moves only after the same ordinary suffix
+    /// initializer succeeds. A named getter consumes its original base without
+    /// promising synthetic callee/receiver operand slots.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_current_callback_frame_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &FrameLayout<'_>,
+        parent: &mut FrameWindow,
+        inputs: &mut crate::engine::vm::call::ordinary::RawCallbackInputs,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+        named_receiver: Option<bool>,
+    ) -> Result<InstalledOrdinaryFrame, Error> {
+        if inputs.callback_callee != Some(function) || inputs.receiver.is_none() {
+            return Err(Error::internal(
+                "callback lost its authenticated input owner",
+            ));
+        }
+        if named_receiver.is_some() {
+            self.peek_current(parent, 0)?;
+            if inputs.preserved_receiver.is_none() {
+                return Err(Error::internal(
+                    "named callback lost its preserved receiver",
+                ));
+            }
+        }
+        let prepared = self.prepare_ordinary_window_from_source_in_state(
+            runtime,
+            state,
+            layout,
+            parent,
+            OrdinaryArgumentSource::Callback(&inputs.arguments),
+            function,
+            observes_arguments,
+        )?;
+        // The current window and selected input owners stayed unchanged while
+        // every reserve/checked parameter retain/local initializer completed.
+        if let Some(keep_receiver) = named_receiver {
+            self.commit_named_getter_receiver_in_state(
+                state,
+                &runtime.0.poisoned,
+                parent,
+                &mut inputs.preserved_receiver,
+                keep_receiver,
+            )?;
+        }
+        let base = prepared.window.base;
+        for (index, value) in inputs.arguments.drain(..).enumerate() {
+            self.slots[base + index] = Some(FrameBinding::Direct(value));
+        }
+        let function = inputs
+            .callback_callee
+            .take()
+            .expect("checked callback callee");
+        let receiver = inputs.receiver.take().expect("checked callback receiver");
+        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
+        let window = self.publish_ordinary_window(parent, 0, prepared);
+        Ok(InstalledOrdinaryFrame {
+            function,
+            input,
+            window,
+        })
+    }
+
+    /// Retire the actual named-read base while the selected this owner is
+    /// protected by its callback guard or published native activation. The
+    /// original one-slot position also proves preserved receiver capacity.
+    pub(super) fn commit_named_getter_receiver_in_state(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        parent: &mut FrameWindow,
+        preserved_receiver: &mut Option<JsValue>,
+        keep_receiver: bool,
+    ) -> Result<(), Error> {
+        self.peek_current(parent, 0)?;
+        if preserved_receiver.is_none() {
+            return Err(Error::internal(
+                "named callback lost its preserved receiver",
+            ));
+        }
+        let original = self.pop_current(parent).expect("checked named read base");
+        state
+            .release_owned_jsvalue(poisoned, original)
+            .map_err(runtime_error_to_vm_error)?;
+        let preserved = preserved_receiver
+            .take()
+            .expect("preserved named read base");
+        if keep_receiver {
+            self.push_current(parent, preserved)
+                .expect("original named receiver slot has capacity");
+        } else {
+            state
+                .release_owned_jsvalue(poisoned, preserved)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        Ok(())
+    }
+
     /// Prepare the unpublished parameter/local suffix while the caller owns
     /// all operands. Ordinary calls and Base constructors share this initializer;
     /// their distinct input owners move only after all fallible work succeeds.
@@ -147,7 +265,35 @@ impl SlotStore {
         function: crate::engine::heap::ObjectId,
         observes_arguments: bool,
     ) -> Result<PreparedOrdinaryWindow, Error> {
-        let start = parent.operands().start + parent.depth - count;
+        self.prepare_ordinary_window_from_source_in_state(
+            runtime,
+            state,
+            layout,
+            parent,
+            OrdinaryArgumentSource::Caller(count),
+            function,
+            observes_arguments,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_ordinary_window_from_source_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &FrameLayout<'_>,
+        parent: &FrameWindow,
+        source: OrdinaryArgumentSource<'_>,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<PreparedOrdinaryWindow, Error> {
+        let count = source.count();
+        let start = parent.operands().start + parent.depth
+            - if matches!(source, OrdinaryArgumentSource::Caller(_)) {
+                count
+            } else {
+                0
+            };
         // Only language-visible original arguments need a second owner.
         // WeakRef liveness belongs to the enclosing execution turn.
         let keep_originals = observes_arguments;
@@ -191,8 +337,14 @@ impl SlotStore {
         if keep_originals {
             // Complete all fallible retains before moving any caller owner.
             for index in 0..count {
-                let Some(FrameBinding::Direct(value)) = &self.slots[start + index] else {
-                    unreachable!()
+                let value = match source {
+                    OrdinaryArgumentSource::Caller(_) => {
+                        let Some(FrameBinding::Direct(value)) = &self.slots[start + index] else {
+                            unreachable!("authenticated ordinary argument is direct")
+                        };
+                        value
+                    }
+                    OrdinaryArgumentSource::Callback(values) => &values[index],
                 };
                 #[cfg(feature = "profiling")]
                 {
@@ -272,6 +424,8 @@ impl SlotStore {
             roots,
             #[cfg(feature = "profiling")]
             function_name: function_name.is_some(),
+            #[cfg(feature = "profiling")]
+            callback_arguments: matches!(source, OrdinaryArgumentSource::Callback(_)),
         })
     }
 
@@ -317,7 +471,11 @@ impl SlotStore {
                 count: self.slots.len() - prepared.initialized,
                 high_water: self.slots.len(),
             });
-            record_owned_storage(Cost::Clear(consumed - count));
+            record_owned_storage(Cost::Clear(if prepared.callback_arguments {
+                0
+            } else {
+                consumed - count
+            }));
             record_owned_storage(Cost::Initialize(end - base));
             record_owned_storage(Cost::Move(count + parameter_count + local_count));
             self.record_occupancy();

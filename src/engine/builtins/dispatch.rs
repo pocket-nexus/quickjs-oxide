@@ -447,14 +447,15 @@ impl Runtime {
         };
         match target {
             NativeFunctionId::FunctionPrototype => {
-                self.0.state.borrow_mut().dispatch_state_native_body(
+                let step = self.0.state.borrow_mut().dispatch_state_native_body(
                     &self.0.poisoned,
                     self.0.host_services.as_ref(),
                     target,
                     realm,
                     invocation,
                     arguments,
-                )
+                )?;
+                self.finish_state_native_body_step(realm, step)
             }
             NativeFunctionId::Map(kind) => {
                 self.call_map_native_borrowed(realm, kind, invocation, arguments)
@@ -643,14 +644,15 @@ impl Runtime {
         match target {
             NativeFunctionId::FunctionPrototype => {
                 self.dispatch_borrowed_invocation(invocation, |invocation| {
-                    self.0.state.borrow_mut().dispatch_state_native_body(
+                    let step = self.0.state.borrow_mut().dispatch_state_native_body(
                         &self.0.poisoned,
                         self.0.host_services.as_ref(),
                         target,
                         realm,
                         invocation,
                         arguments,
-                    )
+                    )?;
+                    self.finish_state_native_body_step(realm, step)
                 })
             }
             NativeFunctionId::FunctionConstructor(kind) => {

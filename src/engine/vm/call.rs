@@ -884,7 +884,9 @@ impl Runtime {
                 invocation,
                 &call.activation.arguments,
             )? {
-                NativeInvocationAdaptation::Complete(result) => Ok(result),
+                NativeInvocationAdaptation::Complete(result) => Ok(
+                    crate::engine::builtins::continuation::NativeStep::Complete(result),
+                ),
                 NativeInvocationAdaptation::Invoke(invocation) => {
                     let result = state.dispatch_state_native_body(
                         &self.0.poisoned,
@@ -898,6 +900,9 @@ impl Runtime {
                     released.and(result)
                 }
             };
+            drop(state);
+            let result = result.and_then(|step| self.finish_state_native_body_step(realm, step));
+            let mut state = self.0.state.borrow_mut();
             return call
                 .into_inner()
                 .finish_completion_reusing(&mut state, &self.0.poisoned, result)

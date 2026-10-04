@@ -189,40 +189,6 @@ impl Runtime {
         )
     }
 
-    pub(crate) fn new_string_iterator(
-        &self,
-        realm: ContextId,
-        string: JsString,
-    ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation()?;
-        let prototype_id = self
-            .0
-            .state
-            .borrow()
-            .heap
-            .context(realm)?
-            .string_iterator_prototype;
-        let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype_id)?;
-        let mut state = self.0.state.borrow_mut();
-        let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
-        let object =
-            match state
-                .heap
-                .allocate_object(ObjectData::string_iterator(shape, Vec::new(), string))
-            {
-                Ok(object) => object,
-                Err(error) => {
-                    let cleanup = state.heap.release_shape(shape)?;
-                    state.apply_cleanup(cleanup)?;
-                    return Err(error.into());
-                }
-            };
-        let cleanup = state.heap.release_shape(shape)?;
-        state.apply_cleanup(cleanup)?;
-        drop(state);
-        Ok(ObjectRef::from_owned_handle(self.clone(), object))
-    }
-
     /// A fresh result object copies the internal value handle into its data
     /// slot; the consumed producer edge is released on every exit.
     pub(crate) fn new_iterator_result_jsvalue(
@@ -667,16 +633,7 @@ impl Runtime {
         &self,
         object: crate::engine::heap::ObjectId,
     ) -> Result<bool, RuntimeError> {
-        Ok(matches!(
-            self.0.state.borrow().heap.object(object)?.payload,
-            crate::engine::heap::ObjectPayload::NativeFunction { .. }
-                | crate::engine::heap::ObjectPayload::BoundFunction { .. }
-                | crate::engine::heap::ObjectPayload::BytecodeFunction { .. }
-                | crate::engine::heap::ObjectPayload::Proxy(crate::engine::heap::ProxyData {
-                    is_callable: true,
-                    ..
-                })
-        ))
+        self.0.state.borrow().object_id_has_call_capability(object)
     }
 
     /// The inner error returns the unchanged non-callable owner so callers can
@@ -1047,6 +1004,37 @@ mod owned_callable_tests {
 }
 
 impl RuntimeState {
+    /// The caller owns the active execution lease. Preserve the prototype's
+    /// independent checked temporary before the layout acquires its edge.
+    pub(crate) fn new_string_iterator(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+        string: JsString,
+    ) -> Result<ObjectId, RuntimeError> {
+        let prototype = self.heap.context(realm)?.string_iterator_prototype;
+        self.heap.retain_object(prototype)?;
+        let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
+        let (state, prototype_owner) = prototype_owner.parts();
+        let object = state.allocate_object_with_layout(
+            poisoned,
+            Some(prototype),
+            &[],
+            Vec::new(),
+            |shape, slots| ObjectData::string_iterator(shape, slots, string),
+        )?;
+        let mut result_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(object));
+        let (state, result_owner) = result_owner.parts();
+        state.release_owned_jsvalue(
+            poisoned,
+            prototype_owner.take().expect("iterator prototype"),
+        )?;
+        let JsValue::Object(object) = result_owner.take().expect("string iterator result") else {
+            unreachable!("String iterator factory allocated an object")
+        };
+        Ok(object)
+    }
+
     /// Ordinary IteratorNext completion owns its producer until the empty
     /// result and both ordered data fields have been initialized. Allocation
     /// merely requests pressure; the caller publishes before GC service.

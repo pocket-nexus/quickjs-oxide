@@ -1,69 +1,25 @@
-//! Mechanical adapters for conversion domain requests.
-use super::JsValue;
-use super::{DirectCallTarget, NumberStep, Resume, Step};
+//! Canonical raw conversion phases retain their request owners until selection.
+use super::{NumberStep, Step};
 
 impl TryFrom<NumberStep> for Step {
     type Error = crate::engine::api::RuntimeError;
     fn try_from(step: NumberStep) -> Result<Self, Self::Error> {
-        Ok({
-            match step {
-                NumberStep::Complete(result) => Self::NumberComplete(Some(result)),
-                NumberStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    Self::Read {
-                        receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::Number(resume)),
-                    }
-                }
-                NumberStep::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::Number(resume)),
-                    }
-                }
-            }
+        Ok(match step {
+            NumberStep::Complete(result) => Self::NumberComplete(Some(result)),
+            step => Self::NumberProgress(Some(step)),
         })
     }
 }
-
 impl TryFrom<crate::engine::value::conversion::primitive::PrimitiveStep> for Step {
     type Error = crate::engine::api::RuntimeError;
     fn try_from(
         step: crate::engine::value::conversion::primitive::PrimitiveStep,
     ) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::value::conversion::primitive::PrimitiveStep;
-            match step {
-                PrimitiveStep::Complete(result) => Self::Complete(Some(result)),
-                PrimitiveStep::Get { mut resume } => {
-                    let (object, key) = resume.take_get();
-                    Self::Read {
-                        receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::Primitive(resume)),
-                    }
-                }
-                PrimitiveStep::Call { mut resume } => {
-                    let callable = resume.take_callable();
-                    let receiver = resume.take_receiver();
-                    let arguments = resume.take_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::Primitive(resume)),
-                    }
-                }
+        Ok(match step {
+            crate::engine::value::conversion::primitive::PrimitiveStep::Complete(result) => {
+                Self::Complete(Some(result))
             }
+            step => Self::PrimitiveProgress(Some(step)),
         })
     }
 }

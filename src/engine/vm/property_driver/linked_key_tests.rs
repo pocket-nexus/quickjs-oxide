@@ -1,5 +1,5 @@
 //! Actual static-read consumers borrow the executable's key owner.
-use super::{PropertyProgress, ReadKey, read_completion_tests::read_fixture, read_progress};
+use super::{ReadKey, read_completion_tests::read_fixture, read_progress_selected};
 use crate::engine::{
     api::{Runtime, Value},
     atom::{Atom, AtomIdx},
@@ -12,22 +12,25 @@ use crate::engine::{
     },
 };
 
-fn selected_static_read(
-    runtime: &Runtime,
+fn static_read_facts(
     execution: &mut RunningExecution,
     id: FrameId,
 ) -> (u32, bool, super::FallthroughPc, Atom) {
-    let VmAction::GetField {
+    let frame = execution.frames.current_mut(id).unwrap();
+    let decoded = frame
+        .executable
+        .exec
+        .decode_published(frame.resume_pc as u32)
+        .unwrap();
+    let index = decoded.operand(0);
+    let keep_receiver = decoded.opcode == Opcode::GetField2Cached;
+    let atom = frame.executable.property_key_atoms.as_ref().unwrap()[index as usize];
+    (
         index,
         keep_receiver,
-        fallthrough,
-    } = execute_frame(runtime, execution, id).unwrap()
-    else {
-        panic!("fixture must select a static property read");
-    };
-    let frame = execution.frames.current_mut(id).unwrap();
-    let atom = frame.executable.property_key_atoms.as_ref().unwrap()[index as usize];
-    (index, keep_receiver, fallthrough, atom)
+        super::FallthroughPc::from_decoded(decoded),
+        atom,
+    )
 }
 
 #[test]
@@ -64,8 +67,7 @@ fn primitive_static_read_never_adds_a_runtime_or_linked_atom_owner() {
         let (mut execution, id) = read_fixture(&runtime, &mut context, source, opcode);
         let frame = execution.frames.current_mut(id).unwrap();
         execution.slots.push(&mut frame.window, value).unwrap();
-        let (index, keep_receiver, fallthrough, atom) =
-            selected_static_read(&runtime, &mut execution, id);
+        let (_, _, _, atom) = static_read_facts(&mut execution, id);
         let runtime_owners = std::rc::Rc::strong_count(&runtime.0);
         let atom_owners = runtime
             .0
@@ -79,16 +81,8 @@ fn primitive_static_read_never_adds_a_runtime_or_linked_atom_owner() {
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert!(
             matches!(
-                read_progress(
-                    &runtime,
-                    &mut execution,
-                    id,
-                    ReadKey::Static(index),
-                    keep_receiver,
-                    fallthrough
-                )
-                .unwrap(),
-                PropertyProgress::Completed
+                execute_frame(&runtime, &mut execution, id).unwrap(),
+                VmAction::Complete
             ),
             "{input}"
         );
@@ -97,7 +91,7 @@ fn primitive_static_read_never_adds_a_runtime_or_linked_atom_owner() {
             frame.cold.rare.get().is_none(),
             "{input} created a frame key cache"
         );
-        let result = execution.slots.peek(&frame.window, 0).unwrap();
+        let result = execution.pending.as_ref().unwrap();
         if string_index {
             let JsValue::String(id) = result else {
                 panic!("String index must produce a String");
@@ -166,8 +160,7 @@ fn borrowed_linked_key_at_max_succeeds_without_promotion_and_stays_live() {
         .slots
         .push(&mut frame.window, JsValue::Int(3))
         .unwrap();
-    let (index, keep_receiver, fallthrough, atom) =
-        selected_static_read(&runtime, &mut execution, id);
+    let (_, _, _, atom) = static_read_facts(&mut execution, id);
     let count = runtime
         .0
         .state
@@ -183,14 +176,7 @@ fn borrowed_linked_key_at_max_succeeds_without_promotion_and_stays_live() {
         .borrow()
         .atoms
         .set_ref_count_for_test(AtomIdx::from_raw(atom.raw()), u32::MAX);
-    let result = read_progress(
-        &runtime,
-        &mut execution,
-        id,
-        ReadKey::Static(index),
-        keep_receiver,
-        fallthrough,
-    );
+    let result = execute_frame(&runtime, &mut execution, id);
     let actual = runtime
         .0
         .state
@@ -205,13 +191,10 @@ fn borrowed_linked_key_at_max_succeeds_without_promotion_and_stays_live() {
         .borrow()
         .atoms
         .set_ref_count_for_test(AtomIdx::from_raw(atom.raw()), count);
-    assert!(matches!(result.unwrap(), PropertyProgress::Completed));
+    assert!(matches!(result.unwrap(), VmAction::Complete));
     assert_eq!(actual, Some(u32::MAX));
     let frame = execution.frames.current_mut(id).unwrap();
-    assert_eq!(
-        execution.slots.peek(&frame.window, 0).unwrap(),
-        &JsValue::Int(19)
-    );
+    assert_eq!(execution.pending.as_ref().unwrap(), &JsValue::Int(19));
     assert!(frame.cold.rare.get().is_none());
     assert!(!runtime.is_poisoned());
 }
@@ -238,8 +221,7 @@ fn proxy_key_promotion_failure_retires_selected_effect_and_preserves_input() {
         .slots
         .push(&mut frame.window, JsValue::Object(proxy.into_handle()))
         .unwrap();
-    let (index, keep_receiver, fallthrough, atom) =
-        selected_static_read(&runtime, &mut execution, id);
+    let (index, keep_receiver, fallthrough, atom) = static_read_facts(&mut execution, id);
     let count = runtime
         .0
         .state
@@ -263,13 +245,19 @@ fn proxy_key_promotion_failure_retires_selected_effect_and_preserves_input() {
         .borrow()
         .atoms
         .set_ref_count_for_test(AtomIdx::from_raw(atom.raw()), u32::MAX);
-    let result = read_progress(
+    assert!(matches!(
+        execute_frame(&runtime, &mut execution, id).unwrap(),
+        VmAction::GetField { .. }
+    ));
+    let selected = execution.selected_named_read.take();
+    let result = read_progress_selected(
         &runtime,
         &mut execution,
         id,
         ReadKey::Static(index),
         keep_receiver,
         fallthrough,
+        selected,
     );
     runtime
         .0
@@ -319,7 +307,7 @@ fn getter_handoff_rejection_retires_the_selected_raw_symbol_receiver() {
     );
     let frame = execution.frames.current_mut(id).unwrap();
     execution.slots.push(&mut frame.window, receiver).unwrap();
-    let (index, keep_receiver, fallthrough, _) = selected_static_read(&runtime, &mut execution, id);
+    let _ = static_read_facts(&mut execution, id);
     let (count, getter_owners) = {
         let state = runtime.0.state.borrow();
         let atom = state.atoms.brand(receiver_atom).unwrap();
@@ -335,14 +323,7 @@ fn getter_handoff_rejection_retires_the_selected_raw_symbol_receiver() {
         .borrow()
         .atoms
         .set_ref_count_for_test(receiver_atom, u32::MAX - 1);
-    let result = read_progress(
-        &runtime,
-        &mut execution,
-        id,
-        ReadKey::Static(index),
-        keep_receiver,
-        fallthrough,
-    );
+    let result = execute_frame(&runtime, &mut execution, id);
     let remaining = {
         let state = runtime.0.state.borrow();
         state

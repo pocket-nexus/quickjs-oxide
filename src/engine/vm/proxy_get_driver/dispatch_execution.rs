@@ -125,6 +125,17 @@ pub(super) fn finish(
                         )
                         .map(Next::Done);
                     }
+                    Finish::ResidentCall { depth, tail } => {
+                        return super::finish_resident_call_instruction(
+                            runtime,
+                            execution,
+                            owner,
+                            completion.take().expect("selected resident completion"),
+                            depth,
+                            tail,
+                        )
+                        .map(Next::Done);
+                    }
                     Finish::Conversion(wait) => {
                         let frame = owner.frame()?;
                         return super::super::conversion_driver::ConversionTask::from_wait(

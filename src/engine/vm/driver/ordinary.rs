@@ -18,6 +18,7 @@ pub(in crate::engine::vm) enum Entry {
     NativeReady,
     NativeComplete,
     NativeThrow,
+    NativeBoundary,
     General,
 }
 
@@ -95,6 +96,10 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
                 callable,
             )
             .ok_or_else(|| Error::internal("linked native classification lost its callee"))?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "native_linked_classification_consumed",
+            );
             return Ok(Some(StateCall::Native(selected)));
         }
         #[cfg(feature = "profiling")]
@@ -469,6 +474,8 @@ pub(in crate::engine::vm) fn native_observes_activation_in_state(
 }
 
 pub(in crate::engine::vm) enum ReturnProgress {
+    NativeThrow,
+    NativeBoundary,
     Declined,
     Returned,
     Property(super::CallStep),
@@ -544,7 +551,7 @@ pub(super) fn finish(
 #[cfg(test)]
 mod layout_tests {
     #[test]
-    fn unhinted_native_callee_is_selected_once_and_keeps_its_slot_owner() {
+    fn unhinted_native_callee_is_selected_once_and_retires_its_transferred_owner() {
         use crate::engine::{
             api::Runtime,
             value::JsValue,
@@ -592,77 +599,46 @@ mod layout_tests {
             crate::engine::vm::driver::push_frame(&runtime, &mut execution, entry).unwrap();
         assert!(execution.selected_native.is_none());
         let runtime_owners = std::rc::Rc::strong_count(&runtime.0);
+        let callee_owners = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(function)
+            .unwrap();
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         let action = {
             let mut state = runtime.0.state.borrow_mut();
             execute_frame_in_state(&runtime, &mut state, &mut execution, parent).unwrap()
         };
-        let VmAction::Call {
-            arguments,
-            method,
-            tail,
-            fallthrough,
-        } = action
-        else {
-            panic!("native call exits the ordinary execution segment")
-        };
-        assert_eq!(arguments, 2);
-        assert!(!method && !tail);
-        let selected = execution
-            .selected_native
-            .take()
-            .expect("carried native fact");
-        assert!(selected.matches_in_domain(runtime.domain_id(), function));
-        assert!(!selected.matches_in_domain(runtime.domain_id().wrapping_add(1), function));
-        let other = runtime.new_object(None).unwrap();
-        assert!(!selected.matches_in_domain(runtime.domain_id(), other.object_id()));
-        drop(other);
+        assert!(matches!(action, VmAction::Complete));
         assert_eq!(std::rc::Rc::strong_count(&runtime.0), runtime_owners);
-        let frame = execution.frames.current_mut(parent).unwrap();
         assert_eq!(
-            execution
-                .slots
-                .peek(&frame.window, usize::from(arguments))
-                .unwrap(),
-            &JsValue::Object(function),
+            runtime.0.state.borrow().heap.object_strong_count(function),
+            Ok(callee_owners),
         );
-        assert!(matches!(
-            super::enter_selected(
-                &runtime,
-                &mut execution,
-                parent,
-                arguments,
-                method,
-                tail,
-                Some(selected),
-                fallthrough,
-            )
-            .unwrap(),
-            super::Entry::NativeReady
-        ));
-        {
-            let mut state = runtime.0.state.borrow_mut();
-            assert!(matches!(
-                execute_frame_in_state(&runtime, &mut state, &mut execution, parent).unwrap(),
-                VmAction::Complete
-            ));
-        }
         assert_eq!(execution.pending, Some(JsValue::Int(7)));
         assert!(execution.selected_native.is_none());
         #[cfg(feature = "profiling")]
         {
             let events = profile.snapshot().owned_execution_events;
             assert_eq!(events.get("direct_callee_payload_selection"), Some(&1));
-            assert_eq!(events.get("core.call_decline.native"), Some(&1));
-            assert_eq!(
-                events.get("native_linked_classification_consumed"),
-                Some(&1)
-            );
+            assert!(!events.contains_key("core.call_decline.native"));
+            assert!(!events.contains_key("native_linked_classification_consumed"));
             assert_eq!(events.get("native_callee_owner_transferred"), Some(&1));
+            assert_eq!(events.get("native_state_body"), Some(&1));
+            assert_eq!(events.get("core.internal_native_body"), Some(&1));
         }
         assert!(!runtime.0.deferred_references.has_pending());
         drop(execution);
+        // The public root entry owns both its original argv snapshot and
+        // its independent parameter copy. Native temporary ownership was
+        // already retired before the completion assertion above.
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(function),
+            Ok(callee_owners - 2),
+        );
         assert!(!runtime.is_poisoned());
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -686,7 +662,9 @@ mod layout_tests {
             events.get("native_linked_classification_consumed"),
             Some(&1)
         );
-        assert_eq!(events.get("core.call_decline.native_hint"), Some(&1));
+        assert!(!events.contains_key("core.call_decline.native_hint"));
+        assert_eq!(events.get("native_state_body"), Some(&1));
+        assert_eq!(events.get("core.internal_native_body"), Some(&1));
         drop(profile);
         assert_eq!(
             context
@@ -990,8 +968,8 @@ mod held_state_call_tests {
     }
 
     #[test]
-    fn native_and_proxy_decline_before_owner_or_resume_changes() {
-        for source in ["Math.max", "new Proxy(function(arg){return arg},{})"] {
+    fn native_completes_in_state_and_proxy_preserves_declined_inputs() {
+        for source in ["Number.isFinite", "new Proxy(function(arg){return arg},{})"] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context().unwrap();
             let callee = context.eval(source).unwrap();
@@ -1009,30 +987,45 @@ mod held_state_call_tests {
             let mut state = runtime.0.state.borrow_mut();
             let counts = [receiver, callee_id, argument]
                 .map(|id| state.heap.object_strong_count(id).unwrap());
-            assert!(matches!(
-                enter_selected_in_state(
-                    &runtime,
-                    &mut state,
-                    &mut execution,
-                    parent,
-                    1,
-                    true,
-                    false,
-                    None,
-                    next,
-                )
-                .unwrap(),
-                Entry::General
-            ));
+            let active_depth = state.active_frames.len();
+            let entry = enter_selected_in_state(
+                &runtime,
+                &mut state,
+                &mut execution,
+                parent,
+                1,
+                true,
+                false,
+                None,
+                next,
+            )
+            .unwrap();
             assert_eq!(execution.frames.current_id(), Some(parent));
             let frame = execution.frames.current_mut(parent).unwrap();
-            assert_eq!(frame.resume_pc, resume);
-            assert_eq!(execution.slots.depth(&frame.window), 3);
-            assert_eq!(
-                [receiver, callee_id, argument]
-                    .map(|id| state.heap.object_strong_count(id).unwrap()),
-                counts
-            );
+            if source == "Number.isFinite" {
+                assert!(matches!(entry, Entry::NativeReady));
+                assert_eq!(frame.resume_pc, next.index());
+                assert_eq!(execution.slots.depth(&frame.window), 1);
+                assert_eq!(
+                    execution.slots.peek(&frame.window, 0).unwrap(),
+                    &JsValue::Bool(false)
+                );
+                assert!(state.heap.object(receiver).is_err());
+                assert!(state.heap.object(argument).is_err());
+                assert_eq!(state.heap.object_strong_count(callee_id), Ok(counts[1] - 1));
+                assert_eq!(state.active_frames.len(), active_depth);
+                assert!(execution.pending.is_none());
+                assert!(execution.selected_native_query.is_none());
+            } else {
+                assert!(matches!(entry, Entry::General));
+                assert_eq!(frame.resume_pc, resume);
+                assert_eq!(execution.slots.depth(&frame.window), 3);
+                assert_eq!(
+                    [receiver, callee_id, argument]
+                        .map(|id| state.heap.object_strong_count(id).unwrap()),
+                    counts
+                );
+            }
             assert!(!runtime.0.deferred_references.has_pending());
         }
     }

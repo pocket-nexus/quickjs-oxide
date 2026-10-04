@@ -302,7 +302,8 @@ pub(super) fn dispatch(
         }
         VmAction::Bridge => Disposition::Bridge,
         VmAction::Suspend(kind) => Disposition::Suspend(kind),
-        VmAction::Materialize
+        VmAction::NativeProgress
+        | VmAction::Materialize
         | VmAction::Pure(_)
         | VmAction::Object { .. }
         | VmAction::ArrayFrom { .. }

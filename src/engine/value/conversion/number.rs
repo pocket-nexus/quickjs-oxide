@@ -1,8 +1,16 @@
-//! ToNumber uses the shared ToPrimitive protocol and preserves its error realm.
+//! ToNumber uses the canonical raw ToPrimitive protocol and defining error realm.
 use super::primitive::{PrimitiveResume, PrimitiveStep};
 use super::*;
-use crate::engine::object::CallableRef;
-use crate::engine::value::JsValue;
+use crate::engine::{
+    atom::Atom,
+    heap::{
+        ObjectId,
+        runtime::{RuntimeState, owned_values::OwnedValueGuard},
+    },
+    object::CallableRef,
+    value::JsValue,
+};
+use std::cell::Cell;
 
 pub(crate) enum NumberStep {
     Complete(NativeConversion<f64>),
@@ -10,38 +18,128 @@ pub(crate) enum NumberStep {
     Call { resume: NumberResume },
 }
 pub(crate) struct NumberResume(Box<NumberResumeState>);
-impl std::ops::Deref for NumberResume {
-    type Target = NumberResumeState;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl std::ops::DerefMut for NumberResume {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-const _: () = assert!(std::mem::size_of::<NumberResume>() <= 8);
 pub(crate) struct NumberResumeState {
     pending_effect: NumberStepPending,
     realm: ContextId,
-    primitive: PrimitiveResume,
+    primitive: Option<PrimitiveResume>,
 }
 impl NumberStep {
+    /// The actual boundary may overlap an admitted State lease. Coordinate
+    /// those releases through the existing FIFO rather than quarantining a
+    /// normal borrow conflict; destructive failure stops the remaining owners.
+    pub(crate) fn retire_at_boundary(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        if runtime.skip_cleanup() {
+            return Err(RuntimeError::Poisoned);
+        }
+        let _unwind = runtime.unwind_guard();
+        if let Ok(mut state) = runtime.0.state.try_borrow_mut() {
+            return self.retire_in_state(&mut state, &runtime.0.poisoned);
+        }
+        let release = |value| {
+            runtime.release_jsvalue(value)?;
+            runtime.check_poison()
+        };
+        match self {
+            Self::Complete(NativeConversion::Value(_)) => Ok(()),
+            Self::Complete(NativeConversion::Throw(value)) => release(value),
+            Self::Read { resume } | Self::Call { resume } => resume.retire_at_boundary(runtime),
+        }
+    }
+
     pub(crate) fn start_jsvalue(
         runtime: &Runtime,
         realm: ContextId,
         value: JsValue,
     ) -> Result<Self, RuntimeError> {
-        from_primitive(
-            runtime,
+        let step = PrimitiveResume::start(runtime, realm, value, ToPrimitiveHint::Number)?;
+        let _unwind = runtime.unwind_guard();
+        from_primitive_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
             realm,
-            PrimitiveResume::start(runtime, realm, value, ToPrimitiveHint::Number)?,
+            step,
         )
     }
+    pub(crate) fn start_jsvalue_in_state(
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+        value: JsValue,
+    ) -> Result<Self, RuntimeError> {
+        let step = PrimitiveResume::start_in_state(
+            state,
+            poisoned,
+            realm,
+            value,
+            ToPrimitiveHint::Number,
+        )?;
+        from_primitive_in_state(state, poisoned, realm, step)
+    }
+    /// Synchronous embedding consumer. Raw phases stay protected across the
+    /// actual property/call boundary; the guard borrows the existing header.
+    pub(crate) fn finish(
+        self,
+        runtime: &Runtime,
+        realm: ContextId,
+    ) -> Result<NativeConversion<f64>, RuntimeError> {
+        let mut owner = NumberBoundaryGuard {
+            runtime,
+            step: Some(self),
+        };
+        loop {
+            let step = owner.step.take().expect("number boundary progress");
+            match step {
+                Self::Complete(result) => return Ok(result),
+                Self::Read { resume } => {
+                    owner.step = Some(Self::Read { resume });
+                    let Some(Self::Read { resume }) = owner.step.as_mut() else {
+                        unreachable!()
+                    };
+                    let object = resume.take_read_object(runtime);
+                    let key = resume.take_read_key(runtime);
+                    let completion = runtime.get_property_in_realm(realm, &object, &key)?;
+                    let Some(Self::Read { resume }) = owner.step.take() else {
+                        unreachable!()
+                    };
+                    owner.step = Some(resume.resume(runtime, completion)?);
+                }
+                Self::Call { resume } => {
+                    owner.step = Some(Self::Call { resume });
+                    let Some(Self::Call { resume }) = owner.step.as_mut() else {
+                        unreachable!()
+                    };
+                    let callable = resume.take_call_callable(runtime);
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
+                    let completion =
+                        runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?;
+                    let Some(Self::Call { resume }) = owner.step.take() else {
+                        unreachable!()
+                    };
+                    owner.step = Some(resume.resume(runtime, completion)?);
+                }
+            }
+        }
+    }
+    pub(crate) fn retire_in_state(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        match self {
+            Self::Complete(NativeConversion::Throw(value)) => {
+                state.release_owned_jsvalue(poisoned, value)
+            }
+            Self::Complete(NativeConversion::Value(_)) => Ok(()),
+            Self::Read { resume } | Self::Call { resume } => {
+                resume.retire_in_state(state, poisoned)
+            }
+        }
+    }
 }
-fn from_primitive(
-    runtime: &Runtime,
+fn from_primitive_in_state(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
     realm: ContextId,
     step: PrimitiveStep,
 ) -> Result<NumberStep, RuntimeError> {
@@ -50,36 +148,49 @@ fn from_primitive(
             NumberStep::Complete(NativeConversion::Throw(value))
         }
         PrimitiveStep::Complete(Completion::Return(value)) => {
-            let converted = runtime.number_from_primitive_jsvalue(realm, &value);
-            runtime.release_jsvalue(value)?;
+            let mut reply = OwnedValueGuard::new(state, poisoned, value);
+            let (state, reply) = reply.parts();
+            let converted = state.number_from_primitive_jsvalue(
+                poisoned,
+                realm,
+                reply.as_ref().expect("number primitive reply"),
+            );
+            if poisoned.get() {
+                return Err(RuntimeError::Poisoned);
+            }
+            state.release_owned_jsvalue(poisoned, reply.take().expect("number primitive reply"))?;
             NumberStep::Complete(converted?)
         }
         PrimitiveStep::Get { mut resume } => {
-            let (object, key) = resume.take_get();
-            NumberStep::request_read(
-                object,
-                key,
-                NumberResume(Box::new(NumberResumeState {
-                    pending_effect: NumberStepPending::new(runtime),
+            let (object, key) = resume.take_get_in_state();
+            NumberStep::Read {
+                resume: NumberResume(Box::new(NumberResumeState {
+                    pending_effect: NumberStepPending {
+                        read_object: Some(object),
+                        read_key: Some(key),
+                        ..NumberStepPending::default()
+                    },
                     realm,
-                    primitive: resume,
+                    primitive: Some(resume),
                 })),
-            )
+            }
         }
         PrimitiveStep::Call { mut resume } => {
-            let callable = resume.take_callable();
+            let callable = resume.take_callable_in_state();
             let receiver = resume.take_receiver();
             let arguments = resume.take_arguments();
-            NumberStep::request_call(
-                callable,
-                receiver,
-                arguments,
-                NumberResume(Box::new(NumberResumeState {
-                    pending_effect: NumberStepPending::new(runtime),
+            NumberStep::Call {
+                resume: NumberResume(Box::new(NumberResumeState {
+                    pending_effect: NumberStepPending {
+                        call_callable: Some(callable),
+                        call_receiver: Some(receiver),
+                        call_arguments: Some(arguments),
+                        ..NumberStepPending::default()
+                    },
                     realm,
-                    primitive: resume,
+                    primitive: Some(resume),
                 })),
-            )
+            }
         }
     })
 }
@@ -89,92 +200,140 @@ impl NumberResume {
         runtime: &Runtime,
         completion: Completion,
     ) -> Result<NumberStep, RuntimeError> {
-        from_primitive(
-            runtime,
-            self.0.realm,
-            self.0.primitive.resume(runtime, completion)?,
+        let _unwind = runtime.unwind_guard();
+        self.resume_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            completion,
         )
     }
-}
-
-struct NumberStepPending {
-    runtime: Runtime,
-    read_object: Option<ObjectRef>,
-    read_key: Option<PropertyKey>,
-    call_callable: Option<CallableRef>,
-    call_receiver: Option<JsValue>,
-    call_arguments: Option<Vec<JsValue>>,
-}
-impl NumberStepPending {
-    fn new(runtime: &Runtime) -> Self {
-        Self {
-            runtime: runtime.clone(),
-            read_object: None,
-            read_key: None,
-            call_callable: None,
-            call_receiver: None,
-            call_arguments: None,
+    pub(crate) fn resume_in_state(
+        mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        completion: Completion,
+    ) -> Result<NumberStep, RuntimeError> {
+        let result = self
+            .0
+            .primitive
+            .take()
+            .expect("number primitive owner")
+            .resume_in_state(state, poisoned, completion)
+            .and_then(|step| from_primitive_in_state(state, poisoned, self.0.realm, step));
+        // Pending request owners are retired after the next semantic state has
+        // been formed, matching the old pending-field Drop timing.
+        if !poisoned.get() {
+            self.0.pending_effect.retire_in_state(state, poisoned)?;
+        }
+        result
+    }
+    pub(crate) fn retire_in_state(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        self.retire_with(&mut |value| state.release_owned_jsvalue(poisoned, value))
+    }
+    fn retire_with(
+        mut self,
+        release: &mut impl FnMut(JsValue) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        self.0.pending_effect.retire_with(release)?;
+        if let Some(mut primitive) = self.0.primitive.take() {
+            primitive.retire_with(release)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn retire_at_boundary(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        self.retire_with(&mut |value| {
+            if runtime.skip_cleanup() {
+                return Err(RuntimeError::Poisoned);
+            }
+            runtime.release_jsvalue(value)?;
+            if runtime.is_poisoned() {
+                Err(RuntimeError::Poisoned)
+            } else {
+                Ok(())
+            }
+        })
+    }
+    pub(crate) fn release_owned(self, runtime: &Runtime) {
+        if runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = runtime.unwind_guard();
+        if let Ok(mut state) = runtime.0.state.try_borrow_mut() {
+            let _ = self.retire_in_state(&mut state, &runtime.0.poisoned);
+        } else {
+            let _ = self.retire_at_boundary(runtime);
         }
     }
-
-    /// Release every edge that was not consumed by a completed step.
-    fn release_owned(&mut self) {
-        if let Some(receiver) = self.call_receiver.take() {
-            let _ = self.runtime.release_jsvalue(receiver);
-        }
-        for argument in self.call_arguments.take().into_iter().flatten() {
-            let _ = self.runtime.release_jsvalue(argument);
-        }
+    pub(crate) fn read_in_state(&self) -> (ObjectId, Atom) {
+        (
+            self.0
+                .pending_effect
+                .read_object
+                .expect("NumberStep Read object"),
+            self.0.pending_effect.read_key.expect("NumberStep Read key"),
+        )
     }
-}
-impl Drop for NumberStepPending {
-    fn drop(&mut self) {
-        self.release_owned();
+    pub(crate) fn take_read_in_state(&mut self) -> (ObjectId, Atom) {
+        (
+            self.0
+                .pending_effect
+                .read_object
+                .take()
+                .expect("NumberStep Read object"),
+            self.0
+                .pending_effect
+                .read_key
+                .take()
+                .expect("NumberStep Read key"),
+        )
     }
-}
-impl NumberStep {
-    pub(crate) fn request_read(
-        object: ObjectRef,
-        key: PropertyKey,
-        mut resume: NumberResume,
-    ) -> Self {
-        resume.0.pending_effect.read_object = Some(object);
-        resume.0.pending_effect.read_key = Some(key);
-        Self::Read { resume }
+    pub(crate) fn take_call_in_state(&mut self) -> (ObjectId, JsValue, Vec<JsValue>) {
+        (
+            self.0
+                .pending_effect
+                .call_callable
+                .take()
+                .expect("NumberStep Call callable"),
+            self.take_call_receiver(),
+            self.take_call_arguments(),
+        )
     }
-    pub(crate) fn request_call(
-        callable: CallableRef,
-        receiver: JsValue,
-        arguments: Vec<JsValue>,
-        mut resume: NumberResume,
-    ) -> Self {
-        resume.0.pending_effect.call_callable = Some(callable);
-        resume.0.pending_effect.call_receiver = Some(receiver);
-        resume.0.pending_effect.call_arguments = Some(arguments);
-        Self::Call { resume }
+    pub(crate) fn take_read_object(&mut self, runtime: &Runtime) -> ObjectRef {
+        let _unwind = runtime.unwind_guard();
+        ObjectRef::from_owned_handle(
+            runtime.clone(),
+            self.0
+                .pending_effect
+                .read_object
+                .take()
+                .expect("NumberStep Read object"),
+        )
     }
-}
-impl NumberResume {
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .read_object
-            .take()
-            .expect("NumberStep Read object")
+    pub(crate) fn take_read_key(&mut self, runtime: &Runtime) -> PropertyKey {
+        let _unwind = runtime.unwind_guard();
+        PropertyKey::from_owned_atom(
+            runtime.clone(),
+            self.0
+                .pending_effect
+                .read_key
+                .take()
+                .expect("NumberStep Read key"),
+        )
     }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .read_key
-            .take()
-            .expect("NumberStep Read key")
-    }
-    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
-        self.0
-            .pending_effect
-            .call_callable
-            .take()
-            .expect("NumberStep Call callable")
+    pub(crate) fn take_call_callable(&mut self, runtime: &Runtime) -> CallableRef {
+        let _unwind = runtime.unwind_guard();
+        CallableRef::from_validated_object(ObjectRef::from_owned_handle(
+            runtime.clone(),
+            self.0
+                .pending_effect
+                .call_callable
+                .take()
+                .expect("NumberStep Call callable"),
+        ))
     }
     pub(crate) fn take_call_receiver(&mut self) -> JsValue {
         self.0
@@ -191,7 +350,60 @@ impl NumberResume {
             .expect("NumberStep Call arguments")
     }
 }
+#[derive(Default)]
+struct NumberStepPending {
+    read_object: Option<ObjectId>,
+    read_key: Option<Atom>,
+    call_callable: Option<ObjectId>,
+    call_receiver: Option<JsValue>,
+    call_arguments: Option<Vec<JsValue>>,
+}
+impl NumberStepPending {
+    fn retire_in_state(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        self.retire_with(&mut |value| state.release_owned_jsvalue(poisoned, value))
+    }
+    fn retire_with(
+        &mut self,
+        release: &mut impl FnMut(JsValue) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        if let Some(receiver) = self.call_receiver.take() {
+            release(receiver)?;
+        }
+        if let Some(arguments) = &mut self.call_arguments {
+            for argument in arguments {
+                release(std::mem::replace(argument, JsValue::Undefined))?;
+            }
+        }
+        self.call_arguments = None;
+        if let Some(object) = self.read_object.take() {
+            release(JsValue::Object(object))?;
+        }
+        self.read_key = None;
+        if let Some(function) = self.call_callable.take() {
+            release(JsValue::Object(function))?;
+        }
+        Ok(())
+    }
+}
+const _: () = assert!(std::mem::size_of::<NumberResume>() <= 8);
 const _: () = assert!(std::mem::size_of::<NumberStep>() <= 64);
 
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<NumberStep>() <= 64);
+struct NumberBoundaryGuard<'a> {
+    runtime: &'a Runtime,
+    step: Option<NumberStep>,
+}
+impl Drop for NumberBoundaryGuard<'_> {
+    fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
+        if let Some(step) = self.step.take() {
+            let _ = step.retire_at_boundary(self.runtime);
+        }
+    }
+}

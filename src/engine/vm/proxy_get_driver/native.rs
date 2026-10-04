@@ -15,7 +15,7 @@ pub(super) fn finish(
 ) -> Result<Step, Error> {
     let mut output = Step::Complete(Some(Completion::Return(JsValue::Undefined)));
     let result = finish_into(runtime, slots, call, &mut resume, result, &mut output);
-    resume.release_owned();
+    resume.release_owned(runtime);
     if let Err(error) = result {
         output.release_owned(runtime);
         return Err(error);
@@ -72,21 +72,16 @@ pub(super) fn finish_result(
 /// Already prepared migrated bodies finish through one held-State ABI turn.
 /// Query and ordinary consumers share this with the resident call algorithm;
 /// only explicitly unmigrated bodies construct a legacy callable adapter.
-fn finish_state_native_body(
+fn start_state_native_body(
     runtime: &Runtime,
-    slots: &mut SlotStore,
-    call: NativeCallGuard<'_>,
-) -> Result<NativeInvokeOutcome, Error> {
+    call: &PreparedNativeCall,
+) -> Result<crate::engine::builtins::continuation::NativeStep, Error> {
     let _unwind = runtime.unwind_guard();
-    let mut state = runtime.0.state.borrow_mut();
-    let mut owner = super::super::call::NativeStateGuard::new(
-        &mut state,
-        &runtime.0.poisoned,
-        call.into_inner(),
-    );
-    let result = {
-        let (state, call) = owner.parts();
-        state.invoke_state_native_body(
+    runtime
+        .0
+        .state
+        .borrow_mut()
+        .invoke_state_native_body(
             &runtime.0.poisoned,
             runtime.0.host_services.as_ref(),
             call.activation.target,
@@ -94,19 +89,29 @@ fn finish_state_native_body(
             &call.invocation,
             &call.activation.arguments,
         )
-    };
+        .map_err(runtime_error_to_vm_error)
+}
+fn finish_state_native_body(
+    runtime: &Runtime,
+    slots: &mut SlotStore,
+    call: NativeCallGuard<'_>,
+) -> Result<NativeInvokeOutcome, Error> {
+    let realm = call.activation.realm;
+    let result = start_state_native_body(runtime, &call).and_then(|step| {
+        runtime
+            .finish_state_native_body_step(realm, step)
+            .map_err(runtime_error_to_vm_error)
+    });
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event(
         "native_completed_without_waiting_scope",
     );
-    let (result, arguments) =
-        owner
-            .into_inner()
-            .finish_completion_reusing(&mut state, &runtime.0.poisoned, result);
-    slots.recycle_native_argument_buffer(arguments);
-    result
-        .map(NativeInvokeOutcome::Completion)
-        .map_err(runtime_error_to_vm_error)
+    finish_result(
+        runtime,
+        slots,
+        call.into_inner(),
+        result.map(NativeInvokeOutcome::Completion),
+    )
 }
 
 pub(super) fn identity_completion(result: NativeInvokeOutcome) -> Result<Completion, Error> {
@@ -640,9 +645,35 @@ pub(super) fn begin_local_owned<'a>(
         .publish(min_readable_args, selected.as_ref())
         .map_err(runtime_error_to_vm_error)?;
     if crate::engine::heap::runtime::RuntimeState::has_state_native_body(target) {
-        return finish_state_native_body(runtime, slots, call)
-            .and_then(identity_completion)
-            .map(LocalNativeResult::Complete);
+        let step = match start_state_native_body(runtime, &call) {
+            Ok(step) => step,
+            Err(error) => {
+                return finish_result(runtime, slots, call.into_inner(), Err(error))
+                    .and_then(identity_completion)
+                    .map(LocalNativeResult::Complete);
+            }
+        };
+        let mut pending = None;
+        match capture_waiting_step(runtime, storage, step, &mut pending) {
+            Ok(Some(result)) => {
+                return finish_result(runtime, slots, call.into_inner(), Ok(result))
+                    .and_then(identity_completion)
+                    .map(LocalNativeResult::Complete);
+            }
+            Err(error) => {
+                return finish_result(runtime, slots, call.into_inner(), Err(error))
+                    .and_then(identity_completion)
+                    .map(LocalNativeResult::Complete);
+            }
+            Ok(None) => {}
+        }
+        let mut records = pending.expect("State body emitted a waiting effect");
+        records[0].call = Some(call.into_inner());
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "native_activation_transported_to_wait",
+        );
+        return Ok(LocalNativeResult::Waiting(records));
     }
     let mut unwind = NativeInvocationUnwindGuard {
         runtime,
@@ -829,15 +860,23 @@ pub(super) fn start_selected_into(
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<(), Error> {
     let realm = query.realm;
-    let kind = match super::super::frames::native_operation(runtime, &callable) {
-        Ok(kind) => kind,
-        Err(error) => {
-            let _ = invocation.release(runtime);
-            for argument in arguments {
-                let _ = runtime.release_jsvalue(argument);
+    let mut selected = selected;
+    let kind = if let Some(selected) = &mut selected {
+        selected.take_operation()
+    } else {
+        match super::super::frames::native_operation(runtime, &callable) {
+            Ok(kind) => kind,
+            Err(error) => {
+                let _ = invocation.release(runtime);
+                for argument in arguments {
+                    let _ = runtime.release_jsvalue(argument);
+                    if runtime.is_poisoned() {
+                        break;
+                    }
+                }
+                resume.release_owned(runtime);
+                return Err(runtime_error_to_vm_error(error));
             }
-            resume.release_owned();
-            return Err(runtime_error_to_vm_error(error));
         }
     };
     let Some(kind) = kind else {
@@ -865,25 +904,26 @@ pub(super) fn start_selected_into(
             Ok(result) => apply_into(runtime, &mut resume, result, output),
             Err(error) => Err(error),
         };
-        resume.release_owned();
+        resume.release_owned(runtime);
         return result;
     };
-    if !execution
-        .frames
-        .can_push_with_continuations(query.continuation_depth())
-        || runtime.host_stack_would_overflow()
+    if selected.is_none()
+        && (!execution
+            .frames
+            .can_push_with_continuations(query.continuation_depth())
+            || runtime.host_stack_would_overflow())
     {
         for argument in arguments {
             let _ = runtime.release_jsvalue(argument);
         }
         if let Err(error) = invocation.release(runtime) {
-            resume.release_owned();
+            resume.release_owned(runtime);
             return Err(runtime_error_to_vm_error(error));
         }
         let result = match overflow(runtime, realm) {
             Ok(result) => result,
             Err(error) => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 return Err(error);
             }
         };
@@ -908,7 +948,7 @@ pub(super) fn start_selected_into(
         for argument in arguments {
             let _ = runtime.release_jsvalue(argument);
         }
-        resume.release_owned();
+        resume.release_owned(runtime);
         return Err(error);
     }
     let mut waiting_call = None;
@@ -931,13 +971,13 @@ pub(super) fn start_selected_into(
     let immediate = match immediate {
         Ok(immediate) => immediate,
         Err(error) => {
-            resume.release_owned();
+            resume.release_owned(runtime);
             return Err(error);
         }
     };
     if let Some(result) = immediate {
         let result = apply_into(runtime, &mut resume, result, output);
-        resume.release_owned();
+        resume.release_owned(runtime);
         return result;
     }
     install_waiting(
@@ -948,6 +988,85 @@ pub(super) fn start_selected_into(
             .into_inner(),
         resume,
     )?;
+    Ok(())
+}
+
+/// A resident activation crossed for this exact unmigrated body. Reserve its
+/// actual waiting scope before starting it; the packet retains the parent until
+/// immediate completion or a real wait consumes it.
+pub(super) fn start_published_boundary(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    query: &mut Query,
+    pending: &mut Step,
+) -> Result<(), Error> {
+    storage::reserve(&mut query.natives, 1, "query.native_scopes")
+        .map_err(|_| Error::internal("native continuation allocation failed"))?;
+    storage::reserve(
+        &mut query.spare_parents,
+        query.natives.len() + 1,
+        "query.spare_parents",
+    )
+    .map_err(|_| Error::internal("native parent storage allocation failed"))?;
+    let Step::PreparedNativeBoundary(packet) = pending else {
+        return Err(Error::internal("expected selected native boundary"));
+    };
+    let mut packet = packet.take().expect("selected native boundary");
+    let mut parent = NativeStepGuard::new(
+        runtime,
+        Step::PrimitiveReply {
+            value: None,
+            resume: Some(std::mem::replace(&mut packet.resume, Resume::Identity)),
+        },
+    );
+    let mut output = NativeStepGuard::new(runtime, Step::Complete(None));
+    let mut waiting = None;
+    let call = NativeCallGuard::new(runtime, packet.call);
+    let result = (|| {
+        let immediate = begin_published_into(
+            runtime,
+            &mut execution.slots,
+            call,
+            packet.kind,
+            &mut output,
+            &mut waiting,
+        )?;
+        let Step::PrimitiveReply { resume, .. } = &mut *parent else {
+            unreachable!()
+        };
+        if let Some(result) = immediate {
+            apply_into(
+                runtime,
+                resume.as_mut().expect("selected native parent"),
+                result,
+                &mut output,
+            )?;
+            resume
+                .take()
+                .expect("selected native parent")
+                .release_owned(runtime);
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+        } else {
+            install_waiting(
+                runtime,
+                query,
+                waiting.take().expect("native wait activation").into_inner(),
+                resume.take().expect("selected native parent"),
+            )?;
+        }
+        Ok::<_, Error>(())
+    })();
+    if let Err(error) = result {
+        // A normal rejection explicitly retires the still-armed owners before
+        // choosing its error. Fatal retirement stops the suffix immediately;
+        // guard Drop is reserved for unwind/abandonment.
+        output.release_owned(runtime);
+        runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+        parent.release_owned(runtime);
+        runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+        return Err(error);
+    }
+    *pending = output.into_inner();
     Ok(())
 }
 
@@ -1023,13 +1142,43 @@ pub(super) fn begin_selected_into<'a>(
     )
     .map_err(runtime_error_to_vm_error)?;
     slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
-    let mut call = call
+    let call = call
         .publish(min_readable_args, selected.as_ref())
         .map_err(runtime_error_to_vm_error)?;
+    begin_published_into(runtime, slots, call, kind, output, waiting_call)
+}
+
+/// The activation and its ABI are already published. A selected boundary
+/// consumes the same first body step as ordinary cold entry without preparing
+/// another callable role, padding argv, or publishing a second active frame.
+pub(super) fn begin_published_into<'a>(
+    runtime: &'a Runtime,
+    slots: &mut SlotStore,
+    mut call: NativeCallGuard<'a>,
+    kind: crate::engine::builtins::continuation::NativeOperation,
+    output: &mut Step,
+    waiting_call: &mut Option<NativeCallGuard<'a>>,
+) -> Result<Option<NativeInvokeOutcome>, Error> {
+    debug_assert!(waiting_call.is_none());
+    let native_realm = call.activation.realm;
+    let target = call.activation.target;
+    let mode = call.activation.mode;
     if matches!(mode, super::super::call::NativeInvokeMode::Ordinary)
         && crate::engine::heap::runtime::RuntimeState::has_state_native_body(target)
     {
-        return finish_state_native_body(runtime, slots, call).map(Some);
+        let started = start_state_native_body(runtime, &call)
+            .and_then(|step| Step::try_from(step).map_err(runtime_error_to_vm_error));
+        match started {
+            Ok(step) => *output = step,
+            Err(error) => {
+                return finish_result(runtime, slots, call.into_inner(), Err(error)).map(Some);
+            }
+        }
+        if let Some(result) = take_immediate(output) {
+            return finish_result(runtime, slots, call.into_inner(), Ok(result)).map(Some);
+        }
+        *waiting_call = Some(call);
+        return Ok(None);
     }
     let mut waiting_written = false;
     let mut waiting_error = None;
@@ -1214,14 +1363,9 @@ pub(super) fn install_waiting(
 ) -> Result<(), Error> {
     let _unwind = runtime.unwind_guard();
     let call = NativeCallGuard::new(runtime, call);
-    if query.native_runtime.strong_count() == 0 {
-        query.native_runtime = match runtime.register_raw_execution_owner() {
-            Ok(capability) => capability,
-            Err(error) => {
-                resume.release_owned();
-                return Err(runtime_error_to_vm_error(error));
-            }
-        };
+    if let Err(error) = query.ensure_raw_owner_registration(runtime) {
+        resume.release_owned(runtime);
+        return Err(error);
     }
     let realm = query.realm;
     let native_realm = call.activation.realm;
@@ -1320,38 +1464,26 @@ mod tests {
             Value::Bool(true)
         );
         let costs = profile.snapshot();
-        assert!(
-            costs
-                .owned_execution_events
-                .get("native_call_completed_without_query")
-                .copied()
-                .unwrap_or(0)
-                > 20
-        );
-        assert!(
-            costs
-                .owned_execution_events
-                .get("native_call_direct_wait")
-                .copied()
-                .unwrap_or(0)
-                > 0
-        );
-        assert!(
-            costs
-                .owned_execution_events
-                .get("query_storage_new")
-                .copied()
-                .unwrap_or(0)
-                > 0
-        );
-        assert!(
-            costs
-                .owned_execution_events
-                .get("native_activation_transported_to_wait")
-                .copied()
-                .unwrap_or(0)
-                > 0
-        );
+        let count = |name| costs.owned_execution_events.get(name).copied().unwrap_or(0);
+        // Each iteration starts three Math bodies. The two primitive calls
+        // complete in the resident entry; only the outer max owns a suffix.
+        assert_eq!(count("native_state_body"), 36, "{costs:?}");
+        assert_eq!(count("math_completed_without_argument_storage"), 24);
+        assert_eq!(count("math_remaining_arguments_owned"), 12);
+        assert_eq!(count("core.internal_native_body"), 24);
+        // The twelve coercions install one zero-argv ordinary method callback
+        // each and resume the same native activation without a cold handoff.
+        assert_eq!(count("ordinary_install.method"), 12, "{costs:?}");
+        // The final Map.size getter is an unmigrated native body. It is the
+        // sole selected native boundary; the twelve Math method calls stay
+        // in the resident callback path above.
+        assert_eq!(count("native_query.boundary.native_body"), 1);
+        assert_eq!(count("execute.action.native_progress"), 1);
+        assert!(count("query_storage_new") + count("query_storage_reused") >= 12);
+        assert!(count("native_activation_prepared") >= 36);
+        assert_eq!(runtime.0.raw_execution_owners.get(), 0);
+        assert_eq!(runtime.0.active_frame_depth.get(), 0);
+        assert!(!runtime.is_poisoned());
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -1503,27 +1635,32 @@ mod tests {
         );
         let costs = profile.snapshot();
         let count = |name| costs.owned_execution_events.get(name).copied().unwrap_or(0);
-        let synchronous = count("native_synchronous_entry");
-        let domain = count("native_domain_completed_without_waiting_payload");
-        let waiting = count("native_activation_transported_to_wait");
-        let identity = count("native_identity_completed_in_place");
-        // The ten primitive Math.max calls, ten throwing primitive Math.min
-        // calls and final Math.min now use the narrow entry rather than the
-        // domain-output adapter. Extra Pure calls (e.g. Symbol) can add hits.
-        assert!(synchronous >= 21, "narrow completion: {synchronous}");
-        // The ten ordinary iterator.next calls still produce raw domain output
-        // before materializing their JS result under the native activation.
-        assert!(domain >= 10, "raw domain completion: {domain}");
-        // Each loop really waits in the outer Math.min, parseInt, Array.map and
-        // callback Math.min. The two parseInt coercions share one activation.
-        assert!(waiting >= 40, "native waiting activations: {waiting}");
-        assert!(count("native_call_direct_wait") >= 40);
-        // Every narrow entry and all ten direct raw-next completions consume
-        // the identity result once; resumed waiting native calls add more.
+        // Per iteration: outer min, nested max, throwing callback min and
+        // primitive Symbol min, followed by one final primitive min.
+        assert_eq!(count("native_state_body"), 41, "{costs:?}");
+        assert_eq!(count("math_completed_without_argument_storage"), 21);
+        assert_eq!(count("math_remaining_arguments_owned"), 20);
+        assert_eq!(count("core.internal_native_body"), 21);
+        // Math coercion waits now use resident Query progress. The two legacy
+        // families, parseInt and Array.map, still transport one activation per
+        // call; parseInt's two coercions must not install it twice.
+        // Aggregate transports also include helper scopes. The direct-wait
+        // counter below identifies the twenty outer parseInt/Array.map waits;
+        // do not attribute every activation transport to those two families.
+        assert!(count("native_activation_transported_to_wait") >= 20);
+        assert_eq!(count("native_query.boundary.legacy_number_reply"), 10);
+        assert_eq!(count("execute.action.native_progress"), 10);
+        assert_eq!(count("native_call_direct_wait"), 20);
+        // Each ordinary iterator.next produces one raw output before its JS
+        // result is materialized, without publishing a waiting activation.
+        assert_eq!(count("native_domain_completed_without_waiting_payload"), 10);
         assert!(
-            identity >= synchronous + 10,
-            "identity: {identity}, narrow: {synchronous}"
+            count("native_identity_completed_in_place") >= count("native_synchronous_entry") + 10
         );
+        assert!(count("native_activation_prepared") >= 41);
+        assert_eq!(runtime.0.raw_execution_owners.get(), 0);
+        assert_eq!(runtime.0.active_frame_depth.get(), 0);
+        assert!(!runtime.is_poisoned());
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }

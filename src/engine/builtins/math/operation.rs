@@ -6,6 +6,8 @@
 //! distinguishes these two starts, without claiming native argument storage or
 //! every primitive conversion is allocation-free.
 use super::{quickjs_binary, quickjs_max, quickjs_min, quickjs_unary};
+use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
+use std::cell::Cell;
 
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
@@ -60,24 +62,54 @@ const _: () = assert!(std::mem::size_of::<MathResume>() <= 8);
 pub(crate) struct MathResumeState {
     kind: MathKind,
     arguments: std::collections::VecDeque<JsValue>,
-    owner: Option<Runtime>,
     result: Option<f64>,
     count: usize,
 }
-impl Drop for MathResumeState {
-    fn drop(&mut self) {
-        if let Some(runtime) = &self.owner {
-            for value in self.arguments.drain(..) {
-                let _ = runtime.release_jsvalue(value);
+impl MathStep {
+    /// The actual boundary may overlap an admitted State lease. Coordinate
+    /// those releases through the existing FIFO rather than quarantining a
+    /// normal borrow conflict; destructive failure stops the remaining owners.
+    pub(crate) fn retire_at_boundary(self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        if runtime.skip_cleanup() {
+            return Err(RuntimeError::Poisoned);
+        }
+        let _unwind = runtime.unwind_guard();
+        if let Ok(mut state) = runtime.0.state.try_borrow_mut() {
+            return self.retire_in_state(&mut state, &runtime.0.poisoned);
+        }
+        let release = |value| {
+            runtime.release_jsvalue(value)?;
+            runtime.check_poison()
+        };
+        match self {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => release(value),
+            Self::Number { value, resume } => {
+                release(value)?;
+                resume.retire_at_boundary(runtime)
             }
-        } else {
-            debug_assert!(self.arguments.is_empty());
         }
     }
-}
-impl MathStep {
+
     pub(crate) fn start(
         runtime: &Runtime,
+        realm: ContextId,
+        kind: MathKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Self, RuntimeError> {
+        let _unwind = runtime.unwind_guard();
+        Self::start_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            realm,
+            kind,
+            invocation,
+            arguments,
+        )
+    }
+    pub(crate) fn start_in_state(
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
         realm: ContextId,
         kind: MathKind,
         invocation: &NativeInvocation,
@@ -100,7 +132,6 @@ impl MathStep {
             let mut resume = MathResumeState {
                 kind,
                 arguments: std::collections::VecDeque::new(),
-                owner: None,
                 result: None,
                 count,
             };
@@ -114,11 +145,15 @@ impl MathStep {
                         .map_err(|_| {
                             RuntimeError::Invariant("Math remaining argv allocation failed")
                         })?;
-                    resume.owner = Some(runtime.clone());
                     for remaining_value in &values[index..] {
-                        resume
-                            .arguments
-                            .push_back(runtime.dup_jsvalue(remaining_value)?);
+                        let value = match state.dup_jsvalue(remaining_value) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                resume.retire_in_state(state, poisoned)?;
+                                return Err(error);
+                            }
+                        };
+                        resume.arguments.push_back(value);
                     }
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
@@ -129,8 +164,8 @@ impl MathStep {
                 // Object arguments above retain the shared waiting protocol.
                 // NativeActivation already owns this primitive: borrow it in
                 // the same conversion kernel used by NumberStep completion.
-                let result = runtime.number_from_primitive_jsvalue(realm, value)?;
-                if let Some(completion) = resume.accept_number(runtime, result)? {
+                let result = state.number_from_primitive_jsvalue(poisoned, realm, value)?;
+                if let Some(completion) = resume.accept_number(result)? {
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "math_completed_without_argument_storage",
@@ -157,18 +192,81 @@ impl MathResume {
         self.0.finish()
     }
     pub(crate) fn number(
-        mut self,
+        self,
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<MathStep, RuntimeError> {
-        if let Some(completion) = self.accept_number(runtime, result)? {
-            Ok(MathStep::Complete(completion))
+        let _unwind = runtime.unwind_guard();
+        self.number_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            result,
+        )
+    }
+    pub(crate) fn number_in_state(
+        mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        result: NativeConversion<f64>,
+    ) -> Result<MathStep, RuntimeError> {
+        if let Some(completion) = self.accept_number(result)? {
+            let (value, thrown) = match completion {
+                Completion::Return(value) => (value, false),
+                Completion::Throw(value) => (value, true),
+            };
+            let mut output = OwnedValueGuard::new(state, poisoned, value);
+            let (state, output) = output.parts();
+            self.0.retire_in_state(state, poisoned)?;
+            let value = output.take().expect("Math result owner");
+            Ok(MathStep::Complete(if thrown {
+                Completion::Throw(value)
+            } else {
+                Completion::Return(value)
+            }))
         } else {
             self.next()
         }
     }
+    pub(crate) fn retire_in_state(
+        mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        self.0.retire_in_state(state, poisoned)
+    }
+    pub(crate) fn retire_at_boundary(mut self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        self.0.retire_with(&mut |value| {
+            if runtime.skip_cleanup() {
+                return Err(RuntimeError::Poisoned);
+            }
+            runtime.release_jsvalue(value)?;
+            if runtime.is_poisoned() {
+                Err(RuntimeError::Poisoned)
+            } else {
+                Ok(())
+            }
+        })
+    }
 }
 impl MathResumeState {
+    fn retire_in_state(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        self.retire_with(&mut |value| state.release_owned_jsvalue(poisoned, value))
+    }
+    fn retire_with(
+        &mut self,
+        release: &mut impl FnMut(JsValue) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        // Pop one consumed edge at a time; an interrupted suffix remains in its owner.
+        while let Some(value) = self.arguments.pop_front() {
+            release(value)?;
+        }
+        Ok(())
+    }
+
     fn finish(self) -> Result<MathStep, RuntimeError> {
         let value = match self.kind {
             MathKind::MinMax(kind) if self.result.is_none() => {
@@ -197,7 +295,6 @@ impl MathResumeState {
     /// One numerical accumulation kernel for immediate and suspended inputs.
     fn accept_number(
         &mut self,
-        _runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<Option<Completion>, RuntimeError> {
         let value = match result {
@@ -261,15 +358,63 @@ impl MathResumeState {
 pub(crate) fn finish(
     runtime: &Runtime,
     realm: ContextId,
-    mut step: MathStep,
+    step: MathStep,
 ) -> Result<Completion, RuntimeError> {
+    let mut step = MathBoundaryGuard {
+        runtime,
+        step: Some(step),
+    };
     loop {
-        step = match step {
+        match step.step.take().expect("Math boundary progress") {
             MathStep::Complete(result) => return Ok(result),
             MathStep::Number { value, resume } => {
-                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
+                let mut owner = MathBoundaryGuard {
+                    runtime,
+                    step: Some(MathStep::Number {
+                        value: JsValue::Undefined,
+                        resume,
+                    }),
+                };
+                let result = runtime.native_to_number_jsvalue(realm, value)?;
+                let MathStep::Number { resume, .. } = owner.step.take().expect("Math parent")
+                else {
+                    unreachable!()
+                };
+                step.step = Some(resume.number(runtime, result)?);
             }
-        };
+        }
+    }
+}
+impl MathStep {
+    pub(crate) fn retire_in_state(
+        self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        match self {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => {
+                state.release_owned_jsvalue(poisoned, value)
+            }
+            Self::Number { value, resume } => {
+                state.release_owned_jsvalue(poisoned, value)?;
+                resume.retire_in_state(state, poisoned)
+            }
+        }
+    }
+}
+struct MathBoundaryGuard<'a> {
+    runtime: &'a Runtime,
+    step: Option<MathStep>,
+}
+impl Drop for MathBoundaryGuard<'_> {
+    fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
+        if let Some(step) = self.step.take() {
+            let _ = step.retire_at_boundary(self.runtime);
+        }
     }
 }
 

@@ -345,7 +345,7 @@ pub(super) fn set(
                         runtime.release_jsvalue(receiver.take().expect("selected Step field"));
                     if let Err(failure) = value_cleanup.and(receiver_cleanup) {
                         let _ = runtime.release_jsvalue(error);
-                        resume.release_owned();
+                        resume.release_owned(runtime);
                         return Err(runtime_error_to_vm_error(failure));
                     }
                     *step = resume
@@ -404,7 +404,7 @@ pub(super) fn set(
                         runtime.release_jsvalue(receiver.take().expect("selected Step field"));
                     if let Err(failure) = value_cleanup.and(receiver_cleanup) {
                         let _ = runtime.release_jsvalue(error);
-                        resume.release_owned();
+                        resume.release_owned(runtime);
                         return Err(runtime_error_to_vm_error(failure));
                     }
                     *step = resume

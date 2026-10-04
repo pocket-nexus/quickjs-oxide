@@ -256,6 +256,8 @@ pub(super) struct RunningExecution {
     pub pending_completion: Option<super::Completion>,
     /// Retained GetField2 result's classification, consumed by the immediate Call.
     pub selected_native: Option<crate::engine::object::LinkedNativeSelection>,
+    /// Allocated only for an actual selected native/conversion boundary.
+    pub selected_native_query: Option<Box<super::proxy_get_driver::ResidentQueryBoundary>>,
     /// A selected static read crossing into the existing getter/query driver.
     pub selected_named_read: Option<super::property_driver::SelectedNamedRead>,
     /// A typed root terminal result; never represented by a manufactured JS Value.
@@ -287,6 +289,10 @@ impl Drop for RunningExecution {
             return;
         }
         let _unwind = runtime.unwind_guard();
+        drop(self.selected_native_query.take());
+        if runtime.is_poisoned() {
+            return;
+        }
         if let Some(pending) = self.pending.take() {
             if runtime.release_jsvalue(pending).is_err() || runtime.is_poisoned() {
                 runtime.0.poisoned.set(true);
@@ -378,6 +384,7 @@ impl RunningExecution {
             pending: None,
             pending_completion: None,
             selected_native: None,
+            selected_native_query: None,
             selected_named_read: None,
             root_query: None,
             root_descriptor: None,
