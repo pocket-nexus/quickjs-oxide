@@ -35,6 +35,7 @@
 | `d1e45524` | 18 个转换型 Date prototype selector 使用原始 continuation 与状态算法，普通/native 子调用共用既有 Query；ToObject 共用 checked prototype 准备和 primitive 工厂。getter 选择先进入 armed request，再退休输入；实际 boxing/Error 携带发布事实。 |
 | `82e107ff` | GetArrayEl/2/3、dense miss 与 ToPropKey 共用完整状态内键转换和读取；保留原 key/receiver 的实际 keeper，复用 Query、callback 和帧发布。直接抛错通过同一 guarded 前缀提交释放原操作数，再发布 Error，修复 verified capacity 耗尽时错误被覆盖的问题。 |
 | `620ecfe4` | 已迁移的 Number/BigInt/Index/String、Math/Numeric/Text、Date brand/ISO 与 constructor-only ABI 拒绝携带实际新建 Error/iterator 的发布事实；共同 Query 在 owner 发布后服务 GC。同步 Number 边界通过原 guarded finisher 消费事实，保留旧 Complete ABI。 |
+| `6607cbfe` | Function.call/apply、Reflect.apply/construct、spread CALL 与 Arguments/rest 共用状态内 producer、raw continuation 和既有 Query；mapped/unmapped 工厂与帧 binding 读取共享实现。删除旧 Apply driver、同步转发循环与 Arguments 外层创建路径；公开边界恢复 VM 携带的原始错误类型。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -69,6 +70,8 @@
 - Date 转换与 ToObject：19 个新见证覆盖全部 16 个 setter、两种 hint、toJSON 的 primitive/Proxy、snapshot 与重读、host 调用顺序、PC/realm、checked retain、放弃及隔离。普通完整运行 2453 项通过，唯一失败是新增 ToObject 见证漏算已发布 shape 的 prototype 边；修正仅限该见证，最终新编译的 4 个 ToObject 用例通过，其余普通结果在逐项源码证明下复用。最终 profiling 完整 2676 项通过，严格 Clippy 两配置、host、源检查与 anti-special-casing 通过。990 项 Rust/Cargo 输入与采纳提交相同；回执 SHA256 `78072e2e82ed3ef8b4e10d413fc8854ea7712bd34ebbfb44543f2362f0a0aeca`。首次导入/可见性失败、原始见证失败均保留；没有性能运行。
 - 计算读取与键转换：27 个新见证覆盖键表示、转换与 getter/Proxy 顺序、三种 opcode 的 keeper、别名、真实 slot budget、checked retain、fault PC、GC 与隔离。普通完整 2481 项通过；之后只有 cfg(test) 的等价 expect_err 改写和 cfg(profiling,test) 的旧机制断言更新，最终重新编译并验证清单，复用完整结果及 7 项 key-value 重验记录，没有再跑完整普通套件。完整 profiling 有 2702 项通过、1 项旧边界计数断言失败；最终编译的 28 项相关用例全部通过，复用其余完整通过记录。两配置严格 Clippy、host、格式与源检查通过，999 项 Rust/Cargo 输入与采纳提交相同；回执 SHA256 `8a64309033ab083ec0a19489583f0872c18492b2d4bb3bcb99b39752e7acc0ad`。原始编译、fixture、真实 throw 发布和机制断言失败均保留；没有性能运行。
 - 分配事实：18 个新见证覆盖实际工厂与传播 throw 的区分、即时/恢复 iterator、真实 getter 的 fault PC、GC 时 raw owner 存活、压力只消费一次及 first-fatal 隔离。普通完整 2499 项通过；完整 profiling 有 2719 项通过，2 项旧机制用例发现同一个 Math 诊断事件漏记。最终只补回 cfg(profiling) 的该事件，原测试断言保持，20 项相关用例通过；在逐字源码/cfg 证明下复用其它完整结果，没有重跑完整普通或 profiling 套件。最终新编译、两配置严格 Clippy、host 与源检查通过，1000 项 Rust/Cargo 输入与采纳提交相同；回执 SHA256 `4ced6dacabbcf15d6f5d54fc8b8936e4a96285e0e4ba8450c95faef47e65298a`。保留最初旧 Number 同步 ABI 的真实回归、错误 BigInt 上限 fixture、私有测试 API 及计数断言修正后撤回的记录；没有性能运行。
+
+- 调用转发与 Arguments：22 个新见证覆盖四种 selector、Bound 链、长度/索引 getter 与 Proxy 顺序、真实 spread 错误、mapped alias、捕获与 rest、checked owner 拒绝、真实回调身份与原错误类型、发布/GC、放弃与隔离。最终新编译的普通完整 2521 项、profiling 完整 2743 项全部通过；两配置严格 workspace/all-targets Clippy、host feature、格式、布局、Rust-only、host-boundary 与 anti-special-casing 通过。1003 项 Rust/Cargo 输入与采纳提交逐项相同；回执 SHA256 `9ffe7fe1cd676eab0585c7a45c504f44bd7cff0367d844bfe4725b1e14744904`。保留早先真实 native/spread 错误归一化缺陷、VM 边界错误类型丢失、Arguments marker fixture 与诊断事件计数/lint 修正记录；最后一轮确实重跑了两个完整配置，没有混合累计测试数。没有性能运行。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
 
@@ -131,6 +134,14 @@ nullish receiver 的检查仍先于计算 key 的 JS 转换，GetArrayEl3 的类
 完整普通测试发现旧 global 数值消费者把新的 NumberStep 标记当作挂起，错误地返回 Internal。Runtime 的同步 Number 入口现在通过原 finisher 消费事实再返回 Complete，State 入口仍携带事实；见证同时覆盖 global、mutation、slice 和 iterator 的真实调用。BigInt 上限见证改为产生真实的扩展符号 limb 后截断，保留 QuickJS 对 short -1 的原有提前返回行为。
 
 Math 的无参数存储事件和 `core.internal_native_body` 是关联计数。补回工厂错误分支漏记的事件后，原断言直接通过；不能把这两项当作独立的 Query 数量。未迁移 native family 的实际边界仍保留已有 checkpoint，本提交不删除它们或宣称全部 GC 服务位置已迁移。
+
+## 已采纳的调用转发与 Arguments
+
+`6607cbfe` 的四个转发 selector 和 spread CALL 共用一个 raw-owned 域。列表长度固定后，按索引升序取得实际输出；getter、Proxy 与 Bound 调用通过原 Query 和帧安装器推进。公共同步转发也进入同一个执行器，注册失败前由既有 guard 保护输入，删除第二套 Function.call 循环。公开错误边界恢复 VM Error 携带的 `Heap`、`Invariant` 等原始类型；真正的 JS native 错误生成实际 Throw 与分配事实。
+
+mapped/unmapped Arguments 与 rest 使用共享状态工厂及 binding 读取，保留真实 callee/cell/输出 owner。`OP_arguments` 是 Arguments 对象创建，不能把它的覆盖算成列表展开。构造、非 callable Proxy、共享缓冲读取和未迁移 native body 仍经实际选中的旧边界，当前未声明全部调用域迁移完成。
+
+完整参数 snapshot 不再因 pending cleanup 退避，也不要求虚拟的 length+2 receiver 引用余量；实际输出按顺序 checked retain。完全即时的 spread CALL 不再取得无消费者的请求身份；真正挂起的请求仍在发布前检查身份。失败时先保护选定请求，再退休原三项操作数，保持真实 fault PC 和首个破坏性失败后的隔离。上述内部契约变动有对应见证，不能宣称保留已删除的中间 owner 拒绝。
 
 ## 中途机制检查
 
