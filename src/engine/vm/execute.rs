@@ -279,10 +279,6 @@ pub(super) enum VmAction {
     Object {
         fallthrough: FallthroughPc,
     },
-    ArrayFrom {
-        count: u16,
-        fallthrough: FallthroughPc,
-    },
     GetSuper,
     Predicate(super::predicate_driver::Kind),
     HomeObject,
@@ -337,6 +333,10 @@ pub(super) enum VmAction {
     Complete,
     Suspend(super::VmSuspendKind),
     Bridge,
+    ArrayFrom {
+        count: u16,
+        fallthrough: FallthroughPc,
+    },
 }
 
 impl VmAction {
