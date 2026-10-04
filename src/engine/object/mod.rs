@@ -1156,7 +1156,9 @@ pub(crate) use internal_methods::{
     ProxyDefineResume, ProxyDefineStep, ProxySetResume, ProxySetStep,
 };
 
-pub(crate) use ordinary::{SetAction, SetProgress, SetResume, SetStep, SetWait, set_completion};
+pub(crate) use ordinary::{
+    SetAction, SetProgress, SetProgressGuard, SetResume, SetStep, SetWait, set_completion,
+};
 
 mod array_length;
 

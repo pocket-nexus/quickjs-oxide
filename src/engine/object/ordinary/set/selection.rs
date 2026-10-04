@@ -9,7 +9,7 @@ fn stored(accepted: bool) -> SetAction {
     }
 }
 
-impl SetResumeState {
+impl SetOperands {
     pub(super) fn select_walk(
         &mut self,
         state: &mut RuntimeState,

@@ -22,8 +22,13 @@ impl<'a> SetActionGuard<'a> {
     pub(super) fn parts(&mut self) -> (&mut RuntimeState, &mut Option<SetAction>) {
         (self.state, &mut self.action)
     }
-    pub(super) fn take(&mut self) -> SetAction {
-        self.action.take().expect("owned Set action")
+    pub(super) fn finish_progress(mut self, cycle_published: bool) -> SetProgress {
+        let action = self.action.take().expect("owned Set action");
+        if cycle_published {
+            SetProgress::CyclePublished(action)
+        } else {
+            SetProgress::Complete(action)
+        }
     }
 }
 impl Drop for SetActionGuard<'_> {
@@ -106,6 +111,44 @@ pub(super) fn retire_descriptor_reply(
     }
 }
 
+impl SetOperands {
+    pub(crate) fn retire(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        if poisoned.get() {
+            return Err(RuntimeError::Poisoned);
+        }
+        let _unwind = RuntimeUnwindGuard::from_flag(poisoned);
+        self.retire_with(|value| state.release_owned_jsvalue(poisoned, value))
+            .map_err(|_| RuntimeError::Poisoned)
+    }
+    fn retire_with(
+        &mut self,
+        mut release: impl FnMut(JsValue) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        // Actual value/receiver first, then the independently owned target/key.
+        // Options stay armed until their exact role is retired; no drain iterator
+        // removes an unconsumed suffix across a fallible release.
+        if let Some(value) = self.value.take() {
+            release(value)?;
+        }
+        if let Some(value) = self.receiver.take() {
+            release(value)?;
+        }
+        if let Some(object) = self.target_owner.take() {
+            release(JsValue::Object(object))?;
+        }
+        if let Some(atom) = self.key_owner.take() {
+            release(JsValue::Symbol(crate::engine::atom::AtomIdx::from_raw(
+                atom.raw(),
+            )))?;
+        }
+        Ok(())
+    }
+}
+
 impl SetResumeState {
     pub(crate) fn retire(
         &mut self,
@@ -123,23 +166,8 @@ impl SetResumeState {
         &mut self,
         mut release: impl FnMut(JsValue) -> Result<(), RuntimeError>,
     ) -> Result<(), RuntimeError> {
-        // Domain body first, then original target/key, phase and request fields.
-        // Options stay armed until their exact role is retired; no drain iterator
-        // removes an unconsumed suffix across a fallible release.
-        if let Some(value) = self.value.take() {
-            release(value)?;
-        }
-        if let Some(value) = self.receiver.take() {
-            release(value)?;
-        }
-        if let Some(object) = self.target_owner.take() {
-            release(JsValue::Object(object))?;
-        }
-        if let Some(atom) = self.key_owner.take() {
-            release(JsValue::Symbol(crate::engine::atom::AtomIdx::from_raw(
-                atom.raw(),
-            )))?;
-        }
+        // Domain roles keep their original order before the suspended suffix.
+        self.inputs.retire_with(&mut release)?;
         if let Some(object) = self.retiring_phase.take() {
             release(JsValue::Object(object))?;
         }
@@ -219,12 +247,12 @@ impl SetResumeState {
         selected: Selected,
     ) -> Result<SetWait, RuntimeError> {
         // Only an actual waiting record needs these separate lifetime roles.
-        if self.target_owner.is_none() {
-            state.heap.retain_object(self.target)?;
-            self.target_owner = Some(self.target);
+        if self.inputs.target_owner.is_none() {
+            state.heap.retain_object(self.inputs.target)?;
+            self.inputs.target_owner = Some(self.inputs.target);
         }
-        if self.key_owner.is_none() {
-            self.key_owner = Some(state.atoms.retain_shared(self.atom)?);
+        if self.inputs.key_owner.is_none() {
+            self.inputs.key_owner = Some(state.atoms.retain_shared(self.inputs.atom)?);
         }
         self.retiring_phase = self.phase_object.take();
         let result = (|| match selected {
@@ -237,22 +265,22 @@ impl SetResumeState {
             Selected::Proxy(object) => {
                 let object = self.adopt_phase_or_retain(state, object)?;
                 self.request_object = Some(object);
-                self.request_key = Some(state.atoms.retain_shared(self.atom)?);
+                self.request_key = Some(state.atoms.retain_shared(self.inputs.atom)?);
                 self.request_value =
-                    Some(state.dup_jsvalue(self.value.as_ref().expect("Set value"))?);
+                    Some(state.dup_jsvalue(self.inputs.value.as_ref().expect("Set value"))?);
                 self.request_receiver =
-                    Some(state.dup_jsvalue(self.receiver.as_ref().expect("Set receiver"))?);
+                    Some(state.dup_jsvalue(self.inputs.receiver.as_ref().expect("Set receiver"))?);
                 self.phase = Phase::Forward;
                 Ok(SetWait::Proxy)
             }
             Selected::Typed(object, index, element) => {
                 state.heap.retain_object(object)?;
                 self.request_object = Some(object);
-                self.request_key = Some(state.atoms.retain_shared(self.atom)?);
+                self.request_key = Some(state.atoms.retain_shared(self.inputs.atom)?);
                 self.request_value =
-                    Some(state.dup_jsvalue(self.value.as_ref().expect("Set value"))?);
+                    Some(state.dup_jsvalue(self.inputs.value.as_ref().expect("Set value"))?);
                 self.request_receiver =
-                    Some(state.dup_jsvalue(self.receiver.as_ref().expect("Set receiver"))?);
+                    Some(state.dup_jsvalue(self.inputs.receiver.as_ref().expect("Set receiver"))?);
                 let object = self.adopt_phase_or_retain(state, object)?;
                 self.phase_object = Some(object);
                 self.typed = Some((index, element));
@@ -274,9 +302,9 @@ impl SetResumeState {
             Selected::ArrayLength(object, initial) => {
                 let object = self.adopt_phase_or_retain(state, object)?;
                 self.request_object = Some(object);
-                self.request_key = Some(state.atoms.retain_shared(self.atom)?);
+                self.request_key = Some(state.atoms.retain_shared(self.inputs.atom)?);
                 self.request_value =
-                    Some(state.dup_jsvalue(self.value.as_ref().expect("Set value"))?);
+                    Some(state.dup_jsvalue(self.inputs.value.as_ref().expect("Set value"))?);
                 self.array_length_initial = Some(initial);
                 self.phase = Phase::Forward;
                 Ok(SetWait::ArrayLength)
@@ -284,15 +312,15 @@ impl SetResumeState {
             Selected::Descriptor(object) => {
                 let object = self.adopt_phase_or_retain(state, object)?;
                 self.request_object = Some(object);
-                self.request_key = Some(state.atoms.retain_shared(self.atom)?);
+                self.request_key = Some(state.atoms.retain_shared(self.inputs.atom)?);
                 self.phase = Phase::Receiver;
                 Ok(SetWait::Descriptor)
             }
             Selected::Define(object, existing) => {
                 state.heap.retain_object(object)?;
                 self.request_object = Some(object);
-                self.request_key = Some(state.atoms.retain_shared(self.atom)?);
-                let value = state.dup_jsvalue(self.value.as_ref().expect("Set value"))?;
+                self.request_key = Some(state.atoms.retain_shared(self.inputs.atom)?);
+                let value = state.dup_jsvalue(self.inputs.value.as_ref().expect("Set value"))?;
                 self.request_descriptor = Some(PropertyDescriptor {
                     value: Some(value.into_raw()),
                     writable: (!existing).then_some(true),
@@ -366,7 +394,7 @@ impl SetResume {
         }
     }
     pub(crate) fn take_cycle_published(&mut self) -> bool {
-        std::mem::take(&mut self.0.cycle_published)
+        std::mem::take(&mut self.0.inputs.cycle_published)
     }
 }
 
@@ -387,6 +415,50 @@ impl SetProgress {
                 action.retire_at_boundary(runtime)
             }
             Self::Waiting { resume, .. } => resume.retire_at_boundary(runtime),
+        }
+    }
+}
+
+/// Only the actual Set result is guarded during synchronous assignment. A
+/// durable Query is constructed after this owner selects a real effect.
+#[must_use]
+pub(crate) struct SetProgressGuard<'a> {
+    state: &'a mut RuntimeState,
+    poisoned: &'a Cell<bool>,
+    progress: Option<SetProgress>,
+}
+impl<'a> SetProgressGuard<'a> {
+    pub(crate) fn new(
+        state: &'a mut RuntimeState,
+        poisoned: &'a Cell<bool>,
+        progress: SetProgress,
+    ) -> Self {
+        Self {
+            state,
+            poisoned,
+            progress: Some(progress),
+        }
+    }
+    pub(crate) fn parts(&mut self) -> (&mut RuntimeState, &mut Option<SetProgress>) {
+        (self.state, &mut self.progress)
+    }
+    pub(crate) fn retire(&mut self) -> Result<(), RuntimeError> {
+        if self.poisoned.get() {
+            return Err(RuntimeError::Poisoned);
+        }
+        if let Some(progress) = self.progress.take() {
+            progress.retire_in_state(self.state, self.poisoned)?;
+        }
+        Ok(())
+    }
+}
+impl Drop for SetProgressGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.poisoned.set(true);
+        }
+        if !self.poisoned.get() {
+            let _ = self.retire();
         }
     }
 }

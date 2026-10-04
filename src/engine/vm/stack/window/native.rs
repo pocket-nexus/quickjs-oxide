@@ -488,37 +488,6 @@ impl FrameExecution<'_> {
         self.publish_selected_write_operands_in_state(runtime, state, step, atom, moved)
     }
 
-    /// A local primitive key uses the existing outer atom guard until a real
-    /// wait transfers that same owner to ResidentWrite. It adds no Query storage.
-    pub(in crate::engine::vm) fn publish_local_write_operands_in_state(
-        &mut self,
-        owner: &mut crate::engine::vm::proxy_get_driver::RawNativeQuery<'_>,
-        key_owner: &mut Option<JsValue>,
-    ) -> Result<crate::engine::atom::Atom, Error> {
-        let moved = self.checked_write_operands(&owner.step)?;
-        if key_owner.is_some() {
-            return Err(Error::internal(
-                "computed write repeated local key publication",
-            ));
-        }
-        let crate::engine::vm::proxy_get_driver::Step::WriteOperands { atom, .. } = &mut owner.step
-        else {
-            unreachable!()
-        };
-        let atom = atom.take().expect("selected write atom owner");
-        *key_owner = Some(JsValue::Symbol(crate::engine::atom::AtomIdx::from_raw(
-            atom.raw(),
-        )));
-        self.publish_selected_write_operands_in_state(
-            owner.runtime,
-            owner.state,
-            &mut owner.step,
-            atom,
-            moved,
-        )?;
-        Ok(atom)
-    }
-
     fn checked_write_operands(
         &mut self,
         step: &crate::engine::vm::proxy_get_driver::Step,

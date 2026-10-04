@@ -9,7 +9,10 @@ mod module;
 mod native;
 mod object;
 pub(super) mod set;
-pub(in crate::engine::vm) use set::WriteKeyInputs;
+pub(in crate::engine::vm) use set::{
+    ValueSetStart, WriteKeyInputs, advance_set_progress_in_state, finish_set_action_in_state,
+    retire_value_set_inputs, setter_call_step, start_value_set_in_state,
+};
 mod object_builtins;
 mod scalar;
 mod string;

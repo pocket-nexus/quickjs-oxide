@@ -133,7 +133,7 @@ impl Drop for ReplyGuard<'_> {
     }
 }
 
-impl SetResumeState {
+impl SetOperands {
     /// The same completed Array length applies both at initial State selection
     /// and after the selected conversion's actual observable effects.
     pub(super) fn array_length_action_in_state(
@@ -238,7 +238,11 @@ impl SetResume {
         let action = match result {
             ArrayLengthConversion::Throw(value) => SetAction::Throw(value),
             ArrayLengthConversion::Length(length) => {
-                match self.0.array_length_action_in_state(state, poisoned, length) {
+                match self
+                    .0
+                    .inputs
+                    .array_length_action_in_state(state, poisoned, length)
+                {
                     Ok(action) => action,
                     Err(error) => {
                         if poisoned.get() {
@@ -276,7 +280,7 @@ impl SetResume {
             ),
             None => {
                 let current = self.0.phase_object.expect("special Set owner");
-                let selected = self.0.select_special_own(state, poisoned, current);
+                let selected = self.0.inputs.select_special_own(state, poisoned, current);
                 self.finish_selected(state, poisoned, selected)
             }
         }
@@ -296,7 +300,7 @@ impl SetResume {
         };
         let selected = match request {
             SharedRequest::TypedDecline { object, .. } => {
-                self.0.select_special_own(state, poisoned, object)
+                self.0.inputs.select_special_own(state, poisoned, object)
             }
             SharedRequest::Own {
                 object, receiver, ..
@@ -306,13 +310,15 @@ impl SetResume {
                 match record {
                     Ok(record) => self
                         .0
+                        .inputs
                         .select_owned_own(state, poisoned, object, record, receiver),
                     Err(error) => Err(error),
                 }
             }
-            SharedRequest::Rejection { object, .. } => {
-                self.0.rejected_definition_with_own(state, object, true)
-            }
+            SharedRequest::Rejection { object, .. } => self
+                .0
+                .inputs
+                .rejected_definition_with_own(state, object, true),
         };
         self.finish_selected(state, poisoned, selected)
     }
@@ -349,7 +355,7 @@ impl SetResume {
                     JsValue::Object(object),
                 );
                 let (state, edge) = owner.parts();
-                let result = self.0.rejected_definition(state, poisoned, object);
+                let result = self.0.inputs.rejected_definition(state, poisoned, object);
                 if poisoned.get() {
                     return Err(RuntimeError::Poisoned);
                 }
@@ -500,7 +506,7 @@ impl SetResume {
             };
             return self.shared(runtime, word);
         }
-        let realm = match self.0.realm {
+        let realm = match self.0.inputs.realm {
             Some(realm) => realm,
             None => {
                 self.retire_at_boundary(runtime)?;

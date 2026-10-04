@@ -304,7 +304,7 @@ impl SetStep {
         };
         let target = *target;
         let _unwind = runtime.unwind_guard();
-        let progress = SetResumeState::start_in_state(
+        let progress = SetOperands::start_in_state(
             &mut runtime.0.state.borrow_mut(),
             &runtime.0.poisoned,
             Some(realm),
@@ -347,7 +347,7 @@ impl SetStep {
             }
             Self::Continue { resume } => resume.advance(runtime),
             Self::Proxy { mut resume } => {
-                let realm = match resume.realm {
+                let realm = match resume.inputs.realm {
                     Some(realm) => realm,
                     None => {
                         resume.retire_at_boundary(runtime)?;
@@ -371,7 +371,7 @@ impl SetStep {
             Self::ArrayLength { mut resume } => {
                 let object = resume.take_object(runtime);
                 let key = resume.take_key(runtime);
-                let realm = resume.realm;
+                let realm = resume.inputs.realm;
                 let value = resume.take_value();
                 let initial = resume.take_array_length_initial();
                 let result = runtime.prepare_set_array_length(realm, &object, &key, value, initial);
@@ -386,7 +386,7 @@ impl SetStep {
             Self::Descriptor { mut resume } => {
                 let object = resume.take_object(runtime);
                 let key = resume.take_key(runtime);
-                let result = match resume.realm {
+                let result = match resume.inputs.realm {
                     Some(realm) => runtime.internal_get_own_property_owned(realm, &object, &key),
                     None => runtime
                         .get_own_property_owned(&object, &key)
@@ -404,7 +404,7 @@ impl SetStep {
                 let object = resume.take_object(runtime);
                 let key = resume.take_key(runtime);
                 let descriptor = resume.take_descriptor(runtime);
-                let result = match resume.realm {
+                let result = match resume.inputs.realm {
                     Some(realm) => {
                         runtime.internal_define_owned_property(realm, &object, &key, descriptor)
                     }
@@ -442,7 +442,7 @@ impl RuntimeState {
         value: JsValue,
         receiver: JsValue,
     ) -> Result<SetProgress, RuntimeError> {
-        SetResumeState::start_in_state(
+        SetOperands::start_in_state(
             self,
             poisoned,
             realm,
@@ -463,7 +463,7 @@ impl RuntimeState {
         value: JsValue,
         receiver: JsValue,
     ) -> Result<SetProgress, RuntimeError> {
-        SetResumeState::start_in_state(
+        SetOperands::start_in_state(
             self, poisoned, realm, object, None, atom, None, value, receiver,
         )
     }

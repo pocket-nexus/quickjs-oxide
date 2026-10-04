@@ -7,22 +7,22 @@ use crate::engine::{
 };
 use std::cell::Cell;
 
-/// The complete assignment producer is shared by a local instruction and Query.
-/// Its inputs remain armed in the existing Step until the canonical Set takes them.
+/// Assignment ingress has only a Set result or a selected diagnostic. Query
+/// and the local instruction adapt this same producer to their real storage.
+#[must_use]
+pub(in crate::engine::vm) enum ValueSetStart {
+    Progress(SetProgress),
+    Diagnostic(crate::engine::api::Error),
+}
+
 pub(in crate::engine::vm) fn start_value_set_in_state(
     state: &mut RuntimeState,
     poisoned: &Cell<bool>,
     realm: crate::engine::heap::ContextId,
-    step: &mut Step,
-) -> Result<(), RuntimeError> {
-    let Step::ValueSet {
-        atom,
-        value,
-        receiver,
-    } = step
-    else {
-        return Err(RuntimeError::Invariant("local write lost its owned inputs"));
-    };
+    atom: crate::engine::atom::Atom,
+    value: &mut Option<JsValue>,
+    receiver: &mut Option<JsValue>,
+) -> Result<ValueSetStart, RuntimeError> {
     let target = match receiver.as_ref().expect("write receiver") {
         JsValue::Object(id) => *id,
         JsValue::Null | JsValue::Undefined => {
@@ -31,17 +31,17 @@ pub(in crate::engine::vm) fn start_value_set_in_state(
             } else {
                 "' of undefined"
             };
-            // Historical assignment consumes value then base
-            // before formatting the nullish diagnostic.
-            state.release_owned_jsvalue(poisoned, value.take().expect("write value"))?;
-            state.release_owned_jsvalue(poisoned, receiver.take().expect("write receiver"))?;
-            *step = Step::WriteError(Some(state.native_atom_error(
-                crate::engine::api::error::ErrorKind::Type,
-                "cannot set property '",
-                *atom,
-                suffix,
-            )?));
-            return Ok(());
+            // Historical assignment consumes value then base before formatting
+            // the nullish diagnostic. A fatal first release stops the suffix.
+            retire_value_set_inputs(state, poisoned, value, receiver)?;
+            return state
+                .native_atom_error(
+                    crate::engine::api::error::ErrorKind::Type,
+                    "cannot set property '",
+                    atom,
+                    suffix,
+                )
+                .map(ValueSetStart::Diagnostic);
         }
         primitive => {
             use crate::engine::builtins::native::PrimitiveKind;
@@ -56,15 +56,96 @@ pub(in crate::engine::vm) fn start_value_set_in_state(
             state.primitive_prototype_id_for_realm(realm, kind)?
         }
     };
-    *step = Step::SetProgress(Some(state.start_set_borrowed(
-        poisoned,
-        Some(realm),
-        target,
-        *atom,
-        value.take().expect("write value"),
-        receiver.take().expect("write receiver"),
-    )?));
+    state
+        .start_set_borrowed(
+            poisoned,
+            Some(realm),
+            target,
+            atom,
+            value.take().expect("write value"),
+            receiver.take().expect("write receiver"),
+        )
+        .map(ValueSetStart::Progress)
+}
+
+pub(in crate::engine::vm) fn retire_value_set_inputs(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
+    value: &mut Option<JsValue>,
+    receiver: &mut Option<JsValue>,
+) -> Result<(), RuntimeError> {
+    if poisoned.get() {
+        return Err(RuntimeError::Poisoned);
+    }
+    if let Some(value) = value.take() {
+        state
+            .release_owned_jsvalue(poisoned, value)
+            .map_err(|_| RuntimeError::Poisoned)?;
+    }
+    if let Some(receiver) = receiver.take() {
+        state
+            .release_owned_jsvalue(poisoned, receiver)
+            .map_err(|_| RuntimeError::Poisoned)?;
+    }
     Ok(())
+}
+
+/// Existing Query storage keeps its inputs armed through prototype selection.
+pub(in crate::engine::vm::proxy_get_driver) fn start_value_set_step_in_state(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
+    realm: crate::engine::heap::ContextId,
+    step: &mut Step,
+) -> Result<(), RuntimeError> {
+    let Step::ValueSet {
+        atom,
+        value,
+        receiver,
+    } = step
+    else {
+        return Err(RuntimeError::Invariant("local write lost its owned inputs"));
+    };
+    *step = match start_value_set_in_state(state, poisoned, realm, *atom, value, receiver)? {
+        ValueSetStart::Progress(progress) => Step::SetProgress(Some(progress)),
+        ValueSetStart::Diagnostic(error) => Step::WriteError(Some(error)),
+    };
+    Ok(())
+}
+
+/// Both consumers use the exact assignment formatter; Call is transported
+/// separately before this helper, and a propagated Throw stays an owned result.
+pub(in crate::engine::vm) fn finish_set_action_in_state(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
+    atom: crate::engine::atom::Atom,
+    strict: bool,
+    action: SetAction,
+) -> Result<Completion, RuntimeError> {
+    let result = match action.into_result() {
+        Ok(result) => result,
+        Err(action) => {
+            action.retire(state, poisoned)?;
+            return Err(RuntimeError::Invariant(
+                "setter result bypassed callback consumer",
+            ));
+        }
+    };
+    state.finish_property_set_in_state(result, atom, strict)
+}
+
+pub(in crate::engine::vm) fn setter_call_step(
+    function: crate::engine::heap::ObjectId,
+    receiver: JsValue,
+    argument: JsValue,
+) -> Step {
+    Step::RawCall {
+        inputs: Some(crate::engine::vm::call::ordinary::RawCallbackInputs::new(
+            function,
+            receiver,
+            vec![argument],
+        )),
+        resume: Some(Resume::Setter),
+    }
 }
 
 /// Advance the actual Set owner through Continue phases. A terminal action or
@@ -94,81 +175,6 @@ pub(in crate::engine::vm) fn advance_set_progress_in_state(
     }
 }
 
-/// The local instruction has no active Set parent. Publish its required
-/// callback or terminal reply once, after the canonical producer has finished.
-pub(in crate::engine::vm) fn advance_set_in_state(
-    state: &mut RuntimeState,
-    poisoned: &Cell<bool>,
-    step: &mut Step,
-) -> Result<bool, RuntimeError> {
-    let Step::SetProgress(progress) = step else {
-        return Err(RuntimeError::Invariant("local write lost its Set progress"));
-    };
-    let cycle_published = advance_set_progress_in_state(state, poisoned, progress)?;
-    if matches!(progress.as_ref(), Some(SetProgress::Waiting { .. })) {
-        return Ok(cycle_published);
-    }
-    let action = match progress.take().expect("raw Set progress") {
-        SetProgress::Complete(action) | SetProgress::CyclePublished(action) => action,
-        SetProgress::Waiting { .. } => unreachable!(),
-    };
-    *step = match action {
-        SetAction::Call {
-            function,
-            receiver,
-            argument,
-        } => Step::RawCall {
-            inputs: Some(crate::engine::vm::call::ordinary::RawCallbackInputs::new(
-                function,
-                receiver,
-                vec![argument],
-            )),
-            resume: Some(Resume::Setter),
-        },
-        action => Step::SetReply {
-            action: Some(action),
-            resume: None,
-        },
-    };
-    Ok(cycle_published)
-}
-
-/// One assignment terminal consumer serves local completion and ResidentWrite.
-pub(in crate::engine::vm) fn finish_write_set_in_state(
-    state: &mut RuntimeState,
-    poisoned: &Cell<bool>,
-    atom: crate::engine::atom::Atom,
-    strict: bool,
-    step: &mut Step,
-) -> Result<(), RuntimeError> {
-    let Step::SetReply {
-        action,
-        resume: None,
-    } = step
-    else {
-        return Err(RuntimeError::Invariant("write lost its terminal Set reply"));
-    };
-    let action = action.take().expect("write Set reply");
-    *step = match state.finish_property_set_in_state(
-        match action.into_result() {
-            Ok(result) => result,
-            Err(action) => {
-                action.retire(state, poisoned)?;
-                return Err(RuntimeError::Invariant(
-                    "setter result bypassed callback consumer",
-                ));
-            }
-        },
-        atom,
-        strict,
-    ) {
-        Ok(completion) => Step::Complete(Some(completion)),
-        Err(RuntimeError::Engine(error)) => Step::WriteError(Some(error)),
-        Err(error) => return Err(error),
-    };
-    Ok(())
-}
-
 impl From<SetProgress> for Step {
     fn from(progress: SetProgress) -> Self {
         Self::SetProgress(Some(progress))
@@ -188,12 +194,6 @@ pub(in crate::engine::vm) struct WriteKeyOperands {
     pub(in crate::engine::vm) value: Option<JsValue>,
 }
 impl WriteKeyInputs {
-    pub(in crate::engine::vm) fn primitive(realm: crate::engine::heap::ContextId) -> Self {
-        Self {
-            realm,
-            operands: None,
-        }
-    }
     pub(in crate::engine::vm) fn object(realm: crate::engine::heap::ContextId) -> Self {
         Self {
             realm,

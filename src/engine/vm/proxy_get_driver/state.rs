@@ -93,7 +93,7 @@ impl Query {
                     });
                 }
                 Step::ValueSet { .. } => {
-                    super::request::set::start_value_set_in_state(
+                    super::request::set::start_value_set_step_in_state(
                         state, poisoned, self.realm, step,
                     )?;
                 }
@@ -119,14 +119,7 @@ impl Query {
                         argument,
                     } = action
                     {
-                        *step = Step::RawCall {
-                            inputs: Some(RawCallbackInputs::new(
-                                function,
-                                receiver,
-                                vec![argument],
-                            )),
-                            resume: Some(Resume::Setter),
-                        };
+                        *step = super::request::set::setter_call_step(function, receiver, argument);
                         continue;
                     }
                     if self.parents.0.last().is_some_and(Resume::can_set_in_state) {
@@ -140,18 +133,8 @@ impl Query {
                         else {
                             unreachable!()
                         };
-                        *step = match state.finish_property_set_in_state(
-                            match action.into_result() {
-                                Ok(result) => result,
-                                Err(action) => {
-                                    action.retire(state, poisoned)?;
-                                    return Err(RuntimeError::Invariant(
-                                        "setter result bypassed callback consumer",
-                                    ));
-                                }
-                            },
-                            *atom,
-                            *strict,
+                        *step = match super::request::set::finish_set_action_in_state(
+                            state, poisoned, *atom, *strict, action,
                         ) {
                             Ok(completion) => Step::Complete(Some(completion)),
                             Err(RuntimeError::Engine(error)) => Step::WriteError(Some(error)),
@@ -1393,6 +1376,11 @@ impl Query {
     }
 }
 
+#[cfg(test)]
+std::thread_local! {
+    static RAW_QUERY_GUARDS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// This concrete owner covers a native activation and its semantic Query
 /// while the existing State lease is held. It creates no Runtime Rc/Weak;
 /// Query registers its one boundary capability only when it acquires raw work.
@@ -1413,6 +1401,8 @@ impl<'a> RawNativeQuery<'a> {
         query: Query,
         step: Step,
     ) -> Self {
+        #[cfg(test)]
+        RAW_QUERY_GUARDS.with(|count| count.set(count.get() + 1));
         Self {
             runtime,
             state,
@@ -1429,6 +1419,8 @@ impl<'a> RawNativeQuery<'a> {
         state: &'a mut RuntimeState,
         step: Step,
     ) -> Self {
+        #[cfg(test)]
+        RAW_QUERY_GUARDS.with(|count| count.set(count.get() + 1));
         Self {
             runtime,
             state,
@@ -1439,62 +1431,9 @@ impl<'a> RawNativeQuery<'a> {
             pending_call: None,
         }
     }
-    pub(in crate::engine::vm) fn start_write_in_state(
-        &mut self,
-        realm: crate::engine::heap::ContextId,
-    ) -> Result<(), RuntimeError> {
-        super::request::set::start_value_set_in_state(
-            self.state,
-            &self.runtime.0.poisoned,
-            realm,
-            &mut self.step,
-        )
-    }
-    pub(in crate::engine::vm) fn advance_set_in_state(&mut self) -> Result<bool, RuntimeError> {
-        super::request::set::advance_set_in_state(
-            self.state,
-            &self.runtime.0.poisoned,
-            &mut self.step,
-        )
-    }
-    pub(in crate::engine::vm) fn finish_write_in_state(
-        &mut self,
-        atom: crate::engine::atom::Atom,
-        strict: bool,
-    ) -> Result<(), RuntimeError> {
-        super::request::set::finish_write_set_in_state(
-            self.state,
-            &self.runtime.0.poisoned,
-            atom,
-            strict,
-            &mut self.step,
-        )
-    }
-    /// The caller proved this original key is primitive, but still performs
-    /// its genuine checked duplicate and the canonical String-hint conversion.
-    pub(in crate::engine::vm) fn complete_primitive_write_key_in_state(
-        &mut self,
-        realm: crate::engine::heap::ContextId,
-    ) -> Result<(), RuntimeError> {
-        if let Some(next) =
-            start_primitive_in_state(self.state, &self.runtime.0.poisoned, realm, &mut self.step)?
-        {
-            next.retire_in_state(self.state, &self.runtime.0.poisoned)?;
-            return Err(RuntimeError::Invariant(
-                "primitive write key unexpectedly selected a callback",
-            ));
-        }
-        let Step::PrimitiveReply { value, resume } = &mut self.step else {
-            unreachable!()
-        };
-        let parent = resume.take().expect("write key parent");
-        self.step = parent.resume_in_state(
-            self.state,
-            &self.runtime.0.poisoned,
-            self.runtime.0.host_services.as_ref(),
-            value.take().expect("write key reply"),
-        )?;
-        Ok(())
+    #[cfg(test)]
+    pub(in crate::engine::vm) fn guard_constructions_for_test() -> u64 {
+        RAW_QUERY_GUARDS.with(std::cell::Cell::get)
     }
     #[cfg(test)]
     pub(in crate::engine::vm) fn has_cached_query_for_test(
@@ -1920,6 +1859,8 @@ impl<'a> RawNativeQuery<'a> {
         query: Query,
         step: Step,
     ) -> Self {
+        #[cfg(test)]
+        RAW_QUERY_GUARDS.with(|count| count.set(count.get() + 1));
         Self {
             runtime,
             state,

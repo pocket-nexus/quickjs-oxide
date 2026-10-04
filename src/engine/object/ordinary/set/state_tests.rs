@@ -322,3 +322,102 @@ fn public_set_receiver_conversion_rejection_retires_the_first_converted_value() 
     assert!(!runtime.is_poisoned());
     assert!(!foreign.is_poisoned());
 }
+
+#[test]
+fn owned_local_set_retires_independent_alias_roles_before_returning_its_terminal() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let object = target(&runtime, &mut context, "({owned_local_alias:7})");
+    let key = runtime.intern_property_key("owned_local_alias").unwrap();
+    let rc = std::rc::Rc::strong_count(&runtime.0);
+    let mut state = runtime.0.state.borrow_mut();
+    let atom_count = state.atoms.resolve(key.atom()).unwrap().ref_count;
+    state.heap.retain_object(object.object_id()).unwrap();
+    let atom = state.atoms.retain_shared(key.atom()).unwrap();
+    let value = state
+        .dup_jsvalue(&JsValue::Object(object.object_id()))
+        .unwrap();
+    let receiver = state
+        .dup_jsvalue(&JsValue::Object(object.object_id()))
+        .unwrap();
+    assert_eq!(state.heap.object_strong_count(object.object_id()), Ok(4));
+    let progress = state
+        .start_set_owned(
+            &runtime.0.poisoned,
+            Some(context.realm),
+            object.object_id(),
+            atom,
+            value,
+            receiver,
+        )
+        .unwrap();
+    assert!(matches!(
+        progress,
+        SetProgress::Complete(SetAction::Complete)
+    ));
+    // These three aliases are distinct input roles. Only the public root and
+    // the genuinely published self edge remain after local completion.
+    assert_eq!(state.heap.object_strong_count(object.object_id()), Ok(2));
+    assert_eq!(
+        state.atoms.resolve(key.atom()).unwrap().ref_count,
+        atom_count
+    );
+    assert!(matches!(
+        raw_slot(&state, object.object_id(), key.atom()),
+        RawValue::Object(id) if id == object.object_id()
+    ));
+    assert_eq!(std::rc::Rc::strong_count(&runtime.0), rc);
+    assert!(!runtime.is_poisoned());
+}
+
+#[test]
+fn owned_local_set_publication_failure_quarantines_target_and_key_after_domain_inputs() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let object = target(&runtime, &mut context, "({owned_fatal_local:{}})");
+    let value = runtime.new_object(None).unwrap();
+    let key = runtime.intern_property_key("owned_fatal_local").unwrap();
+    let invalid = runtime.new_object(None).unwrap().into_handle();
+    let later = runtime.new_object(None).unwrap().into_handle();
+    let mut state = runtime.0.state.borrow_mut();
+    state.heap.retain_object(object.object_id()).unwrap();
+    let atom = state.atoms.retain_shared(key.atom()).unwrap();
+    let atom_count = state.atoms.resolve(atom).unwrap().ref_count;
+    let input = state
+        .dup_jsvalue(&JsValue::Object(value.object_id()))
+        .unwrap();
+    let receiver = state
+        .dup_jsvalue(&JsValue::Object(object.object_id()))
+        .unwrap();
+    for id in [invalid, later] {
+        state
+            .heap
+            .queue_release_for_test(RawId::Object(id))
+            .unwrap();
+    }
+    state
+        .heap
+        .set_strong_count_for_test(RawId::Object(invalid), 1);
+    let result = state.start_set_owned(
+        &runtime.0.poisoned,
+        Some(context.realm),
+        object.object_id(),
+        atom,
+        input,
+        receiver,
+    );
+    assert!(matches!(result, Err(RuntimeError::Poisoned)));
+    assert!(runtime.is_poisoned());
+    assert!(matches!(
+        raw_slot(&state, object.object_id(), atom),
+        RawValue::Object(id) if id == value.object_id()
+    ));
+    // Failed old-slot cleanup stops before any domain input, owned header, or
+    // later zero-queue edge is retired. No suspended record is needed to retain
+    // the untouched suffix in the poisoned heap.
+    assert_eq!(state.heap.object_strong_count(value.object_id()), Ok(3));
+    assert_eq!(state.heap.object_strong_count(object.object_id()), Ok(3));
+    assert_eq!(state.atoms.resolve(atom).unwrap().ref_count, atom_count);
+    assert_eq!(state.heap.object_strong_count(later), Ok(0));
+    assert!(state.heap.has_pending_zero_cleanup());
+}

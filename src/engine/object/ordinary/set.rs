@@ -18,6 +18,7 @@ use std::cell::Cell;
 mod boundary;
 mod finish;
 mod ownership;
+pub(crate) use ownership::SetProgressGuard;
 mod reply;
 mod selection;
 
@@ -81,9 +82,9 @@ impl std::ops::DerefMut for SetResume {
     }
 }
 
-/// Each optional field is an independent owned role. Empty fields have been
-/// published to a request/callback or explicitly retired. No implicit raw Drop.
-pub(crate) struct SetResumeState {
+/// Actual inputs for the sole Set selector. Local completion owns only these
+/// roles; callback-free selection does not construct a suspension ledger.
+struct SetOperands {
     realm: Option<ContextId>,
     target: ObjectId,
     target_owner: Option<ObjectId>,
@@ -91,6 +92,13 @@ pub(crate) struct SetResumeState {
     key_owner: Option<Atom>,
     value: Option<JsValue>,
     receiver: Option<JsValue>,
+    cycle_published: bool,
+}
+
+/// Only a selected wait needs these independent phase/request roles. Empty
+/// fields have transferred to a request or retired explicitly; no raw Drop.
+pub(crate) struct SetResumeState {
+    inputs: SetOperands,
     phase: Phase,
     phase_object: Option<ObjectId>,
     retiring_phase: Option<ObjectId>,
@@ -102,7 +110,6 @@ pub(crate) struct SetResumeState {
     typed: Option<(Option<u64>, TypedArrayElementKind)>,
     array_length_initial: Option<crate::engine::object::array_length::InitialArrayLength>,
     shared: Option<SharedRequest>,
-    cycle_published: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -146,7 +153,7 @@ enum Selected {
     Define(ObjectId, bool),
 }
 
-impl SetResumeState {
+impl SetOperands {
     fn new(
         realm: Option<ContextId>,
         target: ObjectId,
@@ -164,17 +171,6 @@ impl SetResumeState {
             key_owner,
             value: Some(value),
             receiver: Some(receiver),
-            phase: Phase::Forward,
-            phase_object: None,
-            retiring_phase: None,
-            request_object: None,
-            request_key: None,
-            request_value: None,
-            request_receiver: None,
-            request_descriptor: None,
-            typed: None,
-            array_length_initial: None,
-            shared: None,
             cycle_published: false,
         }
     }
@@ -236,19 +232,20 @@ impl SetResumeState {
             }
             Ok(Selected::Complete(action)) => self.finish_action(state, poisoned, action),
             Ok(selected) => {
-                let phase = match self.publish(state, poisoned, selected) {
+                let mut owner = SetResumeState::from_inputs(self);
+                let phase = match owner.publish(state, poisoned, selected) {
                     Ok(phase) => phase,
                     Err(error) => {
                         if poisoned.get() {
                             return Err(RuntimeError::Poisoned);
                         }
-                        self.retire(state, poisoned)?;
+                        owner.retire(state, poisoned)?;
                         return Err(error);
                     }
                 };
                 Ok(SetProgress::Waiting {
                     phase,
-                    resume: SetResume(Box::new(self)),
+                    resume: SetResume(Box::new(owner)),
                 })
             }
         }
@@ -263,13 +260,38 @@ impl SetResumeState {
         let mut action = ownership::SetActionGuard::new(state, poisoned, action);
         let (state, _) = action.parts();
         self.retire(state, poisoned)?;
-        let cycle_published = self.cycle_published;
-        let action = action.take();
-        Ok(if cycle_published {
-            SetProgress::CyclePublished(action)
-        } else {
-            SetProgress::Complete(action)
-        })
+        Ok(action.finish_progress(self.cycle_published))
+    }
+}
+
+impl SetResumeState {
+    fn from_inputs(inputs: SetOperands) -> Self {
+        Self {
+            inputs,
+            phase: Phase::Forward,
+            phase_object: None,
+            retiring_phase: None,
+            request_object: None,
+            request_key: None,
+            request_value: None,
+            request_receiver: None,
+            request_descriptor: None,
+            typed: None,
+            array_length_initial: None,
+            shared: None,
+        }
+    }
+
+    fn finish_action(
+        mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        action: SetAction,
+    ) -> Result<SetProgress, RuntimeError> {
+        let mut action = ownership::SetActionGuard::new(state, poisoned, action);
+        let (state, _) = action.parts();
+        self.retire(state, poisoned)?;
+        Ok(action.finish_progress(self.inputs.cycle_published))
     }
 }
 
@@ -290,7 +312,7 @@ impl SetResume {
                 return Err(error);
             }
         };
-        let selected = match self.0.advance_selected(state, poisoned, selected) {
+        let selected = match self.0.inputs.advance_selected(state, poisoned, selected) {
             Ok(selected) => selected,
             Err(error) => {
                 if poisoned.get() {
@@ -333,7 +355,7 @@ impl SetResume {
             ));
         }
         let object = self.0.phase_object.expect("walk owner");
-        let selected = self.0.select_walk(state, poisoned, object);
+        let selected = self.0.inputs.select_walk(state, poisoned, object);
         // Keep the phase owner armed until the selected request is published.
         self.finish_selected(state, poisoned, selected)
     }
@@ -353,7 +375,9 @@ impl SetResume {
         }
         let selected = match result {
             NativeConversion::Throw(value) => Ok(Selected::Complete(SetAction::Throw(value))),
-            NativeConversion::Value(record) => self.0.select_descriptor(state, poisoned, record),
+            NativeConversion::Value(record) => {
+                self.0.inputs.select_descriptor(state, poisoned, record)
+            }
         };
         self.finish_selected(state, poisoned, selected)
     }

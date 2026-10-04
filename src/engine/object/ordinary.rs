@@ -16,7 +16,7 @@ pub(crate) mod read;
 mod set;
 
 pub(crate) use set::SetStep;
-pub(crate) use set::{SetAction, SetProgress, SetResume, SetWait};
+pub(crate) use set::{SetAction, SetProgress, SetProgressGuard, SetResume, SetWait};
 
 impl Runtime {
     #[cfg(test)]

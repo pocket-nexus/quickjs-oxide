@@ -602,6 +602,7 @@ fn local_writes_complete_without_query_storage_for_every_value_owner_and_base_al
             }
             push(&mut execution, id, value);
             let owners = runtime.0.raw_execution_owners.get();
+            let guards = RawNativeQuery::guard_constructions_for_test();
             {
                 let mut state = runtime.0.state.borrow_mut();
                 assert!(matches!(
@@ -611,6 +612,11 @@ fn local_writes_complete_without_query_storage_for_every_value_owner_and_base_al
                 assert!(
                     !RawNativeQuery::has_cached_query_for_test(&execution.query_storage),
                     "{opcode:?} {expression} acquired a Query"
+                );
+                assert_eq!(
+                    RawNativeQuery::guard_constructions_for_test(),
+                    guards,
+                    "local assignment constructed durable Step/Query guard storage"
                 );
                 assert!(execution.selected_native_query.is_none());
                 assert_eq!(runtime.0.raw_execution_owners.get(), owners);
@@ -672,6 +678,7 @@ fn every_primitive_write_key_uses_local_state_without_query_or_extra_result_owne
         push(&mut execution, id, key);
         push(&mut execution, id, assigned);
         let mut identity = 41;
+        let guards = RawNativeQuery::guard_constructions_for_test();
         {
             let mut state = runtime.0.state.borrow_mut();
             assert!(matches!(
@@ -686,6 +693,11 @@ fn every_primitive_write_key_uses_local_state_without_query_or_extra_result_owne
                 VmAction::Complete
             ));
             assert_eq!(identity, 41, "primitive key created an operation identity");
+            assert_eq!(
+                RawNativeQuery::guard_constructions_for_test(),
+                guards,
+                "primitive suffix/local Set constructed durable Step/Query guard storage"
+            );
             assert!(
                 !RawNativeQuery::has_cached_query_for_test(&execution.query_storage),
                 "{expression} acquired a Query"
@@ -734,6 +746,7 @@ fn real_write_effects_publish_the_existing_query_after_local_selection() {
         push(&mut execution, id, base);
         push(&mut execution, id, key);
         push(&mut execution, id, value);
+        let guards = RawNativeQuery::guard_constructions_for_test();
         {
             let mut state = runtime.0.state.borrow_mut();
             let _ = execute_frame_in_state(&runtime, &mut state, &mut execution, id).unwrap();
@@ -748,6 +761,10 @@ fn real_write_effects_publish_the_existing_query_after_local_selection() {
             assert!(
                 published,
                 "actual setter/Proxy/typed/length wait did not use Query storage"
+            );
+            assert!(
+                RawNativeQuery::guard_constructions_for_test() > guards,
+                "real selected effect must transfer to the existing durable guard"
             );
             assert!(!runtime.is_poisoned());
         }

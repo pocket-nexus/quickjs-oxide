@@ -42,7 +42,9 @@ mod storage;
 pub(super) use native::NativeStepGuard;
 use native::start_into as native_scope;
 pub(in crate::engine::vm) use request::{
-    PreparedNativeBoundary, Resume, SelectedRawCallback, Step, WriteKeyInputs,
+    PreparedNativeBoundary, Resume, SelectedRawCallback, Step, ValueSetStart, WriteKeyInputs,
+    advance_set_progress_in_state, finish_set_action_in_state, retire_value_set_inputs,
+    setter_call_step, start_value_set_in_state,
 };
 pub(in crate::engine::vm) use state::{
     RawNativeQuery, ResidentQueryBoundary, StateEffect, StateNativeProgress,
