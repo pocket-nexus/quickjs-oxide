@@ -2634,13 +2634,17 @@ pub(super) fn execute_frame_in_state(
                     fallthrough,
                 )? {
                     named_read::Progress::Completed | named_read::Progress::Entered => continue,
-                    named_read::Progress::CyclePublished => {
-                        // Exact AutoInit Object publication, not a pressure
-                        // poll on retained objects or allocated leaf outputs.
+                    progress @ (named_read::Progress::CyclePublished
+                    | named_read::Progress::CyclePublishedThrow) => {
+                        // The actual AutoInit or fresh diagnostic edge is
+                        // published in its destination before pressure service.
                         segment.materialize_in_state(state)?;
                         state
                             .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
                             .map_err(runtime_error_to_vm_error)?;
+                        if matches!(progress, named_read::Progress::CyclePublishedThrow) {
+                            return Ok(VmAction::Throw);
+                        }
                         continue;
                     }
                     named_read::Progress::Boundary => return Ok(action),

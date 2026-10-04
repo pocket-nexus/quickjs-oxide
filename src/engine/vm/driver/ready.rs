@@ -396,10 +396,16 @@ fn enter_call(
             super::ordinary::Entry::NativeBoundary => {
                 Some(resume_native_boundary(runtime, execution)?)
             }
-            super::ordinary::Entry::NativeComplete | super::ordinary::Entry::NativeThrow => {
-                return Err(invariant(
-                    "legacy entry received resident native completion",
-                ));
+            super::ordinary::Entry::NativeComplete => Some(Boundary::Complete(Completion::Return(
+                execution
+                    .pending
+                    .take()
+                    .ok_or_else(|| invariant("tail call lost its owned reply"))?,
+            ))),
+            super::ordinary::Entry::NativeThrow => {
+                let frame = execution.frames.current_mut(*id)?;
+                let value = execution.slots.pop(&mut frame.window)?;
+                Some(Boundary::Complete(Completion::Throw(value)))
             }
             super::ordinary::Entry::Native(CallStep::Entered) => Some(Boundary::Entered),
             super::ordinary::Entry::Native(CallStep::Complete(completion)) => {

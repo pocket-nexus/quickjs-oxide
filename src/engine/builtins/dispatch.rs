@@ -32,37 +32,21 @@ impl Runtime {
         bound_arguments: Vec<crate::engine::value::JsValue>,
         call_arguments: Vec<crate::engine::value::JsValue>,
     ) -> Result<NativeConversion<Vec<crate::engine::value::JsValue>>, RuntimeError> {
-        const MAX_CALL_ARGUMENTS: usize = 65_534;
-
-        let overflow = bound_arguments
-            .len()
-            .checked_add(call_arguments.len())
-            .is_none_or(|total| total > MAX_CALL_ARGUMENTS);
-        if overflow {
-            for argument in bound_arguments.into_iter().chain(call_arguments) {
-                let _ = self.release_jsvalue(argument);
-            }
-            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
+        let _unwind = self.unwind_guard();
+        let result = self
+            .0
+            .state
+            .borrow_mut()
+            .concatenate_bound_arguments_jsvalue(
+                &self.0.poisoned,
                 realm,
-                NativeErrorKind::Internal,
-                "stack overflow",
-            )?));
-        }
-        let total = bound_arguments.len() + call_arguments.len();
-        let mut arguments = Vec::with_capacity(total);
-        arguments.extend(bound_arguments);
-        arguments.extend(call_arguments);
-        #[cfg(feature = "profiling")]
-        {
-            crate::engine::api::profiling::record_call_buffer_capacity(
-                "bound.merge",
-                0,
-                arguments.capacity(),
-                size_of::<crate::engine::value::JsValue>(),
+                bound_arguments,
+                call_arguments,
             );
-            crate::engine::api::profiling::record_call_buffer_moves("bound.merge", total);
+        if result.is_ok() {
+            self.check_poison()?;
         }
-        Ok(NativeConversion::Value(arguments))
+        result
     }
 
     #[cfg(any(test, feature = "test262-host"))]
@@ -114,14 +98,66 @@ impl Runtime {
         let mut arguments = arguments;
         let mut argument_start = 0;
         let mut forwarded_call_frames = Vec::new();
+        let mut terminal_classification = None;
         let result = (|| {
             // Owned inputs are already recorded for the same final cleanup on
             // checked-callee rejection. Keep the admitted root through cleanup.
             checked_callable = Some(callable.try_clone()?);
-            let callable = checked_callable.as_mut().expect("checked internal callee");
             self.0.state.borrow().heap.context(caller_realm)?;
             loop {
-                match self.bytecode_for_callable(callable)? {
+                // Public Invoke admission precedes genuine Bound payload
+                // promotions. Each new semantic forwarded call can produce
+                // another Bound target; adjacent wrappers normalize once.
+                let _operation = self.operation()?;
+                if !checked_callable
+                    .as_ref()
+                    .expect("checked internal callee")
+                    .belongs_to(self)
+                {
+                    return Err(RuntimeError::WrongRuntime("callable"));
+                }
+                let bound = {
+                    let state = self.0.state.borrow();
+                    let function = checked_callable
+                        .as_ref()
+                        .expect("checked internal callee")
+                        .as_object()
+                        .object_id();
+                    crate::engine::vm::call::BoundSelection::from_payload(
+                        &state.heap.object(function)?.payload,
+                    )
+                };
+                if let Some(bound) = bound {
+                    for value in arguments.drain(..argument_start) {
+                        self.release_jsvalue(value)?;
+                    }
+                    argument_start = 0;
+                    let normalized = crate::engine::vm::call::normalize_selected_bound_callback(
+                        self,
+                        caller_realm,
+                        checked_callable.take().expect("checked Bound callee"),
+                        receiver.take().expect("Bound call receiver"),
+                        std::mem::take(&mut arguments),
+                        bound,
+                    )?;
+                    match normalized {
+                        NativeConversion::Throw(value) => return Ok(Completion::Throw(value)),
+                        NativeConversion::Value(call) => {
+                            checked_callable = Some(call.callable);
+                            receiver = Some(call.receiver);
+                            arguments = call.arguments;
+                            // Terminal classification is already selected by
+                            // the boundary producer; dispatch it exactly once.
+                            terminal_classification = Some(call.classification);
+                        }
+                    }
+                }
+                let callable = checked_callable.as_mut().expect("checked internal callee");
+                let classification = match terminal_classification.take() {
+                    Some(classification) => classification,
+                    None => self.bytecode_for_callable(callable)?,
+                };
+                match classification {
                     CallableExecution::Bytecode {
                         bytecode,
                         closure_slots,
@@ -224,27 +260,10 @@ impl Runtime {
                             )?,
                         );
                     }
-                    CallableExecution::Bound {
-                        target,
-                        this_value,
-                        arguments: bound,
-                    } => {
-                        self.release_jsvalue(receiver.replace(this_value).expect("call receiver"))?;
-                        for value in arguments.drain(..argument_start) {
-                            self.release_jsvalue(value)?;
-                        }
-                        arguments = match self.concatenate_bound_arguments_jsvalue(
-                            caller_realm,
-                            bound,
-                            std::mem::take(&mut arguments),
-                        )? {
-                            NativeConversion::Value(arguments) => arguments,
-                            NativeConversion::Throw(value) => {
-                                return Ok(Completion::Throw(value));
-                            }
-                        };
-                        argument_start = 0;
-                        *callable = target;
+                    CallableExecution::Bound { .. } => {
+                        unreachable!(
+                            "adjacent Bound CALL chain is normalized before Invoke dispatch"
+                        )
                     }
                     CallableExecution::Proxy => {
                         for value in arguments.drain(..argument_start) {

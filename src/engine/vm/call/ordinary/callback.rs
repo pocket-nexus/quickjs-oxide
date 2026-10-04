@@ -45,25 +45,76 @@ impl RawCallbackInputs {
         }
     }
 
+    /// The one complete Bound CALL loop. The terminal selection is carried
+    /// directly into the ordinary/native installer, with no second chain walk.
+    pub(in crate::engine::vm) fn normalize_bound_chain_in_state<'r>(
+        &mut self,
+        runtime: &'r Runtime,
+        state: &mut RuntimeState,
+        realm: crate::engine::heap::ContextId,
+    ) -> Result<crate::engine::value::conversion::NativeConversion<DirectSelection<'r>>, RuntimeError>
+    {
+        let function = self.selected_callee.expect("selected callback callee");
+        let selected = DirectSelection::select_in_state(runtime, state, function)?;
+        self.normalize_bound_chain_from_selection_in_state(runtime, state, realm, selected)
+    }
+
+    pub(in crate::engine::vm) fn normalize_bound_chain_from_selection_in_state<'r>(
+        &mut self,
+        runtime: &'r Runtime,
+        state: &mut RuntimeState,
+        realm: crate::engine::heap::ContextId,
+        mut selected: DirectSelection<'r>,
+    ) -> Result<crate::engine::value::conversion::NativeConversion<DirectSelection<'r>>, RuntimeError>
+    {
+        use crate::engine::value::conversion::NativeConversion;
+        loop {
+            match selected {
+                DirectSelection::Bound(bound) => {
+                    match self.apply_bound_in_state(state, &runtime.0.poisoned, realm, bound)? {
+                        NativeConversion::Value(()) => {}
+                        NativeConversion::Throw(value) => {
+                            return Ok(NativeConversion::Throw(value));
+                        }
+                    }
+                }
+                selected => return Ok(NativeConversion::Value(selected)),
+            }
+            let function = self.selected_callee.expect("normalized callback callee");
+            selected = DirectSelection::select_in_state(runtime, state, function)?;
+        }
+    }
+
     /// Share direct callback authentication without a public callee wrapper.
-    /// Preserve its independent checked callee promotion before overflow.
+    /// Preserve its independent checked final-callee promotion before overflow.
     pub(in crate::engine::vm) fn select_callback_in_state(
         &mut self,
         runtime: &Runtime,
         state: &mut RuntimeState,
-    ) -> Result<CallbackSelection, RuntimeError> {
-        let function = self.selected_callee.expect("selected callback callee");
-        match DirectSelection::select_in_state(runtime, state, function)? {
-            DirectSelection::Ordinary(selected) => {
+        realm: crate::engine::heap::ContextId,
+    ) -> Result<crate::engine::value::conversion::NativeConversion<CallbackSelection>, RuntimeError>
+    {
+        use crate::engine::value::conversion::NativeConversion;
+        match self.normalize_bound_chain_in_state(runtime, state, realm)? {
+            NativeConversion::Throw(value) => Ok(NativeConversion::Throw(value)),
+            NativeConversion::Value(DirectSelection::Ordinary(selected)) => {
                 let call = selected.authenticate_slot_in_state(runtime, state)?;
+                let function = self.selected_callee.expect("normalized callback callee");
                 state.heap.retain_object(function)?;
                 self.callback_callee = Some(function);
-                Ok(CallbackSelection::Ordinary(call))
+                Ok(NativeConversion::Value(CallbackSelection::Ordinary(call)))
             }
-            DirectSelection::Native(selected) => Ok(CallbackSelection::Native(
-                NativeClassification::classify_selected(selected),
-            )),
-            DirectSelection::General => Ok(CallbackSelection::General),
+            NativeConversion::Value(DirectSelection::Native(selected)) => {
+                Ok(NativeConversion::Value(CallbackSelection::Native(
+                    NativeClassification::classify_selected(selected),
+                )))
+            }
+            NativeConversion::Value(DirectSelection::General) => {
+                Ok(NativeConversion::Value(CallbackSelection::General))
+            }
+            NativeConversion::Value(DirectSelection::Bound(_)) => {
+                unreachable!("normalized Bound chain")
+            }
         }
     }
 
@@ -212,8 +263,11 @@ mod tests {
         );
         {
             let (state, inputs) = owner.parts();
-            let CallbackSelection::Ordinary(call) =
-                inputs.select_callback_in_state(&runtime, state).unwrap()
+            let crate::engine::value::conversion::NativeConversion::Value(
+                CallbackSelection::Ordinary(call),
+            ) = inputs
+                .select_callback_in_state(&runtime, state, context.realm_id())
+                .unwrap()
             else {
                 panic!("ordinary selection")
             };
@@ -249,7 +303,11 @@ mod tests {
             RawCallbackInputs::new(function, JsValue::Object(receiver), Vec::new()),
         );
         let (state, inputs) = owner.parts();
-        assert!(inputs.select_callback_in_state(&runtime, state).is_err());
+        assert!(
+            inputs
+                .select_callback_in_state(&runtime, state, context.realm_id())
+                .is_err()
+        );
         assert_eq!(inputs.selected_callee, Some(function));
         assert!(inputs.callback_callee.is_none());
         assert_eq!(inputs.receiver, Some(JsValue::Object(receiver)));
@@ -277,8 +335,11 @@ mod tests {
             RawCallbackInputs::new(function, JsValue::Undefined, Vec::new()),
         );
         let (state, inputs) = owner.parts();
-        let CallbackSelection::Native(selected) =
-            inputs.select_callback_in_state(&runtime, state).unwrap()
+        let crate::engine::value::conversion::NativeConversion::Value(CallbackSelection::Native(
+            selected,
+        )) = inputs
+            .select_callback_in_state(&runtime, state, context.realm_id())
+            .unwrap()
         else {
             panic!("native selection")
         };

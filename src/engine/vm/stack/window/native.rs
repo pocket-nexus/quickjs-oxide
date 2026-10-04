@@ -353,11 +353,11 @@ impl FrameExecution<'_> {
         fallthrough: crate::engine::vm::execute::FallthroughPc,
         depth: usize,
     ) -> Result<crate::engine::vm::driver::ordinary::Entry, Error> {
+        #[cfg(feature = "profiling")]
+        use crate::engine::vm::proxy_get_driver::StateNativeProgress;
         use crate::engine::vm::{
-            Completion,
             driver::ordinary::Entry,
             frame::{ReturnOwner, ReturnTarget, ReturnValue},
-            proxy_get_driver::StateNativeProgress,
         };
         if !self.execution.frames.can_push_with_continuations(0)
             || runtime.host_stack_would_overflow()
@@ -384,6 +384,25 @@ impl FrameExecution<'_> {
             fallthrough,
             Some(depth),
         )?;
+        #[cfg(feature = "profiling")]
+        if matches!(result, StateNativeProgress::Complete(_)) {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "core.internal_native_body",
+            );
+        }
+        self.finish_state_call_progress(result, tail, fallthrough, depth)
+    }
+
+    pub(super) fn finish_state_call_progress(
+        &mut self,
+        result: crate::engine::vm::proxy_get_driver::StateNativeProgress,
+        tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+        depth: usize,
+    ) -> Result<crate::engine::vm::driver::ordinary::Entry, Error> {
+        use crate::engine::vm::{
+            Completion, driver::ordinary::Entry, proxy_get_driver::StateNativeProgress,
+        };
         match result {
             StateNativeProgress::Entered => Ok(Entry::Ordinary),
             StateNativeProgress::Boundary => Ok(Entry::NativeBoundary),
@@ -410,9 +429,6 @@ impl FrameExecution<'_> {
                 #[cfg(feature = "profiling")]
                 {
                     crate::engine::api::profiling::record_owned_instruction(depth);
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "core.internal_native_body",
-                    );
                 }
                 #[cfg(not(feature = "profiling"))]
                 let _ = depth;
@@ -421,7 +437,7 @@ impl FrameExecution<'_> {
         }
     }
 
-    fn consume_native_query(
+    pub(super) fn consume_native_query(
         &mut self,
         owner: &mut crate::engine::vm::proxy_get_driver::RawNativeQuery<'_>,
         return_to: crate::engine::vm::frame::ReturnTarget,
@@ -474,6 +490,7 @@ impl FrameExecution<'_> {
             owner
                 .publish_outer_scope()
                 .map_err(runtime_error_to_vm_error)?;
+            let callback_realm = owner.realm();
             let selection = {
                 let Step::RawCall {
                     inputs: Some(inputs),
@@ -483,8 +500,38 @@ impl FrameExecution<'_> {
                     unreachable!("raw callback effect")
                 };
                 inputs
-                    .select_callback_in_state(runtime, owner.state)
+                    .select_callback_in_state(runtime, owner.state, callback_realm)
                     .map_err(runtime_error_to_vm_error)?
+            };
+            let selection = match selection {
+                crate::engine::value::conversion::NativeConversion::Value(selected) => selected,
+                crate::engine::value::conversion::NativeConversion::Throw(value) => {
+                    // Keep the diagnostic armed before retiring the normalized
+                    // callee/receiver suffix. Fatal cleanup wins this reply.
+                    let mut value =
+                        crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+                            owner.state,
+                            &runtime.0.poisoned,
+                            value,
+                        );
+                    let (state, value) = value.parts();
+                    let Step::RawCall { inputs, resume } = &mut owner.step else {
+                        unreachable!()
+                    };
+                    inputs
+                        .as_mut()
+                        .expect("overflow callback inputs")
+                        .retire(state, &runtime.0.poisoned)
+                        .map_err(runtime_error_to_vm_error)?;
+                    let parent = resume.take();
+                    owner.step = Step::CyclePublishedPrimitiveReply {
+                        value: Some(crate::engine::vm::Completion::Throw(
+                            value.take().expect("Bound overflow diagnostic"),
+                        )),
+                        resume: parent,
+                    };
+                    continue;
+                }
             };
             match selection {
                 CallbackSelection::General => {

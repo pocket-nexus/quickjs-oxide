@@ -65,7 +65,9 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::PreparedRead { .. } => "query_dispatch.step.prepared_read",
         Step::Primitive { .. } => "query_dispatch.step.primitive",
         Step::NumberReply { .. } => "query_dispatch.step.number_reply",
-        Step::PrimitiveReply { .. } => "query_dispatch.step.primitive_reply",
+        Step::PrimitiveReply { .. } | Step::CyclePublishedPrimitiveReply { .. } => {
+            "query_dispatch.step.primitive_reply"
+        }
         Step::RawRead { .. } => "query_dispatch.step.raw_read",
         Step::RawCall { .. } => "query_dispatch.step.raw_call",
         Step::CallbackBoundary(_) => "query_dispatch.step.callback_boundary",
@@ -107,6 +109,7 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::NumberReply { resume, .. }
         | Step::StringReply { resume, .. }
         | Step::PrimitiveReply { resume, .. }
+        | Step::CyclePublishedPrimitiveReply { resume, .. }
         | Step::RawRead { resume, .. }
         | Step::RawCall { resume, .. }
         | Step::Read { resume, .. }

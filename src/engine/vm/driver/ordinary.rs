@@ -28,6 +28,7 @@ pub(in crate::engine::vm) enum StateCall {
         crate::engine::vm::stack::CheckedOrdinaryCallOperands,
     ),
     Native(crate::engine::vm::frames::NativeClassification),
+    Bound(crate::engine::vm::call::BoundSelection),
 }
 
 #[cfg(all(test, feature = "profiling"))]
@@ -110,6 +111,10 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
     }
     let selected = match DirectSelection::select_in_state(runtime, state, *function) {
         Ok(DirectSelection::Ordinary(selected)) => selected,
+        Ok(DirectSelection::Bound(selected)) => {
+            transaction.validate_call_value_domains(runtime, count, method)?;
+            return Ok(Some(StateCall::Bound(selected)));
+        }
         Ok(DirectSelection::General) => {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
@@ -222,6 +227,7 @@ pub(super) fn enter_selected(
             crate::engine::vm::stack::CheckedOrdinaryCallOperands,
         ),
         Native(crate::engine::vm::frames::NativeClassification),
+        Bound(crate::engine::vm::call::BoundSelection),
     }
     // End every Result/selection container holding a slot borrow before any
     // frame installation or operand transfer. Native facts remain pinned by
@@ -275,6 +281,10 @@ pub(super) fn enter_selected(
         };
         match selection_result {
             Ok(DirectSelection::General) => return Ok(Entry::General),
+            Ok(DirectSelection::Bound(selected)) => {
+                transaction.validate_call_value_domains(runtime, count, method)?;
+                Prepared::Bound(selected)
+            }
             Ok(DirectSelection::Ordinary(ordinary)) => {
                 // The sealed proof is consumed by the immediately following
                 // ordinary installation. Authentication does not touch caller
@@ -317,6 +327,21 @@ pub(super) fn enter_selected(
     #[cfg(feature = "profiling")]
     drop(prepare_timer);
     match prepared {
+        Prepared::Bound(selected) => {
+            drop(transaction);
+            let mut state = runtime.0.state.borrow_mut();
+            crate::engine::vm::stack::FrameExecution::admit(execution, id)?.enter_bound_call(
+                runtime,
+                &mut state,
+                selected,
+                count,
+                method,
+                tail,
+                fallthrough,
+                depth,
+            )
+        }
+
         Prepared::Ordinary(call, checked) => {
             drop(transaction);
             if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {

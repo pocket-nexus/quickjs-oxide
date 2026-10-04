@@ -1,4 +1,5 @@
 //! One authenticated continuous execution borrow. No arena mutation API escapes.
+mod bound;
 mod native;
 use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
 use crate::engine::value::number::operations::Number;
@@ -137,6 +138,18 @@ impl<'a> FrameExecution<'a> {
         };
         let (call, checked) = match prepared {
             StateCall::Ordinary(call, checked) => (call, checked),
+            StateCall::Bound(selected) => {
+                return self.enter_bound_call(
+                    runtime,
+                    state,
+                    selected,
+                    usize::from(arguments),
+                    method,
+                    tail,
+                    fallthrough,
+                    depth,
+                );
+            }
             StateCall::Native(selected) => {
                 return self.enter_state_native(
                     runtime,

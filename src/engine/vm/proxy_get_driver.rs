@@ -1919,6 +1919,7 @@ fn advance_inner(
             | Step::ArrayCopy { .. } => dispatch_iteration::advance,
             Step::NumberReply { .. }
             | Step::PrimitiveReply { .. }
+            | Step::CyclePublishedPrimitiveReply { .. }
             | Step::RawRead { .. }
             | Step::RawCall { .. }
             | Step::CallbackBoundary(_)
@@ -2073,10 +2074,60 @@ fn invoke(
             return Ok(Next::Continue);
         }
     };
-    if let Some(call) =
-        super::call::ordinary::OrdinaryCall::select_callback(runtime, callable.as_object())
-            .map_err(runtime_error_to_vm_error)?
-    {
+    let selection =
+        super::call::ordinary::DirectSelection::select_object(runtime, callable.as_object())
+            .map_err(runtime_error_to_vm_error)?;
+    let call = match selection {
+        super::call::ordinary::DirectSelection::Bound(selected) => {
+            // Transfer the public source owner before taking State. The outer
+            // continuation remains armed in pending through every fallible phase.
+            let DirectCallTarget::Callable(callable) =
+                target.take().expect("selected Bound target")
+            else {
+                unreachable!()
+            };
+            let function = callable.into_object().into_execution_handle();
+            let receiver = receiver.take().expect("Bound receiver");
+            let arguments = arguments.take().expect("Bound arguments");
+            let mut state = runtime.0.state.borrow_mut();
+            let mut inputs = super::call::ordinary::RawCallbackGuard::new(
+                &mut state,
+                &runtime.0.poisoned,
+                super::call::ordinary::RawCallbackInputs::new(function, receiver, arguments),
+            );
+            let result = {
+                let (state, inputs) = inputs.parts();
+                inputs.apply_bound_in_state(state, &runtime.0.poisoned, realm, selected)
+            };
+            match result {
+                Ok(NativeConversion::Value(())) => {
+                    *pending = Step::RawCall {
+                        inputs: Some(inputs.take()),
+                        resume: resume.take(),
+                    };
+                }
+                Ok(NativeConversion::Throw(value)) => {
+                    *pending = Step::CyclePublishedPrimitiveReply {
+                        value: Some(Completion::Throw(value)),
+                        resume: resume.take(),
+                    };
+                    inputs.retire().map_err(runtime_error_to_vm_error)?;
+                }
+                Err(error) => {
+                    inputs.retire().map_err(runtime_error_to_vm_error)?;
+                    return Err(runtime_error_to_vm_error(error));
+                }
+            }
+            return Ok(Next::Continue);
+        }
+        super::call::ordinary::DirectSelection::Ordinary(selected) => Some(
+            selected
+                .authenticate(runtime)
+                .map_err(runtime_error_to_vm_error)?,
+        ),
+        _ => None,
+    };
+    if let Some(call) = call {
         if !execution
             .frames
             .can_push_with_continuations(query.continuation_depth())

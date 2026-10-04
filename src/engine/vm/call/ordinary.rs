@@ -58,6 +58,7 @@ impl<'a> NativeSelection<'a> {
 pub(in crate::engine::vm) enum DirectSelection<'a> {
     Ordinary(OrdinarySelection),
     Native(NativeSelection<'a>),
+    Bound(super::BoundSelection),
     General,
 }
 
@@ -106,6 +107,9 @@ impl<'a> DirectSelection<'a> {
             "direct_callee_payload_selection",
         );
         let object = state.heap.object(function)?;
+        if let Some(bound) = super::BoundSelection::from_payload(&object.payload) {
+            return Ok(Self::Bound(bound));
+        }
         if let ObjectPayload::NativeFunction { data, .. } = &object.payload {
             // Unregistered native kinds retain the checked general entry.
             let Some(_) = data.operation() else {
@@ -506,7 +510,7 @@ mod direct_selection_tests {
                 match selected {
                     DirectSelection::Ordinary(_) => 0,
                     DirectSelection::Native(_) => 1,
-                    DirectSelection::General => 2,
+                    DirectSelection::Bound(_) | DirectSelection::General => 2,
                 },
                 kind,
                 "{source}"

@@ -40,6 +40,13 @@ impl Query {
         let mut cycle_published = false;
         loop {
             match step {
+                Step::CyclePublishedPrimitiveReply { value, resume } => {
+                    cycle_published = true;
+                    *step = Step::PrimitiveReply {
+                        value: value.take(),
+                        resume: resume.take(),
+                    };
+                }
                 Step::String { value, resume } => {
                     *step = Step::Primitive {
                         value: value.take(),
@@ -483,7 +490,8 @@ impl Step {
                     resume.retire_raw_in_state(state, poisoned)?;
                 }
             }
-            Self::PrimitiveReply { value, resume } => {
+            Self::PrimitiveReply { value, resume }
+            | Self::CyclePublishedPrimitiveReply { value, resume } => {
                 if let Some(value) = value.take() {
                     completion(state, value)?;
                 }

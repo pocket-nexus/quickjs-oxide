@@ -7,6 +7,7 @@ mod ready;
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::code::function::metadata::FunctionKind;
+#[cfg(all(test, feature = "profiling"))]
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsValue, Value};
 #[cfg(all(test, feature = "profiling"))]
@@ -159,8 +160,85 @@ pub(super) fn rejected_call(
     )))
 }
 
+fn enter_bound_call_if_selected(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    count: u16,
+    method: bool,
+    tail: bool,
+) -> Result<Option<CallStep>, Error> {
+    let selected = {
+        let frame = execution.frames.current_mut(id)?;
+        let count = usize::from(count);
+        execution
+            .slots
+            .peek(&frame.window, count + usize::from(method))?;
+        let JsValue::Object(function) = execution.slots.peek(&frame.window, count)? else {
+            return Ok(None);
+        };
+        let state = runtime.0.state.borrow();
+        let Ok(object) = state.heap.object(*function) else {
+            return Ok(None);
+        };
+        let Some(selected) = super::call::BoundSelection::from_payload(&object.payload) else {
+            return Ok(None);
+        };
+        selected
+    };
+    let frame = execution.frames.current_mut(id)?;
+    execution.slots.validate_call_value_domains(
+        &frame.window,
+        runtime,
+        usize::from(count),
+        method,
+    )?;
+    let depth = execution.slots.depth(&frame.window);
+    let fallthrough = super::execute::FallthroughPc::from_committed_index(frame.next_pc()?)?;
+    let entry = {
+        let mut state = runtime.0.state.borrow_mut();
+        super::stack::FrameExecution::admit(execution, id)?.enter_bound_call(
+            runtime,
+            &mut state,
+            selected,
+            usize::from(count),
+            method,
+            tail,
+            fallthrough,
+            depth,
+        )?
+    };
+    runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+    Ok(Some(match entry {
+        ordinary::Entry::Ordinary | ordinary::Entry::NativeReady => CallStep::Entered,
+        ordinary::Entry::NativeComplete => CallStep::Complete(Completion::Return(
+            execution.pending.take().expect("Bound tail reply"),
+        )),
+        ordinary::Entry::NativeThrow => {
+            let frame = execution.frames.current_mut(id)?;
+            CallStep::Complete(Completion::Throw(execution.slots.pop(&mut frame.window)?))
+        }
+        ordinary::Entry::NativeBoundary => {
+            let packet = execution
+                .selected_native_query
+                .take()
+                .expect("Bound call boundary");
+            match super::proxy_get_driver::resume_resident_boundary(runtime, execution, packet)? {
+                super::proxy_get_driver::Progress::Call(step) => step,
+                super::proxy_get_driver::Progress::Conversion(_) => {
+                    return Err(Error::internal("Bound call returned a conversion"));
+                }
+            }
+        }
+        ordinary::Entry::General | ordinary::Entry::Native(_) => {
+            unreachable!("selected Bound CALL completed its entry")
+        }
+    }))
+}
+
 /// All classification and allocation occurs after publishing the caller's PC.
-/// Unsupported callable kinds leave every operand and the resume PC untouched.
+/// Bound CALL consumes the canonical resident producer first. Other callable
+/// kinds retain their existing cold classification and publication contract.
 pub(super) fn enter_call(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -169,6 +247,12 @@ pub(super) fn enter_call(
     method: bool,
     tail: bool,
 ) -> Result<CallStep, Error> {
+    // Direct eval fallback and synthetic cold callers use the same complete
+    // Bound CALL entry. Ordinary/native/Proxy cold semantics remain below.
+    if let Some(entry) = enter_bound_call_if_selected(runtime, execution, id, count, method, tail)?
+    {
+        return Ok(entry);
+    }
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     let window = &mut frame.cold.window;
@@ -177,7 +261,7 @@ pub(super) fn enter_call(
     let callee = runtime
         .dup_jsvalue(execution.slots.peek(window, count)?)
         .map_err(runtime_error_to_vm_error)?;
-    let mut callable = match runtime.direct_call_target_from_jsvalue(callee) {
+    let callable = match runtime.direct_call_target_from_jsvalue(callee) {
         Ok(super::call::DirectCallTarget::Callable(callable)) => callable,
         Ok(super::call::DirectCallTarget::NonCallableProxy(proxy)) => {
             // Pinned direct calls observe a non-callable Proxy's apply getter
@@ -213,9 +297,7 @@ pub(super) fn enter_call(
     {
         return Ok(CallStep::Bridge);
     }
-    let mut bound_arguments: Option<Vec<JsValue>> = None;
-    let mut bound_receiver: Option<JsValue> = None;
-    let (bytecode, closure_slots) = loop {
+    let (bytecode, closure_slots) = {
         if let Some(mut selected) = super::frames::NativeClassification::select(runtime, &callable)
             .map_err(runtime_error_to_vm_error)?
             && let Some(kind) = selected.take_operation()
@@ -238,26 +320,8 @@ pub(super) fn enter_call(
                 target,
                 defining_realm,
                 min_readable_args,
-                match bound_receiver {
-                    Some(bound) => {
-                        runtime
-                            .release_jsvalue(receiver)
-                            .map_err(runtime_error_to_vm_error)?;
-                        bound
-                    }
-                    None => receiver,
-                },
-                match bound_arguments {
-                    Some(bound) => {
-                        for value in arguments {
-                            runtime
-                                .release_jsvalue(value)
-                                .map_err(runtime_error_to_vm_error)?;
-                        }
-                        bound
-                    }
-                    None => arguments,
-                },
+                receiver,
+                arguments,
                 tail,
                 depth,
                 Some(selected),
@@ -272,46 +336,9 @@ pub(super) fn enter_call(
             CallableExecution::Bytecode {
                 bytecode,
                 closure_slots,
-            } => {
-                break (bytecode, closure_slots);
-            }
-            CallableExecution::Bound {
-                target,
-                this_value,
-                arguments: bound,
-            } => {
-                let accumulated = match bound_arguments.take() {
-                    Some(arguments) => arguments,
-                    None => {
-                        let mut arguments = Vec::new();
-                        arguments
-                            .try_reserve_exact(count)
-                            .map_err(|_| Error::internal("call arguments allocation failed"))?;
-                        for offset in (0..count).rev() {
-                            arguments.push(
-                                runtime
-                                    .dup_jsvalue(execution.slots.peek(window, offset)?)
-                                    .map_err(runtime_error_to_vm_error)?,
-                            );
-                        }
-                        arguments
-                    }
-                };
-                // The helper transfers the bound payload roots into internal
-                // values without a retain/release pair.
-                bound_arguments = Some(
-                    match runtime
-                        .concatenate_bound_arguments_jsvalue(realm, bound, accumulated)
-                        .map_err(runtime_error_to_vm_error)?
-                    {
-                        NativeConversion::Value(arguments) => arguments,
-                        NativeConversion::Throw(value) => {
-                            return Ok(CallStep::Complete(Completion::Throw(value)));
-                        }
-                    },
-                );
-                bound_receiver = Some(this_value);
-                callable = target;
+            } => (bytecode, closure_slots),
+            CallableExecution::Bound { .. } => {
+                unreachable!("immutable Bound callee was consumed by canonical entry")
             }
             CallableExecution::Proxy => {
                 let depth = execution.slots.depth(window);
@@ -336,8 +363,8 @@ pub(super) fn enter_call(
                     execution,
                     id,
                     callable.as_object().try_clone()?,
-                    bound_receiver.unwrap_or(receiver),
-                    bound_arguments.unwrap_or(arguments),
+                    receiver,
+                    arguments,
                     tail,
                     depth,
                 );
@@ -365,26 +392,8 @@ pub(super) fn enter_call(
                     target,
                     defining_realm,
                     min_readable_args,
-                    match bound_receiver {
-                        Some(bound) => {
-                            runtime
-                                .release_jsvalue(receiver)
-                                .map_err(runtime_error_to_vm_error)?;
-                            bound
-                        }
-                        None => receiver,
-                    },
-                    match bound_arguments {
-                        Some(bound) => {
-                            for value in arguments {
-                                runtime
-                                    .release_jsvalue(value)
-                                    .map_err(runtime_error_to_vm_error)?;
-                            }
-                            bound
-                        }
-                        None => arguments,
-                    },
+                    receiver,
+                    arguments,
                     tail,
                     depth,
                 );
@@ -398,32 +407,7 @@ pub(super) fn enter_call(
                     .slots
                     .take_native_call_operands(runtime, window, count, method)?;
                 return super::proxy_get_driver::start_callback_call(
-                    runtime,
-                    execution,
-                    id,
-                    callable,
-                    match bound_receiver {
-                        Some(bound) => {
-                            runtime
-                                .release_jsvalue(receiver)
-                                .map_err(runtime_error_to_vm_error)?;
-                            bound
-                        }
-                        None => receiver,
-                    },
-                    match bound_arguments {
-                        Some(bound) => {
-                            for value in arguments {
-                                runtime
-                                    .release_jsvalue(value)
-                                    .map_err(runtime_error_to_vm_error)?;
-                            }
-                            bound
-                        }
-                        None => arguments,
-                    },
-                    tail,
-                    depth,
+                    runtime, execution, id, callable, receiver, arguments, tail, depth,
                 );
             }
         }
@@ -445,7 +429,7 @@ pub(super) fn enter_call(
             .map(CallStep::Complete)
             .map_err(runtime_error_to_vm_error);
     }
-    if kind == FunctionKind::Normal && bound_arguments.is_none() {
+    if kind == FunctionKind::Normal {
         let frame = execution.frames.current_mut(id)?;
         let receiver = if method {
             super::stack::copy_value(runtime, execution.slots.peek(&frame.window, count + 1)?)?
@@ -489,17 +473,6 @@ pub(super) fn enter_call(
     runtime
         .release_jsvalue(function)
         .map_err(runtime_error_to_vm_error)?;
-    if let Some(normalized) = bound_arguments {
-        // The superseded operand edges surrender before the normalized owners
-        // move into the request.
-        for argument in arguments {
-            runtime
-                .release_jsvalue(argument)
-                .map_err(runtime_error_to_vm_error)?;
-        }
-        arguments = normalized;
-    }
-    let receiver = bound_receiver.unwrap_or(receiver);
     if kind != FunctionKind::Normal {
         let depth = execution.slots.depth(&frame.window) + count + 1 + usize::from(method);
         return super::proxy_get_driver::start_callback_call(

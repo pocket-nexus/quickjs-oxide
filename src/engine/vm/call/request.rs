@@ -127,7 +127,7 @@ impl BytecodeCallRequest {
 /// Callback classification consumes the bound chain without executing code.
 /// Both property getters and ToPrimitive methods keep the same argument order
 /// and innermost bound receiver before choosing their driver entry.
-pub(in crate::engine::vm) struct NormalizedCallback {
+pub(crate) struct NormalizedCallback {
     pub callable: CallableRef,
     pub receiver: JsValue,
     pub arguments: Vec<JsValue>,
@@ -137,54 +137,153 @@ pub(in crate::engine::vm) struct NormalizedCallback {
 pub(in crate::engine::vm) fn normalize_callback(
     runtime: &Runtime,
     realm: ContextId,
-    mut callable: CallableRef,
+    callable: CallableRef,
     receiver: JsValue,
     arguments: Vec<JsValue>,
 ) -> Result<crate::engine::value::conversion::NativeConversion<NormalizedCallback>, Error> {
-    use crate::engine::value::conversion::NativeConversion;
-    let mut receiver = Some(receiver);
-    let mut arguments = arguments;
-    let result = (|| loop {
-        match runtime
-            .bytecode_for_callable(&callable)
-            .map_err(runtime_error_to_vm_error)?
-        {
-            super::CallableExecution::Bound {
-                target,
-                this_value,
-                arguments: bound,
-            } => {
-                runtime
-                    .release_jsvalue(receiver.replace(this_value).expect("callback receiver"))
-                    .map_err(runtime_error_to_vm_error)?;
-                arguments = match runtime
-                    .concatenate_bound_arguments_jsvalue(
-                        realm,
-                        bound,
-                        std::mem::take(&mut arguments),
-                    )
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    NativeConversion::Value(arguments) => arguments,
-                    NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-                };
-                callable = target;
-            }
-            classification => {
-                return Ok(NativeConversion::Value(NormalizedCallback {
-                    callable,
-                    receiver: receiver.take().expect("callback receiver"),
-                    arguments: std::mem::take(&mut arguments),
-                    classification,
-                }));
-            }
+    let admission = runtime.operation().and_then(|_| {
+        if callable.belongs_to(runtime) {
+            Ok(())
+        } else {
+            Err(crate::engine::api::RuntimeError::WrongRuntime("callable"))
         }
-    })();
-    if let Some(receiver) = receiver {
-        let _ = runtime.release_jsvalue(receiver);
+    });
+    if let Err(error) = admission {
+        let mut inputs = super::ordinary::RawCallbackInputs {
+            selected_callee: None,
+            callback_callee: None,
+            receiver: Some(receiver),
+            arguments,
+            preserved_receiver: None,
+        };
+        inputs
+            .retire_at_boundary(runtime)
+            .map_err(runtime_error_to_vm_error)?;
+        drop(callable);
+        runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+        return Err(runtime_error_to_vm_error(error));
     }
-    for argument in arguments {
-        let _ = runtime.release_jsvalue(argument);
-    }
-    result
+    let selected = match super::ordinary::DirectSelection::select_in_state(
+        runtime,
+        &runtime.0.state.borrow(),
+        callable.as_object().object_id(),
+    ) {
+        Ok(selected) => selected,
+        Err(error) => {
+            let mut inputs = super::ordinary::RawCallbackInputs {
+                selected_callee: None,
+                callback_callee: None,
+                receiver: Some(receiver),
+                arguments,
+                preserved_receiver: None,
+            };
+            inputs
+                .retire_at_boundary(runtime)
+                .map_err(runtime_error_to_vm_error)?;
+            drop(callable);
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+            return Err(runtime_error_to_vm_error(error));
+        }
+    };
+    normalize_callback_from_selection(runtime, realm, callable, receiver, arguments, selected)
+        .map_err(runtime_error_to_vm_error)
+}
+
+/// The synchronous Invoke bridge transfers its existing checked callee owner
+/// into the same complete State Bound-chain producer. It keeps the terminal
+/// legacy header bridge, not a second Bound-by-Bound normalization loop.
+pub(crate) fn normalize_selected_bound_callback(
+    runtime: &Runtime,
+    realm: ContextId,
+    callable: CallableRef,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
+    selected: super::BoundSelection,
+) -> Result<
+    crate::engine::value::conversion::NativeConversion<NormalizedCallback>,
+    crate::engine::api::RuntimeError,
+> {
+    normalize_callback_from_selection(
+        runtime,
+        realm,
+        callable,
+        receiver,
+        arguments,
+        super::ordinary::DirectSelection::Bound(selected),
+    )
+}
+
+fn normalize_callback_from_selection(
+    runtime: &Runtime,
+    realm: ContextId,
+    callable: CallableRef,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
+    selected: super::ordinary::DirectSelection<'_>,
+) -> Result<
+    crate::engine::value::conversion::NativeConversion<NormalizedCallback>,
+    crate::engine::api::RuntimeError,
+> {
+    use super::ordinary::{RawCallbackGuard, RawCallbackInputs};
+    use crate::engine::value::conversion::NativeConversion;
+    let _unwind = runtime.unwind_guard();
+    // The caller retains Runtime access independently. Transfer before taking
+    // State; no rooted public owner or Drop lives under this lease.
+    let function = callable.into_object().into_execution_handle();
+    let inputs = {
+        let mut state = runtime.0.state.borrow_mut();
+        let mut owner = RawCallbackGuard::new(
+            &mut state,
+            &runtime.0.poisoned,
+            RawCallbackInputs::new(function, receiver, arguments),
+        );
+        let result = {
+            let (state, inputs) = owner.parts();
+            inputs.normalize_bound_chain_from_selection_in_state(runtime, state, realm, selected)
+        };
+        match result {
+            Err(error) => {
+                owner.retire()?;
+                return Err(error);
+            }
+            Ok(NativeConversion::Throw(value)) => {
+                let (state, inputs) = owner.parts();
+                let mut value = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+                    state,
+                    &runtime.0.poisoned,
+                    value,
+                );
+                let (state, value) = value.parts();
+                inputs.retire(state, &runtime.0.poisoned)?;
+                return Ok(NativeConversion::Throw(
+                    value.take().expect("Bound overflow diagnostic"),
+                ));
+            }
+            Ok(NativeConversion::Value(_)) => owner.take(),
+        }
+    };
+    runtime.check_poison()?;
+    let mut inputs = inputs;
+    let callable =
+        CallableRef::from_validated_object(crate::engine::object::ObjectRef::from_owned_handle(
+            runtime.clone(),
+            inputs.selected_callee.take().expect("normalized callable"),
+        ));
+    // This is the actual legacy terminal boundary (Proxy, special bytecode, or
+    // legacy native), not another Bound normalization implementation.
+    let classification = match runtime.bytecode_for_callable(&callable) {
+        Ok(classification) => classification,
+        Err(error) => {
+            inputs.retire_at_boundary(runtime)?;
+            drop(callable);
+            runtime.check_poison()?;
+            return Err(error);
+        }
+    };
+    Ok(NativeConversion::Value(NormalizedCallback {
+        callable,
+        receiver: inputs.receiver.take().expect("normalized receiver"),
+        arguments: std::mem::take(&mut inputs.arguments),
+        classification,
+    }))
 }

@@ -17,6 +17,7 @@ use crate::engine::{
 pub(in crate::engine::vm) enum Progress {
     Completed,
     CyclePublished,
+    CyclePublishedThrow,
     Entered,
     Boundary,
     NativeBoundary,
@@ -135,6 +136,7 @@ pub(in crate::engine::vm) fn finish_selected(
                 RawCallbackInputs::new(function, receiver, Vec::new()),
             );
             let mut native_reply = None;
+            let mut fresh_overflow = false;
             let result = (|| {
                 let (state, inputs) = owner.parts();
                 inputs.preserved_receiver = Some(
@@ -145,9 +147,25 @@ pub(in crate::engine::vm) fn finish_selected(
                 // Calling user code is an actual observation boundary. Use the one
                 // existing virtual-frame registry algorithm under this same lease.
                 segment.materialize_in_state(state)?;
+                let calling_realm = segment.frame().executable.realm;
                 let selected = inputs
-                    .select_callback_in_state(runtime, state)
+                    .select_callback_in_state(runtime, state, calling_realm)
                     .map_err(runtime_error_to_vm_error)?;
+                let selected = match selected {
+                    crate::engine::value::conversion::NativeConversion::Value(selected) => selected,
+                    crate::engine::value::conversion::NativeConversion::Throw(value) => {
+                        let mut value = OwnedValueGuard::new(state, &runtime.0.poisoned, value);
+                        let (state, value) = value.parts();
+                        inputs
+                            .retire(state, &runtime.0.poisoned)
+                            .map_err(runtime_error_to_vm_error)?;
+                        fresh_overflow = true;
+                        native_reply = Some(StateNativeProgress::Complete(Completion::Throw(
+                            value.take().expect("Bound getter overflow diagnostic"),
+                        )));
+                        return Ok(Progress::Completed);
+                    }
+                };
                 let call = match selected {
                     CallbackSelection::Ordinary(call) => call,
                     CallbackSelection::General => {
@@ -217,7 +235,16 @@ pub(in crate::engine::vm) fn finish_selected(
                 // already survived canonical activation retirement.
                 owner.retire().map_err(runtime_error_to_vm_error)?;
                 drop(owner);
-                finish_native_reply(runtime, state, segment, native, fallthrough)
+                let result = finish_native_reply(runtime, state, segment, native, fallthrough)?;
+                Ok(if fresh_overflow {
+                    // The actual Error edge is now in the stack throw slot,
+                    // with its original fault PC. Propagated getter throws
+                    // have no new publication fact.
+                    debug_assert!(matches!(result, Progress::Throw));
+                    Progress::CyclePublishedThrow
+                } else {
+                    result
+                })
             } else {
                 result
             }

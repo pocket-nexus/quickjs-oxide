@@ -299,6 +299,12 @@ pub(in crate::engine::vm) enum Step {
         value: Option<Completion>,
         resume: Option<Resume>,
     },
+    /// This completion owns a freshly published collectible producer. The
+    /// canonical State advance consumes the fact before the ordinary reply.
+    CyclePublishedPrimitiveReply {
+        value: Option<Completion>,
+        resume: Option<Resume>,
+    },
     RawRead {
         read: Option<crate::engine::object::ReadStep>,
         key: crate::engine::atom::Atom,
@@ -654,6 +660,7 @@ impl Step {
             | Self::NumberReply { .. }
             | Self::StringReply { .. }
             | Self::PrimitiveReply { .. }
+            | Self::CyclePublishedPrimitiveReply { .. }
             | Self::RawRead { .. }
             | Self::RawCall { .. }
             | Self::CallbackBoundary(_)
@@ -708,7 +715,8 @@ impl Step {
                     resume.release_owned(runtime);
                 }
             }
-            Self::PrimitiveReply { value, resume } => {
+            Self::PrimitiveReply { value, resume }
+            | Self::CyclePublishedPrimitiveReply { value, resume } => {
                 if let Some(value) = value {
                     release_completion(value);
                 }

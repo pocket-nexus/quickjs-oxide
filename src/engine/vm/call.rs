@@ -1,3 +1,5 @@
+mod bound;
+pub(crate) use bound::BoundSelection;
 pub(super) mod ordinary;
 pub(crate) use ordinary::NativeSelection;
 
@@ -5,9 +7,9 @@ mod protocol;
 
 mod request;
 
-pub(in crate::engine::vm) use request::{
-    BytecodeCallRequest, NormalizedCallback, normalize_callback,
-};
+pub(in crate::engine::vm) use request::{BytecodeCallRequest, normalize_callback};
+
+pub(crate) use request::{NormalizedCallback, normalize_selected_bound_callback};
 
 mod native;
 
@@ -59,64 +61,24 @@ impl Runtime {
                     this_value,
                     arguments,
                 } => {
-                    let target = *target;
-                    let this_value = this_value.clone();
-                    let arguments = arguments.clone();
-                    #[cfg(feature = "profiling")]
-                    {
-                        // Cloning this Rc slice shares storage: no raw element
-                        // copy, new allocation, or root retain is inferred.
-                        crate::engine::api::profiling::record_call_buffer_share(
-                            "bound.raw_snapshot",
-                            arguments.len(),
-                            size_of::<crate::engine::heap::RawValue>(),
-                        );
-                    }
+                    let selected =
+                        BoundSelection::new(*target, this_value.clone(), arguments.clone());
                     drop(state);
-                    let target = ObjectRef::from_borrowed_handle(self.clone(), target)?;
-                    let target = CallableRef::from_validated_object(target);
-                    let to_internal =
-                        |raw: &crate::engine::heap::RawValue| -> Result<JsValue, RuntimeError> {
-                            let value = JsValue::from_raw(raw.clone()).ok_or(
-                                RuntimeError::Invariant("bound value was an internal sentinel"),
-                            )?;
-                            self.dup_jsvalue(&value)
-                        };
-                    let mut owned_arguments = Vec::new();
-                    owned_arguments
-                        .try_reserve_exact(arguments.len())
-                        .map_err(|_| {
-                            RuntimeError::Invariant("bound argument snapshot allocation failed")
-                        })?;
-                    let this_value = to_internal(&this_value)?;
-                    for raw in arguments.iter() {
-                        match to_internal(raw) {
-                            Ok(value) => owned_arguments.push(value),
-                            Err(error) => {
-                                let _ = self.release_jsvalue(this_value);
-                                for value in owned_arguments {
-                                    let _ = self.release_jsvalue(value);
-                                }
-                                return Err(error);
-                            }
-                        }
-                    }
-                    let arguments = owned_arguments;
-                    #[cfg(feature = "profiling")]
-                    {
-                        crate::engine::api::profiling::record_call_buffer_observed(
-                            "bound.rooted_snapshot",
-                            arguments.capacity(),
-                            size_of::<JsValue>(),
-                        );
-                        crate::engine::api::profiling::record_call_buffer_js_value_copies(
-                            "bound.rooted_snapshot",
-                            &arguments,
-                        );
-                    }
+                    let inputs = selected
+                        .snapshot_in_state(&mut self.0.state.borrow_mut(), &self.0.poisoned)?;
+                    self.check_poison()?;
+                    let crate::engine::vm::call::ordinary::RawCallbackInputs {
+                        selected_callee,
+                        receiver,
+                        arguments,
+                        ..
+                    } = inputs;
                     return Ok(CallableExecution::Bound {
-                        target,
-                        this_value,
+                        target: CallableRef::from_validated_object(ObjectRef::from_owned_handle(
+                            self.clone(),
+                            selected_callee.expect("promoted Bound target"),
+                        )),
+                        this_value: receiver.expect("promoted Bound receiver"),
                         arguments,
                     });
                 }
