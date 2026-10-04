@@ -78,6 +78,20 @@ Date 的无 JS 转换方法按固定 selector 选择状态实现，覆盖普通�
 
 属性定义的内部 current descriptor 在同一状态访问与 receiver owner 保护下借用；删除它的独立 promotion，因此内部 mapped Arguments/Namespace 的 current MAX 拒绝不再发生。公共 mapped 路径保留 current/completion/cell 的 checked 角色和清理顺序，String/BigInt 的 cell 与只读 slot 仍使用独立 producer。Array 长度转换、typed numeric 转换和共享 backing mutex 保持真实边界，不重放已经完成的转换。迁移适配器退出后先确认 poison，再返回成功。
 
+## 中途机制检查
+
+在 runtime 提交 `25c152d6` 上，仅对冻结的 Richards/DeltaBlue 固定工作量各执行一次诊断运行。Rust 1.88、release、profiling feature、无 PGO；两项完成标志与冻结输入逐项核对。对照复用阶段 A 的相同诊断工作量。
+
+| 计数 | Richards：A → 当前 B | DeltaBlue：A → 当前 B |
+| --- | ---: | ---: |
+| `core.runtime_clone` | 1,315,081 → 981,472（−25.37%） | 1,400,731 → 759,115（−45.81%） |
+| 四类状态访问计数合计 | 4,764,530 → 4,354,394（−8.61%） | 4,649,509 → 3,508,032（−24.55%） |
+| `core.frame_executor_exit` | 524,690 → 524,628 | 383,947 → 383,842 |
+
+状态访问合计包含 `borrow`、`borrow_mut`、`try_borrow`、`try_borrow_mut`，表示被记录的访问次数。计数证明已有实现减少了部分 clone 与访问；解释循环退出尚未明显减少，属性读取和转换的实际 resident 消费仍需完成。计数范围不能证明全局架构指标归零，也不能换算成耗时收益。
+
+回执：`/home/eric/.cache/oxide-runtime-core-20261003/b-interim-25c152d6-mechanism/summary.json`，SHA256 `4259a7d3bf701c74dc97e73351aa3b2fc859fc5c49d54d40013ce98a994bae94`。保存原始 JSONL、受测二进制和构建配置。第一次收集器读取了错误 schema 名；Richards 执行已成功，修正解析后复用其原始输出，仅继续 DeltaBlue，没有重跑 Richards。未运行原版 Score、A/A、Boa 或性能验收。
+
 ## 性能归因与剩余验收
 
 **阶段 B 尚无性能结论。** 最近一次完成整套验收的无 PGO 结果仍是[阶段 A](runtime-core-stage-a.md)：原版 Combined 中位分数从 191 到 215，配对收益 12.30%；历史 Boa Combined 为 300。阶段 A 结果不能替阶段 B 的新增提交背书。
