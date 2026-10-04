@@ -208,9 +208,6 @@ impl Query {
         retired?;
         self.parents.0.clear();
         self.natives.clear();
-        for parents in &mut self.spare_parents {
-            parents.0.clear();
-        }
         self.saved_native_depth = 0;
         self.recycle_empty(storage);
         Ok(())
@@ -235,6 +232,170 @@ impl Query {
 mod tests {
     use super::*;
     use crate::engine::api::Runtime;
+
+    fn prepared_scope(
+        runtime: &Runtime,
+        context: &mut crate::engine::api::Context,
+    ) -> (
+        crate::engine::vm::call::PreparedNativeCall,
+        crate::engine::heap::ObjectId,
+    ) {
+        use crate::engine::{value::JsValue, vm::call::*};
+        let callable = runtime
+            .callable_from_value(context.eval("Number.isFinite").unwrap())
+            .unwrap();
+        let CallableExecution::Native {
+            target,
+            realm,
+            min_readable_args,
+        } = runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("native predicate")
+        };
+        let marker = runtime.new_object(None).unwrap().into_handle();
+        let alias = runtime.dup_jsvalue(&JsValue::Object(marker)).unwrap();
+        let call = runtime
+            .prepare_native_invocation_jsvalue(
+                &callable,
+                realm,
+                target,
+                min_readable_args,
+                NativeInvocation::Call {
+                    this_value: JsValue::Object(marker),
+                },
+                vec![alias],
+                NativeInvokeMode::Ordinary,
+            )
+            .unwrap()
+            .into_inner();
+        (call, marker)
+    }
+
+    #[test]
+    fn resident_outer_scopes_reuse_empty_parents_after_return_and_throw() {
+        use crate::engine::{
+            value::JsValue,
+            vm::{
+                Completion,
+                proxy_get_driver::{RawNativeQuery, Step},
+                stack::SlotStore,
+            },
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let mut storage = QueryStorage::default();
+        let mut slots = SlotStore::new(1024);
+        let mut warmed_capacity = None;
+        for throwing in [false, true] {
+            for _ in 0..128 {
+                let (call, marker) = prepared_scope(&runtime, &mut context);
+                let query = storage.acquire(context.realm, Vec::new(), Finish::Root);
+                let completion = if throwing {
+                    Completion::Throw(JsValue::Int(42))
+                } else {
+                    Completion::Return(JsValue::Int(42))
+                };
+                let mut state = runtime.0.state.borrow_mut();
+                let mut owner = RawNativeQuery::new(
+                    &runtime,
+                    &mut state,
+                    call,
+                    query,
+                    Step::Complete(Some(completion)),
+                );
+                // Actual outer activation publication, including an active
+                // semantic parent that must not be moved into the empty scope.
+                owner.query.as_mut().unwrap().parents.push(Resume::Identity);
+                owner.publish_outer_scope().unwrap();
+                assert_eq!(owner.query.as_ref().unwrap().parents.len(), 1);
+                assert!(owner.query.as_ref().unwrap().natives[0].parents.is_empty());
+                owner.finish_native_scope(&mut slots).unwrap();
+                let completion = owner.finish_outer(&mut slots).unwrap();
+                assert!(matches!(completion, Completion::Throw(JsValue::Int(42))) == throwing);
+                let query = owner.take_query();
+                assert!(query.parents.is_empty());
+                assert_eq!(query.spare_parents.len(), 1);
+                assert!(query.spare_parents[0].is_empty());
+                drop(owner);
+                query
+                    .recycle_in_state(&runtime, &mut state, &mut storage)
+                    .unwrap();
+                assert!(state.heap.object(marker).is_err());
+                assert!(state.active_frames.is_empty());
+                let buffers = &storage.free[0];
+                let capacity = (buffers.natives.capacity(), buffers.spare_parents.capacity());
+                assert_eq!(*warmed_capacity.get_or_insert(capacity), capacity);
+                assert_eq!(storage.free.len(), 1);
+            }
+        }
+        assert_eq!(runtime.0.raw_execution_owners.get(), 0);
+        assert!(!runtime.0.deferred_references.has_pending());
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn resident_nested_scopes_reserve_all_return_buffers_and_retire_each_owner() {
+        use crate::engine::{
+            value::JsValue,
+            vm::{
+                Completion,
+                proxy_get_driver::{RawNativeQuery, Step},
+                stack::SlotStore,
+            },
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let mut storage = QueryStorage::default();
+        let mut slots = SlotStore::new(1024);
+        let (call, marker) = prepared_scope(&runtime, &mut context);
+        let mut nested = Vec::new();
+        let mut markers = vec![marker];
+        for _ in 0..8 {
+            let (call, marker) = prepared_scope(&runtime, &mut context);
+            nested.push(call);
+            markers.push(marker);
+        }
+        let query = storage.acquire(context.realm, Vec::new(), Finish::Root);
+        let mut state = runtime.0.state.borrow_mut();
+        let mut owner =
+            RawNativeQuery::new(&runtime, &mut state, call, query, Step::Complete(None));
+        owner.publish_outer_scope().unwrap();
+        for call in nested {
+            owner.step = Step::RawCall {
+                inputs: None,
+                resume: Some(Resume::Identity),
+            };
+            owner.pending_call = Some(call);
+            owner.pending_step = Some(Step::Complete(Some(Completion::Return(JsValue::Int(42)))));
+            owner.install_pending_native_scope().unwrap();
+        }
+        let query = owner.query.as_ref().unwrap();
+        assert_eq!(query.natives.len(), 9);
+        assert!(query.spare_parents.capacity() >= query.natives.len());
+        let capacity = query.spare_parents.capacity();
+        for marker in markers.iter().rev() {
+            owner.query.as_mut().unwrap().parents.push(Resume::Identity);
+            owner.finish_native_scope(&mut slots).unwrap();
+            assert_eq!(
+                owner.query.as_ref().unwrap().spare_parents.capacity(),
+                capacity
+            );
+            assert!(owner.state.heap.object(*marker).is_err());
+        }
+        assert!(matches!(
+            owner.finish_outer(&mut slots).unwrap(),
+            Completion::Return(JsValue::Int(42))
+        ));
+        assert!(owner.state.active_frames.is_empty());
+        let query = owner.take_query();
+        drop(owner);
+        query
+            .recycle_in_state(&runtime, &mut state, &mut storage)
+            .unwrap();
+        assert!(storage.free[0].spare_parents.iter().all(Parents::is_empty));
+        assert_eq!(runtime.0.raw_execution_owners.get(), 0);
+        assert!(!runtime.is_poisoned());
+    }
 
     #[cfg(feature = "profiling")]
     #[test]

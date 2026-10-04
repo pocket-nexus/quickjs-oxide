@@ -1011,11 +1011,18 @@ impl<'a> RawNativeQuery<'a> {
         let query = self.query.as_mut().expect("resident native query");
         super::storage::reserve(&mut query.natives, 1, "query.native_scopes")
             .map_err(|_| RuntimeError::Invariant("native continuation allocation failed"))?;
-        super::storage::reserve(&mut query.spare_parents, 1, "query.spare_parents")
-            .map_err(|_| RuntimeError::Invariant("native parent storage allocation failed"))?;
+        super::storage::reserve(
+            &mut query.spare_parents,
+            query.natives.len() + 1,
+            "query.spare_parents",
+        )
+        .map_err(|_| RuntimeError::Invariant("native parent storage allocation failed"))?;
         query.natives.push(super::NativeScope {
             call: self.call.take().expect("resident outer native"),
-            parents: super::Parents::default(),
+            // The outer scope preserves the current semantic parents. It still
+            // needs an empty return buffer, acquired from the same cache as a
+            // nested scope; otherwise every completed outer call adds one.
+            parents: query.spare_parents.pop().unwrap_or_default(),
             resume: Resume::Identity,
             parent_realm: query.realm,
         });
@@ -1166,8 +1173,12 @@ impl RawNativeQuery<'_> {
         let query = self.query.as_mut().expect("resident query");
         super::storage::reserve(&mut query.natives, 1, "query.native_scopes")
             .map_err(|_| RuntimeError::Invariant("native continuation allocation failed"))?;
-        super::storage::reserve(&mut query.spare_parents, 1, "query.spare_parents")
-            .map_err(|_| RuntimeError::Invariant("native parent storage allocation failed"))?;
+        super::storage::reserve(
+            &mut query.spare_parents,
+            query.natives.len() + 1,
+            "query.spare_parents",
+        )
+        .map_err(|_| RuntimeError::Invariant("native parent storage allocation failed"))?;
         Ok(())
     }
     pub(in crate::engine::vm) fn finish_native_scope(
@@ -1184,6 +1195,9 @@ impl RawNativeQuery<'_> {
         for resume in query.parents.0.iter_mut().rev() {
             resume.retire_raw_in_state(self.state, &self.runtime.0.poisoned)?;
         }
+        // Retired semantic entries must not be replayed when this buffer is
+        // reused. A retirement failure leaves them armed for quarantine.
+        query.parents.0.clear();
         let empty = std::mem::replace(&mut query.parents, scope.parents);
         query.spare_parents.push(empty);
         query.realm = scope.parent_realm;
