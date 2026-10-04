@@ -887,6 +887,8 @@ impl Runtime {
                 NativeInvocationAdaptation::Complete(result) => Ok(result),
                 NativeInvocationAdaptation::Invoke(invocation) => {
                     let result = state.dispatch_state_native_body(
+                        &self.0.poisoned,
+                        self.0.host_services.as_ref(),
                         target,
                         realm,
                         &invocation,

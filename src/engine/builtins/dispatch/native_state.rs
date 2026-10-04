@@ -220,11 +220,19 @@ impl RuntimeState {
             NativeFunctionId::NumberPredicate(_)
                 | NativeFunctionId::MathRandom
                 | NativeFunctionId::FunctionPrototype
+                | NativeFunctionId::Date(
+                    crate::engine::builtins::native::DateNativeKind::Now
+                        | crate::engine::builtins::native::DateNativeKind::TimeValue
+                        | crate::engine::builtins::native::DateNativeKind::String(_)
+                        | crate::engine::builtins::native::DateNativeKind::TimezoneOffset
+                        | crate::engine::builtins::native::DateNativeKind::GetField(_)
+                )
         )
     }
     pub(crate) fn invoke_state_native_body(
         &mut self,
         poisoned: &std::cell::Cell<bool>,
+        host: &dyn crate::engine::host::HostServices,
         target: NativeFunctionId,
         realm: ContextId,
         invocation: &NativeInvocation,
@@ -235,14 +243,22 @@ impl RuntimeState {
         {
             NativeInvocationAdaptation::Complete(completion) => Ok(completion),
             NativeInvocationAdaptation::Invoke(invocation) => {
-                let result =
-                    self.dispatch_state_native_body(target, realm, invocation.as_ref(), arguments);
+                let result = self.dispatch_state_native_body(
+                    poisoned,
+                    host,
+                    target,
+                    realm,
+                    invocation.as_ref(),
+                    arguments,
+                );
                 invocation.release_in_state(self, poisoned).and(result)
             }
         }
     }
     pub(crate) fn dispatch_state_native_body(
         &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        host: &dyn crate::engine::host::HostServices,
         target: NativeFunctionId,
         realm: ContextId,
         invocation: &NativeInvocation,
@@ -256,6 +272,9 @@ impl RuntimeState {
             }
             NativeFunctionId::MathRandom => self.call_math_random(realm, invocation),
             NativeFunctionId::FunctionPrototype => Ok(Completion::Return(JsValue::Undefined)),
+            NativeFunctionId::Date(kind) => {
+                self.call_date_readonly_native(poisoned, host, realm, kind, invocation)
+            }
             _ => Err(RuntimeError::Invariant(
                 "native body has not migrated to state",
             )),

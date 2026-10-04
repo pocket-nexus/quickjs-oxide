@@ -99,7 +99,7 @@ impl DateConstructorStep {
             }
         };
         if kind == DateNativeKind::Now {
-            return Ok(Self::Complete(runtime.call_date_now()?));
+            return Ok(Self::Complete(runtime.call_date_now(realm)?));
         }
         if kind == DateNativeKind::Constructor && matches!(new_target, JsValue::Undefined) {
             return Ok(Self::Complete(runtime.call_date_as_function()?));

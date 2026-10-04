@@ -249,6 +249,7 @@ impl<'a> FrameExecution<'a> {
             let (state, call) = owner.parts();
             state.invoke_state_native_body(
                 &runtime.0.poisoned,
+                runtime.0.host_services.as_ref(),
                 target,
                 realm,
                 &call.invocation,

@@ -400,11 +400,16 @@ impl Runtime {
             TypedArrayNativeKind as Ta,
         };
         match target {
-            NativeFunctionId::FunctionPrototype => self
-                .0
-                .state
-                .borrow_mut()
-                .dispatch_state_native_body(target, realm, invocation, arguments),
+            NativeFunctionId::FunctionPrototype => {
+                self.0.state.borrow_mut().dispatch_state_native_body(
+                    &self.0.poisoned,
+                    self.0.host_services.as_ref(),
+                    target,
+                    realm,
+                    invocation,
+                    arguments,
+                )
+            }
             NativeFunctionId::Map(kind) => {
                 self.call_map_native_borrowed(realm, kind, invocation, arguments)
             }
@@ -592,10 +597,14 @@ impl Runtime {
         match target {
             NativeFunctionId::FunctionPrototype => {
                 self.dispatch_borrowed_invocation(invocation, |invocation| {
-                    self.0
-                        .state
-                        .borrow_mut()
-                        .dispatch_state_native_body(target, realm, invocation, arguments)
+                    self.0.state.borrow_mut().dispatch_state_native_body(
+                        &self.0.poisoned,
+                        self.0.host_services.as_ref(),
+                        target,
+                        realm,
+                        invocation,
+                        arguments,
+                    )
                 })
             }
             NativeFunctionId::FunctionConstructor(kind) => {

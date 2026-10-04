@@ -5,36 +5,21 @@
 //! accepting the realm's `Date.prototype` object.
 
 use super::calendar::{DateFields, DateInputFields, get_date_fields, set_date_fields};
-use super::format::{DateStringKind as DateFormatKind, format_date_string};
-use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::builtins::native::{
-    DateGetFieldKind, DateNativeKind, DateSetFieldKind, DateStringMethod,
-};
-use crate::engine::heap::{ContextId, ObjectPayload};
+use crate::engine::builtins::native::{DateNativeKind, DateSetFieldKind};
+use crate::engine::heap::ContextId;
 use crate::engine::object::ObjectRef;
 use crate::engine::value::conversion::NativeConversion;
 
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::JsValue;
+#[cfg(test)]
+use crate::engine::value::{JsString, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
 pub(crate) mod operation;
-
-fn date_format_kind(method: DateStringMethod) -> DateFormatKind {
-    match method {
-        DateStringMethod::String => DateFormatKind::String,
-        DateStringMethod::DateString => DateFormatKind::DateString,
-        DateStringMethod::TimeString => DateFormatKind::TimeString,
-        DateStringMethod::UtcString => DateFormatKind::UtcString,
-        DateStringMethod::IsoString => DateFormatKind::IsoString,
-        DateStringMethod::LocaleString => DateFormatKind::LocaleString,
-        DateStringMethod::LocaleDateString => DateFormatKind::LocaleDateString,
-        DateStringMethod::LocaleTimeString => DateFormatKind::LocaleTimeString,
-    }
-}
 
 fn date_input_fields(fields: &DateFields) -> DateInputFields {
     [
@@ -72,13 +57,22 @@ impl Runtime {
         };
 
         match kind {
-            DateNativeKind::TimeValue => self.call_date_time_value(realm, this_value),
-            DateNativeKind::String(method) => self.call_date_string(realm, this_value, method),
+            DateNativeKind::TimeValue
+            | DateNativeKind::String(_)
+            | DateNativeKind::TimezoneOffset
+            | DateNativeKind::GetField(_) => {
+                let _unwind = self.unwind_guard();
+                self.0.state.borrow_mut().call_date_readonly_native(
+                    &self.0.poisoned,
+                    self.0.host_services.as_ref(),
+                    realm,
+                    kind,
+                    invocation,
+                )
+            }
             DateNativeKind::ToPrimitive => {
                 self.call_date_to_primitive(realm, this_value, arguments)
             }
-            DateNativeKind::TimezoneOffset => self.call_date_timezone_offset(realm, this_value),
-            DateNativeKind::GetField(field) => self.call_date_get_field(realm, this_value, field),
             DateNativeKind::SetTime => self.call_date_set_time(realm, this_value, arguments),
             DateNativeKind::SetField(field) => {
                 self.call_date_set_field(realm, this_value, field, arguments)
@@ -97,64 +91,31 @@ impl Runtime {
         realm: ContextId,
         this_value: &JsValue,
     ) -> Result<NativeConversion<(ObjectRef, f64)>, RuntimeError> {
-        let JsValue::Object(id) = this_value else {
-            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
-                realm,
-                NativeErrorKind::Type,
-                "not a Date object",
-            )?));
+        // The legacy conversion domains still need a public temporary. Clone
+        // its Runtime before the checked receiver retain, as the old adapter did.
+        let receiver_runtime = if matches!(this_value, JsValue::Object(_)) {
+            let runtime = self.clone();
+            self.check_poison()?;
+            Some(runtime)
+        } else {
+            None
         };
-        let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
-        let value = {
-            let state = self.0.state.borrow();
-            match &state.heap.object(object.object_id())?.payload {
-                ObjectPayload::Date(value) => Some(*value),
-                ObjectPayload::Ordinary
-                | ObjectPayload::Proxy(_)
-                | ObjectPayload::RawJson
-                | ObjectPayload::Promise(_)
-                | ObjectPayload::RegExp(_)
-                | ObjectPayload::ArrayBuffer(_)
-                | ObjectPayload::SharedArrayBuffer(_)
-                | ObjectPayload::DataView(_)
-                | ObjectPayload::TypedArray(_)
-                | ObjectPayload::Array { .. }
-                | ObjectPayload::Arguments { .. }
-                | ObjectPayload::ArrayIterator { .. }
-                | ObjectPayload::IteratorHelper(_)
-                | ObjectPayload::IteratorWrap(_)
-                | ObjectPayload::AsyncFromSyncIterator(_)
-                | ObjectPayload::IteratorConcat(_)
-                | ObjectPayload::Map { .. }
-                | ObjectPayload::MapIterator { .. }
-                | ObjectPayload::Set { .. }
-                | ObjectPayload::WeakMap { .. }
-                | ObjectPayload::WeakSet { .. }
-                | ObjectPayload::WeakRef { .. }
-                | ObjectPayload::FinalizationRegistry(_)
-                | ObjectPayload::SetIterator { .. }
-                | ObjectPayload::ForInIterator(_)
-                | ObjectPayload::Primitive(_)
-                | ObjectPayload::NativeFunction { .. }
-                | ObjectPayload::BoundFunction { .. }
-                | ObjectPayload::BytecodeFunction { .. }
-                | ObjectPayload::GlobalObject { .. }
-                | ObjectPayload::Error
-                | ObjectPayload::StringIterator { .. }
-                | ObjectPayload::RegExpStringIterator { .. }
-                | ObjectPayload::AsyncFunctionState(_)
-                | ObjectPayload::Generator { .. }
-                | ObjectPayload::AsyncGenerator(_) => None,
-            }
-        };
-        let Some(value) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
-                realm,
-                NativeErrorKind::Type,
-                "not a Date object",
-            )?));
-        };
-        Ok(NativeConversion::Value((object, value)))
+        let _unwind = self.unwind_guard();
+        let result = self.0.state.borrow_mut().date_this_time_value_jsvalue(
+            &self.0.poisoned,
+            realm,
+            this_value,
+        )?;
+        Ok(match result {
+            NativeConversion::Value((object, value)) => NativeConversion::Value((
+                ObjectRef::from_owned_handle(
+                    receiver_runtime.expect("a genuine Date has an object receiver"),
+                    object,
+                ),
+                value,
+            )),
+            NativeConversion::Throw(value) => NativeConversion::Throw(value),
+        })
     }
 
     fn set_date_this_time_value(
@@ -169,107 +130,6 @@ impl Runtime {
             .set_date_value(object.object_id(), value)?;
         Ok(Completion::Return(
             crate::engine::value::number::operations::Number::compact(value).into(),
-        ))
-    }
-
-    fn call_date_time_value(
-        &self,
-        realm: ContextId,
-        this_value: &JsValue,
-    ) -> Result<Completion, RuntimeError> {
-        let (_, value) = match self.date_this_time_value_jsvalue(realm, this_value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(value));
-            }
-        };
-        Ok(Completion::Return(
-            crate::engine::value::number::operations::Number::compact(value).into(),
-        ))
-    }
-
-    /// `toGMTString` is not a ninth formatter native. The installer must
-    /// materialize `toUTCString` once and store that exact callable in both
-    /// properties, preserving `toGMTString === toUTCString` and the shared
-    /// function object's `name === "toUTCString"`.
-    fn call_date_string(
-        &self,
-        realm: ContextId,
-        this_value: &JsValue,
-        method: DateStringMethod,
-    ) -> Result<Completion, RuntimeError> {
-        let (_, value) = match self.date_this_time_value_jsvalue(realm, this_value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(value));
-            }
-        };
-        let kind = date_format_kind(method);
-        let fields = get_date_fields(value, kind.uses_local_time(), false, |instant| {
-            self.date_timezone_offset_minutes(instant)
-        });
-        let output = match format_date_string(fields.as_ref(), kind) {
-            Ok(output) => output,
-            Err(_) => {
-                return Ok(Completion::Throw(self.new_native_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Range,
-                    "Date value is NaN",
-                )?));
-            }
-        };
-        Ok(Completion::Return(self.unroot_value(&Value::String(
-            JsString::try_from_utf8(&output)?,
-        ))?))
-    }
-
-    fn call_date_get_field(
-        &self,
-        realm: ContextId,
-        this_value: &JsValue,
-        field: DateGetFieldKind,
-    ) -> Result<Completion, RuntimeError> {
-        let (_, value) = match self.date_this_time_value_jsvalue(realm, this_value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(value));
-            }
-        };
-        let Some(fields) = get_date_fields(value, field.uses_local_time(), false, |instant| {
-            self.date_timezone_offset_minutes(instant)
-        }) else {
-            return Ok(Completion::Return(
-                crate::engine::value::number::operations::Number::compact(f64::NAN).into(),
-            ));
-        };
-        let mut value = fields[usize::from(field.field_index())];
-        if field.is_legacy_year() {
-            value -= 1900.0;
-        }
-        Ok(Completion::Return(
-            crate::engine::value::number::operations::Number::compact(value).into(),
-        ))
-    }
-
-    fn call_date_timezone_offset(
-        &self,
-        realm: ContextId,
-        this_value: &JsValue,
-    ) -> Result<Completion, RuntimeError> {
-        let (_, value) = match self.date_this_time_value_jsvalue(realm, this_value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(value));
-            }
-        };
-        if value.is_nan() {
-            return Ok(Completion::Return(
-                crate::engine::value::number::operations::Number::compact(f64::NAN).into(),
-            ));
-        }
-        let offset = self.date_timezone_offset_minutes(value.trunc() as i64);
-        Ok(Completion::Return(
-            crate::engine::value::number::operations::Number::compact(f64::from(offset)).into(),
         ))
     }
 

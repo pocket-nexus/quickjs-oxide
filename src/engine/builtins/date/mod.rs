@@ -8,6 +8,7 @@ mod constructor;
 mod format;
 mod parse;
 mod prototype;
+mod state;
 
 use super::*;
 use crate::engine::object::builtin_properties::NativeBuiltinProperty;

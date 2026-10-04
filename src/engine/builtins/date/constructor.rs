@@ -16,7 +16,7 @@ use super::parse::ParsedDateString;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::heap::{ContextId, ObjectData, ObjectPayload};
+use crate::engine::heap::{ContextId, ObjectData};
 use crate::engine::object::ObjectRef;
 
 use crate::engine::value::{JsString, JsValue, Value};
@@ -61,27 +61,21 @@ impl Runtime {
         ))?))
     }
 
-    fn call_date_now(&self) -> Result<Completion, RuntimeError> {
-        Ok(
-            Completion::Return(
-                crate::engine::value::number::operations::Number::compact(
-                    self.date_now_millis() as f64
-                )
-                .into(),
-            ),
+    fn call_date_now(&self, realm: ContextId) -> Result<Completion, RuntimeError> {
+        let _unwind = self.unwind_guard();
+        self.0.state.borrow_mut().call_date_readonly_native(
+            &self.0.poisoned,
+            self.0.host_services.as_ref(),
+            realm,
+            DateNativeKind::Now,
+            &NativeInvocation::Call {
+                this_value: JsValue::Undefined,
+            },
         )
     }
 
     fn genuine_date_value(&self, value: &JsValue) -> Result<Option<f64>, RuntimeError> {
-        let JsValue::Object(object) = value else {
-            return Ok(None);
-        };
-        let state = self.0.state.borrow();
-        let object = state.heap.object(*object)?;
-        Ok(match &object.payload {
-            ObjectPayload::Date(value) => Some(*value),
-            _ => None,
-        })
+        self.0.state.borrow().genuine_date_value(value)
     }
 
     /// Allocate a genuine Date after the newTarget prototype lookup. Keeping

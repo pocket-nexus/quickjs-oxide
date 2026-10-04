@@ -3478,6 +3478,8 @@ mod continuous_call_tests;
 mod dynamic_ret_tests;
 
 #[cfg(test)]
+mod native_date_state_tests;
+#[cfg(test)]
 mod native_state_tests;
 #[cfg(test)]
 mod object_allocation_tests;

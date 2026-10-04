@@ -76,6 +76,8 @@ fn raw_native_activation_keeps_aliases_and_padding_without_runtime_owners() {
         NativeInvocationAdaptation::Invoke(invocation) => {
             let result = state
                 .dispatch_state_native_body(
+                    &runtime.0.poisoned,
+                    runtime.0.host_services.as_ref(),
                     target,
                     realm,
                     invocation.as_ref(),
