@@ -143,6 +143,10 @@ impl<'a> FrameExecution<'a> {
         Ok(Entry::Ordinary)
     }
 
+    // Constructor selection, receiver allocation and guarded publication are
+    // a complete transaction. Keep its allocation/rollback machinery outside
+    // the instruction loop; the ordinary call and numeric paths stay local.
+    #[inline(never)]
     pub(in crate::engine::vm) fn enter_constructor(
         &mut self,
         runtime: &Runtime,
