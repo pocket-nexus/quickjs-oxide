@@ -26,6 +26,7 @@
 | `a66f422b` | 普通与 exotic 的 callback-free 属性定义共用状态算法；完整覆盖 Array index/长度提交与回滚、mapped Arguments、String virtual、Namespace 和 typed postconversion write。Define、selected Set、VM 与 public-field 消费者直接使用同一存储算法；实际 layout/owner 发布处报告失败阶段，删除旧 Runtime 定义与 Array 表示变更实现。 |
 | `344ecc1f` | native preparation 直接返回借用 Runtime 的 guard，调用消费者直接使用它；删除生产路径的临时 Runtime 强 owner。只有确实跨越 Runtime binding 生命周期的独立测试使用显式 standalone 适配器。 |
 | `2706caae` | 静态属性读取直接借用已发布代码持有的 linked Atom，删除每帧 owning key 缓存及由该缓存导致的返回退避。只有实际挂起的 Proxy 请求提升 key；选择结果的 guard 持续保护到 key 和 receiver 的 fallible handoff 完成。 |
+| `2cb1eb5e` | Date 的旧 owned native 入口统一借用处理并显式退休 invocation；修复成功、抛错和 handler error 时遗漏原 receiver/newTarget owner。构造 helper 改为借用 invocation，仍复用既有算法与清理适配器。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -50,6 +51,7 @@
 - 属性定义：37 个新见证通过；普通配置完整 2353 项复用已通过的记录，最终仅有一个测试等价 lint 写法变化，该 fixture 单独重验；最终诊断配置完整 2575 项通过。两种配置各有 40 个成功子进程运行另列。严格 workspace/all-targets Clippy 两配置、host feature 与源检查通过；964 项 Rust/Cargo 输入与采纳提交逐项相同。覆盖 TDZ/lazy 权限、public mapped checked owner 与 String/BigInt producer、Array partial publication/回滚停止、typed resize/shared growth、Proxy 输入和域/admission 优先级。
 - Native preparation：3 个新生命周期与别名见证；普通配置 57 个、诊断配置 77 个不重叠的选定用例通过，两种配置严格 workspace/all-targets Clippy、host feature 和源检查通过。965 项 Rust/Cargo 输入与采纳提交逐项相同；没有重跑完整 library 套件。
 - Linked key 消费：4 个新见证，覆盖七种 primitive 表示、静态 String index、MAX 借用、Proxy key 提升拒绝和 getter receiver 交接拒绝。普通配置 93 个、诊断配置 105 个不重叠的选定用例通过，严格 Clippy 两配置、host 和源检查通过；没有完整套件或性能运行。保留一个 cfg-only 过滤器错误及两个 fixture 入口修正记录，生产源码在验收中没有变化。
+- Date invocation：5 个新见证，两种配置各通过 68 个不重叠的选定用例；严格 workspace/all-targets Clippy、host 与源检查通过。967 项 Rust/Cargo 输入与采纳提交逐项相同。覆盖 receiver/newTarget 正常释放、constructor prototype 抛错，以及清理失败先隔离、停止后续 callee/argv/frame 清理。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
