@@ -264,3 +264,53 @@ Dw +5.60%；D Ir +4.10%、Dw +9.07%；NS Ir −1.74%、Dw −1.59%。因此
 B32 的约 +59% 指令不能归因到 Date 算法或当作稳定 B 成本。
 原始回执 `r0-history-callgrind-{aecf0703,673e91ca}/` 与
 `r0-history-B32-B33-comparison.json`。其余历史区间仍需继续逐层补齐。
+
+### B1 发布契约与构造事务
+
+三个运行时提交：`b759e4d3` 将 global/descriptor 存储与发布失败处理移入
+当前 State，保留 R1 的共享追加与 owner 转移；`419ca76e` 区分对象分配的
+发布前拒绝和发布后失败，并在实际构造入口的临时 owner 清理前隔离状态；
+`0b69fbd2` 将整个构造选择、分配和安装事务放到循环外。普通调用/返回
+仍由当前执行循环推进，发布失败规则没有撤回。
+
+错误注入覆盖 Symbol edge 发布后失败、prototype 清理失败、weak registry
+失败和构造执行器的实际失败路径。workspace all-targets、CI fast 全部通过，
+focused Test262 为 6844/6844；每个提交的 R/D/NS 固定 profile 语义输出通过。
+
+分配迁移的首次短测发现 NavierStokes 局部 +18.08%。硬件 ABBA 确认
+全进程用户态周期约 +18.95%，退休指令几乎不变，分支误预测结果混合；
+另一个计数组合的前端停顿周期约 +87%，L1 指令缓存缺失却减少。它们支持
+继续检查生成代码与执行吞吐，不能将模拟 cache 缺失换算为时间。
+构造事务划界后，解释循环从 72,042 缩到 63,962 字节。相对分配迁移前版，
+局部 R/D/NS 约 −7.32%/−6.54%/−4.44%；相对前一已验收源 `3baf6cd1`
+（集成运行时 `56ac336a`）为 −5.57%/−5.64%/−4.84%，RegExp +0.96%
+且两对混合。不能把这些跨实验变化相加，或全部归因到某一个硬件事件。
+
+最终 `0b69fbd2` 对 A 的累计全九项 ABBA，36/36 原完整输出通过：
+
+| 子项 | 耗时变化 | 两对变化 |
+| --- | ---: | --- |
+| Richards | -20.17% | -21.36% / -18.98% |
+| DeltaBlue | -3.88% | -3.50% / -4.26% |
+| Crypto | -7.22% | -6.64% / -7.80% |
+| RayTrace | -8.40% | -8.60% / -8.19% |
+| EarleyBoyer | -10.67% | -11.22% / -10.12% |
+| RegExp | +1.75% | +2.55% / +0.95% |
+| Splay | -8.35% | -8.65% / -8.06% |
+| NavierStokes | +0.10% | +0.69% / -0.49% |
+| Combined | -5.98% | -5.15% / -6.82% |
+
+以上仍是两对日常短测，不是原版 Score 或正式置信区间。RegExp 的
+两对跨过既有 A/A 参照，NavierStokes 两对混合；均保持未分辨，阶段 B
+性能和架构门槛尚未宣布通过。最终 profile 对 A：R Ir −16.38%、Dw
+−20.44%；D Ir −2.70%、Dw −3.48%；NS Ir +0.67%、Dw −0.10%。
+普通 release 的 text＋rodata 相对 A 增长 0.26%；RSS、最长停顿与正式
+资源验收仍待阶段收口。
+
+原始回执：`recovery-layout-allocation-{vs-A,local}-abba-20261005/`、
+`recovery-allocation-local-abba-20261005/`、
+`recovery-constructor-outlined-local-abba-20261005/`、
+`recovery-allocation-{hardware,frontend}/`、
+`recovery-layout-allocation-gates.json`、
+`recovery-layout-allocation-callgrind-vs-A.json`、
+`recovery-layout-allocation-code-size.json` 及三个逐提交 profile 目录。
