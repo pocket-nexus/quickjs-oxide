@@ -1303,22 +1303,6 @@ pub(super) fn start_write_progress(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn start_receiver_write_progress(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    frame: FrameId,
-    key: PropertyKey,
-    value: JsValue,
-    receiver: JsValue,
-    strict: bool,
-    depth: usize,
-) -> Result<super::property_driver::PropertyProgress, Error> {
-    start_write_adapted(
-        runtime, execution, frame, None, key, value, receiver, strict, depth,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 fn start_write_adapted(
     runtime: &Runtime,
     execution: &mut RunningExecution,

@@ -268,7 +268,6 @@ pub(super) fn dispatch(
         VmAction::Import => import(&mut context)?,
         VmAction::Predicate(kind) => predicate(&mut context, kind)?,
         VmAction::SuperProperty(kind) => super_property(&mut context, kind)?,
-        VmAction::SetProperty(key) => set_property(&mut context, key)?,
         VmAction::GetField {
             index,
             keep_receiver,
@@ -567,34 +566,6 @@ fn super_property(
         super::super::super_property_driver::Progress::Call(CallStep::Bridge) => {
             Err(Error::internal("super property attempted replay"))
         }
-    }
-}
-
-#[inline(never)]
-fn set_property(context: &mut Context<'_>, key: Option<u32>) -> Result<Disposition, Error> {
-    let runtime = context.runtime;
-    let execution = &mut *context.execution;
-    let id = context.id;
-
-    let frame = execution.frames.current_mut(id)?;
-    if key.is_none() && matches!(execution.slots.peek(&frame.window, 1)?, JsValue::Object(_)) {
-        (*context.next_operation) = (*context.next_operation)
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("write conversion identity exhausted"))?;
-        *context.conversion = Some(
-            super::super::conversion_driver::ConversionTask::start_property_write(
-                runtime,
-                execution,
-                id,
-                *context.next_operation,
-            )?,
-        );
-        return Ok(Disposition::Entered);
-    }
-    match super::super::property_write_driver::write(runtime, execution, id, key)? {
-        CallStep::Entered => Ok(Disposition::Entered),
-        CallStep::Complete(completion) => Ok(context.complete(completion)),
-        CallStep::Bridge => Ok(Disposition::Bridge),
     }
 }
 

@@ -15,7 +15,6 @@ enum Finish {
     Predicate(Option<Box<super::predicate_driver::Input>>),
     SuperProperty(Option<Box<super::super_property_driver::Input>>),
     Plus,
-    PropertyWrite { base: JsValue, value: JsValue },
     AddLeft(JsValue),
     AddRight(JsValue),
 }
@@ -47,12 +46,6 @@ impl Drop for ConversionState {
         }
         let finish = std::mem::replace(&mut self.finish, Finish::Plus);
         match finish {
-            Finish::PropertyWrite { base, value } => {
-                if self.runtime.release_jsvalue(base).is_err() || self.runtime.is_poisoned() {
-                    return;
-                }
-                let _ = self.runtime.release_jsvalue(value);
-            }
             Finish::AddLeft(value) | Finish::AddRight(value) => {
                 let _ = self.runtime.release_jsvalue(value);
             }
@@ -100,7 +93,6 @@ pub(super) enum Progress {
     Ready(ConversionTask),
     Entered,
     Complete(Completion),
-    PropertyWrite(Box<super::property_write_driver::ConvertedWrite>),
 }
 
 fn add_completion(
@@ -255,7 +247,6 @@ impl ConversionTask {
                 .expect("super conversion input")
                 .operand_count(),
             Finish::Plus => 1,
-            Finish::PropertyWrite { .. } => 3,
             _ => 2,
         }
     }
@@ -334,30 +325,6 @@ impl ConversionTask {
             frame,
             identity,
             step,
-        ))
-    }
-
-    pub(super) fn start_property_write(
-        runtime: &Runtime,
-        execution: &mut RunningExecution,
-        frame: FrameId,
-        identity: u64,
-    ) -> Result<Self, Error> {
-        let parent = execution.frames.current_mut(frame)?;
-        let value = execution.slots.pop(&mut parent.window)?;
-        let key = execution.slots.pop(&mut parent.window)?;
-        let base = execution.slots.pop(&mut parent.window)?;
-        Ok(Self::new(
-            runtime,
-            Finish::PropertyWrite { base, value },
-            frame,
-            identity,
-            PrimitiveResume::start(
-                runtime,
-                parent.executable.realm,
-                key,
-                ToPrimitiveHint::String,
-            )?,
         ))
     }
 
@@ -489,21 +456,6 @@ impl ConversionTask {
                                     .release_jsvalue(previous)
                                     .map_err(runtime_error_to_vm_error)?;
                                 return Ok(Progress::SuperProperty(input));
-                            }
-                            Finish::PropertyWrite {
-                                base,
-                                value: assigned,
-                            } => {
-                                let base = std::mem::replace(base, JsValue::Undefined);
-                                let assigned = std::mem::replace(assigned, JsValue::Undefined);
-                                return Ok(Progress::PropertyWrite(Box::new(
-                                    super::property_write_driver::ConvertedWrite {
-                                        base: Some(base),
-                                        key: Some(value),
-                                        value: Some(assigned),
-                                        runtime: runtime.clone(),
-                                    },
-                                )));
                             }
                             Finish::Plus => {
                                 match super::numeric::unary_plus_primitive(runtime, value) {

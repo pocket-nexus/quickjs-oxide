@@ -102,8 +102,6 @@ mod property_driver;
 
 mod proxy_get_driver;
 
-mod property_write_driver;
-
 mod super_property_driver;
 
 mod predicate_driver;

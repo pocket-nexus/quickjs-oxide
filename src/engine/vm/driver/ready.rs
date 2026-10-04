@@ -320,23 +320,6 @@ pub(super) fn run(
                 VmAction::WriteProperty { .. } => {
                     unreachable!("resident Set selection escaped its FrameExecution turn")
                 }
-                VmAction::SetProperty(key) => {
-                    let frame = execution.frames.current_mut(id)?;
-                    if key.is_none()
-                        && matches!(
-                            execution.slots.peek(&frame.window, 1)?,
-                            crate::engine::value::JsValue::Object(_)
-                        )
-                    {
-                        return Ok(Boundary::Exit(exit));
-                    }
-                    let progress = crate::engine::vm::property_write_driver::write_progress(
-                        runtime, execution, id, key,
-                    )?;
-                    if let Some(boundary) = property_boundary(progress) {
-                        return Ok(boundary);
-                    }
-                }
                 _ => return Ok(Boundary::Exit(exit)),
             }
             break 'resident;

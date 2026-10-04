@@ -822,25 +822,6 @@ fn run_frames_with_state(
                         }
                     }
                 }
-                Progress::PropertyWrite(input) => {
-                    match super::property_write_driver::converted(
-                        runtime,
-                        &mut execution,
-                        id,
-                        input,
-                    )? {
-                        CallStep::Entered => continue,
-                        CallStep::Complete(completion) => {
-                            forwarded = Some(completion);
-                            VmAction::Complete
-                        }
-                        CallStep::Bridge => {
-                            return Err(Error::internal(
-                                "converted property write attempted replay",
-                            ));
-                        }
-                    }
-                }
             }
         } else if forwarded.is_some() {
             VmAction::Complete

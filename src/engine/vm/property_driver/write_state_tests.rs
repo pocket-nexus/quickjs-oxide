@@ -478,3 +478,60 @@ fn resident_array_set_child_counts_outer_native_before_typed_valueof_maximum() {
     assert!(runtime.0.state.borrow().active_frames.is_empty());
     assert!(!runtime.is_poisoned());
 }
+
+#[test]
+fn borrowed_set_vm_keeps_selected_callbacks_and_strict_rejection() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    assert_eq!(
+        context
+            .eval(
+                r#"
+            (() => {
+                let trace = '';
+                const target = Object.create({set x(v) { trace += 's' + v; }});
+                target[{toString() { trace += 'k'; return 'x'; }}] = 7;
+                const proxy = new Proxy({}, {
+                    set(t, k, v, receiver) {
+                        trace += 'p' + v;
+                        return Reflect.set(t, k, v, receiver);
+                    }
+                });
+                proxy.x = 9;
+                const frozen = Object.freeze({x: 1});
+                frozen.x = 2;
+                try { (function() { 'use strict'; frozen.x = 3; })(); }
+                catch (e) { trace += e instanceof TypeError ? 't' : '?'; }
+                return trace === 'ks7p9t' && proxy.x === 9 && frozen.x === 1;
+            })()
+        "#
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+    assert!(runtime.0.state.borrow().active_frames.is_empty());
+}
+
+#[test]
+fn borrowed_set_vm_preserves_typed_conversion_reentry_and_throw() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    assert_eq!(
+        context
+            .eval(
+                r#"
+            (() => {
+                const target = new Uint8Array(1), marker = {};
+                let calls = 0;
+                target[0] = {valueOf() { calls++; target[0] = 8; return 257; }};
+                try { target[0] = {valueOf() { calls++; throw marker; }}; }
+                catch (e) { if (e !== marker) return false; }
+                return calls === 2 && target[0] === 1;
+            })()
+        "#
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+    assert!(runtime.0.state.borrow().active_frames.is_empty());
+}

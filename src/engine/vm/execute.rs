@@ -263,7 +263,6 @@ pub(super) enum VmAction {
         tail: bool,
         fallthrough: FallthroughPc,
     },
-    SetProperty(Option<u32>),
     /// Internal selection consumed by this same FrameExecution turn.
     WriteProperty {
         index: Option<u32>,
@@ -389,7 +388,6 @@ impl VmAction {
             Self::Eval { .. } => "execute.action.eval",
             Self::Call { .. } => "execute.action.call",
             Self::WriteProperty { .. } => "write_property",
-            Self::SetProperty(_) => "execute.action.set_property",
             Self::GetField { .. } => "execute.action.get_field",
             Self::GetElement { .. } => "execute.action.get_element",
             Self::InitializeDerived(_) => "execute.action.initialize_derived",
@@ -3329,8 +3327,6 @@ fn deferred_action(
             keep_key: opcode == Opcode::GetArrayEl3,
             fallthrough,
         },
-        Opcode::PutField => VmAction::SetProperty(Some(a)),
-        Opcode::PutArrayEl => VmAction::SetProperty(None),
         Opcode::GetSuper => VmAction::GetSuper,
         Opcode::PushHomeObject => VmAction::HomeObject,
         Opcode::GetSuperValue => VmAction::SuperProperty(super::super_property_driver::Kind::Read),
