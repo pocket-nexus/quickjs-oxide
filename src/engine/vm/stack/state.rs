@@ -367,9 +367,40 @@ impl FrameSlots<'_> {
         let stored = state
             .try_store_owned_linked_field(domain, object, input, executable, key)
             .map_err(runtime_error_to_vm_error)?;
-        if !stored.committed() {
-            return Ok(false);
+        match stored {
+            crate::engine::object::FieldStore::Miss => return Ok(false),
+            crate::engine::object::FieldStore::LayoutPublished => {
+                self.finish_added_field_write(state, poisoned, pressure)?;
+                return Ok(true);
+            }
+            crate::engine::object::FieldStore::Existing => {}
         }
+        self.retire_field_write(state, poisoned)?;
+        Ok(true)
+    }
+
+    /// Only a new layout needs a collection checkpoint. Keep this scheduling
+    /// boundary outside the existing-slot consumer; no tag or pressure borrow
+    /// survives across that consumer's two owner releases.
+    #[inline(never)]
+    fn finish_added_field_write(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        pressure: &crate::engine::heap::gc_pressure::GcPressure,
+    ) -> Result<(), Error> {
+        self.retire_field_write(state, poisoned)?;
+        state
+            .collect_if_requested(pressure, poisoned)
+            .map_err(runtime_error_to_vm_error)
+    }
+
+    #[inline]
+    fn retire_field_write(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+    ) -> Result<(), Error> {
         // Selection never moved the receiver. The input now owns the old slot
         // value, and it is retired before the receiver's final owner can die.
         state
@@ -378,18 +409,11 @@ impl FrameSlots<'_> {
         state
             .release_owned_jsvalue(poisoned, self.pop()?)
             .map_err(runtime_error_to_vm_error)?;
-        if stored == crate::engine::object::FieldStore::LayoutPublished {
-            // New owners are now heap edges; retired frame operands are vacant.
-            // Shape allocation can request collection even without a driver exit.
-            state
-                .collect_if_requested(pressure, poisoned)
-                .map_err(runtime_error_to_vm_error)?;
-        }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "ordinary_owned_field_write_in_execute",
         );
-        Ok(true)
+        Ok(())
     }
 
     /// Keep the temporary owner in the execution store until publication. A

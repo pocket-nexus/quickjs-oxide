@@ -11,6 +11,7 @@ pub(crate) enum FieldStore {
     LayoutPublished,
 }
 impl FieldStore {
+    #[cfg(test)]
     pub(crate) fn committed(self) -> bool {
         self != Self::Miss
     }
