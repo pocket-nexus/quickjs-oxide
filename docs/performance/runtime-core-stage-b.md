@@ -236,6 +236,32 @@ Combined 两对为 +9.14% / +9.79%；Splay 两对为 +0.89% / −0.06%，该项�
 
 完整 **1022 项**输入与采纳源码逐项相同；新编译完整 library 普通 **2612**、profiling **2834** 全过，严格 Clippy 两配置、profiling+test262-host 与全部源检查通过。回执 `b-native-local-publication/test-attempt-03/receipt.json`，SHA256 `a94f203051260ef8a446cc5f135d1c6778ee21c1e6552ae956cdd3485a706ec1`。此层未单独计时，不声称性能收益；上面的累计测量对应 B37，尚未包含本提交。
 
+## 已采纳的 RegExp Exec/Test 状态主体
+
+`37fa5f63` 让原生 exec/test、抽象 exec 与公开/旧消费者共用一套 State 阶段算法。输入、字符串与 lastIndex 转换、已选择的 exec 方法、实际子调用和严格 Set 进展进入既有 Query；内部 resume 不保存 Runtime。结果、groups 和 indices 工厂共享直接状态分配与 descriptor 发布，保留真实结果边的 checked retain；matcher 和编译算法不变。本地真实分配结果通过前一提交的共享服务完成，不为服务 GC 建立语义 Query。Constructor、Compile 和 presentation selectors 等仍是后续迁移范围。
+
+17 项新增见证覆盖品牌和转换顺序、全部原始输入、重定义/Proxy/bound/native exec、抛出身份、global/sticky/lastIndex、捕获别名、挂起放弃、真实 MAX 拒绝、发布失败、panic 和致命后缀隔离。既有“Query 身份耗尽仍能本地完成”断言保持并通过。
+
+普通完整 library **2629 项**曾全部通过；随后只把一个无条件 State impl 移到测试模块前以通过 Clippy，方法和测试主体字节相同。最终新编译并重测普通 RegExp **40 项**、共享服务 **6 项**、既有 no-Query/MAX 与 fatal-body 见证；其他完整普通成功结果通过精确 item 移位证明继承，**不称为重跑完整普通套件**。profiling 完整 library 新跑 **2851 项**全过；严格 Clippy 两配置、profiling+test262-host 与源检查通过。采纳的 **1023 项**输入与回执逐项相同：`b-regexp-exec-state/b37-test-attempt-03/receipt.json`，SHA256 `bd71338fe219648c76de96cd40ce743acd8981ecd421903cc637bc424eac40d9`。
+
+实际无 PGO release 使用组合实验提交 `ed1f83a6`（RegExp + 共享终结服务）对照 B37，各项一个 ABBA 块、两对；36 个进程与语义输出全部通过，计时没有并行构建或测试。**收益属于组合筛查，不单独归给 RegExp，也不作为原版 Score、置信区间或阶段 B 验收。**
+
+| 固定工作量 | B37 中位耗时 ms | 组合中位耗时 ms | 配对耗时变化 |
+|---|---:|---:|---:|
+| Richards | 770.15 | 779.73 | +1.24% |
+| DeltaBlue | 794.35 | 821.29 | +3.39% |
+| Crypto | 695.10 | 678.06 | −2.45% |
+| RayTrace | 835.17 | 830.58 | −0.55% |
+| EarleyBoyer | 1228.73 | 1251.78 | +1.88% |
+| RegExp | 2609.96 | 2297.60 | −11.97% |
+| Splay | 1721.68 | 1711.74 | −0.58% |
+| NavierStokes | 652.40 | 681.31 | +4.43% |
+| Combined | 9164.42 | 8866.57 | −3.25% |
+
+RegExp 两对为 −11.94% / −11.99%，Combined 为 −3.01% / −3.50%。针对 NavierStokes 的一次反序 BAAB 复核出现 −1.55% / +3.25%，中位 +0.85%，仍未确认该项变化。DeltaBlue 等回归信号保留到累计集成验收，不能因 Combined 改善而忽略。上面的 B37 相对 A 结果不能与此表百分比相加。
+
+组合二进制 SHA256 `ae5f6d146b9903ae852334c0a87e6e3c825c0242b9d9dd3f9e00c92324b610a9`；主筛查回执 `b-regexp-exec-state/b37-interim/paired-screen-summary.json`，SHA256 `f82b64e6510182664c1cf2bdc6ebcd265f7a8d39c4c34fb3ba260c3517406640`；NavierStokes 风险复核回执 SHA256 `39937157f9bb5fff47602d111e97fb3bad3856161cf2965f7dc9c6110baa8930`。text+rodata 相对 B37 减少 **0.1273%**，相对 A 增加 **1.7881%**；RSS 和完整阶段资源验收未在此层完成。未重跑 Boa、A/A 或原版 Score，阶段 B 最终门槛仍未通过。
+
 ## 中途机制检查
 
 在 runtime 提交 `25c152d6` 上，仅对冻结的 Richards/DeltaBlue 固定工作量各执行一次诊断运行。Rust 1.88、release、profiling feature、无 PGO；两项完成标志与冻结输入逐项核对。对照复用阶段 A 的相同诊断工作量。
