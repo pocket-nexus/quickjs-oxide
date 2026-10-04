@@ -322,8 +322,11 @@ pub(super) fn read_progress_selected(
         .map(PropertyProgress::Deferred);
     }
     let depth = execution.slots.depth(&frame.window);
-    enum SelectedKey<'a> {
-        Borrowed(&'a PropertyKey),
+    enum SelectedKey {
+        // Published executable metadata owns this linked atom until this
+        // synchronous selection ends. Only Proxy's pending request needs
+        // an independent key edge; getter dispatch does not consume a key.
+        Linked(crate::engine::atom::Atom),
         Owned(PropertyKey),
     }
     let (key, retained_key) = match key_kind {
@@ -338,16 +341,7 @@ pub(super) fn read_progress_selected(
             else {
                 return Err(Error::internal("property read has no linked key"));
             };
-            let cache = &mut frame.cold.property_keys;
-            let key = match cache.entry(index) {
-                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(
-                    PropertyKey::from_borrowed_atom(runtime.clone(), atom)
-                        .map_err(|error| Error::internal(error.to_string()))?,
-                ),
-            };
-            let key = Some(SelectedKey::Borrowed(&*key));
-            (key, None)
+            (Some(SelectedKey::Linked(atom)), None)
         }
         ReadKey::Computed { keep_key } => {
             let value = execution.slots.peek(&frame.window, 0)?;
@@ -387,19 +381,18 @@ pub(super) fn read_progress_selected(
     // Lookup borrows the original rooted operand. Only a pending callback
     // needs a second receiver owner; completed reads move this slot directly.
     let read = match selected_read.read.take().map(Ok).unwrap_or_else(|| {
-        runtime.prepare_value_property_read_selected_jsvalue(
-            realm,
-            base,
-            key.as_ref()
-                .map(|key| match key {
-                    SelectedKey::Borrowed(key) => *key,
-                    SelectedKey::Owned(key) => key,
-                })
-                .ok_or(crate::engine::api::runtime_error::RuntimeError::Invariant(
-                    "fallback read lost its key",
-                ))?,
-            None,
-        )
+        match key
+            .as_ref()
+            .ok_or(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                "fallback read lost its key",
+            ))? {
+            SelectedKey::Linked(atom) => {
+                runtime.prepare_linked_value_property_read_jsvalue(realm, base, *atom)
+            }
+            SelectedKey::Owned(key) => {
+                runtime.prepare_value_property_read_selected_jsvalue(realm, base, key, None)
+            }
+        }
     }) {
         Ok(read) => read,
         Err(error) => {
@@ -407,15 +400,27 @@ pub(super) fn read_progress_selected(
                 .map(PropertyProgress::Deferred);
         }
     };
-    let key = if matches!(read, OrdinaryRead::Special { .. }) {
+    // Keep the selected effect armed across Proxy's checked key promotion.
+    // A rejected independent atom owner must retire the getter/Proxy and
+    // receiver owners without consuming the originating operand slots.
+    selected_read.read = Some(read);
+    let key = if matches!(
+        selected_read.read.as_ref(),
+        Some(OrdinaryRead::Special { .. })
+    ) {
         key.map(|key| match key {
-            SelectedKey::Borrowed(key) => key.try_clone(),
+            SelectedKey::Linked(atom) => PropertyKey::from_borrowed_atom(runtime.clone(), atom)
+                .map_err(|error| Error::internal(error.to_string())),
             SelectedKey::Owned(key) => Ok(key),
         })
         .transpose()?
     } else {
         None
     };
+    let read = selected_read
+        .read
+        .as_ref()
+        .expect("selected read remains owned");
     #[cfg(feature = "profiling")]
     if matches!(key_kind, ReadKey::Static(_)) && matches!(read, OrdinaryRead::Complete(_)) {
         use crate::engine::heap::ObjectKind;
@@ -463,8 +468,11 @@ pub(super) fn read_progress_selected(
             crate::engine::api::profiling::record_owned_execution_event(readiness);
         }
     }
-    match read {
-        OrdinaryRead::Complete(value) => complete_read(
+    if matches!(read, OrdinaryRead::Complete(_)) {
+        let Some(OrdinaryRead::Complete(value)) = selected_read.read.take() else {
+            unreachable!("completed selection remained armed")
+        };
+        complete_read(
             runtime,
             execution,
             id,
@@ -476,25 +484,31 @@ pub(super) fn read_progress_selected(
             depth,
             next_pc,
         )
-        .map(|()| PropertyProgress::Completed),
-        read => {
-            let preserved_receiver = runtime
-                .dup_jsvalue(base)
-                .map_err(runtime_error_to_vm_error)?;
-            read_pending(
-                runtime,
-                execution,
-                id,
-                preserved_receiver,
-                key,
-                read,
-                retained_key,
-                keep_receiver,
-                1 + usize::from(computed),
-                depth,
-            )
-            .map(PropertyProgress::Deferred)
-        }
+        .map(|()| PropertyProgress::Completed)
+    } else {
+        // The selected read's raw receiver also needs explicit retirement if
+        // this second, legacy preservation role is rejected. JsValue has no
+        // Drop; keep the finite guard armed until every handoff role exists.
+        let preserved_receiver = runtime
+            .dup_jsvalue(base)
+            .map_err(runtime_error_to_vm_error)?;
+        let read = selected_read
+            .read
+            .take()
+            .expect("pending read remains armed");
+        read_pending(
+            runtime,
+            execution,
+            id,
+            preserved_receiver,
+            key,
+            read,
+            retained_key,
+            keep_receiver,
+            1 + usize::from(computed),
+            depth,
+        )
+        .map(PropertyProgress::Deferred)
     }
 }
 
@@ -1040,7 +1054,7 @@ mod read_completion_tests {
         },
     };
 
-    fn read_fixture(
+    pub(super) fn read_fixture(
         runtime: &Runtime,
         context: &mut crate::engine::api::Context,
         source: &str,
@@ -1548,3 +1562,6 @@ mod read_completion_tests {
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }
+
+#[cfg(test)]
+mod linked_key_tests;

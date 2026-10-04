@@ -612,18 +612,6 @@ impl<'a> FrameExecution<'a> {
                 );
                 return Ok(ReturnProgress::Declined);
             }
-            if frame
-                .cold
-                .rare
-                .get()
-                .is_some_and(|rare| !rare.property_keys.is_empty())
-            {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "core.return_decline.live_wait",
-                );
-                return Ok(ReturnProgress::Declined);
-            }
             if execution.pending.is_none() {
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(

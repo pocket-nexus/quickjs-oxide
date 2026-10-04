@@ -87,7 +87,6 @@ pub(super) enum ConstructorReturn {
 
 #[derive(Default)]
 pub(super) struct FrameRare {
-    pub property_keys: std::collections::HashMap<u32, crate::engine::object::PropertyKey>,
     pub normalized_this: Option<JsValue>,
     property_wait: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
     pub iterator_wait: Option<crate::engine::vm::iterator_driver::PendingIterator>,
@@ -627,7 +626,6 @@ impl FrameCold {
     /// protocol. Call this outside the state borrow until their B migration.
     pub(super) fn release_legacy(&mut self) {
         if let Some(rare) = self.rare.get_mut() {
-            rare.property_keys.clear();
             rare.property_wait = None;
             rare.iterator_wait = None;
             rare.conversion = None;

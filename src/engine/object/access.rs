@@ -97,12 +97,35 @@ impl Runtime {
         if !key.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property key"));
         }
+        self.prepare_admitted_value_property_read_jsvalue(realm, receiver, key.atom(), native)
+    }
+
+    /// The executing PublishedFunctionSnapshot owns this linked atom. Normal
+    /// selection consumes no key owner; a pending Proxy request promotes one
+    /// at the actual callback boundary after lookup has completed.
+    pub(crate) fn prepare_linked_value_property_read_jsvalue(
+        &self,
+        realm: ContextId,
+        receiver: &JsValue,
+        atom: Atom,
+    ) -> Result<OrdinaryRead, RuntimeError> {
+        let _operation = self.operation()?;
+        self.prepare_admitted_value_property_read_jsvalue(realm, receiver, atom, None)
+    }
+
+    fn prepare_admitted_value_property_read_jsvalue(
+        &self,
+        realm: ContextId,
+        receiver: &JsValue,
+        atom: Atom,
+        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
+    ) -> Result<OrdinaryRead, RuntimeError> {
         let step = self.0.state.borrow_mut().prepare_value_read_in_state(
             &self.0.poisoned,
             self.domain_id(),
             realm,
             receiver,
-            key.atom(),
+            atom,
             native,
         )?;
         self.finish_read_boundary(step)
