@@ -488,23 +488,6 @@ pub(super) fn define(
                     .expect("selected Step field")
                     .into_owned(runtime)
                     .map_err(runtime_error_to_vm_error)?;
-                if let Some(accepted) = runtime
-                    .try_define_owned_property(&object, &key, &descriptor)
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    let result = if accepted {
-                        crate::engine::object::operations::InternalDefineResult::Defined
-                    } else {
-                        crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(
-                            object,
-                        )
-                    };
-                    let resume = resume.take().expect("selected Step field");
-                    *step = resume
-                        .defined(runtime, NativeConversion::Value(result))
-                        .map_err(runtime_error_to_vm_error)?;
-                    continue;
-                }
 
                 if runtime
                     .is_proxy_object(&object)
@@ -558,23 +541,6 @@ pub(super) fn define(
                     .expect("selected Step field")
                     .into_owned(runtime)
                     .map_err(runtime_error_to_vm_error)?;
-                if let Some(accepted) = runtime
-                    .try_define_owned_property(&object, &key, &descriptor)
-                    .map_err(runtime_error_to_vm_error)?
-                {
-                    let result = if accepted {
-                        crate::engine::object::operations::InternalDefineResult::Defined
-                    } else {
-                        crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(
-                            object,
-                        )
-                    };
-                    let resume = resume.take().expect("selected Step field");
-                    *step = resume
-                        .defined(runtime, NativeConversion::Value(result))
-                        .map_err(runtime_error_to_vm_error)?;
-                    continue;
-                }
 
                 if let Some(length) = runtime
                     .prepare_array_length_definition_owned(Some(realm), &object, &key, &descriptor)
@@ -615,13 +581,16 @@ pub(super) fn define(
                     *step = request.try_into()?;
                     continue;
                 }
-                let result = match runtime
-                        .define_owned_property_in_realm(Some(realm), &object, &key, &descriptor)
-                        .map_err(runtime_error_to_vm_error)? {
-                        crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => NativeConversion::Value(crate::engine::object::operations::InternalDefineResult::Defined),
-                        crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => NativeConversion::Value(crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(object)),
-                        crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
-                    };
+                let accepted = runtime
+                    .define_owned_property_after_conversion_selection(&object, &key, &descriptor)
+                    .map_err(runtime_error_to_vm_error)?;
+                let result = NativeConversion::Value(if accepted {
+                    crate::engine::object::operations::InternalDefineResult::Defined
+                } else {
+                    crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(
+                        object,
+                    )
+                });
                 let resume = resume.take().expect("selected Step field");
                 *step = resume
                     .defined(runtime, result)

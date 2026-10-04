@@ -38,6 +38,14 @@ pub(crate) enum OwnPropertySelection {
     Shared(SharedTypedOwnWord),
 }
 
+/// A checked stored-slot snapshot consumed under the selecting State lease.
+/// Handles borrow the receiver's edges; this is not an owning descriptor and
+/// must not cross a callback, collection, or property mutation.
+pub(super) struct StoredOwnProperty {
+    pub(super) flags: PropertyFlags,
+    pub(super) slot: PropertySlot,
+}
+
 impl RuntimeState {
     pub(crate) fn string_exotic_index_value(
         &self,
@@ -143,45 +151,59 @@ impl RuntimeState {
 
     /// Canonical shape/parallel-slot selection for every stored class. Owned
     /// reads use the same checked malformed-layout errors as public reads.
-    fn select_stored_own_property(
+    pub(super) fn stored_own_property(
+        &self,
+        object: ObjectId,
+        atom: Atom,
+    ) -> Result<Option<StoredOwnProperty>, RuntimeError> {
+        let data = self.heap.object(object)?;
+        let ordinary = matches!(
+            (data.kind, &data.payload),
+            (ObjectKind::Ordinary, ObjectPayload::Ordinary)
+        );
+        let shape = self.heap.shape(data.shape)?;
+        let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+            return Ok(None);
+        };
+        let index = usize::try_from(index)
+            .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
+        let entry = shape
+            .entries()
+            .get(index)
+            .ok_or(RuntimeError::Invariant(if ordinary {
+                "ordinary shape index is out of bounds"
+            } else {
+                "shape lookup index was out of bounds"
+            }))?;
+        let slot = data
+            .slots
+            .get(index)
+            .ok_or(RuntimeError::Invariant(if ordinary {
+                "ordinary shape has no parallel slot"
+            } else {
+                "object property slot was missing"
+            }))?;
+        Ok(Some(StoredOwnProperty {
+            flags: entry.flags,
+            slot: slot.clone(),
+        }))
+    }
+
+    pub(super) fn select_stored_own_property(
         &mut self,
         poisoned: &Cell<bool>,
         object: ObjectId,
         atom: Atom,
     ) -> Result<OwnPropertySelection, RuntimeError> {
         loop {
-            let data = self.heap.object(object)?;
-            let ordinary = matches!(
-                (data.kind, &data.payload),
-                (ObjectKind::Ordinary, ObjectPayload::Ordinary)
-            );
-            let shape = self.heap.shape(data.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+            let Some(selected) = self.stored_own_property(object, atom)? else {
                 return Ok(OwnPropertySelection::Missing);
             };
-            let index = usize::try_from(index)
-                .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
-            let entry = shape
-                .entries()
-                .get(index)
-                .ok_or(RuntimeError::Invariant(if ordinary {
-                    "ordinary shape index is out of bounds"
-                } else {
-                    "shape lookup index was out of bounds"
-                }))?;
-            let slot = data
-                .slots
-                .get(index)
-                .ok_or(RuntimeError::Invariant(if ordinary {
-                    "ordinary shape has no parallel slot"
-                } else {
-                    "object property slot was missing"
-                }))?;
-            let flags = entry.flags;
-            let record = match slot {
-                PropertySlot::Data(value) => Self::own_data_record(value.clone(), flags),
+            let flags = selected.flags;
+            let record = match selected.slot {
+                PropertySlot::Data(value) => Self::own_data_record(value, flags),
                 PropertySlot::VarRef(cell) => {
-                    let value = self.raw_var_ref_value(*cell)?;
+                    let value = self.raw_var_ref_value(cell)?;
                     if matches!(value, RawValue::Uninitialized) {
                         return Err(RuntimeError::Engine(self.native_atom_error(
                             ErrorKind::Reference,

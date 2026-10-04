@@ -14,91 +14,113 @@ impl Heap {
     /// Allocation failure before publication returns `Ok(None)` with the
     /// source layout and all owners unchanged. `Some(cleanup)` means the move
     /// committed; an error from subsequent shape finalization still propagates.
+    #[cfg(test)]
     pub(crate) fn recover_array_dense_shape(
         &mut self,
         id: ObjectId,
         shape: ShapeId,
         indexed_slots: &[usize],
     ) -> Result<Option<HeapCleanup>, HeapError> {
-        let (previous_shape, named_indices) = {
-            let object = self.object(id)?;
-            if !matches!(object.payload, ObjectPayload::Array { dense: None }) {
-                return Err(HeapError::Invariant("dense recovery requires a slow Array"));
-            }
-            let source = self.shape(object.shape)?;
-            let replacement = self.shape(shape)?;
-            self.validate_property_layout(object.shape, &object.slots)?;
-            if !source.dictionary_layout_is_valid() || replacement.is_dictionary() {
-                return Err(HeapError::Invariant(
-                    "dense recovery requires valid source and ordinary replacement shapes",
-                ));
-            }
-            if indexed_slots.is_empty()
-                || indexed_slots.len() > u32::MAX as usize
-                || indexed_slots.len() > source.entries().len()
-                || replacement.prototype() != source.prototype()
-                || replacement.entries().len() != source.entries().len() - indexed_slots.len()
-            {
-                return Err(HeapError::Invariant(
-                    "dense recovery shape or indexed count is invalid",
-                ));
-            }
+        self.recover_array_dense_shape_with_status(id, shape, indexed_slots)
+            .map_err(|failure| failure.error)
+    }
 
-            let mut named_indices = Vec::new();
-            if named_indices
-                .try_reserve_exact(replacement.entries().len())
-                .is_err()
-            {
+    pub(crate) fn recover_array_dense_shape_with_status(
+        &mut self,
+        id: ObjectId,
+        shape: ShapeId,
+        indexed_slots: &[usize],
+    ) -> Result<Option<HeapCleanup>, object_storage::SlotReplacementError> {
+        let prepared = (|| {
+            let (previous_shape, named_indices) = {
+                let object = self.object(id)?;
+                if !matches!(object.payload, ObjectPayload::Array { dense: None }) {
+                    return Err(HeapError::Invariant("dense recovery requires a slow Array"));
+                }
+                let source = self.shape(object.shape)?;
+                let replacement = self.shape(shape)?;
+                self.validate_property_layout(object.shape, &object.slots)?;
+                if !source.dictionary_layout_is_valid() || replacement.is_dictionary() {
+                    return Err(HeapError::Invariant(
+                        "dense recovery requires valid source and ordinary replacement shapes",
+                    ));
+                }
+                if indexed_slots.is_empty()
+                    || indexed_slots.len() > u32::MAX as usize
+                    || indexed_slots.len() > source.entries().len()
+                    || replacement.prototype() != source.prototype()
+                    || replacement.entries().len() != source.entries().len() - indexed_slots.len()
+                {
+                    return Err(HeapError::Invariant(
+                        "dense recovery shape or indexed count is invalid",
+                    ));
+                }
+
+                let mut named_indices = Vec::new();
+                if named_indices
+                    .try_reserve_exact(replacement.entries().len())
+                    .is_err()
+                {
+                    return Ok(None);
+                }
+                // A shape has unique atoms. Matching each immediate index to its
+                // numeric position in `indexed_slots` proves the mapping is unique;
+                // the expected named count below proves no index was omitted.
+                // Validate both kinds in logical order, including dictionary order,
+                // without an extra selected-slot bitmap or a second shape scan.
+                for slot_index in source.ordered_indices() {
+                    let entry = &source.entries()[slot_index];
+                    if let Some(index) = entry.atom.immediate_integer() {
+                        if indexed_slots.get(index as usize) != Some(&slot_index)
+                            || entry.flags != PropertyFlags::data(true, true, true)
+                            || !matches!(
+                                object.slots.get(slot_index),
+                                Some(PropertySlot::Data(value)) if is_map_storable_value(value)
+                            )
+                        {
+                            return Err(HeapError::Invariant(
+                                "dense recovery index is not default own data at its mapped slot",
+                            ));
+                        }
+                    } else {
+                        if replacement.entries().get(named_indices.len()) != Some(entry) {
+                            return Err(HeapError::Invariant(
+                                "dense recovery changed named property order or flags",
+                            ));
+                        }
+                        named_indices.push(slot_index);
+                    }
+                }
+                if named_indices.len() != replacement.entries().len() {
+                    return Err(HeapError::Invariant(
+                        "dense recovery omitted named properties",
+                    ));
+                }
+                (object.shape, named_indices)
+            };
+
+            // Complete every fallible allocation before retaining the new shape
+            // and publishing the representation change. Property values and their
+            // object/String/BigInt/Symbol edges are moved, never duplicated.
+            let mut dense = Vec::new();
+            if dense.try_reserve_exact(indexed_slots.len()).is_err() {
                 return Ok(None);
             }
-            // A shape has unique atoms. Matching each immediate index to its
-            // numeric position in `indexed_slots` proves the mapping is unique;
-            // the expected named count below proves no index was omitted.
-            // Validate both kinds in logical order, including dictionary order,
-            // without an extra selected-slot bitmap or a second shape scan.
-            for slot_index in source.ordered_indices() {
-                let entry = &source.entries()[slot_index];
-                if let Some(index) = entry.atom.immediate_integer() {
-                    if indexed_slots.get(index as usize) != Some(&slot_index)
-                        || entry.flags != PropertyFlags::data(true, true, true)
-                        || !matches!(
-                            object.slots.get(slot_index),
-                            Some(PropertySlot::Data(value)) if is_map_storable_value(value)
-                        )
-                    {
-                        return Err(HeapError::Invariant(
-                            "dense recovery index is not default own data at its mapped slot",
-                        ));
-                    }
-                } else {
-                    if replacement.entries().get(named_indices.len()) != Some(entry) {
-                        return Err(HeapError::Invariant(
-                            "dense recovery changed named property order or flags",
-                        ));
-                    }
-                    named_indices.push(slot_index);
-                }
+            let mut named = Vec::new();
+            if named.try_reserve_exact(named_indices.len()).is_err() {
+                return Ok(None);
             }
-            if named_indices.len() != replacement.entries().len() {
-                return Err(HeapError::Invariant(
-                    "dense recovery omitted named properties",
-                ));
-            }
-            (object.shape, named_indices)
+            self.retain_shape(shape)?;
+            Ok(Some((previous_shape, named_indices, dense, named)))
+        })();
+        let Some((previous_shape, named_indices, mut dense, mut named)) =
+            prepared.map_err(|error| object_storage::SlotReplacementError {
+                error,
+                published: false,
+            })?
+        else {
+            return Ok(None);
         };
-
-        // Complete every fallible allocation before retaining the new shape
-        // and publishing the representation change. Property values and their
-        // object/String/BigInt/Symbol edges are moved, never duplicated.
-        let mut dense = Vec::new();
-        if dense.try_reserve_exact(indexed_slots.len()).is_err() {
-            return Ok(None);
-        }
-        let mut named = Vec::new();
-        if named.try_reserve_exact(named_indices.len()).is_err() {
-            return Ok(None);
-        }
-        self.retain_shape(shape)?;
 
         self.invalidate_property_layout(id);
         let object = self
@@ -134,6 +156,10 @@ impl Heap {
 
         self.release_and_drain(RawId::Shape(previous_shape))
             .map(Some)
+            .map_err(|error| object_storage::SlotReplacementError {
+                error,
+                published: true,
+            })
     }
 }
 

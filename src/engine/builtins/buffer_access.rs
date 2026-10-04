@@ -82,6 +82,19 @@ pub(crate) fn read_shared_buffer_word(
         .map_err(shared_memory_runtime_error)
 }
 
+/// Shared word writes cross the same concrete mutex boundary as reads.
+pub(crate) fn write_shared_buffer_word(
+    handle: &SharedBufferHandle,
+    byte_offset: usize,
+    bytes: &[u8],
+) -> Result<(), RuntimeError> {
+    let byte_offset = u32::try_from(byte_offset)
+        .map_err(|_| RuntimeError::Invariant("shared buffer word offset overflowed u32"))?;
+    handle
+        .write_word(byte_offset, bytes)
+        .map_err(shared_memory_runtime_error)
+}
+
 const BUFFER_COPY_SCRATCH_BYTE_LENGTH: usize = 8 * 1024;
 
 impl Runtime {
@@ -281,12 +294,7 @@ impl Runtime {
                     .write_array_buffer_word(buffer.object_id(), byte_offset, bytes)?)
             }
             BufferBackingToken::Shared(handle) => {
-                let byte_offset = u32::try_from(byte_offset).map_err(|_| {
-                    RuntimeError::Invariant("shared buffer word offset overflowed u32")
-                })?;
-                handle
-                    .write_word(byte_offset, bytes)
-                    .map_err(shared_memory_runtime_error)
+                write_shared_buffer_word(handle, byte_offset, bytes)
             }
         }
     }

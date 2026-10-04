@@ -1,4 +1,3 @@
-use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::object::property::{CompletePropertyDescriptor, PropertyDescriptor};
 use crate::engine::object::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor,
@@ -139,21 +138,6 @@ impl ValidationValue<'_> {
             _ => false,
         }
     }
-    fn into_value(self) -> Result<Value, RuntimeError> {
-        match self {
-            Self::Value(value) => value.try_clone(),
-            Self::Callable(value) => Ok(Value::Object(value.as_object().try_clone()?)),
-            Self::Undefined => Ok(Value::Undefined),
-        }
-    }
-    fn into_callable(self) -> Result<CallableRef, RuntimeError> {
-        match self {
-            Self::Callable(value) => value.try_clone(),
-            _ => Err(RuntimeError::Invariant(
-                "validated accessor was not callable",
-            )),
-        }
-    }
 }
 
 pub(crate) fn descriptor_to_validation_record(
@@ -208,33 +192,4 @@ pub(crate) fn complete_to_validation_record(
             configurable: *configurable,
         },
     }
-}
-
-pub(crate) fn validation_record_to_complete(
-    descriptor: CompletePropertyDescriptor<ValidationValue<'_>>,
-) -> Result<CompleteOrdinaryPropertyDescriptor, RuntimeError> {
-    Ok(match descriptor {
-        CompletePropertyDescriptor::Data {
-            value,
-            writable,
-            enumerable,
-            configurable,
-        } => CompleteOrdinaryPropertyDescriptor::Data {
-            value: value.into_value()?,
-            writable,
-            enumerable,
-            configurable,
-        },
-        CompletePropertyDescriptor::Accessor {
-            get,
-            set,
-            enumerable,
-            configurable,
-        } => CompleteOrdinaryPropertyDescriptor::Accessor {
-            get: get.map(ValidationValue::into_callable).transpose()?,
-            set: set.map(ValidationValue::into_callable).transpose()?,
-            enumerable,
-            configurable,
-        },
-    })
 }

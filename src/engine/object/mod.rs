@@ -1091,7 +1091,10 @@ pub(crate) mod object_literal;
 
 pub(crate) mod private_elements;
 
+mod arguments_definition;
+mod array_definition;
 mod array_storage;
+mod definition;
 pub(crate) mod properties;
 
 pub(crate) mod template_object;

@@ -399,6 +399,8 @@ mod properties;
 
 mod own_properties;
 
+mod ordinary_definition;
+
 mod native_calls;
 
 mod active_frames;

@@ -7,7 +7,7 @@ use super::{
 };
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, PropertyKeyKind};
-use crate::engine::builtins::buffer_access::read_shared_buffer_word;
+use crate::engine::builtins::buffer_access::{read_shared_buffer_word, write_shared_buffer_word};
 use crate::engine::heap::ObjectId;
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::shared_memory::SharedBufferHandle;
@@ -57,6 +57,12 @@ impl SharedTypedOwnWord {
             element: self.element,
             bytes: read_shared_buffer_word(&self.backing, self.absolute, self.width)?,
         })
+    }
+
+    /// Conversion has already finished. No State lease is alive while this
+    /// selected Arc seed locks its backing and writes the authenticated word.
+    pub(crate) fn write(self, bytes: &[u8; 8]) -> Result<(), RuntimeError> {
+        write_shared_buffer_word(&self.backing, self.absolute, &bytes[..self.width])
     }
 }
 
@@ -112,11 +118,29 @@ impl RuntimeState {
         object: ObjectId,
         index: u64,
     ) -> Result<TypedOwnProperty, RuntimeError> {
+        self.select_typed_own_word(object, index, None)
+    }
+
+    pub(crate) fn write_typed_array_converted_index(
+        &mut self,
+        object: ObjectId,
+        index: u64,
+        bytes: &[u8; 8],
+    ) -> Result<TypedOwnProperty, RuntimeError> {
+        self.select_typed_own_word(object, index, Some(bytes))
+    }
+
+    fn select_typed_own_word(
+        &mut self,
+        object: ObjectId,
+        index: u64,
+        write: Option<&[u8; 8]>,
+    ) -> Result<TypedOwnProperty, RuntimeError> {
         let snapshot = typed_array_snapshot_from_payload(&self.heap.object(object)?.payload)
             .ok_or(RuntimeError::Invariant(
                 "validated TypedArray lost its class payload",
             ))?;
-        match ordinary_typed_array_word_in_heap(&mut self.heap, snapshot, index, None)? {
+        match ordinary_typed_array_word_in_heap(&mut self.heap, snapshot, index, write)? {
             OrdinaryTypedWord::Missing => return Ok(TypedOwnProperty::Missing),
             OrdinaryTypedWord::Word(bytes) => {
                 return Ok(TypedOwnProperty::Word(TypedOwnWord {

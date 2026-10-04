@@ -8,14 +8,10 @@
 
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::atom::{AtomIdx, PropertyKeyKind};
+use crate::engine::atom::PropertyKeyKind;
 
-use crate::engine::heap::{ObjectData, ObjectKind, PropertySlot};
-use crate::engine::object::{
-    CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
-    PropertyKey,
-};
-use crate::engine::value::Value;
+use crate::engine::heap::{ObjectData, ObjectKind};
+use crate::engine::object::{ObjectRef, OrdinaryPropertyDescriptor, PropertyKey};
 
 impl Runtime {
     pub(crate) fn is_module_namespace_object(
@@ -55,31 +51,6 @@ impl Runtime {
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
 
-    /// Whether `key` is one of the live export VarRef properties rather than
-    /// the ordinary non-configurable `@@toStringTag` data property.
-    pub(crate) fn module_namespace_export_slot(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-    ) -> Result<bool, RuntimeError> {
-        if !self.is_module_namespace_object(object)? {
-            return Ok(false);
-        }
-        if !key.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("property key"));
-        }
-        let state = self.0.state.borrow();
-        let object = state.heap.object(object.object_id())?;
-        let shape = state.heap.shape(object.shape)?;
-        let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-            return Ok(false);
-        };
-        Ok(matches!(
-            object.slots.get(index as usize),
-            Some(PropertySlot::VarRef(_))
-        ))
-    }
-
     /// Return namespace own keys in physical insertion order.
     ///
     /// The linker inserts UTF-16-sorted export names followed by
@@ -117,74 +88,27 @@ impl Runtime {
     /// Implement the Module Namespace `[[DefineOwnProperty]]` compatibility
     /// rule for a live export property. `None` delegates to the ordinary path
     /// for non-namespace objects, missing keys, and `@@toStringTag`.
-    pub(crate) fn define_module_namespace_export_owned(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        descriptor: &crate::engine::object::OwnedPropertyDescriptor,
-    ) -> Result<Option<bool>, RuntimeError> {
-        use crate::engine::object::property::CompletePropertyDescriptor;
-        if !self.module_namespace_export_slot(object, key)? {
-            return Ok(None);
-        }
-        // Preserve the unconditional TDZ read, including attribute-only definitions.
-        let current = self
-            .get_own_property_owned(object, key)?
-            .ok_or(RuntimeError::Invariant(
-                "module namespace export slot has no own descriptor",
-            ))?;
-        let CompletePropertyDescriptor::Data { value: current, .. } = current.record() else {
-            return Err(RuntimeError::Invariant(
-                "module namespace export slot is not a data descriptor",
-            ));
-        };
-        if descriptor.get.is_present()
-            || descriptor.set.is_present()
-            || matches!(descriptor.configurable, DescriptorField::Present(true))
-            || matches!(descriptor.enumerable, DescriptorField::Present(false))
-            || matches!(descriptor.writable, DescriptorField::Present(false))
-            || matches!(&descriptor.value, DescriptorField::Present(value) if !crate::engine::value::collection_key::same_value(&self.0.state.borrow().heap, &value.as_raw(), current))
-        {
-            return Ok(Some(false));
-        }
-        Ok(Some(true))
-    }
-
     pub(crate) fn define_module_namespace_export(
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<Option<bool>, RuntimeError> {
-        if !self.module_namespace_export_slot(object, key)? {
+        if !self.is_module_namespace_object(object)? {
             return Ok(None);
         }
-
-        // GetOwnProperty is intentionally unconditional. An uninitialized
-        // exported binding must throw here even when the requested descriptor
-        // carries no value, matching QuickJS's VarRef materialization path.
-        let current = self
-            .get_own_property(object, key)?
-            .ok_or(RuntimeError::Invariant(
-                "module namespace export slot has no own descriptor",
-            ))?;
-        let CompleteOrdinaryPropertyDescriptor::Data { value: current, .. } = current else {
-            return Err(RuntimeError::Invariant(
-                "module namespace export slot is not a data descriptor",
-            ));
-        };
-
-        if descriptor.is_accessor_descriptor()
-            || matches!(descriptor.configurable, DescriptorField::Present(true))
-            || matches!(descriptor.enumerable, DescriptorField::Present(false))
-            || matches!(descriptor.writable, DescriptorField::Present(false))
-            || matches!(
-                &descriptor.value,
-                DescriptorField::Present(value) if !Value::same_value(value, &current)
-            )
-        {
-            return Ok(Some(false));
+        if !key.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("property key"));
         }
-        Ok(Some(true))
+        let _unwind = self.unwind_guard();
+        self.0
+            .state
+            .borrow_mut()
+            .define_module_namespace_export_public(
+                &self.0.poisoned,
+                object.object_id(),
+                key.atom(),
+                descriptor,
+            )
     }
 }

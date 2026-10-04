@@ -3423,7 +3423,7 @@ pub(super) fn start_public_field(
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
     // Keep the instruction's admission before any own-property mutation. The
-    // fallback consumes this identity rather than checking or advancing twice.
+    // selected continuation consumes this identity without advancing twice.
     let Some(identity) = parent.property_generation.checked_add(1) else {
         // The old, unentered Define request dropped these fields in this order.
         drop(object);
@@ -3432,36 +3432,100 @@ pub(super) fn start_public_field(
         return Err(Error::internal("instruction query identity exhausted"));
     };
     parent.property_generation = identity;
-    let result = {
+    let result = (|| {
         // Match the dispatcher's local owner order: all definition inputs drop
         // before publishing the next PC or reifying an error in the frame realm.
-        let object = object;
-        let key = key;
-        let descriptor = descriptor;
-        match runtime.try_define_owned_property(&object, &key, &descriptor) {
-            Ok(None) => {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "public_field_query_fallback",
-                );
+        let result = {
+            let object = object;
+            let key = key;
+            let descriptor = descriptor;
+            if runtime
+                .is_proxy_object(&object)
+                .map_err(runtime_error_to_vm_error)?
+            {
+                let step = Step::Define {
+                    object: Some(object),
+                    key: Some(key),
+                    descriptor: Some(descriptor.into()),
+                    resume: Some(Resume::PublicField),
+                };
                 return start_public_field_pending(
-                    runtime, execution, frame, realm, identity, object, key, descriptor, depth,
+                    runtime,
+                    execution,
+                    frame,
+                    identity,
+                    Vec::new(),
+                    step,
+                    depth,
                 );
             }
-            Ok(Some(accepted)) => Runtime::finish_public_class_field_definition(
-                NativeConversion::Value(if accepted {
-                    crate::engine::object::operations::InternalDefineResult::Defined
-                } else {
-                    crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(
+            if let Some(length) = runtime
+                .prepare_array_length_definition_owned(Some(realm), &object, &key, &descriptor)
+                .map_err(runtime_error_to_vm_error)?
+            {
+                let mut step: Step = length.try_into().map_err(runtime_error_to_vm_error)?;
+                let mut parents = Vec::new();
+                if parents.try_reserve(1).is_err() {
+                    step.release_owned(runtime);
+                    return Err(Error::internal("property continuation allocation failed"));
+                }
+                parents.push(Resume::DefineLength {
+                    payload: Box::new(request::DefineLengthPayload {
                         object,
-                    )
-                }),
-            )
-            .map_err(runtime_error_to_vm_error),
-            Err(error) => Err(runtime_error_to_vm_error(error)),
+                        key,
+                        descriptor,
+                        resume: Box::new(Resume::PublicField),
+                    }),
+                });
+                return start_public_field_pending(
+                    runtime, execution, frame, identity, parents, step, depth,
+                );
+            }
+            if let Some(request) = runtime
+                .prepare_typed_array_definition_owned(&object, &key, &descriptor)
+                .map_err(runtime_error_to_vm_error)?
+            {
+                let mut step: Step = request.try_into().map_err(runtime_error_to_vm_error)?;
+                let mut parents = Vec::new();
+                if parents.try_reserve(1).is_err() {
+                    step.release_owned(runtime);
+                    return Err(Error::internal("property continuation allocation failed"));
+                }
+                parents.push(Resume::DefineTyped {
+                    payload: Box::new(request::DefineTypedPayload {
+                        object,
+                        _descriptor: descriptor,
+                        resume: Box::new(Resume::PublicField),
+                    }),
+                });
+                // The selected typed request owns its view. Its key has no role
+                // across conversion, matching DefineOrdinary's continuation.
+                drop(key);
+                if runtime.0.poisoned.get() {
+                    step.release_owned(runtime);
+                    return Err(runtime_error_to_vm_error(
+                        crate::engine::api::RuntimeError::Poisoned,
+                    ));
+                }
+                return start_public_field_pending(
+                    runtime, execution, frame, identity, parents, step, depth,
+                );
+            }
+            let accepted = runtime
+                .define_owned_property_after_conversion_selection(&object, &key, &descriptor)
+                .map_err(runtime_error_to_vm_error)?;
+            Runtime::finish_public_class_field_definition(NativeConversion::Value(if accepted {
+                crate::engine::object::operations::InternalDefineResult::Defined
+            } else {
+                crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(object)
+            }))
+            .map_err(runtime_error_to_vm_error)?
+        };
+        if runtime.0.poisoned.get() {
+            return Err(runtime_error_to_vm_error(
+                crate::engine::api::RuntimeError::Poisoned,
+            ));
         }
-    };
-    let result = result.and_then(|result| {
         use crate::engine::object::operations::PropertyDefineOutcome;
         let completion = match result {
             PropertyDefineOutcome::Defined(true) => Completion::Return(JsValue::Undefined),
@@ -3483,7 +3547,7 @@ pub(super) fn start_public_field(
             "public_field_completed_without_query",
         );
         Ok(Progress::Call(result))
-    });
+    })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
         Progress::Conversion(_) => Err(Error::internal("public field returned a conversion task")),
@@ -3497,32 +3561,22 @@ fn start_public_field_pending(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
-    realm: crate::engine::heap::ContextId,
     identity: u64,
-    object: ObjectRef,
-    key: PropertyKey,
-    descriptor: crate::engine::object::OwnedPropertyDescriptor,
+    parents: Vec<Resume>,
+    step: Step,
     depth: usize,
-) -> Result<CallStep, Error> {
-    let step = Step::Define {
-        object: Some(object),
-        key: Some(key),
-        descriptor: Some(descriptor.into()),
-        resume: Some(Resume::PublicField),
-    };
-    let result = advance(
+) -> Result<Progress, Error> {
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("public_field_query_fallback");
+    advance(
         runtime,
         execution,
         frame,
         identity,
-        Vec::new(),
+        parents,
         step,
         Finish::Discard(depth),
-    );
-    match finish_error(runtime, realm, result)? {
-        Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("instruction returned a conversion task")),
-    }
+    )
 }
 
 #[cfg(test)]

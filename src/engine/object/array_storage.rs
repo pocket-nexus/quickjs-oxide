@@ -6,27 +6,32 @@
 
 #[cfg(feature = "profiling")]
 use crate::engine::api::profiling::record_owned_execution_event;
-use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::heap::{HeapError, ObjectPayload, PropertySlot, Slots};
-use crate::engine::object::{ObjectRef, shape::PropertyFlags};
+use crate::engine::heap::runtime::RuntimeState;
+use crate::engine::heap::{HeapError, ObjectId, ObjectPayload, PropertySlot, Slots};
+use crate::engine::object::shape::PropertyFlags;
+use std::cell::Cell;
 
 // A recovery attempt is optional work following a successful definition. Bound
 // both its scan and temporary storage; this policy can change with workloads.
 // This also keeps every recovered index in the immediate-integer atom range.
 const MAX_DENSE_RECOVERY_SLOTS: usize = 8192;
 
-impl Runtime {
+impl RuntimeState {
     /// A newly defined zero can complete a reverse fill. Rebuild dense storage
     /// only at this mutation boundary, after proving that every index is an own
     /// default data property. Reads never pay for this recovery decision.
-    pub(super) fn try_recover_dense_array(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
+    pub(super) fn try_recover_dense_array(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+    ) -> Result<bool, RuntimeError> {
         #[cfg(feature = "profiling")]
         record_owned_execution_event("array_storage_dense_recovery_enter");
         let (length, _) = self.array_length_state(object)?;
         let length = length as usize;
-        let mut state = self.0.state.borrow_mut();
-        let id = object.object_id();
+        let state = self;
+        let id = object;
         let (prototype, entries, indexed_slots) = {
             let data = state.heap.object(id)?;
             // Each rejection counter names the first failed predicate in this
@@ -155,16 +160,32 @@ impl Runtime {
         };
         let moved = state
             .heap
-            .recover_array_dense_shape(id, shape, &indexed_slots);
-        let shape_cleanup = state.heap.release_shape(shape)?;
-        state.apply_cleanup(shape_cleanup)?;
-        let Some(cleanup) = moved? else {
+            .recover_array_dense_shape_with_status(id, shape, &indexed_slots);
+        // Inspect the actual publication status before the shape temporary
+        // can retire. A destructive failure quarantines the whole suffix.
+        let moved = match moved {
+            Err(failure) if failure.published => {
+                poisoned.set(true);
+                return Err(failure.error.into());
+            }
+            result => result,
+        };
+        let shape_cleanup = state
+            .heap
+            .release_shape(shape)
+            .inspect_err(|_| poisoned.set(true))?;
+        state
+            .apply_cleanup(shape_cleanup)
+            .inspect_err(|_| poisoned.set(true))?;
+        let Some(cleanup) = moved.map_err(|failure| RuntimeError::from(failure.error))? else {
             // The heap API exposes this optional decline only as Ok(None).
             #[cfg(feature = "profiling")]
             record_owned_execution_event("array_storage_dense_recovery_heap_declined");
             return Ok(false);
         };
-        state.apply_cleanup(cleanup)?;
+        state
+            .apply_cleanup(cleanup)
+            .inspect_err(|_| poisoned.set(true))?;
         #[cfg(feature = "profiling")]
         record_owned_execution_event("array_storage_dense_recovery");
         Ok(true)
@@ -176,12 +197,13 @@ impl Runtime {
     /// Preparation is linear in layout width; publication retains the surviving
     /// slots before releasing the old layout. No per-index layout is published.
     pub(super) fn truncate_sparse_array_indices(
-        &self,
-        object: &ObjectRef,
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
         minimum: u32,
     ) -> Result<Option<u32>, RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let object_id = object.object_id();
+        let state = self;
+        let object_id = object;
         let (prototype, entries, slots, blocker) = {
             let data = state.heap.object(object_id)?;
             if !matches!(data.payload, ObjectPayload::Array { .. }) {
@@ -233,14 +255,14 @@ impl Runtime {
             }
             (shape.prototype(), entries, slots, blocker)
         };
-        state.replace_layout(object_id, prototype, &entries, slots)?;
+        state.replace_layout_with_poison(poisoned, object_id, prototype, &entries, slots)?;
         Ok(blocker)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::engine::api::runtime::Runtime;
     use crate::engine::value::{JsString, Value};
 
     #[test]

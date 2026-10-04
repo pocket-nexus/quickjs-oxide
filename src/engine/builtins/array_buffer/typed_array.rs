@@ -1420,19 +1420,26 @@ impl Runtime {
         index: u64,
         bytes: &[u8; 8],
     ) -> Result<bool, RuntimeError> {
-        let snapshot = self.typed_array_snapshot(object)?;
-
-        match self.ordinary_typed_array_word(snapshot, index, Some(bytes))? {
-            OrdinaryTypedWord::Missing => return Ok(false),
-            OrdinaryTypedWord::Word(_) => return Ok(true),
-            OrdinaryTypedWord::Shared => {}
+        let selected = self
+            .0
+            .state
+            .try_borrow_mut()
+            .map_err(|_| {
+                RuntimeError::Invariant(
+                    "ArrayBuffer-family snapshot attempted during a runtime-state borrow",
+                )
+            })?
+            .write_typed_array_converted_index(object.object_id(), index, bytes)?;
+        match selected {
+            own_property::TypedOwnProperty::Missing => Ok(false),
+            own_property::TypedOwnProperty::Word(_) => Ok(true),
+            own_property::TypedOwnProperty::Shared(word) => {
+                // The seed owns backing identity and copied bounds. State is
+                // released before the lock; no key or view is selected again.
+                word.write(bytes)?;
+                Ok(true)
+            }
         }
-        let access = self.snapshot_buffer_access(snapshot.buffer)?;
-        let Some((absolute, width)) = typed_array_word_range(snapshot, access.state, index)? else {
-            return Ok(false);
-        };
-        self.write_buffer_word(&access, absolute, &bytes[..width])?;
-        Ok(true)
     }
 
     /// A rooted view owns its ordinary backing throughout this synchronous

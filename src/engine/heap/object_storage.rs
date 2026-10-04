@@ -595,45 +595,59 @@ impl Heap {
 
     /// Replace one existing fast element transactionally. New edges are
     /// retained before the previous value and its Symbol atom are detached.
-    pub fn replace_array_dense_value(
+    pub(crate) fn replace_array_dense_value_with_status(
         &mut self,
         id: ObjectId,
         index: u32,
         replacement: RawValue,
-    ) -> Result<HeapCleanup, HeapError> {
-        if !is_map_storable_value(&replacement) {
-            return Err(HeapError::Invariant(
-                "fast Array contains an internal value sentinel",
-            ));
-        }
-        let index = index as usize;
-        match &self.object(id)?.payload {
-            ObjectPayload::Array { dense: Some(dense) } if index < dense.len() => {}
-            ObjectPayload::Array { dense: Some(_) } => {
+    ) -> Result<HeapCleanup, SlotReplacementError> {
+        let prepared = (|| {
+            if !is_map_storable_value(&replacement) {
                 return Err(HeapError::Invariant(
-                    "fast Array replacement index is outside its dense prefix",
+                    "fast Array contains an internal value sentinel",
                 ));
             }
-            ObjectPayload::Array { dense: None } => {
-                return Err(HeapError::Invariant(
-                    "fast Array replacement reached a slow Array",
-                ));
+            let index = index as usize;
+            match &self.object(id)?.payload {
+                ObjectPayload::Array { dense: Some(dense) } if index < dense.len() => {}
+                ObjectPayload::Array { dense: Some(_) } => {
+                    return Err(HeapError::Invariant(
+                        "fast Array replacement index is outside its dense prefix",
+                    ));
+                }
+                ObjectPayload::Array { dense: None } => {
+                    return Err(HeapError::Invariant(
+                        "fast Array replacement reached a slow Array",
+                    ));
+                }
+                _ => {
+                    return Err(HeapError::Invariant(
+                        "fast Array replacement reached an object with the wrong class",
+                    ));
+                }
             }
-            _ => {
-                return Err(HeapError::Invariant(
-                    "fast Array replacement reached an object with the wrong class",
-                ));
-            }
-        }
-        self.retain_edges_transactionally(&raw_value_edges(&replacement))?;
+            self.retain_edges_transactionally(&raw_value_edges(&replacement))?;
+            Ok(index)
+        })();
+        let index = prepared.map_err(|error| SlotReplacementError {
+            error,
+            published: false,
+        })?;
         let previous = {
-            let ObjectPayload::Array { dense: Some(dense) } = &mut self.object_mut(id)?.payload
+            let ObjectPayload::Array { dense: Some(dense) } = &mut self
+                .object_mut(id)
+                .expect("authenticated dense Array disappeared before replacement")
+                .payload
             else {
                 unreachable!("fast Array changed representation during value replacement")
             };
             std::mem::replace(&mut dense[index], replacement)
         };
         self.release_replaced_raw_value(previous)
+            .map_err(|error| SlotReplacementError {
+                error,
+                published: true,
+            })
     }
 
     /// Overwrite a numeric own dense element with another immediate Number.
@@ -768,11 +782,24 @@ impl Heap {
     /// removed edge and Symbol atom.
     pub(crate) fn commit_array_dense_truncation(
         &mut self,
-        mut prepared: PreparedArrayDenseTruncation,
+        prepared: PreparedArrayDenseTruncation,
     ) -> Result<HeapCleanup, HeapError> {
+        self.commit_array_dense_truncation_with_status(prepared)
+            .map_err(|failure| failure.error)
+    }
+
+    pub(crate) fn commit_array_dense_truncation_with_status(
+        &mut self,
+        mut prepared: PreparedArrayDenseTruncation,
+    ) -> Result<HeapCleanup, SlotReplacementError> {
         {
-            let ObjectPayload::Array { dense: Some(dense) } =
-                &mut self.object_mut(prepared.object)?.payload
+            let ObjectPayload::Array { dense: Some(dense) } = &mut self
+                .object_mut(prepared.object)
+                .map_err(|error| SlotReplacementError {
+                    error,
+                    published: false,
+                })?
+                .payload
             else {
                 unreachable!("fast Array changed representation before tail truncation")
             };
@@ -783,13 +810,18 @@ impl Heap {
                     .count()
                     != prepared.removed_atom_count
             {
-                return Err(HeapError::Invariant(
-                    "fast Array changed after truncation preparation",
-                ));
+                return Err(SlotReplacementError {
+                    error: HeapError::Invariant("fast Array changed after truncation preparation"),
+                    published: false,
+                });
             }
             prepared.removed.extend(dense.drain(prepared.new_len..));
         }
         self.release_raw_values_into(prepared.removed, prepared.cleanup)
+            .map_err(|error| SlotReplacementError {
+                error,
+                published: true,
+            })
     }
 
     /// Truncate the contiguous fast prefix without changing the Array's
@@ -1404,46 +1436,53 @@ impl Heap {
     /// suffix of a prepared shape. Existing slots and dense values move in
     /// place, preserving their edge and Symbol-atom ownership without cloning
     /// or temporarily retaining a second copy of the payload.
-    pub fn materialize_array_dense_shape(
+    pub(crate) fn materialize_array_dense_shape_with_status(
         &mut self,
         id: ObjectId,
         shape: ShapeId,
-    ) -> Result<HeapCleanup, HeapError> {
-        let (previous_shape, previous_slot_len, dense_len) = {
-            let object = self.object(id)?;
-            let ObjectPayload::Array { dense: Some(dense) } = &object.payload else {
-                return Err(HeapError::Invariant(
-                    "dense materialization reached a slow Array or wrong object class",
-                ));
+    ) -> Result<HeapCleanup, SlotReplacementError> {
+        let prepared = (|| {
+            let (previous_shape, previous_slot_len, dense_len) = {
+                let object = self.object(id)?;
+                let ObjectPayload::Array { dense: Some(dense) } = &object.payload else {
+                    return Err(HeapError::Invariant(
+                        "dense materialization reached a slow Array or wrong object class",
+                    ));
+                };
+                (object.shape, object.slots.len(), dense.len())
             };
-            (object.shape, object.slots.len(), dense.len())
-        };
-        let previous = self.shape(previous_shape)?;
-        let replacement = self.shape(shape)?;
-        let replacement_len =
-            previous_slot_len
-                .checked_add(dense_len)
-                .ok_or(HeapError::Overflow {
+            let previous = self.shape(previous_shape)?;
+            let replacement = self.shape(shape)?;
+            let replacement_len =
+                previous_slot_len
+                    .checked_add(dense_len)
+                    .ok_or(HeapError::Overflow {
+                        operation: "materializing fast Array slots",
+                    })?;
+            if replacement.prototype() != previous.prototype()
+                || replacement.entries().len() != replacement_len
+                || replacement.entries().get(..previous_slot_len) != Some(previous.entries())
+                || replacement.entries()[previous_slot_len..]
+                    .iter()
+                    .any(|entry| entry.flags != PropertyFlags::data(true, true, true))
+            {
+                return Err(HeapError::Invariant(
+                    "materialized Array shape does not extend its dense layout",
+                ));
+            }
+            self.object_mut(id)?
+                .slots
+                .try_reserve(dense_len)
+                .map_err(|_| HeapError::Allocation {
                     operation: "materializing fast Array slots",
                 })?;
-        if replacement.prototype() != previous.prototype()
-            || replacement.entries().len() != replacement_len
-            || replacement.entries().get(..previous_slot_len) != Some(previous.entries())
-            || replacement.entries()[previous_slot_len..]
-                .iter()
-                .any(|entry| entry.flags != PropertyFlags::data(true, true, true))
-        {
-            return Err(HeapError::Invariant(
-                "materialized Array shape does not extend its dense layout",
-            ));
-        }
-        self.object_mut(id)?
-            .slots
-            .try_reserve(dense_len)
-            .map_err(|_| HeapError::Allocation {
-                operation: "materializing fast Array slots",
-            })?;
-        self.retain_shape(shape)?;
+            self.retain_shape(shape)?;
+            Ok(())
+        })();
+        prepared.map_err(|error| SlotReplacementError {
+            error,
+            published: false,
+        })?;
 
         self.invalidate_property_layout(id);
         let detached_shape = {
@@ -1462,6 +1501,10 @@ impl Heap {
             std::mem::replace(&mut object.shape, shape)
         };
         self.release_and_drain(RawId::Shape(detached_shape))
+            .map_err(|error| SlotReplacementError {
+                error,
+                published: true,
+            })
     }
 
     /// Change only the object's `[[Construct]]` capability bit.

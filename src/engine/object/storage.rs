@@ -7,12 +7,11 @@ use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::runtime::owned_values::OwnedValueGuard;
 
-use crate::engine::heap::{ObjectId, ObjectPayload, PropertySlot, RawValue, ShapeId, VarRefId};
+use crate::engine::heap::{ObjectId, PropertySlot, RawValue, ShapeId, VarRefId};
 use crate::engine::object::property::CompletePropertyDescriptor;
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
 use crate::engine::object::{
-    AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, properties,
+    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, properties,
 };
 use crate::engine::value::{JsValue, Value};
 use std::cell::Cell;
@@ -221,71 +220,6 @@ impl Runtime {
         Ok(ConvertedValue::new(self, raw))
     }
 
-    pub(crate) fn store_complete_property(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        complete: CompleteOrdinaryPropertyDescriptor,
-    ) -> Result<(), RuntimeError> {
-        let converted = match &complete {
-            CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
-                Some(self.raw_property_value(value)?)
-            }
-            CompleteOrdinaryPropertyDescriptor::Accessor { .. } => None,
-        };
-        let complete = match &complete {
-            CompleteOrdinaryPropertyDescriptor::Data {
-                writable,
-                enumerable,
-                configurable,
-                ..
-            } => CompletePropertyDescriptor::Data {
-                value: converted.as_ref().expect("converted data").raw(),
-                writable: *writable,
-                enumerable: *enumerable,
-                configurable: *configurable,
-            },
-            CompleteOrdinaryPropertyDescriptor::Accessor {
-                get,
-                set,
-                enumerable,
-                configurable,
-            } => CompletePropertyDescriptor::Accessor {
-                get: get
-                    .as_ref()
-                    .map(|v| RawValue::Object(v.as_object().object_id())),
-                set: set
-                    .as_ref()
-                    .map(|v| RawValue::Object(v.as_object().object_id())),
-                enumerable: *enumerable,
-                configurable: *configurable,
-            },
-        };
-        self.store_complete_raw_property(object, key, complete)
-    }
-
-    pub(crate) fn store_complete_raw_property(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        complete: CompletePropertyDescriptor<RawValue>,
-    ) -> Result<(), RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        if let ObjectPayload::GlobalObject { uninitialized_vars } =
-            state.heap.object(object.object_id())?.payload
-        {
-            state.store_complete_global_raw_property(
-                &self.0.poisoned,
-                object.object_id(),
-                uninitialized_vars,
-                key.atom(),
-                complete,
-            )
-        } else {
-            state.store_complete_raw_property(object.object_id(), key.atom(), complete)
-        }
-    }
-
     pub(crate) fn own_var_ref_root(
         &self,
         object: &ObjectRef,
@@ -308,7 +242,9 @@ impl Runtime {
         flags: PropertyFlags,
         replacement: PropertySlot,
     ) -> Result<(), RuntimeError> {
-        self.0.state.borrow_mut().store_property_slot(
+        let _unwind = self.unwind_guard();
+        self.0.state.borrow_mut().store_property_slot_with_poison(
+            &self.0.poisoned,
             object.object_id(),
             key.atom(),
             flags,
@@ -317,9 +253,9 @@ impl Runtime {
     }
 }
 
-/// One temporary cell edge used by Global property storage. This borrows
+/// One checked temporary cell edge used by Global and mapped Arguments storage. This borrows
 /// current state and never creates a Runtime-backed root or reborrows state.
-struct GlobalVarRefGuard<'a> {
+pub(super) struct GlobalVarRefGuard<'a> {
     state: &'a mut RuntimeState,
     poisoned: &'a Cell<bool>,
     id: VarRefId,
@@ -327,7 +263,7 @@ struct GlobalVarRefGuard<'a> {
 }
 
 impl<'a> GlobalVarRefGuard<'a> {
-    fn retain(
+    pub(super) fn retain(
         state: &'a mut RuntimeState,
         poisoned: &'a Cell<bool>,
         id: VarRefId,
@@ -345,13 +281,13 @@ impl<'a> GlobalVarRefGuard<'a> {
         }
     }
 
-    fn parts(&mut self) -> (&mut RuntimeState, VarRefId) {
+    pub(super) fn parts(&mut self) -> (&mut RuntimeState, VarRefId) {
         (self.state, self.id)
     }
 
     /// Normal retirement exposes the first cleanup failure to the caller.
     /// A failed retirement is not retried by Drop; quarantine stops the suffix.
-    fn retire(mut self) -> Result<(), RuntimeError> {
+    pub(super) fn retire(mut self) -> Result<(), RuntimeError> {
         self.owns_edge = false;
         let _unwind = RuntimeUnwindGuard::from_flag(self.poisoned);
         self.state
@@ -543,15 +479,15 @@ impl RuntimeState {
     }
 
     /// Raw descriptor edges stay borrowed until the slot transaction retains them.
-    /// Global data bindings use the shared cell kernel before this slot-only path.
-    pub(super) fn store_complete_raw_property(
+    /// Global bindings use the shared cell kernel before this slot-only path.
+    pub(super) fn store_complete_raw_property_with_poison(
         &mut self,
+        poisoned: &Cell<bool>,
         object: ObjectId,
         atom: Atom,
         complete: CompletePropertyDescriptor<RawValue>,
     ) -> Result<(), RuntimeError> {
-        // Legacy entry remains for unconverted consumers; remove in B5.
-        self.store_complete_raw_property_inner(None, object, atom, complete)
+        self.store_complete_raw_property_inner(Some(poisoned), object, atom, complete)
     }
 
     pub(super) fn store_complete_raw_property_inner(
@@ -591,6 +527,7 @@ impl RuntimeState {
         self.store_property_slot_inner(poisoned, object, atom, flags, replacement)
     }
 
+    #[cfg(test)]
     pub(crate) fn store_property_slot(
         &mut self,
         object: ObjectId,

@@ -8,6 +8,7 @@ use crate::engine::{
 };
 
 mod state;
+pub(super) use state::CompleteDescriptorGuard;
 
 pub(crate) struct OwnedPropertyDescriptor {
     runtime: Runtime,
@@ -304,6 +305,7 @@ impl OwnedCompletePropertyDescriptor {
     ) -> Result<super::CompleteOrdinaryPropertyDescriptor, RuntimeError> {
         self.runtime.root_complete_descriptor(&self.record)
     }
+    #[cfg(test)]
     pub(crate) fn from_public(
         runtime: &Runtime,
         source: &super::CompleteOrdinaryPropertyDescriptor,

@@ -468,11 +468,11 @@ impl SetStep {
                     // general protocol. Genuine Array indices also need no
                     // length/value coercion. Keep the shared definition kernel
                     // for flags, ordering, extensibility and array transitions.
-                    let accepted = runtime
-                        .try_define_owned_property(&object, &key, &descriptor)?
-                        .ok_or(RuntimeError::Invariant(
-                            "selected local Set definition lost its raw storage path",
-                        ))?;
+                    let accepted = runtime.define_owned_property_after_conversion_selection(
+                        &object,
+                        &key,
+                        &descriptor,
+                    )?;
                     let result = NativeConversion::Value(if accepted {
                         InternalDefineResult::Defined
                     } else {

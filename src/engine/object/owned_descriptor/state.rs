@@ -11,7 +11,7 @@ use std::cell::Cell;
 /// One descriptor plus its optional virtual-value producer. Normal paths
 /// retire explicitly so cleanup errors stop before an owned result escapes.
 /// Drop is only an unwind/early-return fallback and never reborrows Runtime.
-struct CompleteDescriptorGuard<'a> {
+pub(in crate::engine::object) struct CompleteDescriptorGuard<'a> {
     state: &'a mut RuntimeState,
     poisoned: &'a Cell<bool>,
     record: Option<CompletePropertyDescriptor<RawValue>>,
@@ -19,7 +19,10 @@ struct CompleteDescriptorGuard<'a> {
 }
 
 impl<'a> CompleteDescriptorGuard<'a> {
-    fn new(state: &'a mut RuntimeState, poisoned: &'a Cell<bool>) -> Self {
+    pub(in crate::engine::object) fn new(
+        state: &'a mut RuntimeState,
+        poisoned: &'a Cell<bool>,
+    ) -> Self {
         Self {
             state,
             poisoned,
@@ -33,7 +36,7 @@ impl<'a> CompleteDescriptorGuard<'a> {
         }
     }
 
-    fn duplicate(
+    pub(in crate::engine::object) fn duplicate(
         &mut self,
         source: &CompletePropertyDescriptor<RawValue>,
     ) -> Result<(), RuntimeError> {
@@ -105,7 +108,8 @@ impl<'a> CompleteDescriptorGuard<'a> {
         Ok(())
     }
 
-    fn retire(&mut self) -> Result<(), RuntimeError> {
+    pub(in crate::engine::object) fn retire(&mut self) -> Result<(), RuntimeError> {
+        let _unwind = RuntimeUnwindGuard::from_flag(self.poisoned);
         self.retire_producer()?;
         match self.record.take() {
             Some(CompletePropertyDescriptor::Data { value, .. }) => {
@@ -130,6 +134,50 @@ impl<'a> CompleteDescriptorGuard<'a> {
     fn finish(mut self) -> Result<CompletePropertyDescriptor<RawValue>, RuntimeError> {
         self.retire_producer()?;
         Ok(self.record.take().expect("complete descriptor is owned"))
+    }
+
+    pub(in crate::engine::object) fn state(&mut self) -> &mut RuntimeState {
+        self.state
+    }
+
+    /// Only public String/heap BigInt conversion creates this producer edge.
+    /// Object/Symbol/getter/setter inputs remain borrowed until a store retains.
+    pub(in crate::engine::object) fn public_value(
+        &mut self,
+        value: &Value,
+    ) -> Result<RawValue, RuntimeError> {
+        let raw = match value {
+            Value::Undefined => RawValue::Undefined,
+            Value::Null => RawValue::Null,
+            Value::Bool(value) => RawValue::Bool(*value),
+            Value::Int(value) => RawValue::Int(*value),
+            Value::Float(value) => RawValue::Float(*value),
+            Value::BigInt(value) if value.as_i64().is_some() => {
+                RawValue::ShortBigInt(value.as_i64().expect("short BigInt"))
+            }
+            Value::BigInt(value) => {
+                let value = self.state.heap.allocate_bigint(value.clone())?;
+                self.producer = Some(JsValue::BigInt(value));
+                #[cfg(debug_assertions)]
+                if std::env::var("QJS_TRACE_BIGINT_ID")
+                    .is_ok_and(|filter| format!("{value:?}").contains(&format!("index: {filter},")))
+                {
+                    eprintln!(
+                        "[raw-b] {value:?}\n{}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                }
+                RawValue::BigInt(value)
+            }
+            Value::String(value) => {
+                let value = self.state.heap.allocate_string(value.clone())?;
+                self.producer = Some(JsValue::String(value));
+                RawValue::String(value)
+            }
+            Value::Symbol(value) => RawValue::Symbol(self.state.atoms.unbrand(value.atom())?),
+            Value::Object(value) => RawValue::Object(value.object_id()),
+        };
+        Ok(raw)
     }
 }
 
