@@ -14,6 +14,7 @@ use std::cell::Cell;
 
 pub(crate) enum NumberStep {
     Complete(NativeConversion<f64>),
+    CyclePublished(NativeConversion<f64>),
     Read { resume: NumberResume },
     Call { resume: NumberResume },
 }
@@ -40,8 +41,10 @@ impl NumberStep {
             runtime.check_poison()
         };
         match self {
-            Self::Complete(NativeConversion::Value(_)) => Ok(()),
-            Self::Complete(NativeConversion::Throw(value)) => release(value),
+            Self::Complete(NativeConversion::Value(_))
+            | Self::CyclePublished(NativeConversion::Value(_)) => Ok(()),
+            Self::Complete(NativeConversion::Throw(value))
+            | Self::CyclePublished(NativeConversion::Throw(value)) => release(value),
             Self::Read { resume } | Self::Call { resume } => resume.retire_at_boundary(runtime),
         }
     }
@@ -90,6 +93,16 @@ impl NumberStep {
             let step = owner.step.take().expect("number boundary progress");
             match step {
                 Self::Complete(result) => return Ok(result),
+                Self::CyclePublished(result) => {
+                    owner.step = Some(Self::CyclePublished(result));
+                    runtime.collect_if_requested()?;
+                    let Self::CyclePublished(result) =
+                        owner.step.take().expect("published number completion")
+                    else {
+                        unreachable!()
+                    };
+                    return Ok(result);
+                }
                 Self::Read { resume } => {
                     owner.step = Some(Self::Read { resume });
                     let Some(Self::Read { resume }) = owner.step.as_mut() else {
@@ -127,27 +140,27 @@ impl NumberStep {
         poisoned: &Cell<bool>,
     ) -> Result<(), RuntimeError> {
         match self {
-            Self::Complete(NativeConversion::Throw(value)) => {
+            Self::Complete(NativeConversion::Throw(value))
+            | Self::CyclePublished(NativeConversion::Throw(value)) => {
                 state.release_owned_jsvalue(poisoned, value)
             }
-            Self::Complete(NativeConversion::Value(_)) => Ok(()),
+            Self::Complete(NativeConversion::Value(_))
+            | Self::CyclePublished(NativeConversion::Value(_)) => Ok(()),
             Self::Read { resume } | Self::Call { resume } => {
                 resume.retire_in_state(state, poisoned)
             }
         }
     }
 }
-fn from_primitive_in_state(
+fn completed_primitive_in_state(
     state: &mut RuntimeState,
     poisoned: &Cell<bool>,
     realm: ContextId,
-    step: PrimitiveStep,
-) -> Result<NumberStep, RuntimeError> {
-    Ok(match step {
-        PrimitiveStep::Complete(Completion::Throw(value)) => {
-            NumberStep::Complete(NativeConversion::Throw(value))
-        }
-        PrimitiveStep::Complete(Completion::Return(value)) => {
+    completion: Completion,
+) -> Result<NativeConversion<f64>, RuntimeError> {
+    match completion {
+        Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
+        Completion::Return(value) => {
             let mut reply = OwnedValueGuard::new(state, poisoned, value);
             let (state, reply) = reply.parts();
             let converted = state.number_from_primitive_jsvalue(
@@ -159,8 +172,24 @@ fn from_primitive_in_state(
                 return Err(RuntimeError::Poisoned);
             }
             state.release_owned_jsvalue(poisoned, reply.take().expect("number primitive reply"))?;
-            NumberStep::Complete(converted?)
+            converted
         }
+    }
+}
+
+fn from_primitive_in_state(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
+    realm: ContextId,
+    step: PrimitiveStep,
+) -> Result<NumberStep, RuntimeError> {
+    Ok(match step {
+        PrimitiveStep::CyclePublished(completion) => NumberStep::CyclePublished(
+            completed_primitive_in_state(state, poisoned, realm, completion)?,
+        ),
+        PrimitiveStep::Complete(completion) => NumberStep::Complete(completed_primitive_in_state(
+            state, poisoned, realm, completion,
+        )?),
         PrimitiveStep::Get { mut resume } => {
             let (object, key) = resume.take_get_in_state();
             NumberStep::Read {

@@ -20,6 +20,7 @@ use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 
 use crate::engine::object::{ProxyPrototypeKind, ProxyPrototypeStep};
 
+pub(in crate::engine::vm) mod computed;
 mod construct;
 mod dispatch_conversion;
 mod dispatch_execution;
@@ -140,7 +141,7 @@ pub(in crate::engine::vm) struct Query {
     natives: Vec<NativeScope>,
     saved_native_depth: u128,
     spare_parents: Vec<Parents>,
-    finish: Option<Finish>,
+    pub(in crate::engine::vm) finish: Option<Finish>,
 }
 struct NativeScope {
     call: super::call::PreparedNativeCall,
@@ -225,6 +226,9 @@ impl Query {
                 self.spare_parents.push(scope.parents);
             }
         }
+        if let (Some(runtime), Some(finish)) = (&runtime, self.finish.as_mut()) {
+            let _ = finish.retire_computed_at_boundary(runtime);
+        }
         // Raw parent-only queries use the same single registration as native
         // scopes. Keep it until every scope/pending domain has been retired.
         if let Some(runtime) = &runtime {
@@ -250,8 +254,15 @@ enum Next {
     },
 }
 
-enum Finish {
+pub(in crate::engine::vm) enum Finish {
     Root,
+    ComputedRead(computed::ComputedRead),
+    PropertyKeyValue {
+        #[cfg(feature = "profiling")]
+        depth: usize,
+        fallthrough: super::execute::FallthroughPc,
+        cycle_published: bool,
+    },
     ForIn(usize),
     Class(Box<super::construct_driver::PendingClass>),
     Numeric(usize),
@@ -355,6 +366,9 @@ fn finish_instruction_call_with_continuation<const PC_COMMITTED: bool>(
 }
 
 pub(super) enum Progress {
+    /// A selected computed request published its result on the current frame.
+    Resident,
+    ResidentThrow,
     Call(CallStep),
     Conversion(super::conversion_driver::ConversionTask),
 }
@@ -401,6 +415,9 @@ pub(super) fn start(
         })();
         match finish_error(runtime, realm, result)? {
             Progress::Call(step) => Ok(step),
+            Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+                "resident computed query reached an unrelated consumer",
+            )),
             Progress::Conversion(_) => Err(Error::internal("property read returned a conversion")),
         }
     })();
@@ -454,6 +471,9 @@ pub(super) fn start_owned_read(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("super read returned a conversion")),
     }
 }
@@ -552,6 +572,9 @@ pub(super) fn start_boolean(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("boolean query returned a conversion")),
     }
 }
@@ -593,6 +616,9 @@ pub(super) fn start_prototype(
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("prototype query returned a conversion")),
     }
 }
@@ -651,6 +677,9 @@ pub(super) fn start_call(
         Finish::Call { depth, tail },
     )? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("Proxy call returned a conversion")),
     }
 }
@@ -676,6 +705,9 @@ pub(super) fn start_callback_call(
         Finish::Call { depth, tail },
     )? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("native call returned a conversion")),
     }
 }
@@ -1036,6 +1068,9 @@ fn drive_native_call(
     match drive(runtime, execution, owner, identity, query, result)? {
         Progress::Call(step) => Ok(step),
         // Internal invariant errors pass unchanged through throw_error.
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("native call returned a conversion")),
     }
 }
@@ -1064,6 +1099,9 @@ pub(super) fn start_apply(
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("Apply returned a conversion")),
     }
 }
@@ -1093,6 +1131,9 @@ pub(super) fn start_construct(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("Construct returned a conversion")),
     }
 }
@@ -1488,6 +1529,9 @@ fn write_call_progress(
 ) -> Result<super::property_driver::PropertyProgress, Error> {
     match progress {
         Progress::Call(step) => Ok(super::property_driver::PropertyProgress::Deferred(step)),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("Set returned a conversion operation")),
     }
 }
@@ -1874,6 +1918,49 @@ fn advance_inner(
     step: &mut Step,
 ) -> Result<Next, Error> {
     loop {
+        if query.is_computed_instruction()
+            && matches!(
+                step,
+                Step::Complete(_)
+                    | Step::CyclePublishedComplete(_)
+                    | Step::CyclePublishedNumber(_)
+                    | Step::CyclePublishedElement(_)
+                    | Step::CyclePublishedPrimitiveReply { .. }
+                    | Step::CyclePublishedPrimitive { .. }
+                    | Step::RawReadRequest { .. }
+                    | Step::Primitive { .. }
+                    | Step::PrimitiveProgress(_)
+                    | Step::NumberProgress(_)
+                    | Step::Number { .. }
+                    | Step::String { .. }
+                    | Step::PrimitiveReply { .. }
+                    | Step::NumberReply { .. }
+                    | Step::StringReply { .. }
+                    | Step::RawCall { .. }
+            )
+        {
+            return computed::resume_at_boundary(runtime, execution, owner, query, step);
+        }
+        if query.is_computed_instruction()
+            && matches!(
+                step,
+                Step::RawRead {
+                    read: Some(crate::engine::object::ReadStep::Ready(
+                        crate::engine::object::OwnedRead::Complete(_)
+                            | crate::engine::object::OwnedRead::Getter { .. }
+                    )),
+                    ..
+                } | Step::RawRead {
+                    read: Some(crate::engine::object::ReadStep::CyclePublished(
+                        crate::engine::object::OwnedRead::Complete(_)
+                            | crate::engine::object::OwnedRead::Getter { .. }
+                    )),
+                    ..
+                }
+            )
+        {
+            return computed::resume_at_boundary(runtime, execution, owner, query, step);
+        }
         // Keep domain dispatch frames bounded on the existing 256 KiB host stack.
         // Each helper returns before another request category is dispatched.
         // A plain function pointer keeps the borrowed dispatch ABI explicit without a closure capture or heap transport.
@@ -1917,12 +2004,15 @@ fn advance_inner(
             | Step::OrdinaryInstance { .. }
             | Step::ParseIterator { .. }
             | Step::ArrayCopy { .. } => dispatch_iteration::advance,
-            Step::NumberReply { .. }
+            Step::CyclePublishedComplete(_)
+            | Step::CyclePublishedNumber(_)
+            | Step::CyclePublishedElement(_)
+            | Step::ComputedError(_)
+            | Step::NumberReply { .. }
             | Step::PrimitiveReply { .. }
             | Step::CyclePublishedPrimitiveReply { .. }
             | Step::RawRead { .. }
             | Step::RawReadRequest { .. }
-            | Step::CyclePublishedComplete(_)
             | Step::CyclePublishedPrimitive { .. }
             | Step::RawCall { .. }
             | Step::CallbackBoundary(_)
@@ -2265,6 +2355,7 @@ fn invoke_general_callback(
             unreachable!()
         };
         let proxy = callable.as_object().try_clone()?;
+        query.publish_selected_prefix_at_boundary(runtime, execution, owner)?;
         let next = crate::engine::object::ProxyCallStep::start(
             runtime,
             realm,
@@ -2301,6 +2392,7 @@ fn invoke_general_callback(
             let this_value = receiver.take().expect("normalized receiver");
             let arguments = arguments.take().expect("normalized arguments");
             let resume = resume.take().expect("selected call continuation");
+            query.publish_selected_prefix_at_boundary(runtime, execution, owner)?;
             // The existing native scope owns its inputs and continuation on
             // both startup failure and successful waiting publication.
             native_scope(
@@ -2418,6 +2510,7 @@ fn invoke_general_callback(
         } else {
             generator.unwrap_or_else(|| resume.take().expect("selected call continuation"))
         };
+        query.publish_selected_prefix_at_boundary(runtime, execution, owner)?;
         return Ok(Next::Call {
             entry: Box::new(entry.take()),
             pc: 0,
@@ -2481,6 +2574,7 @@ fn invoke_general_callback(
     let Some(DirectCallTarget::Callable(callable)) = target.as_ref() else {
         unreachable!()
     };
+    query.publish_selected_prefix_at_boundary(runtime, execution, owner)?;
     let outcome = runtime
         .invoke_native_function_jsvalue(
             callable,
@@ -3038,6 +3132,9 @@ pub(super) fn start_iterator_next(
         let result = start_array_next_direct(runtime, execution, pending, step);
         return match finish_error(runtime, realm, result)? {
             Progress::Call(step) => Ok(step),
+            Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+                "computed publication reached an unrelated task",
+            )),
             Progress::Conversion(_) => {
                 Err(Error::internal("iterator returned unrelated conversion"))
             }
@@ -3151,6 +3248,9 @@ pub(super) fn start_array_next_without_pending(
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("Array-next returned unrelated conversion")),
     }
 }
@@ -3335,6 +3435,9 @@ fn start_iterator_query(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("iterator returned unrelated conversion")),
     }
 }
@@ -3375,6 +3478,9 @@ pub(super) fn start_instance(
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("instanceof returned conversion")),
     }
 }
@@ -3481,6 +3587,9 @@ pub(super) fn start_object_copy(
     }
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("object copy returned conversion")),
     }
 }
@@ -3505,6 +3614,9 @@ pub(super) fn start_vm_call(
         Finish::VmCall(value_use),
     )? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("VM callback returned a conversion")),
     }
 }
@@ -3539,6 +3651,9 @@ pub(super) fn start_environment(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("environment returned a conversion")),
     }
 }
@@ -3661,6 +3776,9 @@ pub(super) fn start_numeric(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(NumericProgress::Deferred(step)),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal(
             "numeric operation returned conversion task",
         )),
@@ -3837,6 +3955,9 @@ pub(super) fn start_public_field(
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("public field returned a conversion task")),
     }
 }
@@ -3894,6 +4015,9 @@ fn start_instruction_query(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("instruction returned a conversion task")),
     }
 }
@@ -3960,6 +4084,9 @@ fn start_for_in_pending(
         Finish::ForIn(depth),
     )? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal("instruction returned a conversion task")),
     }
 }
@@ -4038,6 +4165,9 @@ pub(super) fn start_import(
     .and_then(|step| start_instruction(runtime, execution, frame, Step::try_from(step)?, 2));
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
+        Progress::Resident | Progress::ResidentThrow => Err(Error::internal(
+            "resident computed query reached an unrelated consumer",
+        )),
         Progress::Conversion(_) => Err(Error::internal(
             "dynamic import returned an untyped conversion",
         )),

@@ -7,8 +7,10 @@ pub(super) fn canonical(
     runtime: &Runtime,
     value: &crate::engine::value::JsValue,
 ) -> Result<PropertyKey, Error> {
-    if let Some(key) = runtime.immediate_numeric_property_key_jsvalue(value) {
-        return Ok(key);
+    if let Some(atom) =
+        crate::engine::heap::runtime::RuntimeState::immediate_numeric_property_key_atom(value)
+    {
+        return Ok(PropertyKey::from_owned_atom(runtime.clone(), atom));
     }
     match value {
         crate::engine::value::JsValue::Symbol(index) => {

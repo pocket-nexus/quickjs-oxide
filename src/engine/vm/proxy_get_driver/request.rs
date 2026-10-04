@@ -53,6 +53,8 @@ pub(in crate::engine::vm) struct DefineLengthPayload {
 }
 
 pub(in crate::engine::vm) enum Resume {
+    ComputedKey,
+    PropertyKeyValue,
     RootDescriptor,
     RootDefine,
     RootSet,
@@ -305,6 +307,9 @@ pub(in crate::engine::vm) enum Step {
         value: Option<Completion>,
         resume: Option<Resume>,
     },
+    ComputedError(Option<crate::engine::api::Error>),
+    CyclePublishedNumber(Option<NativeConversion<f64>>),
+    CyclePublishedElement(Option<NativeConversion<[u8; 8]>>),
     RawRead {
         read: Option<crate::engine::object::ReadStep>,
         key: crate::engine::atom::Atom,
@@ -681,7 +686,9 @@ impl Step {
             | Self::OrdinaryPrimitive { .. }
             | Self::RawCall { .. }
             | Self::CallbackBoundary(_)
-            | Self::PreparedNativeBoundary(_) => true,
+            | Self::PreparedNativeBoundary(_)
+            | Self::CyclePublishedNumber(Some(_))
+            | Self::CyclePublishedElement(Some(_)) => true,
             Self::String { resume, .. }
             | Self::Primitive { resume, .. }
             | Self::Number { resume, .. }
@@ -704,6 +711,7 @@ impl Step {
             release(value);
         };
         match std::mem::replace(self, Self::Complete(None)) {
+            Self::ComputedError(_) => {}
             Self::CallbackBoundary(value) => {
                 if let Some(mut value) = value {
                     let _ = value.inputs.retire_at_boundary(runtime);
@@ -809,9 +817,8 @@ impl Step {
             Self::PrimitiveProgress(step) => {
                 if let Some(step) = step {
                     match step {
-                        crate::engine::value::conversion::primitive::PrimitiveStep::Complete(
-                            value,
-                        ) => release_completion(value),
+                        crate::engine::value::conversion::primitive::PrimitiveStep::Complete(value)
+                        | crate::engine::value::conversion::primitive::PrimitiveStep::CyclePublished(value) => release_completion(value),
                         crate::engine::value::conversion::primitive::PrimitiveStep::Get {
                             resume,
                         }
@@ -826,8 +833,14 @@ impl Step {
                     match step {
                         crate::engine::value::conversion::number::NumberStep::Complete(
                             NativeConversion::Throw(value),
+                        )
+                        | crate::engine::value::conversion::number::NumberStep::CyclePublished(
+                            NativeConversion::Throw(value),
                         ) => release(value),
                         crate::engine::value::conversion::number::NumberStep::Complete(
+                            NativeConversion::Value(_),
+                        )
+                        | crate::engine::value::conversion::number::NumberStep::CyclePublished(
                             NativeConversion::Value(_),
                         ) => {}
                         crate::engine::value::conversion::number::NumberStep::Read { resume }
@@ -1396,7 +1409,7 @@ impl Step {
                     value.release_owned(runtime);
                 }
             }
-            Self::ElementComplete(value) => {
+            Self::ElementComplete(value) | Self::CyclePublishedElement(value) => {
                 if let Some(NativeConversion::Throw(value)) = value {
                     release(value);
                 }
@@ -1414,7 +1427,7 @@ impl Step {
                     value.release_owned(runtime);
                 }
             }
-            Self::NumberComplete(value) => {
+            Self::NumberComplete(value) | Self::CyclePublishedNumber(value) => {
                 if let Some(NativeConversion::Throw(value)) = value {
                     release(value);
                 }
@@ -1747,6 +1760,8 @@ impl Resume {
                 | Self::NumericPrimitive(_)
                 | Self::DatePrototype(_)
                 | Self::Identity
+                | Self::ComputedKey
+                | Self::PropertyKeyValue
         )
     }
     pub(in crate::engine::vm) fn resume_in_state(
@@ -1756,6 +1771,12 @@ impl Resume {
         completion: Completion,
     ) -> Result<Step, crate::engine::api::RuntimeError> {
         match self {
+            Self::PropertyKeyValue => Ok(Step::Complete(Some(match completion {
+                Completion::Return(value) => {
+                    Completion::Return(state.property_key_primitive(poisoned, value)?)
+                }
+                completion => completion,
+            }))),
             Self::Identity => Ok(Step::Complete(Some(completion))),
             Self::Primitive(resume) => resume
                 .resume_in_state(state, poisoned, completion)
@@ -2468,6 +2489,27 @@ impl Resume {
             Self::ConstructorPrototype { request, resume } => {
                 super::construct::prototype(runtime, request, completion, *resume)
                     .map_err(crate::engine::api::runtime_error::RuntimeError::Engine)
+            }
+            Self::PropertyKeyValue => {
+                let result = match completion {
+                    Completion::Return(value) => Completion::Return(
+                        runtime
+                            .0
+                            .state
+                            .borrow_mut()
+                            .property_key_primitive(&runtime.0.poisoned, value)?,
+                    ),
+                    completion => completion,
+                };
+                Ok(Step::Complete(Some(result)))
+            }
+            Self::ComputedKey => {
+                let (Completion::Return(value) | Completion::Throw(value)) = completion;
+                runtime.release_jsvalue(value)?;
+                runtime.check_poison()?;
+                Err(crate::engine::api::RuntimeError::Invariant(
+                    "computed key reply missed its Query",
+                ))
             }
             Self::Identity => Ok(Step::Complete(Some(completion))),
             Self::ObjectString(resume) => {

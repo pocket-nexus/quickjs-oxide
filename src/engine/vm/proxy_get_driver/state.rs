@@ -20,6 +20,8 @@ use crate::engine::{
 pub(in crate::engine::vm) enum StateEffect {
     Complete,
     Callback,
+    PropertyRead,
+    Diagnostic,
     Boundary,
 }
 pub(in crate::engine::vm) struct StateProgress {
@@ -40,12 +42,28 @@ impl Query {
         let mut cycle_published = false;
         loop {
             match step {
+                Step::ComputedError(_) => {
+                    // Frame publication belongs to the executor. Keep the
+                    // selected diagnostic armed until it supplies that fact.
+                    return Ok(StateProgress {
+                        effect: StateEffect::Diagnostic,
+                        cycle_published,
+                    });
+                }
                 Step::CyclePublishedPrimitiveReply { value, resume } => {
                     cycle_published = true;
                     *step = Step::PrimitiveReply {
                         value: value.take(),
                         resume: resume.take(),
                     };
+                }
+                Step::CyclePublishedNumber(value) => {
+                    cycle_published = true;
+                    *step = Step::NumberComplete(value.take());
+                }
+                Step::CyclePublishedElement(value) => {
+                    cycle_published = true;
+                    *step = Step::ElementComplete(value.take());
                 }
                 Step::String { value, resume } => {
                     *step = Step::Primitive {
@@ -146,6 +164,15 @@ impl Query {
                     )?;
                 }
                 Step::PrimitiveReply { value, resume } => {
+                    if matches!(resume, Some(Resume::ComputedKey)) {
+                        let _ = resume.take();
+                        *step = self.computed_key_reply(
+                            runtime,
+                            state,
+                            value.take().expect("computed key reply"),
+                        )?;
+                        continue;
+                    }
                     if matches!(resume, Some(Resume::StringValue { .. })) {
                         *step = resume
                             .as_mut()
@@ -189,6 +216,15 @@ impl Query {
                     )?;
                 }
                 Step::Complete(value) => {
+                    if matches!(self.parents.0.last(), Some(Resume::ComputedKey)) {
+                        let _ = self.parents.pop();
+                        *step = self.computed_key_reply(
+                            runtime,
+                            state,
+                            value.take().expect("computed key reply"),
+                        )?;
+                        continue;
+                    }
                     if self
                         .parents
                         .0
@@ -234,6 +270,14 @@ impl Query {
                 }
                 Step::PrimitiveProgress(progress) => {
                     match progress.as_mut().expect("primitive progress") {
+                        PrimitiveStep::CyclePublished(_) => {
+                            let PrimitiveStep::CyclePublished(value) =
+                                progress.take().expect("published primitive progress")
+                            else {
+                                unreachable!()
+                            };
+                            *step = Step::CyclePublishedComplete(Some(value));
+                        }
                         PrimitiveStep::Complete(_) => {
                             let PrimitiveStep::Complete(value) =
                                 progress.take().expect("primitive progress")
@@ -279,6 +323,14 @@ impl Query {
                 }
                 Step::NumberProgress(progress) => {
                     match progress.as_mut().expect("number progress") {
+                        NumberStep::CyclePublished(_) => {
+                            let NumberStep::CyclePublished(value) =
+                                progress.take().expect("published number progress")
+                            else {
+                                unreachable!()
+                            };
+                            *step = Step::CyclePublishedNumber(Some(value));
+                        }
                         NumberStep::Complete(_) => {
                             let NumberStep::Complete(value) =
                                 progress.take().expect("number progress")
@@ -396,6 +448,12 @@ impl Query {
                     };
                 }
                 Step::RawRead { read, resume, .. } => {
+                    if self.final_read_pending() && !matches!(read, Some(ReadStep::Shared(_))) {
+                        return Ok(StateProgress {
+                            effect: StateEffect::PropertyRead,
+                            cycle_published,
+                        });
+                    }
                     // Preserve the allocation fact even when the selected effect
                     // itself must leave this lease (for example, a Proxy).
                     cycle_published |= matches!(read, Some(ReadStep::CyclePublished(_)));
@@ -479,6 +537,16 @@ impl Step {
             Self::Complete(value) | Self::CyclePublishedComplete(value) => {
                 if let Some(value) = value.take() {
                     completion(state, value)?;
+                }
+            }
+            Self::CyclePublishedNumber(value) => {
+                if let Some(NativeConversion::Throw(value)) = value.take() {
+                    state.release_owned_jsvalue(poisoned, value)?;
+                }
+            }
+            Self::CyclePublishedElement(value) => {
+                if let Some(NativeConversion::Throw(value)) = value.take() {
+                    state.release_owned_jsvalue(poisoned, value)?;
                 }
             }
             Self::StringReply { value, resume } => {
@@ -611,6 +679,9 @@ impl Query {
                 resume.retire_raw_in_state(state, poisoned)?;
             }
         }
+        if let Some(finish) = self.finish.as_mut() {
+            finish.retire_computed_in_state(state, poisoned)?;
+        }
         Ok(())
     }
 }
@@ -677,35 +748,41 @@ impl<'a> RawNativeQuery<'a> {
         std::mem::replace(&mut self.step, Step::Complete(None))
     }
 }
+impl RawNativeQuery<'_> {
+    /// Normal rejection must observe the first direct retirement failure.
+    pub(in crate::engine::vm) fn retire(&mut self) -> Result<(), RuntimeError> {
+        if self.runtime.0.poisoned.get() {
+            return Ok(());
+        }
+        if let Some(step) = &mut self.pending_step {
+            step.retire_raw_in_state(self.state, &self.runtime.0.poisoned)?;
+        }
+        if let Some(call) = &mut self.pending_call {
+            call.abandon(self.state, &self.runtime.0.poisoned);
+            if self.runtime.0.poisoned.get() {
+                return Err(RuntimeError::Poisoned);
+            }
+        }
+        self.step
+            .retire_raw_in_state(self.state, &self.runtime.0.poisoned)?;
+        if let Some(query) = &mut self.query {
+            query.retire_raw_in_state(self.runtime, self.state)?;
+        }
+        if let Some(call) = &mut self.call {
+            call.abandon(self.state, &self.runtime.0.poisoned);
+            if self.runtime.0.poisoned.get() {
+                return Err(RuntimeError::Poisoned);
+            }
+        }
+        Ok(())
+    }
+}
 impl Drop for RawNativeQuery<'_> {
     fn drop(&mut self) {
         if std::thread::panicking() {
             self.runtime.0.poisoned.set(true);
         }
-        let mut cleanup = || -> Result<(), RuntimeError> {
-            if self.runtime.0.poisoned.get() {
-                return Ok(());
-            }
-            if let Some(step) = &mut self.pending_step {
-                step.retire_raw_in_state(self.state, &self.runtime.0.poisoned)?;
-            }
-            if let Some(call) = &mut self.pending_call {
-                call.abandon(self.state, &self.runtime.0.poisoned);
-                if self.runtime.0.poisoned.get() {
-                    return Err(RuntimeError::Poisoned);
-                }
-            }
-            self.step
-                .retire_raw_in_state(self.state, &self.runtime.0.poisoned)?;
-            if let Some(query) = &mut self.query {
-                query.retire_raw_in_state(self.runtime, self.state)?;
-            }
-            if let Some(call) = &mut self.call {
-                call.abandon(self.state, &self.runtime.0.poisoned);
-            }
-            Ok(())
-        };
-        let _ = cleanup();
+        let _ = self.retire();
         // Successful cleanup or destructive quarantine finishes every raw role.
         // Query's Weak fallback is never invoked under this admitted lease.
         if let Some(query) = &mut self.query
@@ -721,6 +798,8 @@ impl Drop for RawNativeQuery<'_> {
 /// owners already reside in the existing pending Query or rare boundary slot.
 pub(in crate::engine::vm) enum StateNativeProgress {
     Complete(Completion),
+    Published,
+    PublishedThrow,
     Entered,
     Boundary,
 }
@@ -985,6 +1064,8 @@ impl super::PendingProxyGet {
                     super::Finish::Call { .. }
                         | super::Finish::ResidentCall { .. }
                         | super::Finish::VmCall(_)
+                        | super::Finish::ComputedRead(_)
+                        | super::Finish::PropertyKeyValue { .. }
                 )
             )
             && self.resume.can_resume_in_state()
@@ -1012,6 +1093,8 @@ impl<'a> RawNativeQuery<'a> {
         let index = match finish {
             super::Finish::Call { .. } => frame.next_pc()?,
             super::Finish::ResidentCall { .. } | super::Finish::VmCall(_) => frame.resume_pc,
+            super::Finish::ComputedRead(input) => input.fallthrough.index(),
+            super::Finish::PropertyKeyValue { fallthrough, .. } => fallthrough.index(),
             _ => unreachable!("non-native query used native reply continuation"),
         };
         let fallthrough = crate::engine::vm::execute::FallthroughPc::from_committed_index(index)?;
@@ -1058,6 +1141,9 @@ impl<'a> RawNativeQuery<'a> {
                 Some(*depth),
             ),
             super::Finish::VmCall(use_value) => (false, *use_value, None),
+            super::Finish::ComputedRead(_) | super::Finish::PropertyKeyValue { .. } => {
+                (false, crate::engine::vm::frame::ReturnValue::Push, None)
+            }
             _ => unreachable!("non-native query used native result placement"),
         }
     }

@@ -13,9 +13,15 @@ use crate::engine::{
 use std::cell::Cell;
 
 pub(crate) enum PrimitiveStep {
-    Get { resume: PrimitiveResume },
-    Call { resume: PrimitiveResume },
+    Get {
+        resume: PrimitiveResume,
+    },
+    Call {
+        resume: PrimitiveResume,
+    },
     Complete(Completion),
+    /// This completion owns a freshly published collectible Error node.
+    CyclePublished(Completion),
 }
 pub(crate) struct PrimitiveResume(Box<PrimitiveResumeState>);
 pub(crate) struct PrimitiveResumeState {
@@ -41,6 +47,8 @@ enum Effect {
     Get,
     Call,
     Complete(Completion),
+    /// This completion owns a freshly published collectible Error node.
+    CyclePublished(Completion),
 }
 
 impl PrimitiveResume {
@@ -225,6 +233,12 @@ impl PrimitiveResume {
                 resume: owner.into_inner(),
             },
             Effect::Complete(completion) => owner.finish_complete(completion)?,
+            Effect::CyclePublished(completion) => {
+                let PrimitiveStep::Complete(completion) = owner.finish_complete(completion)? else {
+                    unreachable!()
+                };
+                PrimitiveStep::CyclePublished(completion)
+            }
         })
     }
     pub(crate) fn retire_in_state(
@@ -294,7 +308,7 @@ impl PrimitiveResumeState {
         poisoned: &Cell<bool>,
         message: &str,
     ) -> Result<Effect, RuntimeError> {
-        Ok(Effect::Complete(Completion::Throw(JsValue::Object(
+        Ok(Effect::CyclePublished(Completion::Throw(JsValue::Object(
             state.new_native_error_from_message(
                 poisoned,
                 self.realm,
@@ -477,7 +491,10 @@ impl PrimitiveStep {
             runtime.check_poison()
         };
         match self {
-            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => release(value),
+            Self::Complete(Completion::Return(value) | Completion::Throw(value))
+            | Self::CyclePublished(Completion::Return(value) | Completion::Throw(value)) => {
+                release(value)
+            }
             Self::Get { resume } | Self::Call { resume } => resume.retire_at_boundary(runtime),
         }
     }
@@ -488,7 +505,8 @@ impl PrimitiveStep {
         poisoned: &Cell<bool>,
     ) -> Result<(), RuntimeError> {
         match self {
-            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value))
+            | Self::CyclePublished(Completion::Return(value) | Completion::Throw(value)) => {
                 state.release_owned_jsvalue(poisoned, value)
             }
             Self::Get { resume } | Self::Call { resume } => resume.retire_in_state(state, poisoned),
@@ -567,7 +585,7 @@ impl Drop for PrimitiveBoundaryGuard<'_> {
     }
 }
 impl Runtime {
-    pub(super) fn finish_primitive_steps(
+    pub(in crate::engine) fn finish_primitive_steps(
         &self,
         realm: ContextId,
         step: PrimitiveStep,
@@ -579,6 +597,16 @@ impl Runtime {
         loop {
             match owner.step.take().expect("primitive boundary progress") {
                 PrimitiveStep::Complete(completion) => return Ok(completion),
+                PrimitiveStep::CyclePublished(completion) => {
+                    owner.step = Some(PrimitiveStep::CyclePublished(completion));
+                    self.collect_if_requested()?;
+                    let PrimitiveStep::CyclePublished(completion) =
+                        owner.step.take().expect("published primitive completion")
+                    else {
+                        unreachable!()
+                    };
+                    return Ok(completion);
+                }
                 PrimitiveStep::Get { resume } => {
                     let mut pending = PrimitiveBoundaryGuard {
                         runtime: self,

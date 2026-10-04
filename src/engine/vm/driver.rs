@@ -225,6 +225,10 @@ fn enter_bound_call_if_selected(
                 .expect("Bound call boundary");
             match super::proxy_get_driver::resume_resident_boundary(runtime, execution, packet)? {
                 super::proxy_get_driver::Progress::Call(step) => step,
+                super::proxy_get_driver::Progress::Resident
+                | super::proxy_get_driver::Progress::ResidentThrow => {
+                    return Err(Error::internal("Bound call returned a read publication"));
+                }
                 super::proxy_get_driver::Progress::Conversion(_) => {
                     return Err(Error::internal("Bound call returned a conversion"));
                 }
@@ -756,25 +760,6 @@ fn run_frames_with_state(
                         }
                     }
                 }
-                Progress::PropertyRead(input) => {
-                    match super::property_driver::read_converted(
-                        runtime,
-                        &mut execution,
-                        id,
-                        input,
-                    )? {
-                        CallStep::Entered => continue,
-                        CallStep::Complete(completion) => {
-                            forwarded = Some(completion);
-                            VmAction::Complete
-                        }
-                        CallStep::Bridge => {
-                            return Err(Error::internal(
-                                "converted property read attempted replay",
-                            ));
-                        }
-                    }
-                }
             }
         } else if forwarded.is_some() {
             VmAction::Complete
@@ -787,6 +772,9 @@ fn run_frames_with_state(
             match boundary {
                 ready::Boundary::Exit(exit) => exit,
                 ready::Boundary::Entered => continue,
+                ready::Boundary::ReadPublished => {
+                    return Err(Error::internal("completed read escaped the resident loop"));
+                }
                 ready::Boundary::Conversion(exit) => {
                     conversion_prepared = true;
                     exit
@@ -842,6 +830,12 @@ fn run_frames_with_state(
                     target,
                     outcome,
                 )? {
+                    super::proxy_get_driver::Progress::Resident => continue,
+                    super::proxy_get_driver::Progress::ResidentThrow => {
+                        return Err(Error::internal(
+                            "computed read suspension returned a stack throw",
+                        ));
+                    }
                     super::proxy_get_driver::Progress::Conversion(task) => conversion = Some(task),
                     super::proxy_get_driver::Progress::Call(CallStep::Entered) => {}
                     super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
@@ -885,6 +879,21 @@ fn run_frames_with_state(
             Some(super::frame::OperationTarget::PropertyGet(_))
         ) {
             match super::proxy_get_driver::reply(runtime, &mut execution, target, completion)? {
+                super::proxy_get_driver::Progress::Resident => continue,
+                super::proxy_get_driver::Progress::ResidentThrow => {
+                    let step =
+                        super::frame_operations::throw(runtime, &mut execution, target.frame()?)?;
+                    match step {
+                        CallStep::Entered => continue,
+                        CallStep::Complete(completion) => {
+                            forwarded = Some(completion);
+                            continue;
+                        }
+                        CallStep::Bridge => {
+                            return Err(Error::internal("computed throw attempted replay"));
+                        }
+                    }
+                }
                 super::proxy_get_driver::Progress::Conversion(task) => {
                     conversion = Some(task);
                     continue;

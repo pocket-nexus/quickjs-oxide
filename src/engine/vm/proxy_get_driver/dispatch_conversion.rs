@@ -18,7 +18,11 @@ pub(super) fn primitive(
     loop {
         if matches!(
             step,
-            Step::Primitive { .. }
+            Step::CyclePublishedComplete(_)
+                | Step::CyclePublishedNumber(_)
+                | Step::CyclePublishedElement(_)
+                | Step::ComputedError(_)
+                | Step::Primitive { .. }
                 | Step::String { .. }
                 | Step::StringReply { .. }
                 | Step::Number { .. }
@@ -29,7 +33,6 @@ pub(super) fn primitive(
                 | Step::NumberReply { .. }
                 | Step::RawRead { .. }
                 | Step::RawReadRequest { .. }
-                | Step::CyclePublishedComplete(_)
                 | Step::CyclePublishedPrimitive { .. }
                 | Step::OrdinaryPrimitive { .. }
                 | Step::RawCall { .. }

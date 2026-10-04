@@ -16,6 +16,7 @@ use std::ops::Range;
 use std::rc::Rc;
 mod call;
 mod construct;
+mod read;
 
 pub(in crate::engine::vm) struct SlotStore {
     // Initialized high-water backing. Inactive slots are always None; only
@@ -317,6 +318,7 @@ pub(in crate::engine::vm) struct NamedReadOperation {
     pub key_index: u32,
     pub keep_receiver: bool,
 }
+pub(in crate::engine::vm) use read::{ReadOperandCommit, publish_property_read_result};
 pub(in crate::engine::vm) use window::{
     CheckedOrdinaryCallOperands, DirectSlot, FrameExecution, FrameSlots, FrameTransaction,
     FrameTurn, LinkedReadCompletion, NativeInputSource, StateNativeProgress,

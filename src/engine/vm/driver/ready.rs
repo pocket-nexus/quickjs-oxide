@@ -18,6 +18,9 @@ pub(super) enum Boundary {
     /// An actual resident Query boundary already produced this conversion task.
     QueryConversion(crate::engine::vm::conversion_driver::ConversionTask),
     Complete(Completion),
+    /// The selected computed read has published its real suffix and serviced
+    /// its actual collectible producer. Resume without a leaf-only GC poll.
+    ReadPublished,
 }
 
 #[inline(never)]
@@ -29,7 +32,7 @@ pub(super) fn run(
 ) -> Result<Boundary, Error> {
     #[cfg(feature = "profiling")]
     let mut entered = false;
-    loop {
+    'entry: loop {
         // The concrete shared mutex seed/reply already selected a leaf word. Its
         // resident commit is not a new allocation/scheduler pressure boundary.
         // Remaining legacy producer boundaries keep their original service.
@@ -44,284 +47,296 @@ pub(super) fn run(
                 .collect_if_requested()
                 .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
         }
-        #[cfg(feature = "profiling")]
-        {
-            if entered {
-                record_event("frame_authentication_reentry");
-            }
-            entered = true;
-        }
-        // The state borrow ends before materialization and every legacy helper.
-        // Unwind likewise drops it before RunningExecution's cleanup guard.
-        let result = {
-            // Public roots dropped by a legacy adapter coordinate outside the
-            // exclusive segment. No public-root Drop occurs inside this loop.
-            runtime
-                .drain_deferred_references()
-                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
-            let mut state = runtime.0.state.borrow_mut();
-            crate::engine::vm::execute::execute_frame_in_state(runtime, &mut state, execution, id)
-        };
-        // A segment can install and retire several ordinary frames. Its cold
-        // action and fault PC belong to the actual current frame at exit.
-        id = execution
-            .frames
-            .current_id()
-            .ok_or_else(|| invariant("execution segment lost current frame"))?;
-        // A failed owned release may have partially changed heap cleanup.
-        // Do not materialize diagnostics or run another adapter on that state.
-        if runtime.0.poisoned.get() {
-            return Err(result
-                .err()
-                .unwrap_or_else(|| Error::internal("runtime is poisoned")));
-        }
-        #[cfg(feature = "profiling")]
-        record_segment_boundary(&result);
-        #[cfg(feature = "profiling")]
-        record_exit(&result);
-        // Ordinary Call/Return need no observable activation. Cold operations
-        // may allocate an error, release an observable owner or invoke code.
-        if result.as_ref().map_or(true, VmAction::observes_activation)
-            && !matches!(
-                execution.selected_named_read,
-                Some(crate::engine::vm::property_driver::SelectedNamedRead::Shared(_))
-            )
-        {
-            execution.frames.materialize(runtime)?;
-        }
-        let exit = result?;
-        match exit {
-            VmAction::Materialize => continue,
-            VmAction::Pure(operation) => {
-                // Pure leaves can complete or throw, but cannot install another
-                // frame or a pending conversion. Keep their successful result
-                // in this loop instead of redispatching through the cold driver.
-                match crate::engine::vm::frame_operations::pure(runtime, execution, id, operation)?
-                {
-                    CallStep::Entered => {
-                        #[cfg(feature = "profiling")]
-                        record_event("pure_completed_in_same_frame");
+        'resident: loop {
+            if execution.selected_native_query.is_some() {
+                match resume_native_boundary(runtime, execution)? {
+                    Boundary::ReadPublished => continue 'resident,
+                    Boundary::Entered if execution.selected_native_query.is_some() => {
+                        continue 'resident;
                     }
-                    CallStep::Complete(completion) => return Ok(Boundary::Complete(completion)),
-                    CallStep::Bridge => return Err(invariant("pure operation attempted replay")),
+                    boundary => return Ok(boundary),
                 }
             }
-            VmAction::Call {
-                arguments,
-                method,
-                tail,
-                fallthrough,
-            } => {
-                let selected_native = execution.selected_native.take();
-                if let Some(boundary) = enter_call(
+            #[cfg(feature = "profiling")]
+            {
+                if entered {
+                    record_event("frame_authentication_reentry");
+                }
+                entered = true;
+            }
+            // The state borrow ends before materialization and every legacy helper.
+            // Unwind likewise drops it before RunningExecution's cleanup guard.
+            let result = {
+                // Public roots dropped by a legacy adapter coordinate outside the
+                // exclusive segment. No public-root Drop occurs inside this loop.
+                runtime
+                    .drain_deferred_references()
+                    .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+                let mut state = runtime.0.state.borrow_mut();
+                crate::engine::vm::execute::execute_frame_in_state_with_identity(
                     runtime,
+                    &mut state,
                     execution,
-                    &mut id,
+                    id,
+                    next_operation,
+                )
+            };
+            // A segment can install and retire several ordinary frames. Its cold
+            // action and fault PC belong to the actual current frame at exit.
+            id = execution
+                .frames
+                .current_id()
+                .ok_or_else(|| invariant("execution segment lost current frame"))?;
+            // A failed owned release may have partially changed heap cleanup.
+            // Do not materialize diagnostics or run another adapter on that state.
+            if runtime.0.poisoned.get() {
+                return Err(result
+                    .err()
+                    .unwrap_or_else(|| Error::internal("runtime is poisoned")));
+            }
+            #[cfg(feature = "profiling")]
+            record_segment_boundary(&result);
+            #[cfg(feature = "profiling")]
+            record_exit(&result);
+            // Ordinary Call/Return need no observable activation. Cold operations
+            // may allocate an error, release an observable owner or invoke code.
+            if result.as_ref().map_or(true, VmAction::observes_activation)
+                && !matches!(
+                    execution.selected_named_read,
+                    Some(crate::engine::vm::property_driver::SelectedNamedRead::Shared(_))
+                )
+            {
+                execution.frames.materialize(runtime)?;
+            }
+            let exit = result?;
+            match exit {
+                VmAction::Materialize => continue 'entry,
+                VmAction::Pure(operation) => {
+                    // Pure leaves can complete or throw, but cannot install another
+                    // frame or a pending conversion. Keep their successful result
+                    // in this loop instead of redispatching through the cold driver.
+                    match crate::engine::vm::frame_operations::pure(
+                        runtime, execution, id, operation,
+                    )? {
+                        CallStep::Entered => {
+                            #[cfg(feature = "profiling")]
+                            record_event("pure_completed_in_same_frame");
+                        }
+                        CallStep::Complete(completion) => {
+                            return Ok(Boundary::Complete(completion));
+                        }
+                        CallStep::Bridge => {
+                            return Err(invariant("pure operation attempted replay"));
+                        }
+                    }
+                }
+                VmAction::Call {
                     arguments,
                     method,
                     tail,
-                    selected_native,
                     fallthrough,
-                )? {
-                    return Ok(boundary);
+                } => {
+                    let selected_native = execution.selected_native.take();
+                    if let Some(boundary) = enter_call(
+                        runtime,
+                        execution,
+                        &mut id,
+                        arguments,
+                        method,
+                        tail,
+                        selected_native,
+                        fallthrough,
+                    )? {
+                        match boundary {
+                            Boundary::ReadPublished => continue 'resident,
+                            Boundary::Entered if execution.selected_native_query.is_some() => {
+                                continue 'resident;
+                            }
+                            boundary => return Ok(boundary),
+                        }
+                    }
                 }
-            }
-            VmAction::NativeProgress => {
-                return resume_native_boundary(runtime, execution);
-            }
-            VmAction::Complete => match super::ordinary::finish(runtime, execution, id)? {
-                super::ordinary::ReturnProgress::NativeThrow => {
-                    execution.frames.materialize(runtime)?;
-                    return Ok(Boundary::Exit(VmAction::Throw));
+                VmAction::NativeProgress => match resume_native_boundary(runtime, execution)? {
+                    Boundary::ReadPublished => continue 'resident,
+                    Boundary::Entered if execution.selected_native_query.is_some() => {
+                        continue 'resident;
+                    }
+                    boundary => return Ok(boundary),
+                },
+                VmAction::Complete => match super::ordinary::finish(runtime, execution, id)? {
+                    super::ordinary::ReturnProgress::NativeThrow => {
+                        execution.frames.materialize(runtime)?;
+                        return Ok(Boundary::Exit(VmAction::Throw));
+                    }
+                    super::ordinary::ReturnProgress::NativeBoundary => {
+                        execution.frames.materialize(runtime)?;
+                        match resume_native_boundary(runtime, execution)? {
+                            Boundary::ReadPublished => continue 'resident,
+                            Boundary::Entered if execution.selected_native_query.is_some() => {
+                                continue 'resident;
+                            }
+                            boundary => return Ok(boundary),
+                        }
+                    }
+                    super::ordinary::ReturnProgress::Declined => return Ok(Boundary::Exit(exit)),
+                    super::ordinary::ReturnProgress::Returned => {
+                        id = execution.frames.current_id().unwrap()
+                    }
+                    super::ordinary::ReturnProgress::Property(CallStep::Entered) => {
+                        return Ok(Boundary::Entered);
+                    }
+                    super::ordinary::ReturnProgress::Property(CallStep::Complete(completion)) => {
+                        return Ok(Boundary::Complete(completion));
+                    }
+                    super::ordinary::ReturnProgress::Property(CallStep::Bridge) => {
+                        return Err(invariant("property return attempted replay"));
+                    }
+                },
+                #[cfg(all(test, feature = "profiling"))]
+                VmAction::ReleaseOperand { .. } => {
+                    if !crate::engine::vm::frame_operations::complete_owned_slot(
+                        runtime, execution, id, exit,
+                    )? {
+                        return Err(invariant(
+                            "direct slot completion changed its frame protocol",
+                        ));
+                    }
                 }
-                super::ordinary::ReturnProgress::NativeBoundary => {
-                    execution.frames.materialize(runtime)?;
-                    return resume_native_boundary(runtime, execution);
-                }
-                super::ordinary::ReturnProgress::Declined => return Ok(Boundary::Exit(exit)),
-                super::ordinary::ReturnProgress::Returned => {
-                    id = execution.frames.current_id().unwrap()
-                }
-                super::ordinary::ReturnProgress::Property(CallStep::Entered) => {
-                    return Ok(Boundary::Entered);
-                }
-                super::ordinary::ReturnProgress::Property(CallStep::Complete(completion)) => {
-                    return Ok(Boundary::Complete(completion));
-                }
-                super::ordinary::ReturnProgress::Property(CallStep::Bridge) => {
-                    return Err(invariant("property return attempted replay"));
-                }
-            },
-            #[cfg(all(test, feature = "profiling"))]
-            VmAction::ReleaseOperand { .. } => {
-                if !crate::engine::vm::frame_operations::complete_owned_slot(
-                    runtime, execution, id, exit,
-                )? {
-                    return Err(invariant(
-                        "direct slot completion changed its frame protocol",
-                    ));
-                }
-            }
 
-            VmAction::Numeric { kind, fallthrough } => {
-                use crate::engine::vm::frame_operations::NumericProgress;
-                let Some(progress) =
-                    crate::engine::vm::frame_operations::try_complete_primitive_numeric(
+                VmAction::Numeric { kind, fallthrough } => {
+                    use crate::engine::vm::frame_operations::NumericProgress;
+                    let Some(progress) =
+                        crate::engine::vm::frame_operations::try_complete_primitive_numeric(
+                            runtime,
+                            execution,
+                            id,
+                            kind,
+                            fallthrough,
+                        )?
+                    else {
+                        #[cfg(feature = "profiling")]
+                        record_event("numeric_primitive_declined");
+                        return Ok(Boundary::Exit(exit));
+                    };
+                    match progress {
+                        NumericProgress::Completed => {
+                            #[cfg(feature = "profiling")]
+                            record_event("numeric_completed_in_same_frame");
+                            #[cfg(feature = "profiling")]
+                            if kind.primitive_arithmetic() {
+                                record_event("numeric_completed_with_carried_fallthrough");
+                            }
+                        }
+                        NumericProgress::Deferred(CallStep::Entered) => {
+                            return Ok(Boundary::Entered);
+                        }
+                        NumericProgress::Deferred(CallStep::Complete(completion)) => {
+                            return Ok(Boundary::Complete(completion));
+                        }
+                        NumericProgress::Deferred(CallStep::Bridge) => {
+                            return Err(invariant("numeric operation attempted replay"));
+                        }
+                    }
+                }
+                VmAction::ConvertPlus | VmAction::ConvertAdd => {
+                    let addition = exit == VmAction::ConvertAdd;
+                    use crate::engine::vm::conversion_driver::PrimitiveCompletion;
+                    match crate::engine::vm::conversion_driver::complete_primitives(
                         runtime,
                         execution,
                         id,
-                        kind,
-                        fallthrough,
-                    )?
-                else {
-                    #[cfg(feature = "profiling")]
-                    record_event("numeric_primitive_declined");
-                    return Ok(Boundary::Exit(exit));
-                };
-                match progress {
-                    NumericProgress::Completed => {
-                        #[cfg(feature = "profiling")]
-                        record_event("numeric_completed_in_same_frame");
-                        #[cfg(feature = "profiling")]
-                        if kind.primitive_arithmetic() {
-                            record_event("numeric_completed_with_carried_fallthrough");
+                        addition,
+                        next_operation,
+                    )? {
+                        PrimitiveCompletion::Completed => {}
+                        PrimitiveCompletion::Throw(value) => {
+                            return Ok(Boundary::Complete(Completion::Throw(value)));
                         }
-                    }
-                    NumericProgress::Deferred(CallStep::Entered) => return Ok(Boundary::Entered),
-                    NumericProgress::Deferred(CallStep::Complete(completion)) => {
-                        return Ok(Boundary::Complete(completion));
-                    }
-                    NumericProgress::Deferred(CallStep::Bridge) => {
-                        return Err(invariant("numeric operation attempted replay"));
+                        PrimitiveCompletion::Declined => return Ok(Boundary::Conversion(exit)),
                     }
                 }
-            }
-            VmAction::ConvertPlus | VmAction::ConvertAdd => {
-                let addition = exit == VmAction::ConvertAdd;
-                use crate::engine::vm::conversion_driver::PrimitiveCompletion;
-                match crate::engine::vm::conversion_driver::complete_primitives(
-                    runtime,
-                    execution,
-                    id,
-                    addition,
-                    next_operation,
-                )? {
-                    PrimitiveCompletion::Completed => {}
-                    PrimitiveCompletion::Throw(value) => {
-                        return Ok(Boundary::Complete(Completion::Throw(value)));
-                    }
-                    PrimitiveCompletion::Declined => return Ok(Boundary::Conversion(exit)),
-                }
-            }
 
-            VmAction::GetField {
-                index,
-                keep_receiver,
-                fallthrough,
-            } => {
-                #[cfg(feature = "profiling")]
-                record_event("property_read_action_exit");
-                #[cfg(feature = "profiling")]
-                record_event("driver_handoff.named_read");
-                let selected = execution.selected_named_read.take();
-                let selected = match selected {
-                    Some(crate::engine::vm::property_driver::SelectedNamedRead::Shared(word)) => {
-                        // Ended State before this actual mutex. The seed owns
-                        // exact backing/index/word; no Get selection is replayed.
-                        let word = word
-                            .read()
-                            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
-                        let read = runtime
-                            .0
-                            .state
-                            .borrow_mut()
-                            .own_typed_read_word(word)
-                            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
-                        execution.selected_named_read = Some(
-                            crate::engine::vm::property_driver::SelectedNamedRead::SharedReady(
-                                read,
-                            ),
-                        );
-                        #[cfg(feature = "profiling")]
-                        record_event("core.named_read_shared_mutex");
-                        continue;
+                VmAction::GetField {
+                    index,
+                    keep_receiver,
+                    fallthrough,
+                } => {
+                    #[cfg(feature = "profiling")]
+                    record_event("property_read_action_exit");
+                    #[cfg(feature = "profiling")]
+                    record_event("driver_handoff.named_read");
+                    let selected = execution.selected_named_read.take();
+                    let selected = match selected {
+                        Some(crate::engine::vm::property_driver::SelectedNamedRead::Shared(
+                            word,
+                        )) => {
+                            // Ended State before this actual mutex. The seed owns
+                            // exact backing/index/word; no Get selection is replayed.
+                            let word = word
+                                .read()
+                                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+                            let read = runtime
+                                .0
+                                .state
+                                .borrow_mut()
+                                .own_typed_read_word(word)
+                                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+                            execution.selected_named_read = Some(
+                                crate::engine::vm::property_driver::SelectedNamedRead::SharedReady(
+                                    read,
+                                ),
+                            );
+                            #[cfg(feature = "profiling")]
+                            record_event("core.named_read_shared_mutex");
+                            continue 'entry;
+                        }
+                        selected => selected,
+                    };
+                    let progress = crate::engine::vm::property_driver::read_progress_selected(
+                        runtime,
+                        execution,
+                        id,
+                        crate::engine::vm::property_driver::ReadKey::Static(index),
+                        keep_receiver,
+                        fallthrough,
+                        selected,
+                    )?;
+                    #[cfg(feature = "profiling")]
+                    if matches!(
+                        progress,
+                        crate::engine::vm::property_driver::PropertyProgress::Completed
+                    ) {
+                        record_event("property_read_completed_with_carried_fallthrough");
                     }
-                    selected => selected,
-                };
-                let progress = crate::engine::vm::property_driver::read_progress_selected(
-                    runtime,
-                    execution,
-                    id,
-                    crate::engine::vm::property_driver::ReadKey::Static(index),
-                    keep_receiver,
-                    fallthrough,
-                    selected,
-                )?;
-                #[cfg(feature = "profiling")]
-                if matches!(
-                    progress,
-                    crate::engine::vm::property_driver::PropertyProgress::Completed
-                ) {
-                    record_event("property_read_completed_with_carried_fallthrough");
+                    if let Some(boundary) = property_boundary(progress) {
+                        return Ok(boundary);
+                    }
                 }
-                if let Some(boundary) = property_boundary(progress) {
-                    return Ok(boundary);
+                VmAction::GetElement { .. } | VmAction::ConvertPropertyKey { .. } => {
+                    return Err(invariant(
+                        "computed instruction escaped its resident consumer",
+                    ));
                 }
+                VmAction::SetProperty(key) => {
+                    let frame = execution.frames.current_mut(id)?;
+                    if key.is_none()
+                        && matches!(
+                            execution.slots.peek(&frame.window, 1)?,
+                            crate::engine::value::JsValue::Object(_)
+                        )
+                    {
+                        return Ok(Boundary::Exit(exit));
+                    }
+                    let progress = crate::engine::vm::property_write_driver::write_progress(
+                        runtime, execution, id, key,
+                    )?;
+                    if let Some(boundary) = property_boundary(progress) {
+                        return Ok(boundary);
+                    }
+                }
+                _ => return Ok(Boundary::Exit(exit)),
             }
-            VmAction::GetElement {
-                keep_receiver,
-                keep_key,
-                fallthrough,
-            } => {
-                #[cfg(feature = "profiling")]
-                record_event("property_read_action_exit");
-                let frame = execution.frames.current_mut(id)?;
-                if !matches!(
-                    execution.slots.peek(&frame.window, 1)?,
-                    crate::engine::value::JsValue::Null | crate::engine::value::JsValue::Undefined
-                ) && matches!(
-                    execution.slots.peek(&frame.window, 0)?,
-                    crate::engine::value::JsValue::Object(_)
-                ) {
-                    return Ok(Boundary::Exit(exit));
-                }
-                let progress = crate::engine::vm::property_driver::read_progress(
-                    runtime,
-                    execution,
-                    id,
-                    crate::engine::vm::property_driver::ReadKey::Computed { keep_key },
-                    keep_receiver,
-                    fallthrough,
-                )?;
-                #[cfg(feature = "profiling")]
-                if matches!(
-                    progress,
-                    crate::engine::vm::property_driver::PropertyProgress::Completed
-                ) {
-                    record_event("property_read_completed_with_carried_fallthrough");
-                }
-                if let Some(boundary) = property_boundary(progress) {
-                    return Ok(boundary);
-                }
-            }
-            VmAction::SetProperty(key) => {
-                let frame = execution.frames.current_mut(id)?;
-                if key.is_none()
-                    && matches!(
-                        execution.slots.peek(&frame.window, 1)?,
-                        crate::engine::value::JsValue::Object(_)
-                    )
-                {
-                    return Ok(Boundary::Exit(exit));
-                }
-                let progress = crate::engine::vm::property_write_driver::write_progress(
-                    runtime, execution, id, key,
-                )?;
-                if let Some(boundary) = property_boundary(progress) {
-                    return Ok(boundary);
-                }
-            }
-            _ => return Ok(Boundary::Exit(exit)),
+            break 'resident;
         }
     }
 }
@@ -344,6 +359,10 @@ fn resume_native_boundary(
         }
         crate::engine::vm::proxy_get_driver::Progress::Call(CallStep::Bridge) => {
             Err(invariant("resident native query attempted replay"))
+        }
+        crate::engine::vm::proxy_get_driver::Progress::Resident => Ok(Boundary::ReadPublished),
+        crate::engine::vm::proxy_get_driver::Progress::ResidentThrow => {
+            Ok(Boundary::Exit(VmAction::Throw))
         }
         crate::engine::vm::proxy_get_driver::Progress::Conversion(task) => {
             Ok(Boundary::QueryConversion(task))

@@ -7,6 +7,7 @@ impl TryFrom<ElementStep> for Step {
     fn try_from(step: ElementStep) -> Result<Self, Self::Error> {
         Ok({
             match step {
+                ElementStep::CyclePublished(result) => Self::CyclePublishedElement(Some(result)),
                 ElementStep::Complete(result) => Self::ElementComplete(Some(result)),
                 ElementStep::Read { mut resume } => {
                     let object = resume.take_read_object();

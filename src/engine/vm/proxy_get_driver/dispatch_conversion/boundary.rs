@@ -18,6 +18,21 @@ pub(super) fn consume(
     pending: &mut Step,
 ) -> Result<Next, Error> {
     match pending {
+        Step::ComputedError(error) => {
+            let result = super::super::super::property_driver::throw_error(
+                runtime,
+                query.realm,
+                error.take().expect("selected computed error"),
+            )?;
+            let super::super::CallStep::Complete(completion) = result else {
+                return Err(Error::internal("computed diagnostic attempted a callback"));
+            };
+            *pending = Step::Complete(Some(completion));
+            if let Some(input) = query.computed_read_mut() {
+                input.cycle_published = true;
+            }
+            runtime.check_poison().map_err(runtime_error_to_vm_error)?;
+        }
         Step::StringReply { value, resume } => {
             let next = resume
                 .take()
@@ -68,10 +83,21 @@ pub(super) fn consume(
                 }
                 // Raw primitive protocols use domain-held intrinsic atoms. Take
                 // the PropertyKey's independent role before moving the read.
-                runtime
-                    .retain_atom_handle(*key)
-                    .map_err(|error| runtime_error_to_vm_error(error.into()))?;
-                let key = PropertyKey::from_owned_atom(runtime.clone(), *key);
+                let atom = if query.computed_read_mut().is_some_and(|input| {
+                    input.phase == super::super::computed::ComputedPhase::Proxy
+                }) {
+                    let input = query.computed_read_mut().expect("computed Proxy context");
+                    if input.atom != Some(*key) {
+                        return Err(Error::internal("computed Proxy key changed"));
+                    }
+                    input.atom.take().expect("computed Proxy atom owner")
+                } else {
+                    runtime
+                        .retain_atom_handle(*key)
+                        .map_err(|error| runtime_error_to_vm_error(error.into()))?;
+                    *key
+                };
+                let key = PropertyKey::from_owned_atom(runtime.clone(), atom);
                 let selected = match read.take().expect("selected Proxy read") {
                     ReadStep::Ready(read) | ReadStep::CyclePublished(read) => read,
                     ReadStep::Shared(_) => unreachable!(),
@@ -81,6 +107,7 @@ pub(super) fn consume(
                     key: Some(key),
                     resume: resume.take(),
                 };
+                query.publish_selected_prefix_at_boundary(runtime, execution, owner)?;
             }
         }
         Step::RawCall { inputs, resume } => {
@@ -164,6 +191,14 @@ pub(super) fn consume(
                 *resume = Some(std::mem::replace(&mut packet.resume, Resume::Identity));
                 *pending = reply.into_inner();
             } else {
+                if matches!(packet.selection, CallbackSelection::General)
+                    && query.final_getter_pending()
+                {
+                    query
+                        .computed_read_mut()
+                        .expect("computed getter context")
+                        .base = packet.inputs.preserved_receiver.take();
+                }
                 if packet.inputs.callback_callee.is_some()
                     || packet.inputs.preserved_receiver.is_some()
                 {

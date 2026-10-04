@@ -269,7 +269,7 @@ pub(super) fn dispatch(
         VmAction::Construct { arguments, .. } => construct(&mut context, arguments)?,
         VmAction::Apply(kind) => apply(&mut context, kind)?,
         VmAction::InitDerivedConstructor => init_derived_constructor(&mut context)?,
-        VmAction::ConvertAdd => convert(&mut context, true, false)?,
+        VmAction::ConvertAdd => convert(&mut context, true)?,
         VmAction::ApplyEval(environment) => apply_eval(&mut context, environment)?,
         VmAction::Eval {
             arguments,
@@ -284,13 +284,12 @@ pub(super) fn dispatch(
             keep_receiver,
             fallthrough,
         } => get_field(&mut context, index, keep_receiver, fallthrough)?,
-        VmAction::GetElement {
-            keep_receiver,
-            keep_key,
-            fallthrough,
-        } => get_element(&mut context, keep_receiver, keep_key, fallthrough)?,
-        VmAction::ConvertPlus => convert(&mut context, false, false)?,
-        VmAction::ConvertPropertyKey => convert(&mut context, false, true)?,
+        VmAction::GetElement { .. } | VmAction::ConvertPropertyKey { .. } => {
+            return Err(Error::internal(
+                "computed instruction escaped its resident consumer",
+            ));
+        }
+        VmAction::ConvertPlus => convert(&mut context, false)?,
         #[cfg(all(test, feature = "profiling"))]
         exit @ VmAction::ReleaseOperand { .. } => direct(&mut context, exit)?,
         VmAction::Complete => {
@@ -440,11 +439,7 @@ fn class_initializer(
 }
 
 #[inline(never)]
-fn convert(
-    context: &mut Context<'_>,
-    addition: bool,
-    property_key: bool,
-) -> Result<Disposition, Error> {
+fn convert(context: &mut Context<'_>, addition: bool) -> Result<Disposition, Error> {
     let runtime = context.runtime;
     let execution = &mut *context.execution;
     let id = context.id;
@@ -464,7 +459,6 @@ fn convert(
         id,
         *context.next_operation,
         addition,
-        property_key,
     )?);
     Ok(Disposition::Entered)
 }
@@ -626,52 +620,6 @@ fn get_field(
         execution,
         id,
         super::super::property_driver::ReadKey::Static(index),
-        keep_receiver,
-        fallthrough,
-    )? {
-        CallStep::Entered => Ok(Disposition::Entered),
-        CallStep::Complete(completion) => Ok(context.complete(completion)),
-        CallStep::Bridge => Ok(Disposition::Bridge),
-    }
-}
-
-#[inline(never)]
-fn get_element(
-    context: &mut Context<'_>,
-    keep_receiver: bool,
-    keep_key: bool,
-    fallthrough: super::super::execute::FallthroughPc,
-) -> Result<Disposition, Error> {
-    let runtime = context.runtime;
-    let execution = &mut *context.execution;
-    let id = context.id;
-
-    let frame = execution.frames.current_mut(id)?;
-    if !matches!(
-        execution.slots.peek(&frame.window, 1)?,
-        JsValue::Null | JsValue::Undefined
-    ) && matches!(execution.slots.peek(&frame.window, 0)?, JsValue::Object(_))
-    {
-        (*context.next_operation) = (*context.next_operation)
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("property conversion identity exhausted"))?;
-        *context.conversion = Some(
-            super::super::conversion_driver::ConversionTask::start_property_read(
-                runtime,
-                execution,
-                id,
-                *context.next_operation,
-                keep_receiver,
-                keep_key,
-            )?,
-        );
-        return Ok(Disposition::Entered);
-    }
-    match super::super::property_driver::read(
-        runtime,
-        execution,
-        id,
-        super::super::property_driver::ReadKey::Computed { keep_key },
         keep_receiver,
         fallthrough,
     )? {

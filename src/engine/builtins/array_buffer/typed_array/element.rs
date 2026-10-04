@@ -14,6 +14,7 @@ use crate::engine::{
 
 pub(crate) enum ElementStep {
     Complete(NativeConversion<[u8; 8]>),
+    CyclePublished(NativeConversion<[u8; 8]>),
     Read { resume: ElementResume },
     Call { resume: ElementResume },
 }
@@ -58,6 +59,28 @@ impl ElementStep {
         loop {
             self = match self {
                 Self::Complete(result) => return Ok(result),
+                Self::CyclePublished(result) => {
+                    // The canonical boundary guard keeps the actual Error edge
+                    // armed while servicing its producer before adaptation.
+                    return Ok(match result {
+                        NativeConversion::Throw(value) => match runtime.finish_primitive_steps(
+                            realm,
+                            PrimitiveStep::CyclePublished(Completion::Throw(value)),
+                        )? {
+                            Completion::Throw(value) => NativeConversion::Throw(value),
+                            Completion::Return(_) => unreachable!(),
+                        },
+                        NativeConversion::Value(bytes) => {
+                            runtime.finish_primitive_steps(
+                                realm,
+                                PrimitiveStep::CyclePublished(Completion::Return(
+                                    JsValue::Undefined,
+                                )),
+                            )?;
+                            NativeConversion::Value(bytes)
+                        }
+                    });
+                }
                 Self::Read { mut resume } => {
                     let object = resume.take_read_object();
                     let key = resume.take_read_key();
@@ -113,6 +136,12 @@ fn from_primitive(
     step: PrimitiveStep,
 ) -> Result<ElementStep, RuntimeError> {
     Ok(match step {
+        PrimitiveStep::CyclePublished(Completion::Throw(value)) => {
+            ElementStep::CyclePublished(NativeConversion::Throw(value))
+        }
+        PrimitiveStep::CyclePublished(Completion::Return(value)) => {
+            ElementStep::CyclePublished(encode_primitive(runtime, realm, element, value)?)
+        }
         PrimitiveStep::Complete(Completion::Throw(value)) => {
             ElementStep::Complete(NativeConversion::Throw(value))
         }

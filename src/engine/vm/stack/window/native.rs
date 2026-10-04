@@ -19,7 +19,7 @@ pub(in crate::engine::vm) enum NativeInputSource<'a> {
     Callback {
         inputs: &'a mut RawCallbackInputs,
         calling_realm: crate::engine::heap::ContextId,
-        named_keep_receiver: Option<bool>,
+        read_commit: Option<super::super::ReadOperandCommit<'a>>,
     },
 }
 impl FrameExecution<'_> {
@@ -111,18 +111,18 @@ impl FrameExecution<'_> {
             .map_err(runtime_error_to_vm_error)?;
         if let NativeInputSource::Callback {
             inputs,
-            named_keep_receiver: Some(keep_receiver),
+            read_commit: Some(commit),
             ..
         } = source
         {
             let (state, _) = owner.parts();
             // The activation protects the selected this role before the
             // original base and preserved role can perform destructive cleanup.
-            self.commit_named_getter_receiver(
+            self.commit_property_read_operands(
                 state,
                 &runtime.0.poisoned,
                 &mut inputs.preserved_receiver,
-                keep_receiver,
+                commit,
             )?;
         }
         Ok(owner)
@@ -146,7 +146,7 @@ impl FrameExecution<'_> {
         if let NativeInputSource::Callback {
             inputs,
             calling_realm,
-            named_keep_receiver,
+            read_commit,
         } = source
         {
             if !self.execution.frames.can_push_with_continuations(0)
@@ -178,15 +178,15 @@ impl FrameExecution<'_> {
                         resume: Resume::Identity,
                     },
                 )));
-                if let Some(keep_receiver) = named_keep_receiver {
+                if let Some(commit) = read_commit {
                     let Step::CallbackBoundary(Some(boundary)) = &mut owner.step else {
                         unreachable!()
                     };
-                    self.commit_named_getter_receiver(
+                    self.commit_property_read_operands(
                         owner.state,
                         &runtime.0.poisoned,
                         &mut boundary.inputs.preserved_receiver,
-                        keep_receiver,
+                        commit,
                     )?;
                 }
                 self.publish_native_boundary(&mut owner, return_to.owner, fallthrough)?;
@@ -199,7 +199,7 @@ impl FrameExecution<'_> {
                 NativeInputSource::Callback {
                     inputs,
                     calling_realm,
-                    named_keep_receiver,
+                    read_commit,
                 },
                 return_to,
                 fallthrough,
@@ -404,6 +404,9 @@ impl FrameExecution<'_> {
             Completion, driver::ordinary::Entry, proxy_get_driver::StateNativeProgress,
         };
         match result {
+            StateNativeProgress::Published | StateNativeProgress::PublishedThrow => {
+                Err(Error::internal("native Call used computed publication"))
+            }
             StateNativeProgress::Entered => Ok(Entry::Ordinary),
             StateNativeProgress::Boundary => Ok(Entry::NativeBoundary),
             StateNativeProgress::Complete(completion) => {
@@ -451,19 +454,76 @@ impl FrameExecution<'_> {
         let runtime = owner.runtime;
         loop {
             let progress = owner.advance().map_err(runtime_error_to_vm_error)?;
-            if progress.cycle_published {
+            if progress.cycle_published
+                && !owner
+                    .query
+                    .as_mut()
+                    .expect("resident query")
+                    .carry_computed_publication()
+            {
+                // Other native queries already own the real completion or
+                // callback edges in Step; trial deletion treats them as roots.
                 owner
                     .state
                     .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
                     .map_err(runtime_error_to_vm_error)?;
             }
             match progress.effect {
+                StateEffect::Diagnostic => {
+                    self.materialize_in_state(owner.state)?;
+                    let Step::ComputedError(error) = &mut owner.step else {
+                        unreachable!("selected computed diagnostic")
+                    };
+                    let error = error.take().expect("selected computed diagnostic");
+                    let Some(kind) =
+                        crate::engine::api::error::NativeErrorKind::from_javascript_error(
+                            error.kind(),
+                        )
+                    else {
+                        return Err(error);
+                    };
+                    let message = error.native_message().cloned().unwrap_or_else(|| {
+                        crate::engine::api::error::NativeErrorMessage::from_utf8(error.message())
+                    });
+                    let realm = owner.realm();
+                    let object = owner
+                        .state
+                        .new_native_error_from_message(&runtime.0.poisoned, realm, kind, message)
+                        .map_err(runtime_error_to_vm_error)?;
+                    // The real allocation owner enters Step before the common
+                    // fact consumer can collect or retire another role.
+                    owner.step =
+                        Step::CyclePublishedComplete(Some(crate::engine::vm::Completion::Throw(
+                            crate::engine::value::JsValue::Object(object),
+                        )));
+                    continue;
+                }
+                StateEffect::PropertyRead => {
+                    self.prepare_computed_selected(owner)?;
+                    continue;
+                }
                 StateEffect::Complete => {
                     if owner.has_native_scope() {
                         owner
                             .finish_native_scope(&mut self.execution.slots)
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
+                    }
+                    if let Some(result) = self.finish_computed_query(
+                        runtime,
+                        owner.state,
+                        owner.query.as_mut().expect("computed query"),
+                        &mut owner.step,
+                    )? {
+                        let query = owner.take_query();
+                        crate::engine::vm::proxy_get_driver::recycle_resident_query(
+                            runtime,
+                            owner.state,
+                            &mut self.execution.query_storage,
+                            query,
+                        )
+                        .map_err(runtime_error_to_vm_error)?;
+                        return Ok(result);
                     }
                     let completion = owner
                         .finish_outer(&mut self.execution.slots)
@@ -570,16 +630,11 @@ impl FrameExecution<'_> {
                         .map_err(runtime_error_to_vm_error)?;
                     let resume = resume.take().expect("callback parent");
                     let query = owner.take_query();
-                    let pending = self
-                        .execution
-                        .query_storage
-                        .pending(identity, query, resume);
-                    // This exclusive segment checked the parent and empty slot
-                    // before surrendering its Query; no callback can invalidate it.
-                    self.execution
-                        .frames
-                        .put_pending(parent, pending)
-                        .expect("admitted empty pending slot");
+                    let mut pending = Some(
+                        self.execution
+                            .query_storage
+                            .pending(identity, query, resume),
+                    );
                     let Step::RawCall {
                         inputs: Some(inputs),
                         ..
@@ -587,7 +642,7 @@ impl FrameExecution<'_> {
                     else {
                         unreachable!()
                     };
-                    let result = self.install_raw_ordinary_callback(
+                    let result = self.install_raw_property_callback(
                         runtime,
                         owner.state,
                         call,
@@ -599,16 +654,21 @@ impl FrameExecution<'_> {
                             operation: Some(OperationTarget::PropertyGet(identity)),
                         },
                         fallthrough,
+                        &mut pending,
                     );
                     if let Err(error) = result {
-                        let pending = self.execution.frames.take_pending(parent)?;
-                        let (_, query, resume) =
-                            self.execution.query_storage.release_pending(pending);
-                        owner.query = Some(query);
-                        let Step::RawCall { resume: slot, .. } = &mut owner.step else {
-                            unreachable!()
-                        };
-                        *slot = Some(resume);
+                        // Before child publication the same local pending record
+                        // still owns every Query/keeper. After publication it is
+                        // installed on the parent and execution cleanup owns it.
+                        if let Some(pending) = pending.take() {
+                            let (_, query, resume) =
+                                self.execution.query_storage.release_pending(pending);
+                            owner.query = Some(query);
+                            let Step::RawCall { resume: slot, .. } = &mut owner.step else {
+                                unreachable!()
+                            };
+                            *slot = Some(resume);
+                        }
                         return Err(error);
                     }
                     return Ok(StateNativeProgress::Entered);
@@ -621,6 +681,12 @@ impl FrameExecution<'_> {
                         || runtime.host_stack_would_overflow()
                     {
                         owner.callback_boundary(CallbackSelection::Native(selected), true);
+                        let Step::CallbackBoundary(Some(packet)) = &mut owner.step else {
+                            unreachable!()
+                        };
+                        if let Some(input) = owner.query.as_mut().and_then(|query| query.computed_read_mut()).filter(|input| !input.prefix_published && input.phase == crate::engine::vm::proxy_get_driver::computed::ComputedPhase::Getter) {
+                            self.commit_property_read_operands(owner.state, &runtime.0.poisoned, &mut packet.inputs.preserved_receiver, input.callback_commit())?;
+                        }
                         continue;
                     }
                     let calling_realm = owner.realm();
@@ -639,9 +705,17 @@ impl FrameExecution<'_> {
                         NativeInputSource::Callback {
                             inputs,
                             calling_realm,
-                            named_keep_receiver: None,
+                            read_commit: owner.query.as_mut().and_then(|query| query.computed_read_mut()).filter(|input| !input.prefix_published && input.phase == crate::engine::vm::proxy_get_driver::computed::ComputedPhase::Getter).map(|input| input.callback_commit()),
                         },
                     )?;
+                    {
+                        let (state, _) = native.parts();
+                        self.service_computed_publication(
+                            runtime,
+                            state,
+                            owner.query.as_mut().expect("native callback query"),
+                        )?;
+                    }
                     let realm = native.parts().1.activation.realm;
                     if !RuntimeState::has_state_native_body(target) {
                         let kind = selected.take_operation().unwrap_or(
@@ -763,6 +837,8 @@ impl FrameExecution<'_> {
             fallthrough,
         )?;
         match result {
+            StateNativeProgress::Published => Ok(Entry::NativeReady),
+            StateNativeProgress::PublishedThrow => Ok(Entry::NativeThrow),
             StateNativeProgress::Entered => Ok(Entry::Ordinary),
             StateNativeProgress::Boundary => Ok(Entry::NativeBoundary),
             StateNativeProgress::Complete(completion) => {

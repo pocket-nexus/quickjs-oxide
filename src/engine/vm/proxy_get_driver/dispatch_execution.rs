@@ -56,6 +56,19 @@ pub(super) fn finish(
                     .take()
                     .ok_or_else(|| Error::internal("query lost its final continuation"))?
                 {
+                    Finish::ComputedRead(mut input) => {
+                        input
+                            .retire_in_state(&mut runtime.0.state.borrow_mut(), &runtime.0.poisoned)
+                            .map_err(runtime_error_to_vm_error)?;
+                        return Err(Error::internal(
+                            "computed completion bypassed resident publication",
+                        ));
+                    }
+                    Finish::PropertyKeyValue { .. } => {
+                        return Err(Error::internal(
+                            "property-key completion bypassed resident publication",
+                        ));
+                    }
                     Finish::Root => {
                         return Ok(Next::Done(Progress::Call(CallStep::Complete(
                             completion.take().expect("selected Step field"),

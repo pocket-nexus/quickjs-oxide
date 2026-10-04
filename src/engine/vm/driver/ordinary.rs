@@ -552,6 +552,10 @@ pub(super) fn finish(
             crate::engine::vm::proxy_get_driver::Progress::Call(step) => {
                 Ok(ReturnProgress::Property(step))
             }
+            crate::engine::vm::proxy_get_driver::Progress::Resident => Ok(ReturnProgress::Returned),
+            crate::engine::vm::proxy_get_driver::Progress::ResidentThrow => {
+                Ok(ReturnProgress::NativeThrow)
+            }
             crate::engine::vm::proxy_get_driver::Progress::Conversion(_) => {
                 Err(Error::internal("property read returned conversion"))
             }

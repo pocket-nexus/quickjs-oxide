@@ -182,7 +182,11 @@ pub(in crate::engine::vm) fn finish_selected(
                             selected,
                             NativeInputSource::Callback {
                                 inputs,
-                                named_keep_receiver: Some(keep_receiver),
+                                read_commit: Some(
+                                    crate::engine::vm::stack::ReadOperandCommit::named(
+                                        keep_receiver,
+                                    ),
+                                ),
                                 calling_realm,
                             },
                             return_to,
@@ -291,6 +295,9 @@ fn finish_native_reply(
             cursor.commit_owned(state, value)?;
             Ok(Progress::Throw)
         }
+        StateNativeProgress::Published | StateNativeProgress::PublishedThrow => {
+            Err(Error::internal("native getter used computed publication"))
+        }
         StateNativeProgress::Entered => Ok(Progress::Entered),
         StateNativeProgress::Boundary => Ok(Progress::NativeBoundary),
     }
@@ -305,40 +312,26 @@ fn publish_complete(
     fallthrough: FallthroughPc,
 ) -> Result<(), Error> {
     let FrameTurn {
-        transaction,
-        fault_pc,
+        mut transaction,
         resume_pc,
         ..
     } = segment.frame();
     #[cfg(feature = "profiling")]
     let depth = transaction.operand_depth();
-    let mut cursor = FrameCursor::new(transaction, fault_pc, resume_pc, &runtime.0.poisoned);
-    if keep_receiver {
-        // The original base already occupies the preserved receiver slot.
-        // Match the existing descriptor completion's next-PC publication
-        // before the potentially failing result push.
-        cursor.advance(fallthrough.index());
-        cursor.commit_owned(state, value)?;
-    } else {
-        // Guard the produced result while moving the original base. A failed
-        // commit retires its output first; destructive cleanup stops the suffix.
-        let mut output = OwnedValueGuard::new(state, &runtime.0.poisoned, value);
-        let (state, value) = output.parts();
-        let original = cursor.move_owned()?;
-        let mut base = OwnedValueGuard::new(state, &runtime.0.poisoned, original);
-        let (state, original) = base.parts();
-        cursor.advance(fallthrough.index());
-        let result = cursor.commit_owned(state, value.take().expect("owned named read output"));
-        if !runtime.0.poisoned.get() {
-            state
-                .release_owned_jsvalue(
-                    &runtime.0.poisoned,
-                    original.take().expect("named read base"),
-                )
-                .map_err(runtime_error_to_vm_error)?;
-        }
-        result?;
-    }
+    let mut base = None;
+    let mut key = None;
+    crate::engine::vm::stack::publish_property_read_result(
+        state,
+        &runtime.0.poisoned,
+        &mut transaction,
+        resume_pc,
+        fallthrough.index(),
+        &mut base,
+        &mut key,
+        keep_receiver,
+        1,
+        value,
+    )?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(())

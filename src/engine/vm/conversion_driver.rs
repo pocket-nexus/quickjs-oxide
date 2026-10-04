@@ -15,16 +15,7 @@ enum Finish {
     Predicate(Option<Box<super::predicate_driver::Input>>),
     SuperProperty(Option<Box<super::super_property_driver::Input>>),
     Plus,
-    PropertyKey,
-    PropertyWrite {
-        base: JsValue,
-        value: JsValue,
-    },
-    PropertyRead {
-        base: JsValue,
-        keep_receiver: bool,
-        keep_key: bool,
-    },
+    PropertyWrite { base: JsValue, value: JsValue },
     AddLeft(JsValue),
     AddRight(JsValue),
 }
@@ -62,9 +53,6 @@ impl Drop for ConversionState {
                 }
                 let _ = self.runtime.release_jsvalue(value);
             }
-            Finish::PropertyRead { base, .. } => {
-                let _ = self.runtime.release_jsvalue(base);
-            }
             Finish::AddLeft(value) | Finish::AddRight(value) => {
                 let _ = self.runtime.release_jsvalue(value);
             }
@@ -73,7 +61,7 @@ impl Drop for ConversionState {
                     input.release_edges(&self.runtime);
                 }
             }
-            Finish::Predicate(_) | Finish::Plus | Finish::PropertyKey => {}
+            Finish::Predicate(_) | Finish::Plus => {}
         }
         if !self.runtime.skip_cleanup() {
             if let Some(resume) = self.resume.take() {
@@ -112,28 +100,7 @@ pub(super) enum Progress {
     Ready(ConversionTask),
     Entered,
     Complete(Completion),
-    PropertyRead(Box<super::property_driver::ConvertedRead>),
     PropertyWrite(Box<super::property_write_driver::ConvertedWrite>),
-}
-
-fn property_key_primitive(runtime: &Runtime, value: JsValue) -> Result<JsValue, Error> {
-    Ok(match value {
-        JsValue::Symbol(_) => value,
-        JsValue::String(_) => value,
-        primitive => {
-            let text = match super::numeric::to_js_string_jsvalue(runtime, &primitive) {
-                Ok(text) => text,
-                Err(error) => {
-                    let _ = runtime.release_jsvalue(primitive);
-                    return Err(error);
-                }
-            };
-            runtime
-                .release_jsvalue(primitive)
-                .map_err(runtime_error_to_vm_error)?;
-            super::numeric::allocate_string_jsvalue(runtime, text)?
-        }
-    })
 }
 
 fn add_completion(
@@ -287,7 +254,7 @@ impl ConversionTask {
                 .as_ref()
                 .expect("super conversion input")
                 .operand_count(),
-            Finish::Plus | Finish::PropertyKey => 1,
+            Finish::Plus => 1,
             Finish::PropertyWrite { .. } => 3,
             _ => 2,
         }
@@ -299,28 +266,15 @@ impl ConversionTask {
         frame: FrameId,
         identity: u64,
         addition: bool,
-        property_key: bool,
     ) -> Result<Self, Error> {
         let parent = execution.frames.current_mut(frame)?;
         let right = execution.slots.pop(&mut parent.window)?;
-        if property_key && !addition && !matches!(right, JsValue::Object(_)) {
-            let value = property_key_primitive(runtime, right)?;
-            #[cfg(feature = "profiling")]
-            let depth = execution.slots.depth(&parent.window) + 1;
-            execution.slots.push(&mut parent.window, value)?;
-            parent.resume_pc = parent.next_pc()?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
-            return Ok(Self(None));
-        }
         let (value, finish, hint) = if addition {
             (
                 execution.slots.pop(&mut parent.window)?,
                 Finish::AddLeft(right),
                 ToPrimitiveHint::Default,
             )
-        } else if property_key {
-            (right, Finish::PropertyKey, ToPrimitiveHint::String)
         } else {
             (right, Finish::Plus, ToPrimitiveHint::Number)
         };
@@ -407,37 +361,6 @@ impl ConversionTask {
         ))
     }
 
-    pub(super) fn start_property_read(
-        runtime: &Runtime,
-        execution: &mut RunningExecution,
-        frame: FrameId,
-        identity: u64,
-        keep_receiver: bool,
-        keep_key: bool,
-    ) -> Result<Self, Error> {
-        let parent = execution.frames.current_mut(frame)?;
-        execution.slots.peek(&parent.window, 1)?;
-        execution.slots.peek(&parent.window, 0)?;
-        let key = execution.slots.pop(&mut parent.window)?;
-        let base = execution.slots.pop(&mut parent.window)?;
-        Ok(Self::new(
-            runtime,
-            Finish::PropertyRead {
-                base,
-                keep_receiver,
-                keep_key,
-            },
-            frame,
-            identity,
-            PrimitiveResume::start(
-                runtime,
-                parent.executable.realm,
-                key,
-                ToPrimitiveHint::String,
-            )?,
-        ))
-    }
-
     pub(super) fn reply(
         runtime: &Runtime,
         execution: &mut RunningExecution,
@@ -503,7 +426,16 @@ impl ConversionTask {
             .step
             .take()
             .ok_or_else(|| Error::internal("conversion task lost its step"))?;
+        let step = match step {
+            PrimitiveStep::CyclePublished(completion) => PrimitiveStep::Complete(
+                runtime
+                    .finish_primitive_steps(realm, PrimitiveStep::CyclePublished(completion))
+                    .map_err(runtime_error_to_vm_error)?,
+            ),
+            step => step,
+        };
         match step {
+            PrimitiveStep::CyclePublished(_) => unreachable!("serviced published conversion"),
             PrimitiveStep::Complete(completion) => {
                 let completion = match completion {
                     Completion::Throw(value) => Completion::Throw(value),
@@ -573,26 +505,6 @@ impl ConversionTask {
                                     },
                                 )));
                             }
-                            Finish::PropertyRead {
-                                base,
-                                keep_receiver,
-                                keep_key,
-                            } => {
-                                let base = std::mem::replace(base, JsValue::Undefined);
-                                let keep_receiver = *keep_receiver;
-                                let keep_key = *keep_key;
-                                return Ok(Progress::PropertyRead(Box::new(
-                                    super::property_driver::ConvertedRead {
-                                        base,
-                                        key: value,
-                                        keep_receiver,
-                                        keep_key,
-                                    },
-                                )));
-                            }
-                            Finish::PropertyKey => {
-                                Completion::Return(property_key_primitive(runtime, value)?)
-                            }
                             Finish::Plus => {
                                 match super::numeric::unary_plus_primitive(runtime, value) {
                                     Ok(value) => Completion::Return(value),
@@ -656,6 +568,10 @@ impl ConversionTask {
                             key,
                             self.waiting(resume),
                         )? {
+                            super::proxy_get_driver::Progress::Resident
+                            | super::proxy_get_driver::Progress::ResidentThrow => Err(
+                                Error::internal("computed publication reached an unrelated task"),
+                            ),
                             super::proxy_get_driver::Progress::Conversion(task) => {
                                 Ok(Progress::Ready(task))
                             }
@@ -801,6 +717,10 @@ fn invoke(
             )?
         };
         return match progress {
+            super::proxy_get_driver::Progress::Resident
+            | super::proxy_get_driver::Progress::ResidentThrow => Err(Error::internal(
+                "computed publication reached an unrelated task",
+            )),
             super::proxy_get_driver::Progress::Conversion(task) => Ok(Progress::Ready(task)),
             super::proxy_get_driver::Progress::Call(super::driver::CallStep::Entered) => {
                 Ok(Progress::Entered)

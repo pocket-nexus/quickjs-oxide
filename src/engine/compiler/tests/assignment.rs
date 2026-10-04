@@ -167,10 +167,11 @@ fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() 
         context.eval("keyHint = 'none'").unwrap(),
         Value::String(JsString::from_static("none"))
     );
-    assert!(matches!(
-        context.eval("null[keyObject]"),
-        Err(RuntimeError::Exception)
-    ));
+    let nullish = context.eval("null[keyObject]");
+    assert!(
+        matches!(nullish, Err(RuntimeError::Exception)),
+        "{nullish:?}"
+    );
     drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.eval("keyHint").unwrap(),

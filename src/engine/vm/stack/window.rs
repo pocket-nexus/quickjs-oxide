@@ -1,8 +1,10 @@
 //! One authenticated continuous execution borrow. No arena mutation API escapes.
 mod bound;
 mod native;
+mod read;
 use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
 use crate::engine::value::number::operations::Number;
+use crate::engine::vm::exception::runtime_error_to_vm_error;
 pub(in crate::engine::vm) use crate::engine::vm::proxy_get_driver::StateNativeProgress;
 pub(in crate::engine::vm) use native::NativeInputSource;
 
@@ -42,7 +44,8 @@ enum OrdinaryFrameInput<'a> {
     Callback {
         inputs: &'a mut crate::engine::vm::call::ordinary::RawCallbackInputs,
         return_to: crate::engine::vm::frame::ReturnTarget,
-        named_receiver: Option<bool>,
+        read_commit: Option<super::ReadOperandCommit<'a>>,
+        pending: Option<&'a mut Option<Box<crate::engine::vm::proxy_get_driver::PendingProxyGet>>>,
     },
 }
 
@@ -289,24 +292,22 @@ impl<'a> FrameExecution<'a> {
         )
     }
 
-    /// The native callback entry publishes its selected this owner first;
-    /// ordinary callback entry uses this same current-window retirement body.
-    pub(in crate::engine::vm) fn commit_named_getter_receiver(
+    pub(in crate::engine::vm) fn commit_property_read_operands(
         &mut self,
         state: &mut crate::engine::heap::runtime::RuntimeState,
         poisoned: &std::cell::Cell<bool>,
         preserved_receiver: &mut Option<JsValue>,
-        keep_receiver: bool,
+        commit: super::ReadOperandCommit<'_>,
     ) -> Result<(), Error> {
         let turn = self.frame();
         turn.transaction
             .store
-            .commit_named_getter_receiver_in_state(
+            .commit_property_read_operands_in_state(
                 state,
                 poisoned,
                 turn.transaction.window,
                 preserved_receiver,
-                keep_receiver,
+                commit,
             )
     }
 
@@ -349,17 +350,16 @@ impl<'a> FrameExecution<'a> {
             OrdinaryFrameInput::Callback {
                 inputs,
                 return_to,
-                named_receiver: Some(keep_receiver),
+                read_commit: Some(super::ReadOperandCommit::named(keep_receiver)),
+                pending: None,
             },
             false,
             fallthrough,
         )
     }
 
-    /// Selected raw callbacks use the same reservation, suffix initialization,
-    /// cold frame publication and return protocol as an ordinary Call.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::engine::vm) fn install_raw_ordinary_callback(
+    pub(in crate::engine::vm) fn install_raw_property_callback(
         &mut self,
         runtime: &Runtime,
         state: &mut crate::engine::heap::runtime::RuntimeState,
@@ -367,6 +367,7 @@ impl<'a> FrameExecution<'a> {
         inputs: &mut crate::engine::vm::call::ordinary::RawCallbackInputs,
         return_to: crate::engine::vm::frame::ReturnTarget,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
+        pending: &mut Option<Box<crate::engine::vm::proxy_get_driver::PendingProxyGet>>,
     ) -> Result<(), Error> {
         self.install_current_ordinary_with_input(
             runtime,
@@ -375,7 +376,8 @@ impl<'a> FrameExecution<'a> {
             OrdinaryFrameInput::Callback {
                 inputs,
                 return_to,
-                named_receiver: None,
+                read_commit: None,
+                pending: Some(pending),
             },
             false,
             fallthrough,
@@ -451,6 +453,8 @@ impl<'a> FrameExecution<'a> {
         let (_, frame) = prepared
             .current_frame_mut()
             .expect("ordinary publication retains its caller");
+        let mut pending_to_publish = None;
+        let mut cycle_published = false;
         let installed = {
             #[cfg(feature = "profiling")]
             let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
@@ -471,21 +475,42 @@ impl<'a> FrameExecution<'a> {
                 )?,
                 OrdinaryFrameInput::Callback {
                     inputs,
-                    named_receiver,
+                    read_commit,
+                    mut pending,
                     ..
-                } => transaction.store.push_current_callback_frame_in_state(
-                    runtime,
-                    state,
-                    &executable.frame_layout(),
-                    transaction.window,
-                    inputs,
-                    function,
-                    executable.observes_arguments,
-                    named_receiver,
-                )?,
+                } => {
+                    let commit = match pending.as_mut() {
+                        Some(slot) => slot
+                            .as_mut()
+                            .expect("callback pending owner")
+                            .computed_callback_commit(),
+                        None => read_commit,
+                    };
+                    let installed = transaction.store.push_current_callback_frame_in_state(
+                        runtime,
+                        state,
+                        &executable.frame_layout(),
+                        transaction.window,
+                        inputs,
+                        function,
+                        executable.observes_arguments,
+                        commit,
+                    )?;
+                    if let Some(slot) = pending {
+                        let mut actual = slot.take().expect("callback pending owner");
+                        cycle_published = actual.take_computed_publication();
+                        pending_to_publish = Some(actual);
+                    }
+                    installed
+                }
             }
         };
         frame.resume_pc = resume;
+        if let Some(pending) = pending_to_publish {
+            prepared
+                .put_pending(parent, pending)
+                .expect("admitted empty parent pending slot");
+        }
         let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
         cold.return_to = Some(callback_target.unwrap_or(ReturnTarget {
             value_use: ReturnValue::Push,
@@ -511,6 +536,12 @@ impl<'a> FrameExecution<'a> {
             resume_pc: 0,
             cold,
         });
+        if cycle_published {
+            self.materialize_in_state(state)?;
+            state
+                .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                .map_err(runtime_error_to_vm_error)?;
+        }
         #[cfg(feature = "profiling")]
         {
             crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
@@ -957,6 +988,10 @@ impl FrameTransaction<'_> {
         );
         let _ = function_owner_value.take().expect("native callee owner");
         Ok((std::mem::take(arguments), receiver, function))
+    }
+
+    pub(in crate::engine::vm) fn depth(&self) -> usize {
+        self.window.depth
     }
 
     pub(in crate::engine::vm) fn slots(&mut self) -> FrameSlots<'_> {

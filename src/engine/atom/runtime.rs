@@ -72,25 +72,6 @@ impl Runtime {
         self.intern_property_key(&index.to_string())
     }
 
-    /// Allocation-free numeric subset of ToPropertyKey, including numeric -0.
-    /// Larger, negative and fractional numbers retain the full conversion path.
-    pub(crate) fn immediate_numeric_property_key_jsvalue(
-        &self,
-        value: &crate::engine::value::JsValue,
-    ) -> Option<PropertyKey> {
-        let index = match value {
-            crate::engine::value::JsValue::Int(value) => u32::try_from(*value).ok()?,
-            crate::engine::value::JsValue::Float(value)
-                if *value >= 0.0 && *value <= u32::MAX as f64 && value.fract() == 0.0 =>
-            {
-                *value as u32
-            }
-            _ => return None,
-        };
-        Atom::from_immediate_integer(index)
-            .map(|atom| PropertyKey::from_owned_atom(self.clone(), atom))
-    }
-
     #[cfg(test)]
     pub(crate) fn immediate_numeric_property_key(&self, value: &Value) -> Option<PropertyKey> {
         let index = match value {
@@ -193,6 +174,23 @@ impl Runtime {
 }
 
 impl RuntimeState {
+    /// The complete immediate numeric subset of ToPropertyKey. This is a
+    /// representation decision, shared by State and public-root adapters.
+    pub(crate) fn immediate_numeric_property_key_atom(
+        value: &crate::engine::value::JsValue,
+    ) -> Option<Atom> {
+        let index = match value {
+            crate::engine::value::JsValue::Int(value) => u32::try_from(*value).ok()?,
+            crate::engine::value::JsValue::Float(value)
+                if *value >= 0.0 && *value <= u32::MAX as f64 && value.fract() == 0.0 =>
+            {
+                *value as u32
+            }
+            _ => return None,
+        };
+        Atom::from_immediate_integer(index)
+    }
+
     /// Borrow one admitted public symbol atom without manufacturing a root.
     pub(crate) fn symbol_description_atom(
         &self,

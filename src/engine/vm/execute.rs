@@ -25,6 +25,7 @@ use crate::engine::vm::stack::{
     PropertyReadProgress, StoreProgress, copy_value_in_state,
 };
 
+pub(in crate::engine::vm) mod computed_read;
 pub(in crate::engine::vm) mod named_read;
 
 #[cfg(test)]
@@ -87,7 +88,7 @@ pub(super) struct FrameCursor<'a> {
 }
 
 impl<'a> FrameCursor<'a> {
-    fn new(
+    pub(in crate::engine::vm) fn new(
         transaction: FrameTransaction<'a>,
         fault: &'a mut usize,
         resume: &'a mut usize,
@@ -308,7 +309,9 @@ pub(super) enum VmAction {
     },
     ConvertAdd,
     ConvertPlus,
-    ConvertPropertyKey,
+    ConvertPropertyKey {
+        fallthrough: FallthroughPc,
+    },
     NormalizeThis,
     Arguments(ArgumentsKind),
     Rest(u16),
@@ -391,7 +394,7 @@ impl VmAction {
             Self::Construct { .. } => "execute.action.construct",
             Self::ConvertAdd => "execute.action.convert_add",
             Self::ConvertPlus => "execute.action.convert_plus",
-            Self::ConvertPropertyKey => "execute.action.convert_property_key",
+            Self::ConvertPropertyKey { .. } => "execute.action.convert_property_key",
             Self::NormalizeThis => "execute.action.normalize_this",
             Self::Arguments(_) => "execute.action.arguments",
             Self::Rest(_) => "execute.action.rest",
@@ -429,11 +432,22 @@ pub(super) fn execute_frame(
     execute_frame_in_state(runtime, &mut state, execution, id)
 }
 
+#[cfg(test)]
 pub(super) fn execute_frame_in_state(
     runtime: &Runtime,
     state: &mut RuntimeState,
     execution: &mut RunningExecution,
     id: FrameId,
+) -> Result<VmAction, Error> {
+    execute_frame_in_state_with_identity(runtime, state, execution, id, &mut 0)
+}
+
+pub(super) fn execute_frame_in_state_with_identity(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    next_operation: &mut u64,
 ) -> Result<VmAction, Error> {
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("core.frame_executor_entry");
@@ -2652,6 +2666,42 @@ pub(super) fn execute_frame_in_state(
                     named_read::Progress::Throw => return Ok(VmAction::Throw),
                 }
             }
+            VmAction::GetElement {
+                keep_receiver,
+                keep_key,
+                fallthrough,
+            } => {
+                let progress = computed_read::get(
+                    runtime,
+                    state,
+                    &mut segment,
+                    next_operation,
+                    keep_receiver,
+                    keep_key,
+                    fallthrough,
+                )?;
+                match computed_read::progress(runtime, state, &mut segment, progress)? {
+                    named_read::Progress::Completed | named_read::Progress::Entered => continue,
+                    named_read::Progress::NativeBoundary => return Ok(VmAction::NativeProgress),
+                    named_read::Progress::Throw => return Ok(VmAction::Throw),
+                    _ => unreachable!("computed read left an unselected action"),
+                }
+            }
+            VmAction::ConvertPropertyKey { fallthrough } => {
+                let progress = computed_read::property_key(
+                    runtime,
+                    state,
+                    &mut segment,
+                    next_operation,
+                    fallthrough,
+                )?;
+                match computed_read::progress(runtime, state, &mut segment, progress)? {
+                    named_read::Progress::Completed | named_read::Progress::Entered => continue,
+                    named_read::Progress::NativeBoundary => return Ok(VmAction::NativeProgress),
+                    named_read::Progress::Throw => return Ok(VmAction::Throw),
+                    _ => unreachable!("ToPropKey left an unselected action"),
+                }
+            }
             VmAction::Object { fallthrough } => {
                 // FrameCursor has published the allocation's fault PC. Use
                 // the one suffix protocol before allocation can be observed.
@@ -3059,7 +3109,7 @@ fn deferred_action(
         Opcode::DropCatch => VmAction::DropCatch,
         Opcode::NipCatch => VmAction::NipCatch,
         Opcode::ToObject => VmAction::Environment(E::ToObject),
-        Opcode::ToPropKey => VmAction::ConvertPropertyKey,
+        Opcode::ToPropKey => VmAction::ConvertPropertyKey { fallthrough },
 
         Opcode::GlobalReference => VmAction::Environment(E::GlobalReference(checked_u16(a)?)),
         Opcode::DeleteVar => VmAction::Environment(E::GlobalDelete(checked_u16(a)?)),

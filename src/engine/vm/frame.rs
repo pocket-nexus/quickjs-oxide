@@ -543,6 +543,14 @@ pub(super) struct FramePush<'a> {
     next: u64,
 }
 impl FramePush<'_> {
+    /// The parent is still current inside this reserved publication transaction.
+    pub(super) fn put_pending(
+        &mut self,
+        parent: FrameId,
+        pending: Box<super::proxy_get_driver::PendingProxyGet>,
+    ) -> Result<(), Error> {
+        self.store.put_pending(parent, pending)
+    }
     /// Reserved publication still lends the actual caller stack top.
     pub(super) fn current_frame_mut(&mut self) -> Option<(FrameId, &mut Frame)> {
         self.store.current_frame_mut()

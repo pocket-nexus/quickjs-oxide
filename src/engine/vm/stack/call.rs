@@ -163,15 +163,17 @@ impl SlotStore {
         inputs: &mut crate::engine::vm::call::ordinary::RawCallbackInputs,
         function: crate::engine::heap::ObjectId,
         observes_arguments: bool,
-        named_receiver: Option<bool>,
+        read_commit: Option<super::ReadOperandCommit<'_>>,
     ) -> Result<InstalledOrdinaryFrame, Error> {
         if inputs.callback_callee != Some(function) || inputs.receiver.is_none() {
             return Err(Error::internal(
                 "callback lost its authenticated input owner",
             ));
         }
-        if named_receiver.is_some() {
-            self.peek_current(parent, 0)?;
+        if let Some(commit) = read_commit.as_ref() {
+            if commit.consume != 0 {
+                self.peek_current(parent, usize::from(commit.consume - 1))?;
+            }
             if inputs.preserved_receiver.is_none() {
                 return Err(Error::internal(
                     "named callback lost its preserved receiver",
@@ -189,13 +191,13 @@ impl SlotStore {
         )?;
         // The current window and selected input owners stayed unchanged while
         // every reserve/checked parameter retain/local initializer completed.
-        if let Some(keep_receiver) = named_receiver {
-            self.commit_named_getter_receiver_in_state(
+        if let Some(commit) = read_commit {
+            self.commit_property_read_operands_in_state(
                 state,
                 &runtime.0.poisoned,
                 parent,
                 &mut inputs.preserved_receiver,
-                keep_receiver,
+                commit,
             )?;
         }
         let base = prepared.window.base;
@@ -214,41 +216,6 @@ impl SlotStore {
             input,
             window,
         })
-    }
-
-    /// Retire the actual named-read base while the selected this owner is
-    /// protected by its callback guard or published native activation. The
-    /// original one-slot position also proves preserved receiver capacity.
-    pub(super) fn commit_named_getter_receiver_in_state(
-        &mut self,
-        state: &mut crate::engine::heap::runtime::RuntimeState,
-        poisoned: &std::cell::Cell<bool>,
-        parent: &mut FrameWindow,
-        preserved_receiver: &mut Option<JsValue>,
-        keep_receiver: bool,
-    ) -> Result<(), Error> {
-        self.peek_current(parent, 0)?;
-        if preserved_receiver.is_none() {
-            return Err(Error::internal(
-                "named callback lost its preserved receiver",
-            ));
-        }
-        let original = self.pop_current(parent).expect("checked named read base");
-        state
-            .release_owned_jsvalue(poisoned, original)
-            .map_err(runtime_error_to_vm_error)?;
-        let preserved = preserved_receiver
-            .take()
-            .expect("preserved named read base");
-        if keep_receiver {
-            self.push_current(parent, preserved)
-                .expect("original named receiver slot has capacity");
-        } else {
-            state
-                .release_owned_jsvalue(poisoned, preserved)
-                .map_err(runtime_error_to_vm_error)?;
-        }
-        Ok(())
     }
 
     /// Prepare the unpublished parameter/local suffix while the caller owns
