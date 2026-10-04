@@ -1,65 +1,105 @@
-//! Construction of builtin RegExp match result arrays.
-
-use crate::engine::api::runtime::Runtime;
-use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::atom::{Atom, AtomIdx};
-use crate::engine::heap::{ContextId, ObjectData, PropertySlot};
-use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
-use std::collections::HashMap;
-
-use crate::engine::object::{ObjectRef, PropertyKey};
-use crate::engine::value::{JsString, JsValue, Value};
+//! One State construction transaction for builtin RegExp match results.
+#[cfg(test)]
+use crate::engine::{api::runtime::Runtime, value::Value};
+use crate::engine::{
+    api::{runtime::RuntimeUnwindGuard, runtime_error::RuntimeError},
+    atom::{Atom, AtomIdx},
+    heap::{
+        ContextId, ObjectData, ObjectId, PropertySlot,
+        runtime::{RuntimeState, owned_values::OwnedValueGuard},
+    },
+    object::shape::{PropertyFlags, ShapeEntry},
+    value::{JsString, JsValue},
+};
 use crate::regexp::{CompiledRegExp, RegExpFlags, RegExpMatch};
-use std::rc::Rc;
+use std::{cell::Cell, collections::HashMap, rc::Rc};
 
-/// First-occurrence order and the participating value are separate rules for
-/// duplicate group names. Keep their resolution here, before heap publication.
+/// First occurrence fixes field order; the participating duplicate fixes value.
 #[derive(Default)]
 struct NamedCaptures {
     positions: HashMap<Atom, usize>,
-    values: Vec<(PropertyKey, usize)>,
+    values: Vec<(Atom, usize)>,
 }
 impl NamedCaptures {
-    fn record(&mut self, key: PropertyKey, capture_index: usize, participates: bool) {
-        if let Some(&position) = self.positions.get(&key.atom()) {
+    fn record(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &Cell<bool>,
+        key: Atom,
+        capture_index: usize,
+        participates: bool,
+    ) -> Result<(), RuntimeError> {
+        if let Some(&position) = self.positions.get(&key) {
             if participates {
                 self.values[position].1 = capture_index;
             }
+            // The old unused PropertyKey dropped at this record conflict.
+            state
+                .atoms
+                .release(key)
+                .inspect_err(|_| poisoned.set(true))?;
         } else {
-            self.positions.insert(key.atom(), self.values.len());
+            self.positions.insert(key, self.values.len());
             self.values.push((key, capture_index));
         }
+        Ok(())
     }
 }
-// A construction transaction owns all producer edges until the result objects
-// retain them. Named groups refer to capture positions, never duplicate nodes.
-struct RegExpResultOwner {
-    runtime: Runtime,
+struct RegExpResultOwner<'a> {
+    state: &'a mut RuntimeState,
+    poisoned: &'a Cell<bool>,
+    named: NamedCaptures,
     captures: Vec<JsValue>,
     indices: Vec<JsValue>,
     properties: Vec<JsValue>,
     indices_groups: JsValue,
+    result: Option<JsValue>,
 }
-impl Drop for RegExpResultOwner {
-    fn drop(&mut self) {
-        for value in self
-            .captures
-            .drain(..)
-            .chain(self.indices.drain(..))
-            .chain(self.properties.drain(..))
-        {
-            let _ = self.runtime.release_jsvalue(value);
+impl RegExpResultOwner<'_> {
+    fn retire_producers(&mut self) -> Result<(), RuntimeError> {
+        for values in [&mut self.captures, &mut self.indices, &mut self.properties] {
+            for value in values.iter_mut() {
+                self.state.release_owned_jsvalue(
+                    self.poisoned,
+                    std::mem::replace(value, JsValue::Undefined),
+                )?;
+            }
+            values.clear();
         }
-        let _ = self.runtime.release_jsvalue(std::mem::replace(
-            &mut self.indices_groups,
-            JsValue::Undefined,
-        ));
+        self.state.release_owned_jsvalue(
+            self.poisoned,
+            std::mem::replace(&mut self.indices_groups, JsValue::Undefined),
+        )?;
+        for (atom, _) in self.named.values.drain(..) {
+            self.state
+                .atoms
+                .release(atom)
+                .inspect_err(|_| self.poisoned.set(true))?;
+        }
+        Ok(())
     }
 }
-
-impl Runtime {
+impl Drop for RegExpResultOwner<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.poisoned.set(true);
+        }
+        if self.poisoned.get() {
+            return;
+        }
+        let _unwind = RuntimeUnwindGuard::from_flag(self.poisoned);
+        if self.retire_producers().is_err() {
+            return;
+        }
+        if let Some(value) = self.result.take() {
+            let _ = self.state.release_owned_jsvalue(self.poisoned, value);
+        }
+    }
+}
+impl RuntimeState {
     pub(crate) fn build_regexp_result(
-        &self,
+        &mut self,
+        poisoned: &Cell<bool>,
         realm: ContextId,
         input: JsString,
         input_value: &JsValue,
@@ -84,19 +124,24 @@ impl Runtime {
         }
 
         let has_indices = program.flags().contains(RegExpFlags::HAS_INDICES);
-        let mut named = NamedCaptures::default();
         let mut owner = RegExpResultOwner {
-            runtime: self.clone(),
+            state: self,
+            poisoned,
+            named: NamedCaptures::default(),
             captures: Vec::with_capacity(capture_count),
             indices: Vec::with_capacity(if has_indices { capture_count } else { 0 }),
             properties: Vec::with_capacity(4),
             indices_groups: JsValue::Undefined,
+            result: None,
         };
         for (capture_index, range) in matched.captures().iter().enumerate() {
             let capture = match range {
-                Some(range) => {
-                    self.into_jsvalue(Value::String(input.sub_string(range.start, range.end)))?
-                }
+                Some(range) => JsValue::String(
+                    owner
+                        .state
+                        .heap
+                        .allocate_string(input.sub_string(range.start, range.end))?,
+                ),
                 None => JsValue::Undefined,
             };
             owner.captures.push(capture);
@@ -113,13 +158,11 @@ impl Runtime {
                                 "RegExp capture end exceeded signed String range",
                             )
                         })?;
-                        JsValue::Object(
-                            self.new_array_from_values_jsvalue(
-                                realm,
-                                vec![JsValue::Int(start), JsValue::Int(end)],
-                            )?
-                            .into_handle(),
-                        )
+                        JsValue::Object(owner.state.new_array_from_values_jsvalue(
+                            poisoned,
+                            realm,
+                            vec![JsValue::Int(start), JsValue::Int(end)],
+                        )?)
                     }
                     None => JsValue::Undefined,
                 };
@@ -129,11 +172,10 @@ impl Runtime {
                 && let Some(Some(group_name)) =
                     group_names.and_then(|names| names.get(capture_index - 1))
             {
-                named.record(
-                    self.intern_property_key_js_string(group_name)?,
-                    capture_index,
-                    range.is_some(),
-                );
+                let atom = owner.state.intern_property_key_js_string(group_name)?;
+                owner
+                    .named
+                    .record(owner.state, poisoned, atom, capture_index, range.is_some())?;
             }
         }
         let complete = matched.capture(0).ok_or(RuntimeError::Invariant(
@@ -144,58 +186,60 @@ impl Runtime {
             .push(JsValue::Int(i32::try_from(complete.start).map_err(
                 |_| RuntimeError::Invariant("RegExp match start exceeded signed String range"),
             )?));
-        owner.properties.push(self.dup_jsvalue(input_value)?);
+        owner.properties.push(owner.state.dup_jsvalue(input_value)?);
         let groups = if group_names.is_some() {
-            JsValue::Object(
-                self.new_regexp_groups(realm, &named, &owner.captures)?
-                    .into_handle(),
-            )
+            JsValue::Object(owner.state.new_regexp_groups(
+                poisoned,
+                realm,
+                &owner.named,
+                &owner.captures,
+            )?)
         } else {
             JsValue::Undefined
         };
         owner.properties.push(groups);
         if has_indices {
             if group_names.is_some() {
-                owner.indices_groups = JsValue::Object(
-                    self.new_regexp_groups(realm, &named, &owner.indices)?
-                        .into_handle(),
-                );
+                owner.indices_groups = JsValue::Object(owner.state.new_regexp_groups(
+                    poisoned,
+                    realm,
+                    &owner.named,
+                    &owner.indices,
+                )?);
             }
-            let indices = self.new_regexp_result_array(
+            let indices = owner.state.new_regexp_result_array(
+                poisoned,
                 realm,
                 &owner.indices,
                 std::slice::from_ref(&owner.indices_groups),
                 2,
             )?;
-            owner
-                .properties
-                .push(JsValue::Object(indices.into_handle()));
+            owner.properties.push(JsValue::Object(indices));
         }
-        let result = self.new_regexp_result_array(
+        let result = owner.state.new_regexp_result_array(
+            poisoned,
             realm,
             &owner.captures,
             &owner.properties,
             usize::from(has_indices),
         )?;
-        Ok(JsValue::Object(result.into_handle()))
+        // Arm the result before producer retirement can encounter old cleanup.
+        owner.result = Some(JsValue::Object(result));
+        owner.retire_producers()?;
+        Ok(owner.result.take().expect("RegExp result owner"))
     }
-
     fn new_regexp_groups(
-        &self,
+        &mut self,
+        poisoned: &Cell<bool>,
         realm: ContextId,
         named: &NamedCaptures,
         captures: &[JsValue],
-    ) -> Result<ObjectRef, RuntimeError> {
+    ) -> Result<ObjectId, RuntimeError> {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("regexp_result.groups_layout");
-        let names = named
-            .values
-            .iter()
-            .map(|(key, _)| key.atom())
-            .collect::<Vec<_>>();
+        let names = named.values.iter().map(|(key, _)| *key).collect::<Vec<_>>();
         let shape = {
-            let mut state = self.0.state.borrow_mut();
-            if let Some(&shape) = state.heap.context(realm)?.regexp_group_shapes.get(&names) {
+            if let Some(&shape) = self.heap.context(realm)?.regexp_group_shapes.get(&names) {
                 shape
             } else {
                 let entries = names
@@ -205,13 +249,21 @@ impl Runtime {
                         flags: PropertyFlags::data(true, true, true),
                     })
                     .collect::<Vec<_>>();
-                let shape = state.get_or_create_shape(None, &entries)?;
-                let cached = state.heap.cache_regexp_group_shape(realm, names, shape);
-                let cleanup = state.heap.release_shape(shape)?;
-                state.apply_cleanup(cleanup)?;
+                let shape = self.get_or_create_shape(None, &entries)?;
+                let cached = self.heap.cache_regexp_group_shape(realm, names, shape);
+                let cleanup = self
+                    .heap
+                    .release_shape(shape)
+                    .inspect_err(|_| poisoned.set(true))?;
+                self.apply_cleanup(cleanup)
+                    .inspect_err(|_| poisoned.set(true))?;
                 if let Some(evicted) = cached? {
-                    let cleanup = state.heap.release_shape(evicted)?;
-                    state.apply_cleanup(cleanup)?;
+                    let cleanup = self
+                        .heap
+                        .release_shape(evicted)
+                        .inspect_err(|_| poisoned.set(true))?;
+                    self.apply_cleanup(cleanup)
+                        .inspect_err(|_| poisoned.set(true))?;
                 }
                 shape
             }
@@ -221,33 +273,16 @@ impl Runtime {
             .iter()
             .map(|(_, index)| PropertySlot::Data(captures[*index].as_raw()))
             .collect::<Vec<_>>();
-        // Allocation retains storage edges while the construction owner remains live.
-        let id = {
-            let mut state = self.0.state.borrow_mut();
-            let atoms = state.retain_slot_atoms(&slots)?;
-            match state
-                .heap
-                .allocate_object(ObjectData::ordinary(shape, slots))
-            {
-                Ok(id) => id,
-                Err(error) => {
-                    state.release_atoms(atoms)?;
-                    return Err(error.into());
-                }
-            }
-        };
-        Ok(ObjectRef::from_owned_handle(self.clone(), id))
+        self.allocate_prepared_object(poisoned, ObjectData::ordinary(shape, slots))
     }
-
-    /// Publish the final named layout before adding any dense captures. No
-    /// intermediate Array layout or property replacement is constructed.
     fn new_regexp_result_array(
-        &self,
+        &mut self,
+        poisoned: &Cell<bool>,
         realm: ContextId,
         captures: &[JsValue],
         properties: &[JsValue],
         layout: usize,
-    ) -> Result<ObjectRef, RuntimeError> {
+    ) -> Result<ObjectId, RuntimeError> {
         let shape = self
             .regexp_realm_data(realm)?
             .result_shapes
@@ -259,23 +294,28 @@ impl Runtime {
                 .iter()
                 .map(|value| PropertySlot::Data(value.as_raw())),
         );
-        // Allocation retains existing payload handles, without arena conversion.
-        let id = {
-            let mut state = self.0.state.borrow_mut();
-            let atoms = state.retain_slot_atoms(&slots)?;
-            match state.heap.allocate_object(ObjectData::array(shape, slots)) {
-                Ok(id) => id,
-                Err(error) => {
-                    state.release_atoms(atoms)?;
-                    return Err(error.into());
-                }
-            }
-        };
-        let result = ObjectRef::from_owned_handle(self.clone(), id);
+        // The selected realm/cache shape is borrowed; heap storage owns its
+        // independently checked shape and payload edges after publication.
+        let id = self.allocate_prepared_object(poisoned, ObjectData::array(shape, slots))?;
+        let mut result = OwnedValueGuard::new(self, poisoned, JsValue::Object(id));
+        let (state, result_owner) = result.parts();
         for value in captures {
-            self.append_fresh_array_value_jsvalue(&result, self.dup_jsvalue(value)?)?;
+            let appended = state
+                .dup_jsvalue(value)
+                .and_then(|value| state.append_fresh_array_value_jsvalue(poisoned, id, value));
+            if let Err(error) = appended {
+                if poisoned.get() {
+                    return Err(RuntimeError::Poisoned);
+                }
+                state
+                    .release_owned_jsvalue(poisoned, result_owner.take().expect("result Array"))?;
+                return Err(error);
+            }
         }
-        Ok(result)
+        let JsValue::Object(id) = result_owner.take().expect("result Array") else {
+            unreachable!()
+        };
+        Ok(id)
     }
 }
 

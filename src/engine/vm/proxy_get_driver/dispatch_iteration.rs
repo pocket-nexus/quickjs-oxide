@@ -203,26 +203,6 @@ pub(super) fn advance(
                     .try_into()?;
                 continue;
             }
-            Step::RegExpExec {
-                regexp,
-                input,
-                resume,
-            } => {
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("RegExp exec continuation allocation failed"))?;
-                let regexp = regexp.take().expect("selected Step field");
-                let input = input.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-                query.parents.push(resume);
-                *step = crate::engine::builtins::RegExpExecStep::abstract_exec(
-                    runtime, realm, regexp, input,
-                )
-                .map_err(runtime_error_to_vm_error)?
-                .try_into()?;
-                continue;
-            }
             Step::IteratorCloseWithResume {
                 iterator,
                 completion,

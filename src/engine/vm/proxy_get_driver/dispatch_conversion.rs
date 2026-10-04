@@ -20,6 +20,8 @@ pub(super) fn primitive(
         if matches!(
             step,
             Step::ArrayPush { .. }
+                | Step::RegExpExecProgress(_)
+                | Step::RegExpExec { .. }
                 | Step::ArrayMutationProgress(_)
                 | Step::ArrayMutationRead { .. }
                 | Step::ArrayMutationSharedDelete { .. }

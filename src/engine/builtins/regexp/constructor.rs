@@ -105,59 +105,7 @@ impl Runtime {
         &self,
         value: &JsValue,
     ) -> Result<Option<GenuineRegExp>, RuntimeError> {
-        let JsValue::Object(object) = value else {
-            return Ok(None);
-        };
-        let state = self.0.state.borrow();
-        Ok(match &state.heap.object(*object)?.payload {
-            ObjectPayload::RegExp(RegExpObjectData::Compiled { pattern, program }) => {
-                Some(GenuineRegExp {
-                    pattern: pattern.clone(),
-                    program: program.clone(),
-                })
-            }
-            ObjectPayload::RegExp(RegExpObjectData::Uninitialized) => {
-                return Err(RuntimeError::Invariant(
-                    "observable RegExp object was not initialized",
-                ));
-            }
-            ObjectPayload::Ordinary
-            | ObjectPayload::Proxy(_)
-            | ObjectPayload::RawJson
-            | ObjectPayload::Promise(_)
-            | ObjectPayload::Array { .. }
-            | ObjectPayload::Arguments { .. }
-            | ObjectPayload::ArrayIterator { .. }
-            | ObjectPayload::IteratorHelper(_)
-            | ObjectPayload::IteratorWrap(_)
-            | ObjectPayload::AsyncFromSyncIterator(_)
-            | ObjectPayload::IteratorConcat(_)
-            | ObjectPayload::Map { .. }
-            | ObjectPayload::MapIterator { .. }
-            | ObjectPayload::Set { .. }
-            | ObjectPayload::WeakMap { .. }
-            | ObjectPayload::WeakSet { .. }
-            | ObjectPayload::WeakRef { .. }
-            | ObjectPayload::FinalizationRegistry(_)
-            | ObjectPayload::SetIterator { .. }
-            | ObjectPayload::ForInIterator(_)
-            | ObjectPayload::Primitive(_)
-            | ObjectPayload::Date(_)
-            | ObjectPayload::ArrayBuffer(_)
-            | ObjectPayload::SharedArrayBuffer(_)
-            | ObjectPayload::DataView(_)
-            | ObjectPayload::TypedArray(_)
-            | ObjectPayload::GlobalObject { .. }
-            | ObjectPayload::Error
-            | ObjectPayload::StringIterator { .. }
-            | ObjectPayload::RegExpStringIterator { .. }
-            | ObjectPayload::NativeFunction { .. }
-            | ObjectPayload::BoundFunction { .. }
-            | ObjectPayload::BytecodeFunction { .. }
-            | ObjectPayload::AsyncFunctionState(_)
-            | ObjectPayload::Generator { .. }
-            | ObjectPayload::AsyncGenerator(_) => None,
-        })
+        self.0.state.borrow().genuine_regexp_jsvalue(value)
     }
 
     fn new_uninitialized_regexp(&self, prototype: &ObjectRef) -> Result<ObjectRef, RuntimeError> {
@@ -212,15 +160,7 @@ impl Runtime {
         &self,
         realm: ContextId,
     ) -> Result<RegExpRealmData, RuntimeError> {
-        self.0
-            .state
-            .borrow()
-            .heap
-            .context(realm)?
-            .regexp
-            .as_ref()
-            .copied()
-            .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))
+        self.0.state.borrow().regexp_realm_data(realm)
     }
 
     /// QuickJS `OP_regexp`: instantiate one already-compiled literal using
@@ -669,6 +609,77 @@ fn finish_constructor(
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<RegExpConstructorStep>() <= 64);
+
+impl crate::engine::heap::runtime::RuntimeState {
+    pub(crate) fn genuine_regexp_jsvalue(
+        &self,
+        value: &JsValue,
+    ) -> Result<Option<GenuineRegExp>, RuntimeError> {
+        let JsValue::Object(object) = value else {
+            return Ok(None);
+        };
+        Ok(match &self.heap.object(*object)?.payload {
+            ObjectPayload::RegExp(RegExpObjectData::Compiled { pattern, program }) => {
+                Some(GenuineRegExp {
+                    pattern: pattern.clone(),
+                    program: program.clone(),
+                })
+            }
+            ObjectPayload::RegExp(RegExpObjectData::Uninitialized) => {
+                return Err(RuntimeError::Invariant(
+                    "observable RegExp object was not initialized",
+                ));
+            }
+            ObjectPayload::Ordinary
+            | ObjectPayload::Proxy(_)
+            | ObjectPayload::RawJson
+            | ObjectPayload::Promise(_)
+            | ObjectPayload::Array { .. }
+            | ObjectPayload::Arguments { .. }
+            | ObjectPayload::ArrayIterator { .. }
+            | ObjectPayload::IteratorHelper(_)
+            | ObjectPayload::IteratorWrap(_)
+            | ObjectPayload::AsyncFromSyncIterator(_)
+            | ObjectPayload::IteratorConcat(_)
+            | ObjectPayload::Map { .. }
+            | ObjectPayload::MapIterator { .. }
+            | ObjectPayload::Set { .. }
+            | ObjectPayload::WeakMap { .. }
+            | ObjectPayload::WeakSet { .. }
+            | ObjectPayload::WeakRef { .. }
+            | ObjectPayload::FinalizationRegistry(_)
+            | ObjectPayload::SetIterator { .. }
+            | ObjectPayload::ForInIterator(_)
+            | ObjectPayload::Primitive(_)
+            | ObjectPayload::Date(_)
+            | ObjectPayload::ArrayBuffer(_)
+            | ObjectPayload::SharedArrayBuffer(_)
+            | ObjectPayload::DataView(_)
+            | ObjectPayload::TypedArray(_)
+            | ObjectPayload::GlobalObject { .. }
+            | ObjectPayload::Error
+            | ObjectPayload::StringIterator { .. }
+            | ObjectPayload::RegExpStringIterator { .. }
+            | ObjectPayload::NativeFunction { .. }
+            | ObjectPayload::BoundFunction { .. }
+            | ObjectPayload::BytecodeFunction { .. }
+            | ObjectPayload::AsyncFunctionState(_)
+            | ObjectPayload::Generator { .. }
+            | ObjectPayload::AsyncGenerator(_) => None,
+        })
+    }
+    pub(crate) fn regexp_realm_data(
+        &self,
+        realm: ContextId,
+    ) -> Result<RegExpRealmData, RuntimeError> {
+        self.heap
+            .context(realm)?
+            .regexp
+            .as_ref()
+            .copied()
+            .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))
+    }
+}
 
 #[cfg(test)]
 mod tests {

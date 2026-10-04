@@ -18,37 +18,11 @@ impl RuntimeState {
         build: impl FnOnce(ShapeId, Vec<PropertySlot>) -> ObjectData,
     ) -> Result<ObjectId, RuntimeError> {
         let shape = self.get_or_create_shape(prototype, entries)?;
-        // Selection precedes payload atom retention, as primitive Symbol
-        // allocation requires. Concrete builders only pack their borrowed
-        // inputs; the canonical finalizer visitor names every atom owner.
-        let object = build(shape, slots);
-        let mut atoms = Vec::new();
-        for index in crate::engine::heap::gc::object_atoms(&object) {
-            if let Err(error) = self.atoms.retain_index(index) {
-                self.release_atoms(atoms)
-                    .inspect_err(|_| poisoned.set(true))?;
-                let cleanup = self
-                    .heap
-                    .release_shape(shape)
-                    .inspect_err(|_| poisoned.set(true))?;
-                self.apply_cleanup(cleanup)
-                    .inspect_err(|_| poisoned.set(true))?;
-                return Err(error.into());
-            }
-            atoms.push(Atom::from_raw(index.raw()));
-        }
-        let result = match self.heap.allocate_object_with_status(object) {
-            Err(failure) if failure.published => {
-                poisoned.set(true);
-                return Err(failure.error.into());
-            }
-            result => result,
-        };
-        if let Err(failure) = &result {
-            if !failure.published {
-                self.release_atoms(atoms)
-                    .inspect_err(|_| poisoned.set(true))?;
-            }
+        // Shape selection precedes payload atom retention. The construction
+        // edge belongs to this layout entry, not to the publication leaf.
+        let result = self.allocate_prepared_object(poisoned, build(shape, slots));
+        if poisoned.get() {
+            return result;
         }
         let cleanup = self
             .heap
@@ -56,7 +30,38 @@ impl RuntimeState {
             .inspect_err(|_| poisoned.set(true))?;
         self.apply_cleanup(cleanup)
             .inspect_err(|_| poisoned.set(true))?;
-        result.map_err(|failure| failure.error.into())
+        result
+    }
+
+    /// Publish one already selected ObjectData. Its shape/slot inputs are
+    /// borrowed from owners kept live by the concrete factory. Cache-hit
+    /// factories own no artificial construction-shape edge to release.
+    pub(crate) fn allocate_prepared_object(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectData,
+    ) -> Result<ObjectId, RuntimeError> {
+        let mut atoms = Vec::new();
+        for index in crate::engine::heap::gc::object_atoms(&object) {
+            if let Err(error) = self.atoms.retain_index(index) {
+                self.release_atoms(atoms)
+                    .inspect_err(|_| poisoned.set(true))?;
+                return Err(error.into());
+            }
+            atoms.push(Atom::from_raw(index.raw()));
+        }
+        match self.heap.allocate_object_with_status(object) {
+            Ok(object) => Ok(object),
+            Err(failure) if failure.published => {
+                poisoned.set(true);
+                Err(failure.error.into())
+            }
+            Err(failure) => {
+                self.release_atoms(atoms)
+                    .inspect_err(|_| poisoned.set(true))?;
+                Err(failure.error.into())
+            }
+        }
     }
 }
 

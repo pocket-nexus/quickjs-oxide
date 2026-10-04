@@ -43,6 +43,7 @@ pub(super) fn record_dispatch(step: &Step) {
         }
         Step::String { .. } => "query_dispatch.step.string",
         Step::ObjectTag { .. } => "query_dispatch.step.object_tag",
+        Step::RegExpExecProgress(_) => "query_dispatch.step.reg_exp_exec_progress",
         Step::RegExpExec { .. } => "query_dispatch.step.reg_exp_exec",
         Step::IteratorCloseWithResume { .. } => "query_dispatch.step.iterator_close_with_resume",
         Step::NativeRawComplete { .. } => "query_dispatch.step.native_raw_complete",

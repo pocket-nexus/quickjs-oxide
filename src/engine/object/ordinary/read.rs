@@ -156,11 +156,30 @@ impl RuntimeState {
         &mut self,
         poisoned: &Cell<bool>,
         domain: u64,
+        object: ObjectId,
+        atom: Atom,
+        receiver: &JsValue,
+        own_only: bool,
+        native: Option<&mut Option<LinkedNativeSelection>>,
+    ) -> Result<ReadStep, RuntimeError> {
+        self.prepare_ordinary_read(
+            poisoned,
+            object,
+            atom,
+            receiver,
+            own_only,
+            native.map(|hint| (domain, hint)),
+        )
+    }
+
+    fn prepare_ordinary_read(
+        &mut self,
+        poisoned: &Cell<bool>,
         mut object: ObjectId,
         atom: Atom,
         receiver: &JsValue,
         own_only: bool,
-        mut native: Option<&mut Option<LinkedNativeSelection>>,
+        mut native: Option<(u64, &mut Option<LinkedNativeSelection>)>,
     ) -> Result<ReadStep, RuntimeError> {
         loop {
             #[cfg(feature = "profiling")]
@@ -204,7 +223,9 @@ impl RuntimeState {
                         "internal sentinel in ordinary data property",
                     ))?;
                     let owned = self.dup_jsvalue(&borrowed)?;
-                    self.link_native_read_fact(domain, &owned, native.as_deref_mut());
+                    if let Some((domain, hint)) = native.as_mut() {
+                        self.link_native_read_fact(*domain, &owned, Some(&mut **hint));
+                    }
                     OwnedRead::Complete(Some(owned))
                 }
                 ReadyOwnProperty::Stored(CompletePropertyDescriptor::Accessor { get, .. }) => {
@@ -239,11 +260,39 @@ impl RuntimeState {
         atom: Atom,
         native: Option<&mut Option<LinkedNativeSelection>>,
     ) -> Result<ReadStep, RuntimeError> {
+        self.prepare_value_read(
+            poisoned,
+            realm,
+            receiver,
+            atom,
+            native.map(|hint| (domain, hint)),
+        )
+    }
+
+    /// No hint is requested, so no domain fact exists to authenticate. Native
+    /// bodies use the same selector without inventing a Runtime/header owner.
+    pub(crate) fn prepare_value_read_without_native_hint(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+        receiver: &JsValue,
+        atom: Atom,
+    ) -> Result<ReadStep, RuntimeError> {
+        self.prepare_value_read(poisoned, realm, receiver, atom, None)
+    }
+
+    fn prepare_value_read(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+        receiver: &JsValue,
+        atom: Atom,
+        native: Option<(u64, &mut Option<LinkedNativeSelection>)>,
+    ) -> Result<ReadStep, RuntimeError> {
         let kind = match receiver {
             JsValue::Object(object) => {
-                return self.prepare_ordinary_read_in_state(
-                    poisoned, domain, *object, atom, receiver, false, native,
-                );
+                return self
+                    .prepare_ordinary_read(poisoned, *object, atom, receiver, false, native);
             }
             JsValue::String(id) => {
                 let string = self.heap.string(*id)?;
@@ -285,9 +334,7 @@ impl RuntimeState {
             }
         };
         let prototype = self.primitive_prototype_id_for_realm(realm, kind)?;
-        self.prepare_ordinary_read_in_state(
-            poisoned, domain, prototype, atom, receiver, false, native,
-        )
+        self.prepare_ordinary_read(poisoned, prototype, atom, receiver, false, native)
     }
 }
 

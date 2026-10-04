@@ -239,6 +239,47 @@ impl RuntimeState {
         owned.finish()
     }
 
+    /// Consume an owned descriptor while acquiring a distinct checked Data
+    /// output. The descriptor stays armed through duplication; the output
+    /// stays armed through descriptor retirement. Accessors return None.
+    pub(crate) fn duplicate_owned_descriptor_data(
+        &mut self,
+        poisoned: &Cell<bool>,
+        record: CompletePropertyDescriptor<RawValue>,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        let mut owner = CompleteDescriptorGuard::from_owned_record(self, poisoned, record);
+        let source = match owner.record.as_ref().expect("owned descriptor") {
+            CompletePropertyDescriptor::Data { value, .. } => JsValue::from_raw(value.clone())
+                .ok_or(RuntimeError::Invariant("descriptor held internal sentinel"))?,
+            CompletePropertyDescriptor::Accessor { .. } => {
+                owner.retire()?;
+                return Ok(None);
+            }
+        };
+        let copied = match owner.state.dup_jsvalue(&source) {
+            Ok(value) => value,
+            Err(error) => {
+                owner.retire()?;
+                return Err(error);
+            }
+        };
+        let record = owner.record.take().expect("owned descriptor");
+        let mut output = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+            &mut *owner.state,
+            poisoned,
+            copied,
+        );
+        let (state, output) = output.parts();
+        let CompletePropertyDescriptor::Data { value, .. } = record else {
+            unreachable!()
+        };
+        state.release_owned_jsvalue(
+            poisoned,
+            JsValue::from_raw(value).expect("validated Data descriptor"),
+        )?;
+        Ok(output.take())
+    }
+
     /// Materialize the on-demand primitive from a String index or TypedArray
     /// word. Preserve producer -> descriptor retain -> producer retirement;
     /// an older zero-queue cleanup failure cannot return an apparent success.

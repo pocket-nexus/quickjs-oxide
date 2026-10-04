@@ -1992,12 +1992,13 @@ fn advance_inner(
             | Step::IteratorCall { .. }
             | Step::IteratorClose { .. }
             | Step::ObjectTag { .. }
-            | Step::RegExpExec { .. }
             | Step::IteratorCloseWithResume { .. }
             | Step::OrdinaryInstance { .. }
             | Step::ParseIterator { .. }
             | Step::ArrayCopy { .. } => dispatch_iteration::advance,
-            Step::CyclePublishedComplete(_)
+            Step::RegExpExecProgress(_)
+            | Step::RegExpExec { .. }
+            | Step::CyclePublishedComplete(_)
             | Step::CyclePublishedNumber(_)
             | Step::CyclePublishedElement(_)
             | Step::ComputedError(_)

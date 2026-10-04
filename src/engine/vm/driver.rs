@@ -627,6 +627,32 @@ fn execute_owned_root_step(
     }
 }
 
+/// Keep local completion local. Actual waits consume the same raw producer
+/// through the guarded existing root Query/frame loop; resident bodies use
+/// their Query. Fresh local output uses the existing native publication service.
+pub(crate) fn execute_regexp_exec_step(
+    runtime: &Runtime,
+    realm: crate::engine::heap::ContextId,
+    step: crate::engine::builtins::RegExpExecStep,
+) -> Result<Completion, Error> {
+    match step {
+        crate::engine::builtins::RegExpExecStep::Complete(completion) => Ok(completion),
+        crate::engine::builtins::RegExpExecStep::CyclePublished(completion) => runtime
+            .finish_state_native_body_step(
+                realm,
+                crate::engine::builtins::continuation::NativeStep::CyclePublishedComplete(
+                    completion,
+                ),
+            )
+            .map_err(runtime_error_to_vm_error),
+        step => execute_owned_root_step(
+            runtime,
+            realm,
+            super::proxy_get_driver::Step::RegExpExecProgress(Some(step)),
+        ),
+    }
+}
+
 /// The public/cold Date entry delegates to Invoke's protected existing raw
 /// root entry. Resident native Date bodies publish into their current Query.
 /// Composition dependency: execute_owned_root_step from the frozen Invoke slice.

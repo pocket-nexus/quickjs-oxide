@@ -44,41 +44,7 @@ impl TryFrom<crate::engine::builtins::StringReplaceStep> for Step {
 impl TryFrom<crate::engine::builtins::RegExpExecStep> for Step {
     type Error = crate::engine::api::RuntimeError;
     fn try_from(step: crate::engine::builtins::RegExpExecStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::RegExpExecStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    Self::ReadValue {
-                        receiver: Some(receiver),
-                        key: Some(key),
-                        resume: Some(Resume::RegExpExec(resume)),
-                    }
-                }
-                T::Primitive { mut resume } => {
-                    let value = resume.take_primitive_value();
-                    let hint = resume.take_primitive_hint();
-                    Self::Primitive {
-                        value: Some(value),
-                        hint: Some(hint),
-                        resume: Some(Resume::RegExpExec(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let target = resume.take_call_target();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(target),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::RegExpExec(resume)),
-                    }
-                }
-            }
-        })
+        Ok(Self::RegExpExecProgress(Some(step)))
     }
 }
 

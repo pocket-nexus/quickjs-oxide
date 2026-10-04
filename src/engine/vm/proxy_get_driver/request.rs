@@ -334,6 +334,7 @@ pub(in crate::engine::vm) enum Step {
         receiver: Option<JsValue>,
         resume: Option<Resume>,
     },
+    RegExpExecProgress(Option<crate::engine::builtins::RegExpExecStep>),
     ArrayMutationProgress(Option<crate::engine::builtins::ArrayMutationStep>),
     ArrayMutationRead {
         read: Option<crate::engine::object::ReadStep>,
@@ -735,6 +736,8 @@ impl Step {
             | Self::RawReadRequest { .. }
             | Self::RawValueReadRequest { .. }
             | Self::ArrayPush { .. }
+            | Self::RegExpExecProgress(_)
+            | Self::RegExpExec { .. }
             | Self::ArrayMutationProgress(_)
             | Self::ArrayMutationRead { .. }
             | Self::ArrayMutationSharedDelete { .. }
@@ -858,6 +861,11 @@ impl Step {
                 }
                 if let Some(resume) = resume {
                     resume.release_owned(runtime);
+                }
+            }
+            Self::RegExpExecProgress(progress) => {
+                if let Some(progress) = progress {
+                    let _ = progress.retire_at_boundary(runtime);
                 }
             }
             Self::ArrayMutationProgress(progress) => {
@@ -1813,6 +1821,7 @@ impl Resume {
             | Self::Numeric(_)
             | Self::NumericPrimitive(_)
             | Self::Math(_)
+            | Self::RegExpExec(_)
             | Self::ScalarText(_)
             | Self::OrdinarySet(_)
             | Self::SetTyped(_)
@@ -1830,6 +1839,7 @@ impl Resume {
                 }
                 Self::Math(resume) => resume.retire_in_state(state, poisoned),
                 Self::ScalarText(resume) => resume.retire_in_state(state, poisoned),
+                Self::RegExpExec(resume) => resume.retire_in_state(state, poisoned),
                 Self::DatePrototype(resume) => resume.retire_in_state(state, poisoned),
                 Self::Arguments(resume) => resume.retire_in_state(state, poisoned),
                 Self::Invoke(resume) => resume.retire_in_state(state, poisoned),
@@ -1865,6 +1875,7 @@ impl Resume {
             | Self::Numeric(_)
             | Self::NumericPrimitive(_)
             | Self::Math(_)
+            | Self::RegExpExec(_)
             | Self::ScalarText(_)
             | Self::OrdinarySet(_)
             | Self::SetTyped(_)
@@ -1882,6 +1893,7 @@ impl Resume {
                 }
                 Self::Math(resume) => resume.retire_at_boundary(runtime),
                 Self::ScalarText(resume) => resume.retire_at_boundary(runtime),
+                Self::RegExpExec(resume) => resume.retire_at_boundary(runtime),
                 Self::DatePrototype(resume) => resume.retire_at_boundary(runtime),
                 Self::Arguments(resume) => resume.retire_at_boundary(runtime),
                 Self::Invoke(resume) => resume.retire_at_boundary(runtime),
@@ -1912,6 +1924,7 @@ impl Resume {
             | Self::Numeric(_)
             | Self::NumericPrimitive(_)
             | Self::Math(_)
+            | Self::RegExpExec(_)
             | Self::ScalarText(_)
             | Self::OrdinarySet(_)
             | Self::SetTyped(_)
@@ -1982,6 +1995,7 @@ impl Resume {
         matches!(
             self,
             Self::Primitive(_)
+                | Self::RegExpExec(_)
                 | Self::Number(_)
                 | Self::NumericPrimitive(_)
                 | Self::DatePrototype(_)
@@ -2004,6 +2018,9 @@ impl Resume {
         completion: Completion,
     ) -> Result<Step, crate::engine::api::RuntimeError> {
         match self {
+            Self::RegExpExec(resume) => resume
+                .resume_in_state(state, poisoned, completion)
+                .and_then(Step::try_from),
             Self::WriteKey(input) => input.reply_in_state(state, poisoned, completion),
             Self::Setter => {
                 let action = match completion {
@@ -2316,6 +2333,12 @@ impl Resume {
                     .set(runtime, key, set_result(action)?)
                     .and_then(Step::try_from)
             }
+            Self::RegExpExec(resume) => resume
+                .set_boundary(
+                    runtime,
+                    crate::engine::object::SetAction::from_boundary(action),
+                )
+                .and_then(Step::try_from),
             Self::ArrayMutation(resume) => resume
                 .set_boundary(
                     runtime,

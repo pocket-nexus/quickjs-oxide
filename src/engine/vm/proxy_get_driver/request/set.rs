@@ -352,7 +352,7 @@ impl Resume {
     pub(in crate::engine::vm::proxy_get_driver) fn can_set_in_state(&self) -> bool {
         matches!(
             self,
-            Self::OrdinarySet(_) | Self::RootSet | Self::ArrayMutation(_)
+            Self::OrdinarySet(_) | Self::RootSet | Self::ArrayMutation(_) | Self::RegExpExec(_)
         )
     }
     pub(in crate::engine::vm::proxy_get_driver) fn set_in_state(
@@ -362,6 +362,9 @@ impl Resume {
         action: SetAction,
     ) -> Result<Step, RuntimeError> {
         match self {
+            Self::RegExpExec(resume) => resume
+                .set_in_state(state, poisoned, action)
+                .and_then(Step::try_from),
             Self::OrdinarySet(resume) => resume
                 .forward_in_state(state, poisoned, action)
                 .map(Step::from),

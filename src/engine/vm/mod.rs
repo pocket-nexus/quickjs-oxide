@@ -40,7 +40,7 @@ pub(crate) mod entry;
 
 pub(crate) use driver::{
     RootOperation, execute_date_constructor_step, execute_invoke_step, execute_owned_call,
-    execute_root,
+    execute_regexp_exec_step, execute_root,
 };
 
 mod execution;

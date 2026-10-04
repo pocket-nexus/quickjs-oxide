@@ -223,7 +223,10 @@ impl RuntimeState {
     pub(crate) fn has_state_native_body(target: NativeFunctionId) -> bool {
         matches!(
             target,
-            NativeFunctionId::FunctionPrototypeCall
+            NativeFunctionId::RegExp(
+                crate::engine::builtins::native::RegExpNativeKind::Exec
+                    | crate::engine::builtins::native::RegExpNativeKind::Test
+            ) | NativeFunctionId::FunctionPrototypeCall
                 | NativeFunctionId::FunctionPrototypeApply
                 | NativeFunctionId::Reflect(
                     crate::engine::builtins::native::ReflectKind::Apply
@@ -317,6 +320,24 @@ impl RuntimeState {
     ) -> Result<NativeStep, RuntimeError> {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_state_body");
+        if let NativeFunctionId::RegExp(
+            kind @ (crate::engine::builtins::native::RegExpNativeKind::Exec
+            | crate::engine::builtins::native::RegExpNativeKind::Test),
+        ) = target
+        {
+            return crate::engine::builtins::RegExpExecStep::start_in_state(
+                self, poisoned, realm, kind, invocation, arguments,
+            )
+            .map(|step| match step {
+                crate::engine::builtins::RegExpExecStep::Complete(value) => {
+                    NativeStep::Complete(value)
+                }
+                crate::engine::builtins::RegExpExecStep::CyclePublished(value) => {
+                    NativeStep::CyclePublishedComplete(value)
+                }
+                step => NativeStep::RegExpExec(step),
+            });
+        }
         if let Some(kind) =
             crate::engine::builtins::function::invoke::InvokeKind::for_target(target)
         {
@@ -468,6 +489,10 @@ impl crate::engine::api::runtime::Runtime {
             }
             NativeStep::Invoke(step) => {
                 crate::engine::builtins::function::invoke::finish(self, realm, step)
+            }
+            NativeStep::RegExpExec(step) => {
+                crate::engine::vm::execute_regexp_exec_step(self, realm, step)
+                    .map_err(RuntimeError::from)
             }
             NativeStep::ArrayMutation(step) => {
                 crate::engine::builtins::array::mutation::finish(self, realm, step)

@@ -207,6 +207,77 @@ impl Query {
                         )?,
                     );
                 }
+                Step::RegExpExec {
+                    regexp,
+                    input,
+                    resume,
+                } => {
+                    self.parents.try_reserve(1).map_err(|_| {
+                        RuntimeError::Invariant("RegExp exec continuation allocation failed")
+                    })?;
+                    self.parents
+                        .push(resume.take().expect("RegExp abstract parent"));
+                    *step = Step::RegExpExecProgress(Some(
+                        crate::engine::builtins::RegExpExecStep::abstract_exec_in_state(
+                            state,
+                            poisoned,
+                            self.realm,
+                            regexp.take().expect("RegExp receiver"),
+                            input.take().expect("RegExp input"),
+                        )?,
+                    ));
+                }
+                Step::RegExpExecProgress(progress) => {
+                    use crate::engine::builtins::RegExpExecStep as T;
+                    let mut published = false;
+                    *step = match progress.take().expect("RegExp exec progress") {
+                        T::Complete(value) => Step::Complete(Some(value)),
+                        T::CyclePublished(value) => Step::CyclePublishedComplete(Some(value)),
+                        T::Read { mut resume } => {
+                            published = resume.take_publication();
+                            let (read, key) = resume.take_read();
+                            Step::RawRead {
+                                read: Some(read),
+                                key,
+                                resume: Some(Resume::RegExpExec(resume)),
+                            }
+                        }
+                        T::Primitive { mut resume } => {
+                            published = resume.take_publication();
+                            let (value, hint) = resume.take_primitive();
+                            Step::Primitive {
+                                value: Some(value),
+                                hint: Some(hint),
+                                resume: Some(Resume::RegExpExec(resume)),
+                            }
+                        }
+                        T::Call { mut resume } => {
+                            published = resume.take_publication();
+                            let (function, receiver, arguments) = resume.take_call();
+                            let inputs = RawCallbackInputs::new(function, receiver, arguments);
+                            Step::RawCall {
+                                inputs: Some(inputs),
+                                resume: Some(Resume::RegExpExec(resume)),
+                            }
+                        }
+                        T::Set {
+                            progress,
+                            mut resume,
+                        } => {
+                            published = resume.take_publication();
+                            Step::PreparedSetProgress {
+                                progress: Some(*progress),
+                                resume: Some(Resume::RegExpExec(resume)),
+                            }
+                        }
+                    };
+                    if published {
+                        return Ok(StateProgress {
+                            effect: StateEffect::Publication,
+                            cycle_published: true,
+                        });
+                    }
+                }
                 Step::ArrayMutationProgress(progress) => {
                     use crate::engine::builtins::ArrayMutationStep as T;
                     // Copy/Proxy delete are already selected genuine boundaries.
@@ -1012,6 +1083,27 @@ impl Step {
             state.release_owned_jsvalue(poisoned, value)
         };
         match self {
+            Self::RegExpExecProgress(progress) => {
+                if let Some(progress) = progress.take() {
+                    progress.retire_in_state(state, poisoned)?;
+                }
+            }
+            Self::RegExpExec {
+                regexp,
+                input,
+                resume,
+            } => {
+                if let Some(value) = regexp.take() {
+                    state.release_owned_jsvalue(poisoned, value)?;
+                }
+                if let Some(value) = input.take() {
+                    state.release_owned_jsvalue(poisoned, value)?;
+                }
+                if let Some(resume) = resume {
+                    resume.retire_raw_in_state(state, poisoned)?;
+                }
+            }
+
             Self::WriteOperands { atom, input } => {
                 if let Some(input) = input {
                     input.retire_in_state(state, poisoned)?;
