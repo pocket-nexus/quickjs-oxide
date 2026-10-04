@@ -564,6 +564,22 @@ fn capture_waiting_step<'a>(
     step: crate::engine::builtins::continuation::NativeStep,
     pending: &mut Option<NativeWaitGuard<'a>>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
+    // This capture belongs only to an ordinary local native call (including
+    // its nested replace adapter), before a Query is acquired. Existing Query
+    // callbacks keep their own publication/parent policy in begin_published_into.
+    let step = match step {
+        crate::engine::builtins::continuation::NativeStep::CyclePublishedComplete(completion) => {
+            let _unwind = runtime.unwind_guard();
+            let completion = runtime
+                .0
+                .state
+                .borrow_mut()
+                .service_native_completion(&runtime.0.gc_pressure, &runtime.0.poisoned, completion)
+                .map_err(runtime_error_to_vm_error)?;
+            return Ok(Some(NativeInvokeOutcome::Completion(completion)));
+        }
+        step => step,
+    };
     // Completed non-migrated domains must also remain allocation-free. Only
     // after their small payload is ruled out acquire the resident wait record.
     let mut step = Step::try_from(step)?;

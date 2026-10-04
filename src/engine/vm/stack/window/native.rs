@@ -294,29 +294,46 @@ impl FrameExecution<'_> {
                 return self.consume_native_query(&mut query, return_to, fallthrough);
             }
         };
-        if let crate::engine::builtins::continuation::NativeStep::Complete(completion) = started {
-            let call = owner.into_inner();
-            let (result, arguments) =
-                call.finish_completion_reusing(state, &runtime.0.poisoned, Ok(completion));
-            self.execution
-                .slots
-                .recycle_native_argument_buffer(arguments);
-            return result
-                .map(StateNativeProgress::Complete)
-                .map_err(runtime_error_to_vm_error);
-        }
-        let step = Step::try_from(started).map_err(runtime_error_to_vm_error)?;
+        let completion = match started {
+            crate::engine::builtins::continuation::NativeStep::Complete(completion) => completion,
+            crate::engine::builtins::continuation::NativeStep::CyclePublishedComplete(
+                completion,
+            ) => {
+                // Only the real terminal publication needs service. All call
+                // owners remain armed through GC; no semantic Query is needed.
+                let (state, _) = owner.parts();
+                state
+                    .service_native_completion(
+                        &runtime.0.gc_pressure,
+                        &runtime.0.poisoned,
+                        completion,
+                    )
+                    .map_err(runtime_error_to_vm_error)?
+            }
+            started => {
+                let step = Step::try_from(started).map_err(runtime_error_to_vm_error)?;
+                let call = owner.into_inner();
+                let mut query = RawNativeQuery::for_call(
+                    runtime,
+                    state,
+                    call,
+                    &mut self.execution.query_storage,
+                    step,
+                    return_to,
+                    instruction_depth,
+                );
+                return self.consume_native_query(&mut query, return_to, fallthrough);
+            }
+        };
         let call = owner.into_inner();
-        let mut query = RawNativeQuery::for_call(
-            runtime,
-            state,
-            call,
-            &mut self.execution.query_storage,
-            step,
-            return_to,
-            instruction_depth,
-        );
-        self.consume_native_query(&mut query, return_to, fallthrough)
+        let (result, arguments) =
+            call.finish_completion_reusing(state, &runtime.0.poisoned, Ok(completion));
+        self.execution
+            .slots
+            .recycle_native_argument_buffer(arguments);
+        result
+            .map(StateNativeProgress::Complete)
+            .map_err(runtime_error_to_vm_error)
     }
 
     fn publish_native_boundary(

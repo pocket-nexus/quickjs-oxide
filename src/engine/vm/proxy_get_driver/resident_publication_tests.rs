@@ -1,4 +1,6 @@
 //! Actual resident producers carry one fact until an owned completion is ready.
+mod local_native_completion;
+
 use super::*;
 use crate::engine::{
     builtins::{

@@ -460,24 +460,11 @@ impl crate::engine::api::runtime::Runtime {
             NativeStep::Complete(completion) => Ok(completion),
             NativeStep::CyclePublishedComplete(completion) => {
                 let _unwind = self.unwind_guard();
-                let (value, thrown) = match completion {
-                    Completion::Return(value) => (value, false),
-                    Completion::Throw(value) => (value, true),
-                };
-                let mut state = self.0.state.borrow_mut();
-                let mut owner = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
-                    &mut state,
+                self.0.state.borrow_mut().service_native_completion(
+                    &self.0.gc_pressure,
                     &self.0.poisoned,
-                    value,
-                );
-                let (state, owner) = owner.parts();
-                state.collect_if_requested(&self.0.gc_pressure, &self.0.poisoned)?;
-                let value = owner.take().expect("published native completion");
-                Ok(if thrown {
-                    Completion::Throw(value)
-                } else {
-                    Completion::Return(value)
-                })
+                    completion,
+                )
             }
             NativeStep::Invoke(step) => {
                 crate::engine::builtins::function::invoke::finish(self, realm, step)
@@ -504,5 +491,32 @@ impl crate::engine::api::runtime::Runtime {
                 "State native body returned an unmigrated domain",
             )),
         }
+    }
+}
+
+impl RuntimeState {
+    /// Service a terminal producer's actual publication with its result armed.
+    /// The caller keeps the native input/argv/callee and descriptor owners live
+    /// until this returns, then uses the existing ordered activation finisher.
+    pub(crate) fn service_native_completion(
+        &mut self,
+        pressure: &crate::engine::heap::gc_pressure::GcPressure,
+        poisoned: &std::cell::Cell<bool>,
+        completion: Completion,
+    ) -> Result<Completion, RuntimeError> {
+        let (value, thrown) = match completion {
+            Completion::Return(value) => (value, false),
+            Completion::Throw(value) => (value, true),
+        };
+        let mut owner =
+            crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(self, poisoned, value);
+        let (state, owner) = owner.parts();
+        state.collect_if_requested(pressure, poisoned)?;
+        let value = owner.take().expect("published native completion");
+        Ok(if thrown {
+            Completion::Throw(value)
+        } else {
+            Completion::Return(value)
+        })
     }
 }
