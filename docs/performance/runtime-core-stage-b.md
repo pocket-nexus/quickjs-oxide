@@ -211,6 +211,24 @@ mapped/unmapped Arguments 与 rest 使用共享状态工厂及 binding 读取，
 
 同一原版 RayTrace 固定工作量的 `perf record -e cycles:u -F 997` 采样显示，B32 的 `recycle_resident_query` 自身占 75.27% 周期样本；汇编热点是遍历 `spare_parents` 的清空循环。源码核对确认：外层 native scope 每次创建新空 Parents，完成后放回缓存，下一次外层进入却没有取用，导致缓冲数量随串行调用增长，回收的累计工作变成平方级。嵌套 scope 原有的取用路径没有同样的问题。
 
-采样、注释汇编及二进制证明保存在 `/home/eric/.cache/oxide-runtime-core-20261003/b-aecf-regression-profile/`。`673e91ca` 已修复这项生命周期缺陷，正在复测，后续迁移暂停采纳；计数下降不能抵消这份时间证据。
+采样、注释汇编及二进制证明保存在 `/home/eric/.cache/oxide-runtime-core-20261003/b-aecf-regression-profile/`。`673e91ca` 已修复这项生命周期缺陷；计数下降不能抵消这份时间证据。
+
+### 修复后的累计 B33 筛查
+
+使用新构建的无 PGO 普通 release，与同一阶段 A 二进制再次做一个 ABBA 块；输入、CPU affinity 和配置沿用 B32 筛查。以下每项仍只有两对，不作正式置信或收益验收。两个表来自各自的配对运行，不能据此给单个修复计算配对收益。
+
+| 工作量 | 本次阶段 A 中位耗时 ms | 修复后中位耗时 ms | 配对耗时变化 |
+|---|---:|---:|---:|
+| Richards | 621.71 | 681.19 | +9.57% |
+| DeltaBlue | 663.56 | 739.09 | +11.40% |
+| Crypto | 526.00 | 523.68 | −0.43% |
+| RayTrace | 842.85 | 788.59 | −6.44% |
+| EarleyBoyer | 1125.99 | 1173.09 | +4.18% |
+| RegExp | 2189.36 | 2331.88 | +6.51% |
+| Splay | 1617.55 | 1637.69 | +1.25% |
+| NavierStokes | 513.68 | 497.06 | −3.19% |
+| Combined | 8127.36 | 8489.48 | +4.46% |
+
+全部 36 个进程与语义输出通过。RayTrace 的巨大回归已消失，Richards/DeltaBlue、RegExp 和 Combined 仍需排查；**阶段 B 未通过相对阶段 A 的性能门槛**。回执 `b-native-parent-reuse/interim/summary.json`，SHA256 `d2377c5ddf0d7d9c30541ebb94e99fe19d230bb41d1f5689ec57084aab1e2320`；候选二进制 SHA256 `cb101d1aed2645250f165943ce97671ee1a76a3fa53373bac61ac13a49c4acdc`。未运行原版 Score、A/A 或 Boa，也没有把 profiling 构建当作计时二进制。
 
 内部 native、Proxy、模块/job、eval 和挂起路径仍有迁移工作。最终需要同时确认内部 Runtime 强 owner、状态重借用、deferred release/restore、公共 root 中间转换和迁移适配器全部为零，再执行完整 CI、native/wasm、冻结 Test262、QuickJS 差分和相对阶段 A 的全项性能验收。当前已删除的局部协议不代表这些全局指标已达成。
