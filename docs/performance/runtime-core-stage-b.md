@@ -22,6 +22,7 @@
 | `074f3898` | 字节码闭包创建、捕获发布和 function 字段初始化共享状态算法；`FClosure` 使用当前帧窗口和已解码下一条 PC，发布结果后服务分配压力，再继续解释循环。移除旧外层 driver 创建路径与失去消费者的 Runtime helper。 |
 | `51c4257a` | native activation、调用准备、ABI 适配、帧登记与结束清理共享状态实现，内部存储持有原始 owner。四个 NumberPredicate selector、MathRandom 和 FunctionPrototype 在当前解释循环完成；等待路径共用一次 Query 生命周期登记，删除 activation 的 Runtime owner 和旧 operand guard。 |
 | `089ab186` | 五类 primitive wrapper 的公共、内部和 String bootstrap 入口共用状态工厂；flat String 保留原 ID，rope 先规范化，length 使用共享原始描述符算法。对象布局沿用共享 atom visitor，统一保留 slot/payload/private-home 边一次，删除 Symbol 单独保留协议。 |
+| `7ecbf50a` | 普通属性读取、primitive/String 读取及 linked own-read 共用完整状态算法。原型链使用当前借用，getter 仅取得 callee/receiver owner；TypedArray 数字终结缺失不再查原型，共享 backing 仅在实际 mutex 读取时离开状态。移除旧 Runtime walker，raw 结果携带已有 native 选择事实。 |
 
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
@@ -42,6 +43,7 @@
 - 闭包：10 个新见证；29 条验证命令通过，包含普通/诊断配置相关测试、严格 workspace/all-targets Clippy 和 host feature 检查。真实调用确认没有 Runtime clone/deferred release；覆盖 capture 元数据、输出拒绝、checked retain、generator prototype 和发布失败隔离。
 - Native 状态执行：17 个新见证；完整 library 普通配置 2286 项、profiling 配置 2508 项通过，各自 40 个子进程运行另列。两种配置的严格 workspace/all-targets Clippy、host feature 构建及源检查通过。12 个真实 selector × Call/TailCall 场景各观测一次执行入口和内部 body，无 Runtime clone/deferred release。覆盖 standalone/nested/dead/状态忙碌时的 Query 放弃、登记失败、真实 iterator wait 安装失败、ABI 与清理隔离。
 - Primitive wrapper：16 个新见证；完整 library 普通配置 2302 项、profiling 配置 2524 项通过。两种配置严格 workspace/all-targets Clippy 和 host feature 构建通过。覆盖 flat/rope String、短/heap BigInt、Symbol retain 顺序与 overflow、class/domain 拒绝、slot/payload/private-home 原子边、发布及回滚失败先隔离。
+- 普通属性读取：14 个新见证；完整 library 普通配置 2316 项、profiling 配置 2538 项通过，两种配置严格 workspace/all-targets Clippy 及 host feature 检查通过。覆盖原型链借用、getter/receiver 别名及 checked overflow、未消费 setter、TypedArray 终结缺失与 shared BigInt、primitive receiver、AutoInit、既选 Proxy 与 native fact。完整测试后仅修正 cfg(profiling) 测试中的等价 absence 断言；复跑 14 个相关见证和最终编译检查，完整测试记录复用并明确记录该差异。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
@@ -55,6 +57,8 @@ AutoInit 的旧内部入口会在工厂步骤中多次取得状态并选择性�
 Own-property 内部迁移适配器先验证域，再统一完成一次 operation admission；公共入口保留原来的 operation-first 顺序。状态选择器不排空 Runtime 协调队列。此调整替代旧的虚拟值/TDZ 选择性 admission，并由优先级、无 pending 与清理失败用例验证；最终状态消费者将直接使用选择器，删除迁移适配器。
 
 Native 的原始 activation 不携带 Runtime。现有独立 prepared-call 测试所需的 rooted wrapper 暂时保留；生产入口会立即转为 borrowed guard，没有公开的 prepared-call API，这个临时 Runtime owner 仍应在边界清理中删除。尚未迁移的 native body 通过显式边界临时转交同一 callee edge，不增加 retain 或重放算法。Query 在外部状态忙碌时仍保留原有协调队列兜底；resident 标量路径不创建 Query。其它 native family 和这些迁移边界仍需完成。
+
+普通属性读取的状态内原型遍历不产生中间 prototype owner，getter 不再提升未消费的 setter；相应内部 MAX 拒绝随不必要的 owner 一起消失。实际输出和 getter/receiver owner 仍使用 checked retain。现有 getter/Proxy 消费者仍经过显式 rooted 适配器，后续 VM 与 Proxy 的 raw 消费迁移必须删除这些适配器，当前未声明全局 owner 为零。
 
 ## 性能归因与剩余验收
 
