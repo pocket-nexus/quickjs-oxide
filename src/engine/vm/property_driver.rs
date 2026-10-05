@@ -1103,6 +1103,78 @@ mod read_completion_tests {
     }
 
     #[test]
+    fn full_computed_window_keeps_nullish_throw_without_converting_key() {
+        for source in [
+            "(function(o,k){return o[k]})",
+            "(function(o,k){return o[k]()})",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context().unwrap();
+            let key = runtime.into_jsvalue(context.eval(
+                "globalThis.keyConversions=0; ({[Symbol.toPrimitive](){keyConversions++;throw 99}})"
+            ).unwrap()).unwrap();
+            let opcode = if source.ends_with("[k]()})") {
+                Opcode::GetArrayEl2Dense
+            } else {
+                Opcode::GetArrayElDense
+            };
+            let (mut execution, id) = read_fixture(&runtime, &mut context, source, opcode);
+            let frame = execution.frames.current_mut(id).unwrap();
+            while execution
+                .slots
+                .push(&mut frame.window, JsValue::Int(0))
+                .is_ok()
+            {}
+            assert!(execution.slots.pop(&mut frame.window).is_ok());
+            assert!(execution.slots.pop(&mut frame.window).is_ok());
+            execution
+                .slots
+                .push(&mut frame.window, JsValue::Null)
+                .unwrap();
+            execution.slots.push(&mut frame.window, key).unwrap();
+            let depth = execution.slots.depth(&frame.window);
+            let decoded = frame
+                .executable
+                .exec
+                .decode_published(frame.resume_pc as u32)
+                .unwrap();
+            let fallthrough = FallthroughPc::from_decoded(decoded);
+            let result = read_progress(
+                &runtime,
+                &mut execution,
+                id,
+                ReadKey::Computed { keep_key: false },
+                opcode == Opcode::GetArrayEl2Dense,
+                fallthrough,
+            )
+            .unwrap();
+            let PropertyProgress::Deferred(CallStep::Complete(Completion::Throw(error))) = result
+            else {
+                panic!("original TypeError must survive a full operand window");
+            };
+            let frame = execution.frames.current_mut(id).unwrap();
+            assert_eq!(execution.slots.depth(&frame.window), depth);
+            assert!(matches!(
+                execution.slots.peek(&frame.window, 1),
+                Ok(JsValue::Null)
+            ));
+            drop(execution);
+            let value = runtime.root_and_release_jsvalue(error).unwrap();
+            let Value::Object(error) = value else {
+                panic!("Error object");
+            };
+            assert_eq!(
+                context
+                    .get_property(&error, &runtime.intern_property_key("name").unwrap())
+                    .unwrap(),
+                Value::String(crate::engine::value::JsString::from_static("TypeError"))
+            );
+            assert_eq!(context.eval("keyConversions").unwrap(), Value::Int(0));
+            assert!(!runtime.is_poisoned());
+        }
+    }
+
+    #[test]
     fn getterless_named_read_finishes_in_the_active_frame_scope() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");

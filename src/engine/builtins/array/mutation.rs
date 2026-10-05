@@ -1095,3 +1095,6 @@ const _: () = assert!(std::mem::size_of::<MutationStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<MutationStep>() <= 64);
+
+#[cfg(test)]
+mod behavior_tests;
