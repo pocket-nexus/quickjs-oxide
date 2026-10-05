@@ -7,6 +7,8 @@ use crate::engine::vm::Completion;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 
+mod shared_read;
+
 pub(super) enum Boundary {
     Exit(VmAction),
     /// An existing property/query helper scheduled work; revisit the outer
@@ -205,18 +207,11 @@ pub(super) fn run(
                 let selected = execution.selected_named_read.take();
                 let selected = match selected {
                     Some(crate::engine::vm::property_driver::SelectedNamedRead::Shared(read)) => {
-                        let (element, bytes) = read
-                            .read()
-                            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
-                        let mut state = runtime.0.state.borrow_mut();
-                        let mut segment =
-                            crate::engine::vm::stack::FrameExecution::admit(execution, id)?;
-                        crate::engine::vm::execute::named_read::finish_shared(
+                        shared_read::finish(
                             runtime,
-                            &mut state,
-                            &mut segment,
-                            element,
-                            bytes,
+                            execution,
+                            id,
+                            read,
                             keep_receiver,
                             fallthrough,
                         )?;
