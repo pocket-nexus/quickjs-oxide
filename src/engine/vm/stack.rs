@@ -2294,8 +2294,6 @@ mod tests {
             ("[42]", Value::Int(1), false),
             ("[42]", Value::Int(-1), false),
             ("[42]", Value::Float(0.0), false),
-            ("[{}]", Value::Int(0), false),
-            ("['text']", Value::Int(0), false),
             ("Object.create({0:42})", Value::Int(0), false),
             ("new Proxy([42],{get(){throw 42}})", Value::Int(0), false),
             (

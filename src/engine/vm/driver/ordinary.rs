@@ -1,4 +1,7 @@
 //! The ordinary call/return loop's only entry and destruction transactions.
+#[cfg(test)]
+mod native_preparation_tests;
+
 use crate::engine::{
     api::{Error, runtime::Runtime},
     vm::{
@@ -14,6 +17,53 @@ pub(in crate::engine::vm) enum Entry {
     Native(super::CallStep),
     NativeReady,
     General,
+}
+
+/// The transferred receiver and argv still need owners while ordinary
+/// ancestors are materialized. NativeActivation accepts them only afterwards.
+struct NativeOperandsGuard<'a> {
+    runtime: &'a Runtime,
+    receiver: Option<crate::engine::value::JsValue>,
+    arguments: Vec<crate::engine::value::JsValue>,
+}
+
+impl NativeOperandsGuard<'_> {
+    fn take(
+        &mut self,
+    ) -> (
+        crate::engine::value::JsValue,
+        Vec<crate::engine::value::JsValue>,
+    ) {
+        (
+            self.receiver.take().expect("native receiver owner"),
+            std::mem::take(&mut self.arguments),
+        )
+    }
+}
+
+impl Drop for NativeOperandsGuard<'_> {
+    fn drop(&mut self) {
+        if self.receiver.is_none() && self.arguments.is_empty() {
+            return;
+        }
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
+        // Match pending native preparation: invocation before ascending argv.
+        if let Some(receiver) = self.receiver.take() {
+            let _ = self.runtime.release_jsvalue(receiver);
+            if self.runtime.is_poisoned() {
+                return;
+            }
+        }
+        for argument in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(argument);
+            if self.runtime.is_poisoned() {
+                break;
+            }
+        }
+    }
 }
 
 #[cfg(all(test, feature = "profiling"))]
@@ -311,11 +361,21 @@ pub(super) fn enter_selected(
                 count,
                 method,
             )?;
+            let mut operands = NativeOperandsGuard {
+                runtime,
+                receiver: Some(receiver),
+                arguments,
+            };
             drop(transaction);
             if !execution.frames.can_push_with_continuations(0)
                 || runtime.host_stack_would_overflow()
                 || runtime.0.deferred_references.has_pending()
-                || native_observes_activation(runtime, target, &receiver, &arguments)
+                || native_observes_activation(
+                    runtime,
+                    target,
+                    operands.receiver.as_ref().expect("native receiver owner"),
+                    &operands.arguments,
+                )
             {
                 execution.frames.materialize(runtime)?;
             } else {
@@ -324,6 +384,7 @@ pub(super) fn enter_selected(
                     "native_unobserved_entry",
                 );
             }
+            let (receiver, arguments) = operands.take();
             let result = super::super::proxy_get_driver::start_native_with_classification(
                 runtime,
                 execution,

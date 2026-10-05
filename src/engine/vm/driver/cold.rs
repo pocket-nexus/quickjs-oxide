@@ -311,7 +311,10 @@ pub(super) fn dispatch(
         }
         VmAction::Bridge => Disposition::Bridge,
         VmAction::Suspend(kind) => Disposition::Suspend(kind),
-        VmAction::Materialize | VmAction::Pure(_) => {
+        VmAction::Materialize
+        | VmAction::Pure(_)
+        | VmAction::Object { .. }
+        | VmAction::ArrayFrom { .. } => {
             return Err(Error::internal("resident-only exit reached cold dispatch"));
         }
     })

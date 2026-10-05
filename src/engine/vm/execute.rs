@@ -275,6 +275,10 @@ pub(super) enum VmAction {
         method: Option<(DefineMethodKind, bool)>,
     },
     Environment(super::environment_driver::Operation),
+    /// An allocation selected by this executor and completed before it exits.
+    Object {
+        fallthrough: FallthroughPc,
+    },
     GetSuper,
     Predicate(super::predicate_driver::Kind),
     HomeObject,
@@ -329,6 +333,10 @@ pub(super) enum VmAction {
     Complete,
     Suspend(super::VmSuspendKind),
     Bridge,
+    ArrayFrom {
+        count: u16,
+        fallthrough: FallthroughPc,
+    },
 }
 
 impl VmAction {
@@ -355,6 +363,8 @@ impl VmAction {
             Self::DefineClass { .. } => "execute.action.define_class",
             Self::DefineProperty { .. } => "execute.action.define_property",
             Self::Environment(_) => "execute.action.environment",
+            Self::Object { .. } => "execute.action.object",
+            Self::ArrayFrom { .. } => "execute.action.array_from",
             Self::GetSuper => "execute.action.get_super",
             Self::Predicate(_) => "execute.action.predicate",
             Self::HomeObject => "execute.action.home_object",
@@ -581,6 +591,17 @@ pub(super) fn execute_frame_in_state(
                             .retain_object(object)
                             .map_err(|error| Error::internal(error.to_string()))?;
                         cursor.commit_owned(state, JsValue::Object(object))?;
+                    }
+                    Opcode::Object => {
+                        break 'dispatch Ok(VmAction::Object {
+                            fallthrough: FallthroughPc::from_decoded(decoded),
+                        });
+                    }
+                    Opcode::ArrayFrom => {
+                        break 'dispatch Ok(VmAction::ArrayFrom {
+                            count: published_u16(operand),
+                            fallthrough: FallthroughPc::from_decoded(decoded),
+                        });
                     }
                     Opcode::CheckCtor => {
                         if matches!(owners.input.new_target, JsValue::Undefined) {
@@ -2393,13 +2414,9 @@ pub(super) fn execute_frame_in_state(
                         let keep_key = decoded.opcode == Opcode::GetArrayEl3Dense;
                         let hit = cursor.with_slots(|slots| {
                             if keep_receiver {
-                                slots.array_kept_immediate_read_in_state(
-                                    state,
-                                    &runtime.0.poisoned,
-                                    keep_key,
-                                )
+                                slots.array_kept_read_in_state(state, &runtime.0.poisoned, keep_key)
                             } else {
-                                slots.array_immediate_read_in_state(state, &runtime.0.poisoned)
+                                slots.array_read_in_state(state, &runtime.0.poisoned)
                             }
                         })?;
                         #[cfg(feature = "profiling")]
@@ -2423,9 +2440,10 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(VmAction::SetProperty(Some(operand)));
                         };
                         if !cursor.with_slots(|slots| {
-                            slots.try_scalar_field_write_in_state(
+                            slots.try_owned_field_write_in_state(
                                 state,
                                 &runtime.0.poisoned,
+                                &runtime.0.gc_pressure,
                                 runtime.domain_id(),
                                 executable,
                                 operand,
@@ -2440,7 +2458,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(VmAction::SetProperty(None));
                         };
                         if !cursor.with_slots(|slots| {
-                            slots.try_scalar_element_write_in_state(state, &runtime.0.poisoned)
+                            slots.try_owned_element_write_in_state(state, &runtime.0.poisoned)
                         })? {
                             break 'dispatch Ok(VmAction::SetProperty(None));
                         }
@@ -2573,6 +2591,43 @@ pub(super) fn execute_frame_in_state(
             }
         }?;
         match action {
+            VmAction::Object { fallthrough } => {
+                // FrameCursor has published the allocation's fault PC. Use
+                // the one suffix protocol before allocation can be observed.
+                segment.materialize_in_state(state)?;
+                {
+                    let FrameTurn {
+                        executable,
+                        transaction,
+                        fault_pc,
+                        resume_pc,
+                        ..
+                    } = segment.frame();
+                    #[cfg(feature = "profiling")]
+                    let depth = transaction.operand_depth();
+                    let mut cursor =
+                        FrameCursor::new(transaction, fault_pc, resume_pc, &runtime.0.poisoned);
+                    let object = state
+                        .new_ordinary_object_in_realm(&runtime.0.poisoned, executable.realm)
+                        .map_err(runtime_error_to_vm_error)?;
+                    cursor.commit_owned(state, JsValue::Object(object))?;
+                    cursor.advance(fallthrough.index());
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_instruction(depth);
+                }
+                // The fresh edge belongs to the frame before collection.
+                // A rejected commit releases it and skips this checkpoint.
+                state
+                    .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                    .map_err(runtime_error_to_vm_error)?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event("core.internal_object");
+                continue;
+            }
+            VmAction::ArrayFrom { count, fallthrough } => {
+                array_allocation::execute(runtime, state, &mut segment, count, fallthrough)?;
+                continue;
+            }
             VmAction::Call {
                 arguments,
                 method,
@@ -2895,8 +2950,6 @@ fn deferred_action(
             name: b,
         }),
         Opcode::VariableEnvironment => VmAction::Environment(E::CreateVariable),
-        Opcode::Object => VmAction::Environment(E::CreateObject),
-        Opcode::ArrayFrom => VmAction::Environment(E::CreateArray(checked_u16(a)?)),
         Opcode::DefineArrayEl => VmAction::Environment(E::DefineArrayElement),
         Opcode::Append => VmAction::Environment(E::Append),
 
@@ -3294,6 +3347,8 @@ mod captured_read_tests;
 mod continuous_call_tests;
 #[cfg(test)]
 mod dynamic_ret_tests;
+#[cfg(test)]
+mod object_allocation_tests;
 
 #[cfg(test)]
 mod execution_span_tests {
@@ -3634,3 +3689,8 @@ mod execution_span_tests {
 
 #[cfg(all(test, feature = "profiling"))]
 mod named_native_fact_tests;
+
+#[cfg(test)]
+mod array_allocation_tests;
+
+mod array_allocation;

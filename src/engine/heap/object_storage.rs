@@ -1,14 +1,84 @@
 use super::*;
 use crate::engine::numeric_region_miss::NumericRegionMiss as Miss;
-use crate::engine::value::number::operations::Number;
+use crate::engine::value::{JsValue, number::operations::Number};
 
 /// The runtime may undo retained Atoms only before slot publication.
+#[derive(Debug)]
 pub(crate) struct SlotReplacementError {
     pub(crate) error: HeapError,
     pub(crate) published: bool,
 }
 
+/// Common numeric stores exchange their payloads directly. Other public value
+/// pairs keep one cold conversion boundary; neither path changes edge counts.
+#[inline]
+fn exchange_public_owner(previous: &mut RawValue, input: &mut JsValue) -> bool {
+    if let (RawValue::Int(previous), JsValue::Int(input)) = (&mut *previous, &mut *input) {
+        std::mem::swap(previous, input);
+        return true;
+    }
+    if let (RawValue::Float(previous), JsValue::Float(input)) = (&mut *previous, &mut *input) {
+        std::mem::swap(previous, input);
+        return true;
+    }
+    exchange_public_owner_cold(previous, input)
+}
+
+#[inline(never)]
+fn exchange_public_owner_cold(previous: &mut RawValue, input: &mut JsValue) -> bool {
+    if !is_map_storable_value(previous) {
+        return false;
+    }
+    let new = std::mem::replace(input, JsValue::Undefined);
+    let old = std::mem::replace(previous, new.into_raw());
+    *input = JsValue::from_raw(old).expect("exchanged public storage owner");
+    true
+}
+
 impl Heap {
+    /// Exchange two existing public owners. This leaf changes no layout,
+    /// reference count or Atom count; permissions are selected by ordinary Set.
+    pub(crate) fn exchange_owned_data_slot(
+        &mut self,
+        id: ObjectId,
+        index: usize,
+        input: &mut JsValue,
+    ) -> Result<bool, HeapError> {
+        let slot = self
+            .object_mut(id)?
+            .slots
+            .get_mut(index)
+            .ok_or(HeapError::Invariant("selected data slot disappeared"))?;
+        let PropertySlot::Data(previous) = slot else {
+            return Ok(false);
+        };
+        Ok(exchange_public_owner(previous, input))
+    }
+
+    /// Dense entries have default writable data attributes. Descriptor changes
+    /// materialize them before this leaf can exchange their existing owners.
+    pub(crate) fn exchange_owned_dense_value(
+        &mut self,
+        id: ObjectId,
+        index: u32,
+        input: &mut JsValue,
+    ) -> Result<bool, HeapError> {
+        let data = self.object_mut(id)?;
+        if !matches!(data.kind, ObjectKind::Array) {
+            return Ok(false);
+        }
+        let ObjectPayload::Array {
+            dense: Some(values),
+        } = &mut data.payload
+        else {
+            return Ok(false);
+        };
+        let Some(previous) = values.get_mut(index as usize) else {
+            return Ok(false);
+        };
+        Ok(exchange_public_owner(previous, input))
+    }
+
     /// Replace an existing writable own Number without releasing an owner.
     /// The source Number was read before this mutable target access.
     pub(crate) fn try_replace_array_own_number(
@@ -669,54 +739,6 @@ impl Heap {
         true
     }
 
-    /// Scalar-on-scalar dense replacement has no retained edges or cleanup.
-    /// Keep the shape and slot proof in this leaf instead of first reading the
-    /// element and then entering the general owning replacement transaction.
-    #[inline]
-    pub(crate) fn try_replace_dense_immediate_value(
-        &mut self,
-        id: ObjectId,
-        index: u32,
-        replacement: RawValue,
-    ) -> bool {
-        if !matches!(
-            replacement,
-            RawValue::Undefined
-                | RawValue::Null
-                | RawValue::Bool(_)
-                | RawValue::Int(_)
-                | RawValue::Float(_)
-                | RawValue::ShortBigInt(_)
-        ) {
-            return false;
-        }
-        let Ok(data) = self.object_mut(id) else {
-            return false;
-        };
-        if !matches!(data.kind, ObjectKind::Array) {
-            return false;
-        }
-        let ObjectPayload::Array { dense: Some(dense) } = &mut data.payload else {
-            return false;
-        };
-        let Some(slot) = dense.get_mut(index as usize) else {
-            return false;
-        };
-        if !matches!(
-            slot,
-            RawValue::Undefined
-                | RawValue::Null
-                | RawValue::Bool(_)
-                | RawValue::Int(_)
-                | RawValue::Float(_)
-                | RawValue::ShortBigInt(_)
-        ) {
-            return false;
-        }
-        *slot = replacement;
-        true
-    }
-
     /// Reserve every container needed to shorten a fast Array prefix without
     /// changing either its dense storage or logical `length` slot.
     pub(crate) fn prepare_array_dense_truncation(
@@ -854,6 +876,7 @@ impl Heap {
     /// New edges are retained before the old payload is detached.  Releasing
     /// the old payload can reclaim an unrooted receiver, so callers must treat
     /// `id` as potentially stale after this operation unless they hold a root.
+    #[cfg(test)]
     pub fn replace_object_slot(
         &mut self,
         id: ObjectId,
@@ -993,6 +1016,7 @@ impl Heap {
             replacement,
             index,
             slot_count,
+            true,
         )
     }
 
@@ -1003,6 +1027,7 @@ impl Heap {
         selected: crate::engine::object::SelectedMissingAppend,
         flags: PropertyFlags,
         replacement: PropertySlot,
+        retain_value: bool,
     ) -> Result<(), HeapError> {
         let (id, shape_id, atom, selected_count) = selected.into_parts();
         let object = self.object(id)?;
@@ -1035,6 +1060,7 @@ impl Heap {
             replacement,
             index,
             selected_count,
+            retain_value,
         )
     }
 
@@ -1048,6 +1074,7 @@ impl Heap {
         replacement: PropertySlot,
         index: u32,
         slot_count: usize,
+        retain_value: bool,
     ) -> Result<(), HeapError> {
         if usize::try_from(index) != Ok(slot_count) {
             return Err(HeapError::Invariant(
@@ -1065,7 +1092,9 @@ impl Heap {
             ));
         }
 
-        self.retain_edges_transactionally(&property_slot_edges(&replacement))?;
+        if retain_value {
+            self.retain_edges_transactionally(&property_slot_edges(&replacement))?;
+        }
 
         self.invalidate_property_layout(id);
         let shape = match self.shape_mut(shape_id) {
@@ -1260,11 +1289,24 @@ impl Heap {
     /// Append a slot while moving the existing layout owners unchanged into a
     /// canonical successor shape. The caller supplies one owned reference for
     /// every Symbol atom in `replacement`, transferred only on publication.
+    #[cfg(test)]
     pub(crate) fn append_object_slot_with_shape(
         &mut self,
         id: ObjectId,
         shape: ShapeId,
         replacement: PropertySlot,
+    ) -> Result<HeapCleanup, SlotReplacementError> {
+        self.append_object_slot_with_shape_input(id, shape, replacement, true)
+    }
+
+    /// The enclosing state transaction transfers an existing value owner only
+    /// when this result reports publication. Shape ownership remains retained.
+    pub(crate) fn append_object_slot_with_shape_input(
+        &mut self,
+        id: ObjectId,
+        shape: ShapeId,
+        replacement: PropertySlot,
+        retain_value: bool,
     ) -> Result<HeapCleanup, SlotReplacementError> {
         let prepare = (|| {
             let object = self.object(id)?;
@@ -1293,7 +1335,11 @@ impl Heap {
                 .map_err(|_| HeapError::Allocation {
                     operation: "appending a canonical shape property",
                 })?;
-            let mut edges = property_slot_edges(&replacement);
+            let mut edges = if retain_value {
+                property_slot_edges(&replacement)
+            } else {
+                super::edges::Edges::new()
+            };
             edges.push(RawId::Shape(shape));
             self.retain_edges_transactionally(&edges)
         })();
@@ -1327,28 +1373,48 @@ impl Heap {
     /// The caller must already own atom references for symbol values in
     /// `slots`; on success those references transfer to the heap.  The returned
     /// cleanup contains every symbol atom detached from the previous slots.
+    // Production state consumers preserve publication status. Heap-only tests
+    // keep the original cleanup-returning ABI through the same algorithm.
+    #[cfg(test)]
     pub fn replace_object_layout(
         &mut self,
         id: ObjectId,
         shape: ShapeId,
         slots: Slots,
     ) -> Result<HeapCleanup, HeapError> {
-        self.validate_property_layout(shape, &slots)?;
-        let replacement_prototype = self.shape(shape)?.prototype();
-        if matches!(self.object(id)?.payload, ObjectPayload::Proxy(_))
-            && replacement_prototype.is_some()
-        {
-            return Err(HeapError::Invariant(
-                "Proxy has invalid null-prototype layout or cached target capabilities",
-            ));
-        }
+        self.replace_object_layout_with_status(id, shape, slots)
+            .map_err(|failure| failure.error)
+    }
 
-        // The class payload, private brand, and capability bits are unchanged.
-        // Retaining and releasing only the replacement layout edges keeps that
-        // payload in place instead of cloning potentially large non-GC state
-        // such as an ArrayBuffer backing store.
-        let new_edges = object_layout_edges(shape, &slots);
-        self.retain_edges_transactionally(&new_edges)?;
+    pub(crate) fn replace_object_layout_with_status(
+        &mut self,
+        id: ObjectId,
+        shape: ShapeId,
+        slots: Slots,
+    ) -> Result<HeapCleanup, SlotReplacementError> {
+        let prepare = (|| {
+            self.validate_property_layout(shape, &slots)?;
+            let replacement_prototype = self.shape(shape)?.prototype();
+            if matches!(self.object(id)?.payload, ObjectPayload::Proxy(_))
+                && replacement_prototype.is_some()
+            {
+                return Err(HeapError::Invariant(
+                    "Proxy has invalid null-prototype layout or cached target capabilities",
+                ));
+            }
+
+            // The class payload, private brand, and capability bits are unchanged.
+            // Retaining and releasing only the replacement layout edges keeps that
+            // payload in place instead of cloning potentially large non-GC state
+            // such as an ArrayBuffer backing store.
+            let new_edges = object_layout_edges(shape, &slots);
+            self.retain_edges_transactionally(&new_edges)?;
+            Ok(())
+        })();
+        prepare.map_err(|error| SlotReplacementError {
+            error,
+            published: false,
+        })?;
 
         self.invalidate_property_layout(id);
         let (previous_shape, previous_slots) = {
@@ -1361,15 +1427,21 @@ impl Heap {
             )
         };
 
-        let mut cleanup = HeapCleanup::default();
-        cleanup
-            .atoms
-            .extend(previous_slots.iter().flat_map(property_slot_atoms));
-        for edge in object_layout_edges(previous_shape, &previous_slots) {
-            self.release_raw_no_drain(edge)?;
-        }
-        cleanup.merge(self.drain_zero_queue()?);
-        Ok(cleanup)
+        let cleanup = (|| {
+            let mut cleanup = HeapCleanup::default();
+            cleanup
+                .atoms
+                .extend(previous_slots.iter().flat_map(property_slot_atoms));
+            for edge in object_layout_edges(previous_shape, &previous_slots) {
+                self.release_raw_no_drain(edge)?;
+            }
+            cleanup.merge(self.drain_zero_queue()?);
+            Ok(cleanup)
+        })();
+        cleanup.map_err(|error| SlotReplacementError {
+            error,
+            published: true,
+        })
     }
 
     /// Atomically materialize a fast Array's dense prefix into the indexed

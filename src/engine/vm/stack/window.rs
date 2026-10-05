@@ -81,6 +81,15 @@ impl<'a> FrameExecution<'a> {
         }
     }
 
+    /// End the frame projection before making its current PC and ancestors
+    /// observable. Registration uses the segment's existing state access.
+    pub(in crate::engine::vm) fn materialize_in_state(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+    ) -> Result<(), Error> {
+        self.execution.frames.materialize_in_state(state)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn enter_ordinary(
         &mut self,
@@ -134,6 +143,10 @@ impl<'a> FrameExecution<'a> {
         Ok(Entry::Ordinary)
     }
 
+    // Constructor selection, receiver allocation and guarded publication are
+    // a complete transaction. Keep its allocation/rollback machinery outside
+    // the instruction loop; the ordinary call and numeric paths stay local.
+    #[inline(never)]
     pub(in crate::engine::vm) fn enter_constructor(
         &mut self,
         runtime: &Runtime,
@@ -165,7 +178,13 @@ impl<'a> FrameExecution<'a> {
         // Receiver allocation may request GC, but service remains with the
         // execution consumer after this installer publishes every input owner.
         let receiver = state
-            .allocate_object_with_layout(Some(prototype), &[], Vec::new(), ObjectData::ordinary)
+            .allocate_object_with_layout(
+                &runtime.0.poisoned,
+                Some(prototype),
+                &[],
+                Vec::new(),
+                ObjectData::ordinary,
+            )
             .map_err(super::runtime_error_to_vm_error)?;
         let mut receiver =
             OwnedValueGuard::new(state, &runtime.0.poisoned, JsValue::Object(receiver));
@@ -583,6 +602,11 @@ impl CheckedOrdinaryCallOperands {
 }
 
 impl FrameTransaction<'_> {
+    #[cfg(feature = "profiling")]
+    pub(in crate::engine::vm) fn operand_depth(&self) -> usize {
+        self.window.depth
+    }
+
     /// Consume the selected caller lease to publish a Base constructor. No
     /// caller-supplied detached window or mutable slot access can intervene.
     #[allow(clippy::too_many_arguments)]
@@ -1232,7 +1256,7 @@ impl FrameSlots<'_> {
         &mut self,
         runtime: &Runtime,
     ) -> Result<bool, Error> {
-        self.array_immediate_read_in_state(&mut runtime.0.state.borrow_mut(), &runtime.0.poisoned)
+        self.array_read_in_state(&mut runtime.0.state.borrow_mut(), &runtime.0.poisoned)
     }
 
     #[cfg(test)]

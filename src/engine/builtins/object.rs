@@ -9,7 +9,8 @@ use crate::engine::builtins::native::{
     NativeFunctionId, ObjectAccessorKind, ObjectExtensibilityKind, ObjectIntegrityKind,
     ObjectKeysKind, ObjectOwnPropertyKeysKind, PrimitiveKind,
 };
-use crate::engine::heap::{ContextId, ObjectPayload, PrimitiveObjectData};
+use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
+use crate::engine::heap::{ContextId, ObjectData, ObjectId, ObjectPayload, PrimitiveObjectData};
 use crate::engine::object::operations::{ArrayOwnKey, InternalDefineResult};
 use crate::engine::object::{
     AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, SymbolRef,
@@ -18,6 +19,7 @@ use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
+use std::cell::Cell;
 
 pub(super) mod constructor;
 pub(crate) mod copy;
@@ -917,9 +919,13 @@ impl Runtime {
         &self,
         realm: ContextId,
     ) -> Result<ObjectRef, RuntimeError> {
-        let prototype = self.0.state.borrow().heap.context(realm)?.object_prototype;
-        let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
-        self.new_object(Some(&prototype))
+        let _operation = self.operation()?;
+        let object = self
+            .0
+            .state
+            .borrow_mut()
+            .new_ordinary_object_in_realm(&self.0.poisoned, realm)?;
+        Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
 
     fn define_fresh_object_descriptor_property(
@@ -1307,3 +1313,32 @@ impl Runtime {
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<ObjectIteratorStep>() <= 64);
+
+impl RuntimeState {
+    /// The checked prototype temporary preserves the public factory's retain
+    /// overflow boundary even when its empty layout is already cached.
+    pub(crate) fn new_ordinary_object_in_realm(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+    ) -> Result<ObjectId, RuntimeError> {
+        let prototype = self.heap.context(realm)?.object_prototype;
+        self.heap.retain_object(prototype)?;
+        let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
+        let (state, prototype_owner) = prototype_owner.parts();
+        let object = state.allocate_object_with_layout(
+            poisoned,
+            Some(prototype),
+            &[],
+            Vec::new(),
+            ObjectData::ordinary,
+        )?;
+        let mut object_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(object));
+        let (state, object_owner) = object_owner.parts();
+        state.release_owned_jsvalue(poisoned, prototype_owner.take().expect("prototype owner"))?;
+        let JsValue::Object(object) = object_owner.take().expect("new object owner") else {
+            unreachable!("ordinary factory allocated an object")
+        };
+        Ok(object)
+    }
+}

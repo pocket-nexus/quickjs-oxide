@@ -9,13 +9,14 @@
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
+use crate::engine::heap::{ObjectId, RawValue};
+use std::cell::Cell;
 
 use crate::engine::builtins::native::{NativeFunctionId, ReflectKind};
 use crate::engine::heap::{AutoInitProperty, ContextId, HeapError, ObjectPayload, PropertySlot};
 use crate::engine::object::shape::PropertyFlags;
-use crate::engine::object::{
-    DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
-};
+use crate::engine::object::{ObjectRef, WellKnownSymbol};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
@@ -231,65 +232,6 @@ impl Runtime {
             PropertyFlags::data(true, false, true),
             PropertySlot::auto_init(AutoInitProperty::Reflect { realm }),
         )
-    }
-
-    /// Materialize pinned QuickJS's complete `js_reflect_funcs` table in its
-    /// defining realm. Each method remains an AutoInit native property.
-    pub(crate) fn instantiate_reflect_intrinsic(
-        &self,
-        realm: ContextId,
-    ) -> Result<ObjectRef, RuntimeError> {
-        self.0.state.borrow().heap.context(realm)?;
-        let reflect = self.new_ordinary_object_in_realm(realm)?;
-        for (kind, name, length) in [
-            (ReflectKind::Apply, "apply", 3),
-            (ReflectKind::Construct, "construct", 2),
-            (ReflectKind::DefineProperty, "defineProperty", 3),
-            (ReflectKind::DeleteProperty, "deleteProperty", 2),
-            (ReflectKind::Get, "get", 2),
-            (
-                ReflectKind::GetOwnPropertyDescriptor,
-                "getOwnPropertyDescriptor",
-                2,
-            ),
-            (ReflectKind::GetPrototypeOf, "getPrototypeOf", 1),
-            (ReflectKind::Has, "has", 2),
-            (ReflectKind::IsExtensible, "isExtensible", 1),
-            (ReflectKind::OwnKeys, "ownKeys", 1),
-            (ReflectKind::PreventExtensions, "preventExtensions", 1),
-            (ReflectKind::Set, "set", 3),
-            (ReflectKind::SetPrototypeOf, "setPrototypeOf", 2),
-        ] {
-            self.define_native_builtin_auto_init(
-                &reflect,
-                realm,
-                NativeFunctionId::Reflect(kind),
-                name,
-                length,
-                length,
-            )?;
-        }
-
-        let to_string_tag = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::ToStringTag)
-                .expect("well-known symbol"),
-        );
-        if !self.define_own_property(
-            &reflect,
-            &to_string_tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static("Reflect"))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Reflect toStringTag definition was rejected",
-            ));
-        }
-        Ok(reflect)
     }
 
     /// QuickJS `build_arg_list`, shared by Function.prototype.apply and the
@@ -943,5 +885,81 @@ mod arguments_prefix_tests {
             other.prepare_fast_array_arguments_jsvalue(context.realm, &object),
             Err(RuntimeError::WrongRuntime("object"))
         ));
+    }
+}
+
+impl RuntimeState {
+    /// Materialize pinned QuickJS's complete `js_reflect_funcs` table in its
+    /// defining realm. Each method remains an AutoInit native property.
+    pub(crate) fn instantiate_reflect_intrinsic(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+    ) -> Result<ObjectId, RuntimeError> {
+        let reflect = self.new_ordinary_object_in_realm(poisoned, realm)?;
+        let mut result_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(reflect));
+        let (state, result_owner) = result_owner.parts();
+        for (kind, name, length) in [
+            (ReflectKind::Apply, "apply", 3),
+            (ReflectKind::Construct, "construct", 2),
+            (ReflectKind::DefineProperty, "defineProperty", 3),
+            (ReflectKind::DeleteProperty, "deleteProperty", 2),
+            (ReflectKind::Get, "get", 2),
+            (
+                ReflectKind::GetOwnPropertyDescriptor,
+                "getOwnPropertyDescriptor",
+                2,
+            ),
+            (ReflectKind::GetPrototypeOf, "getPrototypeOf", 1),
+            (ReflectKind::Has, "has", 2),
+            (ReflectKind::IsExtensible, "isExtensible", 1),
+            (ReflectKind::OwnKeys, "ownKeys", 1),
+            (ReflectKind::PreventExtensions, "preventExtensions", 1),
+            (ReflectKind::Set, "set", 3),
+            (ReflectKind::SetPrototypeOf, "setPrototypeOf", 2),
+        ] {
+            state.define_native_builtin_auto_init(
+                poisoned,
+                reflect,
+                realm,
+                NativeFunctionId::Reflect(kind),
+                name,
+                length,
+                length,
+            )?;
+        }
+
+        let to_string_tag = state.well_known_symbols[&WellKnownSymbol::ToStringTag];
+        {
+            let string = state
+                .heap
+                .allocate_string(JsString::from_static("Reflect"))?;
+            let mut producer = OwnedValueGuard::new(state, poisoned, JsValue::String(string));
+            let (state, producer) = producer.parts();
+            if !state.define_raw_property_with_poison(
+                poisoned,
+                reflect,
+                to_string_tag,
+                &crate::engine::object::property::PropertyDescriptor {
+                    value: Some(RawValue::String(string)),
+                    writable: Some(false),
+                    enumerable: Some(false),
+                    configurable: Some(true),
+                    ..crate::engine::object::property::PropertyDescriptor::new()
+                },
+            )? {
+                return Err(RuntimeError::Invariant(
+                    "Reflect toStringTag definition was rejected",
+                ));
+            }
+            state.release_owned_jsvalue(
+                poisoned,
+                producer.take().expect("intrinsic tag producer"),
+            )?;
+        }
+        let JsValue::Object(object) = result_owner.take().expect("intrinsic factory result") else {
+            unreachable!("intrinsic factory allocated an object")
+        };
+        Ok(object)
     }
 }

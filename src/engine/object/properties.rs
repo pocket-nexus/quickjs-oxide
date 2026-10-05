@@ -7,11 +7,11 @@ use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::builtins::CanonicalNumericIndex;
 use crate::engine::code::function::metadata::ClosureVariableKind;
 use crate::engine::heap::roots::VarRefRoot;
-use crate::engine::heap::runtime::RuntimeState;
+use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
 
 use crate::engine::heap::{
-    AutoInitProperty, ContextId, HeapError, ObjectId, ObjectPayload, PrimitiveObjectData,
-    PropertySlot, RawValue,
+    AutoInitProperty, ContextId, HeapError, ObjectData, ObjectId, ObjectPayload,
+    PrimitiveObjectData, PropertySlot, RawValue,
 };
 use crate::engine::object::access::raw_string_property_one_level;
 #[cfg(test)]
@@ -32,10 +32,21 @@ use crate::engine::object::{
 };
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
+use std::cell::Cell;
+
+// Callback results precede public-value conversion. String conversion may
+// fail without terminalizing the lazy slot; Object already owns its result.
+enum AutoInitValue {
+    String(JsString),
+    Object(ObjectId),
+}
 
 /// Empty layouts stay canonical. After the first property, exclusively owned
 /// layouts append in place; shared layouts converge through weak transitions.
 pub(crate) const MIN_UNIQUE_SHAPE_APPEND_ENTRIES: usize = 1;
+
+#[cfg(test)]
+mod autoinit_state_tests;
 
 impl RuntimeState {
     #[cfg(test)]
@@ -46,32 +57,44 @@ impl RuntimeState {
         flags: PropertyFlags,
         replacement: PropertySlot,
     ) -> Result<(), RuntimeError> {
-        self.append_unique_layout_inner(object, atom, flags, replacement, None)
+        self.append_unique_layout_inner(
+            None,
+            object,
+            atom,
+            flags,
+            super::SlotAppendInput::Borrowed(replacement),
+            None,
+        )
     }
 
-    pub(super) fn append_selected_unique_layout(
+    pub(super) fn append_selected_unique_layout_input(
         &mut self,
+        poisoned: Option<&Cell<bool>>,
         selected: super::SelectedMissingAppend,
         flags: PropertyFlags,
-        replacement: PropertySlot,
+        input: super::SlotAppendInput<'_>,
     ) -> Result<(), RuntimeError> {
         self.append_unique_layout_inner(
+            poisoned,
             selected.object(),
             selected.atom(),
             flags,
-            replacement,
+            input,
             Some(selected),
         )
     }
 
     fn append_unique_layout_inner(
         &mut self,
+        poisoned: Option<&Cell<bool>>,
         object: ObjectId,
         atom: Atom,
         flags: PropertyFlags,
-        replacement: PropertySlot,
+        input: super::SlotAppendInput<'_>,
         selected: Option<super::SelectedMissingAppend>,
     ) -> Result<(), RuntimeError> {
+        let (replacement, owner) = input.into_parts();
+        let retain_value = owner.is_none();
         let shape = self.heap.object(object)?.shape;
         if self.heap.shape_strong_count(shape)? != 1 {
             return Err(RuntimeError::Invariant(
@@ -80,10 +103,18 @@ impl RuntimeState {
         }
         self.atoms.resolve(atom)?;
         self.atoms.retain(atom)?;
-        let retained_slot_atoms = match self.retain_slot_atoms(std::slice::from_ref(&replacement)) {
+        let retained_slot_atoms = match if retain_value {
+            self.retain_slot_atoms(std::slice::from_ref(&replacement))
+        } else {
+            Ok(Vec::new())
+        } {
             Ok(atoms) => atoms,
             Err(error) => {
-                self.atoms.release(atom)?;
+                self.atoms.release(atom).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                })?;
                 return Err(error);
             }
         };
@@ -91,10 +122,12 @@ impl RuntimeState {
         self.unlink_shape_transitions(shape);
         let previous_hash = self.remove_shape_cache(shape);
         let result = match selected {
-            Some(selected) => {
-                self.heap
-                    .append_selected_missing_object_property(selected, flags, replacement)
-            }
+            Some(selected) => self.heap.append_selected_missing_object_property(
+                selected,
+                flags,
+                replacement,
+                retain_value,
+            ),
             None => self
                 .heap
                 .append_unique_object_property(object, atom, flags, replacement),
@@ -103,9 +136,23 @@ impl RuntimeState {
             if let Some(hash) = previous_hash {
                 self.insert_shape_cache(shape, hash);
             }
-            self.release_atoms(retained_slot_atoms)?;
-            self.atoms.release(atom)?;
+            // Unique append has no fallible cleanup after publication. These
+            // errors are preparation failures; only failed rollback quarantines.
+            self.release_atoms(retained_slot_atoms).inspect_err(|_| {
+                if let Some(poisoned) = poisoned {
+                    poisoned.set(true);
+                }
+            })?;
+            self.atoms.release(atom).inspect_err(|_| {
+                if let Some(poisoned) = poisoned {
+                    poisoned.set(true);
+                }
+            })?;
             return Err(error.into());
+        }
+        if let Some(owner) = owner {
+            // The heap now owns the exact edge/atom previously held here.
+            *owner = JsValue::Undefined;
         }
         // Relink the mutated layout under its successor fingerprint, mirroring
         // QuickJS's in-place hashed-shape update, so later objects converge on
@@ -462,126 +509,29 @@ impl Runtime {
         key: &PropertyKey,
     ) -> Result<(), RuntimeError> {
         self.validate_object_and_key(object, key)?;
-        let object_id = object.object_id();
-        let (slot_index, initializer) = {
-            let state = self.0.state.borrow();
-            let object = state.heap.object(object_id)?;
-            let shape = state.heap.shape(object.shape)?;
-            let slot_index = usize::try_from(
-                shape
-                    .find(AtomIdx::from_raw(key.atom().raw()))
-                    .ok_or(RuntimeError::Invariant("autoinit property disappeared"))?,
-            )
-            .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
-            let initializer = match object.slots.get(slot_index) {
-                Some(PropertySlot::AutoInit(initializer)) => **initializer,
-                Some(
-                    PropertySlot::Data(_) | PropertySlot::VarRef(_) | PropertySlot::Accessor { .. },
-                ) => return Ok(()),
-                None => {
-                    return Err(RuntimeError::Invariant(
-                        "autoinit property slot was missing",
-                    ));
-                }
-            };
-            (slot_index, initializer)
+        let initializer = self
+            .0
+            .state
+            .borrow()
+            .auto_init_property_for_materialization(object.object_id(), key.atom())?;
+        let Some((_, initializer)) = initializer else {
+            return Ok(());
         };
-
-        let initialized = (|| -> Result<Value, RuntimeError> {
-            Ok(match initializer {
-                AutoInitProperty::FunctionPrototype { realm } => {
-                    let object_prototype =
-                        self.0.state.borrow().heap.context(realm)?.object_prototype;
-                    let object_prototype =
-                        ObjectRef::from_borrowed_handle(self.clone(), object_prototype)?;
-                    let prototype = self.new_object(Some(&object_prototype))?;
-                    self.define_function_data_property(
-                        &prototype,
-                        "constructor",
-                        Value::Object(object.try_clone()?),
-                        true,
-                        true,
-                    )?;
-                    Value::Object(prototype)
-                }
-                AutoInitProperty::NativeBuiltin {
-                    realm,
-                    target,
-                    name,
-                    length,
-                    min_readable_args,
-                } => {
-                    let function_prototype = self
-                        .0
-                        .state
-                        .borrow()
-                        .heap
-                        .context(realm)?
-                        .function_prototype;
-                    let function_prototype =
-                        ObjectRef::from_borrowed_handle(self.clone(), function_prototype)?;
-                    let callable = self.new_native_builtin(
-                        &function_prototype,
-                        realm,
-                        target,
-                        min_readable_args,
-                        name,
-                        i32::from(length),
-                    )?;
-                    Value::Object(callable.as_object().try_clone()?)
-                }
-                AutoInitProperty::String { value, .. } => {
-                    Value::String(JsString::from_static(value))
-                }
-                AutoInitProperty::ArrayUnscopables { realm } => {
-                    Value::Object(self.instantiate_array_unscopables(realm)?)
-                }
-                AutoInitProperty::Math { realm } => {
-                    Value::Object(self.instantiate_math_intrinsic(realm)?)
-                }
-                AutoInitProperty::Reflect { realm } => {
-                    Value::Object(self.instantiate_reflect_intrinsic(realm)?)
-                }
-                AutoInitProperty::Json { realm } => {
-                    Value::Object(self.instantiate_json_intrinsic(realm)?)
-                }
-                AutoInitProperty::Atomics { realm } => {
-                    Value::Object(self.instantiate_atomics_intrinsic(realm)?)
-                }
-                #[cfg(test)]
-                AutoInitProperty::FailureProbe { .. } => {
-                    return Err(RuntimeError::Invariant("autoinit failure probe"));
-                }
-            })
-        })();
-        let initialized = match initialized {
-            Ok(initialized) => initialized,
-            Err(initializer_error) => {
-                // Once QuickJS has entered an autoinit callback, failure is
-                // terminal for that slot: it becomes an ordinary undefined
-                // data property and releases the stored realm edge.
-                let mut state = self.0.state.borrow_mut();
-                let cleanup = state.heap.replace_object_slot(
-                    object_id,
-                    slot_index,
-                    PropertySlot::Data(RawValue::Undefined),
-                )?;
-                state.apply_cleanup(cleanup)?;
-                return Err(initializer_error);
-            }
+        let _unwind = self.unwind_guard();
+        // Converge nested factory admission at this actual lazy-slot boundary.
+        // String initialization retains its existing no-operation behavior.
+        // With a pending FIFO, admission failure now precedes realm/prototype
+        // prefix failures in object-producing factories.
+        let _operation = if matches!(initializer, AutoInitProperty::String { .. }) {
+            None
+        } else {
+            Some(self.operation()?)
         };
-        let converted = self.raw_property_value(&initialized)?;
-        // Clone duplicates only the handle; the guard keeps the producer
-        // edge accountable through every store-or-decline path.
-        let mut state = self.0.state.borrow_mut();
-        let replaced =
-            state.replace_property_slot(object_id, slot_index, PropertySlot::Data(converted.raw()));
-        drop(state);
-        // The slot retained its own copy edge on success; a rejected
-        // replacement kept nothing. The guard balances the producer edge.
-        replaced?;
-        drop(initialized);
-        Ok(())
+        self.0.state.borrow_mut().materialize_auto_init_property(
+            &self.0.poisoned,
+            object.object_id(),
+            key.atom(),
+        )
     }
 
     #[cfg(test)]
@@ -1092,58 +1042,25 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
     ) -> Result<bool, RuntimeError> {
-        use crate::engine::object::property::CompletePropertyDescriptor;
-        let complete = {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(object.object_id())?;
-            let shape = state.heap.shape(data.shape)?;
-            let current = shape
-                .find(AtomIdx::from_raw(key.atom().raw()))
-                .map(|index| {
-                    let flags = shape.entries()[index as usize].flags;
-                    match &data.slots[index as usize] {
-                        PropertySlot::Data(value) => Ok(CompletePropertyDescriptor::Data {
-                            value: value.clone(),
-                            writable: flags.writable,
-                            enumerable: flags.enumerable,
-                            configurable: flags.configurable,
-                        }),
-                        PropertySlot::VarRef(id) => Ok(CompletePropertyDescriptor::Data {
-                            value: state.heap.var_ref(*id)?.value.clone(),
-                            writable: flags.writable,
-                            enumerable: flags.enumerable,
-                            configurable: flags.configurable,
-                        }),
-                        PropertySlot::Accessor { get, set } => {
-                            Ok(CompletePropertyDescriptor::Accessor {
-                                get: get.option().map(RawValue::Object),
-                                set: set.option().map(RawValue::Object),
-                                enumerable: flags.enumerable,
-                                configurable: flags.configurable,
-                            })
-                        }
-                        _ => Err(RuntimeError::Invariant(
-                            "raw descriptor reached noncanonical slot",
-                        )),
-                    }
-                })
-                .transpose()?;
-            validate_and_apply_property_descriptor(
-                data.extensible,
-                descriptor,
-                current.as_ref(),
-                &RawValue::Undefined,
-                |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
-            )
+        let mut state = self.0.state.borrow_mut();
+        let Some(complete) =
+            state.validate_raw_property(object.object_id(), key.atom(), descriptor)?
+        else {
+            return Ok(false);
         };
-        let complete = match complete {
-            Ok(value) => value,
-            Err(PropertyDefinitionError::InvalidDescriptor) => {
-                return Err(PropertyDefinitionError::InvalidDescriptor.into());
-            }
-            Err(_) => return Ok(false),
-        };
-        self.store_complete_raw_property(object, key, complete)?;
+        if let ObjectPayload::GlobalObject { uninitialized_vars } =
+            state.heap.object(object.object_id())?.payload
+        {
+            state.store_complete_global_raw_property(
+                &self.0.poisoned,
+                object.object_id(),
+                uninitialized_vars,
+                key.atom(),
+                complete,
+            )?;
+        } else {
+            state.store_complete_raw_property(object.object_id(), key.atom(), complete)?;
+        }
         Ok(true)
     }
 
@@ -2176,78 +2093,11 @@ impl Runtime {
             self.reset_var_ref_uninitialized(&root)?;
             self.set_var_ref_metadata(&root, false, false, ClosureVariableKind::Normal)?;
         }
-        let mut state = self.0.state.borrow_mut();
-        let object_id = object.object_id();
-        let dictionary_eligible = {
-            let data = state.heap.object(object_id)?;
-            let shape = state.heap.shape(data.shape)?;
-            data.supports_dictionary_layout()
-                && (shape.is_dictionary()
-                    || shape.entries().len() >= MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
-        };
-        if dictionary_eligible {
-            let shape = state.heap.shape(state.heap.object(object_id)?.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(true);
-            };
-            if !shape.entries()[index as usize].flags.configurable {
-                return Ok(false);
-            }
-            state.ensure_dictionary_layout(object_id)?;
-            let cleanup = state
-                .heap
-                .delete_dictionary_property(object_id, key.atom())?;
-            state.apply_cleanup(cleanup)?;
-            return Ok(true);
-        }
-        let (prototype, entries, mut slots, index, configurable) = {
-            let object_data = state.heap.object(object_id)?;
-            let shape = state.heap.shape(object_data.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(true);
-            };
-            let index = usize::try_from(index)
-                .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
-            let entry = *shape.entries().get(index).ok_or(RuntimeError::Invariant(
-                "shape lookup index was out of bounds",
-            ))?;
-            (
-                shape.prototype(),
-                shape.entries().to_vec(),
-                object_data.slots.clone(),
-                index,
-                entry.flags.configurable,
-            )
-        };
-        if !configurable {
-            return Ok(false);
-        }
-
-        let arguments_fast_update = if let Some(arguments_index) = arguments_index {
-            match state.heap.arguments_state(object_id)?.1 {
-                Some(fast_len) if arguments_index < fast_len => {
-                    Some(if arguments_index + 1 == fast_len {
-                        Some(arguments_index)
-                    } else {
-                        None
-                    })
-                }
-                Some(_) | None => None,
-            }
-        } else {
-            None
-        };
-
-        let mut next_entries = entries;
-        next_entries.remove(index);
-        slots.remove(index);
-        state.replace_layout(object_id, prototype, &next_entries, slots)?;
-        if let Some(next_fast_len) = arguments_fast_update {
-            state
-                .heap
-                .set_arguments_fast_len(object_id, next_fast_len)?;
-        }
-        Ok(true)
+        self.0.state.borrow_mut().delete_ordinary_property(
+            object.object_id(),
+            key.atom(),
+            arguments_index,
+        )
     }
 
     /// Return a rooted own-key snapshot in ECMAScript order.
@@ -2422,5 +2272,427 @@ impl Runtime {
             .heap
             .set_object_extensible(object.object_id(), false)?;
         Ok(())
+    }
+}
+
+impl RuntimeState {
+    /// Delete a selected ordinary own-slot property after the public entry
+    /// handled exotic and Global binding behavior. Hidden Global tables use
+    /// the same dictionary/shape algorithm with no Arguments index update.
+    pub(super) fn delete_ordinary_property(
+        &mut self,
+        object_id: ObjectId,
+        atom: Atom,
+        arguments_index: Option<u32>,
+    ) -> Result<bool, RuntimeError> {
+        // Legacy entry remains for unconverted consumers; remove in B5.
+        self.delete_ordinary_property_inner(None, object_id, atom, arguments_index)
+    }
+
+    pub(super) fn delete_ordinary_property_with_poison(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object_id: ObjectId,
+        atom: Atom,
+        arguments_index: Option<u32>,
+    ) -> Result<bool, RuntimeError> {
+        self.delete_ordinary_property_inner(Some(poisoned), object_id, atom, arguments_index)
+    }
+
+    fn delete_ordinary_property_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
+        object_id: ObjectId,
+        atom: Atom,
+        arguments_index: Option<u32>,
+    ) -> Result<bool, RuntimeError> {
+        let state = self;
+        let dictionary_eligible = {
+            let data = state.heap.object(object_id)?;
+            let shape = state.heap.shape(data.shape)?;
+            data.supports_dictionary_layout()
+                && (shape.is_dictionary()
+                    || shape.entries().len() >= MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
+        };
+        if dictionary_eligible {
+            let shape = state.heap.shape(state.heap.object(object_id)?.shape)?;
+            let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+                return Ok(true);
+            };
+            if !shape.entries()[index as usize].flags.configurable {
+                return Ok(false);
+            }
+            if let Some(poisoned) = poisoned {
+                state.ensure_dictionary_layout_with_poison(poisoned, object_id)?;
+            } else {
+                state.ensure_dictionary_layout(object_id)?;
+            }
+            let cleanup = state
+                .heap
+                .delete_dictionary_property_with_status(object_id, atom)
+                .map_err(|failure| {
+                    if failure.published {
+                        if let Some(poisoned) = poisoned {
+                            poisoned.set(true);
+                        }
+                    }
+                    RuntimeError::from(failure.error)
+                })?;
+            state.apply_cleanup(cleanup).inspect_err(|_| {
+                if let Some(poisoned) = poisoned {
+                    poisoned.set(true);
+                }
+            })?;
+            return Ok(true);
+        }
+        let (prototype, entries, mut slots, index, configurable) = {
+            let object_data = state.heap.object(object_id)?;
+            let shape = state.heap.shape(object_data.shape)?;
+            let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+                return Ok(true);
+            };
+            let index = usize::try_from(index)
+                .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
+            let entry = *shape.entries().get(index).ok_or(RuntimeError::Invariant(
+                "shape lookup index was out of bounds",
+            ))?;
+            (
+                shape.prototype(),
+                shape.entries().to_vec(),
+                object_data.slots.clone(),
+                index,
+                entry.flags.configurable,
+            )
+        };
+        if !configurable {
+            return Ok(false);
+        }
+
+        let arguments_fast_update = if let Some(arguments_index) = arguments_index {
+            match state.heap.arguments_state(object_id)?.1 {
+                Some(fast_len) if arguments_index < fast_len => {
+                    Some(if arguments_index + 1 == fast_len {
+                        Some(arguments_index)
+                    } else {
+                        None
+                    })
+                }
+                Some(_) | None => None,
+            }
+        } else {
+            None
+        };
+
+        let mut next_entries = entries;
+        next_entries.remove(index);
+        slots.remove(index);
+        if let Some(poisoned) = poisoned {
+            state.replace_layout_with_poison(
+                poisoned,
+                object_id,
+                prototype,
+                &next_entries,
+                slots,
+            )?;
+        } else {
+            state.replace_layout(object_id, prototype, &next_entries, slots)?;
+        }
+        if let Some(next_fast_len) = arguments_fast_update {
+            state
+                .heap
+                .set_arguments_fast_len(object_id, next_fast_len)?;
+        }
+        Ok(true)
+    }
+
+    /// Validate and commit a callback-free descriptor under the same state access.
+    /// The caller admits a non-global object with ordinary slot semantics,
+    /// handles AutoInit/exotic preconditions, and keeps descriptor edges owned.
+    #[cfg(test)]
+    pub(crate) fn define_raw_property(
+        &mut self,
+        object: ObjectId,
+        atom: Atom,
+        descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<bool, RuntimeError> {
+        // Keep the legacy entry for descriptor ownership tests. Production
+        // state consumers supply the runtime header flag below.
+        self.define_raw_property_inner(None, object, atom, descriptor)
+    }
+
+    /// Fresh ordinary-state consumers supply the header flag so a published
+    /// cleanup error quarantines before their temporary owners can retire.
+    pub(crate) fn define_raw_property_with_poison(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        atom: Atom,
+        descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<bool, RuntimeError> {
+        self.define_raw_property_inner(Some(poisoned), object, atom, descriptor)
+    }
+
+    fn define_raw_property_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
+        object: ObjectId,
+        atom: Atom,
+        descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<bool, RuntimeError> {
+        let Some(complete) = self.validate_raw_property(object, atom, descriptor)? else {
+            return Ok(false);
+        };
+        self.store_complete_raw_property_inner(poisoned, object, atom, complete)?;
+        Ok(true)
+    }
+
+    fn validate_raw_property(
+        &self,
+        object: ObjectId,
+        atom: Atom,
+        descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<
+        Option<crate::engine::object::property::CompletePropertyDescriptor<RawValue>>,
+        RuntimeError,
+    > {
+        use crate::engine::object::property::CompletePropertyDescriptor;
+        let complete = {
+            let state = self;
+            let data = state.heap.object(object)?;
+            let shape = state.heap.shape(data.shape)?;
+            let current = shape
+                .find(AtomIdx::from_raw(atom.raw()))
+                .map(|index| {
+                    let flags = shape.entries()[index as usize].flags;
+                    match &data.slots[index as usize] {
+                        PropertySlot::Data(value) => Ok(CompletePropertyDescriptor::Data {
+                            value: value.clone(),
+                            writable: flags.writable,
+                            enumerable: flags.enumerable,
+                            configurable: flags.configurable,
+                        }),
+                        PropertySlot::VarRef(id) => Ok(CompletePropertyDescriptor::Data {
+                            value: state.heap.var_ref(*id)?.value.clone(),
+                            writable: flags.writable,
+                            enumerable: flags.enumerable,
+                            configurable: flags.configurable,
+                        }),
+                        PropertySlot::Accessor { get, set } => {
+                            Ok(CompletePropertyDescriptor::Accessor {
+                                get: get.option().map(RawValue::Object),
+                                set: set.option().map(RawValue::Object),
+                                enumerable: flags.enumerable,
+                                configurable: flags.configurable,
+                            })
+                        }
+                        _ => Err(RuntimeError::Invariant(
+                            "raw descriptor reached noncanonical slot",
+                        )),
+                    }
+                })
+                .transpose()?;
+            validate_and_apply_property_descriptor(
+                data.extensible,
+                descriptor,
+                current.as_ref(),
+                &RawValue::Undefined,
+                |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
+            )
+        };
+        let complete = match complete {
+            Ok(value) => value,
+            Err(PropertyDefinitionError::InvalidDescriptor) => {
+                return Err(PropertyDefinitionError::InvalidDescriptor.into());
+            }
+            Err(_) => return Ok(None),
+        };
+        Ok(Some(complete))
+    }
+}
+
+impl RuntimeState {
+    /// Borrow the current lazy payload; it owns its realm through the slot.
+    /// No callback or mutation occurs between this selection and admission.
+    pub(crate) fn auto_init_property_for_materialization(
+        &self,
+        object: ObjectId,
+        key: Atom,
+    ) -> Result<Option<(usize, AutoInitProperty)>, RuntimeError> {
+        let object = self.heap.object(object)?;
+        let shape = self.heap.shape(object.shape)?;
+        let slot_index = usize::try_from(
+            shape
+                .find(AtomIdx::from_raw(key.raw()))
+                .ok_or(RuntimeError::Invariant("autoinit property disappeared"))?,
+        )
+        .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
+        let initializer = match object.slots.get(slot_index) {
+            Some(PropertySlot::AutoInit(initializer)) => **initializer,
+            Some(
+                PropertySlot::Data(_) | PropertySlot::VarRef(_) | PropertySlot::Accessor { .. },
+            ) => return Ok(None),
+            None => {
+                return Err(RuntimeError::Invariant(
+                    "autoinit property slot was missing",
+                ));
+            }
+        };
+        Ok(Some((slot_index, initializer)))
+    }
+
+    /// Complete all typed AutoInit families under the admitted state access.
+    /// Callers keep object/key owners live and hold their segment unwind guard;
+    /// this kernel neither reacquires Runtime state nor invokes user code.
+    pub(crate) fn materialize_auto_init_property(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        key: Atom,
+    ) -> Result<(), RuntimeError> {
+        let Some((slot_index, initializer)) =
+            self.auto_init_property_for_materialization(object, key)?
+        else {
+            return Ok(());
+        };
+        let initialized: Result<AutoInitValue, RuntimeError> = (|| {
+            Ok(match initializer {
+                AutoInitProperty::FunctionPrototype { realm } => {
+                    let base = self.heap.context(realm)?.object_prototype;
+                    self.heap.retain_object(base)?;
+                    let mut base_owner =
+                        OwnedValueGuard::new(self, poisoned, JsValue::Object(base));
+                    let (state, base_owner) = base_owner.parts();
+                    let prototype = state.allocate_object_with_layout(
+                        poisoned,
+                        Some(base),
+                        &[],
+                        Vec::new(),
+                        ObjectData::ordinary,
+                    )?;
+                    let mut result_owner =
+                        OwnedValueGuard::new(state, poisoned, JsValue::Object(prototype));
+                    let (state, result_owner) = result_owner.parts();
+                    // Preserve the checked public Value temporary from
+                    // object.try_clone(), before constructor-field storage.
+                    state.heap.retain_object(object)?;
+                    state.define_fresh_function_object_property(
+                        poisoned,
+                        prototype,
+                        "constructor",
+                        object,
+                        true,
+                        true,
+                    )?;
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        base_owner.take().expect("function prototype base owner"),
+                    )?;
+                    let JsValue::Object(prototype) =
+                        result_owner.take().expect("function prototype result")
+                    else {
+                        unreachable!("function prototype factory allocated an object")
+                    };
+                    AutoInitValue::Object(prototype)
+                }
+                AutoInitProperty::NativeBuiltin {
+                    realm,
+                    target,
+                    name,
+                    length,
+                    min_readable_args,
+                } => {
+                    let base = self.heap.context(realm)?.function_prototype;
+                    self.heap.retain_object(base)?;
+                    let mut base_owner =
+                        OwnedValueGuard::new(self, poisoned, JsValue::Object(base));
+                    let (state, base_owner) = base_owner.parts();
+                    let function = state.new_native_builtin(
+                        poisoned,
+                        base,
+                        realm,
+                        target,
+                        min_readable_args,
+                        name,
+                        i32::from(length),
+                    )?;
+                    let mut callable_owner =
+                        OwnedValueGuard::new(state, poisoned, JsValue::Object(function));
+                    let (state, callable_owner) = callable_owner.parts();
+                    // Keep callable.as_object().try_clone()'s checked edge,
+                    // then retire the original CallableRef before its base.
+                    state.heap.retain_object(function)?;
+                    let mut result_owner =
+                        OwnedValueGuard::new(state, poisoned, JsValue::Object(function));
+                    let (state, result_owner) = result_owner.parts();
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        callable_owner.take().expect("native callable owner"),
+                    )?;
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        base_owner.take().expect("native function base owner"),
+                    )?;
+                    let JsValue::Object(function) =
+                        result_owner.take().expect("native builtin result")
+                    else {
+                        unreachable!("native builtin factory allocated an object")
+                    };
+                    AutoInitValue::Object(function)
+                }
+                AutoInitProperty::String { value, .. } => {
+                    AutoInitValue::String(JsString::from_static(value))
+                }
+                AutoInitProperty::ArrayUnscopables { realm } => {
+                    AutoInitValue::Object(self.instantiate_array_unscopables(poisoned, realm)?)
+                }
+                AutoInitProperty::Math { realm } => {
+                    AutoInitValue::Object(self.instantiate_math_intrinsic(poisoned, realm)?)
+                }
+                AutoInitProperty::Reflect { realm } => {
+                    AutoInitValue::Object(self.instantiate_reflect_intrinsic(poisoned, realm)?)
+                }
+                AutoInitProperty::Json { realm } => {
+                    AutoInitValue::Object(self.instantiate_json_intrinsic(poisoned, realm)?)
+                }
+                AutoInitProperty::Atomics { realm } => {
+                    AutoInitValue::Object(self.instantiate_atomics_intrinsic(poisoned, realm)?)
+                }
+                #[cfg(test)]
+                AutoInitProperty::FailureProbe { .. } => {
+                    return Err(RuntimeError::Invariant("autoinit failure probe"));
+                }
+            })
+        })();
+        let initialized = match initialized {
+            Ok(initialized) => initialized,
+            Err(initializer_error) => {
+                // Recoverable initialization failure is terminal for the
+                // existing slot and retains its flags. Interrupted published
+                // cleanup already quarantined state; no owner may traverse it.
+                if poisoned.get() {
+                    return Err(initializer_error);
+                }
+                self.replace_property_slot_with_poison(
+                    poisoned,
+                    object,
+                    slot_index,
+                    PropertySlot::Data(RawValue::Undefined),
+                )?;
+                return Err(initializer_error);
+            }
+        };
+        let initialized = match initialized {
+            AutoInitValue::String(value) => JsValue::String(self.heap.allocate_string(value)?),
+            AutoInitValue::Object(object) => JsValue::Object(object),
+        };
+        let mut producer = OwnedValueGuard::new(self, poisoned, initialized);
+        let (state, producer) = producer.parts();
+        state.replace_property_slot_with_poison(
+            poisoned,
+            object,
+            slot_index,
+            PropertySlot::Data(producer.as_ref().expect("AutoInit producer").as_raw()),
+        )?;
+        state.release_owned_jsvalue(poisoned, producer.take().expect("AutoInit producer"))
     }
 }

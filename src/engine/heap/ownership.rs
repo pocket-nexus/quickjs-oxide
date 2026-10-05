@@ -927,6 +927,7 @@ mod direct_state_tests {
             let mut state = runtime.0.state.borrow_mut();
             state
                 .allocate_object_with_layout(
+                    &runtime.0.poisoned,
                     None,
                     &[ShapeEntry {
                         atom: AtomIdx::from_raw(atom.raw()),

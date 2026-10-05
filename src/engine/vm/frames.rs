@@ -529,45 +529,6 @@ impl Runtime {
         )
     }
 
-    pub(in crate::engine::vm) fn publish_materialized_pc(
-        &self,
-        token: ActiveFrameToken,
-        depth: Option<usize>,
-        pc: BytecodePc,
-    ) -> Result<(), RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let index = depth
-            .or_else(|| state.active_frames.iter().rposition(|f| f.token == token))
-            .ok_or(RuntimeError::Invariant("materialized frame is absent"))?;
-        let frame = state
-            .active_frames
-            .get_mut(index)
-            .filter(|f| f.token == token)
-            .ok_or(RuntimeError::Invariant(
-                "materialized frame identity changed",
-            ))?;
-        let ActiveFrameKind::Bytecode { pc: stored, .. } = &mut frame.kind else {
-            return Err(RuntimeError::Invariant(
-                "materialized PC targets a native frame",
-            ));
-        };
-        if *stored == Some(pc) {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "runtime_pc_publication_repeated",
-            );
-            return Ok(());
-        }
-        *stored = Some(pc);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "runtime_pc_publication_materialized",
-        );
-        Ok(())
-    }
-
     pub(crate) fn update_active_bytecode_pc(
         &self,
         token: ActiveFrameToken,
@@ -835,6 +796,9 @@ pub(in crate::engine::vm) struct ActiveFrameRestore {
     bytecode: Option<FunctionBytecodeId>,
 }
 impl ActiveFrameRestore {
+    pub(in crate::engine::vm) const fn token(&self) -> ActiveFrameToken {
+        self.token
+    }
     pub(in crate::engine::vm) fn registry_depth(&self) -> usize {
         self.depth
     }
@@ -988,20 +952,19 @@ impl Drop for BacktraceBarrierGuard {
     }
 }
 
-impl Runtime {
+impl crate::engine::heap::runtime::RuntimeState {
     /// Called only by FrameStore's observation protocol. Frame owners retain
-    /// the function and immutable executable until this guard is retired.
+    /// the function and immutable executable until this restore is retired.
     pub(in crate::engine::vm) fn materialize_owned_frame(
-        &self,
+        &mut self,
         frame: &super::frame::Frame,
-    ) -> Result<ActiveFrameGuard, RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let token = ActiveFrameToken(state.next_active_frame_token);
-        state.next_active_frame_token = token.0.checked_add(1).ok_or(RuntimeError::Invariant(
+    ) -> Result<ActiveFrameRestore, RuntimeError> {
+        let token = ActiveFrameToken(self.next_active_frame_token);
+        self.next_active_frame_token = token.0.checked_add(1).ok_or(RuntimeError::Invariant(
             "active-frame token space was exhausted",
         ))?;
-        let depth = state.active_frames.len();
-        state.active_frames.push(ActiveFrameRecord {
+        let depth = self.active_frames.len();
+        self.active_frames.push(ActiveFrameRecord {
             token,
             native_continuation: false,
             function: frame.cold.function.object_id(),
@@ -1024,20 +987,52 @@ impl Runtime {
         crate::engine::api::profiling::record_owned_execution_event("lazy_frame_materialized");
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("frame_materialization_new");
-        Ok(ActiveFrameGuard {
-            runtime: self.clone(),
+        Ok(ActiveFrameRestore {
             token,
             depth,
-            active: true,
-            _function_root: None,
-            _bytecode_root: None,
+            function: None,
+            bytecode: None,
         })
     }
-}
 
-impl Runtime {}
+    pub(in crate::engine::vm) fn publish_materialized_pc(
+        &mut self,
+        token: ActiveFrameToken,
+        depth: Option<usize>,
+        pc: BytecodePc,
+    ) -> Result<(), RuntimeError> {
+        let index = depth
+            .or_else(|| self.active_frames.iter().rposition(|f| f.token == token))
+            .ok_or(RuntimeError::Invariant("materialized frame is absent"))?;
+        let frame = self
+            .active_frames
+            .get_mut(index)
+            .filter(|f| f.token == token)
+            .ok_or(RuntimeError::Invariant(
+                "materialized frame identity changed",
+            ))?;
+        let ActiveFrameKind::Bytecode { pc: stored, .. } = &mut frame.kind else {
+            return Err(RuntimeError::Invariant(
+                "materialized PC targets a native frame",
+            ));
+        };
+        if *stored == Some(pc) {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "runtime_pc_publication_repeated",
+            );
+            return Ok(());
+        }
+        *stored = Some(pc);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "runtime_pc_publication_materialized",
+        );
+        Ok(())
+    }
 
-impl crate::engine::heap::runtime::RuntimeState {
     pub(crate) fn update_active_bytecode_pc(
         &mut self,
         token: ActiveFrameToken,

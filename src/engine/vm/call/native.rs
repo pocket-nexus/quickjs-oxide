@@ -400,26 +400,24 @@ impl Runtime {
                 available_arg_count - actual_arg_count,
             );
         }
-        let mut arguments = NativeArguments {
+        // Reservation happens before installing the native scope.
+        let active_frame =
+            publication.publish(actual_arg_count, available_arg_count, continuation)?;
+        // Borrowed callable promotion can still fail its checked retain after
+        // diagnostic publication. Keep argv in the preparation guard until
+        // that final fallible step succeeds; NativeArguments has no Drop.
+        let callable = callable_input.into_owned()?;
+        let arguments = NativeArguments {
             actual_arg_count,
             readable: std::mem::take(&mut owners.readable),
         };
-        // Reservation happens before installing the native scope.
-        let active_frame =
-            match publication.publish(actual_arg_count, available_arg_count, continuation) {
-                Ok(active_frame) => active_frame,
-                Err(error) => {
-                    owners.readable = std::mem::take(&mut arguments.readable);
-                    return Err(error);
-                }
-            };
 
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
         Ok(PreparedNativeCall {
             activation: NativeActivation {
                 runtime: Some(self.clone()),
-                callable: Some(callable_input.into_owned()?),
+                callable: Some(callable),
                 realm,
                 target,
                 mode,
@@ -642,6 +640,66 @@ mod tests {
                 NativeInvokeMode::Ordinary,
             )
             .unwrap()
+    }
+
+    #[test]
+    fn borrowed_callable_retain_failure_retires_published_frame_and_prepared_argv() {
+        use crate::engine::heap::{HeapError, RawId};
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let callable = runtime
+            .callable_from_value(context.eval("Reflect.get").unwrap())
+            .unwrap();
+        let CallableExecution::Native {
+            target,
+            realm,
+            min_readable_args,
+        } = runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("expected native");
+        };
+        let invocation = runtime.new_object(None).unwrap().into_handle();
+        let argument = runtime.new_object(None).unwrap().into_handle();
+        let function = callable.as_object().object_id();
+        let original_count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(function)
+            .unwrap();
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(function), u32::MAX);
+        let result = runtime.prepare_native_invocation_jsvalue(
+            &callable,
+            realm,
+            target,
+            min_readable_args,
+            NativeInvocation::Call {
+                this_value: JsValue::Object(invocation),
+            },
+            vec![JsValue::Object(argument)],
+            NativeInvokeMode::Ordinary,
+        );
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Heap(HeapError::Overflow { .. }))
+        ));
+        assert!(!runtime.is_poisoned());
+        let mut state = runtime.0.state.borrow_mut();
+        assert!(state.active_frames.is_empty());
+        assert_eq!(runtime.0.active_frame_depth.get(), 0);
+        assert!(state.heap.object(invocation).is_err());
+        assert!(state.heap.object(argument).is_err());
+        state
+            .heap
+            .set_strong_count_for_test(RawId::Object(function), original_count);
+        drop(state);
+        assert_eq!(context.eval("6*7").unwrap(), Value::Int(42));
     }
 
     #[test]

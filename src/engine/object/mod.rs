@@ -1113,11 +1113,12 @@ pub(crate) mod function_initialization;
 pub(crate) mod access;
 
 pub(crate) mod storage;
-pub(crate) use storage::SelectedMissingAppend;
+pub(crate) use storage::{SelectedMissingAppend, SlotAppendInput};
 
 pub(crate) mod operations;
 
 mod ordinary_storage;
+pub(crate) use ordinary_storage::FieldStore;
 
 pub(crate) mod property_ic;
 

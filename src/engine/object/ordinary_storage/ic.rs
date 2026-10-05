@@ -2,7 +2,6 @@
 use super::{LinkedNativeSelection, NamedDataSelection, NamedSelectionMiss};
 #[cfg(test)]
 use crate::engine::api::runtime::Runtime;
-use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::runtime::RuntimeState;
@@ -295,7 +294,11 @@ impl RuntimeState {
 }
 
 impl RuntimeState {
-    pub(crate) fn try_dense_array_kept_read(&self, base: &JsValue, index: u32) -> Option<JsValue> {
+    pub(crate) fn try_dense_array_borrowed_read(
+        &self,
+        base: &JsValue,
+        index: u32,
+    ) -> Option<JsValue> {
         let JsValue::Object(object) = base else {
             return None;
         };
@@ -303,89 +306,7 @@ impl RuntimeState {
         if !matches!(data.kind, crate::engine::heap::ObjectKind::Array) {
             return None;
         }
-        super::immediate_value_jsvalue(data.dense_array_value(index)?)
-    }
-
-    pub(crate) fn try_linked_scalar_field_write(
-        &mut self,
-        domain_id: u64,
-        base: &JsValue,
-        value: &JsValue,
-        executable: &PublishedFunctionSnapshot,
-        key_index: u32,
-    ) -> Result<bool, RuntimeError> {
-        if !matches!(
-            value,
-            JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_)
-        ) {
-            return Ok(false);
-        }
-        let JsValue::Object(object) = base else {
-            return Ok(false);
-        };
-        let Some(atom) = super::linked_field_atom_in_domain(domain_id, executable, key_index)
-        else {
-            return Ok(false);
-        };
-        if !super::is_ordinary(self.heap.object(*object)?) {
-            return Ok(false);
-        }
-        let Some(slot) = super::locate(self, *object, atom)? else {
-            return Ok(false);
-        };
-        if !slot.flags.writable
-            || !matches!(
-                self.heap.object(*object)?.slots.get(slot.index),
-                Some(crate::engine::heap::PropertySlot::Data(
-                    RawValue::Undefined
-                        | RawValue::Null
-                        | RawValue::Bool(_)
-                        | RawValue::Int(_)
-                        | RawValue::Float(_)
-                        | RawValue::ShortBigInt(_)
-                ))
-            )
-        {
-            return Ok(false);
-        }
-        // Both values own no edges. The shared replacement kernel preserves
-        // storage invariants without enqueueing cleanup or changing layout.
-        self.replace_property_slot(
-            *object,
-            slot.index,
-            crate::engine::heap::PropertySlot::Data(value.as_raw()),
-        )?;
-        Ok(true)
-    }
-
-    pub(crate) fn try_dense_array_write_scalar(
-        &mut self,
-        base: &JsValue,
-        index: u32,
-        value: &JsValue,
-    ) -> Result<bool, RuntimeError> {
-        if !matches!(
-            value,
-            JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_)
-        ) {
-            return Ok(false);
-        }
-        let JsValue::Object(object) = base else {
-            return Ok(false);
-        };
-        Ok(self
-            .heap
-            .try_replace_dense_immediate_value(*object, index, value.as_raw()))
+        JsValue::from_raw(data.dense_array_value(index)?.clone())
     }
 }
 
@@ -718,25 +639,29 @@ mod tests {
         let mut state = runtime.0.state.borrow_mut();
         assert!(
             state
-                .try_linked_scalar_field_write(
+                .try_store_owned_linked_field(
+                    &runtime.0.poisoned,
                     runtime.domain_id(),
-                    &base,
-                    &JsValue::Int(42),
+                    object(&base),
+                    &mut JsValue::Int(42),
                     &code,
                     key
                 )
                 .unwrap()
+                .committed()
         );
         assert!(
             !state
-                .try_linked_scalar_field_write(
+                .try_store_owned_linked_field(
+                    &runtime.0.poisoned,
                     runtime.domain_id(),
-                    &frozen,
-                    &JsValue::Int(42),
+                    object(&frozen),
+                    &mut JsValue::Int(42),
                     &code,
                     key
                 )
                 .unwrap()
+                .committed()
         );
         assert_eq!(
             state.select_linked_data_into(
@@ -751,22 +676,19 @@ mod tests {
             ),
             Some(JsValue::Int(2))
         );
-        assert_eq!(
-            state.try_array_immediate_read(&dense, 0),
-            Some(JsValue::Int(1))
-        );
+        assert_eq!(state.try_array_value_read(&dense, 0), Some(JsValue::Int(1)));
         assert!(
             state
-                .try_dense_array_write_scalar(&dense, 0, &JsValue::Int(9))
+                .try_exchange_dense_value(object(&dense), 0, &mut JsValue::Int(9))
                 .unwrap()
         );
         assert_eq!(
-            state.try_dense_array_kept_read(&dense, 0),
+            state.try_dense_array_borrowed_read(&dense, 0),
             Some(JsValue::Int(9))
         );
         assert!(
             !state
-                .try_dense_array_write_scalar(&dense, 99, &JsValue::Int(9))
+                .try_exchange_dense_value(object(&dense), 99, &mut JsValue::Int(9))
                 .unwrap()
         );
         state
@@ -791,7 +713,7 @@ mod tests {
         assert!(state.try_typed_array_number_write(&typed, 0, 12.0));
         assert!(!state.try_typed_array_number_write(&typed, 99, 12.0));
         assert_eq!(
-            state.try_array_immediate_read(&typed, 0),
+            state.try_array_value_read(&typed, 0),
             Some(JsValue::Int(12))
         );
         for owner in [base, frozen, dense, frozen_dense, typed] {
@@ -824,14 +746,16 @@ mod tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_linked_scalar_field_write(
+                .try_store_owned_linked_field(
+                    &runtime.0.poisoned,
                     runtime.domain_id(),
-                    &base,
-                    &JsValue::Int(42),
+                    object(&base),
+                    &mut JsValue::Int(42),
                     &code,
                     key
                 )
                 .unwrap()
+                .committed()
         );
         assert_eq!(context.eval("scalarBase.x").unwrap(), Value::Int(42));
         assert_eq!(
@@ -848,18 +772,15 @@ mod tests {
     }
 
     #[test]
-    fn linked_scalar_field_write_declines_observable_or_non_scalar_storage() {
+    fn linked_field_exchange_declines_observable_storage() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let (code, _, key) = site(&runtime);
         for source in [
             "Object.freeze({x:1})",
             "({get x(){throw 99}, set x(v){throw 98}})",
-            "Object.create({x:1})",
+            "Object.create(Object.freeze({x:1}))",
             "new Proxy({x:1},{set(){throw 97}})",
-            "({x:{marker:1}})",
-            "({x:'old'})",
-            "Object.assign([], {x:1})",
         ] {
             let base = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
             let root = runtime.dup_jsvalue(&base).unwrap();
@@ -868,14 +789,16 @@ mod tests {
                     .0
                     .state
                     .borrow_mut()
-                    .try_linked_scalar_field_write(
+                    .try_store_owned_linked_field(
+                        &runtime.0.poisoned,
                         runtime.domain_id(),
-                        &base,
-                        &JsValue::Int(42),
+                        object(&base),
+                        &mut JsValue::Int(42),
                         &code,
                         key
                     )
-                    .unwrap(),
+                    .unwrap()
+                    .committed(),
                 "{source}"
             );
             runtime.release_jsvalue(root).unwrap();
@@ -889,14 +812,16 @@ mod tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_linked_scalar_field_write(
+                .try_store_owned_linked_field(
+                    &runtime.0.poisoned,
                     runtime.domain_id(),
-                    &base,
-                    &JsValue::Int(42),
+                    object(&base),
+                    &mut JsValue::Int(42),
                     &code,
                     key,
                 )
                 .unwrap()
+                .committed()
         );
         runtime.release_jsvalue(base).unwrap();
     }
@@ -950,7 +875,7 @@ mod tests {
             profile
                 .snapshot()
                 .owned_execution_events
-                .get("ordinary_scalar_field_write_in_execute")
+                .get("ordinary_owned_field_write_in_execute")
                 .copied(),
             Some(16)
         );
