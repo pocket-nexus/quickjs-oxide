@@ -1,0 +1,707 @@
+{
+  "schema": "oxide-runtime-b0-baseline-v1",
+  "accepted_start": "6db7e6a7ef25a91aa3168a56e1f5f25d70da2660",
+  "plain_runtime_commit": "010b9fa34a5bc2c84260ad6957ef1cf0ce5ee02f",
+  "plain_binary": {
+    "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/010b9fa3/qjs",
+    "sha256": "ea1caed0ce2eb1901be3e37e685f856e6012cd216ade12336454536f8ddbea99",
+    "version": {
+      "command": [
+        "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/010b9fa3/qjs",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+      "stderr": ""
+    },
+    "build": {
+      "schema": "oxide-build-v2",
+      "mode": "plain",
+      "optimization": {
+        "kind": "none",
+        "data": null,
+        "data_sha256": null,
+        "training_receipt": null
+      },
+      "vm_configuration": "stack-vm",
+      "features": [],
+      "commit": "010b9fa34a5bc2c84260ad6957ef1cf0ce5ee02f",
+      "source": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "010b9fa34a5bc2c84260ad6957ef1cf0ce5ee02f",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "340dff1c83451bdfe49f534545e89cf4d55f5132",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-build-source",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      },
+      "binary_sha256": "ea1caed0ce2eb1901be3e37e685f856e6012cd216ade12336454536f8ddbea99",
+      "tooling": {
+        "repository": {
+          "commit": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD"
+            ],
+            "exit_code": 0,
+            "stdout": "010b9fa34a5bc2c84260ad6957ef1cf0ce5ee02f",
+            "stderr": ""
+          },
+          "tree": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD^{tree}"
+            ],
+            "exit_code": 0,
+            "stdout": "340dff1c83451bdfe49f534545e89cf4d55f5132",
+            "stderr": ""
+          },
+          "top_level": {
+            "command": [
+              "git",
+              "rev-parse",
+              "--show-toplevel"
+            ],
+            "exit_code": 0,
+            "stdout": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-build-source",
+            "stderr": ""
+          },
+          "status": {
+            "command": [
+              "git",
+              "status",
+              "--porcelain"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          }
+        },
+        "snapshots": {
+          "build.py": {
+            "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target/x86_64-unknown-linux-gnu/release/qjs.build.tooling-build.py",
+            "sha256": "394021dbfc0adb134eef6f8c5b79d70a6d9f46af7cced62e19d354e471347e58"
+          },
+          "run.py": {
+            "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target/x86_64-unknown-linux-gnu/release/qjs.build.tooling-run.py",
+            "sha256": "278b207bd1eac12fb5b0e50e0843a49094b93a8a11d761734332da5906236e90"
+          }
+        }
+      },
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--release",
+        "--verbose",
+        "-p",
+        "quickjs-oxide-cli",
+        "--no-default-features",
+        "--target-dir",
+        "/home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target",
+        "--jobs",
+        "2",
+        "--target",
+        "x86_64-unknown-linux-gnu"
+      ],
+      "cwd": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-build-source",
+      "exit_code": 0,
+      "stdout": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target/x86_64-unknown-linux-gnu/release/qjs.build.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target/x86_64-unknown-linux-gnu/release/qjs.build.stderr.log",
+        "sha256": "4e930a212473e989592b4e2a0095e2c7c7937badc6b37f09200a909d7fe9f964"
+      },
+      "rustc": {
+        "command": [
+          "rustc",
+          "-vV"
+        ],
+        "exit_code": 0,
+        "stdout": "rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\ncommit-hash: 6b00bc3880198600130e1cf62b8f8a93494488cc\ncommit-date: 2025-06-23\nhost: x86_64-unknown-linux-gnu\nrelease: 1.88.0\nLLVM version: 20.1.5",
+        "stderr": ""
+      },
+      "cargo": {
+        "command": [
+          "cargo",
+          "-V"
+        ],
+        "exit_code": 0,
+        "stdout": "cargo 1.88.0 (873a06493 2025-05-10)",
+        "stderr": ""
+      },
+      "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+      "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+      "release_profile": {
+        "manifest": {
+          "lto": "\"fat\"",
+          "codegen-units": "1"
+        },
+        "environment_overrides": {
+          "CARGO_ENCODED_RUSTFLAGS": "",
+          "CARGO_INCREMENTAL": "0",
+          "RUSTUP_TOOLCHAIN": "1.88.0"
+        },
+        "cargo_config_sha256": {},
+        "qjs_rustc_invocation": {
+          "command": "/home/eric/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=bd55ed8d15be4acb -C extra-filename=-4d4ca6a24e823d52 --out-dir /home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target/x86_64-unknown-linux-gnu/release/deps --target x86_64-unknown-linux-gnu -C strip=debuginfo -L dependency=/home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target/x86_64-unknown-linux-gnu/release/deps -L dependency=/home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target/release/deps --extern quickjs_oxide=/home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target/x86_64-unknown-linux-gnu/release/deps/libquickjs_oxide-0493a2c3ae94af96.rlib --extern quickjs_oxide_host=/home/eric/.cache/oxide-runtime-core-20261003/recovery-plain-target/x86_64-unknown-linux-gnu/release/deps/libquickjs_oxide_host-af93e32f0d6fe425.rlib",
+          "crate": "qjs",
+          "codegen": {
+            "opt-level": "3",
+            "lto": "fat",
+            "codegen-units": "1"
+          },
+          "target": "x86_64-unknown-linux-gnu"
+        },
+        "observed_rustc_compilations": 3,
+        "observed_codegen_groups": [
+          {
+            "target": "x86_64-unknown-linux-gnu",
+            "codegen": {
+              "opt-level": "3",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "quickjs_oxide",
+              "quickjs_oxide_host"
+            ]
+          },
+          {
+            "target": "x86_64-unknown-linux-gnu",
+            "codegen": {
+              "opt-level": "3",
+              "lto": "fat",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "qjs"
+            ]
+          }
+        ]
+      },
+      "target": {
+        "requested_triple": "x86_64-unknown-linux-gnu",
+        "rustc_host": "x86_64-unknown-linux-gnu",
+        "observed_triple": "x86_64-unknown-linux-gnu",
+        "observed_target_cpu": null,
+        "observed_target_feature": null
+      },
+      "commit_environment": "010b9fa34a5bc2c84260ad6957ef1cf0ce5ee02f"
+    }
+  },
+  "diagnostic_source_commit": "b787dce468e3acd3fbf112e4f6fca464f1bcea8b",
+  "configuration": "Rust 1.88 ordinary release, features empty, optimization kind none; diagnostic counts use separate profiling feature build",
+  "frozen_manifest": {
+    "path": "/home/eric/.cache/oxide-heap-growth-retain-fixes-20261003/perf/fixed-manifest.json",
+    "sha256": "379dccf675a638aad91e2e3d112448543d179bef92842b11d6da80490bb8229e"
+  },
+  "callgrind_b0": {
+    "richards": {
+      "Ir": 6418960625,
+      "Dw": 1078803404,
+      "I1mr": 56364618
+    },
+    "deltablue": {
+      "Ir": 7398718099,
+      "Dw": 1426112758,
+      "I1mr": 133430161
+    },
+    "navier-stokes": {
+      "Ir": 8323398830,
+      "Dw": 1101215823,
+      "I1mr": 42972549
+    }
+  },
+  "callgrind_per_runtime_commit": [
+    {
+      "commit": "3173c128",
+      "receipt": "/home/eric/.cache/oxide-runtime-core-20261003/b0-callgrind-3173c128-valid/results.json",
+      "sha256": "c75589319c0602698b76af8659ec853a565937b466f21fb928980e0f1d6993e7",
+      "relative_to_pr89": [
+        {
+          "case": "richards",
+          "changes_percent": {
+            "Ir": 2.791726885220669e-05,
+            "Dw": 5.190934784238266e-05,
+            "I1mr": 3.2912300866644095
+          }
+        },
+        {
+          "case": "deltablue",
+          "changes_percent": {
+            "Ir": 0.00016633986459346772,
+            "Dw": 0.00011317490045126277,
+            "I1mr": -10.373159825677803
+          }
+        },
+        {
+          "case": "navier-stokes",
+          "changes_percent": {
+            "Ir": 6.950281985496076e-05,
+            "Dw": 4.440543539541153e-05,
+            "I1mr": -31.161113989534584
+          }
+        }
+      ]
+    },
+    {
+      "commit": "d56be191",
+      "receipt": "/home/eric/.cache/oxide-runtime-core-20261003/b0-callgrind-d56be191/results.json",
+      "sha256": "1e024ef2a69d07b0abbf489a5a5cb05399bfca5c9c453b9d8e168405874527b9",
+      "relative_to_pr89": [
+        {
+          "case": "richards",
+          "changes_percent": {
+            "Ir": -3.9803918472358646e-05,
+            "Dw": -1.2421165374032483e-05,
+            "I1mr": -6.988733082530119
+          }
+        },
+        {
+          "case": "deltablue",
+          "changes_percent": {
+            "Ir": 0.0001723949762499899,
+            "Dw": 0.00011443707406133541,
+            "I1mr": -4.383897436080764
+          }
+        },
+        {
+          "case": "navier-stokes",
+          "changes_percent": {
+            "Ir": 2.9026588199698722e-05,
+            "Dw": 2.951281492524771e-05,
+            "I1mr": -72.24800595745543
+          }
+        }
+      ]
+    },
+    {
+      "commit": "010b9fa3",
+      "receipt": "/home/eric/.cache/oxide-runtime-core-20261003/b0-callgrind-010b9fa3/results.json",
+      "sha256": "535085b98a1048afbbd1bbdda908c3c50fa9a38fa60daecb34b223900625ca10",
+      "relative_to_pr89": [
+        {
+          "case": "richards",
+          "changes_percent": {
+            "Ir": -8.400106785710904e-05,
+            "Dw": -3.364838083719235e-05,
+            "I1mr": 12.654620338764833
+          }
+        },
+        {
+          "case": "deltablue",
+          "changes_percent": {
+            "Ir": 0.0001435521005843654,
+            "Dw": 0.00010497077198579063,
+            "I1mr": -3.8302811130539904
+          }
+        },
+        {
+          "case": "navier-stokes",
+          "changes_percent": {
+            "Ir": -5.3667950961067135e-05,
+            "Dw": -6.529142748679106e-05,
+            "I1mr": 18.32894795971911
+          }
+        }
+      ]
+    }
+  ],
+  "callgrind_scope": "Single deterministic event trace per case; I1 misses use the frozen cache simulation. Code address/layout changes can affect cache counts without instruction-work changes. No elapsed instrumented time is used as native speed evidence.",
+  "native_short_feedback": {
+    "scope": "One ABBA block, short feedback, not formal confidence or original Scores",
+    "pairs": [
+      {
+        "case": "richards",
+        "changes_percent": [
+          1.204476670039889,
+          4.674958199015178
+        ],
+        "median_percent": 2.9397174345275334
+      },
+      {
+        "case": "deltablue",
+        "changes_percent": [
+          -0.3520687177343329,
+          1.9635272477521726
+        ],
+        "median_percent": 0.8057292650089198
+      },
+      {
+        "case": "crypto",
+        "changes_percent": [
+          -2.7409414438013036,
+          -3.870796606668103
+        ],
+        "median_percent": -3.3058690252347036
+      },
+      {
+        "case": "raytrace",
+        "changes_percent": [
+          -0.5751989665959134,
+          -0.858365366259195
+        ],
+        "median_percent": -0.7167821664275542
+      },
+      {
+        "case": "earley-boyer",
+        "changes_percent": [
+          -2.391902914260602,
+          -2.3829879392254116
+        ],
+        "median_percent": -2.3874454267430067
+      },
+      {
+        "case": "regexp",
+        "changes_percent": [
+          -0.5708516136584851,
+          -2.741695423553081
+        ],
+        "median_percent": -1.656273518605783
+      },
+      {
+        "case": "splay",
+        "changes_percent": [
+          -1.1815389504073348,
+          -2.0227486915871284
+        ],
+        "median_percent": -1.6021438209972316
+      },
+      {
+        "case": "navier-stokes",
+        "changes_percent": [
+          0.3766040459716402,
+          1.2841748793660068
+        ],
+        "median_percent": 0.8303894626688235
+      },
+      {
+        "case": "combined",
+        "changes_percent": [
+          -1.3587996776568079,
+          -0.9021202566595998
+        ],
+        "median_percent": -1.1304599671582038
+      }
+    ]
+  },
+  "richards_recheck": {
+    "paired_changes_percent": [
+      -0.6272362434946777,
+      5.080052004439417
+    ],
+    "interpretation": "mixed signs; unresolved, no speedup or stable regression conclusion"
+  },
+  "diagnostic_counts": [
+    {
+      "case": "richards",
+      "semantic_status": "ok",
+      "query_and_progress": {
+        "query.array_native.acquired": 189,
+        "query.array_native.completed_without_callback": 189,
+        "query.native.acquired": 190,
+        "query.other.acquired": 1,
+        "query.write.acquired": 6,
+        "query.write.completed_without_callback": 6
+      },
+      "internal_header_events": {
+        "core.runtime_clone": 3866,
+        "core.state.borrow": 7816,
+        "core.state.borrow_mut": 3508,
+        "core.state.try_borrow": 1637,
+        "core.state.try_borrow_mut": 4275
+      },
+      "raw_cost_file": "/home/eric/.cache/oxide-runtime-core-20261003/b0-diagnostic-replay/raw/richards.cost.jsonl"
+    },
+    {
+      "case": "deltablue",
+      "semantic_status": "ok",
+      "query_and_progress": {
+        "progress.array_mutation.created": 15925,
+        "query.array_native.acquired": 10842,
+        "query.array_native.completed_without_callback": 10842,
+        "query.native.acquired": 21413,
+        "query.native.completed_without_callback": 1,
+        "query.other.acquired": 1,
+        "query.write.acquired": 35,
+        "query.write.completed_without_callback": 35
+      },
+      "internal_header_events": {
+        "core.runtime_clone": 544633,
+        "core.state.borrow": 797734,
+        "core.state.borrow_mut": 557264,
+        "core.state.try_borrow": 133857,
+        "core.state.try_borrow_mut": 775501
+      },
+      "raw_cost_file": "/home/eric/.cache/oxide-runtime-core-20261003/b0-diagnostic-replay/raw/deltablue.cost.jsonl"
+    },
+    {
+      "case": "crypto",
+      "semantic_status": "ok",
+      "query_and_progress": {
+        "query.array_native.acquired": 91,
+        "query.array_native.completed_without_callback": 91,
+        "query.native.acquired": 203,
+        "query.native.completed_without_callback": 111,
+        "query.other.acquired": 1,
+        "query.write.acquired": 8,
+        "query.write.completed_without_callback": 8
+      },
+      "internal_header_events": {
+        "core.runtime_clone": 897945,
+        "core.state.borrow": 99906,
+        "core.state.borrow_mut": 1337300,
+        "core.state.try_borrow": 449393,
+        "core.state.try_borrow_mut": 1297529
+      },
+      "raw_cost_file": "/home/eric/.cache/oxide-runtime-core-20261003/b0-diagnostic-replay/raw/crypto.cost.jsonl"
+    },
+    {
+      "case": "raytrace",
+      "semantic_status": "ok",
+      "query_and_progress": {
+        "query.array_native.acquired": 4,
+        "query.array_native.completed_without_callback": 4,
+        "query.native.acquired": 133197,
+        "query.native.completed_without_callback": 2,
+        "query.other.acquired": 1,
+        "query.write.acquired": 21,
+        "query.write.completed_without_callback": 21
+      },
+      "internal_header_events": {
+        "core.runtime_clone": 2791416,
+        "core.state.borrow": 1991559,
+        "core.state.borrow_mut": 2103684,
+        "core.state.try_borrow": 918987,
+        "core.state.try_borrow_mut": 2679283
+      },
+      "raw_cost_file": "/home/eric/.cache/oxide-runtime-core-20261003/b0-diagnostic-replay/raw/raytrace.cost.jsonl"
+    },
+    {
+      "case": "earley-boyer",
+      "semantic_status": "ok",
+      "query_and_progress": {
+        "query.array_native.acquired": 108,
+        "query.array_native.completed_without_callback": 108,
+        "query.native.acquired": 501774,
+        "query.native.completed_without_callback": 501663,
+        "query.other.acquired": 1,
+        "query.write.acquired": 39,
+        "query.write.completed_without_callback": 39
+      },
+      "internal_header_events": {
+        "core.runtime_clone": 2172363,
+        "core.state.borrow": 1907171,
+        "core.state.borrow_mut": 3020093,
+        "core.state.try_borrow": 1190381,
+        "core.state.try_borrow_mut": 3530868
+      },
+      "raw_cost_file": "/home/eric/.cache/oxide-runtime-core-20261003/b0-diagnostic-replay/raw/earley-boyer.cost.jsonl"
+    },
+    {
+      "case": "regexp",
+      "semantic_status": "ok",
+      "query_and_progress": {
+        "query.native.acquired": 52419,
+        "query.native.completed_without_callback": 52417,
+        "query.other.acquired": 1,
+        "query.write.acquired": 6,
+        "query.write.completed_without_callback": 6
+      },
+      "internal_header_events": {
+        "core.runtime_clone": 22658831,
+        "core.state.borrow": 26910019,
+        "core.state.borrow_mut": 8796925,
+        "core.state.try_borrow": 14293902,
+        "core.state.try_borrow_mut": 33762821
+      },
+      "raw_cost_file": "/home/eric/.cache/oxide-runtime-core-20261003/b0-diagnostic-replay/raw/regexp.cost.jsonl"
+    },
+    {
+      "case": "splay",
+      "semantic_status": "ok",
+      "query_and_progress": {
+        "query.native.acquired": 1,
+        "query.other.acquired": 1,
+        "query.write.acquired": 7,
+        "query.write.completed_without_callback": 7
+      },
+      "internal_header_events": {
+        "core.runtime_clone": 3207739,
+        "core.state.borrow": 5988128,
+        "core.state.borrow_mut": 6213336,
+        "core.state.try_borrow": 1042524,
+        "core.state.try_borrow_mut": 4023824
+      },
+      "raw_cost_file": "/home/eric/.cache/oxide-runtime-core-20261003/b0-diagnostic-replay/raw/splay.cost.jsonl"
+    },
+    {
+      "case": "navier-stokes",
+      "semantic_status": "ok",
+      "query_and_progress": {
+        "query.array_native.acquired": 18,
+        "query.array_native.completed_without_callback": 18,
+        "query.native.acquired": 21,
+        "query.other.acquired": 1,
+        "query.write.acquired": 6,
+        "query.write.completed_without_callback": 6
+      },
+      "internal_header_events": {
+        "core.runtime_clone": 917452,
+        "core.state.borrow": 689030,
+        "core.state.borrow_mut": 1835784,
+        "core.state.try_borrow": 458268,
+        "core.state.try_borrow_mut": 1147380
+      },
+      "raw_cost_file": "/home/eric/.cache/oxide-runtime-core-20261003/b0-diagnostic-replay/raw/navier-stokes.cost.jsonl"
+    }
+  ],
+  "diagnostic_scope": "Query array_native is a refinement of native acquisition, not an independent additive population. completed_without_callback counts successful Query completion without a scheduled JS bytecode child. Progress creations are counted separately; raw counts do not prove all effects/publication obligations.",
+  "plain_type_sizes": {
+    "Step": 184,
+    "Resume": 32,
+    "Next": 48,
+    "NativeStep": 64,
+    "PreparedNativeCall": 184,
+    "NativeWaitRecord": 400,
+    "Finish": 40,
+    "Query": 144,
+    "PendingIterator": 8,
+    "FrameRare": 176
+  },
+  "plain_layout_receipt": "/home/eric/.cache/oxide-runtime-core-20261003/b0-plain-layout.log",
+  "hot_symbols": [
+    {
+      "symbol": "quickjs_oxide::engine::vm::proxy_get_driver::Query::finish_native_outcome",
+      "address": "0x0000000000281410",
+      "size_bytes": 1335
+    },
+    {
+      "symbol": "quickjs_oxide::engine::vm::proxy_get_driver::native::begin_local",
+      "address": "0x00000000005ba760",
+      "size_bytes": 3673
+    },
+    {
+      "symbol": "quickjs_oxide::engine::vm::stack::state::copy_reference_in_state",
+      "address": "0x00000000005e4210",
+      "size_bytes": 385
+    },
+    {
+      "symbol": "quickjs_oxide::engine::vm::stack::window::FrameExecution::install_current_ordinary",
+      "address": "0x00000000005dfbb0",
+      "size_bytes": 3271
+    },
+    {
+      "symbol": "quickjs_oxide::engine::vm::execute::execute_frame_in_state",
+      "address": "0x00000000005cbfc0",
+      "size_bytes": 64638
+    },
+    {
+      "symbol": "quickjs_oxide::engine::vm::execute::execute_frame_in_state::{{closure}}",
+      "address": "0x00000000005e8170",
+      "size_bytes": 140
+    },
+    {
+      "symbol": "quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::heap::runtime::RuntimeState>::release_jsvalue",
+      "address": "0x000000000010bcb0",
+      "size_bytes": 326
+    },
+    {
+      "symbol": "quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::heap::runtime::RuntimeState>::release_heap_reference",
+      "address": "0x00000000000d5e40",
+      "size_bytes": 1252
+    },
+    {
+      "symbol": "quickjs_oxide::engine::object::property_ic::PropertyReadCache::read",
+      "address": "0x00000000001532c0",
+      "size_bytes": 2641
+    },
+    {
+      "symbol": "quickjs_oxide::engine::object::ordinary_storage::direct_write::<impl quickjs_oxide::engine::heap::runtime::RuntimeState>::try_exchange_dense_value",
+      "address": "0x00000000005e70b0",
+      "size_bytes": 381
+    },
+    {
+      "symbol": "quickjs_oxide::engine::object::ordinary_storage::ic::<impl quickjs_oxide::engine::heap::runtime::RuntimeState>::select_linked_data_into",
+      "address": "0x00000000005e5580",
+      "size_bytes": 2511
+    }
+  ],
+  "hot_symbol_sum_bytes": 80553,
+  "inlined_symbols": [
+    "FrameExecution::enter_ordinary",
+    "FrameExecution::finish_ordinary"
+  ],
+  "budget": {
+    "aa_noise_threshold_percent": {
+      "richards": 2.7799402787444194,
+      "deltablue": 2.1527994175150447,
+      "crypto": 1.763422871001108,
+      "raytrace": 1.1218099839109763,
+      "earley-boyer": 1.0996741556422163,
+      "regexp": 2.0739746243528865,
+      "splay": 2.636032435802327,
+      "navier-stokes": 3.261646390740791,
+      "combined": 1.06280657589653
+    },
+    "aa_source": "docs/performance/runtime-core-stage-a.json",
+    "checkpoint_1_tripwire": {
+      "reference": "callgrind_b0",
+      "events": [
+        "Ir",
+        "Dw",
+        "I1mr"
+      ],
+      "maximum_growth_percent": 0
+    },
+    "hot_symbol_review_growth_percent": 2,
+    "transport_type_growth_requires_review": true,
+    "global_text_rodata_max_growth_vs_A_percent": 10,
+    "A_text_rodata_bytes": 7386713,
+    "pr89_text_rodata_bytes": 7430217,
+    "b0_text_bytes": 6722585,
+    "b0_rodata_bytes": 710960,
+    "b0_text_rodata_bytes": 7433545,
+    "rss_max_growth_percent": 5,
+    "rss_baseline_status": "not yet collected; required before resource acceptance",
+    "sustained_allocation_memory": "bounded",
+    "formal_checkpoint_2_minimum_pairs": 6
+  }
+}
