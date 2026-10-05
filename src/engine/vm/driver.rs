@@ -783,12 +783,18 @@ fn run_frames_with_state(
                         }
                     }
                 }
-                Progress::PropertyRead(input) => {
-                    match super::property_driver::read_converted(
+                Progress::PropertyRead {
+                    keep_receiver,
+                    keep_key,
+                    fallthrough,
+                } => {
+                    match super::property_driver::read(
                         runtime,
                         &mut execution,
                         id,
-                        input,
+                        super::property_driver::ReadKey::Computed { keep_key },
+                        keep_receiver,
+                        fallthrough,
                     )? {
                         CallStep::Entered => continue,
                         CallStep::Complete(completion) => {

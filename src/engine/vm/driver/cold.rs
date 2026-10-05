@@ -671,6 +671,7 @@ fn get_element(
                 *context.next_operation,
                 keep_receiver,
                 keep_key,
+                fallthrough,
             )?,
         );
         return Ok(Disposition::Entered);

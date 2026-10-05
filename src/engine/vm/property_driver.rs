@@ -237,15 +237,6 @@ impl PropertyProgress {
     }
 }
 
-/// Converted inputs stay owned after ToPrimitive's reply, even if lookup next
-/// reaches a Proxy or a callable whose domain continuation is still pending.
-pub(super) struct ConvertedRead {
-    pub base: JsValue,
-    pub key: JsValue,
-    pub keep_receiver: bool,
-    pub keep_key: bool,
-}
-
 pub(super) fn throw_error(
     runtime: &Runtime,
     realm: ContextId,
@@ -564,100 +555,6 @@ pub(super) fn read_progress_selected(
             .map(PropertyProgress::Deferred)
         }
     }
-}
-
-// The conversion reply already owns this boxed operand bundle; avoid moving it through the driver stack.
-#[allow(clippy::boxed_local)]
-pub(super) fn read_converted(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    input: Box<ConvertedRead>,
-) -> Result<CallStep, Error> {
-    let ConvertedRead {
-        base,
-        key,
-        keep_receiver,
-        keep_key,
-    } = *input;
-    if matches!(key, JsValue::Object(_)) {
-        return Err(Error::internal(
-            "ToPrimitive returned an object property key",
-        ));
-    }
-    let frame = execution.frames.current_mut(id)?;
-    let realm = frame.executable.realm;
-    let depth = execution.slots.depth(&frame.window) + 2;
-    // After an object-key conversion, GetArrayEl3 retains String/Symbol, even
-    // if ToPrimitive returned an Int. Direct Int keys retain their original tag.
-    let retained = if keep_key {
-        Some(match &key {
-            JsValue::Symbol(_) | JsValue::String(_) => runtime
-                .dup_jsvalue(&key)
-                .map_err(runtime_error_to_vm_error)?,
-            value => super::numeric::allocate_string_jsvalue(
-                runtime,
-                super::numeric::to_js_string_jsvalue(runtime, value)?,
-            )?,
-        })
-    } else {
-        None
-    };
-    let key = match runtime
-        .native_to_property_key_jsvalue(realm, key)
-        .map_err(runtime_error_to_vm_error)?
-    {
-        NativeConversion::Value(key) => key,
-        NativeConversion::Throw(value) => {
-            return Ok(CallStep::Complete(Completion::Throw(value)));
-        }
-    };
-    finish_read(
-        runtime,
-        execution,
-        id,
-        base,
-        key,
-        retained,
-        keep_receiver,
-        0,
-        depth,
-    )
-    .map(PropertyProgress::into_call_step)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn finish_read(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    base: JsValue,
-    key: PropertyKey,
-    retained_key: Option<JsValue>,
-    keep_receiver: bool,
-    consume: usize,
-    depth: usize,
-) -> Result<PropertyProgress, Error> {
-    let realm = execution.frames.current_mut(id)?.executable.realm;
-    let read = match runtime.prepare_value_property_read_borrowed_jsvalue(realm, &base, &key) {
-        Ok(read) => read,
-        Err(error) => {
-            return throw_error(runtime, realm, runtime_error_to_vm_error(error))
-                .map(PropertyProgress::Deferred);
-        }
-    };
-    read_prepared_progress(
-        runtime,
-        execution,
-        id,
-        base,
-        key,
-        read,
-        retained_key,
-        keep_receiver,
-        consume,
-        depth,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

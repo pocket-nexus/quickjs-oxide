@@ -24,6 +24,7 @@ enum Finish {
         base: JsValue,
         keep_receiver: bool,
         keep_key: bool,
+        fallthrough: super::execute::FallthroughPc,
     },
     AddLeft(JsValue),
     AddRight(JsValue),
@@ -101,28 +102,37 @@ pub(super) enum Progress {
     Ready(ConversionTask),
     Entered,
     Complete(Completion),
-    PropertyRead(Box<super::property_driver::ConvertedRead>),
+    PropertyRead {
+        keep_receiver: bool,
+        keep_key: bool,
+        fallthrough: super::execute::FallthroughPc,
+    },
     PropertyWrite(Box<super::property_write_driver::ConvertedWrite>),
 }
 
 fn property_key_primitive(runtime: &Runtime, value: JsValue) -> Result<JsValue, Error> {
-    Ok(match value {
-        JsValue::Symbol(_) => value,
-        JsValue::String(_) => value,
-        primitive => {
-            let text = match super::numeric::to_js_string_jsvalue(runtime, &primitive) {
-                Ok(text) => text,
-                Err(error) => {
-                    let _ = runtime.release_jsvalue(primitive);
-                    return Err(error);
-                }
-            };
-            runtime
-                .release_jsvalue(primitive)
-                .map_err(runtime_error_to_vm_error)?;
-            super::numeric::allocate_string_jsvalue(runtime, text)?
-        }
-    })
+    if matches!(value, JsValue::Symbol(_) | JsValue::String(_)) {
+        return Ok(value);
+    }
+    let mut state = runtime.0.state.borrow_mut();
+    let mut primitive = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+        &mut state,
+        &runtime.0.poisoned,
+        value,
+    );
+    let (state, primitive) = primitive.parts();
+    let text = state.primitive_to_js_string(primitive.as_ref().expect("primitive key owner"))?;
+    state
+        .release_owned_jsvalue(
+            &runtime.0.poisoned,
+            primitive.take().expect("primitive key owner"),
+        )
+        .map_err(runtime_error_to_vm_error)?;
+    state
+        .heap
+        .allocate_string(text)
+        .map(JsValue::String)
+        .map_err(|error| Error::internal(error.to_string()))
 }
 
 fn add_completion(
@@ -403,6 +413,7 @@ impl ConversionTask {
         identity: u64,
         keep_receiver: bool,
         keep_key: bool,
+        fallthrough: super::execute::FallthroughPc,
     ) -> Result<Self, Error> {
         let parent = execution.frames.current_mut(frame)?;
         execution.slots.peek(&parent.window, 1)?;
@@ -415,6 +426,7 @@ impl ConversionTask {
                 base,
                 keep_receiver,
                 keep_key,
+                fallthrough,
             },
             frame,
             identity,
@@ -566,18 +578,36 @@ impl ConversionTask {
                                 base,
                                 keep_receiver,
                                 keep_key,
+                                fallthrough,
                             } => {
-                                let base = std::mem::replace(base, JsValue::Undefined);
-                                let keep_receiver = *keep_receiver;
-                                let keep_key = *keep_key;
-                                return Ok(Progress::PropertyRead(Box::new(
-                                    super::property_driver::ConvertedRead {
-                                        base,
-                                        key: value,
-                                        keep_receiver,
-                                        keep_key,
-                                    },
-                                )));
+                                // Converted numeric keys use String/Symbol when retained,
+                                // unlike an original direct Int operand. Publish the reply
+                                // into the existing parent window; no operand box is needed.
+                                let key = if *keep_key {
+                                    property_key_primitive(runtime, value)?
+                                } else {
+                                    value
+                                };
+                                let mut state = runtime.0.state.borrow_mut();
+                                let mut key = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+                                    &mut state, &runtime.0.poisoned, key,
+                                );
+                                let (state, key) = key.parts();
+                                let mut base_owner = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+                                    state, &runtime.0.poisoned, std::mem::replace(base, JsValue::Undefined),
+                                );
+                                let (_, base_owner) = base_owner.parts();
+                                let parent = execution.frames.current_mut(frame)?;
+                                let mut transaction =
+                                    execution.slots.frame_transaction(&mut parent.cold.window)?;
+                                let mut slots = transaction.slots();
+                                slots.push_pending(base_owner)?;
+                                slots.push_pending(key)?;
+                                return Ok(Progress::PropertyRead {
+                                    keep_receiver: *keep_receiver,
+                                    keep_key: *keep_key,
+                                    fallthrough: *fallthrough,
+                                });
                             }
                             Finish::PropertyKey => {
                                 Completion::Return(property_key_primitive(runtime, value)?)
@@ -850,8 +880,89 @@ fn invoke(
 
 #[cfg(all(test, feature = "profiling"))]
 mod primitive_store_tests {
+    use super::*;
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn converted_read_reply_uses_parent_storage_and_retains_normalized_key() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(base) = context.eval("({'0':7})").unwrap() else {
+            panic!("object")
+        };
+        let (mut execution, id) =
+            super::super::property_driver::read_completion_tests::read_fixture(
+                &runtime,
+                &mut context,
+                "(function(o,k){return o[k]++})",
+                crate::engine::code::exec_opcode::Opcode::GetArrayEl3Dense,
+            );
+        let frame = execution.frames.current_mut(id).unwrap();
+        let fallthrough = super::super::execute::FallthroughPc::from_decoded(
+            frame
+                .executable
+                .exec
+                .decode_published(frame.resume_pc as u32)
+                .unwrap(),
+        );
+        let task = ConversionTask::new(
+            &runtime,
+            Finish::PropertyRead {
+                base: JsValue::Object(base.into_handle()),
+                keep_receiver: true,
+                keep_key: true,
+                fallthrough,
+            },
+            id,
+            1,
+            PrimitiveStep::Complete(Completion::Return(JsValue::Int(0))),
+        );
+        assert!(matches!(
+            task.advance(&runtime, &mut execution).unwrap(),
+            Progress::PropertyRead {
+                keep_receiver: true,
+                keep_key: true,
+                ..
+            }
+        ));
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 2);
+        assert!(matches!(
+            execution.slots.peek(&frame.window, 1).unwrap(),
+            JsValue::Object(_)
+        ));
+        let JsValue::String(key) = execution.slots.peek(&frame.window, 0).unwrap() else {
+            panic!("converted numeric key must be normalized before retention")
+        };
+        assert_eq!(
+            runtime.0.state.borrow().heap.string(*key).unwrap(),
+            &crate::engine::value::JsString::from_static("0")
+        );
+        assert!(matches!(
+            super::super::property_driver::read_progress(
+                &runtime,
+                &mut execution,
+                id,
+                super::super::property_driver::ReadKey::Computed { keep_key: true },
+                true,
+                fallthrough
+            )
+            .unwrap(),
+            super::super::property_driver::PropertyProgress::Completed
+        ));
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 3);
+        assert_eq!(
+            execution.slots.peek(&frame.window, 0).unwrap(),
+            &JsValue::Int(7)
+        );
+        assert!(matches!(
+            execution.slots.peek(&frame.window, 1).unwrap(),
+            JsValue::String(_)
+        ));
+        assert_eq!(frame.resume_pc, fallthrough.index());
+    }
 
     #[test]
     fn conversion_task_resides_across_both_operands_and_skips_primitive_property_keys() {
