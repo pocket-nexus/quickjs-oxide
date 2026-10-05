@@ -314,7 +314,7 @@ pub(in crate::engine::vm) fn publish_native_in_state(
             "native invocation metadata changed after snapshot",
         ));
     }
-    publish_borrowed_native_frame_in_state(
+    let (token, depth) = publish_borrowed_native_frame_in_state(
         state,
         function,
         realm,
@@ -325,9 +325,16 @@ pub(in crate::engine::vm) fn publish_native_in_state(
             readable_arg_count: actual_arg_count.max(usize::from(min_readable_args)),
         },
         false,
-    )
+    )?;
+    Ok(ActiveFrameRestore {
+        token,
+        depth,
+        function: None,
+        bytecode: None,
+    })
 }
 
+#[inline]
 fn publish_borrowed_native_frame_in_state(
     state: &mut crate::engine::heap::runtime::RuntimeState,
     function: ObjectId,
@@ -335,7 +342,7 @@ fn publish_borrowed_native_frame_in_state(
     flags: ActiveFrameFlags,
     kind: ActiveFrameKind,
     native_continuation: bool,
-) -> Result<ActiveFrameRestore, RuntimeError> {
+) -> Result<(ActiveFrameToken, usize), RuntimeError> {
     let token = ActiveFrameToken(state.next_active_frame_token);
     state.next_active_frame_token =
         state
@@ -353,12 +360,7 @@ fn publish_borrowed_native_frame_in_state(
         flags,
         kind,
     });
-    Ok(ActiveFrameRestore {
-        token,
-        depth,
-        function: None,
-        bytecode: None,
-    })
+    Ok((token, depth))
 }
 
 impl Runtime {
@@ -371,7 +373,7 @@ impl Runtime {
         native_continuation: bool,
     ) -> Result<ActiveFrameGuard, RuntimeError> {
         let mut state = self.0.state.borrow_mut();
-        let restore = publish_borrowed_native_frame_in_state(
+        let (token, depth) = publish_borrowed_native_frame_in_state(
             &mut state,
             function,
             realm,
@@ -381,8 +383,8 @@ impl Runtime {
         )?;
         Ok(ActiveFrameGuard {
             runtime: self.clone(),
-            token: restore.token,
-            depth: restore.depth,
+            token,
+            depth,
             active: true,
             _function_root: None,
             _bytecode_root: None,
