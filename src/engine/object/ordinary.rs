@@ -12,7 +12,9 @@ use crate::engine::object::{CallableRef, DescriptorField, ObjectRef, PropertyKey
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsValue, Value};
 
+mod read;
 mod set;
+pub(crate) use read::ReadBoundary;
 
 pub(crate) use set::SetResume;
 pub(crate) use set::SetStep;
@@ -211,37 +213,54 @@ impl Runtime {
         receiver: &JsValue,
         mut native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        use crate::engine::object::ordinary_storage::ReadProbe;
         let mut prototype: Option<ObjectRef> = None;
         loop {
             let current_id = prototype.as_ref().map_or(object, ObjectRef::object_id);
-            match self.ordinary_read_probe_selected_id(current_id, key, native.as_deref_mut())? {
-                ReadProbe::Value(value) => {
-                    return Ok(OrdinaryRead::Complete(Some(value)));
-                }
-                ReadProbe::Getter(None) => {
-                    return Ok(OrdinaryRead::Complete(Some(JsValue::Undefined)));
-                }
-                ReadProbe::Getter(Some(getter)) => {
+            let mut boundary = None;
+            if let Some(value) = self.0.state.borrow_mut().select_ordinary_read_in_state(
+                current_id,
+                key.atom(),
+                self.domain_id(),
+                &mut boundary,
+                native.as_deref_mut(),
+            )? {
+                return Ok(OrdinaryRead::Complete(Some(value)));
+            }
+            match boundary.ok_or(RuntimeError::Invariant(
+                "ordinary read omitted its boundary",
+            ))? {
+                ReadBoundary::Absent => return Ok(OrdinaryRead::Complete(None)),
+                ReadBoundary::Getter(id) => {
+                    let getter = CallableRef::from_validated_object(
+                        ObjectRef::from_borrowed_handle(self.clone(), id)?,
+                    );
                     return Ok(OrdinaryRead::Call {
                         getter,
                         receiver: self.dup_jsvalue(receiver)?,
                     });
                 }
-                ReadProbe::Missing(Some(next)) => prototype = Some(next),
-                ReadProbe::Missing(None) => return Ok(OrdinaryRead::Complete(None)),
-                ReadProbe::Special(kind @ SpecialKind::Proxy) => {
+                ReadBoundary::Special {
+                    object: current_id,
+                    kind: kind @ SpecialKind::Proxy,
+                } => {
                     return Ok(OrdinaryRead::Special {
                         kind,
                         object: ObjectRef::from_borrowed_handle(self.clone(), current_id)?,
                         receiver: self.dup_jsvalue(receiver)?,
                     });
                 }
-                ReadProbe::Special(kind) => {
+                ReadBoundary::Special {
+                    object: current_id,
+                    kind,
+                } => {
                     // Only exotic storage needs the ObjectRef adapter. Ordinary
                     // data/getter/prototype probing borrows the initial base.
                     let promoted;
-                    let current = if let Some(current) = prototype.as_ref().or(original) {
+                    let current = if let Some(current) = prototype
+                        .as_ref()
+                        .or(original)
+                        .filter(|object| object.object_id() == current_id)
+                    {
                         current
                     } else {
                         promoted = ObjectRef::from_borrowed_handle(self.clone(), current_id)?;
