@@ -11,18 +11,10 @@ use crate::engine::atom::AtomIdx;
 use crate::engine::heap::roots::VarRefRoot;
 
 use crate::engine::heap::{ContextId, ObjectData, ObjectPayload, PropertySlot, RawValue};
-use crate::engine::object::operations::{
-    ValidationValue, complete_to_validation_record, descriptor_to_validation_record,
-    validation_record_to_complete,
-};
-use crate::engine::object::property::{
-    PropertyDefinitionError, validate_and_apply_property_descriptor,
-};
+#[cfg(test)]
+use crate::engine::object::CompleteOrdinaryPropertyDescriptor;
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
-use crate::engine::object::{
-    CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    WellKnownSymbol,
-};
+use crate::engine::object::{ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol};
 use crate::engine::value::JsValue;
 
 /// Keys remain rooted until the complete layout has retained its atoms.
@@ -238,6 +230,7 @@ impl Runtime {
             .1)
     }
 
+    #[cfg(test)]
     pub(crate) fn set_arguments_fast_len(
         &self,
         object: &ObjectRef,
@@ -261,162 +254,21 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<Option<bool>, RuntimeError> {
-        let Some((index, mapped, fast_len)) = self.arguments_index_state(object, key)? else {
+        let Some((index, _, _)) = self.arguments_index_state(object, key)? else {
             return Ok(None);
         };
-        if fast_len.is_some_and(|fast_len| index < fast_len) {
-            self.set_arguments_fast_len(object, None)?;
-        }
-
-        let var_ref = self.own_var_ref_root(object, key)?;
-        if var_ref.is_none() {
-            return self
-                .define_ordinary_own_property(object, key, descriptor)
-                .map(Some);
-        }
-        if !mapped {
-            return Err(RuntimeError::Invariant(
-                "unmapped Arguments object contains a mapped VarRef slot",
-            ));
-        }
-        let var_ref = var_ref.expect("mapped VarRef presence was checked");
-        let current = self
-            .get_own_property(object, key)?
-            .ok_or(RuntimeError::Invariant(
-                "mapped Arguments VarRef lost its property",
-            ))?;
-        let descriptor_record = descriptor_to_validation_record(descriptor);
-        let current_record = complete_to_validation_record(&current);
-        let complete = match validate_and_apply_property_descriptor(
-            self.is_extensible(object)?,
-            &descriptor_record,
-            Some(&current_record),
-            &ValidationValue::Undefined,
-            ValidationValue::same_value,
-        ) {
-            Ok(complete) => validation_record_to_complete(complete)?,
-            Err(PropertyDefinitionError::InvalidDescriptor) => {
-                return Err(PropertyDefinitionError::InvalidDescriptor.into());
-            }
-            Err(_) => return Ok(Some(false)),
-        };
-
-        match complete {
-            CompleteOrdinaryPropertyDescriptor::Data {
-                value,
-                writable: true,
-                enumerable,
-                configurable,
-            } => {
-                self.write_var_ref(&var_ref, self.unroot_value(&value)?)?;
-                self.store_property_slot(
-                    object,
-                    key,
-                    PropertyFlags::data(true, enumerable, configurable),
-                    PropertySlot::VarRef(var_ref.id()),
-                )?;
-            }
-            complete @ CompleteOrdinaryPropertyDescriptor::Data {
-                writable: false, ..
-            } => {
-                let CompleteOrdinaryPropertyDescriptor::Data { value, .. } = &complete else {
-                    unreachable!()
-                };
-                self.write_var_ref(&var_ref, self.unroot_value(value)?)?;
-                self.store_complete_property(object, key, complete)?;
-            }
-            complete @ CompleteOrdinaryPropertyDescriptor::Accessor { .. } => {
-                self.store_complete_property(object, key, complete)?;
-            }
-        }
-        Ok(Some(true))
-    }
-
-    pub(crate) fn define_arguments_index_owned(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        descriptor: &crate::engine::object::OwnedPropertyDescriptor,
-    ) -> Result<Option<bool>, RuntimeError> {
-        use crate::engine::object::property::CompletePropertyDescriptor;
-        let Some((index, mapped, fast_len)) = self.arguments_index_state(object, key)? else {
-            return Ok(None);
-        };
-        if fast_len.is_some_and(|fast_len| index < fast_len) {
-            self.set_arguments_fast_len(object, None)?;
-        }
-        let Some(var_ref) = self.own_var_ref_root(object, key)? else {
-            return self
-                .define_ordinary_owned_property(object, key, descriptor)
-                .map(Some);
-        };
-        if !mapped {
-            return Err(RuntimeError::Invariant(
-                "unmapped Arguments object contains a mapped VarRef slot",
-            ));
-        }
-        let current = self
-            .get_own_property_owned(object, key)?
-            .ok_or(RuntimeError::Invariant(
-                "mapped Arguments VarRef lost its property",
-            ))?;
-        let record = descriptor.raw_record();
-        let extensible = self.is_extensible(object)?;
-        let complete = {
-            let state = self.0.state.borrow();
-            validate_and_apply_property_descriptor(
-                extensible,
-                &record,
-                Some(current.record()),
-                &RawValue::Undefined,
-                |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
+        let owned = crate::engine::object::OwnedPropertyDescriptor::from_public(self, descriptor)?;
+        self.0
+            .state
+            .borrow_mut()
+            .define_arguments_index_in_state(
+                &self.0.poisoned,
+                object.object_id(),
+                key.atom(),
+                index,
+                &owned.raw_record(),
             )
-        };
-        let complete = match complete {
-            Ok(value) => value,
-            Err(PropertyDefinitionError::InvalidDescriptor) => {
-                return Err(PropertyDefinitionError::InvalidDescriptor.into());
-            }
-            Err(_) => return Ok(Some(false)),
-        };
-        match &complete {
-            CompletePropertyDescriptor::Data {
-                value,
-                writable: true,
-                enumerable,
-                configurable,
-            } => {
-                self.write_var_ref(
-                    &var_ref,
-                    self.dup_jsvalue(
-                        &JsValue::from_raw(value.clone()).expect("initialized mapped argument"),
-                    )?,
-                )?;
-                self.store_property_slot(
-                    object,
-                    key,
-                    PropertyFlags::data(true, *enumerable, *configurable),
-                    PropertySlot::VarRef(var_ref.id()),
-                )?;
-            }
-            CompletePropertyDescriptor::Data {
-                value,
-                writable: false,
-                ..
-            } => {
-                self.write_var_ref(
-                    &var_ref,
-                    self.dup_jsvalue(
-                        &JsValue::from_raw(value.clone()).expect("initialized mapped argument"),
-                    )?,
-                )?;
-                self.store_complete_raw_property(object, key, complete)?;
-            }
-            CompletePropertyDescriptor::Accessor { .. } => {
-                self.store_complete_raw_property(object, key, complete)?
-            }
-        }
-        Ok(Some(true))
+            .map(Some)
     }
 
     /// Direct ordinary assignment to an existing Arguments index uses the

@@ -63,9 +63,19 @@ impl RuntimeState {
                     };
                 }
             }
-            (_, ObjectPayload::Arguments { .. }) if indexed => return Ok(None),
-            (_, ObjectPayload::Primitive(PrimitiveObjectData::String(_))) if indexed => {
-                return Ok(None);
+            (_, ObjectPayload::Arguments { .. }) if indexed => {
+                let index = self.atoms.array_index(atom)?.expect("Arguments index");
+                return self
+                    .define_arguments_index_in_state(poisoned, object, atom, index, descriptor)
+                    .map(Some);
+            }
+            (_, ObjectPayload::Primitive(PrimitiveObjectData::String(id))) if indexed => {
+                let index = self.atoms.array_index(atom)?.expect("String index");
+                if let Some(unit) = self.heap.string(*id)?.code_unit_at(index as usize) {
+                    return self
+                        .define_string_unit_in_state(object, unit, descriptor)
+                        .map(Some);
+                }
             }
             _ => {}
         }

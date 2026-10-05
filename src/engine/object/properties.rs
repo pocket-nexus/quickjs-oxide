@@ -49,6 +49,7 @@ pub(crate) const MIN_UNIQUE_SHAPE_APPEND_ENTRIES: usize = 1;
 mod autoinit_state_tests;
 
 mod array_define;
+mod class_define;
 mod state_define;
 mod state_own;
 pub(crate) use state_own::StateOwnPropertySnapshot;
@@ -911,9 +912,6 @@ impl Runtime {
                 NativeConversion::Value(value) => PropertyDefineOutcome::Defined(value),
                 NativeConversion::Throw(value) => PropertyDefineOutcome::Throw(value),
             });
-        }
-        if let Some(defined) = self.define_arguments_index_owned(object, key, descriptor)? {
-            return Ok(PropertyDefineOutcome::Defined(defined));
         }
         if self.array_own_key(object, key)? == ArrayOwnKey::Length {
             if let DescriptorField::Present(value) = &descriptor.value {
