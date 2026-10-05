@@ -31,7 +31,9 @@ pub(super) fn dispatch(
             let StateReadEffect::Getter { callee, receiver } = effect.take().unwrap() else {
                 unreachable!();
             };
-            runtime.release_atom_handle(atom.take().expect("selected read atom"));
+            if let Some(atom) = atom.take() {
+                runtime.release_atom_handle(atom);
+            }
             // The common callable ABI is an explicit boundary for native and
             // bound callees. The read itself has no public input/result root.
             let target = DirectCallTarget::Callable(CallableRef::from_validated_object(
@@ -74,6 +76,53 @@ pub(super) fn dispatch(
             .try_into()?;
             Ok(Next::Continue)
         }
+        StateReadEffect::Get(_) => {
+            // The canonical Proxy prefix has already selected a real request.
+            // Preserve the enclosing algorithm before consuming its exact Get
+            // effect; neither target nor trap selection is replayed here.
+            query
+                .parents
+                .try_reserve(1)
+                .map_err(|_| Error::internal("property continuation allocation failed"))?;
+            if let Some(atom) = atom.take() {
+                runtime.release_atom_handle(atom);
+            }
+            let StateReadEffect::Get(effect) = effect.take().unwrap() else {
+                unreachable!("selected Get effect");
+            };
+            query
+                .parents
+                .push(resume.take().expect("selected read resume"));
+            use crate::engine::object::internal_methods::ProxyGetEffect;
+            *step = match effect {
+                ProxyGetEffect::Read(mut resume) => {
+                    let (effect, atom) = resume.take_read();
+                    Step::StateRead {
+                        effect: Some(effect),
+                        atom: Some(atom),
+                        resume: Some(super::Resume::Get(resume)),
+                    }
+                }
+                ProxyGetEffect::Call(mut resume) => {
+                    let (target, receiver, arguments) = resume.take_call(runtime);
+                    Step::Call {
+                        target: Some(target),
+                        receiver: Some(receiver),
+                        arguments: Some(arguments),
+                        resume: Some(super::Resume::Get(resume)),
+                    }
+                }
+                ProxyGetEffect::PreparedDescriptor(mut resume) => {
+                    let (method, atom) = resume.take_prepared_descriptor();
+                    Step::PreparedOwn {
+                        method: Some(method),
+                        atom: Some(atom),
+                        resume: Some(super::Resume::Get(resume)),
+                    }
+                }
+            };
+            Ok(Next::Continue)
+        }
         StateReadEffect::Shared(_) => {
             let StateReadEffect::Shared(read) = effect.take().unwrap() else {
                 unreachable!();
@@ -81,7 +130,9 @@ pub(super) fn dispatch(
             // The backing lock ends before taking State. No JS can run during
             // this service; its resulting edge belongs to the completion.
             let (element, bytes) = read.read().map_err(runtime_error_to_vm_error)?;
-            runtime.release_atom_handle(atom.take().unwrap());
+            if let Some(atom) = atom.take() {
+                runtime.release_atom_handle(atom);
+            }
             let value = runtime
                 .0
                 .state

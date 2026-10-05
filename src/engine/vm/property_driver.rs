@@ -36,8 +36,8 @@ pub(super) enum PropertyProgress {
 pub(super) enum SelectedNamedRead {
     Getter(OwnedGetterSelection),
     LookupError(Error),
-    Special(OwnedSpecialSelection),
     Shared(crate::engine::builtins::SharedTypedRead),
+    Effect(crate::engine::object::StateReadEffect),
 }
 
 // New cold effect selections must fit the existing getter edges plus the
@@ -55,7 +55,7 @@ impl SelectedNamedRead {
         }
         let _unwind = runtime.unwind_guard();
         if self
-            .release_in_state(&mut runtime.0.state.borrow_mut(), &runtime.0.poisoned)
+            .release_in_state(&mut runtime.0.state.borrow_mut(), runtime)
             .is_err()
         {
             runtime.0.poisoned.set(true);
@@ -65,18 +65,14 @@ impl SelectedNamedRead {
     pub(in crate::engine::vm) fn release_in_state(
         self,
         state: &mut crate::engine::heap::runtime::RuntimeState,
-        poisoned: &std::cell::Cell<bool>,
+        runtime: &Runtime,
     ) -> Result<(), Error> {
+        let poisoned = &runtime.0.poisoned;
         match self {
+            Self::Effect(effect) => effect
+                .release_in_state(state, runtime)
+                .map_err(runtime_error_to_vm_error),
             Self::Getter(selected) => selected.release(state, poisoned),
-            Self::Special(selected) => {
-                state
-                    .release_owned_jsvalue(poisoned, JsValue::Object(selected.object))
-                    .map_err(runtime_error_to_vm_error)?;
-                state
-                    .release_owned_jsvalue(poisoned, selected.receiver)
-                    .map_err(runtime_error_to_vm_error)
-            }
             Self::LookupError(_) | Self::Shared(_) => Ok(()),
         }
     }
@@ -90,6 +86,12 @@ pub(super) struct OwnedGetterSelection {
 }
 
 impl OwnedGetterSelection {
+    pub(super) fn from_parts(callee: crate::engine::heap::ObjectId, receiver: JsValue) -> Self {
+        Self {
+            getter: JsValue::Object(callee),
+            receiver,
+        }
+    }
     pub(in crate::engine::vm) fn getter_id(&self) -> crate::engine::heap::ObjectId {
         let JsValue::Object(getter) = self.getter else {
             unreachable!("selected getter owns an object")
@@ -155,52 +157,6 @@ impl OwnedGetterSelection {
     }
 }
 
-/// Selected exotic holder and original receiver. The lookup has already
-/// reached this actual service/callback boundary; it must not restart at base.
-pub(super) struct OwnedSpecialSelection {
-    object: crate::engine::heap::ObjectId,
-    receiver: JsValue,
-    kind: crate::engine::object::SpecialKind,
-}
-impl OwnedSpecialSelection {
-    pub(super) fn prepare(
-        state: &mut crate::engine::heap::runtime::RuntimeState,
-        poisoned: &std::cell::Cell<bool>,
-        object: crate::engine::heap::ObjectId,
-        receiver: &JsValue,
-        kind: crate::engine::object::SpecialKind,
-    ) -> Result<Self, Error> {
-        let object = state
-            .dup_jsvalue(&JsValue::Object(object))
-            .map_err(runtime_error_to_vm_error)?;
-        let mut owner = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
-            state, poisoned, object,
-        );
-        let (state, object) = owner.parts();
-        let receiver = state
-            .dup_jsvalue(receiver)
-            .map_err(runtime_error_to_vm_error)?;
-        let Some(JsValue::Object(object)) = object.take() else {
-            unreachable!("selected holder owns an object")
-        };
-        Ok(Self {
-            object,
-            receiver,
-            kind,
-        })
-    }
-    fn into_legacy_read(self, runtime: &Runtime) -> OrdinaryRead {
-        OrdinaryRead::Special {
-            object: crate::engine::object::ObjectRef::from_owned_handle(
-                runtime.clone(),
-                self.object,
-            ),
-            receiver: self.receiver,
-            kind: self.kind,
-        }
-    }
-}
-
 struct SelectedReadGuard<'a> {
     runtime: &'a Runtime,
     read: Option<OrdinaryRead>,
@@ -217,6 +173,37 @@ impl Drop for NamedHandoffGuard<'_> {
             selected.release(self.runtime);
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn publish_named_effect(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    keep_receiver: bool,
+    fallthrough: FallthroughPc,
+    selected: &mut NamedHandoffGuard<'_>,
+) -> Result<PropertyProgress, Error> {
+    let depth = {
+        let mut state = runtime.0.state.borrow_mut();
+        let frame = execution.frames.current_mut(id)?;
+        let depth = execution.slots.depth(&frame.window);
+        let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
+        if !keep_receiver {
+            let value = transaction.slots().pop()?;
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, value)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        frame.resume_pc = fallthrough.index();
+        depth
+    };
+    let Some(SelectedNamedRead::Effect(effect)) = selected.selected.take() else {
+        unreachable!("published named read has an exact effect");
+    };
+    super::proxy_get_driver::start_property_state_read(runtime, execution, id, effect, None, depth)
+        .map(PropertyProgress::Deferred)
 }
 
 impl Drop for SelectedReadGuard<'_> {
@@ -303,13 +290,22 @@ pub(super) fn read_progress_selected(
     selected: Option<SelectedNamedRead>,
 ) -> Result<PropertyProgress, Error> {
     let mut selected = NamedHandoffGuard { runtime, selected };
+    if matches!(selected.selected, Some(SelectedNamedRead::Effect(_))) {
+        return publish_named_effect(
+            runtime,
+            execution,
+            id,
+            keep_receiver,
+            fallthrough,
+            &mut selected,
+        );
+    }
     let frame = execution.frames.current_mut(id)?;
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let realm = frame.executable.realm;
     let next_pc = fallthrough.index();
     let selected_read = match selected.selected.take() {
         Some(SelectedNamedRead::Getter(read)) => Some(read.into_legacy_read(runtime)),
-        Some(SelectedNamedRead::Special(read)) => Some(read.into_legacy_read(runtime)),
         Some(SelectedNamedRead::Shared(_)) => {
             return Err(Error::internal(
                 "shared named read reached the legacy read adapter",
@@ -317,6 +313,9 @@ pub(super) fn read_progress_selected(
         }
         Some(SelectedNamedRead::LookupError(error)) => {
             return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
+        }
+        Some(SelectedNamedRead::Effect(_)) => {
+            unreachable!("exact named effect handled before legacy read")
         }
         None => None,
     };
@@ -1400,8 +1399,63 @@ pub(in crate::engine::vm) mod read_completion_tests {
         ));
         assert!(matches!(
             execution.selected_named_read,
-            Some(SelectedNamedRead::Special(_))
+            Some(SelectedNamedRead::Effect(
+                crate::engine::object::StateReadEffect::Get(_)
+            ))
         ));
+    }
+
+    #[test]
+    fn synchronous_proxy_named_read_completes_without_transport() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(object) = context
+            .eval("({__proto__:new Proxy(new Proxy({x:42},{}),{})})")
+            .unwrap()
+        else {
+            panic!("object")
+        };
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o){return o.x})",
+            Opcode::GetFieldCached,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        let owners = std::rc::Rc::strong_count(&runtime.0);
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert!(matches!(
+            execute_frame(&runtime, &mut execution, id).unwrap(),
+            VmAction::Complete
+        ));
+        assert_eq!(execution.pending, Some(JsValue::Int(42)));
+        assert!(execution.selected_named_read.is_none());
+        assert_eq!(owners, std::rc::Rc::strong_count(&runtime.0));
+        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+        assert!(!runtime.0.deferred_references.has_pending());
+        #[cfg(feature = "profiling")]
+        for name in [
+            "query.read.acquired",
+            "get_resume_allocation",
+            "method_resume_allocation",
+            "core.runtime_clone",
+        ] {
+            assert_eq!(
+                profile
+                    .snapshot()
+                    .owned_execution_events
+                    .get(name)
+                    .copied()
+                    .unwrap_or(0),
+                0,
+                "{name}"
+            );
+        }
     }
 
     #[test]

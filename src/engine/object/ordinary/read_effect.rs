@@ -15,6 +15,7 @@ pub(crate) enum StateReadEffect {
     Getter { callee: ObjectId, receiver: JsValue },
     Proxy { object: ObjectId, receiver: JsValue },
     Shared(crate::engine::builtins::SharedTypedRead),
+    Get(crate::engine::object::internal_methods::ProxyGetEffect),
 }
 
 impl StateReadEffect {
@@ -59,8 +60,9 @@ impl StateReadEffect {
     pub(crate) fn release_in_state(
         self,
         state: &mut RuntimeState,
-        poisoned: &Cell<bool>,
+        runtime: &crate::engine::api::Runtime,
     ) -> Result<(), RuntimeError> {
+        let poisoned = &runtime.0.poisoned;
         match self {
             Self::Getter {
                 callee: object,
@@ -71,6 +73,7 @@ impl StateReadEffect {
                 state.release_owned_jsvalue(poisoned, receiver)
             }
             Self::Shared(_) => Ok(()),
+            Self::Get(effect) => effect.release_in_state(state, runtime),
         }
     }
 }
