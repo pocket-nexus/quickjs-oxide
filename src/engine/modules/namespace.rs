@@ -8,14 +8,14 @@
 
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::atom::{AtomIdx, PropertyKeyKind};
+use crate::engine::atom::{Atom, AtomIdx, PropertyKeyKind};
 
-use crate::engine::heap::{ObjectData, ObjectKind, PropertySlot};
-use crate::engine::object::{
-    CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
-    PropertyKey,
+use crate::engine::api::error::ErrorKind;
+use crate::engine::heap::{
+    ObjectData, ObjectId, ObjectKind, PropertySlot, RawValue, runtime::RuntimeState,
 };
-use crate::engine::value::Value;
+use crate::engine::object::property::PropertyDescriptor;
+use crate::engine::object::{ObjectRef, OrdinaryPropertyDescriptor, PropertyKey};
 
 impl Runtime {
     pub(crate) fn is_module_namespace_object(
@@ -123,31 +123,15 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &crate::engine::object::OwnedPropertyDescriptor,
     ) -> Result<Option<bool>, RuntimeError> {
-        use crate::engine::object::property::CompletePropertyDescriptor;
-        if !self.module_namespace_export_slot(object, key)? {
-            return Ok(None);
-        }
-        // Preserve the unconditional TDZ read, including attribute-only definitions.
-        let current = self
-            .get_own_property_owned(object, key)?
-            .ok_or(RuntimeError::Invariant(
-                "module namespace export slot has no own descriptor",
-            ))?;
-        let CompletePropertyDescriptor::Data { value: current, .. } = current.record() else {
-            return Err(RuntimeError::Invariant(
-                "module namespace export slot is not a data descriptor",
-            ));
-        };
-        if descriptor.get.is_present()
-            || descriptor.set.is_present()
-            || matches!(descriptor.configurable, DescriptorField::Present(true))
-            || matches!(descriptor.enumerable, DescriptorField::Present(false))
-            || matches!(descriptor.writable, DescriptorField::Present(false))
-            || matches!(&descriptor.value, DescriptorField::Present(value) if !crate::engine::value::collection_key::same_value(&self.0.state.borrow().heap, &value.as_raw(), current))
-        {
-            return Ok(Some(false));
-        }
-        Ok(Some(true))
+        self.validate_object_and_key(object, key)?;
+        self.0
+            .state
+            .borrow()
+            .define_module_namespace_export_in_state(
+                object.object_id(),
+                key.atom(),
+                &descriptor.raw_record(),
+            )
     }
 
     pub(crate) fn define_module_namespace_export(
@@ -156,35 +140,185 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<Option<bool>, RuntimeError> {
+        self.validate_object_and_key(object, key)?;
         if !self.module_namespace_export_slot(object, key)? {
             return Ok(None);
         }
+        // Public descriptor values are admitted once at this external adapter.
+        // The borrowed State kernel remains the only compatibility algorithm.
+        let descriptor =
+            crate::engine::object::OwnedPropertyDescriptor::from_public(self, descriptor)?;
+        self.define_module_namespace_export_owned(object, key, &descriptor)
+    }
+}
 
-        // GetOwnProperty is intentionally unconditional. An uninitialized
-        // exported binding must throw here even when the requested descriptor
-        // carries no value, matching QuickJS's VarRef materialization path.
-        let current = self
-            .get_own_property(object, key)?
-            .ok_or(RuntimeError::Invariant(
-                "module namespace export slot has no own descriptor",
-            ))?;
-        let CompleteOrdinaryPropertyDescriptor::Data { value: current, .. } = current else {
-            return Err(RuntimeError::Invariant(
-                "module namespace export slot is not a data descriptor",
-            ));
-        };
-
-        if descriptor.is_accessor_descriptor()
-            || matches!(descriptor.configurable, DescriptorField::Present(true))
-            || matches!(descriptor.enumerable, DescriptorField::Present(false))
-            || matches!(descriptor.writable, DescriptorField::Present(false))
-            || matches!(
-                &descriptor.value,
-                DescriptorField::Present(value) if !Value::same_value(value, &current)
-            )
-        {
-            return Ok(Some(false));
+impl RuntimeState {
+    /// Namespace exports are live cells. Read the cell unconditionally before
+    /// validating requested attributes; an attribute-only definition still
+    /// observes TDZ. Compatibility never modifies or retains any supplied edge.
+    pub(crate) fn define_module_namespace_export_in_state(
+        &self,
+        object: ObjectId,
+        atom: Atom,
+        descriptor: &PropertyDescriptor<RawValue>,
+    ) -> Result<Option<bool>, RuntimeError> {
+        let object = self.heap.object(object)?;
+        if object.kind != ObjectKind::ModuleNamespace {
+            return Ok(None);
         }
-        Ok(Some(true))
+        let shape = self.heap.shape(object.shape)?;
+        let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+            return Ok(None);
+        };
+        let Some(PropertySlot::VarRef(id)) = object.slots.get(index as usize) else {
+            return Ok(None);
+        };
+        let current = &self.heap.var_ref(*id)?.value;
+        if matches!(current, RawValue::Uninitialized) {
+            return Err(RuntimeError::Engine(self.native_atom_error(
+                ErrorKind::Reference,
+                "",
+                atom,
+                " is not initialized",
+            )?));
+        }
+        Ok(Some(
+            !(descriptor.is_accessor_descriptor()
+                || descriptor.configurable == Some(true)
+                || descriptor.enumerable == Some(false)
+                || descriptor.writable == Some(false)
+                || descriptor.value.as_ref().is_some_and(|value| {
+                    !crate::engine::value::collection_key::same_value(&self.heap, value, current)
+                })),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod state_tests {
+    use super::*;
+    use crate::engine::heap::VarRefData;
+    use crate::engine::object::shape::PropertyFlags;
+
+    #[test]
+    fn namespace_define_uses_live_cell_without_retaining_or_changing_storage() {
+        let runtime = Runtime::new();
+        let namespace = runtime.new_module_namespace_object().unwrap();
+        let value = runtime.new_object(None).unwrap();
+        let key = runtime.intern_property_key("exported").unwrap();
+        let cell = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .allocate_var_ref(VarRefData::local(RawValue::Object(value.object_id())))
+            .unwrap();
+        runtime
+            .store_property_slot(
+                &namespace,
+                &key,
+                PropertyFlags::data(true, true, false),
+                PropertySlot::VarRef(cell),
+            )
+            .unwrap();
+        let before = std::rc::Rc::strong_count(&runtime.0);
+        let mut state = runtime.0.state.borrow_mut();
+        let shape = state.heap.object(namespace.object_id()).unwrap().shape;
+        let count = state.heap.object_strong_count(value.object_id()).unwrap();
+        for (descriptor, accepted) in [
+            (PropertyDescriptor::new(), true),
+            (
+                PropertyDescriptor {
+                    value: Some(RawValue::Object(value.object_id())),
+                    ..PropertyDescriptor::new()
+                },
+                true,
+            ),
+            (
+                PropertyDescriptor {
+                    value: Some(RawValue::Undefined),
+                    ..PropertyDescriptor::new()
+                },
+                false,
+            ),
+            (
+                PropertyDescriptor {
+                    writable: Some(false),
+                    ..PropertyDescriptor::new()
+                },
+                false,
+            ),
+            (
+                PropertyDescriptor {
+                    get: Some(None),
+                    ..PropertyDescriptor::new()
+                },
+                false,
+            ),
+        ] {
+            assert_eq!(
+                state.try_define_own_property_in_state(
+                    &runtime.0.poisoned,
+                    namespace.object_id(),
+                    key.atom(),
+                    &descriptor
+                ),
+                Ok(Some(accepted))
+            );
+        }
+        assert_eq!(
+            state.heap.object(namespace.object_id()).unwrap().shape,
+            shape
+        );
+        assert_eq!(state.heap.object_strong_count(value.object_id()), Ok(count));
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), before);
+        assert!(!runtime.0.deferred_references.has_pending());
+        let cleanup = state.heap.release_var_ref(cell).unwrap();
+        state.apply_cleanup(cleanup).unwrap();
+    }
+
+    #[test]
+    fn namespace_attribute_only_definition_observes_uninitialized_live_cell() {
+        let runtime = Runtime::new();
+        let namespace = runtime.new_module_namespace_object().unwrap();
+        let key = runtime.intern_property_key("early").unwrap();
+        let cell = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .allocate_var_ref(VarRefData::local(RawValue::Uninitialized))
+            .unwrap();
+        runtime
+            .store_property_slot(
+                &namespace,
+                &key,
+                PropertyFlags::data(true, true, false),
+                PropertySlot::VarRef(cell),
+            )
+            .unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        for descriptor in [
+            PropertyDescriptor::new(),
+            PropertyDescriptor {
+                configurable: Some(true),
+                ..PropertyDescriptor::new()
+            },
+        ] {
+            let error = state
+                .try_define_own_property_in_state(
+                    &runtime.0.poisoned,
+                    namespace.object_id(),
+                    key.atom(),
+                    &descriptor,
+                )
+                .unwrap_err();
+            assert!(
+                matches!(error, RuntimeError::Engine(error) if error.kind() == ErrorKind::Reference)
+            );
+        }
+        assert!(!runtime.is_poisoned());
+        let cleanup = state.heap.release_var_ref(cell).unwrap();
+        state.apply_cleanup(cleanup).unwrap();
     }
 }

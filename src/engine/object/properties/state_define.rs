@@ -21,9 +21,16 @@ impl RuntimeState {
         let data = self.heap.object(object)?;
         let indexed = self.atoms.array_index(atom)?.is_some();
         match (&data.kind, &data.payload) {
-            (ObjectKind::ModuleNamespace, _)
-            | (_, ObjectPayload::Proxy(_))
-            | (_, ObjectPayload::TypedArray(_)) => return Ok(None),
+            (ObjectKind::ModuleNamespace, _) => {
+                if let Some(accepted) =
+                    self.define_module_namespace_export_in_state(object, atom, descriptor)?
+                {
+                    return Ok(Some(accepted));
+                }
+                // Missing keys and @@toStringTag use ordinary compatibility on
+                // the non-extensible namespace shell.
+            }
+            (_, ObjectPayload::Proxy(_)) | (_, ObjectPayload::TypedArray(_)) => return Ok(None),
             (_, ObjectPayload::Array { .. }) => {
                 if let Some(index) = self.atoms.array_index(atom)? {
                     return self
