@@ -1,6 +1,7 @@
 pub(crate) mod descriptor;
 pub(crate) mod number;
 pub(crate) mod primitive;
+mod property_key;
 
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
@@ -64,52 +65,45 @@ impl Runtime {
         realm: ContextId,
         value: crate::engine::value::JsValue,
     ) -> Result<NativeConversion<PropertyKey>, RuntimeError> {
-        let result = (|| {
-            use crate::engine::value::JsValue;
-            if matches!(value, JsValue::Object(_)) {
-                return Err(RuntimeError::Invariant(
-                    "property key conversion received an object",
-                ));
-            }
-            if let Some(key) = self.immediate_numeric_property_key_jsvalue(&value) {
-                return Ok(NativeConversion::Value(key));
-            }
-            if let JsValue::Symbol(index) = &value {
-                let atom = self.0.state.borrow().atoms.brand(*index)?;
-                return Ok(NativeConversion::Value(PropertyKey::from_borrowed_atom(
-                    self.clone(),
-                    atom,
-                )?));
-            }
-            if let JsValue::String(id) = &value {
-                return Ok(NativeConversion::Value(
-                    self.intern_property_key_string_id(*id)?,
-                ));
-            }
-            let string = match crate::engine::vm::to_js_string_jsvalue(self, &value) {
-                Ok(string) => string,
-                Err(error) => {
-                    let Some(kind) = NativeErrorKind::from_javascript_error(error.kind()) else {
-                        return Err(RuntimeError::Engine(error));
-                    };
-                    return Ok(NativeConversion::Throw(
-                        self.new_native_error_from_error_jsvalue(realm, kind, &error)?,
-                    ));
+        // The primitive edge and any newly interned atom are cleaned using
+        // this one State access. Only the public result acquires a Runtime root.
+        let conversion = {
+            let mut state = self.0.state.borrow_mut();
+            let result = match state.property_key_atom_from_primitive(&value) {
+                Ok(atom) => Ok(NativeConversion::Value(atom)),
+                Err(RuntimeError::Engine(error))
+                    if NativeErrorKind::from_javascript_error(error.kind()).is_some() =>
+                {
+                    let kind = NativeErrorKind::from_javascript_error(error.kind())
+                        .expect("JavaScript conversion error kind");
+                    let message = error.native_message().cloned().unwrap_or_else(|| {
+                        crate::engine::api::error::NativeErrorMessage::from_utf8(error.message())
+                    });
+                    state
+                        .new_native_error_from_message(&self.0.poisoned, realm, kind, message)
+                        .map(|error| NativeConversion::Throw(JsValue::Object(error)))
                 }
+                Err(error) => Err(error),
             };
-            Ok(NativeConversion::Value(
-                self.intern_property_key_js_string(&string)?,
-            ))
-        })();
-        match (result, self.release_jsvalue(value)) {
-            (Ok(conversion), Ok(())) => Ok(conversion),
-            (Err(error), _) => Err(error),
-            (Ok(NativeConversion::Throw(thrown)), Err(error)) => {
-                let _ = self.release_jsvalue(thrown);
-                Err(error)
+            match (result, state.release_jsvalue(value)) {
+                (Ok(result), Ok(())) => Ok(result),
+                (Err(error), _) => Err(error),
+                (Ok(NativeConversion::Throw(thrown)), Err(error)) => {
+                    let _ = state.release_owned_jsvalue(&self.0.poisoned, thrown);
+                    Err(error)
+                }
+                (Ok(NativeConversion::Value(atom)), Err(error)) => {
+                    let _ = state.atoms.release(atom);
+                    Err(error)
+                }
             }
-            (Ok(NativeConversion::Value(_)), Err(error)) => Err(error),
-        }
+        }?;
+        Ok(match conversion {
+            NativeConversion::Value(atom) => {
+                NativeConversion::Value(PropertyKey::from_owned_atom(self.clone(), atom))
+            }
+            NativeConversion::Throw(value) => NativeConversion::Throw(value),
+        })
     }
 
     /// Finish ToPropertyKey after the domain continuation has obtained a primitive.
