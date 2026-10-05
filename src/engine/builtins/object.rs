@@ -1326,7 +1326,7 @@ impl RuntimeState {
         self.heap.retain_object(prototype)?;
         let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
         let (state, prototype_owner) = prototype_owner.parts();
-        let object = state.allocate_object_with_layout_with_poison(
+        let object = state.allocate_object_with_layout(
             poisoned,
             Some(prototype),
             &[],

@@ -175,10 +175,13 @@ fn constructor_publication_failure_quarantines_before_execution_cleanup() {
     use crate::engine::heap::RawId;
     let runtime = Runtime::new();
     let mut context = runtime.new_context().unwrap();
-    let (mut execution, parent) = constructor_execution(&runtime, &mut context, JsValue::Undefined);
+    let marker = runtime.new_object(None).unwrap().into_handle();
+    let (mut execution, parent) =
+        constructor_execution(&runtime, &mut context, JsValue::Object(marker));
     let first = runtime.new_object(None).unwrap().into_handle();
     let later = runtime.new_object(None).unwrap().into_handle();
     let _unwind = runtime.unwind_guard();
+    let marker_count;
     {
         let mut state = runtime.0.state.borrow_mut();
         let before = state.heap.counts().object_nodes;
@@ -200,9 +203,16 @@ fn constructor_publication_failure_quarantines_before_execution_cleanup() {
         assert_eq!(state.heap.counts().object_nodes, before + 1);
         assert_eq!(state.heap.object_strong_count(later), Ok(0));
         assert!(state.heap.has_pending_zero_cleanup());
+        assert_eq!(execution.frames.current_id(), Some(parent));
+        assert!(execution.pending.is_none());
+        marker_count = state.heap.object_strong_count(marker).unwrap();
+        assert!(marker_count > 0);
     }
     // Poisoned execution abandons its references without re-entering the
     // failed cleanup. State access has ended before the outer Drop runs.
     drop(execution);
+    let state = runtime.0.state.borrow();
+    assert_eq!(state.heap.object_strong_count(marker), Ok(marker_count));
+    assert_eq!(state.heap.object_strong_count(later), Ok(0));
     assert!(!runtime.0.deferred_references.has_pending());
 }

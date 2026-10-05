@@ -31,9 +31,15 @@ fn error_prototype(state: &RuntimeState, realm: ContextId) -> ObjectId {
         .unwrap()
 }
 
-fn empty_error(state: &mut RuntimeState, prototype: ObjectId) -> ObjectId {
+fn empty_error(state: &mut RuntimeState, poisoned: &Cell<bool>, prototype: ObjectId) -> ObjectId {
     state
-        .allocate_object_with_layout(Some(prototype), &[], Vec::new(), ObjectData::error)
+        .allocate_object_with_layout(
+            poisoned,
+            Some(prototype),
+            &[],
+            Vec::new(),
+            ObjectData::error,
+        )
         .unwrap()
 }
 
@@ -69,7 +75,7 @@ fn native_error_allocation_cleanup_failure_quarantines_prototype_and_suffix() {
     let _unwind = runtime.unwind_guard();
     let mut state = runtime.0.state.borrow_mut();
     let prototype = error_prototype(&state, context.realm);
-    let warm = empty_error(&mut state, prototype);
+    let warm = empty_error(&mut state, &runtime.0.poisoned, prototype);
     let shape = state.heap.object(warm).unwrap().shape;
     let shape_before = state.heap.shape_strong_count(shape).unwrap();
     let prototype_before = state.heap.object_strong_count(prototype).unwrap();
@@ -116,8 +122,8 @@ fn native_error_message_publication_failure_quarantines_all_enclosing_owners() {
     let _unwind = runtime.unwind_guard();
     let mut state = runtime.0.state.borrow_mut();
     let prototype = error_prototype(&state, context.realm);
-    let object = empty_error(&mut state, prototype);
-    let peer = empty_error(&mut state, prototype);
+    let object = empty_error(&mut state, &runtime.0.poisoned, prototype);
+    let peer = empty_error(&mut state, &runtime.0.poisoned, prototype);
     let shape = state.heap.object(object).unwrap().shape;
     assert_eq!(state.heap.object(peer).unwrap().shape, shape);
     assert!(state.heap.shape_strong_count(shape).unwrap() >= 2);
@@ -267,7 +273,7 @@ fn native_error_message_rejection_is_recoverable_and_reclaims_its_producer() {
     let _unwind = runtime.unwind_guard();
     let mut state = runtime.0.state.borrow_mut();
     let prototype = error_prototype(&state, context.realm);
-    let object = empty_error(&mut state, prototype);
+    let object = empty_error(&mut state, &runtime.0.poisoned, prototype);
     state.heap.set_object_extensible(object, false).unwrap();
     let before = state.heap.counts();
     assert_eq!(
@@ -311,8 +317,8 @@ fn native_error_message_slot_retain_overflow_is_recoverable_before_publication()
     let _unwind = runtime.unwind_guard();
     let mut state = runtime.0.state.borrow_mut();
     let prototype = error_prototype(&state, context.realm);
-    let object = empty_error(&mut state, prototype);
-    let peer = empty_error(&mut state, prototype);
+    let object = empty_error(&mut state, &runtime.0.poisoned, prototype);
+    let peer = empty_error(&mut state, &runtime.0.poisoned, prototype);
     let string = state
         .heap
         .allocate_string(JsString::from_static("overflow"))
