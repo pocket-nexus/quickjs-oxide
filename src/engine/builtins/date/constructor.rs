@@ -38,13 +38,13 @@ impl Runtime {
         &self,
         realm: ContextId,
         kind: DateNativeKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         operation::finish(
             self,
             realm,
-            operation::DateConstructorStep::start(self, realm, kind, &invocation, arguments)?,
+            operation::DateConstructorStep::start(self, realm, kind, invocation, arguments)?,
         )
     }
 
