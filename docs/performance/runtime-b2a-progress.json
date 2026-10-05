@@ -1,7 +1,7 @@
 {
   "schema": "oxide-runtime-b2a-progress-v1",
-  "status": "B2a common cleanup/GetMethod batch short-tested; independent B2b, B2c/d, B2e/f consumers implement and validate in parallel. B2 acceptance pending.",
-  "b2a_complete": false,
+  "status": "Canonical static read consumer closes in runtime-b2a-canonical-read.json. Common cleanup history retained; B2 checkpoint 2 remains pending.",
+  "b2a_complete": true,
   "pr": 92,
   "baseline": "B1 760443cb",
   "configuration": {
@@ -1681,8 +1681,8 @@
     }
   ],
   "remaining": [
-    "direct raw getter/Proxy effect handoff and corresponding old-adapter deletion",
-    "full B2a correctness/mechanism/resource closure"
+    "B2b-f coherent consumer integration and final performance/resource gates",
+    "B2 checkpoint 2 formal Score and whole-stage residual review"
   ],
   "formal_score_acceptance": false,
   "parallel_delivery": {
@@ -1691,5 +1691,6 @@
     "b2cd": "State Set, static/computed stores, receiver/proxy ownership; raw Set 38e947b9, 2581 profiling core tests passed in its isolated branch; Own prefix next; awaiting parent integration/performance.",
     "b2ef": "State descriptors, Array/String/Arguments class publication and Reflect consumers; successive isolated correctness batches passed; descriptor converter/native closure still in progress.",
     "stop": "B2 checkpoint 2 before B3; no automatic acceptance from a sibling result."
-  }
+  },
+  "closeout": "runtime-b2a-canonical-read.json"
 }
