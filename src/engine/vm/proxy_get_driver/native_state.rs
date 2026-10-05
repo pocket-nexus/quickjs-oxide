@@ -98,6 +98,15 @@ pub(super) fn try_array(
         frame: None,
         result: None,
     };
+    if !callable
+        .as_ref()
+        .expect("native callable owner")
+        .belongs_to(runtime)
+    {
+        return Err(runtime_error_to_vm_error(RuntimeError::WrongRuntime(
+            "native callable",
+        )));
+    }
     // This is the existing empty-capacity pool, reserved before publication.
     // Skipping it would turn every single-argument push into a fresh Vec.
     slots.reserve_native_argument_depth(guard.state.active_frames.len() + 1)?;
@@ -154,6 +163,7 @@ pub(super) fn try_array(
                 .take()
                 .expect("native frame")
                 .finish(guard.state)
+                .inspect_err(|_| guard.poisoned.set(true))
                 .map_err(runtime_error_to_vm_error)?;
             *invocation = guard.invocation.take();
             *arguments = std::mem::take(&mut guard.arguments);
@@ -366,5 +376,46 @@ mod tests {
         assert_eq!(state.heap.object_strong_count(input).unwrap(), 1);
         drop(state);
         drop(runtime);
+    }
+
+    #[test]
+    fn foreign_native_rejection_retires_only_local_inputs() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let foreign = Runtime::new();
+        let mut other = foreign.new_context().unwrap();
+        let mut callable = Some(
+            foreign
+                .callable_from_value(other.eval("Array").unwrap())
+                .unwrap(),
+        );
+        let receiver = runtime.new_object(None).unwrap().into_handle();
+        let argument = runtime.new_object(None).unwrap().into_handle();
+        let mut invocation = Some(NativeInvocation::Call {
+            this_value: JsValue::Object(receiver),
+        });
+        let mut arguments = vec![JsValue::Object(argument)];
+        let mut slots = super::super::super::stack::SlotStore::new(1024);
+        assert!(
+            try_array(
+                &runtime,
+                &mut slots,
+                &mut callable,
+                context.realm,
+                NativeFunctionId::ArrayConstructor,
+                1,
+                &mut invocation,
+                &mut arguments
+            )
+            .is_err()
+        );
+        assert!(callable.is_some());
+        assert!(invocation.is_none() && arguments.is_empty());
+        let state = runtime.0.state.borrow();
+        assert!(state.heap.object(receiver).is_err());
+        assert!(state.heap.object(argument).is_err());
+        assert!(state.active_frames.is_empty());
+        drop(state);
+        assert_eq!(context.eval("new Array().length").unwrap(), Value::Int(0));
     }
 }
