@@ -8,6 +8,9 @@ use crate::engine::value::JsValue;
 #[cfg(test)]
 use crate::engine::value::Value;
 
+// Consume the checked length where it is used. An outlined Result here spills
+// the array identity and length even when a numeric dense store simply declines.
+#[inline(always)]
 pub(super) fn writable_dense_length(
     state: &RuntimeState,
     data: &ObjectData,
