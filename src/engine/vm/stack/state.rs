@@ -282,7 +282,7 @@ impl FrameSlots<'_> {
         Ok(())
     }
 
-    pub(in crate::engine::vm) fn array_kept_immediate_read_in_state(
+    pub(in crate::engine::vm) fn array_kept_read_in_state(
         &mut self,
         state: &mut RuntimeState,
         poisoned: &std::cell::Cell<bool>,
@@ -300,23 +300,30 @@ impl FrameSlots<'_> {
             }
             _ => return Ok(false),
         };
-        let Some(value) = state.try_dense_array_kept_read(self.peek(1)?, index) else {
+        let Some(value) = state.try_dense_array_borrowed_read(self.peek(1)?, index) else {
             return Ok(false);
         };
         // Capacity is checked before any owner moves out of its slot.
         if keep_key {
             self.store.operand_push_index(self.window)?;
+        } else {
+            self.top_direct_mut()?;
         }
-        if !keep_key {
+        let value = copy_value_in_state(state, &value)?;
+        // Install the result before retiring the key. A cleanup failure still
+        // leaves its owner reachable by execution's error/unwind traversal.
+        if keep_key {
+            self.push(value)?;
+        } else {
+            let key = std::mem::replace(self.top_direct_mut()?, value);
             state
-                .release_owned_jsvalue(poisoned, self.pop()?)
+                .release_owned_jsvalue(poisoned, key)
                 .map_err(runtime_error_to_vm_error)?;
         }
-        self.push(value)?;
         Ok(true)
     }
 
-    pub(in crate::engine::vm) fn array_immediate_read_in_state(
+    pub(in crate::engine::vm) fn array_read_in_state(
         &mut self,
         state: &mut RuntimeState,
         poisoned: &std::cell::Cell<bool>,
@@ -333,9 +340,12 @@ impl FrameSlots<'_> {
             }
             _ => return Ok(false),
         };
-        let Some(value) = state.try_array_immediate_read(self.peek(1)?, index) else {
+        let Some(value) = state.try_array_value_read(self.peek(1)?, index) else {
             return Ok(false);
         };
+        // Retain while the receiver still owns the selected edge. The
+        // resulting owner is committed before either input is retired.
+        let value = copy_value_in_state(state, &value)?;
         let key = self.pop()?;
         let base = self.pop()?;
         // Reuses an occupied operand position; no allocation or capacity
@@ -493,6 +503,197 @@ mod tests {
         },
         vm::stack::{DirectSlot, FrameStorage, SlotStore, StoreProgress},
     };
+
+    #[test]
+    fn dense_reads_commit_all_value_kinds_before_receiver_retirement() {
+        for expression in [
+            "[{}]",
+            "['heap string']",
+            "[9223372036854775808n]",
+            "[Symbol('element')]",
+            "[undefined]",
+            "(()=>{let a=[];a[0]=a;return a})()",
+        ] {
+            for (keep_receiver, keep_key) in [(false, false), (true, false), (true, true)] {
+                let runtime = Runtime::new();
+                let mut context = runtime.new_context().unwrap();
+                let base = runtime
+                    .into_jsvalue(context.eval(expression).unwrap())
+                    .unwrap();
+                let JsValue::Object(array) = &base else {
+                    panic!("array")
+                };
+                let array = *array;
+                let raw = runtime
+                    .0
+                    .state
+                    .borrow()
+                    .heap
+                    .object(array)
+                    .unwrap()
+                    .dense_array_value(0)
+                    .unwrap()
+                    .clone();
+                let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
+                layout.metadata.max_stack = 4;
+                let mut store = SlotStore::new(4);
+                let mut window = store
+                    .push_frame(
+                        &runtime,
+                        &layout.frame_layout(),
+                        FrameStorage {
+                            original_arguments: vec![],
+                            parameters: vec![],
+                            locals: vec![],
+                            operands: vec![JsValue::Int(99), base, JsValue::Int(0)],
+                        },
+                    )
+                    .unwrap();
+                {
+                    let mut state = runtime.0.state.borrow_mut();
+                    let mut slots = store.borrow_frame_slots(&mut window).unwrap();
+                    let hit = if keep_receiver {
+                        slots.array_kept_read_in_state(&mut state, &runtime.0.poisoned, keep_key)
+                    } else {
+                        slots.array_read_in_state(&mut state, &runtime.0.poisoned)
+                    }
+                    .unwrap();
+                    assert!(hit, "{expression}");
+                    assert_eq!(
+                        slots.peek(0).unwrap(),
+                        &JsValue::from_raw(raw.clone()).unwrap()
+                    );
+                    assert_eq!(
+                        slots.window.depth,
+                        2 + usize::from(keep_receiver) + usize::from(keep_key)
+                    );
+                    assert_eq!(
+                        slots.peek(slots.window.depth - 1).unwrap(),
+                        &JsValue::Int(99)
+                    );
+                    if keep_receiver {
+                        assert_eq!(
+                            slots.peek(1 + usize::from(keep_key)).unwrap(),
+                            &JsValue::Object(array)
+                        );
+                    }
+                    if keep_key {
+                        assert_eq!(slots.peek(1).unwrap(), &JsValue::Int(0));
+                    }
+                    if let crate::engine::heap::RawValue::Object(target) = raw {
+                        let expected = if target == array {
+                            2 + u32::from(keep_receiver)
+                        } else if keep_receiver {
+                            2
+                        } else {
+                            1
+                        };
+                        assert_eq!(state.heap.object_strong_count(target), Ok(expected));
+                    }
+                }
+                store.clear_frame(&runtime, window).unwrap();
+                runtime.run_gc().unwrap();
+                assert!(!runtime.is_poisoned());
+                assert!(!runtime.0.deferred_references.has_pending());
+            }
+        }
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn dense_heap_reads_finish_without_property_driver_handoff() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let _ = context
+            .eval("var denseReceiver=[{}];function readDenseValue(){return denseReceiver[0]}")
+            .unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval("readDenseValue() === denseReceiver[0]")
+                .unwrap(),
+            crate::engine::value::Value::Bool(true)
+        );
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("property_read_action_exit")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+    }
+
+    #[test]
+    fn dense_read_failure_preserves_inputs_before_any_owner_transfer() {
+        for capacity_failure in [false, true] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context().unwrap();
+            let base = runtime.into_jsvalue(context.eval("[{}]").unwrap()).unwrap();
+            let JsValue::Object(array) = &base else {
+                panic!("array")
+            };
+            let array = *array;
+            let crate::engine::heap::RawValue::Object(target) = runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object(array)
+                .unwrap()
+                .dense_array_value(0)
+                .unwrap()
+                .clone()
+            else {
+                panic!("object element")
+            };
+            let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
+            layout.metadata.max_stack = 2;
+            let mut store = SlotStore::new(4);
+            let mut window = store
+                .push_frame(
+                    &runtime,
+                    &layout.frame_layout(),
+                    FrameStorage {
+                        original_arguments: vec![],
+                        parameters: vec![],
+                        locals: vec![],
+                        operands: vec![base, JsValue::Int(0)],
+                    },
+                )
+                .unwrap();
+            {
+                let mut state = runtime.0.state.borrow_mut();
+                if !capacity_failure {
+                    state.heap.set_strong_count_for_test(
+                        crate::engine::heap::RawId::Object(target),
+                        u32::MAX,
+                    );
+                }
+                let mut slots = store.borrow_frame_slots(&mut window).unwrap();
+                let result = if capacity_failure {
+                    slots.array_kept_read_in_state(&mut state, &runtime.0.poisoned, true)
+                } else {
+                    slots.array_read_in_state(&mut state, &runtime.0.poisoned)
+                };
+                assert!(result.is_err());
+                assert_eq!(slots.window.depth, 2);
+                assert_eq!(slots.peek(0).unwrap(), &JsValue::Int(0));
+                assert_eq!(slots.peek(1).unwrap(), &JsValue::Object(array));
+                assert_eq!(
+                    state.heap.object_strong_count(target),
+                    Ok(if capacity_failure { 1 } else { u32::MAX })
+                );
+                state
+                    .heap
+                    .set_strong_count_for_test(crate::engine::heap::RawId::Object(target), 1);
+            }
+            store.clear_frame(&runtime, window).unwrap();
+            assert!(runtime.0.state.borrow().heap.object(target).is_err());
+            assert!(!runtime.is_poisoned());
+        }
+    }
 
     #[test]
     fn direct_replacement_releases_final_owner_and_kept_alias_survives() {

@@ -2414,13 +2414,9 @@ pub(super) fn execute_frame_in_state(
                         let keep_key = decoded.opcode == Opcode::GetArrayEl3Dense;
                         let hit = cursor.with_slots(|slots| {
                             if keep_receiver {
-                                slots.array_kept_immediate_read_in_state(
-                                    state,
-                                    &runtime.0.poisoned,
-                                    keep_key,
-                                )
+                                slots.array_kept_read_in_state(state, &runtime.0.poisoned, keep_key)
                             } else {
-                                slots.array_immediate_read_in_state(state, &runtime.0.poisoned)
+                                slots.array_read_in_state(state, &runtime.0.poisoned)
                             }
                         })?;
                         #[cfg(feature = "profiling")]

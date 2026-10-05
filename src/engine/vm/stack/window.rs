@@ -1256,7 +1256,7 @@ impl FrameSlots<'_> {
         &mut self,
         runtime: &Runtime,
     ) -> Result<bool, Error> {
-        self.array_immediate_read_in_state(&mut runtime.0.state.borrow_mut(), &runtime.0.poisoned)
+        self.array_read_in_state(&mut runtime.0.state.borrow_mut(), &runtime.0.poisoned)
     }
 
     #[cfg(test)]

@@ -294,7 +294,11 @@ impl RuntimeState {
 }
 
 impl RuntimeState {
-    pub(crate) fn try_dense_array_kept_read(&self, base: &JsValue, index: u32) -> Option<JsValue> {
+    pub(crate) fn try_dense_array_borrowed_read(
+        &self,
+        base: &JsValue,
+        index: u32,
+    ) -> Option<JsValue> {
         let JsValue::Object(object) = base else {
             return None;
         };
@@ -302,7 +306,7 @@ impl RuntimeState {
         if !matches!(data.kind, crate::engine::heap::ObjectKind::Array) {
             return None;
         }
-        super::immediate_value_jsvalue(data.dense_array_value(index)?)
+        JsValue::from_raw(data.dense_array_value(index)?.clone())
     }
 }
 
@@ -672,17 +676,14 @@ mod tests {
             ),
             Some(JsValue::Int(2))
         );
-        assert_eq!(
-            state.try_array_immediate_read(&dense, 0),
-            Some(JsValue::Int(1))
-        );
+        assert_eq!(state.try_array_value_read(&dense, 0), Some(JsValue::Int(1)));
         assert!(
             state
                 .try_exchange_dense_value(object(&dense), 0, &mut JsValue::Int(9))
                 .unwrap()
         );
         assert_eq!(
-            state.try_dense_array_kept_read(&dense, 0),
+            state.try_dense_array_borrowed_read(&dense, 0),
             Some(JsValue::Int(9))
         );
         assert!(
@@ -712,7 +713,7 @@ mod tests {
         assert!(state.try_typed_array_number_write(&typed, 0, 12.0));
         assert!(!state.try_typed_array_number_write(&typed, 99, 12.0));
         assert_eq!(
-            state.try_array_immediate_read(&typed, 0),
+            state.try_array_value_read(&typed, 0),
             Some(JsValue::Int(12))
         );
         for owner in [base, frozen, dense, frozen_dense, typed] {

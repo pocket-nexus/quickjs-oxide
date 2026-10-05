@@ -1598,11 +1598,7 @@ mod dense_array_read_tests {
         };
         // The supplied-state read borrows its receiver, including its final owner.
         assert!(matches!(
-            runtime
-                .0
-                .state
-                .borrow_mut()
-                .try_array_immediate_read(&base, 5),
+            runtime.0.state.borrow_mut().try_array_value_read(&base, 5),
             Some(JsValue::Int(5))
         ));
         let keeper = runtime.dup_jsvalue(&base).unwrap();
@@ -1620,15 +1616,11 @@ mod dense_array_read_tests {
             Some(Number::Float(value)) if value.is_nan()
         ));
         assert!(matches!(
-            runtime
-                .0
-                .state
-                .borrow_mut()
-                .try_array_immediate_read(&base, 5),
+            runtime.0.state.borrow_mut().try_array_value_read(&base, 5),
             Some(JsValue::Int(5))
         ));
         assert!(matches!(
-            runtime.0.state.borrow_mut().try_array_immediate_read(&base, 2),
+            runtime.0.state.borrow_mut().try_array_value_read(&base, 2),
             Some(JsValue::Float(value)) if value == 0.0 && value.is_sign_negative()
         ));
         assert!(
@@ -1644,7 +1636,7 @@ mod dense_array_read_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read(&base, 3)
+                .try_array_value_read(&base, 3)
                 .is_none()
         );
         assert!(
@@ -1684,11 +1676,7 @@ mod dense_array_read_tests {
             Some(Number::Int(3))
         ));
         assert!(matches!(
-            runtime
-                .0
-                .state
-                .borrow_mut()
-                .try_array_immediate_read(&base, 0),
+            runtime.0.state.borrow_mut().try_array_value_read(&base, 0),
             Some(JsValue::Int(3))
         ));
         assert!(matches!(
@@ -1696,11 +1684,7 @@ mod dense_array_read_tests {
             Some(Number::Int(4))
         ));
         assert!(matches!(
-            runtime
-                .0
-                .state
-                .borrow_mut()
-                .try_array_immediate_read(&base, 1),
+            runtime.0.state.borrow_mut().try_array_value_read(&base, 1),
             Some(JsValue::Int(4))
         ));
         assert_eq!(context.eval("readEffects").unwrap(), Value::Int(0));
@@ -1721,7 +1705,7 @@ mod dense_array_read_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read(&base, 1)
+                .try_array_value_read(&base, 1)
                 .is_none()
         );
         assert_eq!(context.eval("readArray[1]").unwrap(), Value::Int(19));
@@ -2122,7 +2106,7 @@ mod dense_array_read_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read_kind(&base, index as u32, false)
+                .try_array_value_read_kind(&base, index as u32, false)
                 .unwrap();
             assert!(
                 runtime
@@ -2132,7 +2116,7 @@ mod dense_array_read_tests {
             );
         }
         assert!(
-            matches!(runtime.0.state.borrow_mut().try_array_immediate_read_kind(&base, 6, false), Some(JsValue::Float(v)) if v.is_nan())
+            matches!(runtime.0.state.borrow_mut().try_array_value_read_kind(&base, 6, false), Some(JsValue::Float(v)) if v.is_nan())
         );
         assert_eq!(
             runtime.0.state.borrow().heap.object_strong_count(object),
@@ -2144,7 +2128,7 @@ mod dense_array_read_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read_kind(&base, 0, false),
+                .try_array_value_read_kind(&base, 0, false),
             Some(JsValue::Undefined)
         ));
         assert!(runtime.0.state.borrow().heap.object(object).is_ok());
@@ -2152,15 +2136,10 @@ mod dense_array_read_tests {
     }
 
     #[test]
-    fn array_read_leaf_declines_missing_reference_and_exotic_values() {
+    fn array_read_leaf_declines_missing_and_exotic_values() {
         for expression in [
             "[,1]",
             "Object.defineProperty([1], '0', {get(){throw 71}})",
-            "[{}]",
-            "['x']",
-            // Short BigInts are edge-free; this case must retain a heap payload.
-            "[9223372036854775808n]",
-            "[Symbol()]",
             "new Proxy([1], {get(){throw 72}})",
             "new Uint8Array([1])",
             "({0:1,length:1})",
@@ -2179,7 +2158,7 @@ mod dense_array_read_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read_kind(&base, 0, false);
+                .try_array_value_read_kind(&base, 0, false);
             let declined = result.is_none();
             if let Some(value) = result {
                 runtime.release_jsvalue(value).unwrap();
@@ -2200,7 +2179,7 @@ mod dense_array_read_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read_kind(&base, 1, false)
+                .try_array_value_read_kind(&base, 1, false)
                 .is_none()
         );
         assert!(
@@ -2208,7 +2187,7 @@ mod dense_array_read_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read_kind(&base, u32::MAX, false)
+                .try_array_value_read_kind(&base, u32::MAX, false)
                 .is_none()
         );
         runtime.release_jsvalue(keep).unwrap();
@@ -2232,11 +2211,11 @@ mod dense_array_read_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read_kind(&base, 0, false),
+                .try_array_value_read_kind(&base, 0, false),
             Some(JsValue::Int(7))
         ));
         assert!(matches!(
-            runtime.0.state.borrow_mut().try_array_immediate_read_kind(&base, 1, false),
+            runtime.0.state.borrow_mut().try_array_value_read_kind(&base, 1, false),
             Some(JsValue::Float(value)) if value == 0.0 && value.is_sign_negative()
         ));
         assert!(
@@ -2553,20 +2532,12 @@ mod ordinary_field_leaf_tests {
             .unwrap();
         let retained = runtime.dup_jsvalue(&base).unwrap();
         assert_eq!(
-            runtime
-                .0
-                .state
-                .borrow_mut()
-                .try_array_immediate_read(&base, 0),
+            runtime.0.state.borrow_mut().try_array_value_read(&base, 0),
             Some(JsValue::Int(1))
         );
         drop(context.eval("change(7)").unwrap());
         assert_eq!(
-            runtime
-                .0
-                .state
-                .borrow_mut()
-                .try_array_immediate_read(&base, 0),
+            runtime.0.state.borrow_mut().try_array_value_read(&base, 0),
             Some(JsValue::Int(7))
         );
         drop(
@@ -2575,11 +2546,7 @@ mod ordinary_field_leaf_tests {
                 .unwrap(),
         );
         assert_eq!(
-            runtime
-                .0
-                .state
-                .borrow_mut()
-                .try_array_immediate_read(&base, 0),
+            runtime.0.state.borrow_mut().try_array_value_read(&base, 0),
             Some(JsValue::Int(8))
         );
         drop(
@@ -2592,7 +2559,7 @@ mod ordinary_field_leaf_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read(&base, 0)
+                .try_array_value_read(&base, 0)
                 .is_none()
         );
         assert_eq!(context.eval("args[0]").unwrap(), Value::Int(11));
@@ -2602,7 +2569,7 @@ mod ordinary_field_leaf_tests {
                 .0
                 .state
                 .borrow_mut()
-                .try_array_immediate_read(&base, 0)
+                .try_array_value_read(&base, 0)
                 .is_none()
         );
         runtime.release_jsvalue(retained).unwrap();
@@ -2814,7 +2781,7 @@ impl RuntimeState {
             .try_replace_dense_number_value(*id, index, replacement)
     }
 
-    fn try_array_immediate_read_kind(
+    fn try_array_value_read_kind(
         &mut self,
         base: &JsValue,
         index: u32,
@@ -2827,7 +2794,7 @@ impl RuntimeState {
         if matches!(data.kind, ObjectKind::Array) {
             match &data.payload {
                 ObjectPayload::Array { dense: Some(dense) } => {
-                    return immediate_value_jsvalue(dense.get(index as usize)?);
+                    return JsValue::from_raw(dense.get(index as usize)?.clone());
                 }
                 ObjectPayload::Array { dense: None } => {
                     return match materialized_array_own_number(self, data, index)? {
@@ -2858,11 +2825,9 @@ impl RuntimeState {
         Some(value)
     }
 
-    pub(crate) fn try_array_immediate_read(
-        &mut self,
-        base: &JsValue,
-        index: u32,
-    ) -> Option<JsValue> {
-        self.try_array_immediate_read_kind(base, index, true)
+    /// A snapshot borrowed from the live receiver's dense storage. This does
+    /// not retain an edge: the frame consumer copies it while holding State.
+    pub(crate) fn try_array_value_read(&mut self, base: &JsValue, index: u32) -> Option<JsValue> {
+        self.try_array_value_read_kind(base, index, true)
     }
 }
