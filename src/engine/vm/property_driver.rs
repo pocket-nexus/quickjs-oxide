@@ -110,18 +110,18 @@ impl OwnedGetterSelection {
         receiver: &JsValue,
         getter: crate::engine::heap::ObjectId,
     ) -> Result<Self, Error> {
-        let getter = state
-            .dup_jsvalue(&JsValue::Object(getter))
-            .map_err(runtime_error_to_vm_error)?;
-        let mut guard = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
-            state, poisoned, getter,
-        );
-        let (state, getter) = guard.parts();
-        let receiver = state
-            .dup_jsvalue(receiver)
-            .map_err(runtime_error_to_vm_error)?;
+        let effect = crate::engine::object::StateReadEffect::prepare(
+            state,
+            poisoned,
+            crate::engine::object::ReadBoundary::Getter(getter),
+            receiver,
+        )
+        .map_err(runtime_error_to_vm_error)?;
+        let crate::engine::object::StateReadEffect::Getter { callee, receiver } = effect else {
+            unreachable!("getter selection produces a getter effect")
+        };
         Ok(Self {
-            getter: getter.take().expect("guard owns selected getter"),
+            getter: JsValue::Object(callee),
             receiver,
         })
     }

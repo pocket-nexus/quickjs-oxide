@@ -482,6 +482,11 @@ pub(super) enum Step {
         key: Option<PropertyKey>,
         resume: Option<Resume>,
     },
+    StateRead {
+        effect: Option<crate::engine::object::StateReadEffect>,
+        atom: Option<crate::engine::atom::Atom>,
+        resume: Option<Resume>,
+    },
     PreparedRead {
         read: Option<OrdinaryRead>,
         key: Option<PropertyKey>,
@@ -1101,6 +1106,27 @@ impl Step {
             } => {
                 if let Some(value) = resume {
                     value.release_owned(runtime);
+                }
+            }
+            Self::StateRead {
+                effect,
+                atom,
+                resume,
+            } => {
+                if !runtime.skip_cleanup() {
+                    let mut state = runtime.0.state.borrow_mut();
+                    if let Some(effect) = effect {
+                        let _ = effect.release_in_state(&mut state, &runtime.0.poisoned);
+                    }
+                    if !runtime.0.poisoned.get()
+                        && let Some(atom) = atom
+                        && state.release_atoms([atom]).is_err()
+                    {
+                        runtime.0.poisoned.set(true);
+                    }
+                }
+                if let Some(resume) = resume {
+                    resume.release_owned(runtime);
                 }
             }
             Self::PreparedRead {
