@@ -5,7 +5,7 @@ use super::{
 };
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
-use crate::engine::object::{ObjectRef, PropertyKey};
+use crate::engine::object::ObjectRef;
 use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
@@ -14,8 +14,8 @@ pub(crate) enum ProxyPrototypeKind {
     Set(Option<ObjectRef>),
 }
 pub(crate) enum ProxyPrototypeStep {
+    StateRead { resume: ProxyPrototypeResume },
     Complete(Completion),
-    Read { resume: ProxyPrototypeResume },
     Call { resume: ProxyPrototypeResume },
     Get { resume: ProxyPrototypeResume },
     Set { resume: ProxyPrototypeResume },
@@ -98,21 +98,13 @@ fn method(
 ) -> Result<ProxyPrototypeStep, RuntimeError> {
     Ok(match step {
         MethodStep::Throw(value) => ProxyPrototypeStep::Complete(Completion::Throw(value.take())),
-        MethodStep::Read { mut resume } => {
-            let object = resume.take_read_object();
-            let key = resume.take_read_key();
-            let receiver = resume.take_read_receiver();
-            ProxyPrototypeStep::request_read(
-                object,
-                key,
-                receiver,
-                ProxyPrototypeResume(Box::new(ProxyPrototypeResumeState {
-                    pending_effect: ProxyPrototypeStepPending::new(runtime.clone()),
-                    realm,
-                    phase: Phase::Method { resume, kind },
-                })),
-            )
-        }
+        MethodStep::Read { resume } => ProxyPrototypeStep::StateRead {
+            resume: ProxyPrototypeResume(Box::new(ProxyPrototypeResumeState {
+                pending_effect: ProxyPrototypeStepPending::new(runtime.clone()),
+                realm,
+                phase: Phase::Method { resume, kind },
+            })),
+        },
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
             let target = resume.take_completed_target();
@@ -195,6 +187,17 @@ fn inconsistent(runtime: &Runtime, realm: ContextId) -> Result<ProxyPrototypeSte
     ))
 }
 impl ProxyPrototypeResume {
+    pub(crate) fn take_state_read(
+        &mut self,
+    ) -> (
+        crate::engine::object::StateReadEffect,
+        crate::engine::atom::Atom,
+    ) {
+        let Phase::Method { resume, .. } = &mut self.0.phase else {
+            unreachable!("selected method read phase")
+        };
+        resume.take_state_read()
+    }
     pub(crate) fn resume(
         self,
         runtime: &Runtime,
@@ -341,15 +344,14 @@ pub(super) fn finish(
     loop {
         step = match step {
             ProxyPrototypeStep::Complete(result) => return Ok(result),
-            ProxyPrototypeStep::Read { mut resume } => {
-                let object = resume.take_read_object();
-                let key = resume.take_read_key();
-                let receiver = resume.take_read_receiver();
+            ProxyPrototypeStep::StateRead { mut resume } => {
+                let (effect, atom) = resume.take_state_read();
                 resume.resume(
                     runtime,
-                    runtime.internal_get_jsvalue(realm, &object, &key, receiver)?,
+                    runtime.finish_selected_method_read(realm, effect, atom)?,
                 )?
             }
+
             ProxyPrototypeStep::Call { mut resume } => {
                 let target = resume.take_call_target();
                 let receiver = resume.take_call_receiver();
@@ -388,9 +390,6 @@ pub(super) fn finish(
 
 struct ProxyPrototypeStepPending {
     runtime: Runtime,
-    read_object: Option<ObjectRef>,
-    read_key: Option<PropertyKey>,
-    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
     call_receiver: Option<JsValue>,
     call_arguments: Option<Vec<JsValue>>,
@@ -403,9 +402,6 @@ impl ProxyPrototypeStepPending {
     fn new(runtime: Runtime) -> Self {
         Self {
             runtime,
-            read_object: None,
-            read_key: None,
-            read_receiver: None,
             call_target: None,
             call_receiver: None,
             call_arguments: None,
@@ -421,9 +417,6 @@ impl Drop for ProxyPrototypeStepPending {
     /// Consumption goes through `Option::take`; releases are defer-safe and
     /// nothrow, and never run JavaScript.
     fn drop(&mut self) {
-        if let Some(value) = self.read_receiver.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
         if let Some(value) = self.call_receiver.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -435,17 +428,6 @@ impl Drop for ProxyPrototypeStepPending {
     }
 }
 impl ProxyPrototypeStep {
-    pub(crate) fn request_read(
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: JsValue,
-        mut resume: ProxyPrototypeResume,
-    ) -> Self {
-        resume.0.pending_effect.read_object = Some(object);
-        resume.0.pending_effect.read_key = Some(key);
-        resume.0.pending_effect.read_receiver = Some(receiver);
-        Self::Read { resume }
-    }
     pub(crate) fn request_call(
         target: DirectCallTarget,
         receiver: JsValue,
@@ -476,27 +458,6 @@ impl ProxyPrototypeStep {
     }
 }
 impl ProxyPrototypeResume {
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .read_object
-            .take()
-            .expect("ProxyPrototypeStep Read object")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .read_key
-            .take()
-            .expect("ProxyPrototypeStep Read key")
-    }
-    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .read_receiver
-            .take()
-            .expect("ProxyPrototypeStep Read receiver")
-    }
     pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
         self.0
             .pending_effect
@@ -556,7 +517,7 @@ const _: () = assert!(std::mem::size_of::<ProxyPrototypeStep>() <= 64);
 mod tests {
     use super::*;
     fn take_read(step: ProxyPrototypeStep) -> ProxyPrototypeResume {
-        let ProxyPrototypeStep::Read { resume, .. } = step else {
+        let ProxyPrototypeStep::StateRead { resume, .. } = step else {
             panic!("expected read")
         };
         resume
@@ -586,7 +547,7 @@ mod tests {
                 let runtime = Runtime::new();
                 let weak = std::rc::Rc::downgrade(&runtime.0);
                 let mut context = runtime.new_context().expect("create context");
-                let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
+                let Value::Object(proxy) = context.eval("new Proxy({}, {get getPrototypeOf(){return undefined},get setPrototypeOf(){return undefined}})").unwrap() else {
                     panic!("expected Proxy")
                 };
                 let rooted = runtime.proxy_snapshot_if_any(&proxy).unwrap().unwrap();

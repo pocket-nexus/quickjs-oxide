@@ -51,6 +51,10 @@ pub(crate) use call::ProxyCallStep;
 pub(crate) use construct::{ProxyConstructResume, ProxyConstructStep};
 mod get;
 mod method;
+#[allow(unused_imports)] // Raw Proxy consumers are integrated in separate B2 commits.
+pub(crate) use method::{
+    StateMethodResume, StateMethodSelection, StateMethodStep, StateMethodTarget, StateRootedProxy,
+};
 mod own_keys;
 mod own_property;
 
@@ -839,6 +843,10 @@ impl Runtime {
         loop {
             step = match step {
                 ProxyGetStep::Complete(completion) => return Ok(completion),
+                ProxyGetStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    resume.resume(self, self.finish_selected_method_read(realm, effect, atom)?)?
+                }
                 ProxyGetStep::Read { mut resume } => {
                     let object = resume.take_read_object();
                     let key = resume.take_read_key();
@@ -1052,15 +1060,11 @@ impl Runtime {
         loop {
             step = match step {
                 ProxySetStep::Complete(result) => return Ok(result),
-                ProxySetStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    resume.resume(
-                        self,
-                        self.internal_get_jsvalue(realm, &object, &key, receiver)?,
-                    )?
+                ProxySetStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    resume.resume(self, self.finish_selected_method_read(realm, effect, atom)?)?
                 }
+
                 ProxySetStep::Call { mut resume } => {
                     let target = resume.take_call_target();
                     let receiver = resume.take_call_receiver();
@@ -1109,15 +1113,11 @@ impl Runtime {
         loop {
             step = match step {
                 ProxyOwnStep::Complete(result) => return Ok(result),
-                ProxyOwnStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    resume.resume(
-                        self,
-                        self.internal_get_jsvalue(realm, &object, &key, receiver)?,
-                    )?
+                ProxyOwnStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    resume.resume(self, self.finish_selected_method_read(realm, effect, atom)?)?
                 }
+
                 ProxyOwnStep::Call { mut resume } => {
                     let target = resume.take_call_target();
                     let receiver = resume.take_call_receiver();
@@ -1204,15 +1204,11 @@ impl Runtime {
         loop {
             step = match step {
                 ProxyDefineStep::Complete(result) => return Ok(result),
-                ProxyDefineStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    resume.resume(
-                        self,
-                        self.internal_get_jsvalue(realm, &object, &key, receiver)?,
-                    )?
+                ProxyDefineStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    resume.resume(self, self.finish_selected_method_read(realm, effect, atom)?)?
                 }
+
                 ProxyDefineStep::Call { mut resume } => {
                     let target = resume.take_call_target();
                     let receiver = resume.take_call_receiver();

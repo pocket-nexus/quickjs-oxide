@@ -11,6 +11,7 @@ use crate::engine::value::{JsValue, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyGetStep {
+    StateRead { resume: ProxyGetResume },
     Complete(Completion),
     Read { resume: ProxyGetResume },
     Call { resume: ProxyGetResume },
@@ -159,29 +160,32 @@ fn method(
                 }
             }
         }
-        MethodStep::Read { mut resume } => {
-            let object = resume.take_read_object();
-            let method_key = resume.take_read_key();
-            let method_receiver = resume.take_read_receiver();
-            ProxyGetStep::request_read(
-                object,
-                method_key,
-                method_receiver,
-                ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
-                    pending_effect: ProxyGetStepPending::new(runtime.clone()),
-                    realm,
-                    phase: Phase::Method {
-                        resume,
-                        key,
-                        inputs,
-                    },
-                })),
-            )
-        }
+        MethodStep::Read { resume } => ProxyGetStep::StateRead {
+            resume: ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
+                pending_effect: ProxyGetStepPending::new(runtime.clone()),
+                realm,
+                phase: Phase::Method {
+                    resume,
+                    key,
+                    inputs,
+                },
+            })),
+        },
     })
 }
 
 impl ProxyGetResume {
+    pub(crate) fn take_state_read(
+        &mut self,
+    ) -> (
+        crate::engine::object::StateReadEffect,
+        crate::engine::atom::Atom,
+    ) {
+        let Phase::Method { resume, .. } = &mut self.0.phase else {
+            unreachable!("selected method read phase")
+        };
+        resume.take_state_read()
+    }
     pub(crate) fn resume(
         self,
         runtime: &Runtime,
@@ -487,7 +491,7 @@ mod tests {
             JsValue::Undefined,
         )
         .unwrap();
-        assert_eq!(runtime.0.proxy_method_depth.get(), 1);
+        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(target_id).is_ok());
         assert!(runtime.0.state.borrow().heap.object(handler_id).is_ok());
@@ -504,18 +508,14 @@ mod tests {
     #[test]
     fn mismatched_proxy_reply_rejects_and_releases_the_method_guard() {
         let runtime = Runtime::new();
-        let context = runtime.new_context().expect("create context");
-        let NativeConversion::Value(proxy) = runtime
-            .new_proxy(
-                context.realm,
-                Value::Object(runtime.new_object(None).unwrap()),
-                Value::Object(runtime.new_object(None).unwrap()),
-            )
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(proxy) = context
+            .eval("new Proxy({}, {get get(){return undefined}})")
             .unwrap()
         else {
             panic!("proxy allocation failed");
         };
-        let ProxyGetStep::Read { resume, .. } = ProxyGetStep::start(
+        let ProxyGetStep::StateRead { resume, .. } = ProxyGetStep::start(
             &runtime,
             context.realm,
             proxy,
