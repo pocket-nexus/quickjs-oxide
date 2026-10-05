@@ -232,6 +232,8 @@ impl Query {
     }
 }
 impl Query {
+    #[cold]
+    #[inline(never)]
     fn release_owned(&mut self, runtime: &Runtime) {
         if runtime.skip_cleanup() {
             return;

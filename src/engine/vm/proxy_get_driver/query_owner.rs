@@ -53,9 +53,14 @@ impl<'a> QueryScope<'a> {
         self.runtime
     }
 
-    pub(super) fn recycle(self, storage: &mut QueryStorage) {
-        let runtime = self.runtime;
-        self.take().recycle(runtime, storage);
+    pub(super) fn recycle(mut self, storage: &mut QueryStorage) {
+        // Completed queries remain in their resident scope. Moving the whole
+        // record just to drain three empty buffers needlessly spills its finish
+        // and callback state; only publication needs an ownership transfer.
+        self.query
+            .as_mut()
+            .expect("query owner")
+            .recycle(self.runtime, storage);
     }
 }
 
