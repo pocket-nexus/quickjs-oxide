@@ -7,7 +7,7 @@ use crate::engine::vm::Completion;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 
-mod shared_read;
+pub(in crate::engine::vm) mod shared_read;
 
 pub(super) enum Boundary {
     Exit(VmAction),

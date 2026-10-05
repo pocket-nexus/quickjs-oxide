@@ -17,7 +17,7 @@ use crate::engine::{
     vm::property_driver::{OwnedGetterSelection, SelectedNamedRead},
 };
 
-pub(super) enum Progress {
+pub(in crate::engine::vm) enum Progress {
     Completed,
     Boundary,
     Throw,
@@ -27,7 +27,7 @@ pub(super) enum Progress {
 // lookup/effect-selection body and its call edge out of the hot loop layout.
 #[cold]
 #[inline(never)]
-pub(super) fn execute(
+pub(in crate::engine::vm) fn execute(
     runtime: &Runtime,
     state: &mut RuntimeState,
     segment: &mut FrameExecution<'_>,
