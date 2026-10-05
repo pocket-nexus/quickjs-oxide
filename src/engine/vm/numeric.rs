@@ -211,6 +211,33 @@ pub(in crate::engine::vm) fn allocate_bigint_jsvalue(
 /// Representation-only `ToNumber` for internal values. Object conversion must
 /// be routed through a context; Symbol and BigInt conversion throw here.
 pub(crate) fn to_number_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<f64, Error> {
+    primitive_number(value, |id| {
+        let state = runtime.0.state.borrow();
+        state
+            .heap
+            .string(id)
+            .map(crate::engine::value::string_to_number)
+            .map_err(|error| Error::internal(error.to_string()))
+    })
+}
+
+pub(crate) fn to_number_jsvalue_in_state(
+    state: &crate::engine::heap::runtime::RuntimeState,
+    value: &JsValue,
+) -> Result<f64, Error> {
+    primitive_number(value, |id| {
+        state
+            .heap
+            .string(id)
+            .map(crate::engine::value::string_to_number)
+            .map_err(|error| Error::internal(error.to_string()))
+    })
+}
+
+fn primitive_number(
+    value: &JsValue,
+    string_number: impl FnOnce(StringId) -> Result<f64, Error>,
+) -> Result<f64, Error> {
     Ok(match value {
         JsValue::Undefined => f64::NAN,
         JsValue::Null => 0.0,
@@ -223,9 +250,7 @@ pub(crate) fn to_number_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<f6
         }
         JsValue::Int(value) => f64::from(*value),
         JsValue::Float(value) => *value,
-        JsValue::String(id) => {
-            crate::engine::value::string_to_number(&string_payload(runtime, *id)?)
-        }
+        JsValue::String(id) => string_number(*id)?,
         JsValue::BigInt(_) | JsValue::ShortBigInt(_) => {
             return Err(Error::new(
                 ErrorKind::Type,

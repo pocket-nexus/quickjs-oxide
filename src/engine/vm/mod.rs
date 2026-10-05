@@ -72,7 +72,7 @@ pub(crate) use completion::{
 };
 
 mod numeric;
-pub(crate) use numeric::{to_js_string_jsvalue, to_number_jsvalue};
+pub(crate) use numeric::{to_js_string_jsvalue, to_number_jsvalue, to_number_jsvalue_in_state};
 
 mod activation;
 pub use activation::VmUnwindRegion;

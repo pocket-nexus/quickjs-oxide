@@ -1,6 +1,6 @@
 //! Runtime property lookup, definition, and object-layout operations.
 
-use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
+use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx};
@@ -586,24 +586,12 @@ impl Runtime {
         key: &PropertyKey,
         new_length: u32,
     ) -> Result<PropertySetAction, RuntimeError> {
-        let (_, writable) = self.array_length_state(object)?;
-        if !writable {
-            return Ok(PropertySetAction::Rejected(
-                PropertySetRejection::ArrayLengthReadOnly,
-            ));
-        }
-        let descriptor = OrdinaryPropertyDescriptor {
-            value: DescriptorField::Present(Self::array_length_value(new_length)),
-            ..OrdinaryPropertyDescriptor::new()
-        };
-        Ok(
-            match self.apply_array_length_descriptor(object, key, &descriptor, new_length)? {
-                PropertyDefineOutcome::Defined(true) => PropertySetAction::Complete,
-                PropertyDefineOutcome::Defined(false) => {
-                    PropertySetAction::Rejected(PropertySetRejection::NotConfigurable)
-                }
-                PropertyDefineOutcome::Throw(value) => PropertySetAction::Throw(value),
-            },
+        self.validate_object_and_key(object, key)?;
+        self.0.state.borrow_mut().apply_set_array_length_in_state(
+            &self.0.poisoned,
+            object.object_id(),
+            key.atom(),
+            new_length,
         )
     }
 
@@ -1495,7 +1483,13 @@ impl Runtime {
                 crate::engine::object::ArrayLengthStep::Complete(result) => return Ok(result),
                 crate::engine::object::ArrayLengthStep::Number { value, resume } => {
                     let result = if let Some(realm) = realm {
-                        self.native_to_number_jsvalue(realm, value)?
+                        match self.native_to_number_jsvalue(realm, value) {
+                            Ok(result) => result,
+                            Err(error) => {
+                                resume.release_owned(self);
+                                return Err(error);
+                            }
+                        }
                     } else {
                         let result = if matches!(value, JsValue::Object(_)) {
                             Err(Error::internal(
@@ -1504,8 +1498,17 @@ impl Runtime {
                         } else {
                             crate::engine::vm::to_number_jsvalue(self, &value)
                         };
-                        self.release_jsvalue(value)?;
-                        NativeConversion::Value(result.map_err(RuntimeError::Engine)?)
+                        if let Err(error) = self.release_jsvalue(value) {
+                            resume.release_owned(self);
+                            return Err(error);
+                        }
+                        match result {
+                            Ok(number) => NativeConversion::Value(number),
+                            Err(error) => {
+                                resume.release_owned(self);
+                                return Err(RuntimeError::Engine(error));
+                            }
+                        }
                     };
                     resume.number(self, result)?
                 }
@@ -1519,32 +1522,20 @@ impl Runtime {
         value: f64,
         expected_uint32: Option<u32>,
     ) -> Result<ArrayLengthConversion, RuntimeError> {
-        if value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0 {
-            let length = value as u32;
-            if expected_uint32.is_none_or(|expected| expected == length) {
-                return Ok(ArrayLengthConversion::Length(length));
-            }
-        }
-        self.invalid_array_length(realm)
+        self.0
+            .state
+            .borrow_mut()
+            .validate_array_length_number_in_state(&self.0.poisoned, realm, value, expected_uint32)
     }
 
     pub(crate) fn invalid_array_length(
         &self,
         realm: Option<ContextId>,
     ) -> Result<ArrayLengthConversion, RuntimeError> {
-        if let Some(realm) = realm {
-            return Ok(ArrayLengthConversion::Throw(
-                self.new_native_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Range,
-                    "invalid array length",
-                )?,
-            ));
-        }
-        Err(RuntimeError::Engine(Error::new(
-            ErrorKind::Range,
-            "invalid array length",
-        )))
+        self.0
+            .state
+            .borrow_mut()
+            .invalid_array_length_in_state(&self.0.poisoned, realm)
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

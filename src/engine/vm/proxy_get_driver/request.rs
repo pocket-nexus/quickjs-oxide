@@ -1425,6 +1425,7 @@ impl Resume {
             Self::Primitive(resume) => resume.release_owned(runtime),
             Self::Number(resume) => resume.release_owned(runtime),
             Self::Element(resume) => resume.release_owned(runtime),
+            Self::LengthNumber(resume) => resume.release_owned(runtime),
             Self::DefineTyped { payload } => payload.resume.release_owned(runtime),
             Self::DefineLength { payload } => payload.resume.release_owned(runtime),
             _ => {}

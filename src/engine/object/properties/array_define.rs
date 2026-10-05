@@ -27,6 +27,40 @@ impl Drop for IndexAtomsGuard<'_> {
 }
 
 impl RuntimeState {
+    pub(crate) fn apply_set_array_length_in_state(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        atom: Atom,
+        new_length: u32,
+    ) -> Result<PropertySetAction, RuntimeError> {
+        let (_, writable) = Runtime::array_length_state_in_heap(&self.heap, object, atom)?.ok_or(
+            RuntimeError::Invariant("Array length state requested for a non-Array object"),
+        )?;
+        if !writable {
+            return Ok(PropertySetAction::Rejected(
+                PropertySetRejection::ArrayLengthReadOnly,
+            ));
+        }
+        let raw = if let Ok(length) = i32::try_from(new_length) {
+            RawValue::Int(length)
+        } else {
+            RawValue::Float(f64::from(new_length))
+        };
+        let descriptor = PropertyDescriptor {
+            value: Some(raw),
+            ..PropertyDescriptor::new()
+        };
+        self.apply_array_length_descriptor_in_state(poisoned, object, atom, &descriptor, new_length)
+            .map(|defined| {
+                if defined {
+                    PropertySetAction::Complete
+                } else {
+                    PropertySetAction::Rejected(PropertySetRejection::NotConfigurable)
+                }
+            })
+    }
+
     pub(super) fn materialize_dense_array_in_state(
         &mut self,
         poisoned: &Cell<bool>,
