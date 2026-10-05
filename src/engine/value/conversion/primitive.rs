@@ -107,6 +107,20 @@ impl PrimitiveResumeState {
     }
 }
 impl MachineGuard<'_> {
+    /// A result cannot leave the machine before its remaining owners finish
+    /// cleanup. A destructive cleanup failure quarantines even a normal reply.
+    fn finish(
+        self,
+        result: Result<PrimitiveStep, RuntimeError>,
+    ) -> Result<PrimitiveStep, RuntimeError> {
+        let poisoned = self.poisoned;
+        drop(self);
+        if poisoned.get() {
+            Err(RuntimeError::Poisoned)
+        } else {
+            result
+        }
+    }
     fn publish(&mut self, call: bool) -> PrimitiveStep {
         let machine = self.machine.take().expect("owned primitive machine");
         let state = match machine {
@@ -336,7 +350,8 @@ impl PrimitiveResume {
                 arguments: Vec::new(),
             })),
         };
-        guard.read(atom)
+        let result = guard.read(atom);
+        guard.finish(result)
     }
     pub(crate) fn ordinary(
         runtime: &Runtime,
@@ -362,7 +377,8 @@ impl PrimitiveResume {
                 arguments: Vec::new(),
             })),
         };
-        guard.read_method(false)
+        let result = guard.read_method(false);
+        guard.finish(result)
     }
     pub(crate) fn resume(
         self,
@@ -375,7 +391,8 @@ impl PrimitiveResume {
             poisoned: &runtime.0.poisoned,
             machine: Some(Machine::Pending(self.0)),
         };
-        guard.reply(completion)
+        let result = guard.reply(completion);
+        guard.finish(result)
     }
 }
 
@@ -592,6 +609,32 @@ mod state_phase_tests {
         drop(PrimitiveScope::new(&runtime, resume));
         assert!(runtime.0.state.borrow().heap.object(object).is_err());
         assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn successful_reply_is_rejected_if_final_machine_cleanup_poisons() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let value = context.eval("({valueOf(){return 7}})").unwrap();
+        let PrimitiveStep::Call { mut resume } = PrimitiveResume::start(
+            &runtime,
+            context.realm,
+            runtime.unroot_value(&value).unwrap(),
+            ToPrimitiveHint::Number,
+        )
+        .unwrap() else {
+            panic!("method")
+        };
+        let invalid = runtime.new_object(None).unwrap().into_handle();
+        runtime.release_jsvalue(JsValue::Object(invalid)).unwrap();
+        let previous = std::mem::replace(&mut resume.0.object, invalid);
+        runtime.release_jsvalue(JsValue::Object(previous)).unwrap();
+        assert!(matches!(
+            resume.resume(&runtime, Completion::Return(JsValue::Int(7))),
+            Err(RuntimeError::Poisoned)
+        ));
+        assert!(runtime.0.poisoned.get());
+        drop(value); // Poisoned root cleanup cannot retry the failed release.
     }
 
     #[test]

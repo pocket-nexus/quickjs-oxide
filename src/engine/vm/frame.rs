@@ -788,6 +788,7 @@ impl FrameCold {
             rare.property_wait.is_some()
                 || rare.iterator_wait.is_some()
                 || rare.conversion.is_some()
+                || rare.computed_read.is_some()
                 || !rare.regions.is_empty()
                 || rare.resume_throw.is_some()
         }) {
