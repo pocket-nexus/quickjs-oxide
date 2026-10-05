@@ -876,6 +876,7 @@ impl Heap {
     /// New edges are retained before the old payload is detached.  Releasing
     /// the old payload can reclaim an unrooted receiver, so callers must treat
     /// `id` as potentially stale after this operation unless they hold a root.
+    #[cfg(test)]
     pub fn replace_object_slot(
         &mut self,
         id: ObjectId,

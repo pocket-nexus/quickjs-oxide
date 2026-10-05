@@ -545,6 +545,7 @@ impl Runtime {
     /// Allocate a native callable after its defining realm has been
     /// published. `%Function.prototype%` cannot use this path because it is
     /// itself one of the roots needed to publish the realm.
+    #[cfg(test)]
     pub(crate) fn new_bound_native_function(
         &self,
         prototype: &ObjectRef,
@@ -556,28 +557,13 @@ impl Runtime {
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("prototype"));
         }
-        let mut state = self.0.state.borrow_mut();
-        state.heap.context(realm)?;
-        let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
-        let object = match state
-            .heap
-            .allocate_object(ObjectData::bound_native_function(
-                shape,
-                Vec::new(),
-                target,
-                realm,
-                min_readable_args,
-            )) {
-            Ok(object) => object,
-            Err(error) => {
-                let cleanup = state.heap.release_shape(shape)?;
-                state.apply_cleanup(cleanup)?;
-                return Err(error.into());
-            }
-        };
-        let cleanup = state.heap.release_shape(shape)?;
-        state.apply_cleanup(cleanup)?;
-        drop(state);
+        let object = self.0.state.borrow_mut().new_bound_native_function(
+            &self.0.poisoned,
+            prototype.object_id(),
+            realm,
+            target,
+            min_readable_args,
+        )?;
         Ok(CallableRef::from_validated_object(
             ObjectRef::from_owned_handle(self.clone(), object),
         ))
@@ -681,23 +667,22 @@ impl Runtime {
         name: &str,
         length: i32,
     ) -> Result<CallableRef, RuntimeError> {
-        let callable =
-            self.new_bound_native_function(prototype, realm, target, min_readable_args)?;
-        self.define_function_data_property(
-            callable.as_object(),
-            "length",
-            Value::Int(length),
-            false,
-            true,
+        let _operation = self.operation()?;
+        if !prototype.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("prototype"));
+        }
+        let object = self.0.state.borrow_mut().new_native_builtin(
+            &self.0.poisoned,
+            prototype.object_id(),
+            realm,
+            target,
+            min_readable_args,
+            name,
+            length,
         )?;
-        self.define_function_data_property(
-            callable.as_object(),
-            "name",
-            Value::String(JsString::try_from_utf8(name)?),
-            false,
-            true,
-        )?;
-        Ok(callable)
+        Ok(CallableRef::from_validated_object(
+            ObjectRef::from_owned_handle(self.clone(), object),
+        ))
     }
 
     /// Return whether `object` carries the genuine Array exotic class tag.
@@ -1306,3 +1291,57 @@ impl RuntimeState {
 
 #[cfg(test)]
 mod array_state_tests;
+
+impl RuntimeState {
+    pub(crate) fn new_bound_native_function(
+        &mut self,
+        poisoned: &Cell<bool>,
+        prototype: ObjectId,
+        realm: ContextId,
+        target: NativeFunctionId,
+        min_readable_args: u8,
+    ) -> Result<ObjectId, RuntimeError> {
+        self.heap.context(realm)?;
+        self.allocate_object_with_layout(
+            poisoned,
+            Some(prototype),
+            &[],
+            Vec::new(),
+            |shape, slots| {
+                ObjectData::bound_native_function(shape, slots, target, realm, min_readable_args)
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_native_builtin(
+        &mut self,
+        poisoned: &Cell<bool>,
+        prototype: ObjectId,
+        realm: ContextId,
+        target: NativeFunctionId,
+        min_readable_args: u8,
+        name: &str,
+        length: i32,
+    ) -> Result<ObjectId, RuntimeError> {
+        let object =
+            self.new_bound_native_function(poisoned, prototype, realm, target, min_readable_args)?;
+        let mut result_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(object));
+        let (state, result_owner) = result_owner.parts();
+        state.define_fresh_function_integer_property(
+            poisoned, object, "length", length, false, true,
+        )?;
+        state.define_fresh_function_string_property(
+            poisoned,
+            object,
+            "name",
+            JsString::try_from_utf8(name)?,
+            false,
+            true,
+        )?;
+        let JsValue::Object(object) = result_owner.take().expect("native function result") else {
+            unreachable!("native function factory allocated an object")
+        };
+        Ok(object)
+    }
+}

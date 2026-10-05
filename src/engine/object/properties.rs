@@ -7,11 +7,11 @@ use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::builtins::CanonicalNumericIndex;
 use crate::engine::code::function::metadata::ClosureVariableKind;
 use crate::engine::heap::roots::VarRefRoot;
-use crate::engine::heap::runtime::RuntimeState;
+use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
 
 use crate::engine::heap::{
-    AutoInitProperty, ContextId, HeapError, ObjectId, ObjectPayload, PrimitiveObjectData,
-    PropertySlot, RawValue,
+    AutoInitProperty, ContextId, HeapError, ObjectData, ObjectId, ObjectPayload,
+    PrimitiveObjectData, PropertySlot, RawValue,
 };
 use crate::engine::object::access::raw_string_property_one_level;
 #[cfg(test)]
@@ -34,9 +34,19 @@ use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
 use std::cell::Cell;
 
+// Callback results precede public-value conversion. String conversion may
+// fail without terminalizing the lazy slot; Object already owns its result.
+enum AutoInitValue {
+    String(JsString),
+    Object(ObjectId),
+}
+
 /// Empty layouts stay canonical. After the first property, exclusively owned
 /// layouts append in place; shared layouts converge through weak transitions.
 pub(crate) const MIN_UNIQUE_SHAPE_APPEND_ENTRIES: usize = 1;
+
+#[cfg(test)]
+mod autoinit_state_tests;
 
 impl RuntimeState {
     #[cfg(test)]
@@ -499,126 +509,29 @@ impl Runtime {
         key: &PropertyKey,
     ) -> Result<(), RuntimeError> {
         self.validate_object_and_key(object, key)?;
-        let object_id = object.object_id();
-        let (slot_index, initializer) = {
-            let state = self.0.state.borrow();
-            let object = state.heap.object(object_id)?;
-            let shape = state.heap.shape(object.shape)?;
-            let slot_index = usize::try_from(
-                shape
-                    .find(AtomIdx::from_raw(key.atom().raw()))
-                    .ok_or(RuntimeError::Invariant("autoinit property disappeared"))?,
-            )
-            .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
-            let initializer = match object.slots.get(slot_index) {
-                Some(PropertySlot::AutoInit(initializer)) => **initializer,
-                Some(
-                    PropertySlot::Data(_) | PropertySlot::VarRef(_) | PropertySlot::Accessor { .. },
-                ) => return Ok(()),
-                None => {
-                    return Err(RuntimeError::Invariant(
-                        "autoinit property slot was missing",
-                    ));
-                }
-            };
-            (slot_index, initializer)
+        let initializer = self
+            .0
+            .state
+            .borrow()
+            .auto_init_property_for_materialization(object.object_id(), key.atom())?;
+        let Some((_, initializer)) = initializer else {
+            return Ok(());
         };
-
-        let initialized = (|| -> Result<Value, RuntimeError> {
-            Ok(match initializer {
-                AutoInitProperty::FunctionPrototype { realm } => {
-                    let object_prototype =
-                        self.0.state.borrow().heap.context(realm)?.object_prototype;
-                    let object_prototype =
-                        ObjectRef::from_borrowed_handle(self.clone(), object_prototype)?;
-                    let prototype = self.new_object(Some(&object_prototype))?;
-                    self.define_function_data_property(
-                        &prototype,
-                        "constructor",
-                        Value::Object(object.try_clone()?),
-                        true,
-                        true,
-                    )?;
-                    Value::Object(prototype)
-                }
-                AutoInitProperty::NativeBuiltin {
-                    realm,
-                    target,
-                    name,
-                    length,
-                    min_readable_args,
-                } => {
-                    let function_prototype = self
-                        .0
-                        .state
-                        .borrow()
-                        .heap
-                        .context(realm)?
-                        .function_prototype;
-                    let function_prototype =
-                        ObjectRef::from_borrowed_handle(self.clone(), function_prototype)?;
-                    let callable = self.new_native_builtin(
-                        &function_prototype,
-                        realm,
-                        target,
-                        min_readable_args,
-                        name,
-                        i32::from(length),
-                    )?;
-                    Value::Object(callable.as_object().try_clone()?)
-                }
-                AutoInitProperty::String { value, .. } => {
-                    Value::String(JsString::from_static(value))
-                }
-                AutoInitProperty::ArrayUnscopables { realm } => {
-                    Value::Object(self.instantiate_array_unscopables(realm)?)
-                }
-                AutoInitProperty::Math { realm } => {
-                    Value::Object(self.instantiate_math_intrinsic(realm)?)
-                }
-                AutoInitProperty::Reflect { realm } => {
-                    Value::Object(self.instantiate_reflect_intrinsic(realm)?)
-                }
-                AutoInitProperty::Json { realm } => {
-                    Value::Object(self.instantiate_json_intrinsic(realm)?)
-                }
-                AutoInitProperty::Atomics { realm } => {
-                    Value::Object(self.instantiate_atomics_intrinsic(realm)?)
-                }
-                #[cfg(test)]
-                AutoInitProperty::FailureProbe { .. } => {
-                    return Err(RuntimeError::Invariant("autoinit failure probe"));
-                }
-            })
-        })();
-        let initialized = match initialized {
-            Ok(initialized) => initialized,
-            Err(initializer_error) => {
-                // Once QuickJS has entered an autoinit callback, failure is
-                // terminal for that slot: it becomes an ordinary undefined
-                // data property and releases the stored realm edge.
-                let mut state = self.0.state.borrow_mut();
-                let cleanup = state.heap.replace_object_slot(
-                    object_id,
-                    slot_index,
-                    PropertySlot::Data(RawValue::Undefined),
-                )?;
-                state.apply_cleanup(cleanup)?;
-                return Err(initializer_error);
-            }
+        let _unwind = self.unwind_guard();
+        // Converge nested factory admission at this actual lazy-slot boundary.
+        // String initialization retains its existing no-operation behavior.
+        // With a pending FIFO, admission failure now precedes realm/prototype
+        // prefix failures in object-producing factories.
+        let _operation = if matches!(initializer, AutoInitProperty::String { .. }) {
+            None
+        } else {
+            Some(self.operation()?)
         };
-        let converted = self.raw_property_value(&initialized)?;
-        // Clone duplicates only the handle; the guard keeps the producer
-        // edge accountable through every store-or-decline path.
-        let mut state = self.0.state.borrow_mut();
-        let replaced =
-            state.replace_property_slot(object_id, slot_index, PropertySlot::Data(converted.raw()));
-        drop(state);
-        // The slot retained its own copy edge on success; a rejected
-        // replacement kept nothing. The guard balances the producer edge.
-        replaced?;
-        drop(initialized);
-        Ok(())
+        self.0.state.borrow_mut().materialize_auto_init_property(
+            &self.0.poisoned,
+            object.object_id(),
+            key.atom(),
+        )
     }
 
     #[cfg(test)]
@@ -2594,5 +2507,192 @@ impl RuntimeState {
             Err(_) => return Ok(None),
         };
         Ok(Some(complete))
+    }
+}
+
+impl RuntimeState {
+    /// Borrow the current lazy payload; it owns its realm through the slot.
+    /// No callback or mutation occurs between this selection and admission.
+    pub(crate) fn auto_init_property_for_materialization(
+        &self,
+        object: ObjectId,
+        key: Atom,
+    ) -> Result<Option<(usize, AutoInitProperty)>, RuntimeError> {
+        let object = self.heap.object(object)?;
+        let shape = self.heap.shape(object.shape)?;
+        let slot_index = usize::try_from(
+            shape
+                .find(AtomIdx::from_raw(key.raw()))
+                .ok_or(RuntimeError::Invariant("autoinit property disappeared"))?,
+        )
+        .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
+        let initializer = match object.slots.get(slot_index) {
+            Some(PropertySlot::AutoInit(initializer)) => **initializer,
+            Some(
+                PropertySlot::Data(_) | PropertySlot::VarRef(_) | PropertySlot::Accessor { .. },
+            ) => return Ok(None),
+            None => {
+                return Err(RuntimeError::Invariant(
+                    "autoinit property slot was missing",
+                ));
+            }
+        };
+        Ok(Some((slot_index, initializer)))
+    }
+
+    /// Complete all typed AutoInit families under the admitted state access.
+    /// Callers keep object/key owners live and hold their segment unwind guard;
+    /// this kernel neither reacquires Runtime state nor invokes user code.
+    pub(crate) fn materialize_auto_init_property(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        key: Atom,
+    ) -> Result<(), RuntimeError> {
+        let Some((slot_index, initializer)) =
+            self.auto_init_property_for_materialization(object, key)?
+        else {
+            return Ok(());
+        };
+        let initialized: Result<AutoInitValue, RuntimeError> = (|| {
+            Ok(match initializer {
+                AutoInitProperty::FunctionPrototype { realm } => {
+                    let base = self.heap.context(realm)?.object_prototype;
+                    self.heap.retain_object(base)?;
+                    let mut base_owner =
+                        OwnedValueGuard::new(self, poisoned, JsValue::Object(base));
+                    let (state, base_owner) = base_owner.parts();
+                    let prototype = state.allocate_object_with_layout(
+                        poisoned,
+                        Some(base),
+                        &[],
+                        Vec::new(),
+                        ObjectData::ordinary,
+                    )?;
+                    let mut result_owner =
+                        OwnedValueGuard::new(state, poisoned, JsValue::Object(prototype));
+                    let (state, result_owner) = result_owner.parts();
+                    // Preserve the checked public Value temporary from
+                    // object.try_clone(), before constructor-field storage.
+                    state.heap.retain_object(object)?;
+                    state.define_fresh_function_object_property(
+                        poisoned,
+                        prototype,
+                        "constructor",
+                        object,
+                        true,
+                        true,
+                    )?;
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        base_owner.take().expect("function prototype base owner"),
+                    )?;
+                    let JsValue::Object(prototype) =
+                        result_owner.take().expect("function prototype result")
+                    else {
+                        unreachable!("function prototype factory allocated an object")
+                    };
+                    AutoInitValue::Object(prototype)
+                }
+                AutoInitProperty::NativeBuiltin {
+                    realm,
+                    target,
+                    name,
+                    length,
+                    min_readable_args,
+                } => {
+                    let base = self.heap.context(realm)?.function_prototype;
+                    self.heap.retain_object(base)?;
+                    let mut base_owner =
+                        OwnedValueGuard::new(self, poisoned, JsValue::Object(base));
+                    let (state, base_owner) = base_owner.parts();
+                    let function = state.new_native_builtin(
+                        poisoned,
+                        base,
+                        realm,
+                        target,
+                        min_readable_args,
+                        name,
+                        i32::from(length),
+                    )?;
+                    let mut callable_owner =
+                        OwnedValueGuard::new(state, poisoned, JsValue::Object(function));
+                    let (state, callable_owner) = callable_owner.parts();
+                    // Keep callable.as_object().try_clone()'s checked edge,
+                    // then retire the original CallableRef before its base.
+                    state.heap.retain_object(function)?;
+                    let mut result_owner =
+                        OwnedValueGuard::new(state, poisoned, JsValue::Object(function));
+                    let (state, result_owner) = result_owner.parts();
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        callable_owner.take().expect("native callable owner"),
+                    )?;
+                    state.release_owned_jsvalue(
+                        poisoned,
+                        base_owner.take().expect("native function base owner"),
+                    )?;
+                    let JsValue::Object(function) =
+                        result_owner.take().expect("native builtin result")
+                    else {
+                        unreachable!("native builtin factory allocated an object")
+                    };
+                    AutoInitValue::Object(function)
+                }
+                AutoInitProperty::String { value, .. } => {
+                    AutoInitValue::String(JsString::from_static(value))
+                }
+                AutoInitProperty::ArrayUnscopables { realm } => {
+                    AutoInitValue::Object(self.instantiate_array_unscopables(poisoned, realm)?)
+                }
+                AutoInitProperty::Math { realm } => {
+                    AutoInitValue::Object(self.instantiate_math_intrinsic(poisoned, realm)?)
+                }
+                AutoInitProperty::Reflect { realm } => {
+                    AutoInitValue::Object(self.instantiate_reflect_intrinsic(poisoned, realm)?)
+                }
+                AutoInitProperty::Json { realm } => {
+                    AutoInitValue::Object(self.instantiate_json_intrinsic(poisoned, realm)?)
+                }
+                AutoInitProperty::Atomics { realm } => {
+                    AutoInitValue::Object(self.instantiate_atomics_intrinsic(poisoned, realm)?)
+                }
+                #[cfg(test)]
+                AutoInitProperty::FailureProbe { .. } => {
+                    return Err(RuntimeError::Invariant("autoinit failure probe"));
+                }
+            })
+        })();
+        let initialized = match initialized {
+            Ok(initialized) => initialized,
+            Err(initializer_error) => {
+                // Recoverable initialization failure is terminal for the
+                // existing slot and retains its flags. Interrupted published
+                // cleanup already quarantined state; no owner may traverse it.
+                if poisoned.get() {
+                    return Err(initializer_error);
+                }
+                self.replace_property_slot_with_poison(
+                    poisoned,
+                    object,
+                    slot_index,
+                    PropertySlot::Data(RawValue::Undefined),
+                )?;
+                return Err(initializer_error);
+            }
+        };
+        let initialized = match initialized {
+            AutoInitValue::String(value) => JsValue::String(self.heap.allocate_string(value)?),
+            AutoInitValue::Object(object) => JsValue::Object(object),
+        };
+        let mut producer = OwnedValueGuard::new(self, poisoned, initialized);
+        let (state, producer) = producer.parts();
+        state.replace_property_slot_with_poison(
+            poisoned,
+            object,
+            slot_index,
+            PropertySlot::Data(producer.as_ref().expect("AutoInit producer").as_raw()),
+        )?;
+        state.release_owned_jsvalue(poisoned, producer.take().expect("AutoInit producer"))
     }
 }

@@ -1,6 +1,7 @@
 use crate::engine::api::Context;
 use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native::NativeCProto;
+use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
 
 use super::*;
 use crate::engine::heap::shared_memory::SharedBufferHandle;
