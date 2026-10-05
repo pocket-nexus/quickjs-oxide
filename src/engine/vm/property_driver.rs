@@ -1104,20 +1104,15 @@ mod read_completion_tests {
 
     #[test]
     fn full_computed_window_keeps_nullish_throw_without_converting_key() {
-        for source in [
-            "(function(o,k){return o[k]})",
-            "(function(o,k){return o[k]()})",
+        for (source, opcode) in [
+            ("(function(o,k){return o[k]})", Opcode::GetArrayElDense),
+            ("(function(o,k){return o[k]()})", Opcode::GetArrayEl2Dense),
         ] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context().unwrap();
             let key = runtime.into_jsvalue(context.eval(
                 "globalThis.keyConversions=0; ({[Symbol.toPrimitive](){keyConversions++;throw 99}})"
             ).unwrap()).unwrap();
-            let opcode = if source.ends_with("[k]()})") {
-                Opcode::GetArrayEl2Dense
-            } else {
-                Opcode::GetArrayElDense
-            };
             let (mut execution, id) = read_fixture(&runtime, &mut context, source, opcode);
             let frame = execution.frames.current_mut(id).unwrap();
             while execution

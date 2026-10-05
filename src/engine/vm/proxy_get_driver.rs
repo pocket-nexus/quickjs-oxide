@@ -3740,6 +3740,15 @@ mod iterator_resident_layout_tests {
         );
         assert!(size_of::<super::super::iterator_driver::PendingIterator>() <= 8);
         println!(
+            "Step={} Resume={} Next={} NativeStep={} PreparedNativeCall={} NativeWaitRecord={}",
+            size_of::<super::Step>(),
+            size_of::<super::Resume>(),
+            size_of::<super::Next>(),
+            size_of::<crate::engine::builtins::continuation::NativeStep>(),
+            size_of::<super::super::call::PreparedNativeCall>(),
+            size_of::<super::native::NativeWaitRecord>()
+        );
+        println!(
             "Finish={} Query={} PendingIterator={} FrameRare={}",
             size_of::<super::Finish>(),
             size_of::<super::Query>(),
