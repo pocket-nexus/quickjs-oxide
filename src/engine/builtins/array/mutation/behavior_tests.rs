@@ -119,3 +119,61 @@ fn getter_throw_catch_preserves_fault_owner_and_aborts_delete_length() {
 })()"#,
     );
 }
+
+#[cfg(feature = "profiling")]
+#[test]
+fn diagnostics_distinguish_local_mutation_and_actual_getter_calls() {
+    use crate::engine::api::profiling::CostProfile;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let profile = CostProfile::start();
+    assert_eq!(
+        context.eval("const a=[];a.push(7);a.pop()").unwrap(),
+        Value::Int(7)
+    );
+    let events = profile.snapshot().owned_execution_events;
+    assert_eq!(
+        events
+            .get("query.array_native.acquired")
+            .copied()
+            .unwrap_or(0),
+        0
+    );
+    assert_eq!(
+        events
+            .get("progress.array_mutation.created")
+            .copied()
+            .unwrap_or(0),
+        0
+    );
+    drop(profile);
+    let profile = CostProfile::start();
+    assert_eq!(
+        context
+            .eval("({get length(){return 1},set length(v){},0:9,pop:Array.prototype.pop}).pop()")
+            .unwrap(),
+        Value::Int(9)
+    );
+    let events = profile.snapshot().owned_execution_events;
+    assert!(
+        events
+            .get("query.array_native.acquired")
+            .copied()
+            .unwrap_or(0)
+            > 0
+    );
+    assert!(
+        events
+            .get("query_completed_after_callback")
+            .copied()
+            .unwrap_or(0)
+            > 0
+    );
+    assert_eq!(
+        events
+            .get("query.array_native.completed_without_callback")
+            .copied()
+            .unwrap_or(0),
+        0
+    );
+}

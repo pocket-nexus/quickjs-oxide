@@ -1050,6 +1050,33 @@ pub(super) fn compact_array_next_into(
 }
 
 pub(super) fn install_waiting(query: &mut Query, call: PreparedNativeCall, resume: Resume) {
+    #[cfg(feature = "profiling")]
+    if query.natives.is_empty()
+        && matches!(query.finish, Some(Finish::Call { .. } | Finish::VmCall(_)))
+    {
+        use crate::engine::builtins::continuation::NativeOperation as N;
+        if matches!(
+            N::for_target(call.activation.target),
+            Some(
+                N::ArrayConstructor
+                    | N::ArraySlice(_)
+                    | N::ArrayConcat
+                    | N::ArrayFlatten(_)
+                    | N::ArrayBuild(_)
+                    | N::ArraySpeciesGetter
+                    | N::ArraySort(_)
+                    | N::ArrayIndexed(_)
+                    | N::ArrayReverse
+                    | N::ArrayString(_)
+                    | N::ArrayNext
+                    | N::ArrayMutation(_)
+                    | N::ArrayCallback(_)
+            )
+        ) {
+            query.consumer = QueryConsumer::ArrayNative;
+            query.consumer.acquired();
+        }
+    }
     let realm = query.realm;
     let native_realm = call.activation.realm;
     query.saved_native_depth += 1 + query.parents.len() as u128;

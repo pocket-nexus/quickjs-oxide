@@ -215,6 +215,10 @@ impl MutationStep {
         kind: MutationKind,
         object: ObjectRef,
     ) -> MutationResume {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "progress.array_mutation.created",
+        );
         MutationResume(Box::new(MutationResumeState {
             runtime: runtime.clone(),
             pending_effect: MutationStepPending::default(),
