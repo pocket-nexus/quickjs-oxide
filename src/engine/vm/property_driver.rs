@@ -17,6 +17,9 @@ use crate::engine::{
     object::{OrdinaryRead, PropertyKey},
     value::{JsValue, conversion::NativeConversion},
 };
+pub(in crate::engine::vm) use computed::{
+    Effect as ComputedReadEffect, Progress as ComputedReadProgress, execute as execute_computed,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum ReadKey {
@@ -1354,37 +1357,29 @@ pub(in crate::engine::vm) mod read_completion_tests {
                     .push(&mut frame.window, JsValue::Bool(true))
                     .unwrap();
             }
-            let action = execute_frame(&runtime, &mut execution, id).unwrap();
-            let (key, keep_receiver, fallthrough) = match action {
-                VmAction::GetField {
-                    index,
-                    keep_receiver,
-                    fallthrough,
-                } => (ReadKey::Static(index), keep_receiver, fallthrough),
-                VmAction::GetElement {
-                    keep_receiver,
-                    keep_key,
-                    fallthrough,
-                } => (ReadKey::Computed { keep_key }, keep_receiver, fallthrough),
-                _ => panic!("{source} produced {action:?} instead of a property action"),
-            };
-            assert_eq!(keep_receiver, expected_receiver);
-            assert_eq!(
-                matches!(key, ReadKey::Computed { keep_key: true }),
-                expected_key
+            let frame = execution.frames.current_mut(id).unwrap();
+            let fault = frame.fault_pc;
+            let fallthrough = FallthroughPc::from_decoded(
+                frame
+                    .executable
+                    .exec
+                    .decode_published(frame.resume_pc as u32)
+                    .unwrap(),
             );
-            let fault = execution.frames.current_mut(id).unwrap().fault_pc;
             let (progress, recovery_calls) = count_next_pc_calls(|| {
-                read_progress(
+                let mut state = runtime.0.state.borrow_mut();
+                let mut segment =
+                    crate::engine::vm::stack::FrameExecution::admit(&mut execution, id).unwrap();
+                computed::execute(
                     &runtime,
-                    &mut execution,
-                    id,
-                    key,
-                    keep_receiver,
+                    &mut state,
+                    &mut segment,
+                    expected_receiver,
+                    expected_key,
                     fallthrough,
                 )
             });
-            assert!(matches!(progress.unwrap(), PropertyProgress::Completed));
+            assert!(matches!(progress.unwrap(), computed::Progress::Completed));
             assert_eq!(recovery_calls, 0);
             let frame = execution.frames.current_mut(id).unwrap();
             assert_eq!(
@@ -1596,16 +1591,16 @@ pub(in crate::engine::vm) mod read_completion_tests {
             Value::Int(7)
         );
         let events = profile.snapshot().owned_execution_events;
-        assert!(
+        assert_eq!(
             events
                 .get("property_read_action_exit")
                 .copied()
-                .unwrap_or(0)
-                > 0
+                .unwrap_or(0),
+            0
         );
         assert!(
             events
-                .get("property_read_completed_with_carried_fallthrough")
+                .get("computed_read.completed_in_segment")
                 .copied()
                 .unwrap_or(0)
                 > 0

@@ -9,7 +9,7 @@ use crate::engine::{
     atom::Atom,
     heap::runtime::{RuntimeState, owned_values::OwnedValueGuard},
     object::ReadBoundary,
-    vm::stack::FrameSlots,
+    vm::stack::{FrameExecution, FrameSlots, FrameTurn},
 };
 use std::cell::Cell;
 
@@ -44,10 +44,166 @@ impl Drop for KeyGuard<'_> {
     }
 }
 
-struct Effect {
+pub(in crate::engine::vm) struct Effect {
     read: Option<SelectedNamedRead>,
     atom: Option<Atom>,
     retained: Option<JsValue>,
+}
+
+impl Effect {
+    pub(in crate::engine::vm) fn release_owned(self, runtime: &Runtime) {
+        drop(EffectGuard {
+            runtime,
+            effect: Some(self),
+        });
+    }
+}
+
+pub(in crate::engine::vm) enum Progress {
+    Completed,
+    Boundary,
+    Throw,
+}
+
+/// Dense misses reuse the current execution access. Only a selected external
+/// service/callback goes into the frame's existing resident rare storage.
+#[cold]
+#[inline(never)]
+pub(in crate::engine::vm) fn execute(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    segment: &mut FrameExecution<'_>,
+    keep_receiver: bool,
+    keep_key: bool,
+    fallthrough: FallthroughPc,
+) -> Result<Progress, Error> {
+    {
+        let FrameTurn {
+            mut transaction, ..
+        } = segment.frame();
+        let slots = transaction.slots();
+        if matches!(slots.peek(0)?, JsValue::Object(_))
+            && !matches!(slots.peek(1)?, JsValue::Null | JsValue::Undefined)
+        {
+            return Ok(Progress::Boundary);
+        }
+    }
+    segment.materialize_in_state(state)?;
+    let FrameTurn {
+        owners,
+        executable,
+        mut transaction,
+        resume_pc,
+        pending,
+        ..
+    } = segment.frame();
+    #[cfg(feature = "profiling")]
+    let depth = transaction.operand_depth();
+    #[cfg(not(feature = "profiling"))]
+    let depth = 0;
+    let selected = select_in_slots(
+        runtime,
+        state,
+        executable.realm,
+        &mut transaction.slots(),
+        resume_pc,
+        keep_receiver,
+        keep_key,
+        fallthrough,
+        depth,
+    );
+    match selected {
+        Ok(None) => {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "computed_read.completed_in_segment",
+            );
+            state
+                .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                .map_err(runtime_error_to_vm_error)?;
+            Ok(Progress::Completed)
+        }
+        Ok(Some(effect)) => {
+            if owners
+                .rare
+                .get()
+                .is_some_and(|rare| rare.computed_read.is_some())
+            {
+                let mut guard = EffectGuardInState {
+                    state,
+                    poisoned: &runtime.0.poisoned,
+                    effect: Some(effect),
+                };
+                guard.release()?;
+                return Err(Error::internal("computed read overwrote a selected effect"));
+            }
+            // Rare is allocated once for the frame and reused. No common data
+            // read allocates an operand or continuation transport.
+            let mut guard = EffectGuardInState {
+                state,
+                poisoned: &runtime.0.poisoned,
+                effect: Some(effect),
+            };
+            let resident = &mut owners.computed_read;
+            *resident = guard.effect.take();
+            Ok(Progress::Boundary)
+        }
+        Err(error) => {
+            if runtime.0.poisoned.get() {
+                return Err(error);
+            }
+            let Some(kind) =
+                crate::engine::api::error::NativeErrorKind::from_javascript_error(error.kind())
+            else {
+                return Err(error);
+            };
+            let message = error.native_message().cloned().unwrap_or_else(|| {
+                crate::engine::api::error::NativeErrorMessage::from_utf8(error.message())
+            });
+            let error = state
+                .new_native_error_from_message(&runtime.0.poisoned, executable.realm, kind, message)
+                .map_err(runtime_error_to_vm_error)?;
+            debug_assert!(pending.is_none());
+            *pending = Some(JsValue::Object(error));
+            Ok(Progress::Throw)
+        }
+    }
+}
+
+struct EffectGuardInState<'a> {
+    state: &'a mut RuntimeState,
+    poisoned: &'a Cell<bool>,
+    effect: Option<Effect>,
+}
+impl EffectGuardInState<'_> {
+    fn release(&mut self) -> Result<(), Error> {
+        let Some(effect) = self.effect.take() else {
+            return Ok(());
+        };
+        if let Some(read) = effect.read {
+            read.release_in_state(self.state, self.poisoned)?;
+        }
+        drop(KeyGuard {
+            state: self.state,
+            poisoned: self.poisoned,
+            atom: effect.atom,
+            retained: effect.retained,
+        });
+        Ok(())
+    }
+}
+impl Drop for EffectGuardInState<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.poisoned.set(true);
+        }
+        if self.poisoned.get() {
+            return;
+        }
+        if self.release().is_err() {
+            self.poisoned.set(true);
+        }
+    }
 }
 
 /// This guard exists only after exclusive State access ended. It owns a real
@@ -94,8 +250,21 @@ pub(super) fn read(
     keep_key: bool,
     fallthrough: FallthroughPc,
 ) -> Result<PropertyProgress, Error> {
+    let resident = execution
+        .frames
+        .current_mut(id)?
+        .cold
+        .rare
+        .get_mut()
+        .and_then(|rare| rare.computed_read.take());
+    let mut resident = EffectGuard {
+        runtime,
+        effect: resident,
+    };
     let realm = execution.frames.current_mut(id)?.executable.realm;
-    let selected = {
+    let selected = if let Some(effect) = resident.effect.take() {
+        Ok(Some(effect))
+    } else {
         let mut state = runtime.0.state.borrow_mut();
         read_in_state(
             runtime,
@@ -226,6 +395,31 @@ fn read_in_state(
     let depth = execution.slots.depth(&frame.window);
     let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
     let mut slots = transaction.slots();
+    select_in_slots(
+        runtime,
+        state,
+        realm,
+        &mut slots,
+        &mut frame.resume_pc,
+        keep_receiver,
+        keep_key,
+        fallthrough,
+        depth,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn select_in_slots(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    realm: crate::engine::heap::ContextId,
+    slots: &mut FrameSlots<'_>,
+    resume_pc: &mut usize,
+    keep_receiver: bool,
+    keep_key: bool,
+    fallthrough: FallthroughPc,
+    depth: usize,
+) -> Result<Option<Effect>, Error> {
     let receiver = slots.peek(1)?;
     let key = slots.peek(0)?;
     if matches!(receiver, JsValue::Null | JsValue::Undefined) {
@@ -331,8 +525,8 @@ fn read_in_state(
     complete(
         key_owner.state,
         &runtime.0.poisoned,
-        &mut slots,
-        &mut frame.resume_pc,
+        slots,
+        resume_pc,
         keep_receiver,
         &mut key_owner.retained,
         read.expect("synchronous read result"),
@@ -455,6 +649,65 @@ mod tests {
             events.get("computed_read.state_completed").copied(),
             Some(1)
         );
+        assert_eq!(events.get("query.read.acquired").copied().unwrap_or(0), 0);
+        assert_eq!(events.get("core.runtime_clone").copied().unwrap_or(0), 0);
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn non_dense_data_read_uses_the_held_state_without_a_rare_record() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(object) = context.eval("({x:7})").unwrap() else {
+            panic!("object")
+        };
+        let key = runtime
+            .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
+                "x",
+            )))
+            .unwrap();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o,k){return o[k]})",
+            Opcode::GetArrayElDense,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        execution.slots.push(&mut frame.window, key).unwrap();
+        assert!(frame.cold.rare.get().is_none());
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
+        let owners = std::rc::Rc::strong_count(&runtime.0);
+        let mut state = runtime.0.state.borrow_mut();
+        assert!(matches!(
+            crate::engine::vm::execute::execute_frame_in_state(
+                &runtime,
+                &mut state,
+                &mut execution,
+                id
+            )
+            .unwrap(),
+            crate::engine::vm::execute::VmAction::Complete
+        ));
+        assert!(matches!(execution.pending, Some(JsValue::Int(7))));
+        assert!(
+            execution
+                .frames
+                .current_mut(id)
+                .unwrap()
+                .cold
+                .rare
+                .get()
+                .is_none()
+        );
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners);
+        assert!(!runtime.0.deferred_references.has_pending());
+        let events = profile.snapshot().owned_execution_events;
+        assert_eq!(events.get("computed_read.completed_in_segment"), Some(&1));
         assert_eq!(events.get("query.read.acquired").copied().unwrap_or(0), 0);
         assert_eq!(events.get("core.runtime_clone").copied().unwrap_or(0), 0);
     }

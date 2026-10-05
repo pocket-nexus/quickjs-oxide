@@ -96,6 +96,7 @@ pub(super) struct FrameRare {
     pub eval_arguments: Option<Vec<crate::engine::value::JsValue>>,
     pub constructor_return: Option<ConstructorReturn>,
     pub conversion: Option<crate::engine::vm::conversion_driver::ConversionWait>,
+    pub computed_read: Option<super::property_driver::ComputedReadEffect>,
 }
 
 pub(super) struct FrameCold {
@@ -636,6 +637,9 @@ impl FrameCold {
     pub(super) fn release_legacy(&mut self, runtime: &Runtime) {
         if let Some(rare) = self.rare.get_mut() {
             rare.property_keys.clear();
+            if let Some(read) = rare.computed_read.take() {
+                read.release_owned(runtime);
+            }
             if let Some(pending) = rare.property_wait.take() {
                 pending.release(runtime);
             }
@@ -723,6 +727,7 @@ impl FrameCold {
                 if rare.property_wait.is_some()
                     || rare.iterator_wait.is_some()
                     || rare.conversion.is_some()
+                    || rare.computed_read.is_some()
                     || !rare.regions.is_empty()
                     || rare.resume_throw.is_some()
                 {
