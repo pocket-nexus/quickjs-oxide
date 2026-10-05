@@ -211,7 +211,7 @@ impl QueryStorage {
 
 impl Query {
     pub(super) fn recycle(
-        mut self,
+        &mut self,
         runtime: &crate::engine::api::runtime::Runtime,
         storage: &mut QueryStorage,
     ) {
