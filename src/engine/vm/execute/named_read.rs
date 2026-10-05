@@ -10,11 +10,14 @@ use crate::engine::{
         runtime_error::RuntimeError,
     },
     heap::runtime::owned_values::OwnedValueGuard,
-    object::ReadBoundary,
-    vm::property_driver::{OwnedGetterSelection, OwnedSpecialSelection, SelectedNamedRead},
+    object::{
+        ReadBoundary, StateReadEffect,
+        internal_methods::{OwnedProxyGetStep, resolve_read_boundary_in_state},
+    },
+    vm::property_driver::{OwnedGetterSelection, SelectedNamedRead},
 };
 
-pub(super) enum Progress {
+pub(in crate::engine::vm) enum Progress {
     Completed,
     Boundary,
     Throw,
@@ -24,7 +27,7 @@ pub(super) enum Progress {
 // lookup/effect-selection body and its call edge out of the hot loop layout.
 #[cold]
 #[inline(never)]
-pub(super) fn execute(
+pub(in crate::engine::vm) fn execute(
     runtime: &Runtime,
     state: &mut RuntimeState,
     segment: &mut FrameExecution<'_>,
@@ -133,18 +136,57 @@ pub(super) fn execute(
             *selected_named_read = Some(SelectedNamedRead::Shared(read));
             return Ok(Progress::Boundary);
         }
-        (None, Some(ReadBoundary::Special { object, kind })) => {
+        (None, Some(boundary @ ReadBoundary::Special { .. })) => {
             let selected = cursor.with_slots(|slots| {
-                OwnedSpecialSelection::prepare(
+                resolve_read_boundary_in_state(
+                    runtime,
+                    state,
+                    executable.realm,
+                    atom,
+                    slots.peek(0)?,
+                    boundary,
+                )
+                .map_err(runtime_error_to_vm_error)
+            })?;
+            match selected {
+                OwnedProxyGetStep::Complete(super::super::Completion::Return(value)) => complete(
                     state,
                     &runtime.0.poisoned,
-                    object,
-                    slots.peek(0)?,
-                    kind,
-                )
-            })?;
-            *selected_named_read = Some(SelectedNamedRead::Special(selected));
-            return Ok(Progress::Boundary);
+                    &mut cursor,
+                    value,
+                    keep_receiver,
+                    fallthrough,
+                )?,
+                OwnedProxyGetStep::Complete(super::super::Completion::Throw(value)) => {
+                    debug_assert!(pending.is_none());
+                    *pending = Some(value);
+                    return Ok(Progress::Throw);
+                }
+                OwnedProxyGetStep::Effect(StateReadEffect::Getter { callee, receiver }) => {
+                    *selected_named_read = Some(SelectedNamedRead::Getter(
+                        OwnedGetterSelection::from_parts(callee, receiver),
+                    ));
+                    drop(cursor);
+                    return if segment.enter_selected_getter(
+                        runtime,
+                        state,
+                        keep_receiver,
+                        fallthrough,
+                    )? {
+                        Ok(Progress::Completed)
+                    } else {
+                        Ok(Progress::Boundary)
+                    };
+                }
+                OwnedProxyGetStep::Effect(StateReadEffect::Shared(read)) => {
+                    *selected_named_read = Some(SelectedNamedRead::Shared(read));
+                    return Ok(Progress::Boundary);
+                }
+                OwnedProxyGetStep::Effect(effect) => {
+                    *selected_named_read = Some(SelectedNamedRead::Effect(effect));
+                    return Ok(Progress::Boundary);
+                }
+            }
         }
         _ => {
             return Err(Error::internal(

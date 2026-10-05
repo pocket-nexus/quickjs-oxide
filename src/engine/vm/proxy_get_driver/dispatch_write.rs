@@ -488,8 +488,9 @@ pub(super) fn define(
                     .expect("selected Step field")
                     .into_owned(runtime)
                     .map_err(runtime_error_to_vm_error)?;
+                let mut descriptor = Some(descriptor);
                 if let Some(accepted) = runtime
-                    .try_define_owned_property(&object, &key, &descriptor)
+                    .try_define_owned_request(&object, &key, &mut descriptor)
                     .map_err(runtime_error_to_vm_error)?
                 {
                     let result = if accepted {
@@ -506,6 +507,7 @@ pub(super) fn define(
                     continue;
                 }
 
+                let descriptor = descriptor.expect("exotic Define retains its descriptor");
                 if runtime
                     .is_proxy_object(&object)
                     .map_err(runtime_error_to_vm_error)?
@@ -558,8 +560,9 @@ pub(super) fn define(
                     .expect("selected Step field")
                     .into_owned(runtime)
                     .map_err(runtime_error_to_vm_error)?;
+                let mut descriptor = Some(descriptor);
                 if let Some(accepted) = runtime
-                    .try_define_owned_property(&object, &key, &descriptor)
+                    .try_define_owned_request(&object, &key, &mut descriptor)
                     .map_err(runtime_error_to_vm_error)?
                 {
                     let result = if accepted {
@@ -576,6 +579,7 @@ pub(super) fn define(
                     continue;
                 }
 
+                let descriptor = descriptor.expect("exotic Define retains its descriptor");
                 if let Some(length) = runtime
                     .prepare_array_length_definition_owned(Some(realm), &object, &key, &descriptor)
                     .map_err(runtime_error_to_vm_error)?

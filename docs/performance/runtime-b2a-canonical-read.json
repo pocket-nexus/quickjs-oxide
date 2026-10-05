@@ -1,0 +1,270 @@
+{
+  "schema": "oxide-runtime-b2a-canonical-read-v1",
+  "status": "complete consumer batch; correctness, mechanism tripwire and daily feedback passed; checkpoint 2 pending",
+  "runtime_commit": "85e8c55b4895b817dd216e950af80ac1f05d46e5",
+  "baseline_runtime_commit": "e29ae24e39e32d538887bd69e7f61f1af79b76af",
+  "configuration": {
+    "rust": "1.88.0",
+    "profile": "ordinary release",
+    "features": [],
+    "optimization": "none",
+    "fixed_manifest": {
+      "path": "/home/eric/.cache/oxide-heap-growth-retain-fixes-20261003/perf/fixed-manifest.json",
+      "sha256": "379dccf675a638aad91e2e3d112448543d179bef92842b11d6da80490bb8229e"
+    },
+    "build": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/85e8c55b/qjs.build.json",
+      "sha256": "977f11063d374c8efdb5b71796e146d36cafdf7ee290e802350c742b3da908d2"
+    },
+    "binary_sha256": "72b5e285b19aae64227d41e6851b6086efb91ad382df6d311531cb370fc47b48"
+  },
+  "runtime_changes": [
+    "State descriptor/snapshot and canonical Get/Own prefixes preserve selected getter/Proxy progress without Runtime-owning task/resume records.",
+    "Actual static VM read consumers commit and clean up with current State; legacy read owner adapters and the per-frame owning key map are removed.",
+    "Reuse the selected property slot until materialization mutates layout; then resolve again. Parse numeric names only for Array dense or String wrapper indexed storage."
+  ],
+  "correctness": {
+    "schema": "oxide-b2-read-correctness-v1",
+    "source_commit": "85e8c55b4895b817dd216e950af80ac1f05d46e5",
+    "source_worktree": "/home/eric/.cache/oxide-runtime-core-20261003/b2-read-pr",
+    "rust": "1.88.0",
+    "source_changed": false,
+    "gates": [
+      {
+        "name": "full_profiling_core",
+        "command": "CARGO_INCREMENTAL=0 CARGO_PROFILE_TEST_DEBUG=0 cargo test --locked -p quickjs-oxide --features profiling --lib --target-dir /home/eric/.cache/oxide-runtime-core-20261003/b2cd-test-target --jobs 2",
+        "result": {
+          "pass": 2558,
+          "fail": 0,
+          "ignored": 0,
+          "elapsed_seconds": 17.43
+        },
+        "log": "/home/eric/.cache/oxide-runtime-core-20261003/b2-read-85e8-core-gate.log",
+        "log_sha256": "e2de5547b98a6c0ddf07f8af9a3e9071bdaabbb71c20f713a1d4bb7cc8401cca"
+      },
+      {
+        "name": "production_workspace_clippy",
+        "command": "CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 cargo clippy --locked --workspace --lib --bins --features profiling --target-dir /home/eric/.cache/oxide-runtime-core-20261003/b2cd-test-target --jobs 2 -- -D warnings",
+        "result": "pass",
+        "log": "/home/eric/.cache/oxide-runtime-core-20261003/b2-read-85e8-clippy-gate.log",
+        "log_sha256": "a6b8e907af9838fb0cf7c058f3b42bdd88f798f8b0ad898f3bfc282db1e6de8b"
+      },
+      {
+        "name": "frozen_focused_test262",
+        "command": "TEST262_WORKERS=2 CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/home/eric/.cache/oxide-runtime-core-20261003/recovery-test262-target QJS_ORACLE_CACHE=/home/eric/oxide-work/runtime-b1-native-effects/target/oracle ./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --focused",
+        "environment_note": "Removed caller GIT_* variables in child process to satisfy unchanged prepare-test262.sh authentication policy. First prepare-only probe correctly rejected injected GIT_CONFIG_KEY_10; final focused gate exit0.",
+        "result": {
+          "total": 6844,
+          "pass": 6844,
+          "fail": 0,
+          "unsupported": 0,
+          "skipped": 0,
+          "frozen_body": "byte-identical verified by existing script"
+        },
+        "log": "/home/eric/.cache/oxide-runtime-core-20261003/b2-read-85e8-focused-test262.log",
+        "log_sha256": "0c24c0a4d9639c22f57018928456ff745a94ca70d96e3dac2b3df406dd57d56c"
+      },
+      {
+        "name": "architecture_and_ci_fast_subset",
+        "commands": [
+          "cargo fmt --all -- --check",
+          "python3 scripts/checks/check-source-layout.py",
+          "./scripts/checks/check-rust-only.sh",
+          "./scripts/checks/check-no-test262-special-casing.sh",
+          "./scripts/checks/check-test262-host-boundary.sh",
+          "node scripts/checks/check-test262-artifact-inventory.mjs",
+          "./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --check",
+          "./scripts/checks/check-oracle-registry.sh",
+          "python3 scripts/checks/test-oracle-registry.py",
+          "./scripts/quickjs/test-quickjs-fixtures.sh --validate",
+          "./scripts/quickjs/test-quickjs-c-oracles.sh --validate",
+          "./scripts/quickjs/test-quickjs-dynamic-import-trace.sh --validate",
+          "python3 -m unittest discover -s scripts/benchmark -p 'test_*.py'",
+          "node scripts/test262/current-test262-metrics.mjs --check-docs"
+        ],
+        "result": "all pass",
+        "counts": {
+          "source_files": 679,
+          "artifacts": 23,
+          "oracle_non_test_functions": 1103,
+          "oracle_files": 221,
+          "oracle_default_tests": 909,
+          "oracle_host_tests": 5,
+          "oracle_sources": 241,
+          "oracle_registry_tests": 8,
+          "benchmark_script_tests": 76,
+          "quickjs_fixtures": 13,
+          "quickjs_c_fixtures": 9
+        },
+        "scope_note": "Relevant CI fast subset, not a claim that all CI cargo feature/target matrices were executed."
+      }
+    ],
+    "runner": {
+      "vm_configuration": "stack-vm",
+      "features": [],
+      "engine_semantics_sha256": "5359f0d50b522110c518adfb758c9b0e13fade3f24dc8021925ed5c84c5b6dd2",
+      "binary_sha256": "6028e190eb761faadecb0a6231031c376b1b4a4772ab07c27bcc04f659513a23"
+    },
+    "native_timing": "not run",
+    "full_test262": "not run"
+  },
+  "tripwire": {
+    "comparison": "85e8c55b versus 2e6958fc final canonical consumer before own-slot repairs",
+    "hard_events": [
+      "Ir",
+      "Dw"
+    ],
+    "max_growth_percent": 0.1,
+    "I1mr": "diagnostic only",
+    "cases": [
+      {
+        "case": "richards",
+        "change_pct": {
+          "Ir": -4.6380545248858596e-05,
+          "Dw": -4.8093730431464365e-05,
+          "I1mr": 2.337580455973298
+        }
+      },
+      {
+        "case": "deltablue",
+        "change_pct": {
+          "Ir": -0.00026687979063355627,
+          "Dw": -0.00014351510930765699,
+          "I1mr": 3.9672884506928963
+        }
+      },
+      {
+        "case": "navier-stokes",
+        "change_pct": {
+          "Ir": -0.0006738603507194796,
+          "Dw": -0.005833568563418101,
+          "I1mr": -53.333108860044476
+        }
+      }
+    ],
+    "baseline": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-2e6958-callgrind/results.json",
+      "sha256": "6144c3b5aa0f90e8190d62cc201fb9904a08f6c18418245e8aac4e85817fe1d6"
+    },
+    "candidate": [
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-indexed-own-final-richards-callgrind/results.json",
+        "sha256": "1ad25a4f141752f0956066ea7a9f3efbaea9dc8dae410312a09e1e53d68d2251"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-indexed-own-final-deltablue-callgrind/results.json",
+        "sha256": "ce4d8f8b546d644ccc58f4333d43b526c689dfa57574c1703273b3d69a7f1bce"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-indexed-own-final-navier-stokes-callgrind/results.json",
+        "sha256": "b75d6970573565214811f5fdb4cdc113e28fe8df2fea19f2bf0f4484fe434022"
+      }
+    ]
+  },
+  "daily_native": {
+    "order": "A/B/B/A",
+    "samples_per_side": 2,
+    "scope": "all eight independent cases and combined",
+    "results": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-final-85e8-vs-e29-abba/results.json",
+      "sha256": "0295955b263701cf8c18d07db6e059a29d552d5dadce5fbf27e057eb688bc5bd"
+    },
+    "elapsed_changes": [
+      {
+        "case": "richards",
+        "median_elapsed_change_pct": -8.212605117649225,
+        "paired_elapsed_changes_pct": [
+          -8.088824799833084,
+          -8.336385435465365
+        ]
+      },
+      {
+        "case": "deltablue",
+        "median_elapsed_change_pct": -7.8442183760564,
+        "paired_elapsed_changes_pct": [
+          -3.398769222379261,
+          -12.289667529733538
+        ]
+      },
+      {
+        "case": "crypto",
+        "median_elapsed_change_pct": -0.009682329424398617,
+        "paired_elapsed_changes_pct": [
+          0.08056785519225951,
+          -0.09993251404105674
+        ]
+      },
+      {
+        "case": "raytrace",
+        "median_elapsed_change_pct": -1.374765980839232,
+        "paired_elapsed_changes_pct": [
+          -1.5251517295454153,
+          -1.2243802321330488
+        ]
+      },
+      {
+        "case": "earley-boyer",
+        "median_elapsed_change_pct": -0.5803848562742076,
+        "paired_elapsed_changes_pct": [
+          -0.4769936303656408,
+          -0.6837760821827743
+        ]
+      },
+      {
+        "case": "regexp",
+        "median_elapsed_change_pct": -0.07851890116039595,
+        "paired_elapsed_changes_pct": [
+          -0.19406765304019746,
+          0.037029850719405566
+        ]
+      },
+      {
+        "case": "splay",
+        "median_elapsed_change_pct": -1.4235483285993888,
+        "paired_elapsed_changes_pct": [
+          -1.137345839340731,
+          -1.7097508178580467
+        ]
+      },
+      {
+        "case": "navier-stokes",
+        "median_elapsed_change_pct": 0.3356394524681283,
+        "paired_elapsed_changes_pct": [
+          0.6258100423341517,
+          0.04546886260210492
+        ]
+      },
+      {
+        "case": "combined",
+        "median_elapsed_change_pct": -1.8893806869708207,
+        "paired_elapsed_changes_pct": [
+          -2.3367789377569226,
+          -1.4419824361847189
+        ]
+      }
+    ],
+    "classification": "Daily feedback only; small changes are unresolved under reused A/A. These are not original Scores or per-commit attribution."
+  },
+  "mechanism_attribution": {
+    "regexp": {
+      "baseline": "e29ae24e",
+      "candidate": "85e8c55b",
+      "Ir_change_percent": -0.056655325991772365,
+      "Dw_change_percent": -0.3190083043576708,
+      "removed_numeric_parse_calls": 1013820,
+      "removed_parse_inclusive_Ir": 89215692,
+      "ledger": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-regexp-generated-code/09ee-to-85-classparse-ledger.json",
+        "sha256": "cf2798aefe93f4904ff66fad0ce9e4eb64455aaa7430d892fb172cc878187bd7"
+      },
+      "note": "The parse edge is measured separately from the previous duplicate shape lookup repair. Retain guard remains necessary and was cheaper than the old conversion. Small event savings do not establish native speed."
+    }
+  },
+  "remaining": [
+    "Common actual-callback call/reply ABI still has external owner conversion; B3/B5 residual, not claimed zero.",
+    "Other Define/iteration/JSON and native families are not migrated by static read closure.",
+    "B2b-f integration, resource closure and formal checkpoint 2 remain separate gates.",
+    "Full frozen Test262 was not run for this read-only closeout; focused frozen vector passed 6844/6844."
+  ],
+  "formal_score_acceptance": false
+}

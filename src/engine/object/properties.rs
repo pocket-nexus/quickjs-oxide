@@ -48,6 +48,10 @@ pub(crate) const MIN_UNIQUE_SHAPE_APPEND_ENTRIES: usize = 1;
 #[cfg(test)]
 mod autoinit_state_tests;
 
+mod state_define;
+mod state_own;
+pub(crate) use state_own::StateOwnPropertySnapshot;
+
 impl RuntimeState {
     #[cfg(test)]
     pub(crate) fn append_unique_layout(
@@ -359,77 +363,45 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Option<super::OwnedCompletePropertyDescriptor>, RuntimeError> {
-        use super::property::CompletePropertyDescriptor;
         self.validate_object_and_key(object, key)?;
-        // These virtual properties construct their language value on demand.
-        if self.typed_array_is_object(object)?
-            && self.typed_array_canonical_numeric_index(key)?.is_some()
-        {
-            return self
-                .get_own_property(object, key)?
-                .as_ref()
-                .map(|v| super::OwnedCompletePropertyDescriptor::from_public(self, v))
-                .transpose();
-        }
-        if let Some(value) = self.string_exotic_own_property(object, key)? {
-            return super::OwnedCompletePropertyDescriptor::from_public(self, &value).map(Some);
-        }
-        if let Some(value) = self.dense_array_index_value(object, key)? {
-            return super::OwnedCompletePropertyDescriptor::from_raw(
-                self,
-                &CompletePropertyDescriptor::Data {
-                    value,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true,
-                },
-            )
-            .map(Some);
-        }
-        let record = {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(object.object_id())?;
-            let shape = state.heap.shape(data.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(None);
-            };
-            let flags = shape.entries()[index as usize].flags;
-            match &data.slots[index as usize] {
-                PropertySlot::Data(value) => Some(CompletePropertyDescriptor::Data {
-                    value: value.clone(),
-                    writable: flags.writable,
-                    enumerable: flags.enumerable,
-                    configurable: flags.configurable,
-                }),
-                PropertySlot::VarRef(id) => {
-                    let value = state.heap.var_ref(*id)?.value.clone();
-                    if matches!(value, RawValue::Uninitialized) {
-                        None
-                    } else {
-                        Some(CompletePropertyDescriptor::Data {
-                            value,
-                            writable: flags.writable,
-                            enumerable: flags.enumerable,
-                            configurable: flags.configurable,
-                        })
-                    }
+        let selected = {
+            let mut state = self.0.state.borrow_mut();
+            match state.own_property_snapshot_in_state(
+                &self.0.poisoned,
+                object.object_id(),
+                key.atom(),
+            )? {
+                crate::engine::object::StateOwnPropertySnapshot::Absent => return Ok(None),
+                StateOwnPropertySnapshot::Borrowed(snapshot) => {
+                    let record = snapshot.record().clone();
+                    return crate::engine::object::StateOwnedCompleteDescriptor::retain_in_state(
+                        &mut state,
+                        &self.0.poisoned,
+                        &record,
+                    )
+                    .map(|owner| Some(owner.into_legacy(self)));
                 }
-                PropertySlot::Accessor { get, set } => Some(CompletePropertyDescriptor::Accessor {
-                    get: get.option().map(RawValue::Object),
-                    set: set.option().map(RawValue::Object),
-                    enumerable: flags.enumerable,
-                    configurable: flags.configurable,
-                }),
-                PropertySlot::AutoInit(_) => None,
+                StateOwnPropertySnapshot::Owned(owner) => return Ok(Some(owner.into_legacy(self))),
+                StateOwnPropertySnapshot::Shared(read) => read,
+                StateOwnPropertySnapshot::Proxy => {
+                    return Err(RuntimeError::Invariant(
+                        "Proxy own descriptor requires the internal-method effect",
+                    ));
+                }
             }
         };
-        if let Some(record) = record {
-            return super::OwnedCompletePropertyDescriptor::from_raw(self, &record).map(Some);
-        }
-        // Preserve lazy initialization and uninitialized-binding errors before
-        // reacquiring the canonical raw slot; this branch cannot cache a root.
-        drop(self.get_own_property(object, key)?);
-        self.get_own_property_owned(object, key)
+        let (element, bytes) = selected.read()?;
+        let value = self
+            .0
+            .state
+            .borrow_mut()
+            .decode_typed_index(element, bytes)?;
+        Ok(Some(
+            crate::engine::object::StateOwnedCompleteDescriptor::from_owned_data(
+                value, true, true, true,
+            )
+            .into_legacy(self),
+        ))
     }
 
     pub(super) fn materialize_property_snapshot(
@@ -969,44 +941,32 @@ impl Runtime {
         descriptor: &super::OwnedPropertyDescriptor,
     ) -> Result<Option<bool>, RuntimeError> {
         self.validate_object_and_key(object, key)?;
-        match self.array_own_key(object, key)? {
-            ArrayOwnKey::Index(index) => {
-                let (old_length, writable) = self.array_length_state(object)?;
-                if index >= old_length && !writable {
-                    return Ok(Some(false));
-                }
-                return match self.define_array_index_raw(
-                    object,
-                    key,
-                    index,
-                    old_length,
-                    &descriptor.raw_record(),
-                )? {
-                    PropertyDefineOutcome::Defined(value) => Ok(Some(value)),
-                    PropertyDefineOutcome::Throw(value) => {
-                        self.release_jsvalue(value)?;
-                        Err(RuntimeError::Invariant("raw array index definition threw"))
-                    }
-                };
-            }
-            ArrayOwnKey::Length => return Ok(None),
-            ArrayOwnKey::Other => {}
+        if let Some(accepted) = self.0.state.borrow_mut().try_define_own_property_in_state(
+            &self.0.poisoned,
+            object.object_id(),
+            key.atom(),
+            &descriptor.raw_record(),
+        )? {
+            return Ok(Some(accepted));
         }
-        let global = matches!(
-            self.0
-                .state
-                .borrow()
-                .heap
-                .object(object.object_id())?
-                .payload,
-            ObjectPayload::GlobalObject { .. }
-        );
-        if (global || self.ordinary_property_flags(object, key)?.is_some())
-            && self.can_define_raw_property(object, key)?
-        {
-            return self
-                .define_raw_property(object, key, &descriptor.raw_record())
-                .map(Some);
+        if let ArrayOwnKey::Index(index) = self.array_own_key(object, key)? {
+            let (old_length, writable) = self.array_length_state(object)?;
+            if index >= old_length && !writable {
+                return Ok(Some(false));
+            }
+            return match self.define_array_index_raw(
+                object,
+                key,
+                index,
+                old_length,
+                &descriptor.raw_record(),
+            )? {
+                PropertyDefineOutcome::Defined(value) => Ok(Some(value)),
+                PropertyDefineOutcome::Throw(value) => {
+                    self.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant("raw array index definition threw"))
+                }
+            };
         }
         Ok(None)
     }
@@ -1042,26 +1002,12 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
     ) -> Result<bool, RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let Some(complete) =
-            state.validate_raw_property(object.object_id(), key.atom(), descriptor)?
-        else {
-            return Ok(false);
-        };
-        if let ObjectPayload::GlobalObject { uninitialized_vars } =
-            state.heap.object(object.object_id())?.payload
-        {
-            state.store_complete_global_raw_property(
-                &self.0.poisoned,
-                object.object_id(),
-                uninitialized_vars,
-                key.atom(),
-                complete,
-            )?;
-        } else {
-            state.store_complete_raw_property(object.object_id(), key.atom(), complete)?;
-        }
-        Ok(true)
+        self.0.state.borrow_mut().define_raw_property_with_poison(
+            &self.0.poisoned,
+            object.object_id(),
+            key.atom(),
+            descriptor,
+        )
     }
 
     pub(crate) fn array_own_key(
@@ -2442,7 +2388,22 @@ impl RuntimeState {
         let Some(complete) = self.validate_raw_property(object, atom, descriptor)? else {
             return Ok(false);
         };
-        self.store_complete_raw_property_inner(poisoned, object, atom, complete)?;
+        if let ObjectPayload::GlobalObject { uninitialized_vars } =
+            self.heap.object(object)?.payload
+        {
+            let poisoned = poisoned.ok_or(RuntimeError::Invariant(
+                "global descriptor publication requires a poison header",
+            ))?;
+            self.store_complete_global_raw_property(
+                poisoned,
+                object,
+                uninitialized_vars,
+                atom,
+                complete,
+            )?;
+        } else {
+            self.store_complete_raw_property_inner(poisoned, object, atom, complete)?;
+        }
         Ok(true)
     }
 

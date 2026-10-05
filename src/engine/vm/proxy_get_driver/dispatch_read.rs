@@ -498,6 +498,29 @@ pub(super) fn get(
                     resume.take().expect("selected Step field"),
                 )
             }
+            Step::PreparedOwn {
+                method,
+                atom,
+                resume,
+            } => {
+                // Only a selected getter/trap reaches this compatibility
+                // boundary. Reserve before taking its exact facts and owners.
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("property continuation allocation failed"))?;
+                let method = method.take().expect("selected Own method");
+                let atom = atom.take().expect("selected Own key");
+                let key =
+                    crate::engine::object::PropertyKey::from_owned_atom(runtime.clone(), atom);
+                query
+                    .parents
+                    .push(resume.take().expect("selected Own parent"));
+                *step = ProxyOwnStep::start_selected_method(runtime, realm, key, method)
+                    .map_err(runtime_error_to_vm_error)?
+                    .try_into()?;
+                continue;
+            }
             Step::Descriptor {
                 object,
                 key,

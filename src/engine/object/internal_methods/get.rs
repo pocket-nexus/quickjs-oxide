@@ -1,536 +1,362 @@
-//! Proxy [[Get]] phases shared by synchronous entry and the owned VM driver.
-//! Each continuation owns the target/handler selected before observable work.
-use super::{
-    RootedProxy,
-    method::{MethodResume, MethodStep},
+//! Proxy Get consumes the current State and publishes only actual effects.
+mod finish;
+mod invariant;
+mod owner;
+mod resume;
+#[cfg(test)]
+mod tests;
+use super::method::{StateMethodResume, StateMethodStep, StateMethodTarget, StateRootedProxy};
+use crate::engine::{
+    api::{runtime::Runtime, runtime_error::RuntimeError},
+    atom::{Atom, PropertyKeyKind},
+    heap::{
+        ContextId, ObjectId,
+        runtime::{
+            RuntimeState,
+            owned_values::{OwnedValueGuard, OwnedValuesGuard},
+        },
+    },
+    object::{ObjectRef, PropertyKey, ReadBoundary, StateOwnedCompleteDescriptor, StateReadEffect},
+    value::{JsValue, conversion::NativeConversion},
+    vm::{Completion, call::DirectCallTarget},
 };
-use crate::engine::api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError};
-use crate::engine::heap::ContextId;
-use crate::engine::object::{ObjectRef, PropertyKey};
-use crate::engine::value::{JsValue, conversion::NativeConversion};
-use crate::engine::vm::{Completion, call::DirectCallTarget};
+use owner::MethodScope;
 
+#[must_use]
 pub(crate) enum ProxyGetStep {
-    StateRead { resume: ProxyGetResume },
     Complete(Completion),
-    Read { resume: ProxyGetResume },
-    Call { resume: ProxyGetResume },
-    Descriptor { resume: ProxyGetResume },
+    Effect(StateReadEffect),
 }
-
-pub(crate) struct ProxyGetResume(super::reuse::PooledBox<ProxyGetResumeState>);
-impl std::ops::Deref for ProxyGetResume {
-    type Target = ProxyGetResumeState;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+#[must_use]
+pub(crate) enum ProxyGetEffect {
+    Read(ProxyGetResume),
+    Call(ProxyGetResume),
+    PreparedDescriptor(ProxyGetResume),
 }
-impl std::ops::DerefMut for ProxyGetResume {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+pub(crate) struct ProxyGetResume(super::reuse::PooledBox<GetState>);
 thread_local! {
-    // Preserve and reuse the continuation Box allocation across callbacks.
     #[allow(clippy::vec_box)]
-    static EMPTY_CONTINUATIONS: std::cell::RefCell<Vec<Box<Option<ProxyGetResumeState>>>> = const { std::cell::RefCell::new(Vec::new()) };
+    static EMPTY: std::cell::RefCell<Vec<Box<Option<GetState>>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
-impl super::reuse::Reusable for ProxyGetResumeState {
+impl super::reuse::Reusable for GetState {
     #[cfg(feature = "profiling")]
     const EVENT: &'static str = "get_resume_allocation";
     fn pool() -> &'static super::reuse::EmptyPool<Self> {
-        &EMPTY_CONTINUATIONS
+        &EMPTY
     }
 }
-const _: () = assert!(std::mem::size_of::<ProxyGetResume>() <= 8);
-pub(crate) struct ProxyGetResumeState {
-    pending_effect: ProxyGetStepPending,
+struct GetState {
     realm: ContextId,
-    phase: Phase,
+    phase: Option<Phase>,
+    request: Option<Request>,
 }
-
 enum Phase {
     Method {
-        resume: MethodResume,
-        key: PropertyKey,
-        inputs: GetInputs,
-    },
-    Forward {
-        _rooted: RootedProxy,
+        resume: StateMethodResume,
+        atom: Atom,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
     },
     Trap {
-        rooted: RootedProxy,
-        key: PropertyKey,
+        rooted: StateRootedProxy,
+        atom: Atom,
     },
     Invariant {
-        _rooted: RootedProxy,
+        rooted: StateRootedProxy,
+        result: JsValue,
     },
 }
-
-// Owns the receiver while the observable trap lookup is suspended or rejected.
-struct GetInputs {
-    runtime: Runtime,
-    receiver: Option<JsValue>,
-    arguments: Vec<JsValue>,
-}
-impl Drop for GetInputs {
-    fn drop(&mut self) {
-        if let Some(value) = self.receiver.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-        for value in self.arguments.drain(..) {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-    }
+enum Request {
+    Read {
+        effect: StateReadEffect,
+        atom: Atom,
+    },
+    Call {
+        target: StateMethodTarget,
+        receiver: JsValue,
+        arguments: Vec<JsValue>,
+    },
+    PreparedDescriptor {
+        method: StateMethodStep,
+        atom: Atom,
+    },
 }
 
 impl ProxyGetStep {
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
-        proxy: ObjectRef,
+        object: ObjectRef,
         key: PropertyKey,
         receiver: JsValue,
     ) -> Result<Self, RuntimeError> {
-        Self::start_buffered(runtime, realm, proxy, key, receiver, Vec::new())
+        Self::start_buffered(runtime, realm, object, key, receiver, Vec::new())
     }
     pub(crate) fn start_buffered(
         runtime: &Runtime,
         realm: ContextId,
-        proxy: ObjectRef,
+        object: ObjectRef,
         key: PropertyKey,
         receiver: JsValue,
         arguments: Vec<JsValue>,
     ) -> Result<Self, RuntimeError> {
+        // These are boundary owners. Their public destructors run after the
+        // local State access ends; the internal receiver uses that same State.
+        let mut state = runtime.0.state.borrow_mut();
+        let mut receiver_guard = OwnedValueGuard::new(&mut state, &runtime.0.poisoned, receiver);
+        let (state, receiver) = receiver_guard.parts();
+        let mut arguments_guard = OwnedValuesGuard::new(state, &runtime.0.poisoned, arguments);
+        let (state, arguments) = arguments_guard.parts();
+        if !object.belongs_to(runtime) || !key.belongs_to(runtime) {
+            return Err(RuntimeError::WrongRuntime("Proxy Get operands"));
+        }
+        let result = Self::start_in_state(
+            runtime,
+            state,
+            realm,
+            object.object_id(),
+            key.atom(),
+            receiver.as_ref().unwrap(),
+            std::mem::take(arguments),
+        )?;
+        drop(arguments_guard);
+        drop(receiver_guard);
+        if runtime.0.poisoned.get() {
+            return Err(RuntimeError::Poisoned);
+        }
+        Ok(result)
+    }
+    pub(crate) fn start_in_state(
+        runtime: &Runtime,
+        state: &mut RuntimeState,
+        realm: ContextId,
+        object: ObjectId,
+        atom: Atom,
+        receiver: &JsValue,
+        arguments: Vec<JsValue>,
+    ) -> Result<Self, RuntimeError> {
         debug_assert!(arguments.is_empty());
-        let inputs = GetInputs {
-            runtime: runtime.clone(),
-            receiver: Some(receiver),
-            arguments,
-        };
-        runtime.validate_object_and_key(&proxy, &key)?;
-        let step = MethodStep::start(runtime, realm, proxy, "get")?;
-        method(runtime, realm, key, inputs, step)
-    }
-}
-
-fn method(
-    runtime: &Runtime,
-    realm: ContextId,
-    key: PropertyKey,
-    mut inputs: GetInputs,
-    step: MethodStep,
-) -> Result<ProxyGetStep, RuntimeError> {
-    Ok(match step {
-        MethodStep::Throw(value) => ProxyGetStep::Complete(Completion::Throw(value.take())),
-        MethodStep::Complete { mut resume } => {
-            let rooted = resume.take_completed_rooted();
-            let target = resume.take_completed_target();
-            drop(resume);
-            match target {
-                None => ProxyGetStep::request_read(
-                    rooted.target.try_clone()?,
-                    key,
-                    inputs.receiver.take().expect("proxy get receiver"),
-                    ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
-                        pending_effect: ProxyGetStepPending::new(runtime.clone()),
+        // Empty trap forwarding needs neither recursion nor a resident phase.
+        // Keep the next selected holder pinned until its State lookup finishes.
+        let mut cursor = OwnedValueGuard::new(state, &runtime.0.poisoned, JsValue::Undefined);
+        let mut current = object;
+        loop {
+            let (state, owner) = cursor.parts();
+            let method = StateMethodStep::start(runtime, state, realm, current, "get")?;
+            if let StateMethodStep::Complete(selection) = &method
+                && selection.target.is_none()
+            {
+                let target = selection.rooted.target;
+                let mut scope = MethodScope::new(runtime, state, method);
+                let (state, _) = scope.parts();
+                let mut boundary = None;
+                let value = state.select_ordinary_read_in_state(
+                    &runtime.0.poisoned,
+                    target,
+                    atom,
+                    runtime.0.domain_id,
+                    &mut boundary,
+                    None,
+                )?;
+                if let Some(ReadBoundary::Special {
+                    object,
+                    kind: crate::engine::object::SpecialKind::Proxy,
+                }) = boundary
+                {
+                    let next = state.dup_jsvalue(&JsValue::Object(object))?;
+                    if let Some(previous) = owner.replace(next) {
+                        state.release_owned_jsvalue(&runtime.0.poisoned, previous)?;
+                    }
+                    scope.cleanup()?;
+                    current = object;
+                    continue;
+                }
+                let output = if let Some(value) = value {
+                    ProxyGetStep::Complete(Completion::Return(value))
+                } else {
+                    resolve_boundary(
+                        runtime,
+                        state,
                         realm,
-                        phase: Phase::Forward { _rooted: rooted },
-                    })),
-                ),
-                Some(target) => {
-                    let key_value = runtime.into_jsvalue(runtime.property_key_value(&key)?)?;
-                    inputs.arguments.extend([
-                        JsValue::Object(rooted.target.try_clone()?.into_handle()),
-                        key_value,
-                        inputs.receiver.take().expect("proxy get receiver"),
-                    ]);
-                    let receiver = JsValue::Object(rooted.handler.try_clone()?.into_handle());
-                    let arguments = std::mem::take(&mut inputs.arguments);
-                    ProxyGetStep::request_call(
-                        target,
+                        atom,
                         receiver,
-                        arguments,
-                        ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
-                            pending_effect: ProxyGetStepPending::new(runtime.clone()),
-                            realm,
-                            phase: Phase::Trap { rooted, key },
-                        })),
-                    )
+                        boundary.expect("Get selected boundary"),
+                    )?
+                };
+                let output = scope.finish(output)?;
+                drop(cursor);
+                if runtime.0.poisoned.get() {
+                    return Err(RuntimeError::Poisoned);
                 }
+                return Ok(output);
             }
-        }
-        MethodStep::Read { resume } => ProxyGetStep::StateRead {
-            resume: ProxyGetResume(super::reuse::PooledBox::new(ProxyGetResumeState {
-                pending_effect: ProxyGetStepPending::new(runtime.clone()),
-                realm,
-                phase: Phase::Method {
-                    resume,
-                    key,
-                    inputs,
-                },
-            })),
-        },
-    })
-}
-
-impl ProxyGetResume {
-    pub(crate) fn take_state_read(
-        &mut self,
-    ) -> (
-        crate::engine::object::StateReadEffect,
-        crate::engine::atom::Atom,
-    ) {
-        let Phase::Method { resume, .. } = &mut self.0.phase else {
-            unreachable!("selected method read phase")
-        };
-        resume.take_state_read()
-    }
-    pub(crate) fn resume(
-        self,
-        runtime: &Runtime,
-        completion: Completion,
-    ) -> Result<ProxyGetStep, RuntimeError> {
-        let Completion::Return(value) = completion else {
-            return Ok(ProxyGetStep::Complete(completion));
-        };
-        let state = self.0.into_inner();
-        let realm = state.realm;
-        match state.phase {
-            Phase::Method {
-                resume,
-                key,
-                inputs,
-            } => method(
-                runtime,
-                realm,
-                key,
-                inputs,
-                resume.resume(runtime, Completion::Return(value))?,
-            ),
-            Phase::Forward { .. } => Ok(ProxyGetStep::Complete(Completion::Return(value))),
-            Phase::Trap { rooted, key } => {
-                // An ordinary target's [[GetOwnProperty]] is synchronous, so the
-                // invariant comparison runs in place instead of a full scheduler
-                // descriptor round. A Proxy target may re-enter JavaScript and
-                // keeps the descriptor round.
-                if runtime.is_proxy_object(&rooted.target)? {
-                    let mut pending = ProxyGetStepPending::new(runtime.clone());
-                    pending.invariant_result = Some(value);
-                    return Ok(ProxyGetStep::request_descriptor(
-                        rooted.target.try_clone()?,
-                        key,
-                        Self(super::reuse::PooledBox::new(ProxyGetResumeState {
-                            pending_effect: pending,
-                            realm,
-                            phase: Phase::Invariant { _rooted: rooted },
-                        })),
-                    ));
-                }
-                let descriptor =
-                    NativeConversion::Value(runtime.get_own_property_owned(&rooted.target, &key)?);
-                complete_get_invariant(runtime, realm, value, descriptor)
+            let output = after_method(runtime, state, realm, atom, receiver, arguments, method)?;
+            drop(cursor);
+            if runtime.0.poisoned.get() {
+                return Err(RuntimeError::Poisoned);
             }
-            Phase::Invariant { .. } => Err(RuntimeError::Invariant(
-                "Proxy Get descriptor continuation received a value reply",
-            )),
+            return Ok(output);
         }
     }
 
-    pub(crate) fn descriptor(
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn release_in_state(
         self,
         runtime: &Runtime,
-        descriptor: NativeConversion<
-            Option<crate::engine::object::OwnedCompletePropertyDescriptor>,
-        >,
-    ) -> Result<ProxyGetStep, RuntimeError> {
-        let mut state = self.0.into_inner();
-        let Phase::Invariant { _rooted } = state.phase else {
-            if let NativeConversion::Throw(value) = descriptor {
-                let _ = runtime.release_jsvalue(value);
+        state: &mut RuntimeState,
+    ) -> Result<(), RuntimeError> {
+        match self {
+            Self::Complete(Completion::Return(v) | Completion::Throw(v)) => {
+                state.release_owned_jsvalue(&runtime.0.poisoned, v)
             }
-            return Err(RuntimeError::Invariant(
-                "Proxy Get value continuation received a descriptor reply",
-            ));
-        };
-        let result = state
-            .pending_effect
-            .invariant_result
-            .take()
-            .expect("ProxyGetStep Invariant result");
-        complete_get_invariant(runtime, state.realm, result, descriptor)
+            Self::Effect(effect) => effect.release_in_state(state, runtime),
+        }
     }
 }
 
-/// Shared `[[Get]]` invariant test: a non-configurable, non-writable data
-/// property must return the same value, and a setter-less non-configurable
-/// accessor must return `undefined`.
-fn get_invariant_violation(
+fn after_method(
     runtime: &Runtime,
-    result: &JsValue,
-    descriptor: &Option<crate::engine::object::OwnedCompletePropertyDescriptor>,
-) -> bool {
-    use crate::engine::object::property::CompletePropertyDescriptor;
-    match descriptor.as_ref().map(|descriptor| descriptor.record()) {
-        Some(CompletePropertyDescriptor::Data {
-            value,
-            writable: false,
-            configurable: false,
-            ..
-        }) => !crate::engine::value::collection_key::same_value(
-            &runtime.0.state.borrow().heap,
-            &result.as_raw(),
-            value,
-        ),
-        Some(CompletePropertyDescriptor::Accessor {
-            get: None,
-            configurable: false,
-            ..
-        }) => !matches!(result, JsValue::Undefined),
-        _ => false,
-    }
-}
-
-fn complete_get_invariant(
-    runtime: &Runtime,
+    state: &mut RuntimeState,
     realm: ContextId,
-    result: JsValue,
-    descriptor: NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>,
+    atom: Atom,
+    receiver: &JsValue,
+    arguments: Vec<JsValue>,
+    method: StateMethodStep,
 ) -> Result<ProxyGetStep, RuntimeError> {
-    let descriptor = match descriptor {
-        NativeConversion::Value(descriptor) => descriptor,
-        NativeConversion::Throw(value) => {
-            let _ = runtime.release_jsvalue(result);
-            return Ok(ProxyGetStep::Complete(Completion::Throw(value)));
+    let mut scope = MethodScope::new(runtime, state, method);
+    let (state, method) = scope.parts();
+    let result = match method.as_ref().unwrap() {
+        StateMethodStep::Throw(_) => {
+            let StateMethodStep::Throw(value) = method.take().unwrap() else {
+                unreachable!()
+            };
+            ProxyGetStep::Complete(Completion::Throw(value))
+        }
+        StateMethodStep::Read { .. } => {
+            let receiver = state.dup_jsvalue(receiver)?;
+            let mut receiver = OwnedValueGuard::new(state, &runtime.0.poisoned, receiver);
+            let (state, receiver) = receiver.parts();
+            state.atoms.retain(atom)?;
+            let StateMethodStep::Read {
+                effect,
+                atom: read_atom,
+                resume,
+            } = method.take().unwrap()
+            else {
+                unreachable!()
+            };
+            let resume = ProxyGetResume(super::reuse::PooledBox::new(GetState {
+                realm,
+                phase: Some(Phase::Method {
+                    resume,
+                    atom,
+                    receiver: receiver.take().unwrap(),
+                    arguments,
+                }),
+                request: Some(Request::Read {
+                    effect,
+                    atom: read_atom,
+                }),
+            }));
+            ProxyGetStep::Effect(StateReadEffect::Get(ProxyGetEffect::Read(resume)))
+        }
+        StateMethodStep::Complete(selection) if selection.target.is_none() => {
+            let object = selection.rooted.target;
+            let mut boundary = None;
+            if let Some(value) = state.select_ordinary_read_in_state(
+                &runtime.0.poisoned,
+                object,
+                atom,
+                runtime.0.domain_id,
+                &mut boundary,
+                None,
+            )? {
+                ProxyGetStep::Complete(Completion::Return(value))
+            } else {
+                resolve_boundary(
+                    runtime,
+                    state,
+                    realm,
+                    atom,
+                    receiver,
+                    boundary.expect("selected read boundary"),
+                )?
+            }
+        }
+        StateMethodStep::Complete(selection) => {
+            let mut args = OwnedValuesGuard::new(state, &runtime.0.poisoned, arguments);
+            let (state, args) = args.parts();
+            args.try_reserve(3)
+                .map_err(|_| RuntimeError::Invariant("proxy get arguments allocation failed"))?;
+            args.push(state.dup_jsvalue(&JsValue::Object(selection.rooted.target))?);
+            args.push(key_value(state, atom)?);
+            args.push(state.dup_jsvalue(receiver)?);
+            let handler = state.dup_jsvalue(&JsValue::Object(selection.rooted.handler))?;
+            let mut handler = OwnedValueGuard::new(state, &runtime.0.poisoned, handler);
+            let (state, handler) = handler.parts();
+            state.atoms.retain(atom)?;
+            let StateMethodStep::Complete(selection) = method.take().unwrap() else {
+                unreachable!()
+            };
+            let resume = ProxyGetResume(super::reuse::PooledBox::new(GetState {
+                realm,
+                phase: Some(Phase::Trap {
+                    rooted: selection.rooted,
+                    atom,
+                }),
+                request: Some(Request::Call {
+                    target: selection.target.unwrap(),
+                    receiver: handler.take().unwrap(),
+                    arguments: std::mem::take(args),
+                }),
+            }));
+            ProxyGetStep::Effect(StateReadEffect::Get(ProxyGetEffect::Call(resume)))
         }
     };
-    if get_invariant_violation(runtime, &result, &descriptor) {
-        let _ = runtime.release_jsvalue(result);
-        Ok(ProxyGetStep::Complete(Completion::Throw(
-            runtime.new_native_error_jsvalue(
-                realm,
-                NativeErrorKind::Type,
-                "proxy: inconsistent get",
-            )?,
-        )))
-    } else {
-        Ok(ProxyGetStep::Complete(Completion::Return(result)))
-    }
+    scope.finish(result)
 }
 
-struct ProxyGetStepPending {
-    runtime: Runtime,
-    read_object: Option<ObjectRef>,
-    read_key: Option<PropertyKey>,
-    read_receiver: Option<JsValue>,
-    call_target: Option<DirectCallTarget>,
-    call_receiver: Option<JsValue>,
-    call_arguments: Option<Vec<JsValue>>,
-    descriptor_object: Option<ObjectRef>,
-    descriptor_key: Option<PropertyKey>,
-    invariant_result: Option<JsValue>,
-}
-impl ProxyGetStepPending {
-    fn new(runtime: Runtime) -> Self {
-        Self {
-            runtime,
-            read_object: None,
-            read_key: None,
-            read_receiver: None,
-            call_target: None,
-            call_receiver: None,
-            call_arguments: None,
-            descriptor_object: None,
-            descriptor_key: None,
-            invariant_result: None,
-        }
-    }
-}
-impl Drop for ProxyGetStepPending {
-    /// Release the internal edges still held when the request is abandoned.
-    /// Consumption goes through `Option::take`; releases are defer-safe and
-    /// nothrow, and never run JavaScript.
-    fn drop(&mut self) {
-        if let Some(value) = self.read_receiver.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-        if let Some(value) = self.call_receiver.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-        if let Some(values) = self.call_arguments.take() {
-            for value in values {
-                let _ = self.runtime.release_jsvalue(value);
-            }
-        }
-        if let Some(value) = self.invariant_result.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-    }
-}
-impl ProxyGetStep {
-    pub(crate) fn request_read(
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: JsValue,
-        mut resume: ProxyGetResume,
-    ) -> Self {
-        resume.0.pending_effect.read_object = Some(object);
-        resume.0.pending_effect.read_key = Some(key);
-        resume.0.pending_effect.read_receiver = Some(receiver);
-        Self::Read { resume }
-    }
-    pub(crate) fn request_call(
-        target: DirectCallTarget,
-        receiver: JsValue,
-        arguments: Vec<JsValue>,
-        mut resume: ProxyGetResume,
-    ) -> Self {
-        resume.0.pending_effect.call_target = Some(target);
-        resume.0.pending_effect.call_receiver = Some(receiver);
-        resume.0.pending_effect.call_arguments = Some(arguments);
-        Self::Call { resume }
-    }
-    pub(crate) fn request_descriptor(
-        object: ObjectRef,
-        key: PropertyKey,
-        mut resume: ProxyGetResume,
-    ) -> Self {
-        resume.0.pending_effect.descriptor_object = Some(object);
-        resume.0.pending_effect.descriptor_key = Some(key);
-        Self::Descriptor { resume }
-    }
-}
-impl ProxyGetResume {
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .read_object
-            .take()
-            .expect("ProxyGetStep Read object")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .read_key
-            .take()
-            .expect("ProxyGetStep Read key")
-    }
-    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .read_receiver
-            .take()
-            .expect("ProxyGetStep Read receiver")
-    }
-    pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
-        self.0
-            .pending_effect
-            .call_target
-            .take()
-            .expect("ProxyGetStep Call target")
-    }
-    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .call_receiver
-            .take()
-            .expect("ProxyGetStep Call receiver")
-    }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
-        self.0
-            .pending_effect
-            .call_arguments
-            .take()
-            .expect("ProxyGetStep Call arguments")
-    }
-    pub(crate) fn take_descriptor_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .descriptor_object
-            .take()
-            .expect("ProxyGetStep Descriptor object")
-    }
-    pub(crate) fn take_descriptor_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .descriptor_key
-            .take()
-            .expect("ProxyGetStep Descriptor key")
-    }
-}
-const _: () = assert!(std::mem::size_of::<ProxyGetStep>() <= 64);
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<ProxyGetStep>() <= 64);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engine::value::Value;
-
-    #[test]
-    fn abandoned_proxy_method_releases_roots_and_depth_guard() {
-        let runtime = Runtime::new();
-        let weak = std::rc::Rc::downgrade(&runtime.0);
-        let context = runtime.new_context().expect("create context");
-        let target = runtime.new_object(None).unwrap();
-        let handler = runtime.new_object(None).unwrap();
-        let target_id = target.object_id();
-        let handler_id = handler.object_id();
-        let NativeConversion::Value(proxy) = runtime
-            .new_proxy(context.realm, Value::Object(target), Value::Object(handler))
-            .unwrap()
-        else {
-            panic!("proxy allocation failed");
-        };
-        let step = ProxyGetStep::start(
-            &runtime,
-            context.realm,
-            proxy,
-            runtime.intern_property_key("x").unwrap(),
+pub(crate) fn resolve_boundary(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    realm: ContextId,
+    atom: Atom,
+    receiver: &JsValue,
+    boundary: ReadBoundary,
+) -> Result<ProxyGetStep, RuntimeError> {
+    match boundary {
+        ReadBoundary::Absent => Ok(ProxyGetStep::Complete(Completion::Return(
             JsValue::Undefined,
-        )
-        .unwrap();
-        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
-        runtime.run_gc().unwrap();
-        assert!(runtime.0.state.borrow().heap.object(target_id).is_ok());
-        assert!(runtime.0.state.borrow().heap.object(handler_id).is_ok());
-        drop(step);
-        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
-        runtime.run_gc().unwrap();
-        assert!(runtime.0.state.borrow().heap.object(target_id).is_err());
-        assert!(runtime.0.state.borrow().heap.object(handler_id).is_err());
-        drop(context);
-        drop(runtime);
-        assert!(weak.upgrade().is_none());
+        ))),
+        ReadBoundary::Special {
+            object,
+            kind: crate::engine::object::SpecialKind::Proxy,
+        } => {
+            ProxyGetStep::start_in_state(runtime, state, realm, object, atom, receiver, Vec::new())
+        }
+        boundary => Ok(ProxyGetStep::Effect(StateReadEffect::prepare(
+            state,
+            &runtime.0.poisoned,
+            boundary,
+            receiver,
+        )?)),
     }
+}
 
-    #[test]
-    fn mismatched_proxy_reply_rejects_and_releases_the_method_guard() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        let Value::Object(proxy) = context
-            .eval("new Proxy({}, {get get(){return undefined}})")
-            .unwrap()
-        else {
-            panic!("proxy allocation failed");
-        };
-        let ProxyGetStep::StateRead { resume, .. } = ProxyGetStep::start(
-            &runtime,
-            context.realm,
-            proxy,
-            runtime.intern_property_key("x").unwrap(),
-            JsValue::Undefined,
-        )
-        .unwrap() else {
-            panic!("expected method read");
-        };
-        assert_eq!(runtime.0.proxy_method_depth.get(), 1);
-        assert!(
-            resume
-                .descriptor(&runtime, NativeConversion::Value(None))
-                .is_err()
-        );
-        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+fn key_value(state: &mut RuntimeState, atom: Atom) -> Result<JsValue, RuntimeError> {
+    match state.atoms.property_key_kind(atom)? {
+        PropertyKeyKind::String => Ok(JsValue::String(
+            state
+                .heap
+                .allocate_string(state.atoms.to_js_string(atom)?)?,
+        )),
+        PropertyKeyKind::Symbol => {
+            let index = state.atoms.unbrand(atom)?;
+            state.atoms.retain(atom)?;
+            Ok(JsValue::Symbol(index))
+        }
+        PropertyKeyKind::Private => Err(RuntimeError::Invariant(
+            "private key escaped into Proxy Get",
+        )),
     }
 }

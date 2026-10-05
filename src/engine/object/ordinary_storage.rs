@@ -537,9 +537,9 @@ impl Runtime {
     }
 }
 
+#[cfg(test)]
 pub(super) enum ReadProbe {
     Value(JsValue),
-    Getter(Option<crate::engine::object::CallableRef>),
     Declined,
 }
 
@@ -614,58 +614,21 @@ impl Runtime {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property object"));
         }
-        self.ordinary_read_probe_atom(object.object_id(), key.atom(), false, None)
-    }
-
-    // The caller owns the receiver throughout this non-reentrant probe.
-    // Output values/getters/prototypes acquire their own edges below.
-    fn ordinary_read_probe_atom(
-        &self,
-        id: ObjectId,
-        atom: Atom,
-        own_only: bool,
-        mut native: Option<&mut Option<LinkedNativeSelection>>,
-    ) -> Result<ReadProbe, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("property_storage_read_probe");
         let mut state = self.0.state.borrow_mut();
-        let selected = state.select_own_read(id, atom, own_only)?;
-        let selected = match selected {
-            OwnReadSelection::Value(raw) => {
-                let borrowed = JsValue::from_raw(raw).ok_or(RuntimeError::Invariant(
-                    "internal sentinel in ordinary data property",
-                ))?;
-                let value = state.dup_jsvalue(&borrowed)?;
-                if let (Some(output), JsValue::Object(function)) = (native.as_mut(), &value)
-                    && let Some(data) = state.linked_native_data(*function)
-                {
-                    **output = Some(LinkedNativeSelection {
-                        domain_id: self.domain_id(),
-                        function: *function,
-                        data,
-                    });
-                }
-                return Ok(ReadProbe::Value(value));
-            }
-            selected => selected,
-        };
-        // Public roots are created only after the exclusive access ends.
-        // Internal consumers use the same selector without these wrappers.
-        drop(state);
-        Ok(match selected {
-            OwnReadSelection::Getter(get) => ReadProbe::Getter(
-                get.map(|id| {
-                    ObjectRef::from_borrowed_handle(self.clone(), id)
-                        .map(crate::engine::object::CallableRef::from_validated_object)
-                })
-                .transpose()?,
-            ),
-            OwnReadSelection::Missing(_)
-            | OwnReadSelection::Special(_)
-            | OwnReadSelection::StringUnit(_)
-            | OwnReadSelection::Lazy => ReadProbe::Declined,
-            OwnReadSelection::Value(_) => unreachable!("data was promoted under state access"),
-        })
+        let mut boundary = None;
+        Ok(
+            match state.select_ordinary_read_in_state(
+                &self.0.poisoned,
+                object.object_id(),
+                key.atom(),
+                self.domain_id(),
+                &mut boundary,
+                None,
+            )? {
+                Some(value) => ReadProbe::Value(value),
+                None => ReadProbe::Declined,
+            },
+        )
     }
 }
 
@@ -1227,6 +1190,7 @@ fn immediate_value_jsvalue(raw: &crate::engine::heap::RawValue) -> Option<JsValu
     })
 }
 
+#[cfg(test)]
 fn linked_field_atom(
     runtime: &Runtime,
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
@@ -1345,57 +1309,6 @@ fn field_in_state(
 }
 
 impl Runtime {
-    /// A published function already owns its static key. Only the selected
-    /// result/getter is promoted here; fallback will acquire an owning key.
-    #[cfg(test)]
-    pub(crate) fn prepare_linked_own_read(
-        &self,
-        base: &Value,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        index: u32,
-    ) -> Result<Option<crate::engine::object::OrdinaryRead>, RuntimeError> {
-        let internal = self.unroot_value(base)?;
-        let result = self.prepare_linked_own_read_selected(&internal, executable, index, None);
-        self.release_jsvalue(internal)?;
-        result
-    }
-
-    pub(crate) fn prepare_linked_own_read_selected(
-        &self,
-        base: &JsValue,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        index: u32,
-        native: Option<&mut Option<LinkedNativeSelection>>,
-    ) -> Result<Option<crate::engine::object::OrdinaryRead>, RuntimeError> {
-        let Some(atom) = linked_field_atom(self, executable, index) else {
-            return Ok(None);
-        };
-        let JsValue::Object(object) = base else {
-            return Ok(None);
-        };
-        let _operation = self.operation()?;
-        // The borrowed base already pins this object until probing finishes.
-        Ok(
-            match self.ordinary_read_probe_atom(*object, atom, true, native)? {
-                ReadProbe::Value(value) => {
-                    Some(crate::engine::object::OrdinaryRead::Complete(Some(value)))
-                }
-                ReadProbe::Getter(None) => Some(crate::engine::object::OrdinaryRead::Complete(
-                    Some(JsValue::Undefined),
-                )),
-                ReadProbe::Getter(Some(getter)) => {
-                    let receiver = self.dup_jsvalue(base)?;
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "linked_read_owner_clone.ReceiverObject",
-                    );
-                    Some(crate::engine::object::OrdinaryRead::Call { getter, receiver })
-                }
-                ReadProbe::Declined => None,
-            },
-        )
-    }
-
     /// Only an existing writable own scalar slot reaches the ordinary Set
     /// replacement transaction. There are no callback or owner-bearing edges.
     #[cfg(test)]
@@ -2281,12 +2194,6 @@ mod ordinary_field_leaf_tests {
         (executable, index)
     }
 
-    fn release_read(runtime: &Runtime, read: Option<OrdinaryRead>) {
-        if let Some(OrdinaryRead::Complete(Some(value))) = read {
-            runtime.release_jsvalue(value).unwrap();
-        }
-    }
-
     #[test]
     fn ordinary_field_leaf_preserves_scalar_values_flags_and_declines_nonlocal_rules() {
         let runtime = Runtime::new();
@@ -2603,12 +2510,25 @@ mod ordinary_field_leaf_tests {
             )
             .unwrap();
         let mut fact = None;
-        let Some(OrdinaryRead::Complete(Some(value))) = runtime
-            .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
-            .unwrap()
-        else {
-            panic!("own native")
+        let realm = context.realm;
+        let select = |fact: &mut Option<LinkedNativeSelection>| {
+            let mut state = runtime.0.state.borrow_mut();
+            let mut boundary = None;
+            let value = state
+                .select_value_read_in_state(
+                    &runtime.0.poisoned,
+                    realm,
+                    &base,
+                    code.property_key_atoms.as_ref().unwrap()[index as usize],
+                    runtime.domain_id(),
+                    &mut boundary,
+                    Some(fact),
+                )
+                .unwrap();
+            assert!(boundary.is_none());
+            value.expect("own native read")
         };
+        let value = select(&mut fact);
         let Value::Object(callee) = runtime.root_and_release_jsvalue(value).unwrap() else {
             panic!("own native")
         };
@@ -2622,24 +2542,14 @@ mod ordinary_field_leaf_tests {
             data.target,
             NativeFunctionId::MathMinMax(MathMinMaxKind::Min)
         );
-        release_read(
-            &runtime,
-            runtime
-                .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
-                .unwrap(),
-        );
+        runtime.release_jsvalue(select(&mut fact)).unwrap();
         assert!(
             fact.take()
                 .unwrap()
                 .into_parts_jsvalue(callee.runtime(), callee.object_id())
                 .is_none()
         );
-        release_read(
-            &runtime,
-            runtime
-                .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
-                .unwrap(),
-        );
+        runtime.release_jsvalue(select(&mut fact)).unwrap();
         let foreign = Runtime::new();
         let mut foreign_context = foreign.new_context().expect("create context");
         let Value::Object(foreign_callee) = foreign_context.eval("Math.max").unwrap() else {
@@ -2688,27 +2598,43 @@ mod ordinary_field_leaf_tests {
         let base = context
             .eval("globalThis.readLog=0;globalThis.o={get x(){readLog++;return 7}};o")
             .unwrap();
-        let read = runtime
-            .prepare_linked_own_read(&base, &code, index)
+        let base = runtime.into_jsvalue(base).unwrap();
+        let effect = {
+            let mut state = runtime.0.state.borrow_mut();
+            let mut boundary = None;
+            let value = state
+                .select_value_read_in_state(
+                    &runtime.0.poisoned,
+                    context.realm,
+                    &base,
+                    code.property_key_atoms.as_ref().unwrap()[index as usize],
+                    runtime.domain_id(),
+                    &mut boundary,
+                    None,
+                )
+                .unwrap();
+            assert!(value.is_none());
+            crate::engine::object::StateReadEffect::prepare(
+                &mut state,
+                &runtime.0.poisoned,
+                boundary.unwrap(),
+                &base,
+            )
             .unwrap()
-            .unwrap();
+        };
         assert_eq!(context.eval("readLog").unwrap(), Value::Int(0));
         drop(
             context
                 .eval("Object.defineProperty(o,'x',{get(){throw 99}})")
                 .unwrap(),
         );
-        let key = PropertyKey::from_borrowed_atom(
-            runtime.clone(),
-            code.property_key_atoms.as_ref().unwrap()[index as usize],
-        )
-        .unwrap();
+        runtime.release_jsvalue(base).unwrap();
         let result = runtime
-            .finish_prepared_read(context.realm, &key, read)
+            .finish_state_read_effect(context.realm, effect, None)
             .unwrap();
         assert!(matches!(
             result,
-            crate::engine::value::conversion::NativeConversion::Value(Some(Value::Int(7)))
+            crate::engine::vm::Completion::Return(JsValue::Int(7))
         ));
         assert_eq!(context.eval("readLog").unwrap(), Value::Int(1));
     }

@@ -80,7 +80,10 @@ impl StateMethodTarget {
             Self::Callable(id) | Self::NonCallableProxy(id) => *id,
         }
     }
-    pub(super) fn into_legacy(self, runtime: &Runtime) -> DirectCallTarget {
+    pub(in crate::engine::object::internal_methods) fn into_legacy(
+        self,
+        runtime: &Runtime,
+    ) -> DirectCallTarget {
         match self {
             Self::Callable(id) => DirectCallTarget::Callable(CallableRef::from_validated_object(
                 ObjectRef::from_owned_handle(runtime.clone(), id),
@@ -182,8 +185,11 @@ impl StateMethodStep {
                     search: Some(resume.0.into_inner()),
                     value: None,
                 };
-                effect.release_in_state(scope.state, &runtime.0.poisoned)?;
-                scope.state.release_atoms([atom])?;
+                effect.release_in_state(scope.state, runtime)?;
+                scope
+                    .state
+                    .release_atoms([atom])
+                    .inspect_err(|_| runtime.0.poisoned.set(true))?;
                 scope.cleanup()
             }
         }
@@ -343,26 +349,34 @@ impl Scope<'_> {
                 } else {
                     let boundary = boundary
                         .ok_or(RuntimeError::Invariant("method read omitted its selection"))?;
-                    self.state.atoms.retain(atom)?;
-                    let effect = match StateReadEffect::prepare(
+                    match super::super::resolve_read_boundary_in_state(
+                        self.runtime,
                         self.state,
-                        &self.runtime.0.poisoned,
-                        boundary,
-                        &JsValue::Object(handler),
-                    ) {
-                        Ok(effect) => effect,
-                        Err(error) => {
-                            self.state.release_atoms([atom])?;
-                            return Err(error);
-                        }
-                    };
-                    return Ok(StateMethodStep::Read {
-                        effect,
+                        realm,
                         atom,
-                        resume: StateMethodResume(super::super::reuse::PooledBox::new(
-                            self.search.take().unwrap(),
-                        )),
-                    });
+                        &JsValue::Object(handler),
+                        boundary,
+                    )? {
+                        super::super::get::ProxyGetStep::Complete(Completion::Return(value)) => {
+                            self.value = Some(value);
+                        }
+                        super::super::get::ProxyGetStep::Complete(Completion::Throw(value)) => {
+                            return Ok(StateMethodStep::Throw(value));
+                        }
+                        super::super::get::ProxyGetStep::Effect(effect) => {
+                            if let Err(error) = self.state.atoms.retain(atom) {
+                                effect.release_in_state(self.state, self.runtime)?;
+                                return Err(error.into());
+                            }
+                            return Ok(StateMethodStep::Read {
+                                effect,
+                                atom,
+                                resume: StateMethodResume(super::super::reuse::PooledBox::new(
+                                    self.search.take().unwrap(),
+                                )),
+                            });
+                        }
+                    }
                 }
             }
             if matches!(self.value, Some(JsValue::Undefined | JsValue::Null)) {
@@ -489,6 +503,11 @@ pub(super) fn release_read_legacy(runtime: &Runtime, effect: StateReadEffect, at
             let _ = runtime.release_jsvalue(receiver);
         }
         StateReadEffect::Shared(_) => {}
+        StateReadEffect::Get(effect) => {
+            if !runtime.skip_cleanup() {
+                let _ = effect.release_in_state(&mut runtime.0.state.borrow_mut(), runtime);
+            }
+        }
     }
 }
 
@@ -515,6 +534,10 @@ impl Runtime {
                 let key = crate::engine::object::PropertyKey::from_owned_atom(self.clone(), atom);
                 self.proxy_get_jsvalue(realm, &object, &key, receiver)
             }
+            StateReadEffect::Get(effect) => {
+                self.release_atom_handle(atom);
+                self.finish_proxy_get_effect(realm, effect)
+            }
             StateReadEffect::Shared(read) => {
                 self.release_atom_handle(atom);
                 let (element, bytes) = read.read()?;
@@ -533,6 +556,46 @@ impl Runtime {
 mod tests {
     use super::*;
     use crate::engine::{api::Value, heap::RawId};
+
+    #[test]
+    fn synchronous_proxy_handler_read_does_not_publish_method_or_get_resume() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(proxy) = context
+            .eval("new Proxy({x:1},new Proxy(new Proxy({set:undefined},{}),{}))")
+            .unwrap()
+        else {
+            panic!()
+        };
+        let strong = std::rc::Rc::strong_count(&runtime.0);
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let mut state = runtime.0.state.borrow_mut();
+        let StateMethodStep::Complete(selection) = StateMethodStep::start(
+            &runtime,
+            &mut state,
+            context.realm,
+            proxy.object_id(),
+            "set",
+        )
+        .unwrap() else {
+            panic!("synchronous handler forwarding")
+        };
+        assert!(selection.target.is_none());
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), strong);
+        assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+        selection.release_in_state(&mut state, &runtime).unwrap();
+        #[cfg(feature = "profiling")]
+        for event in ["method_resume_allocation", "get_resume_allocation"] {
+            assert!(
+                !profile
+                    .snapshot()
+                    .owned_execution_events
+                    .contains_key(event)
+            );
+        }
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
 
     #[test]
     fn synchronous_method_prefix_has_no_runtime_owner_or_wait_record() {

@@ -319,7 +319,7 @@ pub(in crate::engine::vm) struct NamedReadOperation {
 }
 pub(in crate::engine::vm) use window::{
     CheckedOrdinaryCallOperands, DirectSlot, FrameExecution, FrameSlots, FrameTransaction,
-    FrameTurn, LinkedReadCompletion,
+    FrameTurn,
 };
 
 impl SlotStore {

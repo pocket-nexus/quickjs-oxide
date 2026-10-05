@@ -14,7 +14,7 @@ use crate::engine::{
 
 #[cold]
 #[inline(never)]
-pub(super) fn finish(
+pub(in crate::engine::vm) fn finish(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,

@@ -37,6 +37,7 @@ mod gc;
 use edges::Edges;
 
 #[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 mod slot_ownership;
 #[cfg(test)]
 use gc::object_atoms;
@@ -51,6 +52,7 @@ use gc::{
 };
 
 #[cfg(any(test, feature = "profiling"))]
+#[cfg(test)]
 pub(crate) use slot_ownership::SlotReleaseReadiness;
 mod collection_index;
 mod collection_records;

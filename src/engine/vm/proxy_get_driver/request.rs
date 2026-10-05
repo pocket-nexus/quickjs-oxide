@@ -487,6 +487,12 @@ pub(super) enum Step {
         atom: Option<crate::engine::atom::Atom>,
         resume: Option<Resume>,
     },
+    #[cfg_attr(not(test), allow(dead_code))]
+    PreparedOwn {
+        method: Option<crate::engine::object::internal_methods::StateMethodStep>,
+        atom: Option<crate::engine::atom::Atom>,
+        resume: Option<Resume>,
+    },
     PreparedRead {
         read: Option<OrdinaryRead>,
         key: Option<PropertyKey>,
@@ -1116,7 +1122,30 @@ impl Step {
                 if !runtime.skip_cleanup() {
                     let mut state = runtime.0.state.borrow_mut();
                     if let Some(effect) = effect {
-                        let _ = effect.release_in_state(&mut state, &runtime.0.poisoned);
+                        let _ = effect.release_in_state(&mut state, runtime);
+                    }
+                    if !runtime.0.poisoned.get()
+                        && let Some(atom) = atom
+                        && state.release_atoms([atom]).is_err()
+                    {
+                        runtime.0.poisoned.set(true);
+                    }
+                }
+                if let Some(resume) = resume {
+                    resume.release_owned(runtime);
+                }
+            }
+            Self::PreparedOwn {
+                method,
+                atom,
+                resume,
+            } => {
+                if !runtime.skip_cleanup() {
+                    let mut state = runtime.0.state.borrow_mut();
+                    if let Some(method) = method
+                        && method.release_in_state(runtime, &mut state).is_err()
+                    {
+                        runtime.0.poisoned.set(true);
                     }
                     if !runtime.0.poisoned.get()
                         && let Some(atom) = atom
@@ -1421,6 +1450,7 @@ impl Resume {
             | Self::OwnFlagReply { resume, .. }
             | Self::PrototypeGetReply(resume)
             | Self::PrototypeSetReply(resume) => resume.release_owned(runtime),
+            Self::Get(resume) => resume.release_owned(runtime),
             Self::DefineTyped { payload } => payload.resume.release_owned(runtime),
             Self::DefineLength { payload } => payload.resume.release_owned(runtime),
             _ => {}
@@ -2742,4 +2772,45 @@ fn s11_protocol_layout_inventory() {
                 <= 8
         );
     }
+}
+
+#[cfg(test)]
+#[test]
+fn selected_own_carrier_cancellation_releases_exact_method_and_key() {
+    use crate::engine::{
+        api::Value,
+        object::internal_methods::{StateMethodStep, StateOwnPrefix},
+    };
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let Value::Object(proxy) = context
+        .eval("new Proxy({}, {get getOwnPropertyDescriptor(){throw 42}})")
+        .unwrap()
+    else {
+        panic!()
+    };
+    let strong = std::rc::Rc::strong_count(&runtime.0);
+    let mut pending = {
+        let mut state = runtime.0.state.borrow_mut();
+        let StateOwnPrefix::Effect(method) =
+            StateOwnPrefix::select(&runtime, &mut state, context.realm, proxy.object_id()).unwrap()
+        else {
+            panic!()
+        };
+        assert!(matches!(method, StateMethodStep::Read { .. }));
+        let atom = state.atoms.intern("own-selected-key").unwrap();
+        Step::PreparedOwn {
+            method: Some(method),
+            atom: Some(atom),
+            resume: Some(Resume::RootDescriptor),
+        }
+    };
+    assert_eq!(runtime.0.proxy_method_depth.get(), 1);
+    assert_eq!(std::rc::Rc::strong_count(&runtime.0), strong);
+    pending.release_owned(&runtime);
+    assert!(matches!(pending, Step::Complete(None)));
+    assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+    assert_eq!(std::rc::Rc::strong_count(&runtime.0), strong);
+    assert!(!runtime.is_poisoned());
+    assert!(!runtime.0.deferred_references.has_pending());
 }
