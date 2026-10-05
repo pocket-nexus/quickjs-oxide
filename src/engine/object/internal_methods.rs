@@ -61,8 +61,8 @@ mod own_property;
 pub(crate) use boolean::ProxyBooleanResume;
 pub(crate) use boolean::{ProxyBooleanKind, ProxyBooleanStep};
 
-pub(crate) use get::ProxyGetResume;
 use get::ProxyGetStep;
+pub(crate) use get::{ProxyGetEffect, ProxyGetResume};
 
 pub(crate) use get::ProxyGetStep as OwnedProxyGetStep;
 
@@ -838,50 +838,9 @@ impl Runtime {
         key: &PropertyKey,
         receiver: JsValue,
     ) -> Result<Completion, RuntimeError> {
-        let mut step =
+        let step =
             ProxyGetStep::start(self, realm, object.try_clone()?, key.try_clone()?, receiver)?;
-        loop {
-            step = match step {
-                ProxyGetStep::Complete(completion) => return Ok(completion),
-                ProxyGetStep::StateRead { mut resume } => {
-                    let (effect, atom) = resume.take_state_read();
-                    resume.resume(self, self.finish_selected_method_read(realm, effect, atom)?)?
-                }
-                ProxyGetStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    resume.resume(
-                        self,
-                        self.internal_get_jsvalue(realm, &object, &key, receiver)?,
-                    )?
-                }
-                ProxyGetStep::Call { mut resume } => {
-                    let target = resume.take_call_target();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    {
-                        let completion = match target {
-                            DirectCallTarget::Callable(callable) => {
-                                self.call_internal_jsvalue(realm, &callable, receiver, arguments)?
-                            }
-                            DirectCallTarget::NonCallableProxy(proxy) => {
-                                self.call_proxy_jsvalue(realm, &proxy, receiver, arguments)?
-                            }
-                        };
-                        resume.resume(self, completion)?
-                    }
-                }
-                ProxyGetStep::Descriptor { mut resume } => {
-                    let object = resume.take_descriptor_object();
-                    let key = resume.take_descriptor_key();
-                    resume.descriptor(
-                        self,
-                        self.internal_get_own_property_owned(realm, &object, &key)?,
-                    )?
-                }
-            };
-        }
+        self.finish_proxy_get_step(realm, step)
     }
 
     pub(crate) fn internal_set(
