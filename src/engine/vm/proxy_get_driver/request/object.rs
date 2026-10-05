@@ -11,7 +11,9 @@ impl TryFrom<ProxyGetStep> for Step {
         Ok(match step {
             ProxyGetStep::Complete(result) => Self::Complete(Some(result)),
             ProxyGetStep::Effect(effect) => Self::StateRead {
-                effect: Some(effect), atom: None, resume: Some(Resume::Identity),
+                effect: Some(effect),
+                atom: None,
+                resume: Some(Resume::Identity),
             },
         })
     }

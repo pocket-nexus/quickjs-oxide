@@ -80,7 +80,10 @@ impl StateMethodTarget {
             Self::Callable(id) | Self::NonCallableProxy(id) => *id,
         }
     }
-    pub(super) fn into_legacy(self, runtime: &Runtime) -> DirectCallTarget {
+    pub(in crate::engine::object::internal_methods) fn into_legacy(
+        self,
+        runtime: &Runtime,
+    ) -> DirectCallTarget {
         match self {
             Self::Callable(id) => DirectCallTarget::Callable(CallableRef::from_validated_object(
                 ObjectRef::from_owned_handle(runtime.clone(), id),
