@@ -124,7 +124,7 @@ pub(super) struct FrameEntry {
 impl FrameEntry {
     pub(super) fn release(mut self, runtime: &Runtime) -> Result<(), RuntimeError> {
         runtime.check_poison()?;
-        self.cold.release_legacy();
+        self.cold.release_legacy(runtime);
         runtime.check_poison()?;
         {
             let mut state = runtime.0.state.borrow_mut();
@@ -248,7 +248,7 @@ impl Drop for RetiredFrame<'_> {
             return;
         }
         if let Some(mut frame) = self.frame.take() {
-            frame.cold.release_legacy();
+            frame.cold.release_legacy(self.runtime);
             if self.runtime.is_poisoned() {
                 return;
             }
@@ -454,11 +454,19 @@ impl FrameStore {
 
     pub(super) fn put_pending(
         &mut self,
+        runtime: &Runtime,
         id: FrameId,
         pending: Box<super::proxy_get_driver::PendingProxyGet>,
     ) -> Result<(), Error> {
-        let frame = self.current_mut(id)?;
+        let frame = match self.current_mut(id) {
+            Ok(frame) => frame,
+            Err(error) => {
+                pending.release(runtime);
+                return Err(error);
+            }
+        };
         if frame.cold.property_wait.is_some() {
+            pending.release(runtime);
             return Err(Error::internal("request overwrote a pending reply"));
         }
         let depth = pending.continuation_depth();
@@ -625,10 +633,12 @@ impl FrameCold {
 
     /// Temporary public-root continuations still use their existing cleanup
     /// protocol. Call this outside the state borrow until their B migration.
-    pub(super) fn release_legacy(&mut self) {
+    pub(super) fn release_legacy(&mut self, runtime: &Runtime) {
         if let Some(rare) = self.rare.get_mut() {
             rare.property_keys.clear();
-            rare.property_wait = None;
+            if let Some(pending) = rare.property_wait.take() {
+                pending.release(runtime);
+            }
             rare.iterator_wait = None;
             rare.conversion = None;
         }
@@ -846,6 +856,7 @@ mod tests {
         let first_id = push(&runtime, &mut first_slots, &mut frames, first).unwrap();
         frames
             .put_pending(
+                &runtime,
                 first_id,
                 PendingProxyGet::with_parent_depth_for_test(context.realm, 3),
             )
@@ -864,7 +875,7 @@ mod tests {
         let pending = frames.take_pending(second_id).unwrap();
         assert_eq!(pending.continuation_depth(), 4);
         assert_wait_depth_matches_scan(&frames);
-        frames.put_pending(second_id, pending).unwrap();
+        frames.put_pending(&runtime, second_id, pending).unwrap();
         assert_wait_depth_matches_scan(&frames);
         release(&runtime, &mut second_slots, frames.pop(second_id).unwrap());
         assert_wait_depth_matches_scan(&frames);
@@ -891,6 +902,7 @@ mod tests {
         assert!(
             frames
                 .put_pending(
+                    &runtime,
                     invalid,
                     PendingProxyGet::with_parent_depth_for_test(context.realm, 2)
                 )
@@ -900,6 +912,7 @@ mod tests {
         assert_wait_depth_matches_scan(&frames);
         frames
             .put_pending(
+                &runtime,
                 id,
                 PendingProxyGet::with_parent_depth_for_test(context.realm, 3),
             )
@@ -908,6 +921,7 @@ mod tests {
         assert!(
             frames
                 .put_pending(
+                    &runtime,
                     id,
                     PendingProxyGet::with_parent_depth_for_test(context.realm, 5)
                 )
