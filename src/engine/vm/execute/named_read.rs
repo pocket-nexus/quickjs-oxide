@@ -20,6 +20,9 @@ pub(super) enum Progress {
     Throw,
 }
 
+// Warm named reads finish through the IC in dispatch. Keep the general
+// lookup/effect-selection body and its call edge out of the hot loop layout.
+#[cold]
 #[inline(never)]
 pub(super) fn execute(
     runtime: &Runtime,
