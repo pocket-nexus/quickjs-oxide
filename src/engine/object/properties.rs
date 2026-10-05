@@ -48,6 +48,8 @@ pub(crate) const MIN_UNIQUE_SHAPE_APPEND_ENTRIES: usize = 1;
 #[cfg(test)]
 mod autoinit_state_tests;
 
+mod state_define;
+
 impl RuntimeState {
     #[cfg(test)]
     pub(crate) fn append_unique_layout(
@@ -969,44 +971,32 @@ impl Runtime {
         descriptor: &super::OwnedPropertyDescriptor,
     ) -> Result<Option<bool>, RuntimeError> {
         self.validate_object_and_key(object, key)?;
-        match self.array_own_key(object, key)? {
-            ArrayOwnKey::Index(index) => {
-                let (old_length, writable) = self.array_length_state(object)?;
-                if index >= old_length && !writable {
-                    return Ok(Some(false));
-                }
-                return match self.define_array_index_raw(
-                    object,
-                    key,
-                    index,
-                    old_length,
-                    &descriptor.raw_record(),
-                )? {
-                    PropertyDefineOutcome::Defined(value) => Ok(Some(value)),
-                    PropertyDefineOutcome::Throw(value) => {
-                        self.release_jsvalue(value)?;
-                        Err(RuntimeError::Invariant("raw array index definition threw"))
-                    }
-                };
-            }
-            ArrayOwnKey::Length => return Ok(None),
-            ArrayOwnKey::Other => {}
+        if let Some(accepted) = self.0.state.borrow_mut().try_define_own_property_in_state(
+            &self.0.poisoned,
+            object.object_id(),
+            key.atom(),
+            &descriptor.raw_record(),
+        )? {
+            return Ok(Some(accepted));
         }
-        let global = matches!(
-            self.0
-                .state
-                .borrow()
-                .heap
-                .object(object.object_id())?
-                .payload,
-            ObjectPayload::GlobalObject { .. }
-        );
-        if (global || self.ordinary_property_flags(object, key)?.is_some())
-            && self.can_define_raw_property(object, key)?
-        {
-            return self
-                .define_raw_property(object, key, &descriptor.raw_record())
-                .map(Some);
+        if let ArrayOwnKey::Index(index) = self.array_own_key(object, key)? {
+            let (old_length, writable) = self.array_length_state(object)?;
+            if index >= old_length && !writable {
+                return Ok(Some(false));
+            }
+            return match self.define_array_index_raw(
+                object,
+                key,
+                index,
+                old_length,
+                &descriptor.raw_record(),
+            )? {
+                PropertyDefineOutcome::Defined(value) => Ok(Some(value)),
+                PropertyDefineOutcome::Throw(value) => {
+                    self.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant("raw array index definition threw"))
+                }
+            };
         }
         Ok(None)
     }
@@ -1042,26 +1032,12 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
     ) -> Result<bool, RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let Some(complete) =
-            state.validate_raw_property(object.object_id(), key.atom(), descriptor)?
-        else {
-            return Ok(false);
-        };
-        if let ObjectPayload::GlobalObject { uninitialized_vars } =
-            state.heap.object(object.object_id())?.payload
-        {
-            state.store_complete_global_raw_property(
-                &self.0.poisoned,
-                object.object_id(),
-                uninitialized_vars,
-                key.atom(),
-                complete,
-            )?;
-        } else {
-            state.store_complete_raw_property(object.object_id(), key.atom(), complete)?;
-        }
-        Ok(true)
+        self.0.state.borrow_mut().define_raw_property_with_poison(
+            &self.0.poisoned,
+            object.object_id(),
+            key.atom(),
+            descriptor,
+        )
     }
 
     pub(crate) fn array_own_key(
@@ -2442,7 +2418,22 @@ impl RuntimeState {
         let Some(complete) = self.validate_raw_property(object, atom, descriptor)? else {
             return Ok(false);
         };
-        self.store_complete_raw_property_inner(poisoned, object, atom, complete)?;
+        if let ObjectPayload::GlobalObject { uninitialized_vars } =
+            self.heap.object(object)?.payload
+        {
+            let poisoned = poisoned.ok_or(RuntimeError::Invariant(
+                "global descriptor publication requires a poison header",
+            ))?;
+            self.store_complete_global_raw_property(
+                poisoned,
+                object,
+                uninitialized_vars,
+                atom,
+                complete,
+            )?;
+        } else {
+            self.store_complete_raw_property_inner(poisoned, object, atom, complete)?;
+        }
         Ok(true)
     }
 
