@@ -248,7 +248,12 @@ pub(crate) fn to_number_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<f6
 
 /// Primitive `ToString` payload for internal values (no object conversion).
 pub(crate) fn to_js_string_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<JsString, Error> {
-    runtime.0.state.borrow().primitive_to_js_string(value)
+    match value {
+        JsValue::String(_) | JsValue::BigInt(_) => {
+            runtime.0.state.borrow().primitive_to_js_string(value)
+        }
+        value => crate::engine::value::conversion::primitive_to_js_string_scalar(value),
+    }
 }
 
 pub(in crate::engine::vm) fn to_numeric_primitive(

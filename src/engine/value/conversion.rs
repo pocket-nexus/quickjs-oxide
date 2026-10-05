@@ -2,6 +2,7 @@ pub(crate) mod descriptor;
 pub(crate) mod number;
 pub(crate) mod primitive;
 mod property_key;
+pub(crate) use property_key::primitive_to_js_string_scalar;
 
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;

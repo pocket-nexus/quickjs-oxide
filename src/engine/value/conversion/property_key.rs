@@ -17,17 +17,6 @@ impl RuntimeState {
                 .string(*id)
                 .map_err(|error| Error::internal(error.to_string()))?
                 .clone(),
-            JsValue::Undefined => JsString::from_static("undefined"),
-            JsValue::Null => JsString::from_static("null"),
-            JsValue::Bool(true) => JsString::from_static("true"),
-            JsValue::Bool(false) => JsString::from_static("false"),
-            JsValue::Int(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
-            JsValue::Float(value) => JsString::from_owned_latin1(
-                crate::engine::value::number_to_string(*value).into_bytes(),
-            ),
-            JsValue::ShortBigInt(value) => {
-                JsString::from_owned_latin1(value.to_string().into_bytes())
-            }
             JsValue::BigInt(id) => {
                 let bigint = self
                     .heap
@@ -41,17 +30,7 @@ impl RuntimeState {
                 }
                 JsString::from_owned_latin1(bigint.to_string().into_bytes())
             }
-            JsValue::Symbol(_) => {
-                return Err(Error::new(
-                    ErrorKind::Type,
-                    "cannot convert symbol to string",
-                ));
-            }
-            JsValue::Object(_) => {
-                return Err(Error::internal(
-                    "object ToPrimitive requires an execution context",
-                ));
-            }
+            value => return primitive_to_js_string_scalar(value),
         })
     }
 
@@ -92,10 +71,54 @@ impl RuntimeState {
     }
 }
 
+/// Scalar formatting has no heap dependency. Runtime adapters keep this path
+/// free of RefCell access, while State consumers reuse the identical formatter.
+pub(crate) fn primitive_to_js_string_scalar(value: &JsValue) -> Result<JsString, Error> {
+    Ok(match value {
+        JsValue::Undefined => JsString::from_static("undefined"),
+        JsValue::Null => JsString::from_static("null"),
+        JsValue::Bool(true) => JsString::from_static("true"),
+        JsValue::Bool(false) => JsString::from_static("false"),
+        JsValue::Int(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
+        JsValue::Float(value) => {
+            JsString::from_owned_latin1(crate::engine::value::number_to_string(*value).into_bytes())
+        }
+        JsValue::ShortBigInt(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
+        JsValue::Symbol(_) => {
+            return Err(Error::new(
+                ErrorKind::Type,
+                "cannot convert symbol to string",
+            ));
+        }
+        JsValue::Object(_) => {
+            return Err(Error::internal(
+                "object ToPrimitive requires an execution context",
+            ));
+        }
+        JsValue::String(_) | JsValue::BigInt(_) => {
+            return Err(Error::internal("heap primitive formatting requires State"));
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::{api::Runtime, value::Value};
+
+    #[test]
+    fn scalar_runtime_formatting_does_not_borrow_state() {
+        let runtime = Runtime::new();
+        let _state = runtime.0.state.borrow_mut();
+        assert_eq!(
+            crate::engine::vm::to_js_string_jsvalue(&runtime, &JsValue::Int(7)).unwrap(),
+            JsString::from_static("7")
+        );
+        assert_eq!(
+            crate::engine::vm::to_js_string_jsvalue(&runtime, &JsValue::Float(-0.0)).unwrap(),
+            JsString::from_static("0")
+        );
+    }
 
     #[test]
     fn primitive_keys_use_current_state_and_exact_number_spelling() {
