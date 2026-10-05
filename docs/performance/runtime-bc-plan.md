@@ -71,3 +71,12 @@ manifest 的 `fixed.py --repeat 2 --order abba`：每侧两次，不重新校准
 
 B0 证据：[资产审计](runtime-b0-assets.md)、[全部见证索引](runtime-b0-test-assets.json)、
 [残留编号](runtime-b0-residuals.json)、[计数与预算](runtime-b0-baseline.json)。
+
+## 检查点 1 当前状态
+
+B0 已合并。B1 候选运行时代码为 `760443cb`（PR #91），尚未采纳。
+全八项 Array 无回调 Query/mutation progress 计数为零；正确性和资源门槛通过。
+但 Richards 的 I1 缺失相对 B0 增长 4.465%，同二进制复核仍为 4.465%。
+既定零增长 tripwire 未通过，因此停在检查点 1，B2a–f 尚未开始。
+门槛保持不变；不能将这批实现记为已验收或用其他子项的收益替代该检查。
+完整数据与各提交回执见 [B1 检查点记录](runtime-b1-checkpoint.json)。
