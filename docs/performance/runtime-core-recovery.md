@@ -356,3 +356,49 @@ text＋rodata 相对 A 增长 0.52%。其余资源验收和阶段 B 架构零指
 回执：`recovery-array-error-{vs-A-abba-20261005,gates.json,callgrind-vs-A.json,code-size.json}`，
 `recovery-array-{literal,action-order}-local-abba-20261005/`，
 `recovery-error-state-{tests,clippy}.log` 与四个逐提交 profile 目录。
+
+
+### B1/B2 发布要求、native 临时输入与 AutoInit
+
+本批四个运行时提交：`b4c745d7` 将 prepared native 参数保留在 guard 内，
+直到 callable 的检查提升成功，修复提升失败时的 argv owner 泄漏；
+`65e2eaf6` 要求所有对象 layout 分配入口携带实际 runtime 的 poison header，
+删除可绕过隔离的旧 companion；`ad96318a` 在帧观察/发布失败时清理已转出的
+receiver 和参数；`7a2b74e9` 将八类 AutoInit 工厂和 lazy slot 替换移入当前
+State。同步工厂不创建 Query 或 continuation，guard 使用短期状态再借用。
+
+发布接口变更后的 profiling 核心测试 2461/2461，AutoInit 相关测试 36/36；
+native 检查提升与帧观察故障测试覆盖别名、低位槽、清理顺序和 Runtime
+owner 数量。最终 workspace all-targets、CI fast 全部通过，focused Test262
+6844/6844；四个提交分别完成 R/D/NS profile，完整语义输出通过。
+
+首次两项修复组合 `65e2eaf6` 对前一验收运行时 `1803dba6` 的局部 ABBA：
+R −1.13%、D −4.75%、EB +0.94%、RegExp −0.85%、NS −0.98%。除 D 外，
+幅度小或两对混合。指令/写入变化很小，没有给各 guard 或工厂编造独立提速。
+
+最终 `7a2b74e9` 对阶段 A，全九项一个 ABBA 块，36/36 输出通过；同配置
+Rust 1.88 普通 release、无 PGO、冻结工作量。日常配对耗时反馈如下，
+不是原版 Score 或正式置信区间：
+
+| 子项 | 耗时变化 | 两对变化 |
+| --- | ---: | --- |
+| Richards | -22.64% | -23.00% / -22.29% |
+| DeltaBlue | -3.20% | -3.12% / -3.29% |
+| Crypto | -0.06% | +2.21% / -2.33% |
+| RayTrace | -5.76% | -5.25% / -6.27% |
+| EarleyBoyer | -9.41% | -9.49% / -9.33% |
+| RegExp | -0.14% | +1.18% / -1.46% |
+| Splay | -9.61% | -10.37% / -8.84% |
+| NavierStokes | -0.33% | -0.78% / +0.12% |
+| Combined | -5.45% | -5.63% / -5.27% |
+
+Crypto、RegExp、NavierStokes 两对混合，保留为未分辨。每项独立判断，
+Combined 不替代单项结果。最终 profile 相对 A：R Ir −16.33%、Dw −20.30%；
+D Ir −2.50%、Dw −3.10%；NS Ir +0.73%、Dw +0.11%。模拟缓存不是硬件
+计数。text＋rodata 增长 0.58%；RSS、停顿、正式 Score 和阶段 B 架构
+零残留指标仍待验收。内部 native activation 生命周期和通用 Set/读取
+消费者仍在迁移，尚未宣告 B1–B5 完成。
+
+回执：`recovery-native-autoinit-{vs-A-abba-20261005,gates.json,callgrind-vs-A.json,code-size.json}`、
+`recovery-native-publication-local-abba-20261005/`，各 `recovery-callgrind-{b4c745d7,65e2eaf6,ad96318a,7a2b74e9}/`，
+以及 native 输入、publication、AutoInit 的测试与逐层 profile 比较记录。
