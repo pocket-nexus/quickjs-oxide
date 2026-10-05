@@ -155,6 +155,8 @@ impl Heap {
             published: false,
         })?;
         let id = ObjectId { index, generation };
+        #[cfg(feature = "profiling")]
+        let allocated_kind = object.kind;
         self.publish(index, NodeData::Object(object))
             .map_err(|error| ObjectAllocationError {
                 error,
@@ -174,6 +176,8 @@ impl Heap {
                     published: true,
                 })?;
         }
+        #[cfg(feature = "profiling")]
+        record_object_layout_allocation(allocated_kind);
         Ok(id)
     }
 
@@ -1478,4 +1482,31 @@ mod publication_tests {
         assert_eq!(heap.counts().object_nodes, before.object_nodes + 1);
         assert_eq!(heap.counts().initializing, before.initializing);
     }
+}
+
+/// Diagnostic-only allocation mix for the independent layout experiment. This
+/// records successful publications, not simultaneous live-object occupancy.
+#[cfg(feature = "profiling")]
+fn record_object_layout_allocation(kind: ObjectKind) {
+    use crate::engine::api::profiling::{
+        record_owned_execution_event as event, record_owned_execution_layout as layout,
+    };
+    layout::<ArenaSlot>("heap.layout.arena_slot");
+    layout::<ObjectData>("heap.layout.object_data");
+    layout::<ObjectPayload>("heap.layout.object_payload");
+    layout::<CollectionRecords>("heap.layout.collection_records");
+    layout::<super::collection_index::CollectionIndex>("heap.layout.collection_index");
+    event(match kind {
+        ObjectKind::Ordinary => "heap.layout.alloc.ordinary",
+        ObjectKind::Array => "heap.layout.alloc.array",
+        ObjectKind::Arguments => "heap.layout.alloc.arguments",
+        ObjectKind::BytecodeFunction => "heap.layout.alloc.bytecode_function",
+        ObjectKind::NativeFunction => "heap.layout.alloc.native_function",
+        ObjectKind::Map => "heap.layout.alloc.map",
+        ObjectKind::Set => "heap.layout.alloc.set",
+        ObjectKind::WeakMap => "heap.layout.alloc.weak_map",
+        ObjectKind::WeakSet => "heap.layout.alloc.weak_set",
+        ObjectKind::ForInIterator => "heap.layout.alloc.for_in_iterator",
+        _ => "heap.layout.alloc.other",
+    });
 }

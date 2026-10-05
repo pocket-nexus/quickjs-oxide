@@ -155,3 +155,43 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod layout_experiment {
+    use super::super::*;
+
+    #[test]
+    fn report_object_arena_layout_components() {
+        macro_rules! size {
+            ($($ty:ty),* $(,)?) => { $(eprintln!("layout {} {} {}", stringify!($ty), size_of::<$ty>(), align_of::<$ty>());)* };
+        }
+        size!(
+            ArenaSlot,
+            SlotState,
+            Node,
+            NodeData,
+            ObjectData,
+            ObjectPayload,
+            Slots,
+            PropertySlot,
+            RawValue,
+            CollectionRecords,
+            collection_index::CollectionIndex,
+            WeakCollectionRecords<RawValue>,
+            WeakCollectionRecords<()>,
+            ForInIteratorData,
+            IteratorHelperData,
+            IteratorConcatData,
+            PromiseData,
+            AsyncGeneratorData,
+            AsyncFunctionStateData,
+            NativeFunctionData,
+            InternalCallableData,
+            PrimitiveObjectData,
+            RegExpObjectData,
+            ArrayBufferData,
+            SharedArrayBufferData,
+            std::cell::RefCell<Option<crate::engine::code::runtime::OrdinaryAuthentication>>
+        );
+    }
+}
