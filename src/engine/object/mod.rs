@@ -1119,6 +1119,7 @@ pub(crate) mod operations;
 
 mod ordinary_storage;
 pub(crate) use ordinary_storage::FieldStore;
+pub(crate) use ordinary_storage::prototypes_allow_dense_append;
 
 pub(crate) mod property_ic;
 

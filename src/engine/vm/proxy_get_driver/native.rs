@@ -481,6 +481,123 @@ pub(super) fn begin_local(
     selected: Option<super::super::frames::NativeClassification>,
     nested_budget: bool,
 ) -> Result<LocalNativeResult, Error> {
+    if matches!(
+        target,
+        crate::engine::builtins::native::NativeFunctionId::ArrayConstructor
+            | crate::engine::builtins::native::NativeFunctionId::ArrayPrototypePush(
+                crate::engine::builtins::native::ArrayPushKind::Push
+            )
+            | crate::engine::builtins::native::NativeFunctionId::ArrayPrototypePop(
+                crate::engine::builtins::native::ArrayPopKind::Pop
+            )
+    ) {
+        return begin_array_local(
+            runtime,
+            slots,
+            storage,
+            realm,
+            callable,
+            target,
+            defining_realm,
+            min_readable_args,
+            receiver,
+            arguments,
+            kind,
+            selected,
+            nested_budget,
+        );
+    }
+    begin_unmigrated(
+        runtime,
+        slots,
+        storage,
+        realm,
+        callable,
+        target,
+        defining_realm,
+        min_readable_args,
+        receiver,
+        arguments,
+        kind,
+        selected,
+        nested_budget,
+    )
+}
+
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn begin_array_local(
+    runtime: &Runtime,
+    slots: &mut SlotStore,
+    storage: &mut storage::QueryStorage,
+    realm: crate::engine::heap::ContextId,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
+    kind: crate::engine::builtins::continuation::NativeOperation,
+    selected: Option<super::super::frames::NativeClassification>,
+    nested_budget: bool,
+) -> Result<LocalNativeResult, Error> {
+    let mut callable = Some(callable);
+    let mut invocation = Some(NativeInvocation::Call {
+        this_value: receiver,
+    });
+    let mut arguments = arguments;
+    if let Some(completion) = super::native_state::try_array(
+        runtime,
+        slots,
+        &mut callable,
+        defining_realm,
+        target,
+        min_readable_args,
+        &mut invocation,
+        &mut arguments,
+    )? {
+        return Ok(LocalNativeResult::Complete(completion));
+    }
+    let callable = callable.take().expect("remaining native callable");
+    let NativeInvocation::Call {
+        this_value: receiver,
+    } = invocation.take().expect("remaining invocation")
+    else {
+        unreachable!()
+    };
+    begin_unmigrated(
+        runtime,
+        slots,
+        storage,
+        realm,
+        callable,
+        target,
+        defining_realm,
+        min_readable_args,
+        receiver,
+        arguments,
+        kind,
+        selected,
+        nested_budget,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn begin_unmigrated(
+    runtime: &Runtime,
+    slots: &mut SlotStore,
+    storage: &mut storage::QueryStorage,
+    realm: crate::engine::heap::ContextId,
+    callable: crate::engine::object::CallableRef,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    defining_realm: crate::engine::heap::ContextId,
+    min_readable_args: u8,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
+    kind: crate::engine::builtins::continuation::NativeOperation,
+    selected: Option<super::super::frames::NativeClassification>,
+    nested_budget: bool,
+) -> Result<LocalNativeResult, Error> {
     if let Err(error) = slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)
     {
         let _ = runtime.release_jsvalue(receiver);

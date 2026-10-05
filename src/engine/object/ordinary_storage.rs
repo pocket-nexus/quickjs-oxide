@@ -284,7 +284,7 @@ fn select_missing_prototypes(
 }
 
 /// Only a proof for the current uninterrupted borrow, never cached.
-pub(super) fn prototypes_allow_dense_append(
+pub(crate) fn prototypes_allow_dense_append(
     state: &RuntimeState,
     atom: Atom,
     prototype: Option<ObjectId>,

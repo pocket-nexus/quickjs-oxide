@@ -28,6 +28,7 @@ mod dispatch_read;
 mod dispatch_write;
 
 mod native;
+mod native_state;
 #[cfg(feature = "profiling")]
 mod profiling;
 mod request;
@@ -996,6 +997,39 @@ pub(super) fn start_construct(
     operand_count: usize,
 ) -> Result<CallStep, Error> {
     let realm = execution.frames.current_mut(frame)?.executable.realm;
+    // The direct native constructor consumes the same prepared operands before
+    // any Query exists. Bound/Proxy constructors keep normalization and effects.
+    let direct_array = {
+        let state = runtime.0.state.borrow();
+        match state
+            .heap
+            .object(target.as_object().object_id())
+            .ok()
+            .map(|data| &data.payload)
+        {
+            Some(crate::engine::heap::ObjectPayload::NativeFunction { data, .. })
+                if data.target
+                    == crate::engine::builtins::native::NativeFunctionId::ArrayConstructor =>
+            {
+                data.realm.map(|realm| (realm, data.min_readable_args))
+            }
+            _ => None,
+        }
+    };
+    if let Some((defining_realm, minimum)) = direct_array {
+        return start_local_array_construct(
+            runtime,
+            execution,
+            frame,
+            target,
+            new_target,
+            arguments,
+            operand_count,
+            realm,
+            defining_realm,
+            minimum,
+        );
+    }
     let result = start_instruction(
         runtime,
         execution,
@@ -1011,6 +1045,104 @@ pub(super) fn start_construct(
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
         Progress::Conversion(_) => Err(Error::internal("Construct returned a conversion")),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn start_local_array_construct(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    target: super::call::ConstructorRef,
+    new_target: JsValue,
+    mut arguments: Vec<JsValue>,
+    operand_count: usize,
+    realm: crate::engine::heap::ContextId,
+    defining_realm: crate::engine::heap::ContextId,
+    minimum: u8,
+) -> Result<CallStep, Error> {
+    let mut callable = Some(crate::engine::object::CallableRef::from_validated_object(
+        target.into_object(),
+    ));
+    let mut invocation = Some(super::call::NativeInvocation::Construct { new_target });
+    let attempted = (|| {
+        {
+            let _operation = runtime.operation()?;
+        }
+        let parent = execution.frames.current_mut(frame)?;
+        for _ in 0..operand_count {
+            let value = execution.slots.pop(&mut parent.window)?;
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        let depth = execution.slots.depth(&parent.window);
+        if !execution.frames.can_push_with_continuations(0) || runtime.host_stack_would_overflow() {
+            return Ok(Some((overflow(runtime, realm)?, depth)));
+        }
+        native_state::try_array(
+            runtime,
+            &mut execution.slots,
+            &mut callable,
+            defining_realm,
+            crate::engine::builtins::native::NativeFunctionId::ArrayConstructor,
+            minimum,
+            &mut invocation,
+            &mut arguments,
+        )
+        .map(|result| result.map(|completion| (completion, depth)))
+    })();
+    match attempted {
+        Ok(None) => {
+            let callable = callable.take().expect("constructor effect callable");
+            let super::call::NativeInvocation::Construct { new_target } =
+                invocation.take().expect("constructor effect invocation")
+            else {
+                unreachable!()
+            };
+            let result = start_instruction(
+                runtime,
+                execution,
+                frame,
+                Step::Construct {
+                    target: Some(super::call::ConstructorRef::from_validated_object(
+                        callable.into_object(),
+                    )),
+                    new_target: Some(super::call::ConstructNewTarget::Raw(new_target)),
+                    arguments: Some(arguments),
+                    resume: Some(Resume::Identity),
+                },
+                0,
+            );
+            match finish_error(runtime, realm, result)? {
+                Progress::Call(step) => Ok(step),
+                Progress::Conversion(_) => Err(Error::internal("Construct returned a conversion")),
+            }
+        }
+        result => {
+            // Preparation errors and budget rejection leave these input owners
+            // at the boundary. A completed state guard has already taken them.
+            if let Some(invocation) = invocation.take() {
+                let _ = invocation.release(runtime);
+            }
+            for value in arguments.drain(..) {
+                let _ = runtime.release_jsvalue(value);
+            }
+            drop(callable);
+            match result {
+                Ok(Some((completion, depth))) => finish_call_instruction_call(
+                    runtime,
+                    execution,
+                    ReturnOwner::Frame(frame),
+                    completion,
+                    depth,
+                    false,
+                ),
+                Err(error) => super::property_driver::throw_error(runtime, realm, error),
+                Ok(None) => unreachable!(),
+            }
+        }
     }
 }
 

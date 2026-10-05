@@ -288,6 +288,79 @@ impl<'a> NativePublicationWitness<'a> {
     }
 }
 
+/// Publish the same native descriptor through the executing State. The
+/// callable owner remains in the surrounding state guard for its lifetime.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::engine::vm) fn publish_native_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    function: ObjectId,
+    realm: ContextId,
+    target: NativeFunctionId,
+    min_readable_args: u8,
+    actual_arg_count: usize,
+) -> Result<ActiveFrameRestore, RuntimeError> {
+    state.heap.context(realm)?;
+    let object = state.heap.object(function)?;
+    let ObjectPayload::NativeFunction { data, .. } = &object.payload else {
+        return Err(RuntimeError::Invariant(
+            "native invocation target was not a native function",
+        ));
+    };
+    if data.target != target
+        || data.min_readable_args != min_readable_args
+        || (!target.uses_calling_realm() && data.realm != Some(realm))
+    {
+        return Err(RuntimeError::Invariant(
+            "native invocation metadata changed after snapshot",
+        ));
+    }
+    publish_borrowed_native_frame_in_state(
+        state,
+        function,
+        realm,
+        ActiveFrameFlags::default(),
+        ActiveFrameKind::Native {
+            target,
+            actual_arg_count,
+            readable_arg_count: actual_arg_count.max(usize::from(min_readable_args)),
+        },
+        false,
+    )
+}
+
+fn publish_borrowed_native_frame_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    function: ObjectId,
+    realm: ContextId,
+    flags: ActiveFrameFlags,
+    kind: ActiveFrameKind,
+    native_continuation: bool,
+) -> Result<ActiveFrameRestore, RuntimeError> {
+    let token = ActiveFrameToken(state.next_active_frame_token);
+    state.next_active_frame_token =
+        state
+            .next_active_frame_token
+            .checked_add(1)
+            .ok_or(RuntimeError::Invariant(
+                "active-frame token space was exhausted",
+            ))?;
+    let depth = state.active_frames.len();
+    state.active_frames.push_lazy_native(ActiveFrameRecord {
+        token,
+        native_continuation,
+        function,
+        realm,
+        flags,
+        kind,
+    });
+    Ok(ActiveFrameRestore {
+        token,
+        depth,
+        function: None,
+        bytecode: None,
+    })
+}
+
 impl Runtime {
     fn publish_borrowed_native_frame(
         &self,
@@ -298,27 +371,18 @@ impl Runtime {
         native_continuation: bool,
     ) -> Result<ActiveFrameGuard, RuntimeError> {
         let mut state = self.0.state.borrow_mut();
-        let token = ActiveFrameToken(state.next_active_frame_token);
-        state.next_active_frame_token =
-            state
-                .next_active_frame_token
-                .checked_add(1)
-                .ok_or(RuntimeError::Invariant(
-                    "active-frame token space was exhausted",
-                ))?;
-        let depth = state.active_frames.len();
-        state.active_frames.push_lazy_native(ActiveFrameRecord {
-            token,
-            native_continuation,
+        let restore = publish_borrowed_native_frame_in_state(
+            &mut state,
             function,
             realm,
             flags,
             kind,
-        });
+            native_continuation,
+        )?;
         Ok(ActiveFrameGuard {
             runtime: self.clone(),
-            token,
-            depth,
+            token: restore.token,
+            depth: restore.depth,
             active: true,
             _function_root: None,
             _bytecode_root: None,
