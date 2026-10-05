@@ -48,7 +48,10 @@ pub struct CollectionRecords {
     /// always matches `slots.len()`.
     live: Vec<LiveEntry>,
     live_len: usize,
-    key_index: CollectionIndex,
+    // Map/Set-only lookup metadata must not determine the arena width of every
+    // ordinary object, array and closure. Empty collections pay one allocation;
+    // their records/cursors and all GC edges remain in this canonical store.
+    key_index: Box<CollectionIndex>,
     next_id: usize,
 }
 
