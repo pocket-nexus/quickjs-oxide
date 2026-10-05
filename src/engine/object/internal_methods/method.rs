@@ -270,10 +270,23 @@ mod trap_cache_tests {
         );
         let proxy = object(context.eval("chainedProxy").unwrap());
         for _ in 0..3 {
-            assert!(matches!(
-                start_get(&runtime, context.realm, &proxy),
-                MethodStep::Read { .. }
-            ));
+            let expected = object(context.eval("innerHandler.get").unwrap());
+            let MethodStep::Complete { mut resume } = start_get(&runtime, context.realm, &proxy)
+            else {
+                panic!("an empty handler forwards the State lookup synchronously");
+            };
+            assert_eq!(
+                callable_id(&resume.take_completed_target().unwrap()),
+                expected.object_id()
+            );
+            drop(resume);
+            // This Proxy handler cannot be a cached ordinary location. Changing
+            // its underlying trap must be observed by every prefix lookup.
+            drop(
+                context
+                    .eval("innerHandler.get = function(){return 2}")
+                    .unwrap(),
+            );
         }
     }
 

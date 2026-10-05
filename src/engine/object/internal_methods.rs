@@ -62,7 +62,9 @@ pub(crate) use boolean::ProxyBooleanResume;
 pub(crate) use boolean::{ProxyBooleanKind, ProxyBooleanStep};
 
 use get::ProxyGetStep;
-pub(crate) use get::{ProxyGetEffect, ProxyGetResume};
+pub(crate) use get::{
+    ProxyGetEffect, ProxyGetResume, resolve_boundary as resolve_read_boundary_in_state,
+};
 
 pub(crate) use get::ProxyGetStep as OwnedProxyGetStep;
 
