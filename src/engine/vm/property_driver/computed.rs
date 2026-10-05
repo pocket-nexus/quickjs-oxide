@@ -1,0 +1,511 @@
+//! Computed Get borrows its primitive key and completes with one State access.
+//! Only a real getter, Proxy or shared-word service transports selected edges.
+use super::{
+    Error, FallthroughPc, FrameId, JsValue, OwnedGetterSelection, OwnedSpecialSelection,
+    PropertyKey, PropertyProgress, RunningExecution, Runtime, SelectedNamedRead,
+    runtime_error_to_vm_error,
+};
+use crate::engine::{
+    atom::Atom,
+    heap::runtime::{RuntimeState, owned_values::OwnedValueGuard},
+    object::ReadBoundary,
+    vm::stack::FrameSlots,
+};
+use std::cell::Cell;
+
+struct KeyGuard<'a> {
+    state: &'a mut RuntimeState,
+    poisoned: &'a Cell<bool>,
+    atom: Option<Atom>,
+    retained: Option<JsValue>,
+}
+
+impl Drop for KeyGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.poisoned.set(true);
+        }
+        if self.poisoned.get() {
+            return;
+        }
+        if let Some(value) = self.retained.take()
+            && self
+                .state
+                .release_owned_jsvalue(self.poisoned, value)
+                .is_err()
+        {
+            return;
+        }
+        if let Some(atom) = self.atom.take()
+            && self.state.atoms.release(atom).is_err()
+        {
+            self.poisoned.set(true);
+        }
+    }
+}
+
+struct Effect {
+    read: Option<SelectedNamedRead>,
+    atom: Option<Atom>,
+    retained: Option<JsValue>,
+}
+
+/// This guard exists only after exclusive State access ended. It owns a real
+/// selected effect; it never clones Runtime and is absent from synchronous Get.
+struct EffectGuard<'a> {
+    runtime: &'a Runtime,
+    effect: Option<Effect>,
+}
+
+impl Drop for EffectGuard<'_> {
+    fn drop(&mut self) {
+        let Some(effect) = self.effect.take() else {
+            return;
+        };
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
+        let mut state = self.runtime.0.state.borrow_mut();
+        if let Some(read) = effect.read
+            && read
+                .release_in_state(&mut state, &self.runtime.0.poisoned)
+                .is_err()
+        {
+            self.runtime.0.poisoned.set(true);
+            return;
+        }
+        drop(KeyGuard {
+            state: &mut state,
+            poisoned: &self.runtime.0.poisoned,
+            atom: effect.atom,
+            retained: effect.retained,
+        });
+    }
+}
+
+#[cold]
+#[inline(never)]
+pub(super) fn read(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    keep_receiver: bool,
+    keep_key: bool,
+    fallthrough: FallthroughPc,
+) -> Result<PropertyProgress, Error> {
+    let realm = execution.frames.current_mut(id)?.executable.realm;
+    let selected = {
+        let mut state = runtime.0.state.borrow_mut();
+        read_in_state(
+            runtime,
+            &mut state,
+            execution,
+            id,
+            keep_receiver,
+            keep_key,
+            fallthrough,
+        )
+    };
+    if runtime.0.poisoned.get() {
+        return Err(selected
+            .err()
+            .unwrap_or_else(|| Error::internal("runtime is poisoned")));
+    }
+    let effect = match selected {
+        Ok(None) => return Ok(PropertyProgress::Completed),
+        Ok(Some(effect)) => effect,
+        Err(error) => {
+            return super::throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
+        }
+    };
+    let mut effect = EffectGuard {
+        runtime,
+        effect: Some(effect),
+    };
+    if matches!(
+        effect
+            .effect
+            .as_ref()
+            .and_then(|effect| effect.read.as_ref()),
+        Some(SelectedNamedRead::Shared(_))
+    ) {
+        let Some(SelectedNamedRead::Shared(read)) =
+            effect.effect.as_mut().and_then(|effect| effect.read.take())
+        else {
+            unreachable!("selected shared service")
+        };
+        // Do not acquire the shared backing lock while State is borrowed. The
+        // selected effect guard owns its retained key until the lock ends.
+        let (element, bytes) = read.read().map_err(runtime_error_to_vm_error)?;
+        let mut state = runtime.0.state.borrow_mut();
+        let mut key = KeyGuard {
+            state: &mut state,
+            poisoned: &runtime.0.poisoned,
+            atom: None,
+            retained: effect
+                .effect
+                .as_mut()
+                .and_then(|effect| effect.retained.take()),
+        };
+        let value = key
+            .state
+            .decode_typed_index(element, bytes)
+            .map_err(runtime_error_to_vm_error)?;
+        let frame = execution.frames.current_mut(id)?;
+        let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
+        complete(
+            key.state,
+            &runtime.0.poisoned,
+            &mut transaction.slots(),
+            &mut frame.resume_pc,
+            keep_receiver,
+            &mut key.retained,
+            value,
+            fallthrough,
+        )?;
+        return Ok(PropertyProgress::Completed);
+    }
+    // These public effect adapters remain explicit B2a dependencies. Selection
+    // and primitive conversion have completed once; neither is replayed here.
+    let frame = execution.frames.current_mut(id)?;
+    let depth = execution.slots.depth(&frame.window);
+    let receiver = execution.slots.peek(&frame.window, 1)?;
+    let preserved = runtime
+        .dup_jsvalue(receiver)
+        .map_err(runtime_error_to_vm_error)?;
+    let Some(Effect {
+        read,
+        atom,
+        retained,
+    }) = effect.effect.take()
+    else {
+        unreachable!("selected computed effect")
+    };
+    let (read, key) = match read.expect("selected effect owns its read") {
+        SelectedNamedRead::Getter(read) => (read.into_legacy_read(runtime), None),
+        SelectedNamedRead::Special(read) => (
+            read.into_legacy_read(runtime),
+            Some(PropertyKey::from_owned_atom(
+                runtime.clone(),
+                atom.expect("Proxy Get owns its selected key"),
+            )),
+        ),
+        SelectedNamedRead::Shared(_) | SelectedNamedRead::LookupError(_) => {
+            unreachable!("computed effect has a selected getter or Proxy")
+        }
+    };
+    super::read_pending(
+        runtime,
+        execution,
+        id,
+        preserved,
+        key,
+        read,
+        retained,
+        keep_receiver,
+        2,
+        depth,
+    )
+    .map(PropertyProgress::Deferred)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_in_state(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    keep_receiver: bool,
+    keep_key: bool,
+    fallthrough: FallthroughPc,
+) -> Result<Option<Effect>, Error> {
+    execution.frames.materialize_in_state(state)?;
+    let frame = execution.frames.current_mut(id)?;
+    let realm = frame.executable.realm;
+    let depth = execution.slots.depth(&frame.window);
+    let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
+    let mut slots = transaction.slots();
+    let receiver = slots.peek(1)?;
+    let key = slots.peek(0)?;
+    if matches!(receiver, JsValue::Null | JsValue::Undefined) {
+        let message = if keep_key
+            && !matches!(
+                key,
+                JsValue::Int(_) | JsValue::String(_) | JsValue::Symbol(_)
+            ) {
+            "value has no property"
+        } else if matches!(receiver, JsValue::Null) {
+            "cannot read property of null"
+        } else {
+            "cannot read property of undefined"
+        };
+        return Err(Error::new(
+            crate::engine::api::error::ErrorKind::Type,
+            message,
+        ));
+    }
+    let atom = state
+        .property_key_atom_from_primitive(key)
+        .map_err(runtime_error_to_vm_error)?;
+    let mut key_owner = KeyGuard {
+        state,
+        poisoned: &runtime.0.poisoned,
+        atom: Some(atom),
+        retained: None,
+    };
+    if keep_key {
+        key_owner.retained = Some(match key {
+            JsValue::Int(_) | JsValue::String(_) | JsValue::Symbol(_) => key_owner
+                .state
+                .dup_jsvalue(key)
+                .map_err(runtime_error_to_vm_error)?,
+            value => {
+                let text = key_owner.state.primitive_to_js_string(value)?;
+                JsValue::String(
+                    key_owner
+                        .state
+                        .heap
+                        .allocate_string(text)
+                        .map_err(|error| Error::internal(error.to_string()))?,
+                )
+            }
+        });
+    }
+    let mut boundary = None;
+    let value = key_owner
+        .state
+        .select_value_read_in_state(
+            &runtime.0.poisoned,
+            realm,
+            receiver,
+            atom,
+            runtime.domain_id(),
+            &mut boundary,
+            None,
+        )
+        .map_err(runtime_error_to_vm_error)?;
+    let read = match (value, boundary) {
+        (Some(value), None) => Some(value),
+        (None, Some(ReadBoundary::Absent)) => Some(JsValue::Undefined),
+        (None, Some(ReadBoundary::Getter(getter))) => {
+            let selected = OwnedGetterSelection::prepare(
+                key_owner.state,
+                &runtime.0.poisoned,
+                receiver,
+                getter,
+            )?;
+            return Ok(Some(Effect {
+                read: Some(SelectedNamedRead::Getter(selected)),
+                atom: None,
+                retained: key_owner.retained.take(),
+            }));
+        }
+        (None, Some(ReadBoundary::Special { object, kind })) => {
+            let selected = OwnedSpecialSelection::prepare(
+                key_owner.state,
+                &runtime.0.poisoned,
+                object,
+                receiver,
+                kind,
+            )?;
+            return Ok(Some(Effect {
+                read: Some(SelectedNamedRead::Special(selected)),
+                atom: key_owner.atom.take(),
+                retained: key_owner.retained.take(),
+            }));
+        }
+        (None, Some(ReadBoundary::Shared(read))) => {
+            return Ok(Some(Effect {
+                read: Some(SelectedNamedRead::Shared(read)),
+                atom: None,
+                retained: key_owner.retained.take(),
+            }));
+        }
+        _ => {
+            return Err(Error::internal(
+                "computed read returned an inconsistent selection",
+            ));
+        }
+    };
+    complete(
+        key_owner.state,
+        &runtime.0.poisoned,
+        &mut slots,
+        &mut frame.resume_pc,
+        keep_receiver,
+        &mut key_owner.retained,
+        read.expect("synchronous read result"),
+        fallthrough,
+    )?;
+    super::record_read_completion(depth);
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("computed_read.state_completed");
+    Ok(None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete(
+    state: &mut RuntimeState,
+    poisoned: &Cell<bool>,
+    slots: &mut FrameSlots<'_>,
+    resume_pc: &mut usize,
+    keep_receiver: bool,
+    retained: &mut Option<JsValue>,
+    value: JsValue,
+    fallthrough: FallthroughPc,
+) -> Result<(), Error> {
+    let mut value = OwnedValueGuard::new(state, poisoned, value);
+    let (state, value) = value.parts();
+    let key = slots.pop()?;
+    let mut key = OwnedValueGuard::new(state, poisoned, key);
+    let (state, key) = key.parts();
+    let receiver = slots.pop()?;
+    let mut receiver = OwnedValueGuard::new(state, poisoned, receiver);
+    let (state, receiver) = receiver.parts();
+    state
+        .release_owned_jsvalue(poisoned, key.take().expect("input key owner"))
+        .map_err(runtime_error_to_vm_error)?;
+    if keep_receiver {
+        slots.push_pending(receiver)?;
+    }
+    if retained.is_some() {
+        slots.push_pending(retained)?;
+    }
+    *resume_pc = fallthrough.index();
+    slots.push_pending(value)?;
+    if let Some(receiver) = receiver.take() {
+        state
+            .release_owned_jsvalue(poisoned, receiver)
+            .map_err(runtime_error_to_vm_error)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{
+        code::exec_opcode::Opcode, value::Value,
+        vm::property_driver::read_completion_tests::read_fixture,
+    };
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn synchronous_computed_read_retires_final_receiver_with_current_state() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(object) = context.eval("({x:{marker:7}})").unwrap() else {
+            panic!("object")
+        };
+        let receiver = object.object_id();
+        let key = runtime
+            .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
+                "x",
+            )))
+            .unwrap();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o,k){return o[k]})",
+            Opcode::GetArrayElDense,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        execution.slots.push(&mut frame.window, key).unwrap();
+        let fallthrough = FallthroughPc::from_decoded(
+            frame
+                .executable
+                .exec
+                .decode_published(frame.resume_pc as u32)
+                .unwrap(),
+        );
+        let owners = std::rc::Rc::strong_count(&runtime.0);
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let _scope = crate::engine::api::profiling::CoreExecutionScope::enter();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            assert!(
+                read_in_state(
+                    &runtime,
+                    &mut state,
+                    &mut execution,
+                    id,
+                    false,
+                    false,
+                    fallthrough
+                )
+                .unwrap()
+                .is_none()
+            );
+            assert!(state.heap.object(receiver).is_err());
+            let frame = execution.frames.current_mut(id).unwrap();
+            let JsValue::Object(child) = execution.slots.peek(&frame.window, 0).unwrap() else {
+                panic!("result owner")
+            };
+            assert_eq!(state.heap.object_strong_count(*child), Ok(1));
+            assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners);
+            assert!(!runtime.0.deferred_references.has_pending());
+        }
+        let events = profile.snapshot().owned_execution_events;
+        assert_eq!(
+            events.get("computed_read.state_completed").copied(),
+            Some(1)
+        );
+        assert_eq!(events.get("query.read.acquired").copied().unwrap_or(0), 0);
+        assert_eq!(events.get("core.runtime_clone").copied().unwrap_or(0), 0);
+    }
+
+    #[test]
+    fn kept_computed_key_preserves_direct_int_and_normalizes_float_zero() {
+        for (key, normalized) in [
+            (JsValue::Int(0), Value::Int(0)),
+            (
+                JsValue::Float(-0.0),
+                Value::String(crate::engine::value::JsString::from_static("0")),
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context().unwrap();
+            let Value::Object(object) = context.eval("({'0':7})").unwrap() else {
+                panic!("object")
+            };
+            let (mut execution, id) = read_fixture(
+                &runtime,
+                &mut context,
+                "(function(o,k){return o[k]++})",
+                Opcode::GetArrayEl3Dense,
+            );
+            let frame = execution.frames.current_mut(id).unwrap();
+            execution
+                .slots
+                .push(&mut frame.window, JsValue::Object(object.into_handle()))
+                .unwrap();
+            execution.slots.push(&mut frame.window, key).unwrap();
+            let fallthrough = FallthroughPc::from_decoded(
+                frame
+                    .executable
+                    .exec
+                    .decode_published(frame.resume_pc as u32)
+                    .unwrap(),
+            );
+            assert!(matches!(
+                read(&runtime, &mut execution, id, true, true, fallthrough).unwrap(),
+                PropertyProgress::Completed
+            ));
+            let frame = execution.frames.current_mut(id).unwrap();
+            assert_eq!(execution.slots.depth(&frame.window), 3);
+            assert_eq!(
+                execution.slots.peek(&frame.window, 0).unwrap(),
+                &JsValue::Int(7)
+            );
+            let key = runtime
+                .dup_jsvalue(execution.slots.peek(&frame.window, 1).unwrap())
+                .unwrap();
+            assert_eq!(runtime.root_and_release_jsvalue(key).unwrap(), normalized);
+        }
+    }
+}

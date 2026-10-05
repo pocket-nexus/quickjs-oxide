@@ -1,5 +1,6 @@
 //! Schedule prepared property reads without replaying observable key conversion.
 //! Storage selection remains in object; VM owns input transfer and child replies.
+mod computed;
 use super::{
     Completion,
     call::{BytecodeCallRequest, CallableExecution},
@@ -302,6 +303,12 @@ pub(super) fn read_progress_selected(
     fallthrough: FallthroughPc,
     selected: Option<SelectedNamedRead>,
 ) -> Result<PropertyProgress, Error> {
+    if let ReadKey::Computed { keep_key } = key_kind {
+        if selected.is_some() {
+            return Err(Error::internal("computed read received a named selection"));
+        }
+        return computed::read(runtime, execution, id, keep_receiver, keep_key, fallthrough);
+    }
     let mut selected = NamedHandoffGuard { runtime, selected };
     let frame = execution.frames.current_mut(id)?;
     let computed = matches!(key_kind, ReadKey::Computed { .. });
@@ -421,7 +428,6 @@ pub(super) fn read_progress_selected(
     let depth = execution.slots.depth(&frame.window);
     enum SelectedKey<'a> {
         Borrowed(&'a PropertyKey),
-        Owned(PropertyKey),
     }
     let (key, retained_key) = match key_kind {
         ReadKey::Static(index) => {
@@ -446,40 +452,7 @@ pub(super) fn read_progress_selected(
             let key = Some(SelectedKey::Borrowed(&*key));
             (key, None)
         }
-        ReadKey::Computed { keep_key } => {
-            let value = execution.slots.peek(&frame.window, 0)?;
-            if matches!(value, JsValue::Object(_)) {
-                return Err(Error::internal(
-                    "object property key did not enter its conversion operation",
-                ));
-            }
-            let owned = runtime
-                .dup_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
-            let key = match runtime
-                .native_to_property_key_jsvalue(realm, owned)
-                .map_err(runtime_error_to_vm_error)?
-            {
-                NativeConversion::Value(key) => key,
-                NativeConversion::Throw(value) => {
-                    return Ok(PropertyProgress::Deferred(CallStep::Complete(
-                        Completion::Throw(value),
-                    )));
-                }
-            };
-            let retained = keep_key
-                .then(|| match value {
-                    JsValue::Int(_) | JsValue::String(_) | JsValue::Symbol(_) => runtime
-                        .dup_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error),
-                    value => Ok(super::numeric::allocate_string_jsvalue(
-                        runtime,
-                        super::numeric::to_js_string_jsvalue(runtime, value)?,
-                    )?),
-                })
-                .transpose()?;
-            (Some(SelectedKey::Owned(key)), retained)
-        }
+        ReadKey::Computed { .. } => unreachable!("computed reads use their State consumer"),
     };
     // Lookup borrows the original rooted operand. Only a pending callback
     // needs a second receiver owner; completed reads move this slot directly.
@@ -490,7 +463,6 @@ pub(super) fn read_progress_selected(
             key.as_ref()
                 .map(|key| match key {
                     SelectedKey::Borrowed(key) => *key,
-                    SelectedKey::Owned(key) => key,
                 })
                 .ok_or(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "fallback read lost its key",
@@ -507,7 +479,6 @@ pub(super) fn read_progress_selected(
     let key = if matches!(read, OrdinaryRead::Special { .. }) {
         key.map(|key| match key {
             SelectedKey::Borrowed(key) => key.try_clone(),
-            SelectedKey::Owned(key) => Ok(key),
         })
         .transpose()?
     } else {
