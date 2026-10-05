@@ -660,7 +660,10 @@ impl Runtime {
                 })
                 .transpose()?,
             ),
-            OwnReadSelection::Missing(_) | OwnReadSelection::Special(_) => ReadProbe::Declined,
+            OwnReadSelection::Missing(_)
+            | OwnReadSelection::Special(_)
+            | OwnReadSelection::StringUnit(_)
+            | OwnReadSelection::Lazy => ReadProbe::Declined,
             OwnReadSelection::Value(_) => unreachable!("data was promoted under state access"),
         })
     }
@@ -674,6 +677,8 @@ pub(super) enum OwnReadSelection {
     Getter(Option<ObjectId>),
     Missing(Option<ObjectId>),
     Special(SpecialKind),
+    StringUnit(u16),
+    Lazy,
 }
 
 impl RuntimeState {

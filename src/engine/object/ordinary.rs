@@ -181,156 +181,76 @@ impl Runtime {
     ) -> Result<OrdinaryRead, RuntimeError> {
         let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
-        self.prepare_ordinary_read_selected_inner(
-            object.object_id(),
-            Some(object),
-            key,
-            receiver,
-            native,
-        )
+        self.prepare_ordinary_read_selected_inner(object.object_id(), key, receiver, native)
     }
 
-    /// The caller keeps the borrowed initial object alive for this lookup.
-    pub(crate) fn prepare_ordinary_read_selected_id(
+    fn prepare_ordinary_read_selected_inner(
         &self,
         object: ObjectId,
         key: &PropertyKey,
         receiver: &JsValue,
         native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        let _operation = self.operation()?;
-        if !key.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("property key"));
+        let _unwind = self.unwind_guard();
+        let mut boundary = None;
+        let value = self.0.state.borrow_mut().select_ordinary_read_in_state(
+            &self.0.poisoned,
+            object,
+            key.atom(),
+            self.domain_id(),
+            &mut boundary,
+            native,
+        )?;
+        match value {
+            Some(value) => Ok(OrdinaryRead::Complete(Some(value))),
+            None => self.root_selected_read_boundary(
+                receiver,
+                boundary.ok_or(RuntimeError::Invariant(
+                    "ordinary read omitted its boundary",
+                ))?,
+            ),
         }
-        self.prepare_ordinary_read_selected_inner(object, None, key, receiver, native)
     }
 
-    fn prepare_ordinary_read_selected_inner(
+    /// Public/remaining effect consumers create roots only for a selected call.
+    /// Synchronous data, virtual properties and prototype traversal use State.
+    pub(super) fn root_selected_read_boundary(
         &self,
-        object: ObjectId,
-        original: Option<&ObjectRef>,
-        key: &PropertyKey,
         receiver: &JsValue,
-        mut native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
+        boundary: ReadBoundary,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        let mut prototype: Option<ObjectRef> = None;
-        loop {
-            let current_id = prototype.as_ref().map_or(object, ObjectRef::object_id);
-            let mut boundary = None;
-            if let Some(value) = self.0.state.borrow_mut().select_ordinary_read_in_state(
-                current_id,
-                key.atom(),
-                self.domain_id(),
-                &mut boundary,
-                native.as_deref_mut(),
-            )? {
-                return Ok(OrdinaryRead::Complete(Some(value)));
+        Ok(match boundary {
+            ReadBoundary::Absent => OrdinaryRead::Complete(None),
+            ReadBoundary::Getter(id) => OrdinaryRead::Call {
+                getter: CallableRef::from_validated_object(ObjectRef::from_borrowed_handle(
+                    self.clone(),
+                    id,
+                )?),
+                receiver: self.dup_jsvalue(receiver)?,
+            },
+            ReadBoundary::Special {
+                object,
+                kind: kind @ SpecialKind::Proxy,
+            } => OrdinaryRead::Special {
+                kind,
+                object: ObjectRef::from_borrowed_handle(self.clone(), object)?,
+                receiver: self.dup_jsvalue(receiver)?,
+            },
+            ReadBoundary::Shared(read) => {
+                let (element, bytes) = read.read()?;
+                OrdinaryRead::Complete(Some(
+                    self.0
+                        .state
+                        .borrow_mut()
+                        .decode_typed_index(element, bytes)?,
+                ))
             }
-            match boundary.ok_or(RuntimeError::Invariant(
-                "ordinary read omitted its boundary",
-            ))? {
-                ReadBoundary::Absent => return Ok(OrdinaryRead::Complete(None)),
-                ReadBoundary::Getter(id) => {
-                    let getter = CallableRef::from_validated_object(
-                        ObjectRef::from_borrowed_handle(self.clone(), id)?,
-                    );
-                    return Ok(OrdinaryRead::Call {
-                        getter,
-                        receiver: self.dup_jsvalue(receiver)?,
-                    });
-                }
-                ReadBoundary::Special {
-                    object: current_id,
-                    kind: kind @ SpecialKind::Proxy,
-                } => {
-                    return Ok(OrdinaryRead::Special {
-                        kind,
-                        object: ObjectRef::from_borrowed_handle(self.clone(), current_id)?,
-                        receiver: self.dup_jsvalue(receiver)?,
-                    });
-                }
-                ReadBoundary::Special {
-                    object: current_id,
-                    kind,
-                } => {
-                    // Only exotic storage needs the ObjectRef adapter. Ordinary
-                    // data/getter/prototype probing borrows the initial base.
-                    let promoted;
-                    let current = if let Some(current) = prototype
-                        .as_ref()
-                        .or(original)
-                        .filter(|object| object.object_id() == current_id)
-                    {
-                        current
-                    } else {
-                        promoted = ObjectRef::from_borrowed_handle(self.clone(), current_id)?;
-                        &promoted
-                    };
-                    // Integer-indexed exotic Get is terminal, including
-                    // invalid/detached indices. It must not inspect a prototype.
-                    if matches!(kind, SpecialKind::TypedArray)
-                        && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
-                    {
-                        let value = match numeric {
-                            crate::engine::builtins::CanonicalNumericIndex::Valid(index) => self
-                                .typed_array_read_index_jsvalue(current, index)?
-                                .unwrap_or(JsValue::Undefined),
-                            crate::engine::builtins::CanonicalNumericIndex::Invalid => {
-                                JsValue::Undefined
-                            }
-                        };
-                        return Ok(OrdinaryRead::Complete(Some(value)));
-                    }
-                    // Reuse the full storage kernel for Array holes, String,
-                    // Arguments, namespace live cells and lazy own properties.
-                    // Materializing a descriptor does not invoke its getter.
-                    if let Some(own) = self.get_own_property_owned(current, key)? {
-                        use crate::engine::object::property::CompletePropertyDescriptor;
-                        let getter = match own.record() {
-                            CompletePropertyDescriptor::Data { .. } => {
-                                // Transfer the descriptor's owned value edge
-                                // instead of duplicating it and releasing the
-                                // descriptor's copy right after.
-                                return Ok(OrdinaryRead::Complete(Some(
-                                    own.into_data_value().ok_or(RuntimeError::Invariant(
-                                        "own descriptor stored an internal sentinel",
-                                    ))?,
-                                )));
-                            }
-                            CompletePropertyDescriptor::Accessor {
-                                get: Some(crate::engine::heap::RawValue::Object(id)),
-                                ..
-                            } => Some(*id),
-                            CompletePropertyDescriptor::Accessor { get: None, .. } => None,
-                            _ => {
-                                return Err(RuntimeError::Invariant(
-                                    "stored accessor getter was not an object",
-                                ));
-                            }
-                        };
-                        return Ok(match getter {
-                            Some(id) => {
-                                let getter = CallableRef::from_validated_object(
-                                    ObjectRef::from_borrowed_handle(self.clone(), id)?,
-                                );
-                                OrdinaryRead::Call {
-                                    getter,
-                                    receiver: self.dup_jsvalue(receiver)?,
-                                }
-                            }
-                            None => OrdinaryRead::Complete(Some(JsValue::Undefined)),
-                        });
-                    }
-                    // A non-Proxy object's prototype lookup has no user call.
-                    // A Proxy reached on the next iteration is still returned
-                    // as an explicit unresolved boundary with the same receiver.
-                    let Some(next) = self.get_prototype_of(current)? else {
-                        return Ok(OrdinaryRead::Complete(None));
-                    };
-                    prototype = Some(next);
-                }
+            ReadBoundary::Special { .. } => {
+                return Err(RuntimeError::Invariant(
+                    "read left an unresolved non-Proxy storage boundary",
+                ));
             }
-        }
+        })
     }
 }
 

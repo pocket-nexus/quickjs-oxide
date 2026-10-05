@@ -303,6 +303,8 @@ pub(super) enum VmAction {
     DropCatch,
     NipCatch,
     Throw,
+    /// The execution owns a freshly prepared exception in pending.
+    ThrowPrepared,
     Materialize,
     BindingError {
         index: u32,
@@ -386,6 +388,7 @@ impl VmAction {
             Self::DropCatch => "execute.action.drop_catch",
             Self::NipCatch => "execute.action.nip_catch",
             Self::Throw => "execute.action.throw",
+            Self::ThrowPrepared => "execute.action.throw_prepared",
             Self::Materialize => "execute.action.materialize",
             Self::BindingError { .. } => "execute.action.binding_error",
             Self::PrivateInitialize { .. } => "execute.action.private_initialize",
@@ -2591,6 +2594,24 @@ pub(super) fn execute_frame_in_state(
             }
         }?;
         match action {
+            VmAction::GetField {
+                index,
+                keep_receiver,
+                fallthrough,
+            } => {
+                match named_read::execute(
+                    runtime,
+                    state,
+                    &mut segment,
+                    index,
+                    keep_receiver,
+                    fallthrough,
+                )? {
+                    named_read::Progress::Completed => continue,
+                    named_read::Progress::Boundary => return Ok(action),
+                    named_read::Progress::Throw => return Ok(VmAction::ThrowPrepared),
+                }
+            }
             VmAction::Object { fallthrough } => {
                 // FrameCursor has published the allocation's fault PC. Use
                 // the one suffix protocol before allocation can be observed.
@@ -3694,3 +3715,5 @@ mod named_native_fact_tests;
 mod array_allocation_tests;
 
 mod array_allocation;
+
+pub(super) mod named_read;

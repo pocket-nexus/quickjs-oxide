@@ -1249,29 +1249,10 @@ impl Runtime {
         if !key.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property key"));
         }
-        // Immediate atoms are canonical nonnegative integer strings. Numeric
-        // -0 has already become the zero atom; the string "-0" falls through.
-        if let Some(index) = key.atom().immediate_integer() {
-            return Ok(Some(CanonicalNumericIndex::Valid(u64::from(index))));
-        }
-        if self.0.state.borrow().atoms.property_key_kind(key.atom())? != PropertyKeyKind::String {
-            return Ok(None);
-        }
-        let spelling = self.property_key_to_js_string(key)?;
-        if spelling == JsString::from_static("-0") {
-            return Ok(Some(CanonicalNumericIndex::Invalid));
-        }
-        let number = Value::String(spelling.clone())
-            .to_number()
-            .map_err(RuntimeError::Engine)?;
-        if spelling != Value::number(number).to_js_string()? {
-            return Ok(None);
-        }
-        if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > u64::MAX as f64
-        {
-            return Ok(Some(CanonicalNumericIndex::Invalid));
-        }
-        Ok(Some(CanonicalNumericIndex::Valid(number as u64)))
+        self.0
+            .state
+            .borrow()
+            .typed_array_canonical_numeric_index(key.atom())
     }
 
     pub(crate) fn typed_array_read_index(
@@ -1301,31 +1282,22 @@ impl Runtime {
         object: &ObjectRef,
         index: u64,
     ) -> Result<Option<JsValue>, RuntimeError> {
-        let snapshot = self.typed_array_snapshot(object)?;
-        let bytes = match self.ordinary_typed_array_word(snapshot, index, None)? {
-            OrdinaryTypedWord::Missing => return Ok(None),
-            OrdinaryTypedWord::Word(bytes) => bytes,
-            OrdinaryTypedWord::Shared => {
-                let access = self.snapshot_buffer_access(snapshot.buffer)?;
-                let Some((absolute, width)) =
-                    typed_array_word_range(snapshot, access.state, index)?
-                else {
-                    return Ok(None);
-                };
-                self.read_buffer_word(&access, absolute, width)?
+        let selected = self
+            .0
+            .state
+            .borrow_mut()
+            .typed_array_read_index_in_state(object.object_id(), index)?;
+        match selected {
+            TypedIndexRead::Value(value) => Ok(value),
+            TypedIndexRead::Shared(read) => {
+                let (element, bytes) = read.read()?;
+                self.0
+                    .state
+                    .borrow_mut()
+                    .decode_typed_index(element, bytes)
+                    .map(Some)
             }
-        };
-        // Decoding backing bytes creates a new numeric value. Publish BigInt
-        // once here; subsequent callback buffers retain this exact node.
-        if snapshot.element.is_bigint() {
-            return Ok(Some(
-                self.into_jsvalue(typed_array_decode(snapshot.element, bytes))?,
-            ));
         }
-        Ok(Some(typed_array_decode_number_jsvalue(
-            snapshot.element,
-            bytes,
-        )))
     }
 
     pub(crate) fn typed_array_get_index_descriptor(
@@ -1750,7 +1722,110 @@ fn typed_array_parse_primitive_bigint(
     })
 }
 
+pub(crate) enum TypedIndexRead {
+    Value(Option<JsValue>),
+    Shared(SharedTypedRead),
+}
+
+/// Owns only the shared backing Arc. The view/range was selected with State;
+/// locking bytes happens after that borrow ends, without a public object root.
+pub(crate) struct SharedTypedRead {
+    handle: crate::engine::heap::shared_memory::SharedBufferHandle,
+    offset: u32,
+    width: u8,
+    element: TypedArrayElementKind,
+}
+impl SharedTypedRead {
+    pub(crate) fn read(self) -> Result<(TypedArrayElementKind, [u8; 8]), RuntimeError> {
+        let bytes = self
+            .handle
+            .read_word(self.offset, self.width)
+            .map_err(crate::engine::builtins::buffer_access::shared_memory_runtime_error)?;
+        Ok((self.element, bytes))
+    }
+}
+
 impl crate::engine::heap::runtime::RuntimeState {
+    pub(crate) fn typed_array_canonical_numeric_index(
+        &self,
+        atom: crate::engine::atom::Atom,
+    ) -> Result<Option<CanonicalNumericIndex>, RuntimeError> {
+        if let Some(index) = atom.immediate_integer() {
+            return Ok(Some(CanonicalNumericIndex::Valid(u64::from(index))));
+        }
+        if self.atoms.property_key_kind(atom)? != PropertyKeyKind::String {
+            return Ok(None);
+        }
+        let spelling = self.atoms.to_js_string(atom)?;
+        if spelling == JsString::from_static("-0") {
+            return Ok(Some(CanonicalNumericIndex::Invalid));
+        }
+        let number = Value::String(spelling.clone())
+            .to_number()
+            .map_err(RuntimeError::Engine)?;
+        if spelling != Value::number(number).to_js_string()? {
+            return Ok(None);
+        }
+        if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > u64::MAX as f64
+        {
+            return Ok(Some(CanonicalNumericIndex::Invalid));
+        }
+        Ok(Some(CanonicalNumericIndex::Valid(number as u64)))
+    }
+
+    pub(crate) fn typed_array_read_index_in_state(
+        &mut self,
+        object: ObjectId,
+        index: u64,
+    ) -> Result<TypedIndexRead, RuntimeError> {
+        let snapshot = typed_array_snapshot_from_payload(&self.heap.object(object)?.payload)
+            .ok_or(RuntimeError::Invariant(
+                "indexed read reached a non-TypedArray",
+            ))?;
+        Ok(
+            match ordinary_typed_array_word_in_heap(&mut self.heap, snapshot, index, None)? {
+                OrdinaryTypedWord::Missing => TypedIndexRead::Value(None),
+                OrdinaryTypedWord::Shared => {
+                    let buffer = self.heap.buffer_state(snapshot.buffer)?;
+                    let Some((offset, width)) = typed_array_word_range(snapshot, buffer, index)?
+                    else {
+                        return Ok(TypedIndexRead::Value(None));
+                    };
+                    TypedIndexRead::Shared(SharedTypedRead {
+                        handle: self
+                            .heap
+                            .clone_shared_array_buffer_handle(snapshot.buffer)?,
+                        offset: u32::try_from(offset).map_err(|_| {
+                            RuntimeError::Invariant("shared typed byte offset overflowed u32")
+                        })?,
+                        width: width as u8,
+                        element: snapshot.element,
+                    })
+                }
+                OrdinaryTypedWord::Word(bytes) => {
+                    TypedIndexRead::Value(Some(self.decode_typed_index(snapshot.element, bytes)?))
+                }
+            },
+        )
+    }
+
+    pub(crate) fn decode_typed_index(
+        &mut self,
+        element: TypedArrayElementKind,
+        bytes: [u8; 8],
+    ) -> Result<JsValue, RuntimeError> {
+        if !element.is_bigint() {
+            return Ok(typed_array_decode_number_jsvalue(element, bytes));
+        }
+        let Value::BigInt(value) = typed_array_decode(element, bytes) else {
+            unreachable!("BigInt element decoder")
+        };
+        Ok(match value.as_i64() {
+            Some(value) => JsValue::ShortBigInt(value),
+            None => JsValue::BigInt(self.heap.allocate_bigint(value)?),
+        })
+    }
+
     pub(crate) fn try_typed_array_number_write(
         &mut self,
         base: &JsValue,

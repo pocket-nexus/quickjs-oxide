@@ -3,17 +3,23 @@
 //! consumed while the initial receiver still owns the selected prototype chain.
 
 use crate::engine::{
+    api::error::ErrorKind,
     api::runtime_error::RuntimeError,
-    atom::Atom,
-    heap::{ObjectId, runtime::RuntimeState},
+    atom::{Atom, AtomIdx},
+    builtins::{CanonicalNumericIndex, TypedIndexRead, native::PrimitiveKind},
+    heap::{
+        ContextId, ObjectId, ObjectPayload, PrimitiveObjectData, PropertySlot, RawValue,
+        runtime::RuntimeState,
+    },
     object::ordinary_storage::{OwnReadSelection, SpecialKind},
-    value::JsValue,
+    value::{JsString, JsValue},
 };
 
 pub(crate) enum ReadBoundary {
     Absent,
     Getter(ObjectId),
     Special { object: ObjectId, kind: SpecialKind },
+    Shared(crate::engine::builtins::SharedTypedRead),
 }
 
 impl RuntimeState {
@@ -23,6 +29,7 @@ impl RuntimeState {
     /// returning; a cold boundary is selected without creating a continuation.
     pub(crate) fn select_ordinary_read_in_state(
         &mut self,
+        poisoned: &std::cell::Cell<bool>,
         mut object: ObjectId,
         atom: Atom,
         domain_id: u64,
@@ -35,7 +42,38 @@ impl RuntimeState {
             crate::engine::api::profiling::record_owned_execution_event(
                 "ordinary_read.state_probe",
             );
-            match self.select_own_read(object, atom, false)? {
+            let mut selection = self.select_own_read(object, atom, false)?;
+            if let OwnReadSelection::Special(kind) = selection {
+                selection = match kind {
+                    SpecialKind::Proxy => OwnReadSelection::Special(kind),
+                    SpecialKind::TypedArray => {
+                        if let Some(numeric) = self.typed_array_canonical_numeric_index(atom)? {
+                            match numeric {
+                                CanonicalNumericIndex::Invalid => {
+                                    return Ok(Some(JsValue::Undefined));
+                                }
+                                CanonicalNumericIndex::Valid(index) => {
+                                    match self.typed_array_read_index_in_state(object, index)? {
+                                        TypedIndexRead::Value(value) => {
+                                            return Ok(Some(value.unwrap_or(JsValue::Undefined)));
+                                        }
+                                        TypedIndexRead::Shared(read) => {
+                                            *boundary = Some(ReadBoundary::Shared(read));
+                                            return Ok(None);
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            self.select_special_storage_read(object, atom)?
+                        }
+                    }
+                    SpecialKind::ModuleNamespace | SpecialKind::Other => {
+                        self.select_special_storage_read(object, atom)?
+                    }
+                };
+            }
+            match selection {
                 OwnReadSelection::Value(raw) => {
                     let borrowed = JsValue::from_raw(raw).ok_or(RuntimeError::Invariant(
                         "internal sentinel in ordinary data property",
@@ -64,12 +102,132 @@ impl RuntimeState {
                     return Ok(None);
                 }
                 OwnReadSelection::Missing(Some(next)) => object = next,
+                OwnReadSelection::StringUnit(unit) => {
+                    return Ok(Some(JsValue::String(
+                        self.heap.allocate_string(JsString::from_code_unit(unit))?,
+                    )));
+                }
+                OwnReadSelection::Lazy => {
+                    self.materialize_auto_init_property(poisoned, object, atom)?;
+                }
                 OwnReadSelection::Special(kind) => {
                     *boundary = Some(ReadBoundary::Special { object, kind });
                     return Ok(None);
                 }
             }
         }
+    }
+    /// Virtual own values and live cells share the same lookup with ordinary
+    /// slots. A descriptor/root is unnecessary for a Get consumer.
+    fn select_special_storage_read(
+        &self,
+        object: ObjectId,
+        atom: Atom,
+    ) -> Result<OwnReadSelection, RuntimeError> {
+        let data = self.heap.object(object)?;
+        if let Some(index) = self.atoms.array_index(atom)? {
+            if let ObjectPayload::Primitive(PrimitiveObjectData::String(id)) = &data.payload
+                && let Some(unit) = self.heap.string(*id)?.code_unit_at(index as usize)
+            {
+                return Ok(OwnReadSelection::StringUnit(unit));
+            }
+            if let Some(value) = data.dense_array_value(index) {
+                return Ok(OwnReadSelection::Value(value.clone()));
+            }
+        }
+        let shape = self.heap.shape(data.shape)?;
+        let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+            return Ok(OwnReadSelection::Missing(shape.prototype()));
+        };
+        Ok(
+            match data
+                .slots
+                .get(index as usize)
+                .ok_or(RuntimeError::Invariant("object property slot was missing"))?
+            {
+                PropertySlot::Data(value) => OwnReadSelection::Value(value.clone()),
+                PropertySlot::Accessor { get, .. } => OwnReadSelection::Getter(get.option()),
+                PropertySlot::AutoInit(_) => OwnReadSelection::Lazy,
+                PropertySlot::VarRef(id) => {
+                    let value = self.heap.var_ref(*id)?.value.clone();
+                    if matches!(value, RawValue::Uninitialized) {
+                        return Err(RuntimeError::Engine(self.native_atom_error(
+                            ErrorKind::Reference,
+                            "",
+                            atom,
+                            " is not initialized",
+                        )?));
+                    }
+                    OwnReadSelection::Value(value)
+                }
+            },
+        )
+    }
+
+    /// Primitive receivers keep their value representation. Their realm owns
+    /// the prototype; only an indexed string's new code-unit value allocates.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn select_value_read_in_state(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        realm: ContextId,
+        receiver: &JsValue,
+        atom: Atom,
+        domain_id: u64,
+        boundary: &mut Option<ReadBoundary>,
+        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        *boundary = None;
+        let kind = match receiver {
+            JsValue::Object(object) => {
+                return self.select_ordinary_read_in_state(
+                    poisoned, *object, atom, domain_id, boundary, native,
+                );
+            }
+            JsValue::String(id) => {
+                let string = self.heap.string(*id)?;
+                if let Some(index) = self.atoms.array_index(atom)?
+                    && let Some(unit) = string.code_unit_at(index as usize)
+                {
+                    return Ok(Some(JsValue::String(
+                        self.heap.allocate_string(JsString::from_code_unit(unit))?,
+                    )));
+                }
+                if atom
+                    == self
+                        .pinned_atoms
+                        .get(crate::engine::atom::pinned::PinnedAtom::Length)
+                {
+                    return Ok(Some(
+                        i32::try_from(string.len())
+                            .map(JsValue::Int)
+                            .unwrap_or_else(|_| JsValue::Float(string.len() as f64)),
+                    ));
+                }
+                PrimitiveKind::String
+            }
+            JsValue::Bool(_) => PrimitiveKind::Boolean,
+            JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
+            JsValue::BigInt(_) | JsValue::ShortBigInt(_) => PrimitiveKind::BigInt,
+            JsValue::Symbol(_) => PrimitiveKind::Symbol,
+            JsValue::Null | JsValue::Undefined => {
+                let suffix = if matches!(receiver, JsValue::Null) {
+                    "' of null"
+                } else {
+                    "' of undefined"
+                };
+                return Err(RuntimeError::Engine(self.native_atom_error(
+                    ErrorKind::Type,
+                    "cannot read property '",
+                    atom,
+                    suffix,
+                )?));
+            }
+        };
+        let prototype = self.heap.context(realm)?.primitive_prototypes[kind.index()].ok_or(
+            RuntimeError::Invariant("primitive prototype is not implemented in this realm"),
+        )?;
+        self.select_ordinary_read_in_state(poisoned, prototype, atom, domain_id, boundary, native)
     }
 }
 
@@ -130,7 +288,14 @@ mod tests {
         let original_count = state.heap.object_strong_count(id).unwrap();
         let mut boundary = None;
         let value = state
-            .select_ordinary_read_in_state(id, key.atom(), runtime.domain_id(), &mut boundary, None)
+            .select_ordinary_read_in_state(
+                &runtime.0.poisoned,
+                id,
+                key.atom(),
+                runtime.domain_id(),
+                &mut boundary,
+                None,
+            )
             .unwrap()
             .unwrap();
         assert!(boundary.is_none());
@@ -164,6 +329,7 @@ mod tests {
             assert!(
                 state
                     .select_ordinary_read_in_state(
+                        &runtime.0.poisoned,
                         base.object_id(),
                         key.atom(),
                         runtime.domain_id(),

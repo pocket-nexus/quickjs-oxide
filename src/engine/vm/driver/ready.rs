@@ -73,6 +73,14 @@ pub(super) fn run(
         }
         let exit = result?;
         match exit {
+            VmAction::ThrowPrepared => {
+                let value = execution
+                    .pending
+                    .take()
+                    .ok_or_else(|| invariant("prepared throw lost its owner"))?;
+                return Ok(Boundary::Complete(Completion::Throw(value)));
+            }
+
             VmAction::Materialize => continue,
             VmAction::Pure(operation) => {
                 // Pure leaves can complete or throw, but cannot install another
@@ -195,6 +203,27 @@ pub(super) fn run(
                 #[cfg(feature = "profiling")]
                 record_event("driver_handoff.named_read");
                 let selected = execution.selected_named_read.take();
+                let selected = match selected {
+                    Some(crate::engine::vm::property_driver::SelectedNamedRead::Shared(read)) => {
+                        let (element, bytes) = read
+                            .read()
+                            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+                        let mut state = runtime.0.state.borrow_mut();
+                        let mut segment =
+                            crate::engine::vm::stack::FrameExecution::admit(execution, id)?;
+                        crate::engine::vm::execute::named_read::finish_shared(
+                            runtime,
+                            &mut state,
+                            &mut segment,
+                            element,
+                            bytes,
+                            keep_receiver,
+                            fallthrough,
+                        )?;
+                        continue;
+                    }
+                    selected => selected,
+                };
                 let progress = crate::engine::vm::property_driver::read_progress_selected(
                     runtime,
                     execution,

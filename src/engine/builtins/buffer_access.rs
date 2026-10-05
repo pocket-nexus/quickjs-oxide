@@ -364,7 +364,7 @@ impl Runtime {
     }
 }
 
-fn shared_memory_runtime_error(error: SharedMemoryError) -> RuntimeError {
+pub(super) fn shared_memory_runtime_error(error: SharedMemoryError) -> RuntimeError {
     match error {
         SharedMemoryError::InvalidLength => {
             RuntimeError::Invariant("shared buffer access has an invalid length")
