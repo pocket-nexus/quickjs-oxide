@@ -25,16 +25,42 @@ impl RuntimeState {
             | (_, ObjectPayload::Proxy(_))
             | (_, ObjectPayload::TypedArray(_)) => return Ok(None),
             (_, ObjectPayload::Array { .. }) => {
-                // Index publication can change length or dense representation;
-                // length can run observable conversion. Their shared class
-                // kernel owns those stages, not the ordinary slot transaction.
-                if indexed
-                    || atom
-                        == self
-                            .pinned_atoms
-                            .get(crate::engine::atom::pinned::PinnedAtom::Length)
+                if let Some(index) = self.atoms.array_index(atom)? {
+                    return self
+                        .define_array_index_in_state(poisoned, object, atom, index, descriptor)
+                        .map(Some);
+                }
+                if atom
+                    == self
+                        .pinned_atoms
+                        .get(crate::engine::atom::pinned::PinnedAtom::Length)
                 {
-                    return Ok(None);
+                    // Primitive numeric completion needs no durable conversion
+                    // record. Observable/object conversion remains a boundary.
+                    let length = match descriptor.value.as_ref() {
+                        None => {
+                            return self
+                                .define_raw_property_with_poison(poisoned, object, atom, descriptor)
+                                .map(Some);
+                        }
+                        Some(RawValue::Int(v)) if *v >= 0 => Some(*v as u32),
+                        Some(RawValue::Float(v))
+                            if *v >= 0.0 && *v <= u32::MAX as f64 && v.fract() == 0.0 =>
+                        {
+                            Some(*v as u32)
+                        }
+                        Some(RawValue::Bool(v)) => Some(u32::from(*v)),
+                        Some(RawValue::Null) => Some(0),
+                        _ => None,
+                    };
+                    return match length {
+                        Some(length) => self
+                            .apply_array_length_descriptor_in_state(
+                                poisoned, object, atom, descriptor, length,
+                            )
+                            .map(Some),
+                        None => Ok(None),
+                    };
                 }
             }
             (_, ObjectPayload::Arguments { .. }) if indexed => return Ok(None),

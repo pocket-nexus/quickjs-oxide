@@ -48,6 +48,7 @@ pub(crate) const MIN_UNIQUE_SHAPE_APPEND_ENTRIES: usize = 1;
 #[cfg(test)]
 mod autoinit_state_tests;
 
+mod array_define;
 mod state_define;
 mod state_own;
 pub(crate) use state_own::StateOwnPropertySnapshot;
@@ -1048,69 +1049,12 @@ impl Runtime {
         object: &ObjectRef,
         #[cfg(feature = "profiling")] reason: &'static str,
     ) -> Result<(), RuntimeError> {
-        let (prototype, dense_len, mut entries) =
-            {
-                let state = self.0.state.borrow();
-                let object_data = state.heap.object(object.object_id())?;
-                let ObjectPayload::Array { dense: Some(dense) } = &object_data.payload else {
-                    return Ok(());
-                };
-                let shape = state.heap.shape(object_data.shape)?;
-                for entry in shape.entries() {
-                    if state
-                        .atoms
-                        .array_index(state.atoms.brand(entry.atom)?)?
-                        .is_some()
-                    {
-                        return Err(RuntimeError::Invariant(
-                            "fast Array shape already contained a numeric property",
-                        ));
-                    }
-                }
-                let entry_count = shape.entries().len().checked_add(dense.len()).ok_or(
-                    RuntimeError::Invariant("materialized Array shape length overflowed"),
-                )?;
-                let mut entries = Vec::new();
-                entries
-                    .try_reserve_exact(entry_count)
-                    .map_err(|_| HeapError::Allocation {
-                        operation: "materializing fast Array shape",
-                    })?;
-                entries.extend_from_slice(shape.entries());
-                (shape.prototype(), dense.len(), entries)
-            };
-
-        let mut keys = Vec::new();
-        keys.try_reserve(dense_len)
-            .map_err(|_| HeapError::Allocation {
-                operation: "rooting materialized Array indices",
-            })?;
-        for index in 0..dense_len {
-            let index = u32::try_from(index)
-                .map_err(|_| RuntimeError::Invariant("fast Array count exceeded Uint32"))?;
-            let key = self.property_key_for_index(index as u64)?;
-            entries.push(ShapeEntry {
-                atom: AtomIdx::from_raw(key.atom().raw()),
-                flags: PropertyFlags::data(true, true, true),
-            });
-            keys.push(key);
-        }
-
-        self.0.state.borrow_mut().materialize_array_layout(
+        self.0.state.borrow_mut().materialize_dense_array_in_state(
+            &self.0.poisoned,
             object.object_id(),
-            prototype,
-            &entries,
-        )?;
-        // Count only a completed dense-to-ordinary transition. The early
-        // dense=None return above and failed layout transactions count neither.
-        #[cfg(feature = "profiling")]
-        {
-            crate::engine::api::profiling::record_owned_execution_event(
-                "array_storage_dense_materialization",
-            );
-            crate::engine::api::profiling::record_owned_execution_event(reason);
-        }
-        Ok(())
+            #[cfg(feature = "profiling")]
+            reason,
+        )
     }
 
     fn append_dense_array_raw(
@@ -1118,22 +1062,11 @@ impl Runtime {
         object: &ObjectRef,
         raw: RawValue,
     ) -> Result<(), RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let retained_atoms = match state.retain_raw_value_atoms(std::iter::once(&raw)) {
-            Ok(atoms) => atoms,
-            Err(error) => {
-                return Err(error);
-            }
-        };
-        let appended = state.heap.append_array_dense_value(object.object_id(), raw);
-        match appended {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let released = state.release_atoms(retained_atoms);
-                released?;
-                Err(error.into())
-            }
-        }
+        self.0.state.borrow_mut().append_dense_array_raw_in_state(
+            &self.0.poisoned,
+            object.object_id(),
+            raw,
+        )
     }
 
     pub(super) fn replace_dense_array_value_jsvalue(
@@ -1151,24 +1084,12 @@ impl Runtime {
         index: u32,
         raw: RawValue,
     ) -> Result<(), RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let retained_atoms = match state.retain_raw_value_atoms(std::iter::once(&raw)) {
-            Ok(atoms) => atoms,
-            Err(error) => {
-                return Err(error);
-            }
-        };
-        let replaced = state
-            .heap
-            .replace_array_dense_value(object.object_id(), index, raw);
-        match replaced {
-            Ok(cleanup) => state.apply_cleanup(cleanup),
-            Err(error) => {
-                let released = state.release_atoms(retained_atoms);
-                released?;
-                Err(error.into())
-            }
-        }
+        self.0.state.borrow_mut().replace_dense_array_raw_in_state(
+            &self.0.poisoned,
+            object.object_id(),
+            index,
+            raw,
+        )
     }
 
     /// Read and structurally validate a genuine Array's mandatory first
@@ -1294,27 +1215,12 @@ impl Runtime {
         index: u32,
         old_length: u32,
     ) -> Result<(), RuntimeError> {
-        if index < old_length {
-            return Ok(());
-        }
-        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-        let next_length = index
-            .checked_add(1)
-            .ok_or(RuntimeError::Invariant("Array index exceeded Uint32 range"))?;
-        let updated = self.define_ordinary_own_property(
-            object,
-            &length,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Self::array_length_value(next_length)),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )?;
-        if !updated {
-            return Err(RuntimeError::Invariant(
-                "writable Array length rejected dense index growth",
-            ));
-        }
-        Ok(())
+        self.0.state.borrow_mut().grow_dense_array_length_in_state(
+            &self.0.poisoned,
+            object.object_id(),
+            index,
+            old_length,
+        )
     }
 
     /// Apply a Set-selected data definition without converting its stored
@@ -1498,100 +1404,20 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
         index: u32,
-        old_length: u32,
+        _old_length: u32,
         record: &crate::engine::object::property::PropertyDescriptor<RawValue>,
     ) -> Result<PropertyDefineOutcome, RuntimeError> {
-        use crate::engine::object::property::CompletePropertyDescriptor;
-        if let Some(dense_len) = self.array_fast_len(object)? {
-            let current = if index < dense_len {
-                Some(CompletePropertyDescriptor::Data {
-                    value: self.dense_array_index_value(object, key)?.ok_or(
-                        RuntimeError::Invariant("validated dense Array index disappeared"),
-                    )?,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true,
-                })
-            } else {
-                None
-            };
-            let complete = {
-                let state = self.0.state.borrow();
-                validate_and_apply_property_descriptor(
-                    state.heap.object(object.object_id())?.extensible,
-                    record,
-                    current.as_ref(),
-                    &RawValue::Undefined,
-                    |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
-                )
-            };
-            let complete = match complete {
-                Ok(value) => value,
-                Err(PropertyDefinitionError::InvalidDescriptor) => {
-                    return Err(PropertyDefinitionError::InvalidDescriptor.into());
-                }
-                Err(_) => return Ok(PropertyDefineOutcome::Defined(false)),
-            };
-            if let CompletePropertyDescriptor::Data {
-                value,
-                writable: true,
-                enumerable: true,
-                configurable: true,
-            } = &complete
-            {
-                if index < dense_len {
-                    if record.value.is_some() {
-                        self.replace_dense_array_raw(object, index, value.clone())?;
-                    }
-                    return Ok(PropertyDefineOutcome::Defined(true));
-                }
-                if index == dense_len {
-                    self.append_dense_array_raw(object, value.clone())?;
-                    self.grow_dense_array_length(object, index, old_length)?;
-                    return Ok(PropertyDefineOutcome::Defined(true));
-                }
-            }
-            // This event identifies the descriptor-definition call site. It
-            // can also receive a gap write, so it is not an exclusive claim
-            // that nondefault attributes caused the conversion.
-            #[cfg(feature = "profiling")]
-            self.materialize_dense_array(
-                object,
-                "array_storage_dense_materialization_descriptor_path",
-            )?;
-            #[cfg(not(feature = "profiling"))]
-            self.materialize_dense_array(object)?;
-        }
-        let recover = index == 0 && !self.has_own_property(object, key)?;
-        if !self.define_raw_property(object, key, record)? {
-            return Ok(PropertyDefineOutcome::Defined(false));
-        }
-
-        if index < old_length {
-            if recover {
-                self.try_recover_dense_array(object)?;
-            }
-            return Ok(PropertyDefineOutcome::Defined(true));
-        }
-
-        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-        let next_length = index
-            .checked_add(1)
-            .ok_or(RuntimeError::Invariant("Array index exceeded Uint32 range"))?;
-        let updated = self.define_ordinary_own_property(
-            object,
-            &length,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Self::array_length_value(next_length)),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )?;
-        if !updated {
-            return Err(RuntimeError::Invariant(
-                "writable Array length rejected index growth",
-            ));
-        }
-        Ok(PropertyDefineOutcome::Defined(true))
+        self.0
+            .state
+            .borrow_mut()
+            .define_array_index_in_state(
+                &self.0.poisoned,
+                object.object_id(),
+                key.atom(),
+                index,
+                record,
+            )
+            .map(PropertyDefineOutcome::Defined)
     }
 
     fn define_array_length(
@@ -1623,106 +1449,33 @@ impl Runtime {
         descriptor: &OrdinaryPropertyDescriptor,
         new_length: u32,
     ) -> Result<PropertyDefineOutcome, RuntimeError> {
-        // Conversion may execute JavaScript and mutate this same Array. Match
-        // QuickJS by reloading the length slot only after conversion returns.
-        let (old_length, old_writable) = self.array_length_state(object)?;
-        let mut canonical = descriptor.try_clone()?;
-        canonical.value = DescriptorField::Present(Self::array_length_value(new_length));
-        if new_length >= old_length || !old_writable {
-            return self
-                .define_ordinary_own_property(object, key, &canonical)
-                .map(PropertyDefineOutcome::Defined);
-        }
-
-        let finish_read_only = matches!(canonical.writable, DescriptorField::Present(false));
-        if finish_read_only {
-            canonical.writable = DescriptorField::Present(true);
-        }
-        self.validate_descriptor_domains(&canonical)?;
-        let current = self
-            .get_own_property(object, key)?
-            .ok_or(RuntimeError::Invariant(
-                "genuine Array lost its mandatory length property",
-            ))?;
-        let descriptor_record = descriptor_to_validation_record(&canonical);
-        let current_record = complete_to_validation_record(&current);
-        match validate_and_apply_property_descriptor(
-            self.is_extensible(object)?,
-            &descriptor_record,
-            Some(&current_record),
-            &ValidationValue::Undefined,
-            ValidationValue::same_value,
-        ) {
-            Ok(_) => {}
-            Err(PropertyDefinitionError::InvalidDescriptor) => {
-                return Err(PropertyDefinitionError::InvalidDescriptor.into());
-            }
-            Err(_) => return Ok(PropertyDefineOutcome::Defined(false)),
-        }
-        let dense_truncation = if self
-            .array_fast_len(object)?
-            .is_some_and(|dense_len| new_length < dense_len)
-        {
-            Some(
-                self.0
-                    .state
-                    .borrow()
-                    .heap
-                    .prepare_array_dense_truncation(object.object_id(), new_length)?,
-            )
-        } else {
-            None
+        // Reload canonical length only after the observable conversions finish.
+        self.validate_descriptor_domains(descriptor)?;
+        let record = crate::engine::object::property::PropertyDescriptor {
+            value: None,
+            writable: descriptor.writable.into_option(),
+            enumerable: descriptor.enumerable.into_option(),
+            configurable: descriptor.configurable.into_option(),
+            get: descriptor.get.as_ref().into_option().map(|v| {
+                v.as_callable()
+                    .map(|v| RawValue::Object(v.as_object().object_id()))
+            }),
+            set: descriptor.set.as_ref().into_option().map(|v| {
+                v.as_callable()
+                    .map(|v| RawValue::Object(v.as_object().object_id()))
+            }),
         };
-        if !self.define_ordinary_own_property(object, key, &canonical)? {
-            return Ok(PropertyDefineOutcome::Defined(false));
-        }
-
-        if let Some(prepared) = dense_truncation {
-            let mut state = self.0.state.borrow_mut();
-            let cleanup = state.heap.commit_array_dense_truncation(prepared)?;
-            state.apply_cleanup(cleanup)?;
-        }
-
-        if let Some(index) = self.truncate_sparse_array_indices(object, new_length)? {
-            // ArraySetLength keeps already deleted higher indices, restores
-            // length to the first undeletable index plus one, and still
-            // applies a requested writable:false transition.
-            let restored_length = index
-                .checked_add(1)
-                .ok_or(RuntimeError::Invariant("Array index exceeded Uint32 range"))?;
-            let restored = self.define_ordinary_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Self::array_length_value(restored_length)),
-                    writable: finish_read_only.then_some(false).into(),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )?;
-            if !restored {
-                return Err(RuntimeError::Invariant(
-                    "Array length rollback was rejected",
-                ));
-            }
-            return Ok(PropertyDefineOutcome::Defined(false));
-        }
-
-        if finish_read_only {
-            let updated = self.define_ordinary_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    writable: DescriptorField::Present(false),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )?;
-            if !updated {
-                return Err(RuntimeError::Invariant(
-                    "Array length writable transition was rejected",
-                ));
-            }
-        }
-        Ok(PropertyDefineOutcome::Defined(true))
+        self.0
+            .state
+            .borrow_mut()
+            .apply_array_length_descriptor_in_state(
+                &self.0.poisoned,
+                object.object_id(),
+                key.atom(),
+                &record,
+                new_length,
+            )
+            .map(PropertyDefineOutcome::Defined)
     }
 
     pub(crate) fn to_array_length(

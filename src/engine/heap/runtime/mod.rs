@@ -809,28 +809,44 @@ impl RuntimeState {
         })
     }
 
-    pub(crate) fn materialize_array_layout(
+    pub(crate) fn materialize_array_layout_with_poison(
         &mut self,
+        poisoned: &Cell<bool>,
         object: ObjectId,
         prototype: Option<ObjectId>,
         entries: &[ShapeEntry],
     ) -> Result<(), RuntimeError> {
         let shape = self.get_or_create_shape(prototype, entries)?;
-        let layout_cleanup = match self.heap.materialize_array_dense_shape(object, shape) {
+        let layout_cleanup = match self
+            .heap
+            .materialize_array_dense_shape_with_status(object, shape)
+        {
             Ok(cleanup) => cleanup,
-            Err(error) => {
-                let cleanup = self.heap.release_shape(shape)?;
-                self.apply_cleanup(cleanup)?;
-                return Err(error.into());
+            Err(failure) => {
+                if failure.published {
+                    poisoned.set(true);
+                    return Err(failure.error.into());
+                }
+                let cleanup = self
+                    .heap
+                    .release_shape(shape)
+                    .inspect_err(|_| poisoned.set(true))?;
+                self.apply_cleanup(cleanup)
+                    .inspect_err(|_| poisoned.set(true))?;
+                return Err(failure.error.into());
             }
         };
-        let shape_cleanup = self.heap.release_shape(shape)?;
-        self.apply_cleanup(layout_cleanup)?;
-        self.apply_cleanup(shape_cleanup)?;
-        // Use dictionary storage while slow, so middle deletions and special
-        // descriptors do not keep rebuilding every property. A later complete
-        // reverse fill may recover dense storage at its mutation boundary.
-        self.ensure_dictionary_layout(object)
+        let shape_cleanup = self
+            .heap
+            .release_shape(shape)
+            .inspect_err(|_| poisoned.set(true))?;
+        self.apply_cleanup(layout_cleanup)
+            .inspect_err(|_| poisoned.set(true))?;
+        self.apply_cleanup(shape_cleanup)
+            .inspect_err(|_| poisoned.set(true))?;
+        // Dense owners have moved into slots. Dictionary conversion uses the
+        // same poison header if retiring the newly published layout fails.
+        self.ensure_dictionary_layout_with_poison(poisoned, object)
     }
 
     /// One slot transaction, including Atom ownership. Once published, a
