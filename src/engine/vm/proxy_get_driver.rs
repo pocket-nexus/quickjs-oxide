@@ -31,7 +31,9 @@ mod native;
 mod native_state;
 #[cfg(feature = "profiling")]
 mod profiling;
+mod query_owner;
 mod request;
+use query_owner::{QueryScope, ResumeScope};
 mod storage;
 use native::start_into as native_scope;
 use request::{Resume, Step};
@@ -44,13 +46,18 @@ pub(super) struct PendingProxyGet {
     query: Query,
 }
 
-impl Drop for PendingProxyGet {
-    fn drop(&mut self) {
-        std::mem::replace(&mut self.resume, Resume::Identity).release_owned();
-    }
-}
-
 impl PendingProxyGet {
+    // Release fields in their resident allocation rather than moving the wide
+    // pending record onto the cleanup stack.
+    #[allow(clippy::boxed_local)]
+    pub(in crate::engine::vm) fn release(mut self: Box<Self>, runtime: &Runtime) {
+        if runtime.skip_cleanup() {
+            return;
+        }
+        std::mem::replace(&mut self.resume, Resume::Identity).release_owned(runtime);
+        self.query.release_owned(runtime);
+    }
+
     pub(super) fn is_direct_property_read(&self, operation: Option<OperationTarget>) -> bool {
         operation == Some(OperationTarget::PropertyGet(self.identity))
             && matches!(self.query.finish, Some(Finish::PropertyRead(_)))
@@ -214,7 +221,7 @@ impl Query {
         };
         self.saved_native_depth -= 1 + scope.parents.len() as u128;
         while let Some(resume) = self.parents.pop() {
-            resume.release_owned();
+            resume.release_owned(runtime);
         }
         let empty = std::mem::replace(&mut self.parents, scope.parents);
         // Reservation happens before installing the native scope.
@@ -223,22 +230,26 @@ impl Query {
         native::finish(runtime, slots, scope.call, scope.resume, result)
     }
 }
-impl Drop for Query {
-    fn drop(&mut self) {
+impl Query {
+    fn release_owned(&mut self, runtime: &Runtime) {
+        if runtime.skip_cleanup() {
+            return;
+        }
         // Current domain states belong to the innermost native activation.
         // Each saved resume/parent stack belongs to its caller, outside that
         // activation; release them before proceeding to the next outer scope.
         while let Some(resume) = self.parents.pop() {
-            resume.release_owned();
+            resume.release_owned(runtime);
         }
         while let Some(mut scope) = self.natives.pop() {
             let _ = scope.call.release_invocation();
             drop(scope.call);
-            scope.resume.release_owned();
+            scope.resume.release_owned(runtime);
             while let Some(resume) = scope.parents.pop() {
-                resume.release_owned();
+                resume.release_owned(runtime);
             }
         }
+        self.finish = None;
     }
 }
 
@@ -835,6 +846,7 @@ pub(super) fn start_waitable_native_call(
                 let call = records[0].call.take().expect("waiting activation");
                 let mut parent = records[0].parents.pop();
                 let mut query = execution.query_storage.acquire(
+                    runtime,
                     realm,
                     Vec::new(),
                     Finish::Call { depth, tail },
@@ -943,12 +955,12 @@ fn finish_call_instruction_call(
 }
 
 #[inline(never)]
-fn drive_native_call(
-    runtime: &Runtime,
+fn drive_native_call<'a>(
+    runtime: &'a Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     identity: u64,
-    query: Query,
+    query: QueryScope<'a>,
     result: Result<Step, Error>,
 ) -> Result<CallStep, Error> {
     match drive(runtime, execution, owner, identity, query, result)? {
@@ -1589,14 +1601,16 @@ fn take_pending(
     }
 }
 fn put_pending(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     pending: Box<PendingProxyGet>,
 ) -> Result<(), Error> {
     match owner {
-        ReturnOwner::Frame(frame) => execution.frames.put_pending(frame, pending),
+        ReturnOwner::Frame(frame) => execution.frames.put_pending(runtime, frame, pending),
         ReturnOwner::Root => {
             if execution.root_query.is_some() {
+                pending.release(runtime);
                 return Err(Error::internal("request overwrote a pending reply"));
             }
             execution.root_query = Some(pending);
@@ -1619,7 +1633,7 @@ fn reply_outcome(
             Some(Finish::Iterator(id) | Finish::IteratorNext(id)) => Some(*id),
             _ => None,
         };
-        drop(pending);
+        pending.release(runtime);
         if let Some(id) = iterator {
             if let Ok(frame) = execution.frames.current_mut(id) {
                 if let Some(rare) = frame.cold.rare.get_mut() {
@@ -1631,14 +1645,16 @@ fn reply_outcome(
             "request reply belongs to another operation",
         ));
     }
-    let (identity, query, resume) = execution.query_storage.release_pending(pending);
+    let (identity, query, resume) = execution.query_storage.release_pending(runtime, pending);
     let realm = match target.owner {
         ReturnOwner::Root => query.realm,
         ReturnOwner::Frame(id) => execution.frames.current_mut(id)?.executable.realm,
     };
     let step = match outcome {
-        super::suspend::VmRunOutcome::Complete(completion) => resume.resume(runtime, completion),
-        outcome => resume.suspended(runtime, outcome),
+        super::suspend::VmRunOutcome::Complete(completion) => {
+            resume.take().resume(runtime, completion)
+        }
+        outcome => resume.take().suspended(runtime, outcome),
     }
     .map_err(runtime_error_to_vm_error);
     let result = drive(runtime, execution, target.owner, identity, query, step);
@@ -1740,7 +1756,7 @@ pub(super) fn start_root(
     };
     let query = execution
         .query_storage
-        .acquire(realm, Vec::new(), Finish::Root);
+        .acquire(runtime, realm, Vec::new(), Finish::Root);
     let result = drive(runtime, execution, ReturnOwner::Root, 1, query, Ok(step));
     finish_error(runtime, realm, result)
 }
@@ -1769,7 +1785,9 @@ fn advance(
     finish: Finish,
 ) -> Result<Progress, Error> {
     let realm = execution.frames.current_mut(frame)?.executable.realm;
-    let query = execution.query_storage.acquire(realm, parents, finish);
+    let query = execution
+        .query_storage
+        .acquire(runtime, realm, parents, finish);
     drive(
         runtime,
         execution,
@@ -1780,12 +1798,12 @@ fn advance(
     )
 }
 
-fn drive(
-    runtime: &Runtime,
+fn drive<'a>(
+    runtime: &'a Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     identity: u64,
-    query: Query,
+    query: QueryScope<'a>,
     step: Result<Step, Error>,
 ) -> Result<Progress, Error> {
     let result = drive_inner(runtime, execution, owner, identity, query, step);
@@ -1800,12 +1818,12 @@ fn drive(
     }
     result
 }
-fn drive_inner(
-    runtime: &Runtime,
+fn drive_inner<'a>(
+    runtime: &'a Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     identity: u64,
-    mut query: Query,
+    mut query: QueryScope<'a>,
     step: Result<Step, Error>,
 ) -> Result<Progress, Error> {
     let mut step = step.map_err(Some);
@@ -1849,11 +1867,12 @@ fn drive_inner(
                 return Ok(result);
             }
             Ok(Next::Call { entry, pc, resume }) => {
+                let mut entry = super::frame::FrameEntryGuard::new(runtime, *entry);
                 #[cfg(feature = "profiling")]
                 let had_callback = std::mem::replace(&mut query.had_callback, true);
                 let pending = execution.query_storage.pending(identity, query, resume);
-                put_pending(execution, owner, pending)?;
-                match push_frame(runtime, execution, *entry) {
+                put_pending(runtime, execution, owner, pending)?;
+                match push_frame(runtime, execution, entry.take()) {
                     Ok(id) => {
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
@@ -1866,8 +1885,8 @@ fn drive_inner(
                     Err(error) => {
                         let pending = take_pending(execution, owner)?;
                         let (_, restored, resume) =
-                            execution.query_storage.release_pending(pending);
-                        resume.release_owned();
+                            execution.query_storage.release_pending(runtime, pending);
+                        resume.take().release_owned(runtime);
                         query = restored;
                         #[cfg(feature = "profiling")]
                         {
@@ -2494,6 +2513,7 @@ mod native_scope_tests {
             let frame = super::super::driver::push_frame(&runtime, &mut execution, entry).unwrap();
             if cached {
                 let query = execution.query_storage.acquire(
+                    &runtime,
                     context.realm,
                     Vec::new(),
                     Finish::Call {
@@ -2937,9 +2957,10 @@ pub(super) fn start_array_next_without_pending(
             let Some(result) = result else {
                 let identity = iterator_query_identity(execution, frame)?;
                 let pending = super::iterator_driver::next_wait(execution, frame, record_base)?;
-                let mut query = execution
-                    .query_storage
-                    .acquire(realm, Vec::new(), Finish::Root);
+                let mut query =
+                    execution
+                        .query_storage
+                        .acquire(runtime, realm, Vec::new(), Finish::Root);
                 storage::reserve(&mut query.natives, 1, "query.native_scopes")
                     .map_err(|_| Error::internal("native continuation allocation failed"))?;
                 storage::reserve(&mut query.spare_parents, 1, "query.spare_parents")
@@ -3057,7 +3078,9 @@ fn start_array_next_direct(
             // The first native step may already have advanced the iterator.
             // Install exactly that activation and selected wait, never restart.
             let finish = install_iterator_finish(execution, pending, true)?;
-            let mut query = execution.query_storage.acquire(realm, Vec::new(), finish);
+            let mut query = execution
+                .query_storage
+                .acquire(runtime, realm, Vec::new(), finish);
             native::install_waiting(
                 &mut query,
                 waiting_call.expect("native wait has an activation"),

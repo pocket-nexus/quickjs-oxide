@@ -330,7 +330,9 @@ impl Drop for RunningExecution {
                 return;
             }
         }
-        drop(self.root_query.take());
+        if let Some(pending) = self.root_query.take() {
+            pending.release(&runtime);
+        }
     }
 }
 

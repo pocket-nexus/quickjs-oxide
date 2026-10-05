@@ -1,5 +1,5 @@
 //! Reuse only empty query containers. Live callback owners stay in their Query.
-use super::{Finish, NativeScope, Parents, Query, Resume};
+use super::{Finish, NativeScope, Parents, Query, QueryScope, Resume, ResumeScope};
 use crate::engine::heap::ContextId;
 
 /// Observe only an actual successful Vec reserve; unchanged capacity is not
@@ -46,13 +46,15 @@ impl QueryStorage {
     pub(super) fn pending(
         &mut self,
         identity: u64,
-        query: Query,
+        query: QueryScope<'_>,
         resume: Resume,
     ) -> Box<super::PendingProxyGet> {
+        let runtime = query.runtime();
+        let query = query.take();
         if let Some(mut pending) = self.pending.pop() {
             pending.identity = identity;
             pending.query = query;
-            std::mem::replace(&mut pending.resume, resume).release_owned();
+            std::mem::replace(&mut pending.resume, resume).release_owned(runtime);
             return pending;
         }
         #[cfg(feature = "profiling")]
@@ -69,10 +71,11 @@ impl QueryStorage {
         })
     }
 
-    pub(super) fn release_pending(
+    pub(super) fn release_pending<'a>(
         &mut self,
+        runtime: &'a crate::engine::api::runtime::Runtime,
         mut pending: Box<super::PendingProxyGet>,
-    ) -> (u64, Query, Resume) {
+    ) -> (u64, QueryScope<'a>, ResumeScope<'a>) {
         let empty = Query {
             #[cfg(feature = "profiling")]
             had_callback: false,
@@ -91,7 +94,11 @@ impl QueryStorage {
         if self.pending.len() < 16 && reserve(&mut self.pending, 1, "query.pending_pool").is_ok() {
             self.pending.push(pending);
         }
-        (identity, query, resume)
+        (
+            identity,
+            QueryScope::new(runtime, query),
+            ResumeScope::new(runtime, resume),
+        )
     }
 
     pub(super) fn take_native_wait(
@@ -154,12 +161,13 @@ impl QueryStorage {
         Ok(true)
     }
 
-    pub(super) fn acquire(
+    pub(super) fn acquire<'a>(
         &mut self,
+        runtime: &'a crate::engine::api::runtime::Runtime,
         realm: ContextId,
         parents: Vec<Resume>,
         finish: Finish,
-    ) -> Query {
+    ) -> QueryScope<'a> {
         let reused = !self.free.is_empty();
         let mut buffers = self.free.pop().unwrap_or_default();
         #[cfg(feature = "profiling")]
@@ -183,34 +191,41 @@ impl QueryStorage {
         let consumer = super::QueryConsumer::for_finish(&finish);
         #[cfg(feature = "profiling")]
         consumer.acquired();
-        Query {
-            #[cfg(feature = "profiling")]
-            had_callback: false,
-            #[cfg(feature = "profiling")]
-            consumer,
-            realm,
-            parents: buffers.parents,
-            natives: buffers.natives,
-            saved_native_depth: 0,
-            spare_parents: buffers.spare_parents,
-            finish: Some(finish),
-        }
+        QueryScope::new(
+            runtime,
+            Query {
+                #[cfg(feature = "profiling")]
+                had_callback: false,
+                #[cfg(feature = "profiling")]
+                consumer,
+                realm,
+                parents: buffers.parents,
+                natives: buffers.natives,
+                saved_native_depth: 0,
+                spare_parents: buffers.spare_parents,
+                finish: Some(finish),
+            },
+        )
     }
 }
 
 impl Query {
-    pub(super) fn recycle(mut self, storage: &mut QueryStorage) {
-        // Preserve Query::drop's native/root release order. On abnormal exits
+    pub(super) fn recycle(
+        mut self,
+        runtime: &crate::engine::api::runtime::Runtime,
+        storage: &mut QueryStorage,
+    ) {
+        // Preserve the native/root release order. On abnormal exits
         // this includes every still-waiting native and its enclosing parents.
         while let Some(resume) = self.parents.pop() {
-            resume.release_owned();
+            resume.release_owned(runtime);
         }
         while let Some(mut scope) = self.natives.pop() {
             let _ = scope.call.release_invocation();
             drop(scope.call);
-            scope.resume.release_owned();
+            scope.resume.release_owned(runtime);
             while let Some(resume) = scope.parents.pop() {
-                resume.release_owned();
+                resume.release_owned(runtime);
             }
             // Caching must not turn successful cleanup into an allocation error.
             if reserve(&mut self.spare_parents, 1, "query.spare_parents").is_ok() {
@@ -225,7 +240,7 @@ impl Query {
         };
         // The final continuation may still own roots on an error. Release it
         // before making the empty buffers available to another query.
-        drop(self);
+        self.release_owned(runtime);
         if reserve(&mut storage.free, 1, "query.free_pool").is_ok() {
             storage.free.push(buffers);
         }
@@ -262,12 +277,12 @@ mod tests {
         let context = runtime.new_context().expect("create context");
         let mut storage = QueryStorage::default();
         storage
-            .acquire(context.realm, Vec::new(), Finish::Root)
+            .acquire(&runtime, context.realm, Vec::new(), Finish::Root)
             .recycle(&mut storage);
         assert!(storage.reserve_cached_native_entry().unwrap());
-        let query = storage.acquire(context.realm, Vec::new(), Finish::Root);
+        let query = storage.acquire(&runtime, context.realm, Vec::new(), Finish::Root);
         assert!(!storage.has_cached_entry());
-        let nested = storage.acquire(context.realm, Vec::new(), Finish::Root);
+        let nested = storage.acquire(&runtime, context.realm, Vec::new(), Finish::Root);
         assert_eq!(nested.natives.capacity(), 0);
         nested.recycle(&mut storage);
         assert!(query.natives.capacity() >= 1);
@@ -281,16 +296,16 @@ mod tests {
         let runtime = Runtime::new();
         let context = runtime.new_context().expect("create context");
         let mut storage = QueryStorage::default();
-        let mut outer = storage.acquire(context.realm, Vec::new(), Finish::Root);
+        let mut outer = storage.acquire(&runtime, context.realm, Vec::new(), Finish::Root);
         outer.parents.try_reserve(12).unwrap();
         outer.parents.push(Resume::Identity);
         let capacity = outer.parents.0.capacity();
-        let inner = storage.acquire(context.realm, Vec::new(), Finish::Root);
+        let inner = storage.acquire(&runtime, context.realm, Vec::new(), Finish::Root);
         assert!(inner.parents.is_empty());
         assert_eq!(outer.parents.len(), 1);
         inner.recycle(&mut storage);
         outer.recycle(&mut storage);
-        let reused = storage.acquire(context.realm, Vec::new(), Finish::Root);
+        let reused = storage.acquire(&runtime, context.realm, Vec::new(), Finish::Root);
         assert!(reused.parents.is_empty());
         assert_eq!(reused.parents.0.capacity(), capacity);
         assert!(reused.natives.is_empty());
@@ -303,7 +318,7 @@ mod tests {
         let mut storage = QueryStorage::default();
         assert!(!storage.reserve_cached_native_entry().unwrap());
         storage
-            .acquire(context.realm, Vec::new(), Finish::Root)
+            .acquire(&runtime, context.realm, Vec::new(), Finish::Root)
             .recycle(&mut storage);
         let pool_capacity = storage.free.capacity();
         let entry_address = storage.free.as_ptr();
@@ -316,7 +331,7 @@ mod tests {
             assert_eq!(storage.free.as_ptr(), entry_address);
         }
         let reserved = storage.free.last().unwrap().natives.capacity();
-        let query = storage.acquire(context.realm, Vec::new(), Finish::Root);
+        let query = storage.acquire(&runtime, context.realm, Vec::new(), Finish::Root);
         assert_eq!(query.natives.capacity(), reserved);
         assert!(!storage.has_cached_entry());
         query.recycle(&mut storage);
@@ -331,7 +346,7 @@ mod tests {
         let mut outer = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
         outer
             .query_storage
-            .acquire(context.realm, Vec::new(), Finish::Root)
+            .acquire(&runtime, context.realm, Vec::new(), Finish::Root)
             .recycle(&mut outer.query_storage);
         assert!(outer.query_storage.reserve_cached_native_entry().unwrap());
         let borrowed = outer.query_storage.free.last().unwrap();
@@ -341,7 +356,7 @@ mod tests {
         assert!(!inner.query_storage.has_cached_entry());
         let query = inner
             .query_storage
-            .acquire(context.realm, Vec::new(), Finish::Root);
+            .acquire(&runtime, context.realm, Vec::new(), Finish::Root);
         assert_eq!(query.natives.capacity(), 0);
         query.recycle(&mut inner.query_storage);
         drop(inner);
@@ -357,7 +372,12 @@ mod tests {
         let context = runtime.new_context().expect("create context");
         let mut storage = QueryStorage::default();
         for _ in 0..2000 {
-            let query = storage.acquire(context.realm, vec![Resume::Identity], Finish::Root);
+            let query = storage.acquire(
+                &runtime,
+                context.realm,
+                vec![Resume::Identity],
+                Finish::Root,
+            );
             assert_eq!(query.parents.len(), 1);
             assert!(query.spare_parents.is_empty());
             query.recycle(&mut storage);
