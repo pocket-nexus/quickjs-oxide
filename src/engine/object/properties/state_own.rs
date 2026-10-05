@@ -175,7 +175,14 @@ impl RuntimeState {
                 }
             });
         }
-        if let Some(index) = self.atoms.array_index(atom)? {
+        // Only these classes have virtual/dense indexed descriptors. Named
+        // properties on other objects never need a decimal-index parse.
+        if matches!(
+            self.heap.object(object)?.payload,
+            ObjectPayload::Primitive(PrimitiveObjectData::String(_))
+                | ObjectPayload::Array { dense: Some(_) }
+        ) && let Some(index) = self.atoms.array_index(atom)?
+        {
             let data = self.heap.object(object)?;
             if let ObjectPayload::Primitive(PrimitiveObjectData::String(id)) = data.payload
                 && let Some(unit) = self.heap.string(id)?.code_unit_at(index as usize)
