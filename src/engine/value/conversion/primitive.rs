@@ -273,6 +273,9 @@ impl MachineGuard<'_> {
                 }
             }
         }; // The incoming-owner guard ends before the next State operation.
+        if self.poisoned.get() {
+            return Err(RuntimeError::Poisoned);
+        }
         match reply {
             Reply::Call => Ok(self.publish(true)),
             Reply::Complete(value) => Ok(PrimitiveStep::Complete(Completion::Return(value))),
@@ -609,6 +612,67 @@ mod state_phase_tests {
         drop(PrimitiveScope::new(&runtime, resume));
         assert!(runtime.0.state.borrow().heap.object(object).is_err());
         assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn destructive_reply_cleanup_does_not_advance_to_the_next_method() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(method) = context
+            .eval("var method = function(){return '7'}; method")
+            .unwrap()
+        else {
+            panic!("method")
+        };
+        let Value::Object(object) = context
+            .eval("({get valueOf(){return undefined},toString:method})")
+            .unwrap()
+        else {
+            panic!("object")
+        };
+        let PrimitiveStep::Get { mut resume } = PrimitiveResume::ordinary(
+            &runtime,
+            context.realm,
+            object.try_clone().unwrap(),
+            ToPrimitiveHint::Number,
+        )
+        .unwrap() else {
+            panic!("valueOf getter")
+        };
+        let (effect, atom) = resume.take_state_read();
+        let _ = runtime
+            .finish_primitive_read(context.realm, effect, atom)
+            .unwrap();
+        let method_id = method.object_id();
+        let before = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(method_id)
+            .unwrap();
+        let invalid = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .allocate_string(JsString::from_static("invalid"))
+            .unwrap();
+        runtime.release_jsvalue(JsValue::String(invalid)).unwrap();
+        assert!(matches!(
+            resume.resume(&runtime, Completion::Return(JsValue::String(invalid))),
+            Err(RuntimeError::Poisoned)
+        ));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(method_id)
+                .unwrap(),
+            before
+        );
     }
 
     #[test]
