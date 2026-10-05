@@ -186,7 +186,10 @@ impl StateMethodStep {
                     value: None,
                 };
                 effect.release_in_state(scope.state, runtime)?;
-                scope.state.release_atoms([atom])?;
+                scope
+                    .state
+                    .release_atoms([atom])
+                    .inspect_err(|_| runtime.0.poisoned.set(true))?;
                 scope.cleanup()
             }
         }
