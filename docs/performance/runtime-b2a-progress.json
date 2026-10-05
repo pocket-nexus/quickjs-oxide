@@ -1,6 +1,6 @@
 {
   "schema": "oxide-runtime-b2a-progress-v1",
-  "status": "B2a shared-service write repair verified; parallel B2b, B2c/d, B2e/f implement against same snapshot; raw effect cleanup foundation in progress",
+  "status": "B2a common cleanup/GetMethod batch short-tested; independent B2b, B2c/d, B2e/f consumers implement and validate in parallel. B2 acceptance pending.",
   "b2a_complete": false,
   "pr": 92,
   "baseline": "B1 760443cb",
@@ -1358,11 +1358,338 @@
         }
       },
       "mechanism": "NS local Dw -0.092146%; cumulative relative to ed4f +0.035181%, within +0.1% budget. Additional writes in shared ready branch no longer retained."
+    },
+    {
+      "runtime_commit": "16495b8a9a82ecb3a7442be44c933fb522be7e34",
+      "scope": "Supply Query/Resume cleanup with execution context; raw pending records do not retain Runtime.",
+      "status": "Not adopted as a standalone performance candidate; confirmed Crypto regression. Superseded by the e29 shared batch.",
+      "native": {
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-16495b-vs-b26409-abba/results.json",
+          "sha256": "dfc1e5b55e42b836f6a611e93b29c7232c94f7233b291556533966c3311addb6"
+        },
+        "changes": [
+          {
+            "case": "richards",
+            "pairs": 2,
+            "median_elapsed_change_percent": -2.3143016321635623,
+            "ratio_of_median_elapsed_change_percent": -2.350429797261877
+          },
+          {
+            "case": "deltablue",
+            "pairs": 2,
+            "median_elapsed_change_percent": -4.306394646451755,
+            "ratio_of_median_elapsed_change_percent": -4.3149337427690675
+          },
+          {
+            "case": "crypto",
+            "pairs": 2,
+            "median_elapsed_change_percent": 4.170598461935981,
+            "ratio_of_median_elapsed_change_percent": 4.17171157677414
+          },
+          {
+            "case": "raytrace",
+            "pairs": 2,
+            "median_elapsed_change_percent": 0.3442443888116986,
+            "ratio_of_median_elapsed_change_percent": 0.34384400090599065
+          },
+          {
+            "case": "earley-boyer",
+            "pairs": 2,
+            "median_elapsed_change_percent": 0.5877073065896465,
+            "ratio_of_median_elapsed_change_percent": 0.5808958989416357
+          },
+          {
+            "case": "regexp",
+            "pairs": 2,
+            "median_elapsed_change_percent": -0.41402173087677907,
+            "ratio_of_median_elapsed_change_percent": -0.41495404928960644
+          },
+          {
+            "case": "splay",
+            "pairs": 2,
+            "median_elapsed_change_percent": 2.473048252382737,
+            "ratio_of_median_elapsed_change_percent": 2.471191432755937
+          },
+          {
+            "case": "navier-stokes",
+            "pairs": 2,
+            "median_elapsed_change_percent": 2.450852817492366,
+            "ratio_of_median_elapsed_change_percent": 2.450477789746608
+          },
+          {
+            "case": "combined",
+            "pairs": 2,
+            "median_elapsed_change_percent": 0.5507724696558913,
+            "ratio_of_median_elapsed_change_percent": 0.5480733161426388
+          }
+        ],
+        "classification": "Daily feedback, not formal Score acceptance."
+      },
+      "tripwire": {
+        "reference_receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-b26409-callgrind/results.json",
+          "sha256": "63b72446fcc40e54fc3a4f63e84a6552bda768cd0384435a8e89161d5ef81df2"
+        },
+        "candidate_receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-16495b-callgrind/results.json",
+          "sha256": "e6736fe4b31132bb7fe1049d1cb3d10035d7c916b69f57d68d6c56c194990a0c"
+        },
+        "cases": [
+          {
+            "case": "richards",
+            "relative_percent": {
+              "Ir": -0.10785847248772074,
+              "Dw": -0.16722662219773587,
+              "I1mr": -18.223185936333287
+            },
+            "hard_pass": true
+          },
+          {
+            "case": "deltablue",
+            "relative_percent": {
+              "Ir": -0.18482833750977923,
+              "Dw": -0.2528828318658305,
+              "I1mr": -2.0595852898915523
+            },
+            "hard_pass": true
+          },
+          {
+            "case": "navier-stokes",
+            "relative_percent": {
+              "Ir": 0.0011349882531375144,
+              "Dw": 0.008794063185746381,
+              "I1mr": -11.546936800104424
+            },
+            "hard_pass": true
+          }
+        ],
+        "i1mr_policy": "diagnostic only"
+      },
+      "crypto_review": {
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-16495b-crypto-paired.json",
+          "sha256": "33e89f5d75ac4edfaa071a3df2143253988c440d8bb3b7c6103fe23824cdbe7f"
+        },
+        "median_elapsed_change_percent": 4.9369108397190224,
+        "elapsed_change_ci95_percent": [
+          3.596205663355989,
+          6.115666609252102
+        ],
+        "classification": "Confirmed regression; Combined cannot justify it."
+      }
+    },
+    {
+      "runtime_commit": "e29ae24e39e32d538887bd69e7f61f1af79b76af",
+      "included_runtime_commits": [
+        "d9a63be6",
+        "e29ae24e"
+      ],
+      "scope": "Canonical State GetMethod with exact read effects; recycle Query in its resident record and outline cancellation cleanup. This is the measured shared batch, not a per-commit attribution.",
+      "binary": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/e29ae24e/qjs",
+        "sha256": "105dfccd8cba5536249b666581419974abb1a5be2ae314874efe7ef2d6ee29bd"
+      },
+      "build_receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/e29ae24e/qjs.build.json",
+        "sha256": "9484cf5f1a9e74b65973e751e0acc248d92de85b12dc771db808f6f4ef1ed98b"
+      },
+      "native": {
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-e29ae2-vs-16495b-abba/results.json",
+          "sha256": "665015d32728710587e6b61add025dc4a08aeeb72f7797c385bb7b7ec4f3e708"
+        },
+        "changes": [
+          {
+            "case": "richards",
+            "pairs": 2,
+            "median_elapsed_change_percent": 1.9899564269322156,
+            "ratio_of_median_elapsed_change_percent": 1.988619287490323
+          },
+          {
+            "case": "deltablue",
+            "pairs": 2,
+            "median_elapsed_change_percent": -1.2674068986340048,
+            "ratio_of_median_elapsed_change_percent": -1.3062335627762045
+          },
+          {
+            "case": "crypto",
+            "pairs": 2,
+            "median_elapsed_change_percent": -1.1296718009250362,
+            "ratio_of_median_elapsed_change_percent": -1.197562315200018
+          },
+          {
+            "case": "raytrace",
+            "pairs": 2,
+            "median_elapsed_change_percent": 1.1598139687348907,
+            "ratio_of_median_elapsed_change_percent": 1.1601820115686223
+          },
+          {
+            "case": "earley-boyer",
+            "pairs": 2,
+            "median_elapsed_change_percent": -0.9549389174813738,
+            "ratio_of_median_elapsed_change_percent": -0.9549048813971894
+          },
+          {
+            "case": "regexp",
+            "pairs": 2,
+            "median_elapsed_change_percent": -1.0320271947938053,
+            "ratio_of_median_elapsed_change_percent": -1.0339286184343766
+          },
+          {
+            "case": "splay",
+            "pairs": 2,
+            "median_elapsed_change_percent": 1.5971360063880002,
+            "ratio_of_median_elapsed_change_percent": 1.6038046743966694
+          },
+          {
+            "case": "navier-stokes",
+            "pairs": 2,
+            "median_elapsed_change_percent": -0.3713784267078246,
+            "ratio_of_median_elapsed_change_percent": -0.37700558336626333
+          },
+          {
+            "case": "combined",
+            "pairs": 2,
+            "median_elapsed_change_percent": -0.10124520039146989,
+            "ratio_of_median_elapsed_change_percent": -0.10245768050499704
+          }
+        ],
+        "classification": "Daily feedback, not formal Score acceptance."
+      },
+      "tripwire": {
+        "reference_receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-16495b-callgrind/results.json",
+          "sha256": "e6736fe4b31132bb7fe1049d1cb3d10035d7c916b69f57d68d6c56c194990a0c"
+        },
+        "candidate_receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-e29ae2-callgrind/results.json",
+          "sha256": "3c24f290c4ab68e91c2f215cfbd87108d7ed2f651949f101c75cd8d716f00bca"
+        },
+        "cases": [
+          {
+            "case": "richards",
+            "relative_percent": {
+              "Ir": 1.123315884754561e-05,
+              "Dw": 2.3223422518370285e-05,
+              "I1mr": 2.9102532745624687
+            },
+            "hard_pass": true
+          },
+          {
+            "case": "deltablue",
+            "relative_percent": {
+              "Ir": 0.0038817609926189434,
+              "Dw": -0.0032739109503077124,
+              "I1mr": -1.6419951984154468
+            },
+            "hard_pass": true
+          },
+          {
+            "case": "navier-stokes",
+            "relative_percent": {
+              "Ir": -0.0003427915148512817,
+              "Dw": -0.002916591200563534,
+              "I1mr": -9.337501541700776
+            },
+            "hard_pass": true
+          }
+        ],
+        "i1mr_policy": "diagnostic only"
+      },
+      "crypto_repair_review": {
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-e29ae2-crypto-repair-paired.json",
+          "sha256": "7b98e9e850bc9bcf7e3a4e9c9371d0a5aa44a451d848c4163667705a2799d3a1"
+        },
+        "median_elapsed_change_percent": 1.6709765956482658,
+        "elapsed_change_ci95_percent": [
+          -11.231905059179088,
+          1.9882764126073371
+        ],
+        "aa_noise_percent": 1.763422871001108,
+        "classification": "No renewed regression confirmed: median within existing A/A, CI crosses zero. All samples retained, including one baseline outlier. Does not establish the precise native cause or a gain."
+      },
+      "cumulative_vs_stage_A": {
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-e29ae2-vs-A-abba/results.json",
+          "sha256": "65ad21ca8864323ee32c8f4e9783ab60d16013db978636421ab69b05c3f44ad5"
+        },
+        "changes": [
+          {
+            "case": "richards",
+            "pairs": 2,
+            "median_elapsed_change_percent": -25.435284941552545,
+            "ratio_of_median_elapsed_change_percent": -25.53376935623214
+          },
+          {
+            "case": "deltablue",
+            "pairs": 2,
+            "median_elapsed_change_percent": -13.335634731892153,
+            "ratio_of_median_elapsed_change_percent": -13.345044584410603
+          },
+          {
+            "case": "crypto",
+            "pairs": 2,
+            "median_elapsed_change_percent": -1.5056179042423012,
+            "ratio_of_median_elapsed_change_percent": -1.5088128917903343
+          },
+          {
+            "case": "raytrace",
+            "pairs": 2,
+            "median_elapsed_change_percent": -5.707450980517621,
+            "ratio_of_median_elapsed_change_percent": -5.712551797973031
+          },
+          {
+            "case": "earley-boyer",
+            "pairs": 2,
+            "median_elapsed_change_percent": -9.367570963117345,
+            "ratio_of_median_elapsed_change_percent": -9.390009960088152
+          },
+          {
+            "case": "regexp",
+            "pairs": 2,
+            "median_elapsed_change_percent": -1.0974532586207064,
+            "ratio_of_median_elapsed_change_percent": -1.0975069274999028
+          },
+          {
+            "case": "splay",
+            "pairs": 2,
+            "median_elapsed_change_percent": -10.908685986563027,
+            "ratio_of_median_elapsed_change_percent": -10.92301065322766
+          },
+          {
+            "case": "navier-stokes",
+            "pairs": 2,
+            "median_elapsed_change_percent": -0.1963344821207802,
+            "ratio_of_median_elapsed_change_percent": -0.21683494237516587
+          },
+          {
+            "case": "combined",
+            "pairs": 2,
+            "median_elapsed_change_percent": -7.2503714900354455,
+            "ratio_of_median_elapsed_change_percent": -7.260424700237467
+          }
+        ],
+        "classification": "Daily feedback, not formal Score acceptance."
+      },
+      "limitations": [
+        "B2a and B2 checkpoint 2 are incomplete.",
+        "Exact native cause of standalone 164 Crypto regression remains unproved.",
+        "Fixed-time daily observations are not original benchmark Scores."
+      ]
     }
   ],
   "remaining": [
     "direct raw getter/Proxy effect handoff and corresponding old-adapter deletion",
     "full B2a correctness/mechanism/resource closure"
   ],
-  "formal_score_acceptance": false
+  "formal_score_acceptance": false,
+  "parallel_delivery": {
+    "root": "Shared Get/read effects, static read consumer, integration and exclusive native timing.",
+    "b2b": "Computed reads and primitive key conversion; complete consumer batch 4572ca80, 2565 profiling core tests passed in its isolated branch; awaiting parent integration/performance.",
+    "b2cd": "State Set, static/computed stores, receiver/proxy ownership; raw Set 38e947b9, 2581 profiling core tests passed in its isolated branch; Own prefix next; awaiting parent integration/performance.",
+    "b2ef": "State descriptors, Array/String/Arguments class publication and Reflect consumers; successive isolated correctness batches passed; descriptor converter/native closure still in progress.",
+    "stop": "B2 checkpoint 2 before B3; no automatic acceptance from a sibling result."
+  }
 }
