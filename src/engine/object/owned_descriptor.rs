@@ -1,4 +1,6 @@
-//! Owned descriptor request across observable DefineOwnProperty suspension.
+//! Rooted adapters retained by unmigrated descriptor and exotic consumers.
+
+mod state_owned;
 use super::property::PropertyDescriptor;
 use super::{AccessorValue, DescriptorField, OrdinaryPropertyDescriptor};
 use crate::engine::{
@@ -6,6 +8,7 @@ use crate::engine::{
     heap::RawValue,
     value::JsValue,
 };
+pub(crate) use state_owned::{StateDescriptorGuard, StatePropertyDescriptor};
 
 pub(crate) struct OwnedPropertyDescriptor {
     runtime: Runtime,
