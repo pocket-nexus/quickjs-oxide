@@ -71,6 +71,19 @@ impl ConstructorStep {
                 "Array constructor requires constructor-or-function invocation",
             ));
         };
+        if let Some(completion) = runtime
+            .0
+            .state
+            .borrow_mut()
+            .try_complete_array_constructor(
+                &runtime.0.poisoned,
+                realm,
+                new_target,
+                &arguments.readable[..arguments.actual_arg_count],
+            )?
+        {
+            return Ok(Self::Complete(completion));
+        }
         let mut resume = ConstructorResume(Box::new(ConstructorResumeState {
             runtime: runtime.clone(),
             pending_effect: ConstructorStepPending::default(),
@@ -418,3 +431,108 @@ const _: () = assert!(std::mem::size_of::<ConstructorStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<ConstructorStep>() <= 64);
+
+impl crate::engine::heap::runtime::RuntimeState {
+    /// Execute the constructor's non-callback prefix under one State access.
+    /// Declines precede allocation or indexed writes. A prototype getter or
+    /// inherited indexed setter is handled by the existing effect consumer.
+    pub(crate) fn try_complete_array_constructor(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        realm: ContextId,
+        new_target: &JsValue,
+        arguments: &[JsValue],
+    ) -> Result<Option<Completion>, RuntimeError> {
+        use crate::engine::{
+            api::error::{NativeErrorKind, NativeErrorMessage},
+            atom::{Atom, AtomIdx, pinned::PinnedAtom},
+            heap::runtime::owned_values::OwnedValueGuard,
+            heap::{ObjectPayload, PropertySlot, RawValue},
+            object::prototypes_allow_dense_append,
+        };
+        let prototype = match new_target {
+            JsValue::Undefined => self.heap.context(realm)?.array_prototype,
+            JsValue::Object(target) => {
+                let data = self.heap.object(*target)?;
+                if matches!(data.payload, ObjectPayload::Proxy { .. }) {
+                    return Ok(None);
+                }
+                let atom = self.pinned_atoms.get(PinnedAtom::Prototype);
+                let shape = self.heap.shape(data.shape)?;
+                let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+                    return Ok(None);
+                };
+                let Some(PropertySlot::Data(RawValue::Object(prototype))) =
+                    data.slots.get(index as usize)
+                else {
+                    return Ok(None);
+                };
+                *prototype
+            }
+            _ => return Ok(None),
+        };
+        let numeric_length = match arguments {
+            [JsValue::Int(n)] => Some(f64::from(*n)),
+            [JsValue::Float(n)] => Some(*n),
+            _ => None,
+        };
+        if numeric_length.is_none() {
+            for index in 0..arguments.len() {
+                let Some(atom) = u32::try_from(index)
+                    .ok()
+                    .and_then(Atom::from_immediate_integer)
+                else {
+                    return Ok(None);
+                };
+                if !prototypes_allow_dense_append(self, atom, Some(prototype))? {
+                    return Ok(None);
+                }
+            }
+        }
+        // Preserve the checked temporary prototype owner and its failure order.
+        // Both guards reborrow this State; neither carries a Runtime root.
+        self.heap.retain_object(prototype)?;
+        let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
+        let (state, _) = prototype_owner.parts();
+        let array = state.new_empty_array_with_prototype(poisoned, prototype)?;
+        let mut array_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(array));
+        let (state, result_owner) = array_owner.parts();
+        if let Some(length) = numeric_length {
+            if !(length >= 0.0 && length <= f64::from(u32::MAX) && length.fract() == 0.0) {
+                let error = state.new_native_error_from_message(
+                    poisoned,
+                    realm,
+                    NativeErrorKind::Range,
+                    NativeErrorMessage::from_utf8("invalid array length"),
+                )?;
+                return Ok(Some(Completion::Throw(JsValue::Object(error))));
+            }
+            state.replace_property_slot(
+                array,
+                0,
+                PropertySlot::Data(
+                    JsValue::from(crate::engine::value::number::operations::Number::compact(
+                        f64::from(Runtime::to_uint32_number(length)),
+                    ))
+                    .into_raw(),
+                ),
+            )?;
+        } else {
+            for value in arguments {
+                let pushed = state.try_dense_push(array, value)?;
+                if pushed.is_none() {
+                    return Err(RuntimeError::Invariant(
+                        "fresh Array prefix changed under exclusive State access",
+                    ));
+                }
+            }
+        }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "array_constructor_completed_in_state",
+        );
+        Ok(Some(Completion::Return(
+            result_owner.take().expect("Array result owner"),
+        )))
+    }
+}

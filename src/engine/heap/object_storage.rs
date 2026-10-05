@@ -815,6 +815,34 @@ impl Heap {
 
     /// Truncate the contiguous fast prefix without changing the Array's
     /// logical `length` slot. Every removed edge and Symbol atom is detached.
+    /// Transfer the last dense edge without reference-count traffic. The
+    /// semantic caller checked writable length and absence of holes under this
+    /// same State borrow; verify the structural prefix before changing it.
+    pub(crate) fn take_last_array_dense_value(
+        &mut self,
+        id: ObjectId,
+        length: u32,
+    ) -> Result<RawValue, HeapError> {
+        let data = self.object_mut(id)?;
+        let ObjectPayload::Array { dense: Some(dense) } = &mut data.payload else {
+            return Err(HeapError::Invariant(
+                "dense pop requires dense Array storage",
+            ));
+        };
+        if length == 0 || dense.len() != length as usize {
+            return Err(HeapError::Invariant(
+                "dense pop length changed before commit",
+            ));
+        }
+        let value = dense.pop().expect("verified non-empty dense tail");
+        data.slots[0] = PropertySlot::Data(if let Ok(n) = i32::try_from(length - 1) {
+            RawValue::Int(n)
+        } else {
+            RawValue::Float(f64::from(length - 1))
+        });
+        Ok(value)
+    }
+
     pub fn truncate_array_dense(
         &mut self,
         id: ObjectId,

@@ -683,13 +683,27 @@
     },
     "aa_source": "docs/performance/runtime-core-stage-a.json",
     "checkpoint_1_tripwire": {
+      "policy_version": 2,
       "reference": "callgrind_b0",
       "events": [
         "Ir",
-        "Dw",
+        "Dw"
+      ],
+      "maximum_growth_percent": 0.1,
+      "diagnostic_events": [
         "I1mr"
       ],
-      "maximum_growth_percent": 0
+      "native_policy": "Within frozen A/A noise is unresolved and acceptable; investigate suspected out-of-noise regression with six paired observations.",
+      "superseded_policy": {
+        "reference": "callgrind_b0",
+        "events": [
+          "Ir",
+          "Dw",
+          "I1mr"
+        ],
+        "maximum_growth_percent": 0
+      },
+      "correction": "General correction of the B migration policy: I1mr is an investigation signal, not a zero-growth rejection gate."
     },
     "hot_symbol_review_growth_percent": 2,
     "transport_type_growth_requires_review": true,

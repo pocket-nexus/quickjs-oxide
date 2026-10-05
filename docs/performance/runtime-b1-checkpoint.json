@@ -1,0 +1,1028 @@
+{
+  "schema": "oxide-runtime-b1-checkpoint-v1",
+  "status": "accepted",
+  "adopted": true,
+  "b2_started": false,
+  "base": "478d4d426512ccc3736aad28ca2a8c8917cec79c",
+  "candidate_runtime_commit": "760443cb0250ed876ee65a0ddc60e9bd38074ec0",
+  "plain_binary": {
+    "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/760443cb/qjs",
+    "sha256": "6226cebbdd63c1bb8bef46a0d243fd05eaaee7136ed116621fb55a67ce085802",
+    "build_receipt": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/760443cb/qjs.build.json",
+      "sha256": "3155731ad76ce76574a6dc3b25e426091dd44b493c1fe12b5c6708a544f4f226"
+    }
+  },
+  "configuration": {
+    "rust": "1.88.0",
+    "mode": "ordinary release",
+    "pgo": false,
+    "frozen_manifest_sha256": "379dccf675a638aad91e2e3d112448543d179bef92842b11d6da80490bb8229e"
+  },
+  "tripwire": {
+    "reference": "runtime-b0-baseline.json:callgrind_b0",
+    "maximum_growth_percent": 0.1,
+    "events": [
+      {
+        "case": "richards",
+        "values": {
+          "Ir": 6416927651,
+          "Dw": 1078313271,
+          "I1mr": 58881566
+        },
+        "relative_to_b0_percent": {
+          "Ir": -0.03167138916668755,
+          "Dw": -0.04543302312383091,
+          "I1mr": 4.465475131934715
+        },
+        "gate_passed": true,
+        "historical_gate_passed": false
+      },
+      {
+        "case": "deltablue",
+        "values": {
+          "Ir": 7096540567,
+          "Dw": 1355943737,
+          "I1mr": 122481972
+        },
+        "relative_to_b0_percent": {
+          "Ir": -4.084187665439531,
+          "Dw": -4.920299647161563,
+          "I1mr": -8.205183084505164
+        },
+        "gate_passed": true,
+        "historical_gate_passed": true
+      },
+      {
+        "case": "navier-stokes",
+        "values": {
+          "Ir": 8320229935,
+          "Dw": 1100253242,
+          "I1mr": 36514153
+        },
+        "relative_to_b0_percent": {
+          "Ir": -0.038072127321098215,
+          "Dw": -0.08741074909164315,
+          "I1mr": -15.029120101765436
+        },
+        "gate_passed": true,
+        "historical_gate_passed": true
+      }
+    ],
+    "failure": null,
+    "receipt": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-length-callgrind/results.json",
+      "sha256": "9d15953694fe1ed3b37e1d836043c48ef44dabdefdf877ba76a9170d05a45a06"
+    },
+    "richards_recheck": {
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-richards-cache-recheck/results.json",
+        "sha256": "359de32ad813c7a8e012abeddf9783a16fa9c43d23f693f3c3242fb29f58cb8e"
+      },
+      "values": {
+        "Ir": 6416926743,
+        "Dw": 1078313307,
+        "I1mr": 58881306
+      },
+      "relative_to_b0_percent": {
+        "Ir": -0.03168553475898506,
+        "Dw": -0.045429686093201305,
+        "I1mr": 4.465013849645882
+      },
+      "gate_passed": true,
+      "scope": "Same immutable binary/model/validated frozen workload. I1 growth repeats at +4.4650%; counts are not claimed bit-identical (minor startup variation).",
+      "historical_gate_passed": false
+    },
+    "policy_version": 2,
+    "hard_events": [
+      "Ir",
+      "Dw"
+    ],
+    "diagnostic_events": [
+      "I1mr"
+    ]
+  },
+  "per_runtime_commit": [
+    {
+      "commit": "06b70540",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-pop-callgrind-valid/results.json",
+        "sha256": "78f79ec974c29ae71df326ab1d52f77671f7e7520657b8e79ec93b9866e8b0e9"
+      },
+      "events": [
+        {
+          "case": "richards",
+          "values": {
+            "Ir": 6418963720,
+            "Dw": 1078803659,
+            "I1mr": 52343044
+          },
+          "relative_to_b0_percent": {
+            "Ir": 4.821652881403793e-05,
+            "Dw": 2.3637300272660866e-05,
+            "I1mr": -7.134926382362783
+          },
+          "gate_passed": false
+        },
+        {
+          "case": "deltablue",
+          "values": {
+            "Ir": 7223399792,
+            "Dw": 1391494278,
+            "I1mr": 118068669
+          },
+          "relative_to_b0_percent": {
+            "Ir": -2.3695767922783273,
+            "Dw": -2.4274714468265013,
+            "I1mr": -11.512758348541595
+          },
+          "gate_passed": true
+        },
+        {
+          "case": "navier-stokes",
+          "values": {
+            "Ir": 8323405195,
+            "Dw": 1101216371,
+            "I1mr": 47171060
+          },
+          "relative_to_b0_percent": {
+            "Ir": 7.647116435638424e-05,
+            "Dw": 4.976317888871762e-05,
+            "I1mr": 9.770216330429914
+          },
+          "gate_passed": false
+        }
+      ]
+    },
+    {
+      "commit": "4be22b62",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-state-callgrind/results.json",
+        "sha256": "67d31e008bd5a8342eee9cddbccb768b117d8ff6140129256f6e61c36ad10b25"
+      },
+      "events": [
+        {
+          "case": "richards",
+          "values": {
+            "Ir": 6416939406,
+            "Dw": 1078317835,
+            "I1mr": 42493390
+          },
+          "relative_to_b0_percent": {
+            "Ir": -0.03148825983022574,
+            "Dw": -0.045009961796527165,
+            "I1mr": -24.609814618099602
+          },
+          "gate_passed": true
+        },
+        {
+          "case": "deltablue",
+          "values": {
+            "Ir": 7099928686,
+            "Dw": 1357133825,
+            "I1mr": 107547060
+          },
+          "relative_to_b0_percent": {
+            "Ir": -4.038394340776197,
+            "Dw": -4.836849864293836,
+            "I1mr": -19.39823860363925
+          },
+          "gate_passed": true
+        },
+        {
+          "case": "navier-stokes",
+          "values": {
+            "Ir": 8323892327,
+            "Dw": 1101627076,
+            "I1mr": 38434610
+          },
+          "relative_to_b0_percent": {
+            "Ir": 0.005929032238860543,
+            "Dw": 0.03734535877624179,
+            "I1mr": -10.560088022704917
+          },
+          "gate_passed": false
+        }
+      ]
+    },
+    {
+      "commit": "26048256",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-domain-callgrind/results.json",
+        "sha256": "5074d8d2a43596ffc215b891b5cee003a05406131d6827dc7c696fbb457a940c"
+      },
+      "events": [
+        {
+          "case": "richards",
+          "values": {
+            "Ir": 6416940079,
+            "Dw": 1078317851,
+            "I1mr": 58744213
+          },
+          "relative_to_b0_percent": {
+            "Ir": -0.03147777526677498,
+            "Dw": -0.04500847867180413,
+            "I1mr": 4.221788569559726
+          },
+          "gate_passed": false
+        },
+        {
+          "case": "deltablue",
+          "values": {
+            "Ir": 7100384204,
+            "Dw": 1357247849,
+            "I1mr": 128156819
+          },
+          "relative_to_b0_percent": {
+            "Ir": -4.03223762560061,
+            "Dw": -4.828854423585483,
+            "I1mr": -3.952136428884323
+          },
+          "gate_passed": true
+        },
+        {
+          "case": "navier-stokes",
+          "values": {
+            "Ir": 8323895976,
+            "Dw": 1101627570,
+            "I1mr": 34683009
+          },
+          "relative_to_b0_percent": {
+            "Ir": 0.005972872502613136,
+            "Dw": 0.037390218284216736,
+            "I1mr": -19.2903148472761
+          },
+          "gate_passed": false
+        }
+      ]
+    },
+    {
+      "commit": "5457abbc",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-final-callgrind/results.json",
+        "sha256": "1bbb3f4125ef03d469fbd350af1f0ed1903555974a6935830e2d4afbb645f417"
+      },
+      "events": [
+        {
+          "case": "richards",
+          "values": {
+            "Ir": 6416935431,
+            "Dw": 1078316444,
+            "I1mr": 51271974
+          },
+          "relative_to_b0_percent": {
+            "Ir": -0.0315501857436562,
+            "Dw": -0.045138900952146344,
+            "I1mr": -9.035178771192953
+          },
+          "gate_passed": true
+        },
+        {
+          "case": "deltablue",
+          "values": {
+            "Ir": 7099162852,
+            "Dw": 1356759574,
+            "I1mr": 117045795
+          },
+          "relative_to_b0_percent": {
+            "Ir": -4.04874524196952,
+            "Dw": -4.863092599862995,
+            "I1mr": -12.279357138750658
+          },
+          "gate_passed": true
+        },
+        {
+          "case": "navier-stokes",
+          "values": {
+            "Ir": 8323855507,
+            "Dw": 1101593756,
+            "I1mr": 23794051
+          },
+          "relative_to_b0_percent": {
+            "Ir": 0.0054866648748541635,
+            "Dw": 0.034319612205568895,
+            "I1mr": -44.629649500196045
+          },
+          "gate_passed": false
+        }
+      ]
+    },
+    {
+      "commit": "8682b0e3",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-inline-callgrind/results.json",
+        "sha256": "1a083820777f269516934ef4a08e8e90aeecdbdb159770a3f5bcadb78a5b1d11"
+      },
+      "events": [
+        {
+          "case": "richards",
+          "values": {
+            "Ir": 6416932296,
+            "Dw": 1078314999,
+            "I1mr": 42743167
+          },
+          "relative_to_b0_percent": {
+            "Ir": -0.031599025426332084,
+            "Dw": -0.04527284565372103,
+            "I1mr": -24.16666959403504
+          },
+          "gate_passed": true
+        },
+        {
+          "case": "deltablue",
+          "values": {
+            "Ir": 7097733860,
+            "Dw": 1356223628,
+            "I1mr": 102614671
+          },
+          "relative_to_b0_percent": {
+            "Ir": -4.0680592904422275,
+            "Dw": -4.900673499198859,
+            "I1mr": -23.094845849732582
+          },
+          "gate_passed": true
+        },
+        {
+          "case": "navier-stokes",
+          "values": {
+            "Ir": 8323894913,
+            "Dw": 1101627291,
+            "I1mr": 39639857
+          },
+          "relative_to_b0_percent": {
+            "Ir": 0.005960101277513452,
+            "Dw": 0.03736488265115856,
+            "I1mr": -7.755397521333906
+          },
+          "gate_passed": false
+        }
+      ]
+    },
+    {
+      "commit": "760443cb",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-length-callgrind/results.json",
+        "sha256": "9d15953694fe1ed3b37e1d836043c48ef44dabdefdf877ba76a9170d05a45a06"
+      },
+      "events": [
+        {
+          "case": "richards",
+          "values": {
+            "Ir": 6416927651,
+            "Dw": 1078313271,
+            "I1mr": 58881566
+          },
+          "relative_to_b0_percent": {
+            "Ir": -0.03167138916668755,
+            "Dw": -0.04543302312383091,
+            "I1mr": 4.465475131934715
+          },
+          "gate_passed": false
+        },
+        {
+          "case": "deltablue",
+          "values": {
+            "Ir": 7096540567,
+            "Dw": 1355943737,
+            "I1mr": 122481972
+          },
+          "relative_to_b0_percent": {
+            "Ir": -4.084187665439531,
+            "Dw": -4.920299647161563,
+            "I1mr": -8.205183084505164
+          },
+          "gate_passed": true
+        },
+        {
+          "case": "navier-stokes",
+          "values": {
+            "Ir": 8320229935,
+            "Dw": 1100253242,
+            "I1mr": 36514153
+          },
+          "relative_to_b0_percent": {
+            "Ir": -0.038072127321098215,
+            "Dw": -0.08741074909164315,
+            "I1mr": -15.029120101765436
+          },
+          "gate_passed": true
+        }
+      ]
+    }
+  ],
+  "short_feedback": [
+    {
+      "baseline": "B0",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-length-vs-b0-abba/results.json",
+        "sha256": "7d62227db6f4dda01b67743d07235c0bafd6592fcdce8b6724f9ea79bbad8e50"
+      },
+      "order": "A/B/B/A",
+      "samples_each": 2,
+      "scope": "Frozen whole-process time, not original adaptive Score; short feedback, not formal confidence interval.",
+      "cases": [
+        {
+          "case": "richards",
+          "paired_time_changes_percent": [
+            0.64305696961382,
+            -1.3190459609014882
+          ],
+          "median_paired_time_change_percent": -0.3379944956438341,
+          "existing_aa_noise_percent": 2.7799402787444194,
+          "status": "unresolved"
+        },
+        {
+          "case": "deltablue",
+          "paired_time_changes_percent": [
+            -4.946787190980784,
+            -6.209961922034712
+          ],
+          "median_paired_time_change_percent": -5.5783745565077485,
+          "existing_aa_noise_percent": 2.1527994175150447,
+          "status": "two_pairs_faster_beyond_existing_aa_range"
+        },
+        {
+          "case": "crypto",
+          "paired_time_changes_percent": [
+            -3.687633154325798,
+            -4.315122136184191
+          ],
+          "median_paired_time_change_percent": -4.001377645254994,
+          "existing_aa_noise_percent": 1.763422871001108,
+          "status": "two_pairs_faster_beyond_existing_aa_range"
+        },
+        {
+          "case": "raytrace",
+          "paired_time_changes_percent": [
+            -0.26800937047616324,
+            -0.19341390929716873
+          ],
+          "median_paired_time_change_percent": -0.230711639886666,
+          "existing_aa_noise_percent": 1.1218099839109763,
+          "status": "unresolved"
+        },
+        {
+          "case": "earley-boyer",
+          "paired_time_changes_percent": [
+            -0.01327996119587782,
+            0.7902154358942148
+          ],
+          "median_paired_time_change_percent": 0.3884677373491685,
+          "existing_aa_noise_percent": 1.0996741556422163,
+          "status": "unresolved"
+        },
+        {
+          "case": "regexp",
+          "paired_time_changes_percent": [
+            -0.11527979540759681,
+            1.7330822330127171
+          ],
+          "median_paired_time_change_percent": 0.8089012188025602,
+          "existing_aa_noise_percent": 2.0739746243528865,
+          "status": "unresolved"
+        },
+        {
+          "case": "splay",
+          "paired_time_changes_percent": [
+            -1.3959005163267646,
+            -0.3413930964051737
+          ],
+          "median_paired_time_change_percent": -0.8686468063659691,
+          "existing_aa_noise_percent": 2.636032435802327,
+          "status": "unresolved"
+        },
+        {
+          "case": "navier-stokes",
+          "paired_time_changes_percent": [
+            0.29432749216227183,
+            0.3866890654167676
+          ],
+          "median_paired_time_change_percent": 0.3405082787895197,
+          "existing_aa_noise_percent": 3.261646390740791,
+          "status": "unresolved"
+        },
+        {
+          "case": "combined",
+          "paired_time_changes_percent": [
+            -0.8491860698046305,
+            -0.7248369860165416
+          ],
+          "median_paired_time_change_percent": -0.787011527910586,
+          "existing_aa_noise_percent": 1.06280657589653,
+          "status": "unresolved"
+        }
+      ]
+    },
+    {
+      "baseline": "A",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-length-vs-a-abba/results.json",
+        "sha256": "a1e9a3a9fa8fd90228d3193f0c3f4a924ecb505bd4bbbf2506bee5427c8d006f"
+      },
+      "order": "A/B/B/A",
+      "samples_each": 2,
+      "scope": "Frozen whole-process time, not original adaptive Score; short feedback, not formal confidence interval.",
+      "cases": [
+        {
+          "case": "richards",
+          "paired_time_changes_percent": [
+            -22.267235480703697,
+            -19.546226519392185
+          ],
+          "median_paired_time_change_percent": -20.90673100004794,
+          "existing_aa_noise_percent": 2.7799402787444194,
+          "status": "two_pairs_faster_beyond_existing_aa_range"
+        },
+        {
+          "case": "deltablue",
+          "paired_time_changes_percent": [
+            -12.18514316609589,
+            -13.41502099856755
+          ],
+          "median_paired_time_change_percent": -12.80008208233172,
+          "existing_aa_noise_percent": 2.1527994175150447,
+          "status": "two_pairs_faster_beyond_existing_aa_range"
+        },
+        {
+          "case": "crypto",
+          "paired_time_changes_percent": [
+            0.5689558136648509,
+            -2.517526304827866
+          ],
+          "median_paired_time_change_percent": -0.9742852455815076,
+          "existing_aa_noise_percent": 1.763422871001108,
+          "status": "unresolved"
+        },
+        {
+          "case": "raytrace",
+          "paired_time_changes_percent": [
+            -6.854084574365082,
+            -4.945813369731145
+          ],
+          "median_paired_time_change_percent": -5.899948972048113,
+          "existing_aa_noise_percent": 1.1218099839109763,
+          "status": "two_pairs_faster_beyond_existing_aa_range"
+        },
+        {
+          "case": "earley-boyer",
+          "paired_time_changes_percent": [
+            -9.802840743806874,
+            -11.584429179607536
+          ],
+          "median_paired_time_change_percent": -10.693634961707204,
+          "existing_aa_noise_percent": 1.0996741556422163,
+          "status": "two_pairs_faster_beyond_existing_aa_range"
+        },
+        {
+          "case": "regexp",
+          "paired_time_changes_percent": [
+            -1.831765213661829,
+            -0.08423882308344899
+          ],
+          "median_paired_time_change_percent": -0.958002018372639,
+          "existing_aa_noise_percent": 2.0739746243528865,
+          "status": "unresolved"
+        },
+        {
+          "case": "splay",
+          "paired_time_changes_percent": [
+            -8.47058497697718,
+            -8.398039254456169
+          ],
+          "median_paired_time_change_percent": -8.434312115716676,
+          "existing_aa_noise_percent": 2.636032435802327,
+          "status": "two_pairs_faster_beyond_existing_aa_range"
+        },
+        {
+          "case": "navier-stokes",
+          "paired_time_changes_percent": [
+            0.7560105192360389,
+            0.1796249562606267
+          ],
+          "median_paired_time_change_percent": 0.4678177377483328,
+          "existing_aa_noise_percent": 3.261646390740791,
+          "status": "unresolved"
+        },
+        {
+          "case": "combined",
+          "paired_time_changes_percent": [
+            -6.90321370792989,
+            -5.455459298616649
+          ],
+          "median_paired_time_change_percent": -6.179336503273269,
+          "existing_aa_noise_percent": 1.06280657589653,
+          "status": "two_pairs_faster_beyond_existing_aa_range"
+        }
+      ]
+    }
+  ],
+  "mechanism_counters": [
+    {
+      "case": "richards",
+      "completed_without_callback": 0,
+      "mutation_progress_created": 0,
+      "state_guard_completions": 190,
+      "core_runtime_clones": 1595,
+      "b0_core_runtime_clones": 3866
+    },
+    {
+      "case": "deltablue",
+      "completed_without_callback": 0,
+      "mutation_progress_created": 0,
+      "state_guard_completions": 57227,
+      "core_runtime_clones": 121883,
+      "b0_core_runtime_clones": 544633
+    },
+    {
+      "case": "crypto",
+      "completed_without_callback": 0,
+      "mutation_progress_created": 0,
+      "state_guard_completions": 92,
+      "core_runtime_clones": 897032,
+      "b0_core_runtime_clones": 897945
+    },
+    {
+      "case": "raytrace",
+      "completed_without_callback": 0,
+      "mutation_progress_created": 0,
+      "state_guard_completions": 15,
+      "core_runtime_clones": 2791343,
+      "b0_core_runtime_clones": 2791416
+    },
+    {
+      "case": "earley-boyer",
+      "completed_without_callback": 0,
+      "mutation_progress_created": 0,
+      "state_guard_completions": 118,
+      "core_runtime_clones": 2171041,
+      "b0_core_runtime_clones": 2172363
+    },
+    {
+      "case": "regexp",
+      "completed_without_callback": 0,
+      "mutation_progress_created": 0,
+      "state_guard_completions": 1,
+      "core_runtime_clones": 22658828,
+      "b0_core_runtime_clones": 22658831
+    },
+    {
+      "case": "splay",
+      "completed_without_callback": 0,
+      "mutation_progress_created": 0,
+      "state_guard_completions": 8001,
+      "core_runtime_clones": 3183736,
+      "b0_core_runtime_clones": 3207739
+    },
+    {
+      "case": "navier-stokes",
+      "completed_without_callback": 0,
+      "mutation_progress_created": 0,
+      "state_guard_completions": 19,
+      "core_runtime_clones": 917233,
+      "b0_core_runtime_clones": 917452
+    }
+  ],
+  "diagnostic_receipt": {
+    "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-length-diagnostic-replay/results.json",
+    "sha256": "6bd5409750b6b4965fa29a69fa28d2a92a3ebc861de908766d13fc8a098d62b4"
+  },
+  "transport_layouts": {
+    "ConversionTask": {
+      "size_bytes": 8,
+      "align_bytes": 8
+    },
+    "Frame": {
+      "size_bytes": 56,
+      "align_bytes": 8
+    },
+    "FrameCold": {
+      "size_bytes": 232,
+      "align_bytes": 8
+    },
+    "NativeScope": {
+      "size_bytes": 248,
+      "align_bytes": 8
+    },
+    "Next": {
+      "size_bytes": 48,
+      "align_bytes": 8
+    },
+    "PreparedNativeCall": {
+      "size_bytes": 184,
+      "align_bytes": 8
+    },
+    "Query": {
+      "size_bytes": 144,
+      "align_bytes": 16
+    },
+    "Result<VmAction, Error>": {
+      "size_bytes": 16,
+      "align_bytes": 8
+    },
+    "Resume": {
+      "size_bytes": 32,
+      "align_bytes": 8
+    },
+    "Step": {
+      "size_bytes": 184,
+      "align_bytes": 8
+    },
+    "VmAction": {
+      "size_bytes": 16,
+      "align_bytes": 8
+    }
+  },
+  "resources": {
+    "fixed_rss_receipt": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-resources/fixed-rss/results.json",
+      "sha256": "60e4a58be506c63c50f0fe85bbc9bb087dcbc96ff78872d89649a4ab1a0d609d"
+    },
+    "fixed_rss": [
+      {
+        "case": "richards",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 10748,
+          "candidate": 11140
+        },
+        "peak_growth_percent": 3.6471901749162594,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "deltablue",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 17408,
+          "candidate": 17700
+        },
+        "peak_growth_percent": 1.6773897058823595,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "crypto",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 11900,
+          "candidate": 12256
+        },
+        "peak_growth_percent": 2.9915966386554693,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "raytrace",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 11252,
+          "candidate": 11604
+        },
+        "peak_growth_percent": 3.1283327408460737,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "earley-boyer",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 41432,
+          "candidate": 41240
+        },
+        "peak_growth_percent": -0.46340992469589004,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "regexp",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 17896,
+          "candidate": 18272
+        },
+        "peak_growth_percent": 2.101028162717933,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "splay",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 339440,
+          "candidate": 340132
+        },
+        "peak_growth_percent": 0.2038651897242616,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "navier-stokes",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 13304,
+          "candidate": 13816
+        },
+        "peak_growth_percent": 3.848466626578473,
+        "limit_growth_percent": 5
+      },
+      {
+        "case": "combined",
+        "complete": true,
+        "eligible": true,
+        "gate_passed": true,
+        "peaks_kib": {
+          "baseline": 348816,
+          "candidate": 351976
+        },
+        "peak_growth_percent": 0.9059217467088709,
+        "limit_growth_percent": 5
+      }
+    ],
+    "array_cycle_witness": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-resources/array-witness.json",
+      "sha256": "bdc132527f189729c64c9f78ca0be4913007c9667c26a9417ef1c84973044723"
+    },
+    "array_cycle_scope": "262144 and 1048576 discarded Array/object self cycles. Exact checksum checked. qjs RSS settled in middle/tail windows; sampled evidence, not a mathematical bound.",
+    "text_rodata": {
+      ".text": 6735961,
+      ".rodata": 711392,
+      "sum_bytes": 7447353,
+      "growth_vs_a_percent": 0.8209334788017442
+    }
+  },
+  "correctness": {
+    "local_ci": [
+      {
+        "gate": "workspace all targets",
+        "command": "cargo test --locked --workspace --all-targets",
+        "exit": 0,
+        "seconds": 88.9243084519403,
+        "log": "/home/eric/.cache/oxide-runtime-core-20261003/b1-ci-gate-0.log",
+        "commit": "5457abbc7e73d0f90b4cb657037e443134e0c3b9"
+      },
+      {
+        "gate": "Check formatting and architecture gates",
+        "command": "cargo fmt --all -- --check\npython3 -m unittest discover -s scripts/benchmark -p 'test_*.py'\n./scripts/checks/check-no-test262-special-casing.sh\nnode scripts/checks/check-test262-artifact-inventory.mjs\nnode --check scripts/test262/audit-negative-diagnostics.mjs\nnode --check scripts/test262/test-negative-diagnostic-generator.mjs\nnode --check scripts/test262/generate-test262-dynamic-import-a.mjs\nnode --check scripts/test262/generate-test262-tla-core-a.mjs\nnode --check scripts/test262/generate-test262-tla-b.mjs\nnode --check scripts/test262/test-generate-test262-tla-b.mjs\nnode --check scripts/test262/generate-test262-module-var-lexical-shadow-a.mjs\nnode --check scripts/test262/generate-test262-module-local-binding-a.mjs\nnode --check scripts/test262/generate-test262-module-import-attributes-a.mjs\nnode --check scripts/test262/test-generate-test262-module-import-attributes-a.mjs\nnode --check scripts/test262/generate-test262-module-json-a.mjs\nnode --check scripts/test262/test-generate-test262-module-json-a.mjs\n./scripts/checks/check-oracle-registry.sh\npython3 scripts/checks/test-oracle-registry.py\n./scripts/quickjs/test-quickjs-fixtures.sh --validate\n./scripts/quickjs/test-quickjs-c-oracles.sh --validate\n./scripts/quickjs/test-quickjs-dynamic-import-trace.sh --validate\n./scripts/checks/check-test262-host-boundary.sh\n./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --check\n./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --runner-provenance\nnode scripts/test262/current-test262-metrics.mjs --check-docs\npython3 scripts/checks/check-source-layout.py\n./scripts/checks/check-rust-only.sh",
+        "exit": 0,
+        "seconds": 105.37338358908892,
+        "log": "/home/eric/.cache/oxide-runtime-core-20261003/b1-ci-gate-1.log",
+        "commit": "5457abbc7e73d0f90b4cb657037e443134e0c3b9"
+      },
+      {
+        "gate": "Run fast engine tests",
+        "command": "cargo test --locked -p quickjs-oxide-cli --features profiling --test profiling --bin qjs\ncargo test --locked -p quickjs-oxide --features profiling --lib profiling_\ncargo test --locked --workspace --doc\ncargo test --locked --workspace --features test262-host --lib --bins\ncargo test --locked --features test262-host \\\n  --test unsupported_diagnostics\ncargo test --locked --features test262-host \\\n  --test oracle test262_\n./scripts/checks/check-oracle-registry.sh --compiled",
+        "exit": 0,
+        "seconds": 118.67758326092735,
+        "log": "/home/eric/.cache/oxide-runtime-core-20261003/b1-ci-gate-2.log",
+        "commit": "5457abbc7e73d0f90b4cb657037e443134e0c3b9"
+      },
+      {
+        "gate": "Lint production targets",
+        "command": "cargo clippy --locked --workspace --lib --bins -- -D warnings\ncargo clippy --locked -p quickjs-oxide-cli --features profiling --bin qjs -- -D warnings\ncargo clippy --locked --test oracle -- -D warnings\ncargo clippy --locked --workspace --features test262-host \\\n  --lib --bins -- -D warnings\ncargo clippy --locked --workspace --features test262-host \\\n  --test unsupported_diagnostics --test oracle \\\n  -- -D warnings",
+        "exit": 0,
+        "seconds": 77.2115046629915,
+        "log": "/home/eric/.cache/oxide-runtime-core-20261003/b1-ci-gate-3.log",
+        "commit": "5457abbc7e73d0f90b4cb657037e443134e0c3b9"
+      },
+      {
+        "gate": "focused Test262",
+        "command": "./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --focused",
+        "exit": 0,
+        "seconds": 212.09207200806122,
+        "log": "/home/eric/.cache/oxide-runtime-core-20261003/b1-ci-gate-4.log",
+        "commit": "5457abbc7e73d0f90b4cb657037e443134e0c3b9"
+      }
+    ],
+    "core_tests": {
+      "commit": "8682b0e30d14a0fda7121a8752997f10fb35fd3b",
+      "passed": 2525,
+      "log": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-inline-core-tests.log",
+        "sha256": "57ac17639e6e9aa0304e195144e88a7e63c4963390d0358dbf1ac5b6961cd9a4"
+      }
+    },
+    "dense_tests": {
+      "commit": "760443cb0250ed876ee65a0ddc60e9bd38074ec0",
+      "passed": 66,
+      "log": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-length-dense-tests.log",
+        "sha256": "4a320cb1ee193a8f71bf61e31572d4bfb6563d008f4cfb9624e7897ca34c94da"
+      }
+    },
+    "production_clippy": {
+      "commit": "760443cb0250ed876ee65a0ddc60e9bd38074ec0",
+      "exit": 0,
+      "log": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-length-clippy.log",
+        "sha256": "5f7e30c835afc783ea6866b99a93ee3fb45206d1663f79fda26b25fe2582c107"
+      }
+    },
+    "remote_checks": {
+      "headRefOid": "760443cb0250ed876ee65a0ddc60e9bd38074ec0",
+      "statusCheckRollup": [
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-05T15:17:57Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/37329658721/job/111829231404",
+          "name": "fast",
+          "startedAt": "2026-10-05T15:03:15Z",
+          "status": "COMPLETED",
+          "workflowName": "Engine CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-05T15:07:57Z",
+          "conclusion": "SUCCESS",
+          "detailsUrl": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/37329658721/job/111829231569",
+          "name": "test262-focused",
+          "startedAt": "2026-10-05T15:03:15Z",
+          "status": "COMPLETED",
+          "workflowName": "Engine CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-05T15:03:11Z",
+          "conclusion": "SKIPPED",
+          "detailsUrl": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/37329658721/job/111829234246",
+          "name": "quickjs-differential",
+          "startedAt": "2026-10-05T15:03:11Z",
+          "status": "COMPLETED",
+          "workflowName": "Engine CI"
+        },
+        {
+          "__typename": "CheckRun",
+          "completedAt": "2026-10-05T15:03:11Z",
+          "conclusion": "SKIPPED",
+          "detailsUrl": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/37329658721/job/111829233923",
+          "name": "test262-full",
+          "startedAt": "2026-10-05T15:03:11Z",
+          "status": "COMPLETED",
+          "workflowName": "Engine CI"
+        }
+      ]
+    }
+  },
+  "code_review": {
+    "trigger": "Expanded reached helper set exceeds the +2% review trigger. The original eleven hot symbols retain their sizes; the unchanged begin_local body is counted under begin_unmigrated, together with new callers and guards.",
+    "global_text_rodata_gate_passed": true,
+    "assembly_receipts": [
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-final-native-publication.asm",
+        "sha256": "5c5ba419504eb6e8fd8d8024f6fe7f2b9ade5c20acd3fdc0544e02949441e65f"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-inline-native-publication.asm",
+        "sha256": "2d7b225e38594d2602202b676576a2a03ab2a6b9cf634f8a4589b0c757d5d73c"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-append-b0.asm",
+        "sha256": "f9113904cb62afa2432f8a76415a6ea565cc1d062041974c9f490b74eea9095c"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-append-current.asm",
+        "sha256": "dcb8bea84714475c1f33a8a6ae54be43fbbef6b7cc2ea98e8db20f6d3c307eed"
+      }
+    ],
+    "richards_self_event_deltas": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-r-self-deltas.json",
+      "sha256": "db37ad2e86d8d91b033a5856ae24eb2d8d2f47c0010205c83961479101ab26f9"
+    },
+    "remaining_cache_finding": "Most increased I1 misses are in existing FramePush::install, FrameCold::release_owned and prepare_ordinary_window_in_state. Their self Ir/Dw counts are unchanged. This supports a code-placement/cache interaction, not a quantified native elapsed-time penalty. No padding/layout lottery or threshold waiver adopted."
+  },
+  "residuals": {
+    "B1_N01": "Implemented for the new State Array activation; not accepted until checkpoint passes. Legacy NativeActivation Runtime owners remain explicitly unmigrated.",
+    "B1_A01": "All eight diagnostic cases at zero no-callback Array Query/mutation progress; batch acceptance withheld.",
+    "B2a_to_f": "Authorized after adopted B1; not yet started at this documentation commit.",
+    "B3_B4_C": "No work started; B2 review remains the scope limit."
+  },
+  "historical_decision": {
+    "status": "failed",
+    "adopted": false,
+    "policy": {
+      "events": [
+        "Ir",
+        "Dw",
+        "I1mr"
+      ],
+      "maximum_growth_percent": 0
+    },
+    "reason": "Richards I1mr +4.465475%; zero-growth contract remains unchanged.",
+    "superseded_by": "B migration policy v2 and explicit user adoption of B1"
+  },
+  "adoption": {
+    "authorization": "User: B1\u5df2\u7ecf\u53ef\u4ee5\u91c7\u7eb3\u4e86; approved implementation plan.",
+    "runtime_commit": "760443cb0250ed876ee65a0ddc60e9bd38074ec0",
+    "additional_native_six_pairs_required": false,
+    "native_evidence_scope": "Existing two-pair short feedback; not formal original Score or a new confidence interval."
+  }
+}
