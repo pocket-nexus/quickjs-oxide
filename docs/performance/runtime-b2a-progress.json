@@ -1,6 +1,6 @@
 {
   "schema": "oxide-runtime-b2a-progress-v1",
-  "status": "B2a in progress; cold shared-service isolation addresses cumulative NS writes before further effect migration",
+  "status": "B2a shared-service write repair verified; parallel B2b, B2c/d, B2e/f implement against same snapshot; raw effect cleanup foundation in progress",
   "b2a_complete": false,
   "pr": 92,
   "baseline": "B1 760443cb",
@@ -1058,6 +1058,306 @@
       "ns_write_investigation": {
         "scope": "ed4f457a to c7b785c1: extra Dw concentrated in ready::run, 1,147,191 writes. Its new Shared backing branch contains word decoding, State re-admission and guards inline. Outline the real cold service before expanding migration. Per-function counts from the same frozen Callgrind workload; instrumented time is not native speed."
       }
+    },
+    {
+      "runtime_commit": "b2640941ad7fb468c86fb72b260af45bb8725bfc",
+      "scope": "Shared backing service executes only at actual cold boundary; isolates word lock, State re-admission and decode from ready::run. No semantic or output changes.",
+      "adopted": true,
+      "binary": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/b2640941/qjs",
+        "sha256": "52088d35be062161802fce3d6ff8626e26aeecf8d25833a0637f30b07cf85351"
+      },
+      "build_receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/b2640941/qjs.build.json",
+        "sha256": "0559b28cdcc5e1d35011cadf65219b5b87bac0dd45c7116d161c383b924df470"
+      },
+      "native": {
+        "baseline_commit": "c7b785c143b287d138c68a973f222b392edb2f60",
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-b26409-vs-c7b785-abba/results.json/results.json",
+          "sha256": "8a6185c2a3ecd0946e1d3413e436dce457ab611681862034a698e48ffaef11e8"
+        },
+        "changes": [
+          {
+            "case": "richards",
+            "median_elapsed_change_percent": 2.303474787796911,
+            "paired_elapsed_change_percent": [
+              2.7917129230641935,
+              1.8157402958710378
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "deltablue",
+            "median_elapsed_change_percent": 3.399830701696649,
+            "paired_elapsed_change_percent": [
+              2.773296544654791,
+              4.038969245789215
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "crypto",
+            "median_elapsed_change_percent": -1.4278514361087957,
+            "paired_elapsed_change_percent": [
+              -1.3825428298657627,
+              -1.4728681202633265
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "raytrace",
+            "median_elapsed_change_percent": -0.2705020548464332,
+            "paired_elapsed_change_percent": [
+              -0.8287221740473472,
+              0.2841763296079325
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "earley-boyer",
+            "median_elapsed_change_percent": -0.3297963456986519,
+            "paired_elapsed_change_percent": [
+              -1.6566049324956977,
+              0.9700147606369613
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "regexp",
+            "median_elapsed_change_percent": 1.9668711288516771,
+            "paired_elapsed_change_percent": [
+              2.4962796020037814,
+              1.442990391046739
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "splay",
+            "median_elapsed_change_percent": -2.456460701256158,
+            "paired_elapsed_change_percent": [
+              -5.008770190211775,
+              0.1923530229295256
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "navier-stokes",
+            "median_elapsed_change_percent": -2.6653682016934743,
+            "paired_elapsed_change_percent": [
+              -0.5527747220877788,
+              -4.691610699744397
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "combined",
+            "median_elapsed_change_percent": 1.4393682182475054,
+            "paired_elapsed_change_percent": [
+              1.3231090139200319,
+              1.5549277375069837
+            ],
+            "pairs": 2
+          }
+        ],
+        "review_receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-b26409-dc-review/results.json",
+          "sha256": "093f379c3822d6066b92d79b3744977356b4719ce4f535d9aa0eb89c7e8d9bb4"
+        },
+        "paired_receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-b26409-dc-paired.json",
+          "sha256": "4435dc2114a78f97856612b6480acb5af20e471192d5be87041194f2360a2085"
+        },
+        "targeted_review": [
+          {
+            "case": "deltablue",
+            "pairs": 6,
+            "median_elapsed_change_percent": 1.6526295568592642,
+            "elapsed_ci95_percent": [
+              0.3059318907678854,
+              2.7131822438079656
+            ]
+          },
+          {
+            "case": "combined",
+            "pairs": 6,
+            "median_elapsed_change_percent": 1.1807747926360634,
+            "elapsed_ci95_percent": [
+              -0.26147796049720284,
+              1.8722688230510487
+            ]
+          }
+        ],
+        "classification": "Fixed-work review only. D median lies in existing AA band; Combined CI crosses zero. No confirmed beyond-noise regression and no speedup claim."
+      },
+      "callgrind": {
+        "baseline_receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-c7b785-callgrind/results.json",
+          "sha256": "7c9f33a4cab25008e1bcfa59aaf3352c16c35ea560f4a67baa72fff2b40ad5f9"
+        },
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-b26409-callgrind/results.json",
+          "sha256": "63b72446fcc40e54fc3a4f63e84a6552bda768cd0384435a8e89161d5ef81df2"
+        },
+        "tripwire": [
+          {
+            "case": "richards",
+            "values": {
+              "Ir": 6416515866,
+              "Dr": 1882051202,
+              "Dw": 1078302591,
+              "I1mr": 48446825,
+              "D1mr": 19488871,
+              "D1mw": 1718343,
+              "ILmr": 16620,
+              "DLmr": 8080,
+              "DLmw": 31412,
+              "Bc": 786447700,
+              "Bcm": 36458799,
+              "Bi": 71994095,
+              "Bim": 27270635
+            },
+            "relative_to_baseline_percent": {
+              "Ir": -5.445319812835692e-05,
+              "Dr": -0.0001470202260711595,
+              "Dw": -7.864205652241552e-05,
+              "I1mr": 9.326004227413808,
+              "D1mr": 5.575837691771546,
+              "D1mw": 28.411261467272865,
+              "ILmr": 0.16271921894774888,
+              "DLmr": -0.18529956763434496,
+              "DLmw": 0.009551402464258452,
+              "Bc": 1.4241254175928475e-05,
+              "Bcm": -7.107106104785254,
+              "Bi": -1.3890026129281807e-05,
+              "Bim": 0.001712494033778711
+            },
+            "cumulative_relative_to_ed4f_percent": {
+              "Ir": -0.006395180256890676,
+              "Dr": -0.0009269587492699571,
+              "Dw": -0.0010125070222022359,
+              "I1mr": -6.009225008562547,
+              "D1mr": 4.89763625937365,
+              "D1mw": 28.042583917097417,
+              "ILmr": -0.5861945208757047,
+              "DLmr": -2.403671941055685,
+              "DLmw": 0.0,
+              "Bc": -0.0010426522326301146,
+              "Bcm": 0.4159107338697732,
+              "Bi": -0.0008958987837148769,
+              "Bim": 2.2286105389807798
+            },
+            "hard_gate_passed": true
+          },
+          {
+            "case": "deltablue",
+            "values": {
+              "Ir": 7096138058,
+              "Dr": 2148660462,
+              "Dw": 1356368471,
+              "I1mr": 103134549,
+              "D1mr": 20144619,
+              "D1mw": 3111388,
+              "ILmr": 19378,
+              "DLmr": 69372,
+              "DLmw": 134543,
+              "Bc": 846040578,
+              "Bcm": 37661411,
+              "Bi": 65692831,
+              "Bim": 25374072
+            },
+            "relative_to_baseline_percent": {
+              "Ir": -0.012741349982292594,
+              "Dr": -0.0374382895622527,
+              "Dw": 0.005137363563223474,
+              "I1mr": 1.071237301103234,
+              "D1mr": -10.11828069014582,
+              "D1mw": -7.019551848887806,
+              "ILmr": 1.5831411197315903,
+              "DLmr": -3.8929372973871557,
+              "DLmw": -0.2831202519918419,
+              "Bc": -0.0004827168332166565,
+              "Bcm": 0.9278718625296944,
+              "Bi": -3.0444713083888075e-05,
+              "Bim": 0.37251729635006114
+            },
+            "cumulative_relative_to_ed4f_percent": {
+              "Ir": -0.00590119982749604,
+              "Dr": 0.012081823298593086,
+              "Dw": 0.03010892194279524,
+              "I1mr": -12.02788339756956,
+              "D1mr": -0.4612272717974264,
+              "D1mw": -6.033378604435969,
+              "ILmr": -0.5797547586065321,
+              "DLmr": -2.973509748524439,
+              "DLmw": -0.2727724203363646,
+              "Bc": -0.008272086718252858,
+              "Bcm": 3.431572252046111,
+              "Bi": -0.0010792537591952645,
+              "Bim": 1.1920440005080746
+            },
+            "hard_gate_passed": true
+          },
+          {
+            "case": "navier-stokes",
+            "values": {
+              "Ir": 8316914271,
+              "Dr": 2129215467,
+              "Dw": 1100640261,
+              "I1mr": 42440260,
+              "D1mr": 1412107,
+              "D1mw": 271775,
+              "ILmr": 17502,
+              "DLmr": 8130,
+              "DLmw": 73565,
+              "Bc": 1167402181,
+              "Bcm": 33152981,
+              "Bi": 103671613,
+              "Bim": 46116672
+            },
+            "relative_to_baseline_percent": {
+              "Ir": -0.03697142535967757,
+              "Dr": -0.11211592313259411,
+              "Dw": -0.09214560297688967,
+              "I1mr": -31.992439925968363,
+              "D1mr": -0.2587284657818767,
+              "D1mw": -0.4220908887724528,
+              "ILmr": 0.2865001146000523,
+              "DLmr": 0.14781966001478075,
+              "DLmw": -0.008155387312935858,
+              "Bc": -0.008343643165620307,
+              "Bcm": 0.1460187970013349,
+              "Bi": 7.716674210733743e-06,
+              "Bim": -0.0014159537657487675
+            },
+            "cumulative_relative_to_ed4f_percent": {
+              "Ir": -0.039818755999221356,
+              "Dr": -0.016001361973905226,
+              "Dw": 0.03518117533201082,
+              "I1mr": 26.584039371570768,
+              "D1mr": -0.9644017847499575,
+              "D1mw": -2.802812468706639,
+              "ILmr": -0.5172511794463652,
+              "DLmr": -2.0835842466578325,
+              "DLmw": -0.006796248470841704,
+              "Bc": -0.048138195936031636,
+              "Bcm": 16.812237213715964,
+              "Bi": -0.0004678211489417272,
+              "Bim": -0.28082746505712075
+            },
+            "hard_gate_passed": true
+          }
+        ],
+        "classification": "Ir/Dw all pass local and cumulative consumer gate; I1mr diagnostic only."
+      },
+      "correctness": {
+        "typed_tests_passed": 107,
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-shared-cold-tests.log",
+          "sha256": "c1868a57cbfd2f60c970bcf71d5d49be030e5478da3b18a5d5af6e58a4ac249a"
+        }
+      },
+      "mechanism": "NS local Dw -0.092146%; cumulative relative to ed4f +0.035181%, within +0.1% budget. Additional writes in shared ready branch no longer retained."
     }
   ],
   "remaining": [
