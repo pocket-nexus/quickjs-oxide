@@ -110,15 +110,6 @@ impl Drop for ProxyMethodStackGuard {
     }
 }
 
-// Selection preserves IntegerIndexedElementSet's conversion/fallthrough split.
-// A different valid receiver needs its original descriptor path; ignored
-// canonical indices do not convert the supplied value.
-enum TypedSetSelection {
-    Decline,
-    Ignore,
-    Element(Option<u64>),
-}
-
 impl Runtime {
     fn proxy_method_chain_limit(&self, name: &'static str) -> Option<usize> {
         // Empty-handler forwarding is recursive C code in the pinned build.
@@ -931,23 +922,34 @@ impl Runtime {
         value: &JsValue,
         receiver: &JsValue,
     ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
-        use crate::engine::builtins::TypedWriteStep;
-        match self.select_typed_array_set(object, key, receiver)? {
-            TypedSetSelection::Decline => Ok(None),
-            TypedSetSelection::Ignore => Ok(Some(TypedWriteStep::Complete(
-                NativeConversion::Value(true),
-            ))),
-            TypedSetSelection::Element(index) => {
-                if let Some(realm) = _realm
-                    && !matches!(value, JsValue::Object(_))
-                {
-                    return TypedWriteStep::set_primitive(self, realm, object, index, value)
-                        .map(Some);
-                }
-                TypedWriteStep::set(self, object.try_clone()?, index, self.dup_jsvalue(value)?)
-                    .map(Some)
+        use crate::engine::builtins::{StateTypedWrite, TypedWriteStep};
+        self.validate_object_and_key(object, key)?;
+        let selected = self.0.state.borrow_mut().prepare_typed_array_set_in_state(
+            &self.0.poisoned,
+            _realm,
+            object.object_id(),
+            key.atom(),
+            value,
+            receiver,
+        )?;
+        Ok(match selected {
+            None => None,
+            Some(StateTypedWrite::Complete(result)) => Some(TypedWriteStep::Complete(result)),
+            Some(StateTypedWrite::Shared(write)) => {
+                write.write()?;
+                Some(TypedWriteStep::Complete(NativeConversion::Value(true)))
             }
-        }
+            Some(StateTypedWrite::Object(selection)) => {
+                // Unmigrated callers retain their selected class ABI. The B2
+                // State consumers receive this raw selection without roots.
+                Some(TypedWriteStep::set(
+                    self,
+                    object.try_clone()?,
+                    selection.index,
+                    self.dup_jsvalue(value)?,
+                )?)
+            }
+        })
     }
 
     pub(crate) fn try_typed_array_set_primitive(
@@ -958,48 +960,53 @@ impl Runtime {
         value: &JsValue,
         receiver: &JsValue,
     ) -> Result<Option<NativeConversion<bool>>, RuntimeError> {
+        use crate::engine::builtins::StateTypedWrite;
         if matches!(value, JsValue::Object(_)) {
             return Err(RuntimeError::Invariant(
                 "primitive typed Set received an object",
             ));
         }
-        match self.select_typed_array_set(object, key, receiver)? {
-            TypedSetSelection::Decline => Ok(None),
-            TypedSetSelection::Ignore => Ok(Some(NativeConversion::Value(true))),
-            TypedSetSelection::Element(index) => {
-                crate::engine::builtins::TypedWriteStep::set_primitive_result(
-                    self, realm, object, index, value,
-                )
-                .map(Some)
+        self.validate_object_and_key(object, key)?;
+        let selected = self.0.state.borrow_mut().prepare_typed_array_set_in_state(
+            &self.0.poisoned,
+            Some(realm),
+            object.object_id(),
+            key.atom(),
+            value,
+            receiver,
+        )?;
+        match selected {
+            None => Ok(None),
+            Some(StateTypedWrite::Complete(result)) => Ok(Some(result)),
+            Some(StateTypedWrite::Shared(write)) => {
+                write.write()?;
+                Ok(Some(NativeConversion::Value(true)))
             }
+            Some(StateTypedWrite::Object(_)) => Err(RuntimeError::Invariant(
+                "primitive typed Set selected conversion",
+            )),
         }
     }
 
-    fn select_typed_array_set(
+    /// Finish an exact selected view after element conversion, servicing a
+    /// shared backing only after the State borrow has ended.
+    pub(crate) fn finish_selected_typed_write(
         &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        receiver: &JsValue,
-    ) -> Result<TypedSetSelection, RuntimeError> {
-        let Some(numeric) = self.typed_array_canonical_numeric_index(key)? else {
-            return Ok(TypedSetSelection::Decline);
-        };
-        let same_receiver =
-            matches!(receiver, JsValue::Object(receiver) if *receiver == object.object_id());
-        if same_receiver {
-            return Ok(TypedSetSelection::Element(match numeric {
-                CanonicalNumericIndex::Valid(index) => Some(index),
-                CanonicalNumericIndex::Invalid => None,
-            }));
+        selection: crate::engine::builtins::TypedWriteSelection,
+        bytes: [u8; 8],
+    ) -> Result<NativeConversion<bool>, RuntimeError> {
+        use crate::engine::builtins::StateTypedWrite;
+        let result = selection.finish_in_state(&mut self.0.state.borrow_mut(), bytes)?;
+        match result {
+            StateTypedWrite::Complete(result) => Ok(result),
+            StateTypedWrite::Shared(write) => {
+                write.write()?;
+                Ok(NativeConversion::Value(true))
+            }
+            StateTypedWrite::Object(_) => Err(RuntimeError::Invariant(
+                "converted typed write selected conversion",
+            )),
         }
-        if let CanonicalNumericIndex::Valid(index) = numeric
-            && self
-                .typed_array_get_index_descriptor(object, index)?
-                .is_some()
-        {
-            return Ok(TypedSetSelection::Decline);
-        }
-        Ok(TypedSetSelection::Ignore)
     }
 
     pub(super) fn proxy_set(

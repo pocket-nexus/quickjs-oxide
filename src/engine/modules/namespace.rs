@@ -162,6 +162,11 @@ impl RuntimeState {
         atom: Atom,
         descriptor: &PropertyDescriptor<RawValue>,
     ) -> Result<Option<bool>, RuntimeError> {
+        if descriptor.is_data_descriptor() && descriptor.is_accessor_descriptor() {
+            return Err(
+                crate::engine::object::property::PropertyDefinitionError::InvalidDescriptor.into(),
+            );
+        }
         let object = self.heap.object(object)?;
         if object.kind != ObjectKind::ModuleNamespace {
             return Ok(None);

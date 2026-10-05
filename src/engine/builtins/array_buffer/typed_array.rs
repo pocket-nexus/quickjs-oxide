@@ -38,6 +38,9 @@ use crate::engine::{
     },
 };
 
+mod state_write;
+pub(crate) use state_write::{StateTypedWrite, TypedWriteSelection};
+
 mod collect;
 
 pub(crate) use collect::{
@@ -1364,35 +1367,10 @@ impl Runtime {
         element: TypedArrayElementKind,
         value: &JsValue,
     ) -> Result<[u8; 8], RuntimeError> {
-        if element.is_bigint() {
-            let bigint = match value {
-                JsValue::ShortBigInt(value) => crate::engine::value::bigint::JsBigInt::from(*value),
-                JsValue::BigInt(id) => self.0.state.borrow().heap.bigint(*id)?.clone(),
-                JsValue::Bool(value) => {
-                    crate::engine::value::bigint::JsBigInt::from(i64::from(*value))
-                }
-                JsValue::String(id) => {
-                    let string = self.0.state.borrow().heap.string(*id)?.clone();
-                    typed_array_parse_primitive_bigint(&string)?
-                }
-                _ => {
-                    return Err(RuntimeError::Engine(Error::new(
-                        ErrorKind::Type,
-                        "cannot convert to bigint",
-                    )));
-                }
-            };
-            return typed_array_encode_bigint(&bigint);
-        }
-        if matches!(value, JsValue::Object(_)) {
-            return Err(RuntimeError::Engine(Error::new(
-                ErrorKind::Internal,
-                "object ToPrimitive requires an execution context",
-            )));
-        }
-        let number =
-            crate::engine::vm::to_number_jsvalue(self, value).map_err(RuntimeError::Engine)?;
-        Ok(typed_array_encode_number(element, number))
+        self.0
+            .state
+            .borrow()
+            .typed_array_convert_primitive_element_in_state(element, value)
     }
 
     pub(crate) fn typed_array_write_converted_index(

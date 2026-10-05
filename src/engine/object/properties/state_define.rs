@@ -30,7 +30,33 @@ impl RuntimeState {
                 // Missing keys and @@toStringTag use ordinary compatibility on
                 // the non-extensible namespace shell.
             }
-            (_, ObjectPayload::Proxy(_)) | (_, ObjectPayload::TypedArray(_)) => return Ok(None),
+            (_, ObjectPayload::Proxy(_)) => return Ok(None),
+            (_, ObjectPayload::TypedArray(view)) => {
+                if self.typed_array_canonical_numeric_index(atom)?.is_some() {
+                    // The wide class result handles shared service and actual
+                    // object conversion. This Option adapter admits neither,
+                    // before conversion or backing-handle acquisition.
+                    if matches!(descriptor.value, Some(RawValue::Object(_)))
+                        || matches!(
+                            self.heap.object(view.view.buffer)?.payload,
+                            ObjectPayload::SharedArrayBuffer(_)
+                        )
+                    {
+                        return Ok(None);
+                    }
+                    return match self.prepare_typed_array_define_in_state(
+                        poisoned, None, object, atom, descriptor,
+                    )? {
+                        Some(crate::engine::builtins::StateTypedWrite::Complete(
+                            crate::engine::value::conversion::NativeConversion::Value(accepted),
+                        )) => Ok(Some(accepted)),
+                        _ => Err(RuntimeError::Invariant(
+                            "synchronous typed definition selected an effect",
+                        )),
+                    };
+                }
+                // A non-canonical key is an ordinary property on this view.
+            }
             (_, ObjectPayload::Array { .. }) => {
                 if let Some(index) = self.atoms.array_index(atom)? {
                     return self

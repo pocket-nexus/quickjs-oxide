@@ -63,36 +63,6 @@ impl TypedWriteStep {
             resume,
         })
     }
-    /// Primitive Set performs the same conversion before reacquiring buffer
-    /// access, but never constructs a waiting resume or clones the view root.
-    pub(crate) fn set_primitive(
-        runtime: &Runtime,
-        realm: ContextId,
-        object: &ObjectRef,
-        index: Option<u64>,
-        value: &JsValue,
-    ) -> Result<Self, RuntimeError> {
-        Self::set_primitive_result(runtime, realm, object, index, value).map(Self::Complete)
-    }
-
-    /// Small transport for the same primitive conversion and final write.
-    pub(crate) fn set_primitive_result(
-        runtime: &Runtime,
-        realm: ContextId,
-        object: &ObjectRef,
-        index: Option<u64>,
-        value: &JsValue,
-    ) -> Result<NativeConversion<bool>, RuntimeError> {
-        if matches!(value, JsValue::Object(_)) {
-            return Err(RuntimeError::Invariant(
-                "primitive typed Set received an object",
-            ));
-        }
-        let element = runtime.typed_array_snapshot(object)?.element;
-        let result =
-            super::element::encode_primitive(runtime, realm, element, runtime.dup_jsvalue(value)?)?;
-        finish_element(runtime, object, index, result)
-    }
     pub(crate) fn define(
         runtime: &Runtime,
         object: ObjectRef,
@@ -217,12 +187,15 @@ fn finish_element(
     let result = match result {
         NativeConversion::Throw(value) => NativeConversion::Throw(value),
         NativeConversion::Value(bytes) => {
-            if let Some(index) = index {
-                // Conversion may detach, resize, or replace the backing bytes.
-                // Both Set and Define ignore a failed post-conversion write.
-                let _ = runtime.typed_array_write_converted_index(object, index, &bytes)?;
-            }
-            NativeConversion::Value(true)
+            let element = runtime.typed_array_snapshot(object)?.element;
+            return runtime.finish_selected_typed_write(
+                crate::engine::builtins::TypedWriteSelection {
+                    object: object.object_id(),
+                    index,
+                    element,
+                },
+                bytes,
+            );
         }
     };
     Ok(result)
@@ -378,12 +351,6 @@ mod tests {
         let value = runtime
             .into_jsvalue(Value::Object(runtime.new_object(None).unwrap()))
             .unwrap();
-        assert!(matches!(
-            TypedWriteStep::set_primitive_result(&runtime, context.realm, &object, Some(0), &value),
-            Err(RuntimeError::Invariant(
-                "primitive typed Set received an object"
-            ))
-        ));
         assert!(matches!(
             runtime.try_typed_array_set_primitive(context.realm, &object, &key, &value, &receiver),
             Err(RuntimeError::Invariant(

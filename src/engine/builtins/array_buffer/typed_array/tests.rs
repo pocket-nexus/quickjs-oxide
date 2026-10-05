@@ -1581,13 +1581,14 @@ fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
     let symbol = runtime
         .into_jsvalue(second.eval("Symbol()").unwrap())
         .unwrap();
-    let NativeConversion::Throw(JsValue::Object(error)) =
-        write::TypedWriteStep::set_primitive_result(
-            &runtime,
+    let key = runtime.intern_property_key("0").unwrap();
+    let Some(NativeConversion::Throw(JsValue::Object(error))) = runtime
+        .try_typed_array_set_primitive(
             second.realm,
             &view,
-            Some(0),
+            &key,
             &symbol,
+            &JsValue::Object(view_id),
         )
         .unwrap()
     else {
