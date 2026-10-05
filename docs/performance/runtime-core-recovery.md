@@ -314,3 +314,45 @@ focused Test262 为 6844/6844；每个提交的 R/D/NS 固定 profile 语义输�
 `recovery-layout-allocation-gates.json`、
 `recovery-layout-allocation-callgrind-vs-A.json`、
 `recovery-layout-allocation-code-size.json` 及三个逐提交 profile 目录。
+
+### B1/B2 状态基础：模块守卫、数组字面量与 Error
+
+本批四个运行时提交：`ee0720b5` 的模块回调守卫借用 Runtime header，
+不再克隆 Runtime 或重新借用 heap state；`c30d8d5b` 的 ArrayFrom 在当前
+状态下消费帧元素 owner，保留顺序、realm、失败清理和发布后 GC；
+`55b03b90` 保留已有 VmAction 编号；`1803dba6` 共享 State 回溯 renderer
+并以当前状态完成 fresh Error 消息、stack 与发布失败隔离。两类分配事务
+放在循环外，同步完成不创建 Query 或 continuation。数组 native 方法的
+迁移仍未完成，不能把数组字面量的交付算作该项完成。
+
+ArrayFrom 相关测试 221/221，Error 相关测试 14/14；workspace all-targets、
+CI fast 与 focused Test262 6844/6844 全部通过。每提交三项 profile 的
+原完整输出通过。集成保留原提交，运行时源与已测 `1803dba6` 一致。
+
+数组首版的局部 DeltaBlue 为 +2.87%（+1.90%/+3.85%），主体在该负载
+执行很少，增加的工作主要在解释循环。保留已有 action 编号后的局部
+R/D/NS 为 +0.64%/−0.60%/−0.76%，前两项混合；RegExp +1.39%，
+EarleyBoyer −2.80%。这些是日常反馈，不将布局变化或小幅计数变化
+单独声明为时间收益。
+
+最终普通 release `1803dba6` 对 A 的全九项 ABBA，36/36 原完整输出通过：
+
+| 子项 | 耗时变化 | 两对变化 |
+| --- | ---: | --- |
+| Richards | -20.86% | -20.33% / -21.40% |
+| DeltaBlue | -4.08% | -3.78% / -4.37% |
+| Crypto | -4.72% | -4.91% / -4.54% |
+| RayTrace | -7.33% | -5.57% / -9.08% |
+| EarleyBoyer | -7.02% | -6.70% / -7.34% |
+| RegExp | +1.04% | +0.61% / +1.48% |
+| Splay | -10.41% | -10.84% / -9.99% |
+| NavierStokes | +0.30% | -0.30% / +0.89% |
+| Combined | -5.53% | -5.33% / -5.74% |
+
+RegExp 在匹配 A/A 参照内，NavierStokes 两对混合；仍为未分辨，
+没有正式验收区间或原版 Score 结论。最终 profile 对 A：
+Richards Ir -16.33%、Dw -20.29%；DeltaBlue Ir -2.54%、Dw -3.18%；NavierStokes Ir +0.72%、Dw +0.03%；
+text＋rodata 相对 A 增长 0.52%。其余资源验收和阶段 B 架构零指标仍未完成。
+回执：`recovery-array-error-{vs-A-abba-20261005,gates.json,callgrind-vs-A.json,code-size.json}`，
+`recovery-array-{literal,action-order}-local-abba-20261005/`，
+`recovery-error-state-{tests,clippy}.log` 与四个逐提交 profile 目录。

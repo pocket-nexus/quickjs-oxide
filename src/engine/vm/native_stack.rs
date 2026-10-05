@@ -40,20 +40,24 @@ pub(crate) struct ModuleHostStackOverflow;
 /// callbacks. The outermost module callback temporarily owns the stack-top
 /// marker; nested callbacks share it with bytecode and Proxy entry guards.
 #[must_use = "the guard must live across the module-host callback"]
-pub(crate) struct ModuleHostCallbackGuard {
-    runtime: Runtime,
+pub(crate) struct ModuleHostCallbackGuard<'a> {
+    // The actual callback scope already borrows Runtime. Accounting only
+    // restores header Cells and needs no additional Runtime Rc owner.
+    runtime: &'a Runtime,
     previous_depth: usize,
     restore_top: bool,
     previous_top: Option<usize>,
 }
 
-impl ModuleHostCallbackGuard {
-    pub(crate) fn enter(runtime: &Runtime) -> Result<Self, ModuleHostStackOverflow> {
+impl<'a> ModuleHostCallbackGuard<'a> {
+    pub(crate) fn enter(runtime: &'a Runtime) -> Result<Self, ModuleHostStackOverflow> {
         let previous_depth = runtime.0.module_host_callback_depth.get();
         let next_depth = previous_depth
             .checked_add(1)
             .ok_or(ModuleHostStackOverflow)?;
-        let active_frames = !runtime.0.state.borrow().active_frames.is_empty();
+        // ActiveFrames maintains this header for both materialized records
+        // and its pending native tail, without reacquiring heap state.
+        let active_frames = runtime.0.active_frame_depth.get() != 0;
         let active_chain =
             active_frames || runtime.0.proxy_method_depth.get() != 0 || previous_depth != 0;
         let current = current_host_stack_address();
@@ -73,7 +77,7 @@ impl ModuleHostCallbackGuard {
         }
         runtime.0.module_host_callback_depth.set(next_depth);
         Ok(Self {
-            runtime: runtime.clone(),
+            runtime,
             previous_depth,
             restore_top,
             previous_top,
@@ -81,7 +85,7 @@ impl ModuleHostCallbackGuard {
     }
 }
 
-impl Drop for ModuleHostCallbackGuard {
+impl Drop for ModuleHostCallbackGuard<'_> {
     fn drop(&mut self) {
         self.runtime
             .0
@@ -353,6 +357,33 @@ mod tests {
     use crate::engine::value::Value;
 
     use super::*;
+
+    #[test]
+    fn module_callback_stack_scope_restores_nested_unwind_under_state_access() {
+        let runtime = Runtime::new();
+        runtime.0.host_stack_top.set(Some(17));
+        let state = runtime.0.state.borrow_mut();
+        {
+            let _outer = ModuleHostCallbackGuard::enter(&runtime)
+                .unwrap_or_else(|_| panic!("outer callback stack admission failed"));
+            let outer_top = runtime.0.host_stack_top.get();
+            assert_ne!(outer_top, Some(17));
+            assert_eq!(runtime.0.module_host_callback_depth.get(), 1);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _inner = ModuleHostCallbackGuard::enter(&runtime)
+                    .unwrap_or_else(|_| panic!("inner callback stack admission failed"));
+                assert_eq!(runtime.0.module_host_callback_depth.get(), 2);
+                assert_eq!(runtime.0.host_stack_top.get(), outer_top);
+                panic!("unwind nested callback stack accounting");
+            }));
+            assert!(result.is_err());
+            assert_eq!(runtime.0.module_host_callback_depth.get(), 1);
+            assert_eq!(runtime.0.host_stack_top.get(), outer_top);
+        }
+        assert_eq!(runtime.0.module_host_callback_depth.get(), 0);
+        assert_eq!(runtime.0.host_stack_top.get(), Some(17));
+        assert!(state.active_frames.is_empty());
+    }
 
     fn on_two_mib_stack(test: impl FnOnce() + Send + 'static) {
         std::thread::Builder::new()

@@ -8,9 +8,14 @@ use crate::engine::code::function::metadata::{
 };
 use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::heap::roots::VarRefRoot;
+use crate::engine::heap::runtime::{
+    RuntimeState,
+    owned_values::{OwnedValueGuard, OwnedValuesGuard},
+};
 
 use crate::engine::heap::{
-    ContextId, ObjectData, ObjectPayload, PrimitiveObjectData, PropertySlot, RawValue, ShapeId,
+    ContextId, ObjectData, ObjectId, ObjectPayload, PrimitiveObjectData, PropertySlot, RawValue,
+    ShapeId,
 };
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
 use crate::engine::object::{
@@ -18,6 +23,7 @@ use crate::engine::object::{
 };
 use crate::engine::realm::bindings::GlobalBindingCreationMode;
 use crate::engine::value::{JsString, JsValue, Value};
+use std::cell::Cell;
 use std::collections::HashMap;
 
 impl Runtime {
@@ -62,26 +68,8 @@ impl Runtime {
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Array prototype"));
         }
-        let length = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-        let entries = [ShapeEntry {
-            atom: AtomIdx::from_raw(length.atom().raw()),
-            flags: PropertyFlags::data(true, false, false),
-        }];
         let mut state = self.0.state.borrow_mut();
-        let shape = state.get_or_create_shape(Some(prototype.object_id()), &entries)?;
-        let object = match state.heap.allocate_object(ObjectData::array(
-            shape,
-            vec![PropertySlot::Data(RawValue::Int(0))],
-        )) {
-            Ok(object) => object,
-            Err(error) => {
-                let cleanup = state.heap.release_shape(shape)?;
-                state.apply_cleanup(cleanup)?;
-                return Err(error.into());
-            }
-        };
-        let cleanup = state.heap.release_shape(shape)?;
-        state.apply_cleanup(cleanup)?;
+        let object = state.new_empty_array_with_prototype(prototype.object_id())?;
         drop(state);
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
@@ -151,6 +139,8 @@ impl Runtime {
         realm: ContextId,
         values: Vec<crate::engine::value::JsValue>,
     ) -> Result<ObjectRef, RuntimeError> {
+        let _unwind = self.unwind_guard();
+        // Keep the suffix owner outside admission and the fallible builder.
         let mut values = values.into_iter();
         let result = (|| {
             let array = self.new_array(realm)?;
@@ -161,14 +151,15 @@ impl Runtime {
         })();
         // Allocation or publication may fail before the suffix was consumed.
         // These owners never entered the Array and must all be surrendered.
-        let mut cleanup = Ok(());
         for value in values {
-            let released = self.release_jsvalue(value);
-            if cleanup.is_ok() {
-                cleanup = released;
+            if self.skip_cleanup() {
+                break;
+            }
+            self.release_jsvalue(value)?;
+            if self.is_poisoned() {
+                break;
             }
         }
-        cleanup?;
         result
     }
 
@@ -184,21 +175,13 @@ impl Runtime {
             self.release_jsvalue(value)?;
             return Err(RuntimeError::WrongRuntime("Array"));
         }
-        let appended = self
-            .0
-            .state
-            .borrow_mut()
-            .heap
-            .append_fresh_array_dense_value_owned(array.object_id(), value.into_raw());
-        match appended {
-            Ok(()) => Ok(()),
-            Err((error, raw)) => {
-                self.release_jsvalue(
-                    crate::engine::value::JsValue::from_raw(raw).expect("internal Array element"),
-                )?;
-                Err(error.into())
-            }
-        }
+        self.check_poison()?;
+        let _unwind = self.unwind_guard();
+        self.0.state.borrow_mut().append_fresh_array_value_jsvalue(
+            &self.0.poisoned,
+            array.object_id(),
+            value,
+        )
     }
 
     pub(crate) fn new_string_iterator(
@@ -1181,3 +1164,153 @@ mod owned_callable_tests {
         assert!(callable.belongs_to(&runtime));
     }
 }
+
+impl RuntimeState {
+    /// Reuse the canonical Array layout: writable, non-enumerable,
+    /// non-configurable length is physical slot zero, initially zero.
+    pub(crate) fn new_empty_array_with_prototype(
+        &mut self,
+        prototype: ObjectId,
+    ) -> Result<ObjectId, RuntimeError> {
+        self.allocate_empty_array_with_prototype(None, prototype)
+    }
+
+    fn allocate_empty_array_with_prototype(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
+        prototype: ObjectId,
+    ) -> Result<ObjectId, RuntimeError> {
+        let length = self
+            .pinned_atoms
+            .get(crate::engine::atom::pinned::PinnedAtom::Length);
+        let entries = [ShapeEntry {
+            atom: AtomIdx::from_raw(length.raw()),
+            flags: PropertyFlags::data(true, false, false),
+        }];
+        let slots = vec![PropertySlot::Data(RawValue::Int(0))];
+        match poisoned {
+            Some(poisoned) => self.allocate_object_with_layout_with_poison(
+                poisoned,
+                Some(prototype),
+                &entries,
+                slots,
+                ObjectData::array,
+            ),
+            None => self.allocate_object_with_layout(
+                Some(prototype),
+                &entries,
+                slots,
+                ObjectData::array,
+            ),
+        }
+    }
+
+    /// Preserve the checked prototype temporary even when the layout is cached.
+    /// The returned object has one owned edge and only requests GC pressure.
+    pub(crate) fn new_array(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+    ) -> Result<ObjectId, RuntimeError> {
+        let prototype = self.heap.context(realm)?.array_prototype;
+        self.heap.retain_object(prototype)?;
+        let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
+        let (state, prototype_owner) = prototype_owner.parts();
+        let array = state.allocate_empty_array_with_prototype(Some(poisoned), prototype)?;
+        let mut array_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(array));
+        let (state, array_owner) = array_owner.parts();
+        state.release_owned_jsvalue(poisoned, prototype_owner.take().expect("prototype owner"))?;
+        let JsValue::Object(array) = array_owner.take().expect("new Array owner") else {
+            unreachable!("Array factory allocated an object")
+        };
+        Ok(array)
+    }
+
+    /// Consume the element's existing heap/atom owner. The heap transaction
+    /// either publishes it or returns that exact unchanged owner for cleanup.
+    pub(crate) fn append_fresh_array_value_jsvalue(
+        &mut self,
+        poisoned: &Cell<bool>,
+        array: ObjectId,
+        value: JsValue,
+    ) -> Result<(), RuntimeError> {
+        match self
+            .heap
+            .append_fresh_array_dense_value_owned(array, value.into_raw())
+        {
+            Ok(()) => Ok(()),
+            Err((error, raw)) => {
+                self.release_owned_jsvalue(
+                    poisoned,
+                    JsValue::from_raw(raw).expect("internal Array element"),
+                )?;
+                Err(error.into())
+            }
+        }
+    }
+
+    /// Consume all input owners in ascending order. Each transferred slot is
+    /// replaced with an immediate so the guard still owns every unconsumed
+    /// suffix on a fallible exit; an iterator must not discard those edges.
+    pub(crate) fn new_array_from_values_jsvalue(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+        values: Vec<JsValue>,
+    ) -> Result<ObjectId, RuntimeError> {
+        let mut values_owner = OwnedValuesGuard::new(self, poisoned, values);
+        let (state, values) = values_owner.parts();
+        let result = state
+            .new_array(poisoned, realm)
+            .and_then(|array| state.append_fresh_array_values_owned(poisoned, array, values));
+        if result.is_err() && !poisoned.get() {
+            for value in values.iter_mut() {
+                state.release_owned_jsvalue(
+                    poisoned,
+                    std::mem::replace(value, JsValue::Undefined),
+                )?;
+            }
+        }
+        result
+    }
+
+    /// The factory owns the suffix buffer; this helper consumes the fresh
+    /// Array and retires its prefix before returning an append error.
+    fn append_fresh_array_values_owned(
+        &mut self,
+        poisoned: &Cell<bool>,
+        array: ObjectId,
+        values: &mut [JsValue],
+    ) -> Result<ObjectId, RuntimeError> {
+        let mut array_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(array));
+        let (state, array_owner) = array_owner.parts();
+        let appended = (|| {
+            for value in values.iter_mut() {
+                state.append_fresh_array_value_jsvalue(
+                    poisoned,
+                    array,
+                    std::mem::replace(value, JsValue::Undefined),
+                )?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = appended {
+            // Retire the Array and its published prefix before the suffix.
+            // A cleanup failure quarantines state and stops all traversal.
+            if !poisoned.get() {
+                state.release_owned_jsvalue(
+                    poisoned,
+                    array_owner.take().expect("failed Array owner"),
+                )?;
+            }
+            return Err(error);
+        }
+        let JsValue::Object(array) = array_owner.take().expect("complete Array owner") else {
+            unreachable!("Array factory allocated an object")
+        };
+        Ok(array)
+    }
+}
+
+#[cfg(test)]
+mod array_state_tests;

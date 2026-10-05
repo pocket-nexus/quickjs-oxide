@@ -333,6 +333,10 @@ pub(super) enum VmAction {
     Complete,
     Suspend(super::VmSuspendKind),
     Bridge,
+    ArrayFrom {
+        count: u16,
+        fallthrough: FallthroughPc,
+    },
 }
 
 impl VmAction {
@@ -360,6 +364,7 @@ impl VmAction {
             Self::DefineProperty { .. } => "execute.action.define_property",
             Self::Environment(_) => "execute.action.environment",
             Self::Object { .. } => "execute.action.object",
+            Self::ArrayFrom { .. } => "execute.action.array_from",
             Self::GetSuper => "execute.action.get_super",
             Self::Predicate(_) => "execute.action.predicate",
             Self::HomeObject => "execute.action.home_object",
@@ -589,6 +594,12 @@ pub(super) fn execute_frame_in_state(
                     }
                     Opcode::Object => {
                         break 'dispatch Ok(VmAction::Object {
+                            fallthrough: FallthroughPc::from_decoded(decoded),
+                        });
+                    }
+                    Opcode::ArrayFrom => {
+                        break 'dispatch Ok(VmAction::ArrayFrom {
+                            count: published_u16(operand),
                             fallthrough: FallthroughPc::from_decoded(decoded),
                         });
                     }
@@ -2617,6 +2628,10 @@ pub(super) fn execute_frame_in_state(
                 crate::engine::api::profiling::record_owned_execution_event("core.internal_object");
                 continue;
             }
+            VmAction::ArrayFrom { count, fallthrough } => {
+                array_allocation::execute(runtime, state, &mut segment, count, fallthrough)?;
+                continue;
+            }
             VmAction::Call {
                 arguments,
                 method,
@@ -2939,7 +2954,6 @@ fn deferred_action(
             name: b,
         }),
         Opcode::VariableEnvironment => VmAction::Environment(E::CreateVariable),
-        Opcode::ArrayFrom => VmAction::Environment(E::CreateArray(checked_u16(a)?)),
         Opcode::DefineArrayEl => VmAction::Environment(E::DefineArrayElement),
         Opcode::Append => VmAction::Environment(E::Append),
 
@@ -3679,3 +3693,8 @@ mod execution_span_tests {
 
 #[cfg(all(test, feature = "profiling"))]
 mod named_native_fact_tests;
+
+#[cfg(test)]
+mod array_allocation_tests;
+
+mod array_allocation;

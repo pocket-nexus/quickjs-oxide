@@ -2495,21 +2495,20 @@ impl RuntimeState {
     /// Validate and commit a callback-free descriptor under the same state access.
     /// The caller admits a non-global object with ordinary slot semantics,
     /// handles AutoInit/exotic preconditions, and keeps descriptor edges owned.
+    #[cfg(test)]
     pub(crate) fn define_raw_property(
         &mut self,
         object: ObjectId,
         atom: Atom,
         descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
     ) -> Result<bool, RuntimeError> {
-        // Legacy entry remains for unconverted consumers; remove in B5.
+        // Keep the legacy entry for descriptor ownership tests. Production
+        // state consumers supply the runtime header flag below.
         self.define_raw_property_inner(None, object, atom, descriptor)
     }
 
     /// Fresh ordinary-state consumers supply the header flag so a published
     /// cleanup error quarantines before their temporary owners can retire.
-    // The next fresh Error slice adopts this companion without changing the
-    // existing ABI. Remove this temporary allowance with that migration.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn define_raw_property_with_poison(
         &mut self,
         poisoned: &Cell<bool>,
