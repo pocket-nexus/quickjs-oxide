@@ -1116,7 +1116,7 @@ impl Step {
                 if !runtime.skip_cleanup() {
                     let mut state = runtime.0.state.borrow_mut();
                     if let Some(effect) = effect {
-                        let _ = effect.release_in_state(&mut state, &runtime.0.poisoned);
+                        let _ = effect.release_in_state(&mut state, runtime);
                     }
                     if !runtime.0.poisoned.get()
                         && let Some(atom) = atom
@@ -1421,6 +1421,7 @@ impl Resume {
             | Self::OwnFlagReply { resume, .. }
             | Self::PrototypeGetReply(resume)
             | Self::PrototypeSetReply(resume) => resume.release_owned(runtime),
+            Self::Get(resume) => resume.release_owned(runtime),
             Self::Primitive(resume) => resume.release_owned(runtime),
             Self::Number(resume) => resume.release_owned(runtime),
             Self::Element(resume) => resume.release_owned(runtime),
