@@ -3,7 +3,7 @@ use super::*;
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind, NativeErrorMessage};
 
 impl RuntimeState {
-    pub(super) fn array_length_from_primitive(
+    pub(crate) fn array_length_from_primitive(
         &mut self,
         poisoned: &Cell<bool>,
         realm: Option<ContextId>,
