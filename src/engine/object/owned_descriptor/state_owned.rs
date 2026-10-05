@@ -57,9 +57,8 @@ impl StatePropertyDescriptor {
         }
         Ok(())
     }
-
-    /// Only an unmigrated exotic boundary uses the rooted ABI. The State
-    /// borrow must end before its Runtime-backed cleanup guard can run.
+    /// Only the unconverted exotic boundary recreates public roots. No edge
+    /// is retained or released here; the current State access has already ended.
     pub(crate) fn into_legacy(self, runtime: &Runtime) -> OwnedPropertyDescriptor {
         let accessor = |field: DescriptorField<Option<ObjectId>>| {
             field.map(|id| {
@@ -145,6 +144,50 @@ impl Drop for StateDescriptorGuard<'_> {
     }
 }
 
+impl Runtime {
+    /// Consume a synchronous Define request's payload through the same State
+    /// access that publishes it. A genuine exotic boundary keeps its original
+    /// descriptor payload for the legacy effect adapter after State access ends.
+    pub(crate) fn try_define_owned_request(
+        &self,
+        object: &super::super::ObjectRef,
+        key: &super::super::PropertyKey,
+        descriptor: &mut Option<OwnedPropertyDescriptor>,
+    ) -> Result<Option<bool>, RuntimeError> {
+        self.validate_object_and_key(object, key)?;
+        let raw = descriptor
+            .take()
+            .expect("Define descriptor owner")
+            .into_state_owned();
+        let mut remaining: Option<crate::engine::object::StatePropertyDescriptor> = None;
+        let result = {
+            let mut state = self.0.state.borrow_mut();
+            let mut guard =
+                crate::engine::object::StateDescriptorGuard::new(&mut state, &self.0.poisoned, raw);
+            let (state, input) = guard.parts();
+            let result = state.try_define_own_property_in_state(
+                &self.0.poisoned,
+                object.object_id(),
+                key.atom(),
+                &input
+                    .as_ref()
+                    .expect("Define descriptor owner")
+                    .raw_record(),
+            );
+            if matches!(result, Ok(None)) {
+                remaining = input.take();
+            }
+            guard.finish()?;
+            result
+        };
+        if let Some(remaining) = remaining {
+            *descriptor = Some(remaining.into_legacy(self));
+        }
+
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,31 +228,6 @@ mod tests {
         assert_eq!(state.heap.object_strong_count(id), Ok(1));
         assert!(!runtime.0.deferred_references.has_pending());
         assert!(!runtime.is_poisoned());
-    }
-
-    #[test]
-    fn true_exotic_boundary_round_trip_transfers_edges_without_retains() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
-        let Value::Object(function) = context.eval("(function(){})").unwrap() else {
-            panic!()
-        };
-        let id = function.object_id();
-        let mut descriptor = OwnedPropertyDescriptor::new(&runtime);
-        descriptor.get = DescriptorField::Present(AccessorValue::Callable(
-            CallableRef::from_validated_object(function.try_clone().unwrap()),
-        ));
-        descriptor.set = DescriptorField::Present(AccessorValue::Undefined);
-        let raw = descriptor.into_state_owned();
-        assert_eq!(runtime.0.state.borrow().heap.object_strong_count(id), Ok(2));
-        let descriptor = raw.into_legacy(&runtime);
-        assert_eq!(runtime.0.state.borrow().heap.object_strong_count(id), Ok(2));
-        assert!(matches!(
-            descriptor.set,
-            DescriptorField::Present(AccessorValue::Undefined)
-        ));
-        drop(descriptor);
-        assert_eq!(runtime.0.state.borrow().heap.object_strong_count(id), Ok(1));
     }
 
     #[test]

@@ -1165,40 +1165,15 @@ impl Runtime {
         descriptor: crate::engine::object::OwnedPropertyDescriptor,
     ) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
         self.validate_object_and_key(object, key)?;
-        let mut remaining: Option<crate::engine::object::StatePropertyDescriptor> = None;
-        let selected = {
-            let mut state = self.0.state.borrow_mut();
-            let mut guard = crate::engine::object::StateDescriptorGuard::new(
-                &mut state,
-                &self.0.poisoned,
-                descriptor.into_state_owned(),
-            );
-            let (state, input) = guard.parts();
-            let result = state.try_define_own_property_in_state(
-                &self.0.poisoned,
-                object.object_id(),
-                key.atom(),
-                &input
-                    .as_ref()
-                    .expect("Define descriptor owner")
-                    .raw_record(),
-            );
-            if matches!(result, Ok(None)) {
-                remaining = input.take();
-            }
-            guard.finish()?;
-            result
-        }?;
-        if let Some(accepted) = selected {
+        let mut descriptor = Some(descriptor);
+        if let Some(accepted) = self.try_define_owned_request(object, key, &mut descriptor)? {
             return Ok(NativeConversion::Value(if accepted {
                 InternalDefineResult::Defined
             } else {
                 InternalDefineResult::RejectedOrdinary(object.try_clone()?)
             }));
         }
-        let descriptor = remaining
-            .expect("exotic Define retains its descriptor")
-            .into_legacy(self);
+        let descriptor = descriptor.expect("exotic Define retains its descriptor");
         if self.proxy_snapshot_if_any(object)?.is_some() {
             return self.proxy_define_owned_property(realm, object, key, descriptor);
         }
