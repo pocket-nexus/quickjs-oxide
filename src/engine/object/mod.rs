@@ -1128,7 +1128,7 @@ pub(crate) use ordinary_storage::LinkedNativeSelection;
 pub(crate) use ordinary_storage::NamedSelectionMiss;
 
 mod ordinary;
-pub(crate) use ordinary::{OrdinaryRead, ReadBoundary};
+pub(crate) use ordinary::{OrdinaryRead, ReadBoundary, StateReadEffect};
 
 #[cfg(test)]
 mod ordinary_tests;

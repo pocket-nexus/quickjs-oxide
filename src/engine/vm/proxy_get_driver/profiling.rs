@@ -61,6 +61,7 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::KeysComplete { .. } => "query_dispatch.step.keys_complete",
         Step::ReadValue { .. } => "query_dispatch.step.read_value",
         Step::PreparedHas { .. } => "query_dispatch.step.prepared_has",
+        Step::StateRead { .. } => "query_dispatch.step.state_read",
         Step::PreparedRead { .. } => "query_dispatch.step.prepared_read",
         Step::Primitive { .. } => "query_dispatch.step.primitive",
         Step::GetPrototype { .. } => "query_dispatch.step.get_prototype",
@@ -96,6 +97,7 @@ pub(super) fn record_dispatch(step: &Step) {
     });
     let resume = match step {
         Step::Read { resume, .. }
+        | Step::StateRead { resume, .. }
         | Step::PreparedRead { resume, .. }
         | Step::Set { resume, .. }
         | Step::PreparedSet { resume, .. }
