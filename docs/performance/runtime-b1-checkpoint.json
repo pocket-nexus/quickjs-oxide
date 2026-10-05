@@ -1,7 +1,7 @@
 {
   "schema": "oxide-runtime-b1-checkpoint-v1",
-  "status": "failed",
-  "adopted": false,
+  "status": "accepted",
+  "adopted": true,
   "b2_started": false,
   "base": "478d4d426512ccc3736aad28ca2a8c8917cec79c",
   "candidate_runtime_commit": "760443cb0250ed876ee65a0ddc60e9bd38074ec0",
@@ -21,7 +21,7 @@
   },
   "tripwire": {
     "reference": "runtime-b0-baseline.json:callgrind_b0",
-    "maximum_growth_percent": 0,
+    "maximum_growth_percent": 0.1,
     "events": [
       {
         "case": "richards",
@@ -35,7 +35,8 @@
           "Dw": -0.04543302312383091,
           "I1mr": 4.465475131934715
         },
-        "gate_passed": false
+        "gate_passed": true,
+        "historical_gate_passed": false
       },
       {
         "case": "deltablue",
@@ -49,7 +50,8 @@
           "Dw": -4.920299647161563,
           "I1mr": -8.205183084505164
         },
-        "gate_passed": true
+        "gate_passed": true,
+        "historical_gate_passed": true
       },
       {
         "case": "navier-stokes",
@@ -63,10 +65,11 @@
           "Dw": -0.08741074909164315,
           "I1mr": -15.029120101765436
         },
-        "gate_passed": true
+        "gate_passed": true,
+        "historical_gate_passed": true
       }
     ],
-    "failure": "Richards I1mr +4.465475%; zero-growth contract remains unchanged.",
+    "failure": null,
     "receipt": {
       "path": "/home/eric/.cache/oxide-runtime-core-20261003/b1-length-callgrind/results.json",
       "sha256": "9d15953694fe1ed3b37e1d836043c48ef44dabdefdf877ba76a9170d05a45a06"
@@ -86,9 +89,18 @@
         "Dw": -0.045429686093201305,
         "I1mr": 4.465013849645882
       },
-      "gate_passed": false,
-      "scope": "Same immutable binary/model/validated frozen workload. I1 growth repeats at +4.4650%; counts are not claimed bit-identical (minor startup variation)."
-    }
+      "gate_passed": true,
+      "scope": "Same immutable binary/model/validated frozen workload. I1 growth repeats at +4.4650%; counts are not claimed bit-identical (minor startup variation).",
+      "historical_gate_passed": false
+    },
+    "policy_version": 2,
+    "hard_events": [
+      "Ir",
+      "Dw"
+    ],
+    "diagnostic_events": [
+      "I1mr"
+    ]
   },
   "per_runtime_commit": [
     {
@@ -990,7 +1002,27 @@
   "residuals": {
     "B1_N01": "Implemented for the new State Array activation; not accepted until checkpoint passes. Legacy NativeActivation Runtime owners remain explicitly unmigrated.",
     "B1_A01": "All eight diagnostic cases at zero no-callback Array Query/mutation progress; batch acceptance withheld.",
-    "B2a_to_f": "Not started. Checkpoint contract prohibits proceeding after the tripwire failure.",
+    "B2a_to_f": "Authorized after adopted B1; not yet started at this documentation commit.",
     "B3_B4_C": "No work started; B2 review remains the scope limit."
+  },
+  "historical_decision": {
+    "status": "failed",
+    "adopted": false,
+    "policy": {
+      "events": [
+        "Ir",
+        "Dw",
+        "I1mr"
+      ],
+      "maximum_growth_percent": 0
+    },
+    "reason": "Richards I1mr +4.465475%; zero-growth contract remains unchanged.",
+    "superseded_by": "B migration policy v2 and explicit user adoption of B1"
+  },
+  "adoption": {
+    "authorization": "User: B1\u5df2\u7ecf\u53ef\u4ee5\u91c7\u7eb3\u4e86; approved implementation plan.",
+    "runtime_commit": "760443cb0250ed876ee65a0ddc60e9bd38074ec0",
+    "additional_native_six_pairs_required": false,
+    "native_evidence_scope": "Existing two-pair short feedback; not formal original Score or a new confidence interval."
   }
 }
