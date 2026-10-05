@@ -14,7 +14,7 @@ impl Step {
                     let (effect, atom) = resume.take_state_read();
                     Self::StateRead {
                         effect: Some(effect),
-                        atom: Some(atom),
+                        atom,
                         resume: Some(Resume::Element(resume)),
                     }
                 }

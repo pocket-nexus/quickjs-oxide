@@ -7,7 +7,6 @@ use crate::engine::heap::{
     runtime::{RuntimeState, owned_values::OwnedValueGuard},
 };
 use crate::engine::object::{CallableRef, ObjectRef, ReadBoundary, StateReadEffect};
-use std::cell::Cell;
 
 pub(crate) enum PrimitiveStep {
     Get { resume: PrimitiveResume },
@@ -64,21 +63,21 @@ impl std::ops::DerefMut for Machine {
 }
 struct MachineGuard<'a> {
     state: &'a mut RuntimeState,
-    poisoned: &'a Cell<bool>,
+    runtime: &'a Runtime,
     machine: Option<Machine>,
 }
 impl Drop for MachineGuard<'_> {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            self.poisoned.set(true);
+            self.runtime.0.poisoned.set(true);
         }
-        if self.poisoned.get() {
+        if self.runtime.0.poisoned.get() {
             return;
         }
         if let Some(mut machine) = self.machine.take()
-            && machine.release_in_state(self.state, self.poisoned).is_err()
+            && machine.release_in_state(self.state, self.runtime).is_err()
         {
-            self.poisoned.set(true);
+            self.runtime.0.poisoned.set(true);
         }
     }
 }
@@ -86,10 +85,11 @@ impl PrimitiveResumeState {
     fn release_in_state(
         &mut self,
         state: &mut RuntimeState,
-        poisoned: &Cell<bool>,
+        runtime: &Runtime,
     ) -> Result<(), RuntimeError> {
+        let poisoned = &runtime.0.poisoned;
         if let Some(effect) = self.read.take() {
-            effect.release_in_state(state, poisoned)?;
+            effect.release_in_state(state, runtime)?;
         }
         if let Some(atom) = self.atom.take() {
             state.atoms.release(atom)?;
@@ -113,7 +113,7 @@ impl MachineGuard<'_> {
         self,
         result: Result<PrimitiveStep, RuntimeError>,
     ) -> Result<PrimitiveStep, RuntimeError> {
-        let poisoned = self.poisoned;
+        let poisoned = &self.runtime.0.poisoned;
         drop(self);
         if poisoned.get() {
             Err(RuntimeError::Poisoned)
@@ -143,7 +143,7 @@ impl MachineGuard<'_> {
     fn type_error(&mut self, message: &str) -> Result<PrimitiveStep, RuntimeError> {
         let realm = self.machine.as_ref().expect("primitive owner").realm;
         let error = self.state.new_native_error_from_message(
-            self.poisoned,
+            &self.runtime.0.poisoned,
             realm,
             NativeErrorKind::Type,
             crate::engine::api::error::NativeErrorMessage::from_utf8(message),
@@ -168,7 +168,7 @@ impl MachineGuard<'_> {
         let receiver = JsValue::Object(machine.object);
         let mut boundary = None;
         let value = self.state.select_value_read_in_state(
-            self.poisoned,
+            &self.runtime.0.poisoned,
             machine.realm,
             &receiver,
             atom,
@@ -185,11 +185,26 @@ impl MachineGuard<'_> {
         if matches!(boundary, ReadBoundary::Absent) {
             return self.reply(Completion::Return(JsValue::Undefined));
         }
-        let effect = StateReadEffect::prepare(self.state, self.poisoned, boundary, &receiver)?;
+        let effect = match crate::engine::object::internal_methods::resolve_read_boundary_in_state(
+            self.runtime,
+            self.state,
+            machine.realm,
+            atom,
+            &receiver,
+            boundary,
+        )? {
+            crate::engine::object::ProxyGetStep::Complete(completion) => {
+                return self.reply(completion);
+            }
+            crate::engine::object::ProxyGetStep::Effect(effect) => effect,
+        };
+        let needs_key = matches!(effect, StateReadEffect::Proxy { .. });
         let machine = self.machine.as_mut().expect("primitive owner");
         machine.read = Some(effect);
-        self.state.atoms.retain(atom)?;
-        machine.atom = Some(atom);
+        if needs_key {
+            self.state.atoms.retain(atom)?;
+            machine.atom = Some(atom);
+        }
         Ok(self.publish(false))
     }
     fn reply(&mut self, completion: Completion) -> Result<PrimitiveStep, RuntimeError> {
@@ -206,7 +221,7 @@ impl MachineGuard<'_> {
             Error(&'static str),
         }
         let reply = {
-            let mut incoming = OwnedValueGuard::new(self.state, self.poisoned, value);
+            let mut incoming = OwnedValueGuard::new(self.state, &self.runtime.0.poisoned, value);
             let (state, value) = incoming.parts();
             let machine = self.machine.as_mut().expect("primitive owner");
             match machine.phase {
@@ -273,7 +288,7 @@ impl MachineGuard<'_> {
                 }
             }
         }; // The incoming-owner guard ends before the next State operation.
-        if self.poisoned.get() {
+        if self.runtime.0.poisoned.get() {
             return Err(RuntimeError::Poisoned);
         }
         match reply {
@@ -289,10 +304,10 @@ impl PrimitiveResume {
     pub(crate) fn realm(&self) -> ContextId {
         self.0.realm
     }
-    pub(crate) fn take_state_read(&mut self) -> (StateReadEffect, Atom) {
+    pub(crate) fn take_state_read(&mut self) -> (StateReadEffect, Option<Atom>) {
         (
             self.0.read.take().expect("primitive selected read"),
-            self.0.atom.take().expect("primitive selected key"),
+            self.0.atom.take(),
         )
     }
     pub(crate) fn take_callable(&mut self, runtime: &Runtime) -> CallableRef {
@@ -310,9 +325,9 @@ impl PrimitiveResume {
     pub(crate) fn release_in_state(
         mut self,
         state: &mut RuntimeState,
-        poisoned: &Cell<bool>,
+        runtime: &Runtime,
     ) -> Result<(), RuntimeError> {
-        self.0.release_in_state(state, poisoned)
+        self.0.release_in_state(state, runtime)
     }
     pub(crate) fn release_owned(self, runtime: &Runtime) {
         if runtime.skip_cleanup() {
@@ -320,7 +335,7 @@ impl PrimitiveResume {
         }
         let _unwind = runtime.unwind_guard();
         if self
-            .release_in_state(&mut runtime.0.state.borrow_mut(), &runtime.0.poisoned)
+            .release_in_state(&mut runtime.0.state.borrow_mut(), runtime)
             .is_err()
         {
             runtime.0.poisoned.set(true);
@@ -339,7 +354,7 @@ impl PrimitiveResume {
         let atom = state.well_known_symbols[&WellKnownSymbol::ToPrimitive];
         let mut guard = MachineGuard {
             state: &mut state,
-            poisoned: &runtime.0.poisoned,
+            runtime,
             machine: Some(Machine::Local(PrimitiveResumeState {
                 object,
                 realm,
@@ -366,7 +381,7 @@ impl PrimitiveResume {
         let mut state = runtime.0.state.borrow_mut();
         let mut guard = MachineGuard {
             state: &mut state,
-            poisoned: &runtime.0.poisoned,
+            runtime,
             machine: Some(Machine::Local(PrimitiveResumeState {
                 object,
                 realm,
@@ -391,7 +406,7 @@ impl PrimitiveResume {
         let mut state = runtime.0.state.borrow_mut();
         let mut guard = MachineGuard {
             state: &mut state,
-            poisoned: &runtime.0.poisoned,
+            runtime,
             machine: Some(Machine::Pending(self.0)),
         };
         let result = guard.reply(completion);
@@ -441,31 +456,9 @@ impl Runtime {
         &self,
         realm: ContextId,
         effect: StateReadEffect,
-        atom: Atom,
+        atom: Option<Atom>,
     ) -> Result<Completion, RuntimeError> {
-        let key = PropertyKey::from_owned_atom(self.clone(), atom);
-        match effect {
-            StateReadEffect::Getter { callee, receiver } => {
-                let callable = CallableRef::from_validated_object(ObjectRef::from_owned_handle(
-                    self.clone(),
-                    callee,
-                ));
-                self.call_internal_jsvalue(realm, &callable, receiver, Vec::new())
-            }
-            StateReadEffect::Proxy { object, receiver } => {
-                let object = ObjectRef::from_owned_handle(self.clone(), object);
-                self.internal_get_jsvalue(realm, &object, &key, receiver)
-            }
-            StateReadEffect::Shared(read) => {
-                let (element, bytes) = read.read()?;
-                Ok(Completion::Return(
-                    self.0
-                        .state
-                        .borrow_mut()
-                        .decode_typed_index(element, bytes)?,
-                ))
-            }
-        }
+        self.finish_state_read_effect(realm, effect, atom)
     }
     pub(super) fn finish_primitive_steps(
         &self,
@@ -546,6 +539,37 @@ mod state_phase_tests {
             1
         );
         assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn synchronous_proxy_method_prefix_does_not_publish_a_primitive_phase() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let value = context
+            .eval("new Proxy({[Symbol.toPrimitive]:null,valueOf:null,toString:null},{})")
+            .unwrap();
+        let input = runtime.unroot_value(&value).unwrap();
+        let owners = std::rc::Rc::strong_count(&runtime.0);
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
+        let PrimitiveStep::Complete(Completion::Throw(error)) =
+            PrimitiveResume::start(&runtime, context.realm, input, ToPrimitiveHint::Number)
+                .unwrap()
+        else {
+            panic!("synchronous ToPrimitive rejection")
+        };
+        let events = profile.snapshot().owned_execution_events;
+        for event in [
+            "primitive.real_effect_resume_created",
+            "get_resume_allocation",
+            "query.read.acquired",
+            "core.runtime_clone",
+        ] {
+            assert_eq!(events.get(event).copied().unwrap_or(0), 0, "{event}");
+        }
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners);
+        runtime.release_jsvalue(error).unwrap();
     }
 
     #[test]

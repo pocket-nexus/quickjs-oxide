@@ -561,7 +561,52 @@ pub(super) fn start_boolean(
     }
 }
 
-/// The query entry is also used to validate the protocol before native entry migration.
+/// Publish one already selected actual read effect after its source window
+/// has transferred operands. Synchronous Get never reaches this scheduler.
+#[cold]
+#[inline(never)]
+pub(super) fn start_property_state_read(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    effect: crate::engine::object::StateReadEffect,
+    atom: Option<crate::engine::atom::Atom>,
+    depth: usize,
+) -> Result<CallStep, Error> {
+    let mut step = query_owner::StepScope::new(
+        runtime,
+        Step::StateRead {
+            effect: Some(effect),
+            atom,
+            resume: Some(Resume::Identity),
+        },
+    );
+    let parent = execution.frames.current_mut(frame)?;
+    let identity = parent
+        .property_generation
+        .checked_add(1)
+        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+    parent.property_generation = identity;
+    let realm = parent.executable.realm;
+    let result = advance(
+        runtime,
+        execution,
+        frame,
+        identity,
+        Vec::new(),
+        step.take(),
+        Finish::PropertyRead(depth),
+    );
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("property effect returned a conversion"))
+        }
+    }
+}
+
+/// The query entry also validates the protocol before native migration.
 #[cfg(all(test, feature = "profiling"))]
 pub(super) fn start_prototype(
     runtime: &Runtime,
@@ -612,13 +657,13 @@ pub(super) fn start_conversion_state_read(
     execution: &mut RunningExecution,
     frame: FrameId,
     effect: crate::engine::object::StateReadEffect,
-    atom: crate::engine::atom::Atom,
+    atom: Option<crate::engine::atom::Atom>,
     wait: super::conversion_driver::ConversionWait,
 ) -> Result<Progress, Error> {
     let mut wait = super::conversion_driver::ConversionWaitScope::new(runtime, wait);
     let mut step = Step::StateRead {
         effect: Some(effect),
-        atom: Some(atom),
+        atom,
         resume: Some(Resume::Identity),
     };
     let prepared = (|| {

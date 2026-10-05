@@ -54,7 +54,7 @@ impl NumberResume {
     ) -> Result<NumberStep, RuntimeError> {
         from_primitive(runtime, self.0.realm(), self.0.resume(runtime, completion)?)
     }
-    pub(crate) fn take_state_read(&mut self) -> (StateReadEffect, Atom) {
+    pub(crate) fn take_state_read(&mut self) -> (StateReadEffect, Option<Atom>) {
         self.0.take_state_read()
     }
     pub(crate) fn take_call_callable(&mut self, runtime: &Runtime) -> CallableRef {

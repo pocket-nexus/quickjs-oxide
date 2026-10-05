@@ -675,11 +675,9 @@ impl ConversionTask {
                 let (effect, atom) = resume.take_state_read();
                 match effect {
                     crate::engine::object::StateReadEffect::Getter { callee, receiver } => {
-                        let key = crate::engine::object::PropertyKey::from_owned_atom(
-                            runtime.clone(),
-                            atom,
-                        );
-                        drop(key);
+                        if let Some(atom) = atom {
+                            runtime.release_atom_handle(atom);
+                        }
                         let getter = CallableRef::from_validated_object(
                             crate::engine::object::ObjectRef::from_owned_handle(
                                 runtime.clone(),
@@ -709,7 +707,8 @@ impl ConversionTask {
                             ),
                         ))
                     }
-                    effect @ crate::engine::object::StateReadEffect::Proxy { .. } => {
+                    effect @ (crate::engine::object::StateReadEffect::Proxy { .. }
+                    | crate::engine::object::StateReadEffect::Get(_)) => {
                         match super::proxy_get_driver::start_conversion_state_read(
                             runtime,
                             execution,

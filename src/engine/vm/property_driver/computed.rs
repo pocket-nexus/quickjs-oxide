@@ -1,14 +1,13 @@
 //! Computed Get borrows its primitive key and completes with one State access.
 //! Only a real getter, Proxy or shared-word service transports selected edges.
 use super::{
-    Error, FallthroughPc, FrameId, JsValue, OwnedGetterSelection, OwnedSpecialSelection,
-    PropertyKey, PropertyProgress, RunningExecution, Runtime, SelectedNamedRead,
+    Error, FallthroughPc, FrameId, JsValue, PropertyProgress, RunningExecution, Runtime,
     runtime_error_to_vm_error,
 };
 use crate::engine::{
     atom::Atom,
     heap::runtime::{RuntimeState, owned_values::OwnedValueGuard},
-    object::ReadBoundary,
+    object::{ProxyGetStep, ReadBoundary, StateReadEffect},
     vm::stack::{FrameExecution, FrameSlots, FrameTurn},
 };
 use std::cell::Cell;
@@ -45,9 +44,14 @@ impl Drop for KeyGuard<'_> {
 }
 
 pub(in crate::engine::vm) struct Effect {
-    read: Option<SelectedNamedRead>,
-    atom: Option<Atom>,
+    read: Option<StateReadEffect>,
     retained: Option<JsValue>,
+}
+
+enum Selection {
+    Completed,
+    Effect(Effect),
+    Throw(JsValue),
 }
 
 impl Effect {
@@ -112,8 +116,13 @@ pub(in crate::engine::vm) fn execute(
         fallthrough,
         depth,
     );
+    if runtime.0.poisoned.get() {
+        return Err(selected
+            .err()
+            .unwrap_or_else(|| Error::internal("runtime is poisoned")));
+    }
     match selected {
-        Ok(None) => {
+        Ok(Selection::Completed) => {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
                 "computed_read.completed_in_segment",
@@ -123,7 +132,7 @@ pub(in crate::engine::vm) fn execute(
                 .map_err(runtime_error_to_vm_error)?;
             Ok(Progress::Completed)
         }
-        Ok(Some(effect)) => {
+        Ok(Selection::Effect(effect)) => {
             if owners
                 .rare
                 .get()
@@ -131,7 +140,7 @@ pub(in crate::engine::vm) fn execute(
             {
                 let mut guard = EffectGuardInState {
                     state,
-                    poisoned: &runtime.0.poisoned,
+                    runtime,
                     effect: Some(effect),
                 };
                 guard.release()?;
@@ -141,12 +150,17 @@ pub(in crate::engine::vm) fn execute(
             // read allocates an operand or continuation transport.
             let mut guard = EffectGuardInState {
                 state,
-                poisoned: &runtime.0.poisoned,
+                runtime,
                 effect: Some(effect),
             };
             let resident = &mut owners.computed_read;
             *resident = guard.effect.take();
             Ok(Progress::Boundary)
+        }
+        Ok(Selection::Throw(value)) => {
+            debug_assert!(pending.is_none());
+            *pending = Some(value);
+            Ok(Progress::Throw)
         }
         Err(error) => {
             if runtime.0.poisoned.get() {
@@ -172,7 +186,7 @@ pub(in crate::engine::vm) fn execute(
 
 struct EffectGuardInState<'a> {
     state: &'a mut RuntimeState,
-    poisoned: &'a Cell<bool>,
+    runtime: &'a Runtime,
     effect: Option<Effect>,
 }
 impl EffectGuardInState<'_> {
@@ -181,12 +195,13 @@ impl EffectGuardInState<'_> {
             return Ok(());
         };
         if let Some(read) = effect.read {
-            read.release_in_state(self.state, self.poisoned)?;
+            read.release_in_state(self.state, self.runtime)
+                .map_err(runtime_error_to_vm_error)?;
         }
         drop(KeyGuard {
             state: self.state,
-            poisoned: self.poisoned,
-            atom: effect.atom,
+            poisoned: &self.runtime.0.poisoned,
+            atom: None,
             retained: effect.retained,
         });
         Ok(())
@@ -195,13 +210,13 @@ impl EffectGuardInState<'_> {
 impl Drop for EffectGuardInState<'_> {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            self.poisoned.set(true);
+            self.runtime.0.poisoned.set(true);
         }
-        if self.poisoned.get() {
+        if self.runtime.0.poisoned.get() {
             return;
         }
         if self.release().is_err() {
-            self.poisoned.set(true);
+            self.runtime.0.poisoned.set(true);
         }
     }
 }
@@ -224,9 +239,7 @@ impl Drop for EffectGuard<'_> {
         let _unwind = self.runtime.unwind_guard();
         let mut state = self.runtime.0.state.borrow_mut();
         if let Some(read) = effect.read
-            && read
-                .release_in_state(&mut state, &self.runtime.0.poisoned)
-                .is_err()
+            && read.release_in_state(&mut state, self.runtime).is_err()
         {
             self.runtime.0.poisoned.set(true);
             return;
@@ -234,7 +247,7 @@ impl Drop for EffectGuard<'_> {
         drop(KeyGuard {
             state: &mut state,
             poisoned: &self.runtime.0.poisoned,
-            atom: effect.atom,
+            atom: None,
             retained: effect.retained,
         });
     }
@@ -263,7 +276,7 @@ pub(super) fn read(
     };
     let realm = execution.frames.current_mut(id)?.executable.realm;
     let selected = if let Some(effect) = resident.effect.take() {
-        Ok(Some(effect))
+        Ok(Selection::Effect(effect))
     } else {
         let mut state = runtime.0.state.borrow_mut();
         read_in_state(
@@ -282,8 +295,13 @@ pub(super) fn read(
             .unwrap_or_else(|| Error::internal("runtime is poisoned")));
     }
     let effect = match selected {
-        Ok(None) => return Ok(PropertyProgress::Completed),
-        Ok(Some(effect)) => effect,
+        Ok(Selection::Completed) => return Ok(PropertyProgress::Completed),
+        Ok(Selection::Throw(value)) => {
+            return Ok(PropertyProgress::Deferred(super::CallStep::Complete(
+                super::Completion::Throw(value),
+            )));
+        }
+        Ok(Selection::Effect(effect)) => effect,
         Err(error) => {
             return super::throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
         }
@@ -297,9 +315,9 @@ pub(super) fn read(
             .effect
             .as_ref()
             .and_then(|effect| effect.read.as_ref()),
-        Some(SelectedNamedRead::Shared(_))
+        Some(StateReadEffect::Shared(_))
     ) {
-        let Some(SelectedNamedRead::Shared(read)) =
+        let Some(StateReadEffect::Shared(read)) =
             effect.effect.as_mut().and_then(|effect| effect.read.take())
         else {
             unreachable!("selected shared service")
@@ -335,45 +353,45 @@ pub(super) fn read(
         )?;
         return Ok(PropertyProgress::Completed);
     }
-    // These public effect adapters remain explicit B2a dependencies. Selection
-    // and primitive conversion have completed once; neither is replayed here.
-    let frame = execution.frames.current_mut(id)?;
-    let depth = execution.slots.depth(&frame.window);
-    let receiver = execution.slots.peek(&frame.window, 1)?;
-    let preserved = runtime
-        .dup_jsvalue(receiver)
-        .map_err(runtime_error_to_vm_error)?;
-    let Some(Effect {
-        read,
-        atom,
-        retained,
-    }) = effect.effect.take()
-    else {
-        unreachable!("selected computed effect")
-    };
-    let (read, key) = match read.expect("selected effect owns its read") {
-        SelectedNamedRead::Getter(read) => (read.into_legacy_read(runtime), None),
-        SelectedNamedRead::Special(read) => (
-            read.into_legacy_read(runtime),
-            Some(PropertyKey::from_owned_atom(
-                runtime.clone(),
-                atom.expect("Proxy Get owns its selected key"),
-            )),
-        ),
-        SelectedNamedRead::Shared(_) | SelectedNamedRead::LookupError(_) => {
-            unreachable!("computed effect has a selected getter or Proxy")
+    // The source window pins every input until exact effect selection finishes.
+    // Consume that window through its current State before publishing the actual
+    // callback; no public key/root or replayable read request is constructed.
+    let depth = {
+        let mut state = runtime.0.state.borrow_mut();
+        let frame = execution.frames.current_mut(id)?;
+        let depth = execution.slots.depth(&frame.window);
+        let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
+        let mut slots = transaction.slots();
+        let key = slots.pop()?;
+        let mut key = OwnedValueGuard::new(&mut state, &runtime.0.poisoned, key);
+        let (state, key) = key.parts();
+        let receiver = slots.pop()?;
+        let mut receiver = OwnedValueGuard::new(state, &runtime.0.poisoned, receiver);
+        let (state, receiver) = receiver.parts();
+        if keep_receiver {
+            slots.push_pending(receiver)?;
         }
+        let retained = &mut effect.effect.as_mut().unwrap().retained;
+        if retained.is_some() {
+            slots.push_pending(retained)?;
+        }
+        state
+            .release_owned_jsvalue(&runtime.0.poisoned, key.take().unwrap())
+            .map_err(runtime_error_to_vm_error)?;
+        frame.resume_pc = fallthrough.index();
+        depth
     };
-    super::read_pending(
+    if runtime.0.poisoned.get() {
+        return Err(Error::internal("runtime is poisoned"));
+    }
+    let Effect { read, retained } = effect.effect.take().unwrap();
+    debug_assert!(retained.is_none());
+    super::super::proxy_get_driver::start_property_state_read(
         runtime,
         execution,
         id,
-        preserved,
-        key,
-        read,
-        retained,
-        keep_receiver,
-        2,
+        read.expect("selected read effect"),
+        None,
         depth,
     )
     .map(PropertyProgress::Deferred)
@@ -388,7 +406,7 @@ fn read_in_state(
     keep_receiver: bool,
     keep_key: bool,
     fallthrough: FallthroughPc,
-) -> Result<Option<Effect>, Error> {
+) -> Result<Selection, Error> {
     execution.frames.materialize_in_state(state)?;
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
@@ -419,7 +437,7 @@ fn select_in_slots(
     keep_key: bool,
     fallthrough: FallthroughPc,
     depth: usize,
-) -> Result<Option<Effect>, Error> {
+) -> Result<Selection, Error> {
     let receiver = slots.peek(1)?;
     let key = slots.peek(0)?;
     if matches!(receiver, JsValue::Null | JsValue::Undefined) {
@@ -479,42 +497,31 @@ fn select_in_slots(
             None,
         )
         .map_err(runtime_error_to_vm_error)?;
-    let read = match (value, boundary) {
-        (Some(value), None) => Some(value),
-        (None, Some(ReadBoundary::Absent)) => Some(JsValue::Undefined),
-        (None, Some(ReadBoundary::Getter(getter))) => {
-            let selected = OwnedGetterSelection::prepare(
+    let value = match (value, boundary) {
+        (Some(value), None) => value,
+        (None, Some(ReadBoundary::Absent)) => JsValue::Undefined,
+        (None, Some(boundary)) => {
+            match crate::engine::object::internal_methods::resolve_read_boundary_in_state(
+                runtime,
                 key_owner.state,
-                &runtime.0.poisoned,
+                realm,
+                atom,
                 receiver,
-                getter,
-            )?;
-            return Ok(Some(Effect {
-                read: Some(SelectedNamedRead::Getter(selected)),
-                atom: None,
-                retained: key_owner.retained.take(),
-            }));
-        }
-        (None, Some(ReadBoundary::Special { object, kind })) => {
-            let selected = OwnedSpecialSelection::prepare(
-                key_owner.state,
-                &runtime.0.poisoned,
-                object,
-                receiver,
-                kind,
-            )?;
-            return Ok(Some(Effect {
-                read: Some(SelectedNamedRead::Special(selected)),
-                atom: key_owner.atom.take(),
-                retained: key_owner.retained.take(),
-            }));
-        }
-        (None, Some(ReadBoundary::Shared(read))) => {
-            return Ok(Some(Effect {
-                read: Some(SelectedNamedRead::Shared(read)),
-                atom: None,
-                retained: key_owner.retained.take(),
-            }));
+                boundary,
+            )
+            .map_err(runtime_error_to_vm_error)?
+            {
+                ProxyGetStep::Complete(super::Completion::Return(value)) => value,
+                ProxyGetStep::Complete(super::Completion::Throw(value)) => {
+                    return Ok(Selection::Throw(value));
+                }
+                ProxyGetStep::Effect(read) => {
+                    return Ok(Selection::Effect(Effect {
+                        read: Some(read),
+                        retained: key_owner.retained.take(),
+                    }));
+                }
+            }
         }
         _ => {
             return Err(Error::internal(
@@ -529,13 +536,13 @@ fn select_in_slots(
         resume_pc,
         keep_receiver,
         &mut key_owner.retained,
-        read.expect("synchronous read result"),
+        value,
         fallthrough,
     )?;
     super::record_read_completion(depth);
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("computed_read.state_completed");
-    Ok(None)
+    Ok(Selection::Completed)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -632,8 +639,7 @@ mod tests {
                     false,
                     fallthrough
                 )
-                .unwrap()
-                .is_none()
+                .is_ok_and(|result| matches!(result, Selection::Completed))
             );
             assert!(state.heap.object(receiver).is_err());
             let frame = execution.frames.current_mut(id).unwrap();
@@ -656,60 +662,66 @@ mod tests {
     #[cfg(feature = "profiling")]
     #[test]
     fn non_dense_data_read_uses_the_held_state_without_a_rare_record() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
-        let Value::Object(object) = context.eval("({x:7})").unwrap() else {
-            panic!("object")
-        };
-        let key = runtime
-            .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
-                "x",
-            )))
-            .unwrap();
-        let (mut execution, id) = read_fixture(
-            &runtime,
-            &mut context,
-            "(function(o,k){return o[k]})",
-            Opcode::GetArrayElDense,
-        );
-        let frame = execution.frames.current_mut(id).unwrap();
-        execution
-            .slots
-            .push(&mut frame.window, JsValue::Object(object.into_handle()))
-            .unwrap();
-        execution.slots.push(&mut frame.window, key).unwrap();
-        assert!(frame.cold.rare.get().is_none());
-        let profile = crate::engine::api::profiling::CostProfile::start();
-        let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
-        let owners = std::rc::Rc::strong_count(&runtime.0);
-        let mut state = runtime.0.state.borrow_mut();
-        assert!(matches!(
-            crate::engine::vm::execute::execute_frame_in_state(
+        for source in [
+            "({x:7})",
+            "new Proxy({x:7},{})",
+            "new Proxy(new Proxy({x:7},{}),{})",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context().unwrap();
+            let Value::Object(object) = context.eval(source).unwrap() else {
+                panic!("object")
+            };
+            let key = runtime
+                .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
+                    "x",
+                )))
+                .unwrap();
+            let (mut execution, id) = read_fixture(
                 &runtime,
-                &mut state,
-                &mut execution,
-                id
-            )
-            .unwrap(),
-            crate::engine::vm::execute::VmAction::Complete
-        ));
-        assert!(matches!(execution.pending, Some(JsValue::Int(7))));
-        assert!(
+                &mut context,
+                "(function(o,k){return o[k]})",
+                Opcode::GetArrayElDense,
+            );
+            let frame = execution.frames.current_mut(id).unwrap();
             execution
-                .frames
-                .current_mut(id)
-                .unwrap()
-                .cold
-                .rare
-                .get()
-                .is_none()
-        );
-        assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners);
-        assert!(!runtime.0.deferred_references.has_pending());
-        let events = profile.snapshot().owned_execution_events;
-        assert_eq!(events.get("computed_read.completed_in_segment"), Some(&1));
-        assert_eq!(events.get("query.read.acquired").copied().unwrap_or(0), 0);
-        assert_eq!(events.get("core.runtime_clone").copied().unwrap_or(0), 0);
+                .slots
+                .push(&mut frame.window, JsValue::Object(object.into_handle()))
+                .unwrap();
+            execution.slots.push(&mut frame.window, key).unwrap();
+            assert!(frame.cold.rare.get().is_none());
+            let profile = crate::engine::api::profiling::CostProfile::start();
+            let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
+            let owners = std::rc::Rc::strong_count(&runtime.0);
+            let mut state = runtime.0.state.borrow_mut();
+            assert!(matches!(
+                crate::engine::vm::execute::execute_frame_in_state(
+                    &runtime,
+                    &mut state,
+                    &mut execution,
+                    id
+                )
+                .unwrap(),
+                crate::engine::vm::execute::VmAction::Complete
+            ));
+            assert!(matches!(execution.pending, Some(JsValue::Int(7))));
+            assert!(
+                execution
+                    .frames
+                    .current_mut(id)
+                    .unwrap()
+                    .cold
+                    .rare
+                    .get()
+                    .is_none()
+            );
+            assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners);
+            assert!(!runtime.0.deferred_references.has_pending());
+            let events = profile.snapshot().owned_execution_events;
+            assert_eq!(events.get("computed_read.completed_in_segment"), Some(&1));
+            assert_eq!(events.get("query.read.acquired").copied().unwrap_or(0), 0);
+            assert_eq!(events.get("core.runtime_clone").copied().unwrap_or(0), 0);
+        }
     }
 
     #[test]

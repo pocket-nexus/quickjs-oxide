@@ -135,7 +135,7 @@ impl ElementResume {
             self.0.primitive.resume(runtime, completion)?,
         )
     }
-    pub(crate) fn take_state_read(&mut self) -> (StateReadEffect, Atom) {
+    pub(crate) fn take_state_read(&mut self) -> (StateReadEffect, Option<Atom>) {
         self.0.primitive.take_state_read()
     }
     pub(crate) fn take_call_callable(&mut self, runtime: &Runtime) -> CallableRef {
