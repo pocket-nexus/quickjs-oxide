@@ -40,16 +40,23 @@ pub struct Context {
     pub(crate) realm: ContextId,
 }
 
-impl Clone for Context {
-    fn clone(&self) -> Self {
-        self.runtime
-            .retain_context_handle(self.realm)
-            .expect("a live Context handle must retain its realm");
-        Self {
+impl Context {
+    /// Retain this realm, rejecting quarantined state.
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        self.runtime.check_poison()?;
+        // Checked retention and Rc cloning do not unwind; diagnostics can.
+        #[cfg(any(debug_assertions, feature = "profiling"))]
+        let _unwind = self.runtime.unwind_guard();
+        self.runtime.retain_context_handle(self.realm)?;
+        Ok(Self {
             runtime: self.runtime.clone(),
             id: self.id,
             realm: self.realm,
-        }
+        })
     }
 }
 
@@ -88,13 +95,17 @@ impl Context {
 
     /// Return whether this runtime currently carries a pending JavaScript
     /// exception completion.
-    #[must_use]
-    pub fn has_exception(&self) -> bool {
+    pub fn has_exception(&self) -> Result<bool, RuntimeError> {
+        self.runtime.check_poison()?;
+        let _unwind = self.runtime.unwind_guard();
         self.runtime.has_pending_exception()
     }
 
     /// Move the pending JavaScript exception value out of the runtime slot.
     pub fn take_exception(&mut self) -> Result<Option<Value>, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime.take_pending_exception()
     }
 
@@ -109,6 +120,9 @@ impl Context {
         kind: NativeErrorKind,
         message: &str,
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let error = self
             .runtime
             .new_native_error_jsvalue(self.realm, kind, message)?;

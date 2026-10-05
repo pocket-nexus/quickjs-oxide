@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn wide_object_deletion_reuses_its_unique_layout_and_preserves_key_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context
         .eval("(() => { const o = {}; for (let i = 0; i < 32; i++) o['p' + i] = i; return o; })()")
         .unwrap()
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn dictionary_deletion_detaches_shared_shapes_and_releases_removed_edges() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(first) = context
             .eval("(() => { const o = {}; for (let i=0;i<32;i++) o['p'+i]=i; return o; })()")
             .unwrap()
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn dictionary_order_survives_descriptors_prototype_changes_and_churn() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(() => {
         const o = {}, a = Symbol('a'), b = Symbol('b');
         for (let i=0;i<32;i++) o['p'+i]=i;
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn holey_dictionary_keeps_prototype_setters_and_partial_length_failure() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn holey_array_churn_reuses_the_layout_after_its_initial_conversion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(array) = context
             .eval(
                 "(() => { const a=[]; for(let i=0;i<32;i++) a.push(i); delete a[7]; return a; })()",

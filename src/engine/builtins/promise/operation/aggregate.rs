@@ -129,7 +129,7 @@ impl PromiseStep {
         };
         let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object_id)?;
         let constructor = match runtime
-            .constructor_from_jsvalue(realm, JsValue::Object(object.clone().into_handle()))?
+            .constructor_from_jsvalue(realm, JsValue::Object(object.try_clone()?.into_handle()))?
         {
             NativeConversion::Throw(value) => {
                 return Ok(Self::Complete(Completion::Throw(value)));
@@ -144,7 +144,7 @@ impl PromiseStep {
             pending_effect: super::PromiseStepPending::default(),
             realm,
             phase: super::Phase::AggregateCapability {
-                constructor: object.clone(),
+                constructor: object.try_clone()?,
                 inputs: Inputs::new(runtime, iterable),
                 kind,
             },
@@ -163,7 +163,7 @@ pub(super) fn ready(
     Ok({
         let __pending_field_key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Resolve)?;
-        let __pending_field_receiver = JsValue::Object(constructor.clone().into_handle());
+        let __pending_field_receiver = JsValue::Object(constructor.try_clone()?.into_handle());
         let __pending_field_resume = continuation(
             runtime,
             realm,
@@ -220,7 +220,7 @@ pub(super) fn resume(
                 NativeConversion::Value(resolve) => Ok({
                     let __pending_field_receiver = runtime.dup_jsvalue(&state.inputs.iterable)?;
                     let __pending_field_key =
-                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?);
                     let __pending_field_resume =
                         continuation(runtime, realm, Phase::Method { state, resolve });
                     PromiseStep::request_read(
@@ -265,7 +265,8 @@ pub(super) fn resume(
                 Ok({
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
-                    let __pending_field_receiver = JsValue::Object(iterator.clone().into_handle());
+                    let __pending_field_receiver =
+                        JsValue::Object(iterator.try_clone()?.into_handle());
                     let __pending_field_resume = continuation(
                         runtime,
                         realm,
@@ -320,7 +321,7 @@ pub(super) fn resume(
                 inputs: state.inputs,
                 aggregate,
             })
-            .advance(realm))
+            .advance(realm)?)
         }
         Phase::Resolved(mut state) => {
             state.inputs.reply = value;
@@ -348,8 +349,22 @@ pub(super) fn resume(
                 Vec::from(handlers)
             } else {
                 vec![
-                    JsValue::Object(state.capability.resolve.as_object().clone().into_handle()),
-                    JsValue::Object(state.capability.reject.as_object().clone().into_handle()),
+                    JsValue::Object(
+                        state
+                            .capability
+                            .resolve
+                            .as_object()
+                            .try_clone()?
+                            .into_handle(),
+                    ),
+                    JsValue::Object(
+                        state
+                            .capability
+                            .reject
+                            .as_object()
+                            .try_clone()?
+                            .into_handle(),
+                    ),
                 ]
             };
             Ok({
@@ -375,7 +390,7 @@ pub(super) fn resume(
                 };
                 elements.index = index;
             }
-            Ok(state.advance(realm))
+            Ok(state.advance(realm)?)
         }
         Phase::Terminal(capability) => {
             runtime.release_jsvalue(value)?;
@@ -392,22 +407,27 @@ pub(super) fn resume(
     }
 }
 impl Loop {
-    fn advance(self: Box<Self>, realm: ContextId) -> PromiseStep {
-        let runtime = self.constructor.runtime().clone();
-        {
-            let __pending_field_iterator = self.iterator.clone();
-            let __pending_field_method = self
-                .constructor
-                .runtime()
-                .dup_jsvalue(&self.inputs.method)
-                .expect("aggregate next method must be a live edge");
-            let __pending_field_resume = continuation(&runtime, realm, Phase::Next(self));
-            PromiseStep::request_next(
-                __pending_field_iterator,
-                __pending_field_method,
-                __pending_field_resume,
-            )
-        }
+    fn advance(
+        self: Box<Self>,
+        realm: ContextId,
+    ) -> Result<PromiseStep, crate::engine::api::RuntimeError> {
+        Ok({
+            let runtime = self.constructor.runtime().clone();
+            {
+                let __pending_field_iterator = self.iterator.try_clone()?;
+                let __pending_field_method = self
+                    .constructor
+                    .runtime()
+                    .dup_jsvalue(&self.inputs.method)
+                    .expect("aggregate next method must be a live edge");
+                let __pending_field_resume = continuation(&runtime, realm, Phase::Next(self));
+                PromiseStep::request_next(
+                    __pending_field_iterator,
+                    __pending_field_method,
+                    __pending_field_resume,
+                )
+            }
+        })
     }
     // Consume the existing suspended-loop box here, keeping its payload out of the reply transport.
     #[allow(clippy::boxed_local)]
@@ -450,9 +470,9 @@ impl Loop {
         match result {
             ObjectIteratorStep::Throw(reason) => reject(runtime, realm, self.capability, reason),
             ObjectIteratorStep::Yield(value) => Ok({
-                let __pending_field_callable = self.resolve.clone();
+                let __pending_field_callable = self.resolve.try_clone()?;
                 let __pending_field_receiver =
-                    JsValue::Object(self.constructor.clone().into_handle());
+                    JsValue::Object(self.constructor.try_clone()?.into_handle());
                 let __pending_field_arguments = vec![value];
                 let __pending_field_resume = continuation(runtime, realm, Phase::Resolved(self));
                 PromiseStep::request_call(
@@ -476,20 +496,20 @@ impl Loop {
                     if count == 0 {
                         let (callable, value) = if self.kind == PromiseNativeKind::Any {
                             (
-                                self.capability.reject.clone(),
+                                self.capability.reject.try_clone()?,
                                 JsValue::Object(
                                     runtime
                                         .new_internal_aggregate_error(
                                             realm,
-                                            elements.values.clone(),
+                                            elements.values.try_clone()?,
                                         )?
                                         .into_handle(),
                                 ),
                             )
                         } else {
                             (
-                                self.capability.resolve.clone(),
-                                JsValue::Object(elements.values.clone().into_handle()),
+                                self.capability.resolve.try_clone()?,
+                                JsValue::Object(elements.values.try_clone()?.into_handle()),
                             )
                         };
                         return Ok({

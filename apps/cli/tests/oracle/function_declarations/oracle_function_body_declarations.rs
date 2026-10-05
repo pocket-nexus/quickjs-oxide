@@ -142,7 +142,7 @@ fn direct_function_body_declaration_values_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -163,7 +163,7 @@ fn direct_function_body_declaration_tdz_matches_pinned_quickjs() {
     for &(description, source) in ERROR_OBSERVATION_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -187,7 +187,7 @@ fn failed_body_lexical_initializer_keeps_escaped_hoist_tdz_matches_pinned_quickj
     ];
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let rust = sources
         .iter()
         .map(|source| observe_rust_eval(&runtime, &mut context, source, description))
@@ -236,8 +236,8 @@ fn function_body_declaration_cross_realm_regression() {
     // directly, so keep it in the unconditional product regression suite.
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     drop(defining.eval("globalThis.realmTag='A'").unwrap());
     drop(caller.eval("globalThis.realmTag='B'").unwrap());
 
@@ -266,11 +266,11 @@ fn function_body_declaration_cross_realm_regression() {
     };
     assert_eq!(
         runtime.get_prototype_of(&outer).unwrap(),
-        Some(function_prototype_a.clone())
+        Some(function_prototype_a.try_clone().expect("duplicate root"))
     );
     assert_ne!(
         runtime.get_prototype_of(&outer).unwrap(),
-        Some(function_prototype_b.clone())
+        Some(function_prototype_b.try_clone().expect("duplicate root"))
     );
 
     let outer = runtime.as_callable(&outer).unwrap().unwrap();
@@ -289,7 +289,7 @@ fn function_body_declaration_cross_realm_regression() {
     };
     assert_eq!(
         runtime.get_prototype_of(&inner).unwrap(),
-        Some(function_prototype_a.clone())
+        Some(function_prototype_a.try_clone().expect("duplicate root"))
     );
     assert_ne!(
         runtime.get_prototype_of(&inner).unwrap(),

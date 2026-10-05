@@ -84,7 +84,7 @@ impl ReverseStep {
                 }
             };
         Ok(Self::request_read(
-            object.clone(),
+            object.try_clone()?,
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             ReverseResume(Box::new(ReverseResumeState {
                 runtime: runtime.clone(),
@@ -168,7 +168,7 @@ impl ReverseResume {
     fn next(mut self, runtime: &Runtime) -> Result<ReverseStep, RuntimeError> {
         if self.0.lower >= self.0.upper {
             return Ok(ReverseStep::Complete(Completion::Return(JsValue::Object(
-                self.0.object.clone().into_handle(),
+                self.0.object.try_clone()?.into_handle(),
             ))));
         }
         self.0.phase = Phase::LowerHas;
@@ -179,7 +179,7 @@ impl ReverseResume {
             runtime.release_jsvalue(value)?;
         }
         Ok(ReverseStep::request_has(
-            self.0.object.clone(),
+            self.0.object.try_clone()?,
             runtime.property_key_for_index(self.0.lower)?,
             self,
         ))
@@ -187,7 +187,7 @@ impl ReverseResume {
     fn upper(mut self, runtime: &Runtime) -> Result<ReverseStep, RuntimeError> {
         self.0.phase = Phase::UpperHas;
         Ok(ReverseStep::request_has(
-            self.0.object.clone(),
+            self.0.object.try_clone()?,
             runtime.property_key_for_index(self.0.upper)?,
             self,
         ))
@@ -197,14 +197,14 @@ impl ReverseResume {
         let key = runtime.property_key_for_index(self.0.lower)?;
         if let Some(value) = self.0.upper_value.take() {
             Ok(ReverseStep::request_set(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 key,
                 value,
                 self,
             ))
         } else if self.0.lower_value.is_some() {
             Ok(ReverseStep::request_delete(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 runtime.property_key_for_index(self.0.lower)?,
                 self,
             ))
@@ -217,14 +217,14 @@ impl ReverseResume {
         let key = runtime.property_key_for_index(self.0.upper)?;
         if let Some(value) = self.0.lower_value.take() {
             Ok(ReverseStep::request_set(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 key,
                 value,
                 self,
             ))
         } else {
             Ok(ReverseStep::request_delete(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 runtime.property_key_for_index(self.0.upper)?,
                 self,
             ))
@@ -256,7 +256,7 @@ impl ReverseResume {
                         Phase::UpperRead
                     };
                     Ok(ReverseStep::request_read(
-                        self.0.object.clone(),
+                        self.0.object.try_clone()?,
                         runtime.property_key_for_index(if lower {
                             self.0.lower
                         } else {
@@ -345,7 +345,7 @@ pub(crate) fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }

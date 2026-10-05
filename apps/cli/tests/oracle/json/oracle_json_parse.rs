@@ -652,8 +652,8 @@ fn json_parse_allocations_and_native_errors_use_the_method_defining_realm() {
     // allocates the parse graph, reviver contexts, wrapper, or SyntaxError.
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_object_prototype = defining.object_prototype().unwrap();
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_syntax_error = eval_object(
@@ -715,7 +715,11 @@ fn json_parse_allocations_and_native_errors_use_the_method_defining_realm() {
 
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_object_prototype.clone()),
+        Some(
+            defining_object_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "JSON.parse allocated its object graph in the caller realm",
     );
     assert_eq!(
@@ -725,7 +729,11 @@ fn json_parse_allocations_and_native_errors_use_the_method_defining_realm() {
     );
     assert_eq!(
         runtime.get_prototype_of(&context).unwrap(),
-        Some(defining_object_prototype.clone()),
+        Some(
+            defining_object_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "JSON.parse allocated reviver contexts in the callback realm",
     );
     assert_eq!(
@@ -766,7 +774,7 @@ fn json_parse_allocations_and_native_errors_use_the_method_defining_realm() {
 fn rust_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(case.source) {
         Ok(value) => format!(
             "return|{}|{}",

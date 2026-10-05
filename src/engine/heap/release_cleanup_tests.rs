@@ -3,6 +3,34 @@ use super::runtime::DeferredRefOp;
 use crate::engine::api::Runtime;
 use crate::engine::value::Value;
 
+#[test]
+fn state_queries_leave_deferred_releases_pending() {
+    let runtime = Runtime::new();
+    let object = runtime.new_object(None).unwrap();
+    let id = object.object_id();
+    let counts = runtime.0.state.borrow().heap.counts();
+    {
+        let _state = runtime.0.state.borrow();
+        drop(object);
+    }
+    assert!(runtime.0.deferred_references.has_pending());
+
+    assert_eq!(runtime.heap_counts().unwrap(), counts);
+    assert!(runtime.0.deferred_references.has_pending());
+    runtime.debug_info_mode().unwrap();
+    assert!(runtime.0.deferred_references.has_pending());
+    #[cfg(feature = "profiling")]
+    {
+        assert_eq!(runtime.memory_snapshot().unwrap().heap, counts);
+        assert!(runtime.0.deferred_references.has_pending());
+    }
+    assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+
+    runtime.drain_deferred_references().unwrap();
+    assert!(!runtime.0.deferred_references.has_pending());
+    assert!(runtime.0.state.borrow().heap.object(id).is_err());
+}
+
 fn restoration(depth: usize) -> DeferredRefOp {
     DeferredRefOp::ActiveCollectionRecordsTruncate { depth }
 }
@@ -78,13 +106,13 @@ fn idle_and_borrow_blocked_checkpoints_leave_the_queue_untouched() {
     assert!(state.heap.object(id).is_ok());
     drop(state);
     // The existing operation boundary, including nested boundaries, still drains.
-    let _operation = runtime.operation();
+    let _operation = runtime.operation().unwrap();
     assert!(!runtime.0.deferred_references.has_pending());
     assert!(runtime.0.state.borrow().heap.object(id).is_err());
 }
 
 #[test]
-fn failed_deferred_operation_releases_the_guard_and_keeps_remaining_work() {
+fn failed_deferred_operation_quarantines_remaining_work() {
     let runtime = Runtime::new();
     let stale = runtime.new_object(None).unwrap();
     let stale_id = stale.object_id();
@@ -101,15 +129,25 @@ fn failed_deferred_operation_releases_the_guard_and_keeps_remaining_work() {
     assert!(runtime.drain_deferred_references().is_err());
     assert!(runtime.0.deferred_references.has_pending());
     assert!(runtime.0.state.borrow().heap.object(live_id).is_ok());
-    runtime.drain_deferred_references().unwrap();
-    assert!(!runtime.0.deferred_references.has_pending());
-    assert!(runtime.0.state.borrow().heap.object(live_id).is_err());
+    assert!(runtime.is_poisoned());
+    assert_eq!(
+        runtime.drain_deferred_references(),
+        Err(crate::engine::api::RuntimeError::Poisoned)
+    );
+    assert!(runtime.0.deferred_references.has_pending());
+    assert_eq!(
+        runtime.0.state.borrow().heap.object_strong_count(live_id),
+        Ok(1)
+    );
+    // Failed servicing releases its queue lease even though state is now
+    // quarantined. No heap operation may consume the remaining work.
+    assert!(runtime.0.deferred_references.try_start_draining().is_some());
 }
 
 #[test]
 fn cascading_zero_reference_destruction_finishes_before_release_returns() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     // Warm the ordinary object path before recording the persistent baseline.
     drop(context.eval("({ next: null })").unwrap());
     let before = runtime.0.state.borrow().heap.counts().object_nodes;
@@ -130,7 +168,7 @@ fn cascading_zero_reference_destruction_finishes_before_release_returns() {
 fn runtime_teardown_applies_queued_bytecode_context_and_atom_releases() {
     let runtime = Runtime::new();
     let weak = std::rc::Rc::downgrade(&runtime.0);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let bytecode = context.compile("({ value: 42 })").unwrap();
     let key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::QueuedAtTeardown)
@@ -212,7 +250,7 @@ fn nonzero_release_still_drains_previously_queued_nodes() {
 fn arguments_prefix_declines_pending_zero_cleanup_without_draining() {
     use super::RawId;
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(carrier) = context.eval("(function(){return arguments})(1,2)").unwrap()
     else {
         panic!("carrier")
@@ -248,7 +286,7 @@ fn arguments_prefix_declines_carrier_saturation_and_preserves_old_clone() {
 
     for count in [u32::MAX - 3, u32::MAX - 2, u32::MAX - 1, u32::MAX] {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(carrier) = context.eval("(function(){return arguments})(1)").unwrap()
         else {
             panic!("carrier");
@@ -282,16 +320,18 @@ fn arguments_prefix_declines_carrier_saturation_and_preserves_old_clone() {
             .unwrap();
         // Read owns exactly two edges after successful start; error unwind
         // released the input carrier. Restore valid counts before teardown.
-        runtime
-            .0
-            .state
-            .borrow_mut()
-            .heap
-            .set_strong_count_for_test(RawId::Object(id), if step.is_ok() { 2 } else { 1 });
+        runtime.0.state.borrow_mut().heap.set_strong_count_for_test(
+            RawId::Object(id),
+            if matches!(step, Ok(Ok(_))) { 2 } else { 1 },
+        );
         assert!(matches!(result, Ok(None)));
         assert_eq!(after_probe, count);
         if count == u32::MAX {
-            assert!(step.is_err(), "old ObjectRef::clone must still overflow");
+            assert!(
+                matches!(step, Ok(Err(_))),
+                "checked root retention must report overflow without panic"
+            );
+            assert!(!runtime.is_poisoned());
             runtime.release_jsvalue(JsValue::Object(id)).unwrap();
         } else {
             assert_eq!(after_start, count + 1);
@@ -306,7 +346,7 @@ fn arguments_prefix_reserves_headroom_for_self_aliases_and_pinned_length() {
     use crate::engine::heap::RawId;
     use crate::engine::value::{JsValue, conversion::NativeConversion};
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(carrier) = context
         .eval("(function(a){arguments[0]=arguments;return arguments})(1)")
         .unwrap()

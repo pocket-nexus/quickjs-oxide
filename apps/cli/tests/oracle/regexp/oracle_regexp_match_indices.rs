@@ -239,8 +239,8 @@ fn regexp_match_indices_replace_callbacks_match_pinned_quickjs() {
 fn regexp_match_indices_nested_arrays_use_the_exec_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype =
         eval_object(&mut defining, "Array.prototype", "defining Array prototype");
     let caller_array_prototype =
@@ -268,28 +268,40 @@ fn regexp_match_indices_nested_arrays_use_the_exec_defining_realm() {
     );
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
     );
     assert_ne!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(caller_array_prototype.clone()),
+        Some(caller_array_prototype.try_clone().expect("duplicate root")),
     );
 
     let indices = object_property(&runtime, &mut caller, &result, "indices");
     assert_eq!(
         runtime.get_prototype_of(&indices).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
     );
     let whole_pair = object_property(&runtime, &mut caller, &indices, "0");
     let named_pair = object_property(&runtime, &mut caller, &indices, "1");
     for pair in [&whole_pair, &named_pair] {
         assert_eq!(
             runtime.get_prototype_of(pair).unwrap(),
-            Some(defining_array_prototype.clone()),
+            Some(
+                defining_array_prototype
+                    .try_clone()
+                    .expect("duplicate root")
+            ),
         );
         assert_ne!(
             runtime.get_prototype_of(pair).unwrap(),
-            Some(caller_array_prototype.clone()),
+            Some(caller_array_prototype.try_clone().expect("duplicate root")),
         );
     }
     assert_eq!(
@@ -325,7 +337,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);
         if actual != expected {

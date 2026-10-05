@@ -122,7 +122,13 @@ impl Runtime {
         self.finish_set_property_or_throw(
             realm,
             key,
-            self.internal_set(realm, object, key, value, Value::Object(object.clone()))?,
+            self.internal_set(
+                realm,
+                object,
+                key,
+                value,
+                Value::Object(object.try_clone()?),
+            )?,
         )
     }
 

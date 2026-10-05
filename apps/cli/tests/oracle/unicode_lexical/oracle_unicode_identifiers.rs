@@ -73,7 +73,7 @@ fn unicode_identifier_execution_matches_pinned_quickjs() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for (description, source) in cases {
         assert_eq!(
             context.eval(&source).unwrap_or_else(|error| {
@@ -381,7 +381,7 @@ fn oracle_number_observation(oracle: &OsStr, source: &str, description: &str) ->
 fn rust_error_observation(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust parser did not materialize an Error object for {source:?}");
@@ -417,7 +417,7 @@ fn oracle_error_observation(oracle: &OsStr, source: &str) -> String {
 fn rust_diagnostic_observation(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust parser did not materialize an Error object for {source:?}");

@@ -34,11 +34,11 @@ fn global_object(context: &mut Context, name: &str) -> quickjs_oxide::engine::ap
 fn promise_all_settled_and_any_match_pinned_quickjs() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     drop(eval(&mut context, FIXTURE));
     runtime.run_gc().unwrap();
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         runtime.run_gc().unwrap();
         assert!(runtime.execute_pending_job().unwrap().executed());
         runtime.run_gc().unwrap();
@@ -54,8 +54,8 @@ fn promise_all_settled_and_any_match_pinned_quickjs() {
 fn promise_aggregate_internal_values_follow_quickjs_context_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     drop(eval(
         &mut defining,

@@ -113,7 +113,7 @@ impl ModuleLoader for AttributeModuleLoader {
         if !self.cleared.replace(true)
             && let Some(runtime) = &self.clear_runtime_on_first_check
         {
-            runtime.clear_module_loader();
+            let _ = runtime.clear_module_loader();
         }
         if self.controls.reject_checks.get() {
             return Err(ModuleLoaderError::new("fixture rejected import attributes"));
@@ -208,7 +208,7 @@ impl ModuleLoader for JsonModuleLoader {
         self.modules
             .borrow()
             .get(&normalized_name)
-            .cloned()
+            .map(|value| value.try_clone().expect("duplicate root"))
             .ok_or_else(|| ModuleLoaderError::new("fixture module is missing"))
     }
 }
@@ -284,7 +284,9 @@ impl ModuleLoader for CompiledModuleLoader {
         _normalized_name: &JsString,
         _attributes: &ModuleImportAttributes,
     ) -> Result<ModuleLoadResult, ModuleLoaderError> {
-        Ok(ModuleLoadResult::Compiled(self.module.clone()))
+        Ok(ModuleLoadResult::Compiled(
+            self.module.try_clone().expect("duplicate root"),
+        ))
     }
 }
 
@@ -374,8 +376,9 @@ impl AbruptModuleLoader {
     }
 
     fn failure(&self, phase: AbruptLoaderPhase) -> Option<ModuleLoaderError> {
-        (self.failing.get() && self.phase == phase)
-            .then(|| ModuleLoaderError::exception(self.exception.clone()))
+        (self.failing.get() && self.phase == phase).then(|| {
+            ModuleLoaderError::exception(self.exception.try_clone().expect("duplicate root"))
+        })
     }
 }
 
@@ -436,7 +439,9 @@ impl ModuleLoader for DependencyAttributeAbruptLoader {
         _attributes: &[ModuleImportAttribute],
     ) -> Result<(), ModuleLoaderError> {
         if self.failing.get() {
-            Err(ModuleLoaderError::exception(self.exception.clone()))
+            Err(ModuleLoaderError::exception(
+                self.exception.try_clone().expect("duplicate root"),
+            ))
         } else {
             Ok(())
         }
@@ -570,7 +575,7 @@ impl ModuleLoader for ClearingModuleLoader {
         let normalized_name = valid_fixture_module_name(normalized_name)?;
         self.loads.borrow_mut().push(normalized_name.clone());
         if !self.cleared.replace(true) {
-            self.runtime.clear_module_loader();
+            let _ = self.runtime.clear_module_loader();
         }
         self.sources
             .get(&normalized_name)
@@ -605,9 +610,11 @@ impl ModuleLoader for NormalizeReplacingModuleLoader {
             .borrow_mut()
             .push((base_name.to_utf8_lossy(), specifier.to_utf8_lossy()));
         if let Some(replacement) = self.replacement.borrow_mut().take() {
-            self.replacement_registration
-                .borrow_mut()
-                .replace(self.runtime.set_module_loader(replacement));
+            self.replacement_registration.borrow_mut().replace(
+                self.runtime
+                    .set_module_loader(replacement)
+                    .expect("replace loader"),
+            );
         }
         default_module_normalize_name(base_name, specifier)
             .map_err(|error| ModuleLoaderError::new(error.to_string()))
@@ -653,9 +660,11 @@ impl ModuleLoader for AttributeReplacingModuleLoader {
             .borrow_mut()
             .push(recorded_attribute_pairs(attributes));
         if let Some(replacement) = self.replacement.borrow_mut().take() {
-            self.replacement_registration
-                .borrow_mut()
-                .replace(self.runtime.set_module_loader(replacement));
+            self.replacement_registration.borrow_mut().replace(
+                self.runtime
+                    .set_module_loader(replacement)
+                    .expect("replace loader"),
+            );
         }
         Ok(())
     }
@@ -866,16 +875,17 @@ fn assert_static_loader_exception(
 ) {
     let runtime = Runtime::new();
     let exception = make_exception(&runtime);
-    let (loader, failing, loads) = AbruptModuleLoader::new(phase, exception.clone());
+    let (loader, failing, loads) =
+        AbruptModuleLoader::new(phase, exception.try_clone().expect("duplicate root"));
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename(source, "pkg/entry.js"),
         Err(RuntimeError::Exception)
     ));
     assert_eq!(context.take_exception().unwrap(), Some(exception));
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 
     failing.set(false);
     let module = context

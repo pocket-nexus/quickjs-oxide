@@ -60,7 +60,7 @@ pub(super) fn instantiate(
                     .cold
                     .function
                     .closures()
-                    .get(usize::from(index))
+                    .get(runtime, usize::from(index))
                     .ok_or_else(|| {
                         Error::internal("captured parent closure index is out of bounds")
                     })?,
@@ -70,11 +70,11 @@ pub(super) fn instantiate(
                 .cold
                 .function
                 .closures()
-                .get(usize::from(index))
+                .get(runtime, usize::from(index))
                 .ok_or_else(|| {
                     Error::internal("relayed parent global closure index is out of bounds")
                 })?
-                .clone(),
+                .try_clone()?,
             _ => {
                 return Err(Error::internal(
                     "child closure attempted to resolve a root descriptor",

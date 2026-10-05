@@ -697,8 +697,8 @@ fn regexp_replace_standard_fast_path_matches_pinned_quickjs() {
 fn regexp_replace_standard_fast_path_accepts_cross_realm_native_targets() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let exec = eval_optional_callable(
         &runtime,
         &mut defining,
@@ -730,7 +730,7 @@ fn regexp_replace_standard_fast_path_accepts_cross_realm_native_targets() {
     let prototype = eval_object(&mut caller, "RegExp.prototype", "caller RegExp prototype");
 
     let exec_key = runtime.intern_property_key("exec").unwrap();
-    let exec_object = exec.as_object().clone();
+    let exec_object = exec.as_object().try_clone().expect("duplicate root");
     assert!(
         runtime
             .define_own_property(
@@ -788,8 +788,8 @@ fn regexp_replace_standard_fast_path_accepts_cross_realm_native_targets() {
 fn regexp_replace_intrinsic_uses_its_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let Some(replace) = eval_optional_callable(
         &runtime,
         &mut defining,

@@ -782,7 +782,7 @@ impl RegExpReplaceResume {
                         self.0.realm,
                         &key,
                         value,
-                        JsValue::Object(self.0.state.regexp.clone().into_handle()),
+                        JsValue::Object(self.0.state.regexp.try_clone()?.into_handle()),
                         |step| pending = Some(step),
                     )?;
                     let step = match selected {
@@ -820,7 +820,7 @@ impl RegExpReplaceResume {
                 ReplaceAction::Exec => {
                     let input = runtime.dup_jsvalue(&self.0.state.input_value)?;
                     return Ok(RegExpReplaceStep::make_exec(
-                        JsValue::Object(self.0.state.regexp.clone().into_handle()),
+                        JsValue::Object(self.0.state.regexp.try_clone()?.into_handle()),
                         input,
                         self,
                     ));
@@ -839,7 +839,7 @@ impl RegExpReplaceResume {
                 Ok(key) => key,
                 Err(error) => {
                     runtime.release_jsvalue(value)?;
-                    return Err(error.into());
+                    return Err(error);
                 }
             };
         self.0.phase = if initial {
@@ -913,7 +913,7 @@ impl RegExpReplaceResume {
                 position: 0,
                 captures: Vec::new(),
             });
-            let key = state.length_key.clone();
+            let key = state.length_key.try_clone()?;
             return Ok(self.read(ReadTarget::Match, key, ReplacePhase::Length));
         }
         let next_source = state.next_source;
@@ -948,7 +948,7 @@ impl RegExpReplaceResume {
         }
         Ok(self.read(
             ReadTarget::Match,
-            self.result_cursor().groups_key.clone(),
+            self.result_cursor().groups_key.try_clone()?,
             ReplacePhase::Groups,
         ))
     }
@@ -1205,7 +1205,7 @@ impl RegExpReplaceResume {
                         .zero
                         .as_ref()
                         .expect("replace collection omitted zero key")
-                        .clone(),
+                        .try_clone()?,
                     ReplacePhase::EmptyMatch,
                 ))
             }
@@ -1284,7 +1284,7 @@ impl RegExpReplaceResume {
                         .zero
                         .as_ref()
                         .expect("replace collection omitted zero key")
-                        .clone(),
+                        .try_clone()?,
                     ReplacePhase::Matched,
                 ))
             }
@@ -1308,7 +1308,7 @@ impl RegExpReplaceResume {
                 state.matched_value = matched_value;
                 Ok(self.read(
                     ReadTarget::Match,
-                    self.result_cursor().index_key.clone(),
+                    self.result_cursor().index_key.try_clone()?,
                     ReplacePhase::Position,
                 ))
             }
@@ -1390,7 +1390,7 @@ impl RegExpReplaceResume {
                             "too many arguments in function call (only 65534 allowed)",
                         );
                     }
-                    let target = DirectCallTarget::Callable(callable.clone());
+                    let target = DirectCallTarget::Callable(callable.try_clone()?);
                     let arguments = std::mem::take(&mut state.captures);
                     self.0.phase = ReplacePhase::Callback;
                     Ok(ReplaceAction::Call {
@@ -1602,7 +1602,7 @@ mod tests {
     #[test]
     fn standard_string_replace_completes_before_resident_allocation() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("RegExp.prototype.exec").unwrap());
         let regexp = context.eval("/a/g").unwrap();
         let invocation = NativeInvocation::Call {
@@ -1647,7 +1647,7 @@ mod tests {
     #[test]
     fn fresh_lazy_exec_preserves_the_selected_flags_getter() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(regexp) = context
             .eval("globalThis.coldReplace = /a/g; coldReplace")
             .unwrap()
@@ -1702,7 +1702,7 @@ mod tests {
     fn collected_replace_results_and_callback_survive_gc_until_abandonment() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let regexp = runtime.new_object(None).unwrap();
         let regexp_id = regexp.object_id();
         let callback = context.eval("(function(){return 'x'})").unwrap();

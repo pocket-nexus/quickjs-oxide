@@ -42,7 +42,7 @@ impl Runtime {
         global: bool,
         full_unicode: bool,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !regexp.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("RegExp String Iterator matcher"));
         }

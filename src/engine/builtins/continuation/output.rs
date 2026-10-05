@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn waiting_domain_is_delivered_once_without_performing_its_read() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let iterator = context.eval("globalThis.readCount=0;Array.prototype.values.call({get length(){readCount++;return 1;},0:4})").unwrap();
         let invocation = NativeInvocation::Call {
             this_value: runtime.unroot_value(&iterator).unwrap(),

@@ -105,7 +105,7 @@ impl ArrayNextStep {
         let source = ObjectRef::from_borrowed_handle(runtime.clone(), source)?;
         let mut resume = ArrayNextResume(Box::new(ArrayNextResumeState {
             realm,
-            iterator: iterator.clone(),
+            iterator: iterator.try_clone()?,
             source,
             index,
             kind,
@@ -275,7 +275,7 @@ impl ArrayNextResume {
                 use crate::engine::value::conversion::number::NumberStep;
                 action = match action {
                     NextAction::Read(key) => {
-                        let receiver = Value::Object(self.0.source.clone());
+                        let receiver = Value::Object(self.0.source.try_clone()?);
                         match runtime.prepare_ordinary_read_borrowed(
                             &self.0.source,
                             &key,
@@ -346,7 +346,7 @@ impl ArrayNextResume {
         match action {
             NextAction::Complete(result) => Ok(ArrayNextStep::Complete(result)),
             NextAction::Read(key) => {
-                self.requested_object = Some(self.source.clone());
+                self.requested_object = Some(self.source.try_clone()?);
                 self.requested_key = Some(key);
                 Ok(ArrayNextStep::Read { resume: self })
             }

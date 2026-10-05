@@ -43,8 +43,8 @@ fn reflect_native_cproto_matches_pinned_quickjs_table() {
 #[test]
 fn global_reflect_is_realm_aware_lazy_and_complete() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
     let key = runtime
@@ -139,7 +139,7 @@ fn global_reflect_is_realm_aware_lazy_and_complete() {
 #[test]
 fn reflect_call_construct_and_argument_validation_follow_pinned_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         eval_string(
@@ -200,7 +200,7 @@ fn reflect_call_construct_and_argument_validation_follow_pinned_order() {
 #[test]
 fn reflect_property_and_prototype_operations_return_booleans() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         eval_string(
             &mut context,
@@ -235,7 +235,7 @@ fn reflect_property_and_prototype_operations_return_booleans() {
 #[test]
 fn reflect_callback_reentry_stack_overflow_is_catchable_and_recovers() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         eval_string(
@@ -276,7 +276,7 @@ fn reflect_callback_reentry_stack_overflow_is_catchable_and_recovers() {
 #[test]
 fn detached_reflect_method_retains_then_releases_its_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
     let defining_realm = defining.realm;
     let global = defining.global_object().unwrap();
     let reflect_key = runtime
@@ -312,7 +312,7 @@ fn detached_reflect_method_retains_then_releases_its_defining_realm() {
         "detached Reflect.get did not retain its defining realm",
     );
 
-    let mut caller = runtime.new_context();
+    let mut caller = runtime.new_context().expect("create context");
     let target = caller.new_object().unwrap();
     let answer_key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Answer)
@@ -328,7 +328,7 @@ fn detached_reflect_method_retains_then_releases_its_defining_realm() {
                 &get,
                 Value::Undefined,
                 &[
-                    Value::Object(target.clone()),
+                    Value::Object(target.try_clone().expect("duplicate root")),
                     Value::String(JsString::from_static("answer")),
                 ],
             )
@@ -349,13 +349,16 @@ fn detached_reflect_method_retains_then_releases_its_defining_realm() {
             .is_err(),
         "released Reflect.get left its defining realm alive",
     );
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 }
 
 #[test]
 fn deleting_lazy_global_reflect_releases_its_realm_edge() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Reflect)

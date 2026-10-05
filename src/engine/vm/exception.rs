@@ -6,7 +6,7 @@ use crate::engine::value::{JsValue, Value};
 impl Runtime {
     /// Move one owned internal edge into the pending-exception slot.
     pub(crate) fn set_pending_exception_jsvalue(&self, value: JsValue) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         if let Some(previous) = state.pending_exception.replace(value.into_raw()) {
             state.release_owned_raw_root(previous)?;
@@ -20,7 +20,7 @@ impl Runtime {
     }
 
     pub(crate) fn take_pending_exception_jsvalue(&self) -> Result<Option<JsValue>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.0
             .state
             .borrow_mut()
@@ -34,16 +34,16 @@ impl Runtime {
     }
 
     pub(crate) fn take_pending_exception(&self) -> Result<Option<Value>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let pending = self.0.state.borrow_mut().pending_exception.take();
         pending
             .map(|value| self.take_owned_raw_value(value))
             .transpose()
     }
 
-    pub(crate) fn has_pending_exception(&self) -> bool {
-        let _operation = self.operation();
-        self.0.state.borrow().pending_exception.is_some()
+    pub(crate) fn has_pending_exception(&self) -> Result<bool, RuntimeError> {
+        let _operation = self.operation()?;
+        Ok(self.0.state.borrow().pending_exception.is_some())
     }
 }
 

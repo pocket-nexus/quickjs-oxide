@@ -213,7 +213,7 @@ impl PendingIteratorState {
                         runtime
                             .dup_jsvalue(&self.iterable)
                             .map_err(runtime_error_to_vm_error)?,
-                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
+                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
                     ))
                 } else {
                     let method = callable(runtime, value, "value is not iterable")?;

@@ -146,15 +146,11 @@ fn site_key(runtime: &Runtime, executable: &PublishedFunctionSnapshot, pc: usize
 }
 
 #[cfg(feature = "profiling")]
-fn source_identity(
-    runtime: &Runtime,
+fn source_identity_in_state(
+    state: &crate::engine::heap::runtime::RuntimeState,
     executable: &PublishedFunctionSnapshot,
 ) -> (Option<String>, Option<String>, Option<u32>, Option<u32>) {
     let Some(id) = executable.bytecode_id() else {
-        return (None, None, None, None);
-    };
-    // A profiling probe must not turn an active Runtime borrow into a panic.
-    let Ok(state) = runtime.0.state.try_borrow() else {
         return (None, None, None, None);
     };
     let Ok(bytecode) = state.heap.function_bytecode(id) else {
@@ -184,7 +180,22 @@ fn source_identity(
 /// Register one executed immutable function's direct-read candidate inventory.
 /// Repeated calls at frame entry only perform a map lookup in diagnostic builds.
 #[cfg(feature = "profiling")]
-pub(crate) fn record_execution_static(runtime: &Runtime, executable: &PublishedFunctionSnapshot) {
+pub(crate) fn record_execution_static_in_state(
+    runtime: &Runtime,
+    state: &crate::engine::heap::runtime::RuntimeState,
+    executable: &PublishedFunctionSnapshot,
+) {
+    record_execution_static_with(runtime, executable, || {
+        source_identity_in_state(state, executable)
+    });
+}
+
+#[cfg(feature = "profiling")]
+fn record_execution_static_with(
+    runtime: &Runtime,
+    executable: &PublishedFunctionSnapshot,
+    source: impl FnOnce() -> (Option<String>, Option<String>, Option<u32>, Option<u32>),
+) {
     let Some(collector) = current() else { return };
     let key = function_key(runtime, executable);
     let mut snapshot = collector.borrow_mut();
@@ -198,7 +209,7 @@ pub(crate) fn record_execution_static(runtime: &Runtime, executable: &PublishedF
         return;
     }
     let (function_name, filename, definition_line_zero_based, definition_column_zero_based) =
-        source_identity(runtime, executable);
+        source();
     let mut cost = ExecutionStaticCost {
         function_name,
         filename,
@@ -431,7 +442,7 @@ mod tests {
     #[test]
     fn execution_word_outcomes_separate_dense_hits_and_generic_reads() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let _ = context
             .eval("function read(a,i){return a[i]}; let array=[11]")
             .unwrap();
@@ -489,7 +500,7 @@ mod tests {
     #[test]
     fn callsite_callee_history_is_bounded_without_owning_functions() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         assert_eq!(
             context

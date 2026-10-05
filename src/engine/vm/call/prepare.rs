@@ -15,19 +15,19 @@ use crate::engine::vm::bindings::FrameBinding;
 use crate::engine::vm::frames::ActiveFrameGuard;
 
 #[cfg(test)]
-pub(in crate::engine::vm) struct PreparedBytecodeFrame {
+pub(in crate::engine::vm) struct PreparedBytecodeFrame<'a> {
     pub executable: PublishedFunctionSnapshot,
     pub active_frame: ActiveFrameGuard,
-    pub input: CallInput,
+    pub input: super::super::protocol::CallInputGuard<'a>,
     pub arguments: Vec<FrameBinding>,
     pub locals: Vec<FrameBinding>,
 }
 
 /// Common validated call owners, without legacy binding-buffer headers.
-pub(in crate::engine::vm) struct PreparedBytecodeHeader {
+pub(in crate::engine::vm) struct PreparedBytecodeHeader<'a> {
     pub executable: PublishedFunctionSnapshot,
     pub active_frame: ActiveFrameGuard,
-    pub input: CallInput,
+    pub input: super::super::protocol::CallInputGuard<'a>,
 }
 
 impl Runtime {
@@ -39,7 +39,7 @@ impl Runtime {
         new_target: Value,
         arguments: &[Value],
         bytecode: FunctionBytecodeRef,
-    ) -> Result<PreparedBytecodeFrame, RuntimeError> {
+    ) -> Result<PreparedBytecodeFrame<'_>, RuntimeError> {
         #[cfg(feature = "profiling")]
         let _profile_phase =
             crate::engine::api::profiling::PhaseTimer::start_vm("bytecode.prepare");
@@ -111,7 +111,7 @@ impl Runtime {
         this_value: JsValue,
         new_target: JsValue,
         bytecode: FunctionBytecodeRef,
-    ) -> Result<PreparedBytecodeHeader, RuntimeError> {
+    ) -> Result<PreparedBytecodeHeader<'_>, RuntimeError> {
         #[cfg(feature = "profiling")]
         let _profile_phase =
             crate::engine::api::profiling::PhaseTimer::start_vm("bytecode.prepare");
@@ -124,8 +124,11 @@ impl Runtime {
         this_value: JsValue,
         new_target: JsValue,
         bytecode: FunctionBytecodeRef,
-    ) -> Result<PreparedBytecodeHeader, RuntimeError> {
-        let mut input = CallInput::new(self, this_value, new_target, None);
+    ) -> Result<PreparedBytecodeHeader<'_>, RuntimeError> {
+        let mut input = super::super::protocol::CallInputGuard::new(
+            self,
+            CallInput::new(self, this_value, new_target, None),
+        );
         let executable = self.snapshot_function_bytecode(&bytecode)?;
         let PublishedFunctionData {
             local_definitions,
@@ -137,7 +140,7 @@ impl Runtime {
         let realm = *realm;
         let callee_global = self.global_object_for_realm(realm)?;
         let active_frame = self.push_bytecode_active_frame(
-            callable.as_object().clone(),
+            callable.as_object().try_clone()?,
             bytecode,
             realm,
             metadata.strict,
@@ -154,7 +157,7 @@ impl Runtime {
             executable,
             active_frame,
             input: {
-                input.callee_global = Some(callee_global);
+                input.callee_global = Some(callee_global.into_execution_handle());
                 input
             },
         })
@@ -163,6 +166,7 @@ impl Runtime {
 
 /// Shared initial binding shape for both legacy vectors and owned windows.
 /// The named-function binding duplicates the callable's edge for the frame.
+#[cfg(test)]
 pub(in crate::engine::vm) fn initial_local_binding(
     runtime: &Runtime,
     lexical: bool,

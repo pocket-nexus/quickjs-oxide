@@ -365,7 +365,7 @@ fn object_descriptor_exotic_surfaces_match_pinned_quickjs() {
 fn object_descriptor_pins_quickjs_proxy_same_value_omission_without_an_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         observe_rust_eval(
             &runtime,
@@ -403,7 +403,7 @@ fn object_descriptor_autoinit_can_be_deleted_before_materialization() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = global_callable(&runtime, &mut context, "Object");
     let mut values = Vec::new();
     for name in ["getOwnPropertyDescriptor", "getOwnPropertyDescriptors"] {
@@ -436,8 +436,8 @@ fn object_descriptor_autoinit_can_be_deleted_before_materialization() {
 fn object_descriptor_cross_realm_results_nested_objects_and_errors_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_object = global_callable(&runtime, &mut defining, "Object");
     let singular = property_callable(
         &runtime,
@@ -462,7 +462,7 @@ fn object_descriptor_cross_realm_results_nested_objects_and_errors_are_exact() {
             &singular,
             Value::Undefined,
             &[
-                Value::Object(source.clone()),
+                Value::Object(source.try_clone().expect("duplicate root")),
                 Value::String(JsString::try_from_utf8("x").unwrap()),
             ],
         )
@@ -472,7 +472,11 @@ fn object_descriptor_cross_realm_results_nested_objects_and_errors_are_exact() {
     };
     assert_eq!(
         runtime.get_prototype_of(&descriptor).unwrap(),
-        Some(defining_object_prototype.clone()),
+        Some(
+            defining_object_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
     );
 
     let Value::Object(descriptors) = caller
@@ -483,7 +487,11 @@ fn object_descriptor_cross_realm_results_nested_objects_and_errors_are_exact() {
     };
     assert_eq!(
         runtime.get_prototype_of(&descriptors).unwrap(),
-        Some(defining_object_prototype.clone()),
+        Some(
+            defining_object_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
     );
     let nested = object_property(&runtime, &mut caller, &descriptors, "x");
     assert_eq!(
@@ -535,8 +543,8 @@ fn object_descriptor_methods_and_results_retain_then_release_their_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (singular, plural, descriptors, nested) = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_object = global_callable(&runtime, &mut first, "Object");
         let second_object = global_callable(&runtime, &mut second, "Object");
         let first_singular = property_callable(
@@ -589,23 +597,32 @@ fn object_descriptor_methods_and_results_retain_then_release_their_realm() {
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(singular);
     drop(plural);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(descriptors);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(nested);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [
@@ -643,7 +660,7 @@ fn rust_graph_observations() -> Vec<String> {
         };
         let callable = runtime.as_callable(&function).unwrap();
         assert!(callable.is_some());
-        methods.push(function.clone());
+        methods.push(function.try_clone().expect("duplicate root"));
         output.push(format!(
             "{name}={}:{}:{}:{}:{}:{}:{}",
             string_property(&runtime, &mut context, &function, "name"),

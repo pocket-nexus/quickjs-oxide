@@ -201,14 +201,28 @@ impl AsyncResume {
 }
 impl Drop for AsyncResume {
     fn drop(&mut self) {
-        if self.active {
-            let _ = self.runtime.complete_async_function_state(&self.state);
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
+        if self.active
+            && self
+                .runtime
+                .complete_async_function_state(&self.state)
+                .is_err()
+        {
+            self.runtime.0.poisoned.set(true);
+            return;
         }
         let output = std::mem::replace(&mut self.output, JsValue::Undefined);
         let _ = self.runtime.release_jsvalue(output);
+        if self.runtime.is_poisoned() {
+            return;
+        }
         self.pending_effect.release_owned(&self.runtime);
     }
 }
+
 impl AsyncStep {
     pub(crate) fn finish(
         self,
@@ -236,11 +250,11 @@ mod tests {
     #[test]
     fn await_thenable_jobs_and_finally_stay_owned_across_gc() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         assert_eq!(context.eval("var asyncResult=0, asyncReads=0, asyncFinally=0; async function f(){try {return 2+await {get then(){asyncReads++;return resolve=>resolve(40)}};} finally {asyncFinally=[1,2].map(x=>x+1)[1]}} f().then(x=>asyncResult=x); asyncResult").unwrap(), Value::Int(0));
         let mut jobs = 0;
-        while runtime.is_job_pending() {
+        while runtime.is_job_pending().expect("runtime state") {
             runtime.run_gc().unwrap();
             runtime.execute_pending_job().unwrap();
             jobs += 1;
@@ -267,11 +281,21 @@ struct AsyncStepPending {
 }
 impl AsyncStepPending {
     fn release_owned(&mut self, runtime: &Runtime) {
+        if runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = runtime.unwind_guard();
         if let Some(value) = self.resolve_value.take() {
             let _ = runtime.release_jsvalue(value);
+            if runtime.is_poisoned() {
+                return;
+            }
         }
         if let Some(value) = self.call_value.take() {
             let _ = runtime.release_jsvalue(value);
+            if runtime.is_poisoned() {
+                return;
+            }
         }
         if let Some(
             VmActivationResume::AwaitFulfill(value) | VmActivationResume::AwaitReject(value),
@@ -352,3 +376,143 @@ const _: () = assert!(std::mem::size_of::<AsyncStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<AsyncStep>() <= 64);
+
+#[cfg(all(test, not(target_family = "wasm"), panic = "unwind"))]
+mod quarantine_tests {
+    use super::*;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn async_resume_abandonment_respects_quarantine() {
+        let Ok(case) = std::env::var("QJS_ASYNC_RESUME_CHILD") else {
+            for case in ["normal", "poison", "unwind", "error", "pending-error"] {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "engine::vm::async_function::operation::quarantine_tests::async_resume_abandonment_respects_quarantine",
+                        "--nocapture",
+                    ])
+                    .env("QJS_ASYNC_RESUME_CHILD", case)
+                    .env("QJS_TEARDOWN_PROBE", "1")
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "async cleanup {case}: {status}");
+            }
+            return;
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let mut resume = AsyncResume::start(&runtime, context.realm).unwrap();
+        let driver = resume.state.try_clone().unwrap();
+        let JsValue::Object(output) = resume.output else {
+            panic!("expected async output Promise")
+        };
+        let output_count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(output)
+            .unwrap();
+        match case.as_str() {
+            "normal" => {
+                drop(resume);
+                assert!(!runtime.is_poisoned());
+                assert_eq!(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .async_function_state_snapshot(driver.object_id())
+                        .unwrap()
+                        .phase,
+                    AsyncFunctionPhase::Completed
+                );
+                assert_eq!(context.eval("1 + 2").unwrap(), Value::number(3.0));
+            }
+            "poison" | "unwind" => {
+                let state = runtime.0.state.borrow_mut();
+                if case == "poison" {
+                    runtime.0.poisoned.set(true);
+                    drop(resume);
+                } else {
+                    assert!(
+                        catch_unwind(AssertUnwindSafe(|| {
+                            let _resume = resume;
+                            panic!("injected async abandonment panic");
+                        }))
+                        .is_err()
+                    );
+                }
+                assert!(runtime.is_poisoned());
+                assert_eq!(
+                    state
+                        .heap
+                        .async_function_state_snapshot(driver.object_id())
+                        .unwrap()
+                        .phase,
+                    AsyncFunctionPhase::Executing
+                );
+                assert_eq!(
+                    state.heap.object_strong_count(output).unwrap(),
+                    output_count
+                );
+                drop(state);
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            "error" => {
+                runtime.complete_async_function_state(&driver).unwrap();
+                drop(resume);
+                assert!(runtime.is_poisoned());
+                assert_eq!(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .object_strong_count(output)
+                        .unwrap(),
+                    output_count
+                );
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            "pending-error" => {
+                let output = std::mem::replace(&mut resume.output, JsValue::Undefined);
+                runtime.release_jsvalue(output).unwrap();
+                resume.active = false;
+                let invalid = runtime.new_object(None).unwrap().into_handle();
+                runtime.release_object_handle(invalid);
+                let later = runtime.new_object(None).unwrap().into_handle();
+                let later_count = runtime
+                    .0
+                    .state
+                    .borrow()
+                    .heap
+                    .object_strong_count(later)
+                    .unwrap();
+                resume.pending_effect.resolve_value = Some(JsValue::Object(invalid));
+                resume.pending_effect.call_value = Some(JsValue::Object(later));
+                resume.pending_effect.release_owned(&runtime);
+                assert!(matches!(
+                    resume.pending_effect.call_value,
+                    Some(JsValue::Object(id)) if id == later
+                ));
+                drop(resume);
+                assert!(runtime.is_poisoned());
+                assert_eq!(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .object_strong_count(later)
+                        .unwrap(),
+                    later_count
+                );
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            _ => panic!("unknown async cleanup case"),
+        }
+    }
+}

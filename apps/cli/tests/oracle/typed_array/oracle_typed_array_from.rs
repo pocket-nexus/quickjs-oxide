@@ -580,9 +580,9 @@ fn typed_array_from_matches_pinned_quickjs() {
 fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
-    let mut custom = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
+    let mut custom = runtime.new_context().expect("create context");
 
     let from = eval_callable(
         &runtime,
@@ -621,7 +621,7 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
         &runtime,
         &mut caller,
         "__typedArrayFromMapThis",
-        Value::Object(map_this.clone()),
+        Value::Object(map_this.try_clone().expect("duplicate root")),
     );
     let map = eval_callable(
         &runtime,
@@ -637,10 +637,10 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
     let result = caller
         .call(
             &from,
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
             &[
                 Value::Object(source),
-                Value::Object(map.as_object().clone()),
+                Value::Object(map.as_object().try_clone().expect("duplicate root")),
                 Value::Object(map_this),
             ],
         )
@@ -683,10 +683,10 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
         caller
             .call(
                 &from,
-                Value::Object(constructor.as_object().clone()),
+                Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
                 &[
                     Value::Object(sloppy_source),
-                    Value::Object(sloppy_map.as_object().clone()),
+                    Value::Object(sloppy_map.as_object().try_clone().expect("duplicate root")),
                 ],
             )
             .expect("cross-realm sloppy mapper"),
@@ -718,10 +718,10 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
         caller
             .call(
                 &from,
-                Value::Object(constructor.as_object().clone()),
+                Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
                 &[
                     Value::Object(strict_source),
-                    Value::Object(strict_map.as_object().clone()),
+                    Value::Object(strict_map.as_object().try_clone().expect("duplicate root")),
                 ],
             )
             .expect("cross-realm strict mapper"),
@@ -737,7 +737,7 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
     assert!(matches!(
         caller.call(
             &from,
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
             &[Value::Null],
         ),
         Err(RuntimeError::Exception),
@@ -745,12 +745,12 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
     let error = take_exception_object(&mut caller, "cross-realm null source TypeError");
     assert_eq!(
         runtime.get_prototype_of(&error).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "null source TypeError did not use the builtin defining realm",
     );
     assert_ne!(
         runtime.get_prototype_of(&error).unwrap(),
-        Some(caller_type_error.clone()),
+        Some(caller_type_error.try_clone().expect("duplicate root")),
         "null source TypeError leaked into the caller realm",
     );
 
@@ -762,7 +762,7 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
     assert!(matches!(
         caller.call(
             &from,
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
             &[Value::Object(conversion_source)],
         ),
         Err(RuntimeError::Exception),
@@ -784,7 +784,7 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
         &runtime,
         &mut caller,
         "__typedArrayFromToken",
-        Value::Object(token.clone()),
+        Value::Object(token.try_clone().expect("duplicate root")),
     );
     let abrupt_source = eval_object(
         &mut caller,
@@ -796,7 +796,7 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
     assert!(matches!(
         caller.call(
             &from,
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
             &[Value::Object(abrupt_source)],
         ),
         Err(RuntimeError::Exception),
@@ -811,7 +811,7 @@ fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
 fn oxide_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(case.source) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),
         Ok(value) => panic!(

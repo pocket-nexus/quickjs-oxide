@@ -438,9 +438,9 @@ fn typed_array_of_matches_pinned_quickjs() {
 fn typed_array_of_cross_realm_results_errors_and_abrupt_values() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
-    let mut custom = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
+    let mut custom = runtime.new_context().expect("create context");
 
     let of = eval_callable(
         &runtime,
@@ -473,7 +473,7 @@ fn typed_array_of_cross_realm_results_errors_and_abrupt_values() {
     let result = caller
         .call(
             &of,
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
             &[Value::number(41.0), Value::number(65578.0)],
         )
         .expect("cross-realm TypedArray.of");
@@ -505,12 +505,12 @@ fn typed_array_of_cross_realm_results_errors_and_abrupt_values() {
     let error = take_exception_object(&mut caller, "cross-realm receiver TypeError");
     assert_eq!(
         runtime.get_prototype_of(&error).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "receiver TypeError did not use the builtin defining realm",
     );
     assert_ne!(
         runtime.get_prototype_of(&error).unwrap(),
-        Some(caller_type_error.clone()),
+        Some(caller_type_error.try_clone().expect("duplicate root")),
         "receiver TypeError leaked into the caller realm",
     );
 
@@ -521,7 +521,7 @@ fn typed_array_of_cross_realm_results_errors_and_abrupt_values() {
     let error = take_exception_object(&mut caller, "cross-realm primitive receiver TypeError");
     assert_eq!(
         runtime.get_prototype_of(&error).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "primitive receiver TypeError did not use the builtin defining realm",
     );
     assert_ne!(
@@ -540,12 +540,12 @@ fn typed_array_of_cross_realm_results_errors_and_abrupt_values() {
         &runtime,
         &mut caller,
         "__typedArrayOfToken",
-        Value::Object(token.clone()),
+        Value::Object(token.try_clone().expect("duplicate root")),
     );
     assert!(matches!(
         caller.call(
             &of,
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
             &[Value::Object(item)],
         ),
         Err(RuntimeError::Exception),
@@ -562,7 +562,7 @@ fn typed_array_of_cross_realm_results_errors_and_abrupt_values() {
     assert!(matches!(
         caller.call(
             &of,
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
             &[symbol],
         ),
         Err(RuntimeError::Exception),
@@ -578,7 +578,7 @@ fn typed_array_of_cross_realm_results_errors_and_abrupt_values() {
 fn oxide_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(case.source) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),
         Ok(value) => panic!(

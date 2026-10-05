@@ -129,7 +129,7 @@ fn named_function_self_assignment_matches_quickjs_strict_and_sloppy_rules() {
     );
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context.eval("(function named() { 'use strict'; named = 1; })()"),
         Err(RuntimeError::Exception)

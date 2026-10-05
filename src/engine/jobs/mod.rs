@@ -228,8 +228,8 @@ impl PendingJob {
 }
 
 /// Own the queue's manual roots after one job has been removed from the FIFO.
-/// Normal completion releases them explicitly; a host panic releases them
-/// during unwind without converting the panic into a JavaScript rejection.
+/// Normal completion releases them explicitly; a host panic quarantines them
+/// without converting the panic into a JavaScript rejection.
 #[must_use = "the guard owns a dequeued pending job's roots"]
 struct PendingJobRootGuard<'a> {
     runtime: &'a Runtime,
@@ -251,27 +251,40 @@ impl<'a> PendingJobRootGuard<'a> {
     }
 
     fn finish(mut self) -> Result<Option<ContextId>, RuntimeError> {
+        self.runtime.check_poison()?;
+        let _unwind = self.runtime.unwind_guard();
         let job = self
             .job
             .take()
             .ok_or(RuntimeError::Invariant("pending-job roots released twice"))?;
-        self.runtime
+        let result = self
+            .runtime
             .0
             .state
             .borrow_mut()
-            .release_pending_job_roots_with_context(&job)
+            .release_pending_job_roots_with_context(&job);
+        if result.is_err() {
+            self.runtime.0.poisoned.set(true);
+        }
+        result
     }
 }
 
 impl Drop for PendingJobRootGuard<'_> {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
         let Some(job) = self.job.take() else {
             return;
         };
         let Ok(mut state) = self.runtime.0.state.try_borrow_mut() else {
             return;
         };
-        let _ = state.release_pending_job_roots_with_context(&job);
+        if state.release_pending_job_roots_with_context(&job).is_err() {
+            self.runtime.0.poisoned.set(true);
+        }
     }
 }
 
@@ -284,18 +297,25 @@ impl<'a> PreparedJobs<'a> {
     pub(crate) fn new(runtime: &'a Runtime, jobs: Vec<PendingJob>) -> Self {
         Self { runtime, jobs }
     }
-    pub(crate) fn publish(mut self) {
+    pub(crate) fn publish(mut self) -> Result<(), RuntimeError> {
         self.runtime
-            .publish_prepared_jobs(std::mem::take(&mut self.jobs));
+            .publish_prepared_jobs(std::mem::take(&mut self.jobs))
     }
 }
 impl Drop for PreparedJobs<'_> {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
         let Ok(mut state) = self.runtime.0.state.try_borrow_mut() else {
             return;
         };
         for job in self.jobs.drain(..) {
-            let _ = state.release_pending_job_roots_with_context(&job);
+            if state.release_pending_job_roots_with_context(&job).is_err() {
+                self.runtime.0.poisoned.set(true);
+                return;
+            }
         }
     }
 }
@@ -390,41 +410,15 @@ impl RuntimeState {
         let roots = job.roots();
         let mut context_after_release = None;
         let mut found_context = false;
-        let mut first_error = None;
         for root in roots.iter().rev().flatten().copied() {
             if let PendingJobRoot::Context(context) = root {
                 found_context = true;
-                let survives = match self.heap.context_strong_count(context) {
-                    Ok(count) => Some(count > 1),
-                    Err(error) => {
-                        if first_error.is_none() {
-                            first_error = Some(RuntimeError::Heap(error));
-                        }
-                        None
-                    }
-                };
-                match self.release_pending_job_root(root) {
-                    Ok(()) => {
-                        if let Some(survives) = survives {
-                            context_after_release = Some(survives.then_some(context));
-                        }
-                    }
-                    Err(error) => {
-                        if first_error.is_none() {
-                            first_error = Some(error);
-                        }
-                    }
-                }
+                let survives = self.heap.context_strong_count(context)? > 1;
+                self.release_pending_job_root(root)?;
+                context_after_release = Some(survives.then_some(context));
                 continue;
             }
-            if let Err(error) = self.release_pending_job_root(root)
-                && first_error.is_none()
-            {
-                first_error = Some(error);
-            }
-        }
-        if let Some(error) = first_error {
-            return Err(error);
+            self.release_pending_job_root(root)?;
         }
         if !found_context {
             return Err(RuntimeError::Invariant(
@@ -439,7 +433,7 @@ impl RuntimeState {
 
 impl Runtime {
     pub(crate) fn enqueue_pending_job(&self, job: PendingJob) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         state.retain_pending_job_roots(&job)?;
         state.pending_jobs.push_back(job);
@@ -447,10 +441,9 @@ impl Runtime {
     }
 
     /// Return whether QuickJS's runtime-wide FIFO contains a pending job.
-    #[must_use]
-    pub fn is_job_pending(&self) -> bool {
-        let _operation = self.operation();
-        !self.0.state.borrow().pending_jobs.is_empty()
+    pub fn is_job_pending(&self) -> Result<bool, RuntimeError> {
+        let _operation = self.operation()?;
+        Ok(!self.0.state.borrow().pending_jobs.is_empty())
     }
 
     /// Execute at most one FIFO job and report its surviving originating realm.
@@ -461,6 +454,10 @@ impl Runtime {
     /// integer result and obsolete `pctx` out-parameter of
     /// `JS_ExecutePendingJob`.
     pub fn execute_pending_job(&self) -> Result<PendingJobOutcome, PendingJobError> {
+        self.check_poison().map_err(|error| PendingJobError {
+            context: None,
+            error,
+        })?;
         if self.0.execution_turn_depth.get() != 0 {
             return Err(PendingJobError {
                 context: None,
@@ -473,7 +470,10 @@ impl Runtime {
                 context: None,
                 error,
             })?;
-        let _operation = self.operation();
+        let _operation = self.operation().map_err(|error| PendingJobError {
+            context: None,
+            error,
+        })?;
         let Some(job) = self.0.state.borrow_mut().pending_jobs.pop_front() else {
             return Ok(PendingJobOutcome::NoJob);
         };
@@ -587,7 +587,7 @@ impl Runtime {
         argument: RawValue,
     ) -> Result<(), RuntimeError> {
         let job = self.prepare_promise_reaction_job(realm, reaction, argument)?;
-        self.publish_prepared_jobs([job]);
+        self.publish_prepared_jobs([job])?;
         Ok(())
     }
 
@@ -606,24 +606,31 @@ impl Runtime {
             reaction,
             argument,
         };
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.0.state.borrow_mut().retain_pending_job_roots(&job)?;
         Ok(job)
     }
 
-    pub(crate) fn publish_prepared_jobs(&self, jobs: impl IntoIterator<Item = PendingJob>) {
-        let _operation = self.operation();
+    pub(crate) fn publish_prepared_jobs(
+        &self,
+        jobs: impl IntoIterator<Item = PendingJob>,
+    ) -> Result<(), RuntimeError> {
+        let _operation = self.operation()?;
         self.0.state.borrow_mut().pending_jobs.extend(jobs);
+        Ok(())
     }
 
     pub(crate) fn discard_prepared_jobs(
         &self,
         jobs: impl IntoIterator<Item = PendingJob>,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         for job in jobs {
-            state.release_pending_job_roots(&job)?;
+            if let Err(error) = state.release_pending_job_roots(&job) {
+                self.0.poisoned.set(true);
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -664,13 +671,14 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(not(target_family = "wasm"), panic = "unwind"))]
+    mod cleanup;
     use crate::engine::api::Context;
     use crate::engine::heap::{ContextData, HeapError};
     use crate::engine::modules::ModuleLoaderError;
     use crate::engine::object::CallableRef;
 
     use super::*;
-    use crate::engine::api::PromiseState;
 
     #[derive(Debug)]
     struct PanickingDynamicModuleLoader;
@@ -745,7 +753,7 @@ mod tests {
     #[test]
     fn pending_job_reports_null_context_after_its_last_realm_root_on_success_and_throw() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
 
         let success = eval_callable(&mut context, "(function () { return 42; })");
         let success_realm = allocate_job_only_realm(&runtime, context.realm_id());
@@ -780,7 +788,7 @@ mod tests {
     fn dynamic_loader_panic_releases_dequeued_job_roots_without_settling_promise() {
         let runtime = Runtime::new();
         let _registration = runtime.set_module_loader(PanickingDynamicModuleLoader);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(promise) = context
             .eval_with_filename("import('./panic.js')", "pkg/entry.js")
             .unwrap()
@@ -788,7 +796,7 @@ mod tests {
             panic!("dynamic import did not return a Promise");
         };
 
-        let (realm, resolve, reject) = {
+        let (_realm, resolve, reject) = {
             let state = runtime.0.state.borrow();
             assert_eq!(state.pending_jobs.len(), 1);
             let PendingJob::DynamicImportLoad {
@@ -804,15 +812,6 @@ mod tests {
         };
         let resolve_root = ObjectRef::from_borrowed_handle(runtime.clone(), resolve).unwrap();
         let reject_root = ObjectRef::from_borrowed_handle(runtime.clone(), reject).unwrap();
-        let counts_before = {
-            let state = runtime.0.state.borrow();
-            (
-                state.heap.context_strong_count(realm).unwrap(),
-                state.heap.object_strong_count(resolve).unwrap(),
-                state.heap.object_strong_count(reject).unwrap(),
-            )
-        };
-
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = runtime.execute_pending_job();
         }))
@@ -826,24 +825,15 @@ mod tests {
             Some("intentional dynamic module loader panic")
         );
 
-        let counts_after = {
-            let state = runtime.0.state.borrow();
-            assert!(state.pending_jobs.is_empty());
-            (
-                state.heap.context_strong_count(realm).unwrap(),
-                state.heap.object_strong_count(resolve).unwrap(),
-                state.heap.object_strong_count(reject).unwrap(),
-            )
-        };
-        assert_eq!(counts_after.0 + 1, counts_before.0);
-        assert_eq!(counts_after.1 + 1, counts_before.1);
-        assert_eq!(counts_after.2 + 1, counts_before.2);
-        assert_eq!(
-            runtime.promise_snapshot(&promise).unwrap().unwrap().state(),
-            PromiseState::Pending
-        );
-        assert!(!context.has_exception());
-        assert_eq!(context.eval("40 + 2").unwrap(), Value::Int(42));
+        assert!(runtime.is_poisoned());
+        assert!(matches!(
+            runtime.promise_snapshot(&promise),
+            Err(RuntimeError::Poisoned)
+        ));
+        assert!(matches!(
+            context.eval("40 + 2"),
+            Err(RuntimeError::Poisoned)
+        ));
         drop((resolve_root, reject_root));
     }
 }

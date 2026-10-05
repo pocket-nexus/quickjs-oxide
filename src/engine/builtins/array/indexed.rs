@@ -145,7 +145,7 @@ impl IndexedStep {
             resume.0.arguments.push(runtime.dup_jsvalue(value)?);
         }
         Ok(Self::request_read(
-            resume.0.object.clone(),
+            resume.0.object.try_clone()?,
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             resume,
         ))
@@ -336,7 +336,7 @@ impl IndexedResume {
                 let count = (self.0.bounds[2] - from).min(self.0.length - to).max(0);
                 self.0.phase = Phase::Copy;
                 return Ok(IndexedStep::request_copy(
-                    self.0.object.clone(),
+                    self.0.object.try_clone()?,
                     to as u64,
                     from as u64,
                     count as u64,
@@ -393,7 +393,7 @@ impl IndexedResume {
             if matches!(self.0.kind, IndexedKind::Fill) {
                 self.0.phase = Phase::Write;
                 return Ok(IndexedStep::request_set(
-                    self.0.object.clone(),
+                    self.0.object.try_clone()?,
                     key,
                     runtime.dup_jsvalue(self.argument(0))?,
                     self,
@@ -401,10 +401,18 @@ impl IndexedResume {
             }
             if matches!(self.0.kind, IndexedKind::Search(ArraySearchKind::Includes)) {
                 self.0.phase = Phase::Read;
-                return Ok(IndexedStep::request_read(self.0.object.clone(), key, self));
+                return Ok(IndexedStep::request_read(
+                    self.0.object.try_clone()?,
+                    key,
+                    self,
+                ));
             }
             self.0.phase = Phase::Has;
-            return Ok(IndexedStep::request_has(self.0.object.clone(), key, self));
+            return Ok(IndexedStep::request_has(
+                self.0.object.try_clone()?,
+                key,
+                self,
+            ));
         }
     }
     fn complete(mut self, runtime: &Runtime) -> Result<IndexedStep, RuntimeError> {
@@ -418,7 +426,7 @@ impl IndexedResume {
             IndexedKind::Search(ArraySearchKind::Includes) => Value::Bool(false),
             IndexedKind::Search(_) => Value::Int(-1),
             IndexedKind::At => Value::Undefined,
-            _ => Value::Object(self.0.object.clone()),
+            _ => Value::Object(self.0.object.try_clone()?),
         };
         Ok(IndexedStep::Complete(Completion::Return(
             runtime.into_jsvalue(value)?,
@@ -440,7 +448,7 @@ impl IndexedResume {
                 if value {
                     self.0.phase = Phase::Read;
                     return Ok(IndexedStep::request_read(
-                        self.0.object.clone(),
+                        self.0.object.try_clone()?,
                         runtime.property_key_for_index(self.0.index as u64)?,
                         self,
                     ));
@@ -528,7 +536,7 @@ pub(crate) fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }

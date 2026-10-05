@@ -453,8 +453,10 @@ fn tagged_template_rust_smoke_matches_pinned_expectation() {
 fn tagged_template_site_identity_survives_gc_in_strip_debug_mode() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    runtime.set_debug_info_mode(DebugInfoMode::StripDebug);
-    let mut context = runtime.new_context();
+    runtime
+        .set_debug_info_mode(DebugInfoMode::StripDebug)
+        .expect("set runtime configuration");
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(
@@ -546,7 +548,7 @@ fn tagged_template_semantics_match_pinned_quickjs() {
 fn rust_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(case.source) {
         Ok(value) => format!(
             "return|{}|{}",

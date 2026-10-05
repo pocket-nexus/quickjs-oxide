@@ -39,12 +39,26 @@ pub(super) fn enter(
     let new_target = runtime
         .dup_jsvalue(execution.slots.peek(&frame.window, count)?)
         .map_err(runtime_error_to_vm_error)?;
-    let mut arguments = Vec::new();
+    let mut input = super::protocol::CallInputGuard::new(
+        runtime,
+        super::CallInput::new(runtime, JsValue::Undefined, new_target, None),
+    );
+    let mut arguments = super::stack::FrameStorageGuard::new(
+        runtime,
+        super::stack::FrameStorage {
+            original_arguments: Vec::new(),
+            parameters: Vec::new(),
+            locals: Vec::new(),
+            operands: Vec::new(),
+        },
+    );
     arguments
+        .storage_mut()
+        .original_arguments
         .try_reserve_exact(count)
         .map_err(|_| Error::internal("construct arguments allocation failed"))?;
     for offset in (0..count).rev() {
-        arguments.push(
+        arguments.storage_mut().original_arguments.push(
             runtime
                 .dup_jsvalue(execution.slots.peek(&frame.window, offset)?)
                 .map_err(runtime_error_to_vm_error)?,
@@ -55,9 +69,195 @@ pub(super) fn enter(
         execution,
         id,
         constructor,
-        new_target,
-        arguments,
+        std::mem::replace(&mut input.new_target, JsValue::Undefined),
+        arguments.take().original_arguments,
         count + 2,
+    )
+}
+
+/// Test admission adapter for synthetic outgoing constructor operands.
+#[cfg(test)]
+fn try_ordinary_base(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    count: usize,
+) -> Result<bool, Error> {
+    let _unwind = runtime.unwind_guard();
+    let frame = execution.frames.current_mut(id)?;
+    let decoded = frame
+        .executable
+        .exec
+        .decode_published(frame.fault_pc as u32)
+        .map_err(|_| Error::internal("constructor PC is not a published instruction"))?;
+    let fallthrough = super::execute::FallthroughPc::from_decoded(decoded);
+    try_ordinary_base_in_state(
+        runtime,
+        &mut runtime.0.state.borrow_mut(),
+        execution,
+        id,
+        count,
+        fallthrough,
+    )
+}
+
+/// Select a Base constructor through the admitted caller transaction.
+/// Prototype callbacks/exotics decline with every source owner untouched;
+/// this selection executes no JavaScript and creates no temporary public root.
+pub(super) fn prepare_ordinary_base_in_state(
+    runtime: &Runtime,
+    state: &crate::engine::heap::runtime::RuntimeState,
+    transaction: &super::stack::FrameTransaction<'_>,
+    count: usize,
+) -> Result<
+    Option<(
+        super::call::ordinary::OrdinaryCall,
+        crate::engine::heap::ObjectId,
+    )>,
+    Error,
+> {
+    use crate::engine::{
+        code::function::metadata::{ConstructorKind, FunctionKind},
+        heap::{ObjectKind, ObjectPayload, PropertySlot, RawId, RawValue},
+        vm::call::ordinary::{DirectSelection, OrdinaryCall},
+    };
+    let target = transaction.peek(count + 1)?;
+    let new_target = transaction.peek(count)?;
+    let (JsValue::Object(target_id), JsValue::Object(new_target_id)) = (target, new_target) else {
+        return Ok(None);
+    };
+    let prototype = {
+        let target = state
+            .heap
+            .object(*target_id)
+            .map_err(super::exception::heap_error_to_vm_error)?;
+        if !target.is_constructor {
+            return Ok(None);
+        }
+        let ObjectPayload::BytecodeFunction { bytecode, .. } = &target.payload else {
+            return Ok(None);
+        };
+        let data = state
+            .heap
+            .function_bytecode(*bytecode)
+            .map_err(super::exception::heap_error_to_vm_error)?;
+        if data.metadata.function_kind != FunctionKind::Normal
+            || data.metadata.constructor_kind != ConstructorKind::Base
+        {
+            return Ok(None);
+        }
+        let new_target = state
+            .heap
+            .object(*new_target_id)
+            .map_err(super::exception::heap_error_to_vm_error)?;
+        // Exotic [[Get]], inherited properties, lazy initialization and getters
+        // keep the owning query. An own ordinary data slot needs no callback.
+        if !new_target.is_constructor
+            || !matches!(
+                new_target.kind,
+                ObjectKind::BytecodeFunction | ObjectKind::Ordinary
+            )
+        {
+            return Ok(None);
+        }
+        let atom = state
+            .pinned_atoms
+            .get(crate::engine::atom::pinned::PinnedAtom::Prototype);
+        let shape = state
+            .heap
+            .shape(new_target.shape)
+            .map_err(super::exception::heap_error_to_vm_error)?;
+        let Some(slot) = shape.find(crate::engine::atom::AtomIdx::from_raw(atom.raw())) else {
+            return Ok(None);
+        };
+        if shape.entries()[slot as usize].flags.storage
+            != crate::engine::object::shape::PropertyStorageKind::Data
+        {
+            return Ok(None);
+        }
+        let Some(PropertySlot::Data(RawValue::Object(prototype))) =
+            new_target.slots.get(slot as usize)
+        else {
+            return Ok(None);
+        };
+        // The canonical query keeps additional transient owners. Keep its
+        // overflow and immortal transition behavior near saturation, including
+        // every argument aliasing target, new target or prototype. Each input
+        // may have an outgoing and a writable-parameter copy; eight further
+        // edges conservatively cover the constructor/prototype query owners.
+        let headroom = (count as u32).saturating_mul(2).saturating_add(8);
+        let ready = |value: &JsValue| -> Result<bool, Error> {
+            let id = match value {
+                JsValue::Object(id) => RawId::Object(*id),
+                JsValue::String(id) => RawId::String(*id),
+                JsValue::BigInt(id) => RawId::BigInt(*id),
+                JsValue::Symbol(index) => {
+                    let atom = state
+                        .atoms
+                        .brand(*index)
+                        .map_err(|error| Error::internal(error.to_string()))?;
+                    return Ok(state
+                        .atoms
+                        .resolve(atom)
+                        .map_err(|error| Error::internal(error.to_string()))?
+                        .ref_count
+                        .is_none_or(|count| count < u32::MAX - headroom));
+                }
+                _ => return Ok(true),
+            };
+            Ok(state
+                .heap
+                .strong_count(id)
+                .map_err(super::exception::heap_error_to_vm_error)?
+                < u32::MAX - headroom)
+        };
+        if !ready(&JsValue::Object(*target_id))?
+            || !ready(&JsValue::Object(*new_target_id))?
+            || !ready(&JsValue::Object(*prototype))?
+            || state
+                .heap
+                .strong_count(RawId::FunctionBytecode(*bytecode))
+                .map_err(super::exception::heap_error_to_vm_error)?
+                >= u32::MAX - 4
+        {
+            return Ok(None);
+        }
+        for offset in (0..count).rev() {
+            if !ready(transaction.peek(offset)?)? {
+                return Ok(None);
+            }
+        }
+        *prototype
+    };
+    let call: OrdinaryCall = match DirectSelection::select_in_state(runtime, state, *target_id)
+        .map_err(runtime_error_to_vm_error)?
+    {
+        DirectSelection::Ordinary(selected) => selected
+            .authenticate_slot_in_state(runtime, state)
+            .map_err(runtime_error_to_vm_error)?,
+        _ => return Ok(None),
+    };
+    Ok(Some((call, prototype)))
+}
+
+/// Synthetic legacy entry authenticates its supplied frame/window once. Real
+/// bytecode construction enters through the existing exclusive execution lease.
+#[cfg(test)]
+fn try_ordinary_base_in_state(
+    runtime: &Runtime,
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    count: usize,
+    fallthrough: super::execute::FallthroughPc,
+) -> Result<bool, Error> {
+    let count = u16::try_from(count)
+        .map_err(|_| Error::internal("constructor argument count exceeds bytecode range"))?;
+    super::stack::FrameExecution::admit(execution, id)?.enter_constructor(
+        runtime,
+        state,
+        count,
+        fallthrough,
     )
 }
 
@@ -81,8 +281,13 @@ pub(super) fn enter_default_derived(
     }
     // Preserve the old entry's live prototype lookup, argument snapshot, then
     // constructor validation order, including null and non-constructor errors.
+    let function = frame
+        .cold
+        .function
+        .to_root(runtime)
+        .map_err(runtime_error_to_vm_error)?;
     let target = runtime
-        .get_prototype_of(&frame.cold.function)
+        .get_prototype_of(&function)
         .map_err(runtime_error_to_vm_error)?;
     let arguments = execution
         .slots
@@ -190,10 +395,15 @@ pub(super) fn initializer(
             }
             InitializerKind::Block => {
                 let receiver = &frame.cold.input.this_value;
+                let function = frame
+                    .cold
+                    .function
+                    .to_root(runtime)
+                    .map_err(runtime_error_to_vm_error)?;
                 let callable = runtime
                     .begin_class_static_block(
                         realm,
-                        &frame.cold.function,
+                        &function,
                         receiver,
                         execution.slots.peek(&frame.window, 0)?,
                     )
@@ -268,7 +478,7 @@ pub(super) fn initializer(
             .map_err(runtime_error_to_vm_error)?;
         if let Some(request) = request {
             let entry = request.prepare(runtime, &mut execution.call_storage)?;
-            push_frame(execution, entry)?;
+            push_frame(runtime, execution, entry)?;
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(depth);
@@ -416,7 +626,7 @@ fn enter_class_parent(
     if let Err(error) = runtime.validate_class_parent(&pending.parent) {
         return finish_class_result(runtime, execution, pending.frame, Err(error));
     }
-    let parent = pending.parent.clone();
+    let parent = pending.parent.try_clone()?;
     let realm = pending.realm;
     let frame = pending.frame;
     super::proxy_get_driver::start_class_parent(
@@ -441,7 +651,7 @@ pub(super) fn finish_class_reply(
             pending.realm,
             &pending.constructor,
             &pending.name,
-            pending.parent.clone(),
+            pending.parent.try_clone()?,
             prototype,
         ),
     };
@@ -543,6 +753,524 @@ pub(super) fn define_property(
     )
 }
 
+#[cfg(test)]
+mod ordinary_constructor_tests {
+    use crate::engine::{
+        api::{Context, Runtime, Value},
+        heap::RawId,
+        object::ObjectRef,
+        value::JsValue,
+        vm::{
+            call::ordinary::OrdinaryCall,
+            execution::{ExecutionLimits, RunningExecution},
+            frame::{FrameId, ReturnOwner, ReturnTarget, ReturnValue},
+        },
+    };
+
+    fn operands(
+        runtime: &Runtime,
+        context: &mut Context,
+        target: &ObjectRef,
+        arguments: Vec<JsValue>,
+        limits: ExecutionLimits,
+    ) -> (RunningExecution, FrameId) {
+        let Value::Object(parent) = context
+            .eval("(function(){return new Object(1,2,3,4)})")
+            .unwrap()
+        else {
+            panic!("parent function")
+        };
+        let mut execution = RunningExecution::new(runtime, limits).unwrap();
+        let call = OrdinaryCall::select_callback(runtime, &parent)
+            .unwrap()
+            .unwrap();
+        let entry = call
+            .prepare_callback(
+                runtime,
+                &mut execution.call_storage,
+                JsValue::Undefined,
+                Vec::new(),
+                context.realm,
+                ReturnTarget {
+                    owner: ReturnOwner::Root,
+                    value_use: ReturnValue::Push,
+                    tail: false,
+                    operation: None,
+                },
+            )
+            .unwrap();
+        let id = crate::engine::vm::driver::push_frame(runtime, &mut execution, entry).unwrap();
+        let frame = execution.frames.current_mut(id).unwrap();
+        // Synthetic operands represent the outgoing Construct. Its consumer
+        // can now return and continue this parent within the same segment.
+        let mut pc = 0;
+        loop {
+            let decoded = frame.executable.exec.decode_published(pc).unwrap();
+            if decoded.opcode == crate::engine::code::exec_opcode::Opcode::Construct {
+                frame.fault_pc = pc as usize;
+                frame.resume_pc = pc as usize;
+                break;
+            }
+            pc = decoded.next_pc;
+        }
+        for value in [
+            JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
+            JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
+        ]
+        .into_iter()
+        .chain(arguments)
+        {
+            execution.slots.push(&mut frame.window, value).unwrap();
+        }
+        (execution, id)
+    }
+
+    #[test]
+    fn ordinary_constructor_preserves_inputs_new_target_and_return_contracts() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        for source in [
+            "(()=>{let marker={};function C(a,b){this.a=a;this.b=b;this.target=new.target;return 3}let p=C.prototype;for(let i=0;i<16;i++){let o=new C(marker,i);if(o.a!==marker||o.b!==i||o.target!==C||Object.getPrototypeOf(o)!==p)return false}return true})()",
+            "(()=>{let result={};function C(){this.side=1;return result}void C.prototype;return new C()===result})()",
+            "(()=>{function C(a){this.a=a;return null}let first=new C(1);C.prototype={changed:42};let second=new C(2);return first.a===1&&second.a===2&&second.changed===42&&Object.getPrototypeOf(first)!==C.prototype})()",
+            "(()=>{function C(){this.snapshot=arguments[0];arguments[0]=7;this.changed=arguments[0]}void C.prototype;let marker={};let o=new C(marker);return o.snapshot===marker&&o.changed===7})()",
+            "(()=>{let expected={};function C(){throw expected}void C.prototype;try{new C()}catch(e){return e===expected}return false})()",
+            "(()=>{function C(n){this.n=n;if(n)this.child=new C(n-1)}void C.prototype;let o=new C(4);return o.child.child.child.child.n===0})()",
+            "(()=>{class C{field=42;constructor(a){this.a=a}}let o=new C(7);return o.field===42&&o.a===7})()",
+            "(()=>{function Base(x){this.x=x;this.target=new.target}void Base.prototype;class Derived extends Base{constructor(){super(42)}}let o=new Derived();return o.x===42&&o.target===Derived&&o instanceof Derived})()",
+        ] {
+            assert_eq!(
+                context
+                    .eval(source)
+                    .unwrap_or_else(|error| panic!("{source}: {error:?}")),
+                Value::Bool(true),
+                "{source}"
+            );
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+        #[cfg(feature = "profiling")]
+        assert!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("constructor_base_lazy_install")
+                .copied()
+                .unwrap_or(0)
+                >= 16
+        );
+    }
+
+    #[test]
+    fn constructor_misses_preserve_bound_proxy_prototype_and_exception_order() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        for source in [
+            "(()=>{function C(x){this.x=x;this.target=new.target}let Bound=C.bind(null,42);let o=new Bound();return o.x===42&&o.target===C&&o instanceof C})()",
+            "(()=>{let trace='';function C(x){trace+='body';this.x=x}let P=new Proxy(C,{get(t,k,r){if(k==='prototype')trace+='prototype:';return Reflect.get(t,k,r)}});let o=new P(42);return trace==='prototype:body'&&o.x===42})()",
+            "(()=>{let marker={},calls=0;function C(){}let P=new Proxy(C,{get(t,k,r){if(k==='prototype'){calls++;throw marker}return Reflect.get(t,k,r)}});try{new P()}catch(e){return e===marker&&calls===1}return false})()",
+            "(()=>{function C(){this.n=42;this.target=new.target}void C.prototype;class D extends C{constructor(){super()}}let calls=0,p=D.prototype;let P=new Proxy(D,{get(t,k,r){if(k==='prototype'){calls++;return p}return Reflect.get(t,k,r)}});let o=new P();return calls===1&&o.n===42&&o.target===P&&Object.getPrototypeOf(o)===p})()",
+            "(()=>{function C(){this.x=42}C.prototype=7;let o=new C();return o.x===42&&Object.getPrototypeOf(o)===Object.prototype})()",
+            "(()=>{function C(){}let count=0;let P=new Proxy(C,{construct(){count++;return {x:42}}});return new P().x===42&&count===1})()",
+            "(()=>{let order='';try{new (()=>{})(order+='argument')}catch(e){return e instanceof TypeError&&order==='argument'}return false})()",
+            "(()=>{let marker={};function C(){this.x=42}function N(){}Object.defineProperty(N,'prototype',{value:null});let o=Reflect.construct(C,[],N);return o.x===42&&Object.getPrototypeOf(o)===Object.prototype})()",
+        ] {
+            assert_eq!(
+                context
+                    .eval(source)
+                    .unwrap_or_else(|error| panic!("{source}: {error:?}")),
+                Value::Bool(true),
+                "{source}"
+            );
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn lazy_constructor_materializes_its_call_pc_for_an_observed_error() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        assert_eq!(context.eval_with_filename(
+            "function C(){\n this.stack = new Error('observed').stack;\n}\nfunction outer(){\n return new C();\n}\nvoid C.prototype;\nvar object=outer();\nobject.stack.includes('at C (constructor-observe.js:2:') && object.stack.includes('at outer (constructor-observe.js:5:') && object.stack.split('at C (').length===2",
+            "constructor-observe.js",
+        ).unwrap(), Value::Bool(true));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn ordinary_constructor_uses_its_defining_realm_and_captured_values() {
+        let runtime = Runtime::new();
+        let mut defining = runtime.new_context().expect("create context");
+        let function = defining.eval("let captured={};function Foreign(){this.captured=captured;this.array=Array;this.target=new.target}void Foreign.prototype;Foreign").unwrap();
+        let expected_array = defining.eval("Array").unwrap();
+        let expected_capture = defining.eval("captured").unwrap();
+        let mut caller = runtime.new_context().expect("create context");
+        let global = caller.global_object().unwrap();
+        for (name, value) in [
+            ("Foreign", function),
+            ("ExpectedArray", expected_array),
+            ("ExpectedCapture", expected_capture),
+        ] {
+            assert!(
+                caller
+                    .set_property(&global, &runtime.intern_property_key(name).unwrap(), value)
+                    .unwrap()
+            );
+        }
+        assert_eq!(caller.eval("let first=new Foreign();let second=new Foreign();first.captured===ExpectedCapture&&second.captured===ExpectedCapture&&first.array===ExpectedArray&&first.target===Foreign&&second.target===Foreign&&ExpectedArray!==Array").unwrap(), Value::Bool(true));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn constructor_admission_misses_do_not_promote_saturated_role_aliases() {
+        for source in [
+            "(function(){function C(){}C.prototype=C;return C})()",
+            "(function(){class D extends Object{};void D.prototype;return D})()",
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context().expect("create context");
+            let Value::Object(target) = context.eval(source).unwrap() else {
+                panic!("constructor")
+            };
+            let arguments = vec![
+                JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
+                JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
+            ];
+            let (mut execution, id) = operands(
+                &runtime,
+                &mut context,
+                &target,
+                arguments,
+                ExecutionLimits::default(),
+            );
+            let call_pc = execution.frames.current_mut(id).unwrap().resume_pc;
+            let roles = {
+                let state = runtime.0.state.borrow();
+                let data = state.heap.object(target.object_id()).unwrap();
+                let crate::engine::heap::ObjectPayload::BytecodeFunction { bytecode, .. } =
+                    &data.payload
+                else {
+                    panic!("bytecode constructor")
+                };
+                let key = state
+                    .pinned_atoms
+                    .get(crate::engine::atom::pinned::PinnedAtom::Prototype);
+                let slot = state
+                    .heap
+                    .shape(data.shape)
+                    .unwrap()
+                    .find(crate::engine::atom::AtomIdx::from_raw(key.raw()))
+                    .unwrap();
+                let crate::engine::heap::PropertySlot::Data(crate::engine::heap::RawValue::Object(
+                    prototype,
+                )) = &data.slots[slot as usize]
+                else {
+                    panic!("data prototype")
+                };
+                [
+                    RawId::Object(target.object_id()),
+                    RawId::Object(*prototype),
+                    RawId::FunctionBytecode(*bytecode),
+                ]
+            };
+            for role in roles {
+                let original = runtime.0.state.borrow().heap.strong_count(role).unwrap();
+                for count in [u32::MAX - 3, u32::MAX - 1, u32::MAX] {
+                    runtime
+                        .0
+                        .state
+                        .borrow_mut()
+                        .heap
+                        .set_strong_count_for_test(role, count);
+                    assert!(!super::try_ordinary_base(&runtime, &mut execution, id, 2).unwrap());
+                    assert_eq!(runtime.0.state.borrow().heap.strong_count(role), Ok(count));
+                    let frame = execution.frames.current_mut(id).unwrap();
+                    assert_eq!(execution.slots.depth(&frame.window), 4);
+                    assert_eq!(frame.resume_pc, call_pc);
+                    assert_eq!(execution.frames.depth(), 1);
+                }
+                runtime
+                    .0
+                    .state
+                    .borrow_mut()
+                    .heap
+                    .set_strong_count_for_test(role, original);
+            }
+        }
+    }
+
+    #[test]
+    fn constructor_admission_preserves_depth_misses() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(target) = context
+            .eval("(function(){function C(){}void C.prototype;return C})()")
+            .unwrap()
+        else {
+            panic!("constructor")
+        };
+        let (mut execution, id) = operands(
+            &runtime,
+            &mut context,
+            &target,
+            Vec::new(),
+            ExecutionLimits::default(),
+        );
+        let call_pc = execution.frames.current_mut(id).unwrap().resume_pc;
+        execution.frames.materialize(&runtime).unwrap();
+        let previous = runtime.0.host_stack_top.replace(Some(0));
+        assert!(!super::try_ordinary_base(&runtime, &mut execution, id, 0).unwrap());
+        runtime.0.host_stack_top.set(previous);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 2);
+        assert_eq!(frame.resume_pc, call_pc);
+        drop(execution);
+
+        runtime
+            .set_recursion_limit(6)
+            .expect("set runtime configuration");
+        assert_eq!(context.eval("function C(n){if(n)new C(n-1)}void C.prototype;try{new C(Infinity);'missing'}catch(e){e.name+':'+e.message}").unwrap(), Value::String(crate::engine::value::JsString::from_static("InternalError:stack overflow")));
+        assert_eq!(context.eval("new C(1);6*7").unwrap(), Value::Int(42));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn constructor_current_state_admission_leaves_external_cleanup_to_boundary() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(target) = context
+            .eval("(function(){function C(a){this.a=a}void C.prototype;return C})()")
+            .unwrap()
+        else {
+            panic!("constructor")
+        };
+        let (mut execution, id) = operands(
+            &runtime,
+            &mut context,
+            &target,
+            vec![JsValue::Int(42)],
+            ExecutionLimits::default(),
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        let fallthrough = super::super::execute::FallthroughPc::from_decoded(
+            frame
+                .executable
+                .exec
+                .decode_published(frame.fault_pc as u32)
+                .unwrap(),
+        );
+        let garbage = runtime.new_object(None).unwrap();
+        let garbage_id = garbage.object_id();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            drop(garbage);
+            assert!(runtime.0.deferred_references.has_pending());
+            assert!(
+                super::try_ordinary_base_in_state(
+                    &runtime,
+                    &mut state,
+                    &mut execution,
+                    id,
+                    1,
+                    fallthrough,
+                )
+                .unwrap()
+            );
+            assert!(runtime.0.deferred_references.has_pending());
+            assert!(state.heap.object(garbage_id).is_ok());
+            assert_eq!(execution.frames.depth(), 2);
+            assert_ne!(execution.frames.current_id(), Some(id));
+        }
+        runtime.drain_deferred_references().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(garbage_id).is_err());
+        drop(execution);
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn generic_constructor_retain_failure_releases_earlier_argument_and_new_target_edges() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(target) = context.eval("Object").unwrap() else {
+            panic!("native constructor")
+        };
+        let first = runtime.new_object(None).unwrap();
+        let first_id = first.object_id();
+        let blocked = runtime.new_object(None).unwrap();
+        let blocked_id = blocked.object_id();
+        let (mut execution, id) = operands(
+            &runtime,
+            &mut context,
+            &target,
+            vec![
+                JsValue::Object(first.into_handle()),
+                JsValue::Object(blocked.into_handle()),
+            ],
+            ExecutionLimits::default(),
+        );
+        let call_pc = execution.frames.current_mut(id).unwrap().resume_pc;
+        let (target_owners, first_owners, blocked_owners) = {
+            let state = runtime.0.state.borrow();
+            (
+                state.heap.object_strong_count(target.object_id()).unwrap(),
+                state.heap.object_strong_count(first_id).unwrap(),
+                state.heap.object_strong_count(blocked_id).unwrap(),
+            )
+        };
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(blocked_id), u32::MAX);
+        let failed = super::enter(&runtime, &mut execution, id, 2, 0);
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(blocked_id), blocked_owners);
+        let error = failed
+            .err()
+            .expect("later checked argument retain must fail");
+        assert!(error.message().contains("retaining a heap reference"));
+        assert!(!runtime.is_poisoned());
+        let state = runtime.0.state.borrow();
+        assert_eq!(
+            state.heap.object_strong_count(target.object_id()),
+            Ok(target_owners)
+        );
+        assert_eq!(state.heap.object_strong_count(first_id), Ok(first_owners));
+        assert_eq!(
+            state.heap.object_strong_count(blocked_id),
+            Ok(blocked_owners)
+        );
+        drop(state);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 4);
+        assert_eq!(frame.resume_pc, call_pc);
+        drop(execution);
+        assert!(runtime.0.state.borrow().heap.object(first_id).is_err());
+        assert!(runtime.0.state.borrow().heap.object(blocked_id).is_err());
+    }
+
+    #[test]
+    fn constructor_slot_limit_failure_releases_unpublished_child_inputs() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(target) = context.eval("(function(){function C(a,b,c){let local=a;this.result=b;return local}void C.prototype;return C})()").unwrap() else {
+            panic!("constructor")
+        };
+        let marker = runtime.new_object(None).unwrap();
+        let arguments = (0..3)
+            .map(|_| JsValue::Object(marker.try_clone().expect("duplicate root").into_handle()))
+            .collect();
+        let (mut execution, id) = operands(
+            &runtime,
+            &mut context,
+            &target,
+            arguments,
+            ExecutionLimits {
+                frames: 4,
+                slots: 8,
+            },
+        );
+        runtime.run_gc().unwrap();
+        let objects = runtime.heap_counts().expect("runtime state").object_nodes;
+        let target_count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(target.object_id())
+            .unwrap();
+        let marker_count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(marker.object_id())
+            .unwrap();
+        let error = super::try_ordinary_base(&runtime, &mut execution, id, 3).unwrap_err();
+        assert!(error.to_string().contains("execution slot limit exceeded"));
+        assert_eq!(execution.frames.depth(), 1);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 5);
+        runtime.run_gc().unwrap();
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").object_nodes,
+            objects
+        );
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(target.object_id()),
+            Ok(target_count)
+        );
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(marker.object_id()),
+            Ok(marker_count)
+        );
+        drop(execution);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert_eq!(context.eval("6*7").unwrap(), Value::Int(42));
+    }
+
+    #[test]
+    fn constructor_allocation_preserves_inputs_until_ready_collection() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(target) = context
+            .eval("(function(){function C(a){return a}void C.prototype;return C})()")
+            .unwrap()
+        else {
+            panic!("constructor")
+        };
+        let Value::Object(marker) = context
+            .eval("(()=>{let marker={};marker.self=marker;return marker})()")
+            .unwrap()
+        else {
+            panic!("marker")
+        };
+        let marker_id = marker.object_id();
+        let arguments = vec![JsValue::Object(marker.into_handle())];
+        let (mut execution, id) = operands(
+            &runtime,
+            &mut context,
+            &target,
+            arguments,
+            ExecutionLimits::default(),
+        );
+        runtime.0.gc_pressure.remaining.set(1);
+        assert!(super::try_ordinary_base(&runtime, &mut execution, id, 1).unwrap());
+        assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
+        let child = execution.frames.current_id().unwrap();
+        // ready::run services this method before its next execute_frame. The
+        // new receiver requests collection without collecting inside install.
+        runtime.collect_if_requested().unwrap();
+        assert!(matches!(
+            crate::engine::vm::execute::execute_frame(&runtime, &mut execution, child).unwrap(),
+            crate::engine::vm::execute::VmAction::Complete
+        ));
+        assert!(runtime.0.gc_pressure.remaining.get() > 0);
+        assert!(runtime.0.state.borrow().heap.object(marker_id).is_ok());
+        assert!(matches!(execution.pending, Some(JsValue::Object(object)) if object == marker_id));
+        drop(execution);
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(marker_id).is_err());
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+}
+
 #[cfg(all(test, feature = "profiling"))]
 mod owned_definition_tests {
     use crate::engine::{
@@ -565,7 +1293,7 @@ mod owned_definition_tests {
             "(function(){var marker={},p=new Proxy({}, {get apply(){throw marker}});try{p()}catch(e){return e===marker?42:0}})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();
@@ -594,7 +1322,7 @@ mod owned_definition_tests {
             "(function(){var marker={},calls=0,proxy=new Proxy({}, {defineProperty(){calls++;throw marker}});class Base{constructor(){return proxy}}return function(){try{class C extends Base{x=42}new C}catch(e){return e===marker&&calls===1?42:0}return 0}})()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();

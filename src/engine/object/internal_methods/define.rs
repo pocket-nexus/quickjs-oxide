@@ -107,7 +107,7 @@ fn method(
             drop(resume);
             match target {
                 None => ProxyDefineStep::request_define(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     key,
                     descriptor,
                     ProxyDefineResume(Box::new(ProxyDefineResumeState {
@@ -120,9 +120,10 @@ fn method(
                     let key_value = runtime.property_key_value(&key)?;
                     let descriptor_object =
                         runtime.proxy_descriptor_object_owned(realm, &descriptor)?;
-                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let receiver =
+                        runtime.into_jsvalue(Value::Object(rooted.handler.try_clone()?))?;
                     let arguments = [
-                        Value::Object(rooted.target.clone()),
+                        Value::Object(rooted.target.try_clone()?),
                         key_value,
                         Value::Object(descriptor_object),
                     ]
@@ -185,7 +186,7 @@ impl ProxyDefineResume {
                     )));
                 }
                 Ok(ProxyDefineStep::request_descriptor(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     key,
                     Self(Box::new(ProxyDefineResumeState {
                         pending_effect: ProxyDefineStepPending::new(runtime.clone()),

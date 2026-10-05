@@ -186,7 +186,7 @@ pub(super) fn resume(
                 let constructor = ObjectRef::from_owned_handle(runtime.clone(), constructor_id);
                 let __pending_field_receiver = JsValue::Object(constructor.into_handle());
                 let __pending_field_key =
-                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species));
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)?);
                 let __pending_field_resume = continuation(runtime, realm, Phase::Species(inputs));
                 PromiseStep::request_read(
                     __pending_field_receiver,
@@ -251,7 +251,9 @@ pub(super) fn resume(
                 runtime,
                 realm,
                 value,
-                vec![JsValue::Object(thunk.as_object().clone().into_handle())],
+                vec![JsValue::Object(
+                    thunk.as_object().try_clone()?.into_handle(),
+                )],
             )
         }
     }
@@ -267,7 +269,7 @@ fn handlers(
     PromiseStep::invoke_then(
         runtime,
         realm,
-        JsValue::Object(inputs.receiver.clone().into_handle()),
+        JsValue::Object(inputs.receiver.try_clone()?.into_handle()),
         handlers.into(),
     )
 }

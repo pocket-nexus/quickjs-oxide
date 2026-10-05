@@ -271,8 +271,8 @@ fn array_fill_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_fill_boxing_native_errors_and_user_throws_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_boolean_prototype = eval_object(
         &mut defining,
@@ -295,7 +295,7 @@ fn array_fill_boxing_native_errors_and_user_throws_use_pinned_realms() {
     let Value::Object(result) = caller
         .call(
             &method,
-            Value::Object(receiver.clone()),
+            Value::Object(receiver.try_clone().expect("duplicate root")),
             &[Value::Int(99), Value::Int(1)],
         )
         .expect("cross-realm Array.fill call")
@@ -362,7 +362,7 @@ fn array_fill_boxing_native_errors_and_user_throws_use_pinned_realms() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

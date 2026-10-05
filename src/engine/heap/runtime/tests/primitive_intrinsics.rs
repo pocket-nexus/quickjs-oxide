@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn number_intrinsic_graph_payload_constants_and_aliases_match_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let constructor = global_callable(&runtime, &mut context, "Number");
     let prototype = context.number_prototype().unwrap();
@@ -145,7 +145,7 @@ fn number_intrinsic_graph_payload_constants_and_aliases_match_quickjs() {
 #[test]
 fn boolean_intrinsic_graph_payload_and_brand_methods_match_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let constructor = global_callable(&runtime, &mut context, "Boolean");
     let prototype = context.boolean_prototype().unwrap();
 
@@ -222,19 +222,27 @@ fn boolean_intrinsic_graph_payload_and_brand_methods_match_quickjs() {
     assert_eq!(runtime.own_property_keys(&wrapper).unwrap(), []);
     assert_eq!(
         runtime.get_prototype_of(&wrapper).unwrap(),
-        Some(prototype.clone())
+        Some(prototype.try_clone().expect("duplicate root"))
     );
     let value_of = property_callable(&runtime, &mut context, &prototype, "valueOf");
     let to_string = property_callable(&runtime, &mut context, &prototype, "toString");
     assert_eq!(
         context
-            .call(&value_of, Value::Object(wrapper.clone()), &[])
+            .call(
+                &value_of,
+                Value::Object(wrapper.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
         Value::Bool(false)
     );
     assert_eq!(
         context
-            .call(&to_string, Value::Object(wrapper.clone()), &[])
+            .call(
+                &to_string,
+                Value::Object(wrapper.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
         Value::String(JsString::from_static("false"))
     );
@@ -263,7 +271,7 @@ fn boolean_intrinsic_graph_payload_and_brand_methods_match_quickjs() {
 #[test]
 fn bigint_intrinsic_graph_conversion_truncation_and_wrappers_match_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let constructor = global_callable(&runtime, &mut context, "BigInt");
     let prototype = context.bigint_prototype().unwrap();
 
@@ -290,14 +298,18 @@ fn bigint_intrinsic_graph_conversion_truncation_and_wrappers_match_quickjs() {
     let to_string_key = runtime.intern_property_key("toString").unwrap();
     let value_of_key = runtime.intern_property_key("valueOf").unwrap();
     let constructor_key = runtime.intern_property_key("constructor").unwrap();
-    let tag_key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     assert_eq!(
         runtime.own_property_keys(&prototype).unwrap(),
         [
             to_string_key,
             value_of_key,
             constructor_key,
-            tag_key.clone(),
+            tag_key.try_clone().expect("duplicate root"),
         ]
     );
     assert!(matches!(
@@ -375,7 +387,11 @@ fn bigint_intrinsic_graph_conversion_truncation_and_wrappers_match_quickjs() {
         Value::String(JsString::from_static("ff"))
     );
     assert!(matches!(
-        context.call(&value_of, Value::Object(prototype.clone()), &[]),
+        context.call(
+            &value_of,
+            Value::Object(prototype.try_clone().expect("duplicate root")),
+            &[]
+        ),
         Err(RuntimeError::Exception)
     ));
     assert_eq!(
@@ -414,7 +430,7 @@ fn bigint_intrinsic_graph_conversion_truncation_and_wrappers_match_quickjs() {
 #[test]
 fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let parse_int = global_callable(&runtime, &mut context, "parseInt");
     let parse_float = global_callable(&runtime, &mut context, "parseFloat");
@@ -520,7 +536,11 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
             )
             .unwrap()
     );
-    let to_primitive = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
     let input = context.new_object().unwrap();
     let input_conversion = eval_callable(
         &runtime,
@@ -533,7 +553,12 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
                 &input,
                 &to_primitive,
                 &data_descriptor(
-                    Value::Object(input_conversion.as_object().clone()),
+                    Value::Object(
+                        input_conversion
+                            .as_object()
+                            .try_clone()
+                            .expect("duplicate root")
+                    ),
                     true,
                     false,
                     true,
@@ -553,7 +578,12 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
                 &radix,
                 &to_primitive,
                 &data_descriptor(
-                    Value::Object(radix_conversion.as_object().clone()),
+                    Value::Object(
+                        radix_conversion
+                            .as_object()
+                            .try_clone()
+                            .expect("duplicate root")
+                    ),
                     true,
                     false,
                     true,
@@ -566,7 +596,10 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
             .call(
                 &parse_int,
                 Value::Undefined,
-                &[Value::Object(input.clone()), Value::Object(radix)],
+                &[
+                    Value::Object(input.try_clone().expect("duplicate root")),
+                    Value::Object(radix)
+                ],
             )
             .unwrap(),
         Value::Int(2)
@@ -597,7 +630,7 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
                 &throwing_input,
                 &to_primitive,
                 &data_descriptor(
-                    Value::Object(input_throw.as_object().clone()),
+                    Value::Object(input_throw.as_object().try_clone().expect("duplicate root")),
                     true,
                     false,
                     true,
@@ -617,7 +650,12 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
                 &late_radix,
                 &to_primitive,
                 &data_descriptor(
-                    Value::Object(late_radix_conversion.as_object().clone()),
+                    Value::Object(
+                        late_radix_conversion
+                            .as_object()
+                            .try_clone()
+                            .expect("duplicate root")
+                    ),
                     true,
                     false,
                     true,
@@ -666,7 +704,12 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
                 &symbol_radix,
                 &to_primitive,
                 &data_descriptor(
-                    Value::Object(symbol_radix_conversion.as_object().clone()),
+                    Value::Object(
+                        symbol_radix_conversion
+                            .as_object()
+                            .try_clone()
+                            .expect("duplicate root")
+                    ),
                     true,
                     false,
                     true,
@@ -678,7 +721,10 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
         context.call(
             &parse_int,
             Value::Undefined,
-            &[Value::Symbol(symbol.clone()), Value::Object(symbol_radix),],
+            &[
+                Value::Symbol(symbol.try_clone().expect("duplicate root")),
+                Value::Object(symbol_radix),
+            ],
         ),
         Err(RuntimeError::Exception)
     ));
@@ -707,7 +753,7 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
     else {
         panic!("defining TypeError.prototype was not an object");
     };
-    let mut caller = runtime.new_context();
+    let mut caller = runtime.new_context().expect("create context");
     assert_eq!(
         caller.call(
             &parse_int,
@@ -731,7 +777,7 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
 #[test]
 fn global_numeric_predicates_match_quickjs_graph_and_coercion_split() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     for name in ["isNaN", "isFinite"] {
         let key = runtime.intern_property_key(name).unwrap();

@@ -242,7 +242,7 @@ fn script_for_capture_survives_a_following_eval_like_pinned_quickjs() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(setup)
@@ -311,6 +311,7 @@ fn rust_value_observation(source: &str, description: &str) -> String {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let value = runtime
         .new_context()
+        .expect("create context")
         .eval(source)
         .unwrap_or_else(|error| panic!("Rust rejected {description} ({source:?}): {error}"));
     normalize_rust_value(value)

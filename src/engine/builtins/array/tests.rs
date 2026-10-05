@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn reduced_flatten_target_limit_preserves_prefix_and_exact_error() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = eval_object(&mut context, "[1,2,3]");
     let target = eval_object(&mut context, "Object()");
 
@@ -67,7 +67,7 @@ fn reduced_flatten_target_limit_preserves_prefix_and_exact_error() {
 #[test]
 fn reduced_flatten_frame_limit_is_catchable_without_rust_recursion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = eval_object(
         &mut context,
         "(function(){var source=[];source[0]=source;return source})()",
@@ -104,9 +104,13 @@ fn reduced_flatten_frame_limit_is_catchable_without_rust_recursion() {
 #[test]
 fn array_unscopables_autoinit_retains_then_releases_its_realm_edge() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
-    let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Unscopables));
+    let key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Unscopables)
+            .expect("well-known symbol"),
+    );
 
     let (slot_index, count_before) = {
         let state = runtime.0.state.borrow();
@@ -146,9 +150,13 @@ fn array_unscopables_autoinit_retains_then_releases_its_realm_edge() {
 #[test]
 fn array_unscopables_metadata_and_delete_preserve_lazy_state() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
-    let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Unscopables));
+    let key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Unscopables)
+            .expect("well-known symbol"),
+    );
 
     let count_before = {
         let state = runtime.0.state.borrow();
@@ -226,7 +234,7 @@ fn string_property(
 #[test]
 fn owned_array_domains_preserve_mutation_and_callback_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for source in [
         "(()=>{let a=[1,,3];let r=a.map((v,i)=>{if(i===0)a[1]=2;return v*2});return r.join(',')==='2,4,6'})()",
         "(()=>{let a=[1,2,3];let r=a.filter((v,i)=>{if(i===0)delete a[1];return true});return r.join(',')==='1,3'})()",
@@ -274,7 +282,7 @@ fn array_copy_build_sort_and_push_preserve_payload_nodes() {
     let runtime = Runtime::new();
     let weak = std::rc::Rc::downgrade(&runtime.0);
     {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for payload in ["'shared payload'", "123456789012345678901234567890n"] {
             let arrays = eval_object(
                 &mut context,

@@ -74,7 +74,7 @@ impl BindStep {
         let bound =
             runtime.new_bound_function(realm, &target, &arguments.readable[0], forwarded)?;
         Ok(Self::Own {
-            object: target.as_object().clone(),
+            object: target.as_object().try_clone()?,
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             resume: BindResume(Box::new(BindResumeState {
                 target: target.into_object(),
@@ -94,7 +94,7 @@ impl BindResume {
         match result {
             NativeConversion::Throw(value) => Ok(BindStep::Complete(Completion::Throw(value))),
             NativeConversion::Value(true) => Ok(BindStep::Read {
-                object: self.0.target.clone(),
+                object: self.0.target.try_clone()?,
                 key: runtime
                     .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                 resume: self,
@@ -126,7 +126,7 @@ impl BindResume {
         }
         self.0.name = true;
         Ok(BindStep::Read {
-            object: self.0.target.clone(),
+            object: self.0.target.try_clone()?,
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?,
             resume: self,
         })

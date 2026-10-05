@@ -66,9 +66,11 @@ pub(super) fn validate(
                         .ok_or_else(|| {
                             Error::internal("eval closure binding index is out of bounds")
                         })?;
-                    let root = closure_slots.get(usize::from(index)).ok_or_else(|| {
-                        Error::internal("eval closure slot index is out of bounds")
-                    })?;
+                    let root = closure_slots
+                        .get(runtime, usize::from(index))
+                        .ok_or_else(|| {
+                            Error::internal("eval closure slot index is out of bounds")
+                        })?;
                     runtime
                         .validate_var_ref_metadata(&root, descriptor)
                         .map_err(|error| Error::internal(error.to_string()))?;
@@ -80,6 +82,7 @@ pub(super) fn validate(
 }
 
 pub(super) fn materialize(
+    runtime: &Runtime,
     prepared: PreparedEvalEnvironment,
     closure_slots: &super::closure::ClosureSlots,
     mut capture: impl FnMut(EvalBindingSource, ClosureVariable) -> Result<VarRefRoot, Error>,
@@ -95,9 +98,9 @@ pub(super) fn materialize(
         for binding in &scope.bindings {
             let root = match binding.source {
                 EvalBindingSource::Closure(index) => closure_slots
-                    .get(usize::from(index))
+                    .get(runtime, usize::from(index))
                     .ok_or_else(|| Error::internal("eval closure slot index is out of bounds"))?
-                    .clone(),
+                    .try_clone()?,
                 source => {
                     let parent = match source {
                         EvalBindingSource::Local(index) => ClosureSource::ParentLocal(index),

@@ -138,7 +138,10 @@ impl Runtime {
             )?;
         }
 
-        let to_string_tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let to_string_tag = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::ToStringTag)
+                .expect("well-known symbol"),
+        );
         if !self.define_own_property(
             &atomics,
             &to_string_tag,
@@ -506,7 +509,7 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         // QuickJS deliberately checks the host policy after every observable
         // conversion, even when the current memory value would be unequal.
-        if !self.can_block() {
+        if !self.can_block()? {
             return Ok(Completion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,

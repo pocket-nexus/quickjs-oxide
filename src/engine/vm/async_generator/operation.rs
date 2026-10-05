@@ -24,6 +24,7 @@ pub(crate) enum AsyncGeneratorStep {
     Resolve { resume: Box<AsyncGeneratorResume> },
     Call { resume: Box<AsyncGeneratorResume> },
 }
+
 pub(crate) struct AsyncGeneratorResume {
     pending_effect: AsyncGeneratorStepPending,
     runtime: Runtime,
@@ -47,17 +48,26 @@ enum Cleanup {
 }
 impl Drop for AsyncGeneratorResume {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
         let _ = self
             .runtime
             .release_jsvalue(std::mem::replace(&mut self.output, JsValue::Undefined));
-        for value in [
-            self.pending_effect.resolve_value.take(),
-            self.pending_effect.call_value.take(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let _ = self.runtime.release_jsvalue(value);
+        if self.runtime.is_poisoned() {
+            return;
+        }
+        for field in [
+            &mut self.pending_effect.resolve_value,
+            &mut self.pending_effect.call_value,
+        ] {
+            if let Some(value) = field.take() {
+                let _ = self.runtime.release_jsvalue(value);
+                if self.runtime.is_poisoned() {
+                    return;
+                }
+            }
         }
         if let Some(input) = self.pending_effect.run_input.take() {
             let value = match input {
@@ -69,18 +79,20 @@ impl Drop for AsyncGeneratorResume {
                 ) => value,
             };
             let _ = self.runtime.release_jsvalue(value);
+            if self.runtime.is_poisoned() {
+                return;
+            }
         }
         if let Some(generator) = &self.generator {
-            match self.cleanup {
-                Cleanup::None => {}
-                Cleanup::Executing => {
-                    let _ = self.runtime.complete_async_generator(generator);
-                }
-                Cleanup::AwaitingReturn => {
-                    let _ = self
-                        .runtime
-                        .finish_async_generator_completed_return(generator);
-                }
+            let result = match self.cleanup {
+                Cleanup::None => Ok(()),
+                Cleanup::Executing => self.runtime.complete_async_generator(generator),
+                Cleanup::AwaitingReturn => self
+                    .runtime
+                    .finish_async_generator_completed_return(generator),
+            };
+            if result.is_err() {
+                self.runtime.0.poisoned.set(true);
             }
         }
     }
@@ -103,7 +115,7 @@ impl AsyncGeneratorStep {
         ))?;
         if let NativeFunctionId::AsyncGeneratorPrototypeResume(kind) = target {
             let capability = runtime.new_default_promise_capability(realm)?;
-            let promise = JsValue::Object(capability.promise.clone().into_handle());
+            let promise = JsValue::Object(capability.promise.try_clone()?.into_handle());
             let generator = match this_value {
                 JsValue::Object(generator)
                     if matches!(
@@ -199,7 +211,7 @@ impl AsyncGeneratorStep {
             pending_effect: AsyncGeneratorStepPending::default(),
             runtime: runtime.clone(),
             realm,
-            generator: Some(generator.clone()),
+            generator: Some(generator.try_clone()?),
             output: JsValue::Undefined,
             phase: Phase::Body,
             cleanup: Cleanup::None,
@@ -330,7 +342,7 @@ impl AsyncGeneratorResume {
     }
     fn pump(mut self: Box<Self>) -> Result<AsyncGeneratorStep, RuntimeError> {
         loop {
-            let generator = self.generator()?.clone();
+            let generator = self.generator()?.try_clone()?;
             let snapshot = self
                 .runtime
                 .0
@@ -470,7 +482,7 @@ impl AsyncGeneratorResume {
                 None
             }
         };
-        let generator = self.generator()?.clone();
+        let generator = self.generator()?.try_clone()?;
         let mut request = self
             .runtime
             .root_front_async_generator_request(&generator)?;
@@ -776,3 +788,160 @@ const _: () = assert!(std::mem::size_of::<AsyncGeneratorStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<AsyncGeneratorStep>() <= 64);
+
+#[cfg(all(test, not(target_family = "wasm"), panic = "unwind"))]
+mod quarantine_tests {
+    use super::*;
+    use crate::engine::value::Value;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn async_generator_resume_abandonment_respects_quarantine() {
+        let Ok(case) = std::env::var("QJS_ASYNC_GENERATOR_RESUME_CHILD") else {
+            for case in [
+                "normal",
+                "poison",
+                "unwind",
+                "error",
+                "output-error",
+                "pending-error",
+            ] {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "engine::vm::async_generator::operation::quarantine_tests::async_generator_resume_abandonment_respects_quarantine",
+                        "--nocapture",
+                    ])
+                    .env("QJS_ASYNC_GENERATOR_RESUME_CHILD", case)
+                    .env("QJS_TEARDOWN_PROBE", "1")
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "async generator cleanup {case}: {status}");
+            }
+            return;
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(generator) = context.eval("(async function*(){yield 1;})()").unwrap()
+        else {
+            panic!("expected async generator")
+        };
+        let mut resume = AsyncGeneratorResume {
+            pending_effect: AsyncGeneratorStepPending::default(),
+            runtime: runtime.clone(),
+            realm: context.realm,
+            generator: Some(generator.try_clone().unwrap()),
+            output: JsValue::Undefined,
+            phase: Phase::Body,
+            cleanup: Cleanup::Executing,
+        };
+        let count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(generator.object_id())
+            .unwrap();
+        match case.as_str() {
+            "normal" => {
+                drop(resume);
+                assert!(!runtime.is_poisoned());
+                assert_eq!(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .async_generator_snapshot(generator.object_id())
+                        .unwrap()
+                        .state,
+                    AsyncGeneratorState::Completed
+                );
+                assert_eq!(context.eval("1 + 2").unwrap(), Value::number(3.0));
+            }
+            "poison" | "unwind" => {
+                let state = runtime.0.state.borrow_mut();
+                if case == "poison" {
+                    runtime.0.poisoned.set(true);
+                    drop(resume);
+                } else {
+                    assert!(
+                        catch_unwind(AssertUnwindSafe(|| {
+                            let _resume = resume;
+                            panic!("injected async generator abandonment panic");
+                        }))
+                        .is_err()
+                    );
+                }
+                assert!(runtime.is_poisoned());
+                assert_eq!(
+                    state
+                        .heap
+                        .async_generator_snapshot(generator.object_id())
+                        .unwrap()
+                        .state,
+                    AsyncGeneratorState::SuspendedStart
+                );
+                assert_eq!(
+                    state
+                        .heap
+                        .object_strong_count(generator.object_id())
+                        .unwrap(),
+                    count
+                );
+                drop(state);
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            "error" => {
+                runtime.complete_async_generator(&generator).unwrap();
+                drop(resume);
+                assert!(runtime.is_poisoned());
+                assert_eq!(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .object_strong_count(generator.object_id())
+                        .unwrap(),
+                    count
+                );
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            "output-error" | "pending-error" => {
+                let invalid = runtime.new_object(None).unwrap().into_handle();
+                runtime.release_object_handle(invalid);
+                let later = runtime.new_object(None).unwrap().into_handle();
+                let later_count = runtime
+                    .0
+                    .state
+                    .borrow()
+                    .heap
+                    .object_strong_count(later)
+                    .unwrap();
+                if case == "output-error" {
+                    resume.output = JsValue::Object(invalid);
+                    resume.pending_effect.resolve_value = Some(JsValue::Object(later));
+                } else {
+                    resume.pending_effect.resolve_value = Some(JsValue::Object(invalid));
+                    resume.pending_effect.call_value = Some(JsValue::Object(later));
+                }
+                drop(resume);
+                assert!(runtime.is_poisoned());
+                let state = runtime.0.state.borrow();
+                assert_eq!(
+                    state
+                        .heap
+                        .async_generator_snapshot(generator.object_id())
+                        .unwrap()
+                        .state,
+                    AsyncGeneratorState::SuspendedStart
+                );
+                assert_eq!(state.heap.object_strong_count(later).unwrap(), later_count);
+                drop(state);
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            _ => panic!("unknown async generator cleanup case"),
+        }
+    }
+}

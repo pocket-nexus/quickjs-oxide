@@ -124,7 +124,7 @@ fn for_in_values_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),
@@ -158,7 +158,7 @@ fn for_in_parser_diagnostics_match_pinned_quickjs() {
 fn for_in_rust_smoke_runs_without_an_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::String(value) = context
         .eval("(function(){var s='';for(var k in {b:1,a:1})s+=k;return s})()")
         .expect("execute for-in smoke")

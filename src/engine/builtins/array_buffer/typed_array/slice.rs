@@ -83,7 +83,7 @@ impl Runtime {
                             .unwrap_or(JsValue::Undefined);
                         match super::write::TypedWriteStep::set(
                             self,
-                            target.clone(),
+                            target.try_clone()?,
                             Some(index),
                             value,
                         )?
@@ -341,7 +341,7 @@ impl TypedSliceResume {
         let count = u64::try_from((end - start).max(0))
             .map_err(|_| RuntimeError::Invariant("TypedArray.slice count was negative"))?;
         let snapshot = runtime.typed_array_snapshot(&self.0.source)?;
-        let source = self.0.source.clone();
+        let source = self.0.source.try_clone()?;
         let kind = self.0.kind;
         let resume = {
             let updated_0 = Phase::Species { start, count };
@@ -385,7 +385,7 @@ impl TypedSliceResume {
         Ok(TypedSliceStep::Complete(match self.0.kind {
             TypedSliceKind::Slice => runtime.finish_typed_slice(
                 self.0.realm,
-                self.0.source.clone(),
+                self.0.source.try_clone()?,
                 target,
                 start,
                 count,

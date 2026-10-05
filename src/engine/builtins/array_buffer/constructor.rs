@@ -173,7 +173,7 @@ impl BufferConstructorResume {
                 };
                 if let Some(options) = &self.0.options {
                     Ok(BufferConstructorStep::Read {
-                        object: options.clone(),
+                        object: options.try_clone()?,
                         key: runtime.pinned_property_key(
                             crate::engine::atom::pinned::PinnedAtom::MaxByteLength,
                         )?,
@@ -296,7 +296,7 @@ pub(in crate::engine::builtins) fn finish(
                     realm,
                     &object,
                     &key,
-                    JsValue::Object(object.clone().into_handle()),
+                    JsValue::Object(object.try_clone()?.into_handle()),
                 )?,
             )?,
             BufferConstructorStep::Prototype { new_target, resume } => resume.prototype(

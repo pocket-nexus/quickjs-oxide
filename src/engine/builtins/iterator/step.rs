@@ -66,7 +66,7 @@ impl NextStep {
         iterator: ObjectRef,
         callable: CallableRef,
     ) -> Result<Self, RuntimeError> {
-        let _operation = runtime.operation();
+        let _operation = runtime.operation()?;
         if !callable.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
@@ -174,7 +174,7 @@ impl NextResume {
                 let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
                 runtime.release_jsvalue(value)?;
                 Ok(NextStep::Read {
-                    object: object.clone(),
+                    object: object.try_clone()?,
                     key: runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?,
                     resume: Self(Box::new(NextResumeState {
@@ -221,7 +221,7 @@ pub(crate) fn finish_next(
                     realm,
                     &object,
                     &key,
-                    JsValue::Object(object.clone().into_handle()),
+                    JsValue::Object(object.try_clone()?.into_handle()),
                 )?,
             )?,
             NextStep::Call {
@@ -302,7 +302,7 @@ impl CloseStep {
             called: false,
         }));
         Ok(Self::Read {
-            object: resume.0.iterator.clone(),
+            object: resume.0.iterator.try_clone()?,
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?,
             resume,
         })
@@ -370,7 +370,7 @@ impl CloseResume {
         self.0.called = true;
         Ok(CloseStep::Call {
             callable,
-            iterator: self.0.iterator.clone(),
+            iterator: self.0.iterator.try_clone()?,
             resume: self,
         })
     }
@@ -393,7 +393,7 @@ pub(crate) fn finish_close(
                     realm,
                     &object,
                     &key,
-                    JsValue::Object(object.clone().into_handle()),
+                    JsValue::Object(object.try_clone()?.into_handle()),
                 )?,
             )?,
             CloseStep::Call {
@@ -426,7 +426,7 @@ mod raw_completion_tests {
     #[test]
     fn raw_completion_checks_phase_and_releases_ignored_done_value() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let resume = NextResume(Box::new(NextResumeState {
             realm: context.realm,
             phase: NextPhase::Result,
@@ -470,7 +470,7 @@ mod raw_completion_tests {
     #[test]
     fn consuming_raw_wrapper_drops_wrong_phase_result_owner() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
         let wrong = NextResume(Box::new(NextResumeState {
@@ -495,7 +495,7 @@ mod raw_completion_tests {
     #[test]
     fn raw_completion_preserves_yield_and_throw_identity() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let resume = NextResume(Box::new(NextResumeState {
             realm: context.realm,
             phase: NextPhase::Result,
@@ -536,7 +536,7 @@ mod raw_completion_tests {
     fn raw_completion_ordinary_results_reuse_done_value_parsing_once() {
         for wrapper in [false, true] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let result = context.eval("globalThis.trace='';globalThis.marker={};({get done(){trace+='d';return false},get value(){trace+='v';return marker}})").unwrap();
             let marker = context.eval("marker").unwrap();
             let resume = NextResume(Box::new(NextResumeState {

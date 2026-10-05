@@ -25,13 +25,13 @@ impl Runtime {
         key: &PropertyKey,
         value: Value,
     ) -> Result<PropertySetAction, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.prepare_set_property_with_receiver_in_realm(
             None,
             object,
             key,
             value,
-            Value::Object(object.clone()),
+            Value::Object(object.try_clone().expect("duplicate root")),
         )
     }
 
@@ -66,7 +66,14 @@ impl Runtime {
                 return Err(error);
             }
         };
-        let mut step = SetStep::start(self, realm, object.clone(), key.clone(), value, receiver)?;
+        let mut step = SetStep::start(
+            self,
+            realm,
+            object.try_clone().expect("duplicate root"),
+            key.try_clone().expect("duplicate root"),
+            value,
+            receiver,
+        )?;
         loop {
             match step {
                 SetStep::Complete(action) => return Ok(action),
@@ -170,7 +177,7 @@ impl Runtime {
         receiver: &JsValue,
         native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         self.prepare_ordinary_read_selected_inner(
             object.object_id(),
@@ -189,7 +196,7 @@ impl Runtime {
         receiver: &JsValue,
         native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !key.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property key"));
         }

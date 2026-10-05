@@ -162,7 +162,7 @@ impl ErrorStep {
                     )));
                 };
                 let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object)?;
-                resume.object = Some(object.clone());
+                resume.object = Some(object.try_clone()?);
                 resume.phase = Phase::NameRead;
                 Ok({
                     let __pending_field_key = runtime
@@ -183,7 +183,9 @@ impl ErrorResume {
     fn object(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
             .object
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("Error operation object missing"))
     }
     fn aggregate_kind(&self) -> bool {

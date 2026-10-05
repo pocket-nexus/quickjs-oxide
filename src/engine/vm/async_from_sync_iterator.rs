@@ -33,24 +33,30 @@ impl Runtime {
         realm: ContextId,
         iterable: Value,
     ) -> Result<NativeConversion<(Value, Value)>, RuntimeError> {
-        let async_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::AsyncIterator));
-        let async_method =
-            match self.get_value_property_in_realm(realm, iterable.clone(), &async_key)? {
+        let async_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::AsyncIterator)?);
+        let async_method = match self.get_value_property_in_realm(
+            realm,
+            iterable.try_clone().expect("duplicate root"),
+            &async_key,
+        )? {
+            Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+            Completion::Throw(value) => {
+                return Ok(NativeConversion::Throw(value));
+            }
+        };
+
+        let iterator = if matches!(async_method, Value::Undefined | Value::Null) {
+            let sync_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
+            let sync_method = match self.get_value_property_in_realm(
+                realm,
+                iterable.try_clone().expect("duplicate root"),
+                &sync_key,
+            )? {
                 Completion::Return(value) => self.root_and_release_jsvalue(value)?,
                 Completion::Throw(value) => {
                     return Ok(NativeConversion::Throw(value));
                 }
             };
-
-        let iterator = if matches!(async_method, Value::Undefined | Value::Null) {
-            let sync_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
-            let sync_method =
-                match self.get_value_property_in_realm(realm, iterable.clone(), &sync_key)? {
-                    Completion::Return(value) => self.root_and_release_jsvalue(value)?,
-                    Completion::Throw(value) => {
-                        return Ok(NativeConversion::Throw(value));
-                    }
-                };
             let sync_method =
                 match self.async_from_sync_callable(realm, sync_method, "not a function")? {
                     NativeConversion::Value(method) => method,
@@ -107,7 +113,11 @@ impl Runtime {
         };
 
         let next_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?;
-        let next = match self.get_value_property_in_realm(realm, iterator.clone(), &next_key)? {
+        let next = match self.get_value_property_in_realm(
+            realm,
+            iterator.try_clone().expect("duplicate root"),
+            &next_key,
+        )? {
             Completion::Return(value) => self.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
                 return Ok(NativeConversion::Throw(value));
@@ -382,7 +392,7 @@ mod tests {
     #[test]
     fn get_async_iterator_uses_nullish_fallback_and_branded_wrapper() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (iterator, _next) = acquire(
             &runtime,
             &mut context,
@@ -428,7 +438,7 @@ mod tests {
     #[test]
     fn async_from_sync_distinguishes_argument_count_and_reads_done_then_value() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (iterator, next) = acquire(
             &runtime,
             &mut context,
@@ -454,7 +464,11 @@ mod tests {
 
         let first = promise(
             context
-                .call(&next, Value::Object(iterator.clone()), &[])
+                .call(
+                    &next,
+                    Value::Object(iterator.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         );
         drain_jobs(&runtime);
@@ -502,7 +516,7 @@ mod tests {
     #[test]
     fn missing_return_resolves_directly_without_assimilating_argument() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (iterator, _next) = acquire(
             &runtime,
             &mut context,
@@ -546,7 +560,7 @@ mod tests {
     #[test]
     fn receiver_and_synchronous_failures_return_rejected_promises() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (iterator, next) = acquire(
             &runtime,
             &mut context,
@@ -572,7 +586,7 @@ mod tests {
     #[test]
     fn rejected_value_closes_non_return_and_preserves_original_reason_across_gc() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (iterator, next) = acquire(
             &runtime,
             &mut context,
@@ -595,7 +609,11 @@ mod tests {
         );
         let result_promise = promise(
             context
-                .call(&next, Value::Object(iterator.clone()), &[])
+                .call(
+                    &next,
+                    Value::Object(iterator.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         );
         drop(iterator);
@@ -615,7 +633,7 @@ mod tests {
     #[test]
     fn return_mode_and_completed_steps_do_not_close_rejected_values() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (iterator, next) = acquire(
             &runtime,
             &mut context,
@@ -639,7 +657,11 @@ mod tests {
 
         let done_promise = promise(
             context
-                .call(&next, Value::Object(iterator.clone()), &[])
+                .call(
+                    &next,
+                    Value::Object(iterator.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         );
         drain_jobs(&runtime);
@@ -672,7 +694,7 @@ mod tests {
     #[test]
     fn missing_throw_closes_normally_before_rejecting() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (iterator, _next) = acquire(
             &runtime,
             &mut context,

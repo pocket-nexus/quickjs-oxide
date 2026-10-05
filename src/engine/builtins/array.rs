@@ -134,7 +134,7 @@ impl Runtime {
         object: &ObjectRef,
         kind: ArrayIteratorKind,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Array Iterator target"));
         }
@@ -359,7 +359,7 @@ impl Runtime {
             0,
             0,
         )?;
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             array_iterator_prototype,
             &tag,
@@ -403,7 +403,7 @@ impl Runtime {
             "get [Symbol.species]",
             0,
         )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species));
+        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
         if !self.define_own_property(
             constructor.as_object(),
             &species,
@@ -443,7 +443,7 @@ impl Runtime {
             .borrow_mut()
             .heap
             .attach_array_prototype_values(realm, values.object_id())?;
-        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
+        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
         if !self.define_raw_property(
             array_prototype,
             &iterator,
@@ -464,7 +464,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Array",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -481,7 +481,7 @@ impl Runtime {
         array_prototype: &ObjectRef,
         realm: ContextId,
     ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Unscopables));
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Unscopables)?);
         self.validate_object_and_key(array_prototype, &key)?;
         let mut state = self.0.state.borrow_mut();
         state.heap.context(realm)?;
@@ -979,12 +979,12 @@ impl Runtime {
             flatten::FlattenStep::start_into(
                 self,
                 realm,
-                target.clone(),
+                target.try_clone().expect("duplicate root"),
                 source,
                 source_length,
                 depth,
-                mapper.cloned(),
-                mapper_this.clone(),
+                mapper.map(|value| value.try_clone().expect("duplicate root")),
+                mapper_this.try_clone().expect("duplicate root"),
                 target_limit,
                 frame_limit,
             )?,
@@ -1313,11 +1313,9 @@ impl Runtime {
             ));
         };
         let object = match this_value {
-            JsValue::Object(id) => {
-                std::borrow::Cow::Owned(ObjectRef::from_borrowed_handle(self.clone(), *id)?)
-            }
+            JsValue::Object(id) => ObjectRef::from_borrowed_handle(self.clone(), *id)?,
             value => match self.native_to_object_jsvalue(realm, self.dup_jsvalue(value)?)? {
-                NativeConversion::Value(object) => std::borrow::Cow::Owned(object),
+                NativeConversion::Value(object) => object,
                 NativeConversion::Throw(value) => {
                     return Ok(Completion::Throw(value));
                 }

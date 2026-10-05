@@ -399,8 +399,14 @@ fn install_worker_callback(runtime_id: u64, callback: CallableRef) {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn worker_callback(runtime_id: u64) -> Option<CallableRef> {
-    AGENT_WORKER_CALLBACKS.with(|callbacks| callbacks.borrow().get(&runtime_id).cloned())
+fn worker_callback(runtime_id: u64) -> Result<Option<CallableRef>, RuntimeError> {
+    AGENT_WORKER_CALLBACKS.with(|callbacks| {
+        callbacks
+            .borrow()
+            .get(&runtime_id)
+            .map(CallableRef::try_clone)
+            .transpose()
+    })
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -434,10 +440,16 @@ fn run_agent_worker(
     // the main worker's authenticated bytecode tree. Current admissions keep
     // agent-host and dynamic-import roots disjoint, so fail closed here until
     // an independently authenticated agent dynamic-import cohort exists.
-    runtime.set_dynamic_import_bytecode_allowed(false);
+    runtime
+        .set_dynamic_import_bytecode_allowed(false)
+        .map_err(|error| format!("set worker import policy: {error}"))?;
     let runtime_id = runtime.domain_id();
-    runtime.set_can_block(true);
-    let mut context = runtime.new_context();
+    runtime
+        .set_can_block(true)
+        .map_err(|error| format!("configure worker: {error}"))?;
+    let mut context = runtime
+        .new_context()
+        .map_err(|error| format!("create worker context: {error}"))?;
     bind_realm(&runtime, context.realm_id(), session, AgentRole::Worker)
         .map_err(|error| format!("bind worker realm: {error}"))?;
     let _binding = RuntimeBindingGuard(runtime_id);
@@ -467,7 +479,9 @@ fn run_agent_worker(
             break;
         }
 
-        let Some(callback) = worker_callback(runtime_id) else {
+        let Some(callback) = worker_callback(runtime_id)
+            .map_err(|error| format!("duplicate worker callback: {error}"))?
+        else {
             break;
         };
 
@@ -545,7 +559,7 @@ fn record_agent_failure(
     error: &RuntimeError,
 ) {
     failures.push(format!("{operation}: {error}"));
-    if context.has_exception() {
+    if matches!(context.has_exception(), Ok(true)) {
         if let Err(clear_error) = context.take_exception() {
             failures.push(format!("clear {operation} exception: {clear_error}"));
         }
@@ -559,7 +573,15 @@ fn drain_agent_jobs(
     failures: &mut Vec<String>,
     operation: &str,
 ) -> bool {
-    while runtime.is_job_pending() {
+    loop {
+        match runtime.is_job_pending() {
+            Ok(true) => {}
+            Ok(false) => return true,
+            Err(error) => {
+                failures.push(format!("inspect agent jobs: {error}"));
+                return false;
+            }
+        }
         match runtime
             .execute_pending_job()
             .map_err(|error| error.into_error())
@@ -575,7 +597,6 @@ fn drain_agent_jobs(
             }
         }
     }
-    true
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -623,7 +644,7 @@ impl Runtime {
             )?;
             let key = self.intern_property_key(name)?;
             let descriptor = OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::Object(function.as_object().clone())),
+                value: DescriptorField::Present(Value::Object(function.as_object().try_clone()?)),
                 writable: DescriptorField::Present(true),
                 enumerable: DescriptorField::Present(false),
                 configurable: DescriptorField::Present(true),
@@ -739,6 +760,9 @@ impl Context {
         &mut self,
         session: &Test262AgentSession,
     ) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         bind_realm(&self.runtime, self.realm, session, AgentRole::Main)?;
         self.install_test262_host()
     }
@@ -777,7 +801,7 @@ mod tests {
     #[test]
     fn opt_in_agent_surface_matches_pinned_quickjs_shape_and_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         context.install_test262_host().unwrap();
         assert_eq!(eval_string(&mut context, "typeof $262.agent"), "undefined");
 
@@ -827,7 +851,7 @@ mod tests {
     #[test]
     fn report_queue_sleep_clock_and_main_role_are_quickjs_shaped() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
 
@@ -898,7 +922,7 @@ mod tests {
     #[test]
     fn worker_has_fresh_blocking_runtime_and_quickjs_role_checks() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -936,7 +960,7 @@ mod tests {
     #[test]
     fn create_realm_inherits_session_with_quickjs_main_role() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -951,7 +975,7 @@ child262.agent.start("$262.agent.report('main-child')");"#,
         assert_eq!(take_reports(&session), ["main-child"]);
 
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -990,7 +1014,7 @@ child262.agent.start("$262.agent.report('main-child')");"#,
     #[test]
     fn broadcast_handles_zero_and_invocation_time_worker_cohorts() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
 
@@ -1043,7 +1067,7 @@ var cohortBuffer = new SharedArrayBuffer(4);"#,
     #[test]
     fn receiver_can_wait_before_broadcast_and_ack_precedes_callback_completion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1088,7 +1112,7 @@ $262.agent.start(`
     #[test]
     fn callback_replacement_role_checks_and_conversion_order_are_pinned() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
 
@@ -1180,7 +1204,7 @@ $262.agent.start(`
     #[test]
     fn fixed_shared_backing_preserves_int32_and_bigint_across_runtimes() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1225,7 +1249,7 @@ $262.agent.start(`
     #[test]
     fn callback_jobs_can_register_the_next_broadcast_generation() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1267,7 +1291,7 @@ $262.agent.start(`
     #[test]
     fn synchronous_callback_replacement_is_discarded_after_the_current_call() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1303,7 +1327,7 @@ $262.agent.start(`
     #[test]
     fn worker_and_callback_exceptions_still_drain_jobs_and_clean_up_join() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1342,7 +1366,7 @@ $262.agent.start(`
     #[test]
     fn join_surfaces_worker_failures() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1363,7 +1387,7 @@ $262.agent.start(`
             "Function(\"return import('./fixture.js')\")",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let session = Test262AgentSession::new(Runtime::new);
             context.install_test262_host_with_agent(&session).unwrap();
             drop(
@@ -1405,14 +1429,14 @@ $262.agent.start(`
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let shared = context
                 .import_shared_array_buffer(SharedBufferHandle::new(4, None).unwrap())
                 .unwrap();
             let function = context.eval(source).unwrap();
             let callable = runtime.callable_from_value(function).unwrap();
             let this = if receiver {
-                Value::Object(shared.clone())
+                Value::Object(shared.try_clone().expect("duplicate root"))
             } else {
                 Value::Undefined
             };
@@ -1428,7 +1452,7 @@ $262.agent.start(`
             runtime.run_gc().unwrap();
         }
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let shared = context
             .import_shared_array_buffer(SharedBufferHandle::new(4, None).unwrap())
             .unwrap();
@@ -1438,7 +1462,7 @@ $262.agent.start(`
             .call(
                 &callable,
                 Value::Undefined,
-                &[Value::Object(shared.clone())],
+                &[Value::Object(shared.try_clone().expect("duplicate root"))],
             )
             .unwrap();
         assert_eq!(returned, Value::Object(shared));

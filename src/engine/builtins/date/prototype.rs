@@ -427,6 +427,7 @@ mod tests {
         let runtime = Runtime::new();
         runtime
             .new_context()
+            .expect("create context")
             .eval(source)
             .unwrap_or_else(|error| panic!("Date prototype test failed: {error:?}"))
     }

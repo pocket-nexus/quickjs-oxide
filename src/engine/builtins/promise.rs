@@ -35,13 +35,23 @@ pub(crate) mod operation;
 /// `handled == false` reports a rejection which had no handler when it was
 /// published. `handled == true` reports that a handler was attached later.
 /// The Promise and reason are rooted for the duration of the callback and may
-/// be cloned by the host when it needs to retain them.
-#[derive(Clone)]
+/// be duplicated with `try_clone` or moved into host storage when it needs to retain them.
 pub struct PromiseRejectionEvent {
     pub(crate) context: ContextId,
     pub(crate) promise: ObjectRef,
     pub(crate) reason: Value,
     pub(crate) handled: bool,
+}
+
+impl PromiseRejectionEvent {
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            context: self.context,
+            promise: self.promise.try_clone()?,
+            reason: self.reason.try_clone()?,
+            handled: self.handled,
+        })
+    }
 }
 
 pub(crate) type HostPromiseRejectionTracker = Rc<dyn Fn(PromiseRejectionEvent)>;
@@ -50,13 +60,20 @@ pub(crate) type HostPromiseRejectionTracker = Rc<dyn Fn(PromiseRejectionEvent)>;
 ///
 /// This is the Rust counterpart of QuickJS `JS_PromiseState` plus
 /// `JS_PromiseResult`. A pending Promise always reports `undefined`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct PromiseSnapshot {
     state: PromiseState,
     result: Value,
 }
 
 impl PromiseSnapshot {
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            state: self.state,
+            result: self.result.try_clone()?,
+        })
+    }
+
     #[must_use]
     pub const fn state(&self) -> PromiseState {
         self.state
@@ -86,6 +103,11 @@ impl PromiseRejectionEvent {
     pub const fn is_handled(&self) -> bool {
         self.handled
     }
+
+    /// Consume the notification, transferring its existing roots to the host.
+    pub fn into_parts(self) -> (ContextId, ObjectRef, Value, bool) {
+        (self.context, self.promise, self.reason, self.handled)
+    }
 }
 
 pub(crate) struct RootedPromiseCapability {
@@ -110,6 +132,7 @@ impl Runtime {
         &self,
         promise: &ObjectRef,
     ) -> Result<Option<PromiseSnapshot>, RuntimeError> {
+        let _operation = self.operation()?;
         if !promise.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Promise"));
         }
@@ -135,16 +158,20 @@ impl Runtime {
     /// tracker drops it immediately; use
     /// [`Runtime::clear_host_promise_rejection_tracker`] when tracking is no
     /// longer required.
-    pub fn set_host_promise_rejection_tracker<F>(&self, tracker: F)
+    pub fn set_host_promise_rejection_tracker<F>(&self, tracker: F) -> Result<(), RuntimeError>
     where
         F: Fn(PromiseRejectionEvent) + 'static,
     {
+        let _operation = self.operation()?;
         *self.0.promise_rejection_tracker.borrow_mut() = Some(Rc::new(tracker));
+        Ok(())
     }
 
     /// Remove the runtime-wide host Promise rejection tracker.
-    pub fn clear_host_promise_rejection_tracker(&self) {
+    pub fn clear_host_promise_rejection_tracker(&self) -> Result<(), RuntimeError> {
+        let _operation = self.operation()?;
         self.0.promise_rejection_tracker.borrow_mut().take();
+        Ok(())
     }
 
     pub(crate) fn initialize_promise_intrinsic(
@@ -216,7 +243,7 @@ impl Runtime {
             "get [Symbol.species]",
             0,
         )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species));
+        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
         if !self.define_own_property(
             constructor.as_object(),
             &species,
@@ -236,7 +263,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Promise",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -252,7 +279,7 @@ impl Runtime {
     }
 
     fn define_promise_to_string_tag(&self, object: &ObjectRef) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             object,
             &key,
@@ -304,7 +331,7 @@ impl Runtime {
     }
 
     fn new_promise_object(&self, prototype: &ObjectRef) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Promise prototype"));
         }
@@ -335,7 +362,7 @@ impl Runtime {
         length: i32,
         internal: InternalCallableData,
     ) -> Result<CallableRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let function_prototype = self
             .0
             .state
@@ -457,7 +484,7 @@ impl Runtime {
                 return Err(error);
             }
         };
-        let promise = capability.promise.clone();
+        let promise = capability.promise.try_clone()?;
         self.settle_promise(realm, &promise, PromiseState::Rejected, reason)?;
         Ok(promise)
     }
@@ -774,12 +801,12 @@ impl Runtime {
             if state == PromiseState::Rejected && !was_handled {
                 self.notify_host_promise_rejection_tracker(
                     realm,
-                    promise.clone(),
+                    promise.try_clone()?,
                     &result.as_raw(),
                     false,
                 )?;
             }
-            prepared_jobs.publish();
+            prepared_jobs.publish()?;
             Ok(())
         })();
         self.release_jsvalue(result)?;
@@ -867,7 +894,7 @@ impl Runtime {
                 if !snapshot.is_handled {
                     self.notify_host_promise_rejection_tracker(
                         realm,
-                        promise.clone(),
+                        promise.try_clone()?,
                         &snapshot.result,
                         true,
                     )?;
@@ -991,7 +1018,7 @@ impl Runtime {
         match operation::PromiseStep::dynamic_import_then(
             self,
             realm,
-            promise.clone(),
+            promise.try_clone()?,
             module,
             resolve,
             reject,
@@ -1056,7 +1083,7 @@ impl Runtime {
                 if !snapshot.is_handled {
                     self.notify_host_promise_rejection_tracker(
                         realm,
-                        promise.clone(),
+                        promise.try_clone()?,
                         &snapshot.result,
                         true,
                     )?;
@@ -1080,7 +1107,7 @@ mod tests {
     #[test]
     fn settlement_retains_original_string_node_without_materialization() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(promise) = context.eval("new Promise(() => {})").unwrap() else {
             panic!("expected promise");
         };
@@ -1112,7 +1139,7 @@ mod tests {
     #[test]
     fn promise_snapshot_rejects_a_promise_from_another_runtime() {
         let owner = Runtime::new();
-        let mut context = owner.new_context();
+        let mut context = owner.new_context().expect("create context");
         let Value::Object(promise) = context.eval("Promise.resolve(42)").unwrap() else {
             panic!("Promise.resolve did not return an object");
         };
@@ -1135,7 +1162,7 @@ mod tests {
     #[test]
     fn promise_snapshot_roots_an_object_result_across_gc() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(promise) = context
             .eval(
                 r#"

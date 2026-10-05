@@ -42,7 +42,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Function",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -187,7 +187,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Number",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -232,7 +232,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Boolean",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -278,7 +278,7 @@ impl Runtime {
         string_prototype: &ObjectRef,
         string_iterator_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
+        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
         self.define_native_builtin_auto_init_with_key(
             string_prototype,
             realm,
@@ -298,7 +298,7 @@ impl Runtime {
             0,
         )?;
 
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             string_iterator_prototype,
             &tag,
@@ -344,7 +344,7 @@ impl Runtime {
             0,
         )?;
 
-        let to_primitive = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToPrimitive));
+        let to_primitive = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToPrimitive)?);
         self.define_native_builtin_auto_init_with_key(
             symbol_prototype,
             realm,
@@ -357,7 +357,8 @@ impl Runtime {
             // but a symbol-named method is installed non-writable.
             PropertyFlags::data(false, false, true),
         )?;
-        let to_string_tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let to_string_tag =
+            PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             symbol_prototype,
             &to_string_tag,
@@ -423,7 +424,7 @@ impl Runtime {
                 constructor.as_object(),
                 &key,
                 &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Value::Symbol(self.well_known_symbol(symbol))),
+                    value: DescriptorField::Present(Value::Symbol(self.well_known_symbol(symbol)?)),
                     writable: DescriptorField::Present(false),
                     enumerable: DescriptorField::Present(false),
                     configurable: DescriptorField::Present(false),
@@ -438,7 +439,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Symbol",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -472,7 +473,7 @@ impl Runtime {
             0,
             0,
         )?;
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             bigint_prototype,
             &tag,
@@ -513,7 +514,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "BigInt",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -544,7 +545,7 @@ impl Runtime {
             self.define_function_data_property(
                 global_object,
                 name,
-                Value::Object(callable.as_object().clone()),
+                Value::Object(callable.as_object().try_clone()?),
                 true,
                 true,
             )?;
@@ -602,7 +603,7 @@ impl Runtime {
         &self,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         let defined = self.define_own_property(
             global_object,
             &key,
@@ -631,7 +632,7 @@ impl Runtime {
             global_object,
             &key,
             &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::Object(global_object.clone())),
+                value: DescriptorField::Present(Value::Object(global_object.try_clone()?)),
                 writable: DescriptorField::Present(true),
                 enumerable: DescriptorField::Present(false),
                 configurable: DescriptorField::Present(true),
@@ -688,10 +689,10 @@ impl Runtime {
                 &key,
                 &OrdinaryPropertyDescriptor {
                     get: DescriptorField::Present(AccessorValue::Callable(
-                        throw_type_error.clone(),
+                        throw_type_error.try_clone()?,
                     )),
                     set: DescriptorField::Present(AccessorValue::Callable(
-                        throw_type_error.clone(),
+                        throw_type_error.try_clone()?,
                     )),
                     enumerable: DescriptorField::Present(false),
                     configurable: DescriptorField::Present(true),
@@ -751,7 +752,7 @@ impl Runtime {
             0,
         )?;
 
-        let has_instance = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::HasInstance));
+        let has_instance = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::HasInstance)?);
         self.define_native_builtin_auto_init_with_key(
             function_prototype,
             realm,
@@ -850,14 +851,14 @@ impl Runtime {
         self.define_function_data_property(
             constructor.as_object(),
             "prototype",
-            Value::Object(prototype.clone()),
+            Value::Object(prototype.try_clone()?),
             false,
             false,
         )?;
         self.define_function_data_property(
             prototype,
             "constructor",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )

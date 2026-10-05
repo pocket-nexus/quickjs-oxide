@@ -70,7 +70,7 @@ fn update_expressions_in_function_constructor_match_quickjs_oracle() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let constructor = context.function_constructor().unwrap();
     let mut output = Vec::new();
 

@@ -146,7 +146,7 @@ impl TypedIterationStep {
             ArrayIterationKind::ForEach => IterationMode::ForEach,
             ArrayIterationKind::Map => {
                 return Ok(Self::request_species(
-                    input.target.clone(),
+                    input.target.try_clone()?,
                     element,
                     length,
                     TypedIterationResume(Box::new(TypedIterationResumeState {
@@ -186,7 +186,7 @@ impl TypedIterationResume {
                 IterationMode::Map(target) => JsValue::Object(target.into_handle()),
                 IterationMode::Filter { selected, length } => {
                     return Ok(TypedIterationStep::request_species(
-                        state.input.target.clone(),
+                        state.input.target.try_clone()?,
                         state.input.element,
                         length,
                         Self(Box::new(TypedIterationResumeState {
@@ -246,9 +246,12 @@ impl TypedIterationResume {
             .call_arguments
             .as_mut()
             .unwrap()
-            .push(JsValue::Object(state.input.target.clone().into_handle()));
-        resume.0.pending_effect.call_target =
-            Some(DirectCallTarget::Callable(state.input.callback.clone()));
+            .push(JsValue::Object(
+                state.input.target.try_clone()?.into_handle(),
+            ));
+        resume.0.pending_effect.call_target = Some(DirectCallTarget::Callable(
+            state.input.callback.try_clone()?,
+        ));
         Ok(TypedIterationStep::Call { resume })
     }
     pub(crate) fn species(
@@ -273,7 +276,7 @@ impl TypedIterationResume {
                 },
             ),
             IterationPhase::FilterSpecies(selected) => Ok(TypedIterationStep::request_read(
-                target.clone(),
+                target.try_clone()?,
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Set)?,
                 Self(Box::new(TypedIterationResumeState {
                     pending_effect: TypedIterationStepPending::new(runtime.clone()),
@@ -414,7 +417,7 @@ impl TypedIterationResume {
                 arguments.push(JsValue::Object(selected.into_handle()));
                 Ok(TypedIterationStep::request_call(
                     DirectCallTarget::Callable(callable),
-                    JsValue::Object(target.clone().into_handle()),
+                    JsValue::Object(target.try_clone()?.into_handle()),
                     arguments,
                     Self(Box::new(TypedIterationResumeState {
                         pending_effect: TypedIterationStepPending::new(runtime.clone()),
@@ -490,7 +493,7 @@ impl Runtime {
                             realm,
                             &object,
                             &key,
-                            JsValue::Object(object.clone().into_handle()),
+                            JsValue::Object(object.try_clone()?.into_handle()),
                         )?,
                     )?
                 }

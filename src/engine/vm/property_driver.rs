@@ -34,14 +34,78 @@ pub(super) enum PropertyProgress {
 /// A static read selected while the frame transaction was still active.
 /// The read owns its getter/receiver or result until the driver consumes it.
 pub(super) enum SelectedNamedRead {
-    Read(OrdinaryRead),
+    Getter(OwnedGetterSelection),
     LookupError(Error),
 }
 
 impl SelectedNamedRead {
     pub(super) fn release(self, runtime: &Runtime) {
-        if let Self::Read(read) = self {
-            read.release(runtime);
+        match self {
+            Self::Getter(OwnedGetterSelection { getter, receiver }) => {
+                let _ = runtime.release_jsvalue(getter);
+                let _ = runtime.release_jsvalue(receiver);
+            }
+            Self::LookupError(_) => {}
+        }
+    }
+}
+
+/// A completed getter choice owns only its callee and receiver edges. Selection
+/// does not build a public root or replay lookup at the legacy boundary.
+pub(super) struct OwnedGetterSelection {
+    getter: JsValue,
+    receiver: JsValue,
+}
+
+impl OwnedGetterSelection {
+    pub(super) fn prepare(
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        receiver: &JsValue,
+        getter: crate::engine::heap::ObjectId,
+    ) -> Result<Self, Error> {
+        let getter = state
+            .dup_jsvalue(&JsValue::Object(getter))
+            .map_err(runtime_error_to_vm_error)?;
+        let mut guard = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+            state, poisoned, getter,
+        );
+        let (state, getter) = guard.parts();
+        let receiver = state
+            .dup_jsvalue(receiver)
+            .map_err(runtime_error_to_vm_error)?;
+        Ok(Self {
+            getter: getter.take().expect("guard owns selected getter"),
+            receiver,
+        })
+    }
+
+    pub(super) fn release(
+        self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+    ) -> Result<(), Error> {
+        state
+            .release_owned_jsvalue(poisoned, self.getter)
+            .map_err(runtime_error_to_vm_error)?;
+        state
+            .release_owned_jsvalue(poisoned, self.receiver)
+            .map_err(runtime_error_to_vm_error)
+    }
+
+    fn into_legacy_read(self, runtime: &Runtime) -> OrdinaryRead {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "core.legacy_boundary.selected_getter_root",
+        );
+        let JsValue::Object(id) = self.getter else {
+            unreachable!("selected getter is an object")
+        };
+        OrdinaryRead::Call {
+            getter: crate::engine::object::CallableRef::from_validated_object(
+                crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), id),
+            ),
+            receiver: self.receiver,
         }
     }
 }
@@ -153,7 +217,7 @@ pub(super) fn read_progress_selected(
     let realm = frame.executable.realm;
     let next_pc = fallthrough.index();
     let selected_read = match selected.selected.take() {
-        Some(SelectedNamedRead::Read(read)) => Some(read),
+        Some(SelectedNamedRead::Getter(read)) => Some(read.into_legacy_read(runtime)),
         Some(SelectedNamedRead::LookupError(error)) => {
             return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
         }
@@ -258,6 +322,10 @@ pub(super) fn read_progress_selected(
         .map(PropertyProgress::Deferred);
     }
     let depth = execution.slots.depth(&frame.window);
+    enum SelectedKey<'a> {
+        Borrowed(&'a PropertyKey),
+        Owned(PropertyKey),
+    }
     let (key, retained_key) = match key_kind {
         ReadKey::Static(index) => {
             let Some(atom) = frame
@@ -278,7 +346,7 @@ pub(super) fn read_progress_selected(
                         .map_err(|error| Error::internal(error.to_string()))?,
                 ),
             };
-            let key = Some(std::borrow::Cow::Borrowed(&*key));
+            let key = Some(SelectedKey::Borrowed(&*key));
             (key, None)
         }
         ReadKey::Computed { keep_key } => {
@@ -313,7 +381,7 @@ pub(super) fn read_progress_selected(
                     )?),
                 })
                 .transpose()?;
-            (Some(std::borrow::Cow::Owned(key)), retained)
+            (Some(SelectedKey::Owned(key)), retained)
         }
     };
     // Lookup borrows the original rooted operand. Only a pending callback
@@ -322,7 +390,11 @@ pub(super) fn read_progress_selected(
         runtime.prepare_value_property_read_selected_jsvalue(
             realm,
             base,
-            key.as_deref()
+            key.as_ref()
+                .map(|key| match key {
+                    SelectedKey::Borrowed(key) => *key,
+                    SelectedKey::Owned(key) => key,
+                })
                 .ok_or(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "fallback read lost its key",
                 ))?,
@@ -336,7 +408,11 @@ pub(super) fn read_progress_selected(
         }
     };
     let key = if matches!(read, OrdinaryRead::Special { .. }) {
-        key.map(std::borrow::Cow::into_owned)
+        key.map(|key| match key {
+            SelectedKey::Borrowed(key) => key.try_clone(),
+            SelectedKey::Owned(key) => Ok(key),
+        })
+        .transpose()?
     } else {
         None
     };
@@ -902,7 +978,7 @@ fn read_pending(
             runtime,
             execution,
             id,
-            callable.as_object().clone(),
+            callable.as_object().try_clone()?,
             receiver,
             arguments,
             false,
@@ -921,6 +997,7 @@ fn read_pending(
     frame.resume_pc = frame.next_pc()?;
     if let Some((call, receiver)) = ordinary_callback {
         let entry = call.prepare_callback(
+            runtime,
             &mut execution.call_storage,
             receiver,
             Vec::new(),
@@ -932,10 +1009,10 @@ fn read_pending(
                 operation: None,
             },
         )?;
-        push_frame(execution, entry)?;
+        push_frame(runtime, execution, entry)?;
     } else if let Some(request) = request {
         let entry = request.prepare(runtime, &mut execution.call_storage)?;
-        push_frame(execution, entry)?;
+        push_frame(runtime, execution, entry)?;
     } else {
         execution.slots.push(
             &mut frame.cold.window,
@@ -980,7 +1057,7 @@ mod read_completion_tests {
         else {
             panic!("fixture must be bytecode");
         };
-        let prepared = runtime
+        let mut prepared = runtime
             .prepare_bytecode_frame(&callable, Value::Undefined, Value::Undefined, &[], bytecode)
             .unwrap();
         let locals = prepared.locals.len();
@@ -994,11 +1071,12 @@ mod read_completion_tests {
             cold: ColdFrame::new(FrameCold {
                 rare: std::cell::OnceCell::new(),
                 return_to: None,
-                entry_guard: Some(prepared.active_frame),
+                entry_guard: Some(prepared.active_frame.into_internal()),
                 function: crate::engine::vm::closure::FrameFunction::new(function, closure_slots)
+                    .unwrap()
                     .into(),
                 reusable_captured_locals: vec![false; locals],
-                input: prepared.input.into(),
+                input: prepared.input.take().into(),
             }),
             storage: FrameStorage {
                 original_arguments: vec![],
@@ -1008,7 +1086,7 @@ mod read_completion_tests {
             },
         };
         let mut execution = RunningExecution::new(runtime, ExecutionLimits::default()).unwrap();
-        let id = crate::engine::vm::driver::push_frame(&mut execution, entry).unwrap();
+        let id = crate::engine::vm::driver::push_frame(runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
         let exec = &frame.executable.exec;
         let published = (0..exec.instruction_len())
@@ -1027,14 +1105,14 @@ mod read_completion_tests {
     #[test]
     fn getterless_named_read_finishes_in_the_active_frame_scope() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context
             .eval("globalThis.localRead = {}; Object.defineProperty(localRead, 'x', {get: undefined}); localRead")
             .unwrap()
         else {
             panic!("object");
         };
-        let _other_owner = object.clone();
+        let _other_owner = object.try_clone().expect("duplicate root");
         let (mut execution, id) = read_fixture(
             &runtime,
             &mut context,
@@ -1047,7 +1125,7 @@ mod read_completion_tests {
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
         assert!(matches!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Complete
         ));
         assert!(execution.selected_named_read.is_none());
@@ -1056,14 +1134,14 @@ mod read_completion_tests {
     #[test]
     fn selected_named_getter_survives_the_frame_scope_handoff() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context
             .eval("globalThis.pendingRead = {get x(){ return 7 }}; pendingRead")
             .unwrap()
         else {
             panic!("object");
         };
-        let _other_owner = object.clone();
+        let _other_owner = object.try_clone().expect("duplicate root");
         let (mut execution, id) = read_fixture(
             &runtime,
             &mut context,
@@ -1076,26 +1154,26 @@ mod read_completion_tests {
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
         assert!(matches!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::GetField { .. }
         ));
         assert!(matches!(
             execution.selected_named_read,
-            Some(SelectedNamedRead::Read(OrdinaryRead::Call { .. }))
+            Some(SelectedNamedRead::Getter(_))
         ));
     }
 
     #[test]
     fn unresolved_named_read_uses_the_existing_driver() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context
             .eval("globalThis.generalRead = new Proxy({x:7}, {get(t,k,r){return Reflect.get(t,k,r)}}); generalRead")
             .unwrap()
         else {
             panic!("object");
         };
-        let _other_owner = object.clone();
+        let _other_owner = object.try_clone().expect("duplicate root");
         let (mut execution, id) = read_fixture(
             &runtime,
             &mut context,
@@ -1108,7 +1186,7 @@ mod read_completion_tests {
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
         assert!(matches!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::GetField { .. }
         ));
         assert!(execution.selected_named_read.is_none());
@@ -1135,7 +1213,7 @@ mod read_completion_tests {
             ),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             assert_eq!(context.eval(source).unwrap(), Value::Int(expected));
         }
     }
@@ -1143,7 +1221,7 @@ mod read_completion_tests {
     #[test]
     fn property_actions_complete_at_carried_boundary_without_recovery() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for (
             source,
             object_source,
@@ -1153,15 +1231,6 @@ mod read_completion_tests {
             expected_key,
             expected_depth,
         ) in [
-            (
-                "(function(o){return o.x})",
-                "({x:7,true:5})",
-                Opcode::GetFieldCached,
-                false,
-                false,
-                false,
-                1,
-            ),
             (
                 "(function(o,k){return o[k]})",
                 "({x:7,true:5})",
@@ -1205,7 +1274,7 @@ mod read_completion_tests {
                     .push(&mut frame.window, JsValue::Bool(true))
                     .unwrap();
             }
-            let action = execute_frame(&mut execution, id).unwrap();
+            let action = execute_frame(&runtime, &mut execution, id).unwrap();
             let (key, keep_receiver, fallthrough) = match action {
                 VmAction::GetField {
                     index,
@@ -1253,7 +1322,7 @@ mod read_completion_tests {
     #[test]
     fn retained_receiver_partial_output_keeps_property_publication_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context.eval("({x:7})").unwrap() else {
             panic!("object");
         };
@@ -1283,7 +1352,7 @@ mod read_completion_tests {
             index,
             keep_receiver,
             fallthrough,
-        } = execute_frame(&mut execution, id).unwrap()
+        } = execute_frame(&runtime, &mut execution, id).unwrap()
         else {
             panic!("fixture must produce a retained field action");
         };
@@ -1318,7 +1387,7 @@ mod read_completion_tests {
         use crate::engine::api::profiling::CostProfile;
 
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         assert_eq!(
             context
@@ -1367,7 +1436,7 @@ mod read_completion_tests {
     #[test]
     fn direct_and_deferred_reads_keep_originating_source_location() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let direct = "function fail(){\n return null.x;\n}\ntry{fail()}catch(e){e instanceof TypeError && e.stack.includes('at fail (c2-direct.js:2:')}";
         assert_eq!(
             context.eval_with_filename(direct, "c2-direct.js").unwrap(),
@@ -1386,7 +1455,7 @@ mod read_completion_tests {
     #[test]
     fn linked_owning_read_transaction_preserves_method_receiver_and_selected_errors() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -1415,7 +1484,7 @@ mod read_completion_tests {
     fn completed_reads_keep_last_receiver_and_result_owners() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"(()=>{
@@ -1449,7 +1518,7 @@ mod read_completion_tests {
     #[test]
     fn completed_and_pending_reads_keep_keys_receivers_and_terminal_typed_indices() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

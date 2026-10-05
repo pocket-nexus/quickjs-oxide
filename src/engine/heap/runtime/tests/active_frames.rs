@@ -3,9 +3,9 @@ use super::*;
 #[test]
 fn unified_active_frames_preserve_order_caller_pc_and_defining_realms() {
     let runtime = Runtime::new();
-    let outer_context = runtime.new_context();
-    let native_context = runtime.new_context();
-    let callback_context = runtime.new_context();
+    let outer_context = runtime.new_context().expect("create context");
+    let native_context = runtime.new_context().expect("create context");
+    let callback_context = runtime.new_context().expect("create context");
 
     let function_prototype = native_context.function_prototype().unwrap();
     let probe = runtime
@@ -77,8 +77,8 @@ fn unified_active_frames_preserve_order_caller_pc_and_defining_realms() {
             &outer,
             Value::Undefined,
             &[
-                Value::Object(probe.as_object().clone()),
-                Value::Object(callback.as_object().clone()),
+                Value::Object(probe.as_object().try_clone().expect("duplicate root")),
+                Value::Object(callback.as_object().try_clone().expect("duplicate root")),
             ],
         )
         .unwrap();
@@ -149,7 +149,7 @@ fn unified_active_frames_preserve_order_caller_pc_and_defining_realms() {
 #[test]
 fn unified_active_frames_restore_after_return_throw_and_engine_error() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let probe = runtime
         .new_bound_native_function(
@@ -198,7 +198,9 @@ fn unified_active_frames_restore_after_return_throw_and_engine_error() {
             .call(
                 &no_argument_call,
                 Value::Undefined,
-                &[Value::Object(probe.as_object().clone())],
+                &[Value::Object(
+                    probe.as_object().try_clone().expect("duplicate root")
+                )],
             )
             .unwrap(),
         Value::Undefined
@@ -209,7 +211,10 @@ fn unified_active_frames_restore_after_return_throw_and_engine_error() {
         context.call(
             &command_call,
             Value::Undefined,
-            &[Value::Object(probe.as_object().clone()), Value::Bool(false),],
+            &[
+                Value::Object(probe.as_object().try_clone().expect("duplicate root")),
+                Value::Bool(false),
+            ],
         ),
         Err(RuntimeError::Exception)
     );
@@ -226,7 +231,7 @@ fn unified_active_frames_restore_after_return_throw_and_engine_error() {
             &command_call,
             Value::Undefined,
             &[
-                Value::Object(probe.as_object().clone()),
+                Value::Object(probe.as_object().try_clone().expect("duplicate root")),
                 Value::Bool(true),
             ],
         ),
@@ -239,7 +244,7 @@ fn unified_active_frames_restore_after_return_throw_and_engine_error() {
 #[test]
 fn active_frame_guard_roots_function_and_bytecode_through_gc_and_drop_fallback() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let bytecode = runtime
         .publish_unlinked_function(
             context.realm,
@@ -261,8 +266,8 @@ fn active_frame_guard_roots_function_and_bytecode_through_gc_and_drop_fallback()
     let function_id = callable.as_object().object_id();
     let guard = runtime
         .push_bytecode_active_frame(
-            callable.as_object().clone(),
-            bytecode.clone(),
+            callable.as_object().try_clone().expect("duplicate root"),
+            bytecode.try_clone().expect("duplicate root"),
             context.realm,
             true,
         )
@@ -295,8 +300,8 @@ fn active_frame_guard_roots_function_and_bytecode_through_gc_and_drop_fallback()
 #[test]
 fn bytecode_active_frame_rejects_a_realm_other_than_the_bytecode_realm() {
     let runtime = Runtime::new();
-    let defining_context = runtime.new_context();
-    let other_context = runtime.new_context();
+    let defining_context = runtime.new_context().expect("create context");
+    let other_context = runtime.new_context().expect("create context");
     let bytecode = runtime
         .publish_unlinked_function(
             defining_context.realm,
@@ -317,8 +322,8 @@ fn bytecode_active_frame_rejects_a_realm_other_than_the_bytecode_realm() {
 
     assert!(matches!(
         runtime.push_bytecode_active_frame(
-            callable.as_object().clone(),
-            bytecode.clone(),
+            callable.as_object().try_clone().expect("duplicate root"),
+            bytecode.try_clone().expect("duplicate root"),
             other_context.realm,
             true,
         ),
@@ -332,7 +337,7 @@ fn bytecode_active_frame_rejects_a_realm_other_than_the_bytecode_realm() {
 #[test]
 fn active_frame_drop_defers_nested_pops_until_the_state_borrow_ends() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let bytecode = runtime
         .publish_unlinked_function(
             context.realm,
@@ -354,8 +359,8 @@ fn active_frame_drop_defers_nested_pops_until_the_state_borrow_ends() {
     let function_id = callable.as_object().object_id();
     let outer_guard = runtime
         .push_bytecode_active_frame(
-            callable.as_object().clone(),
-            bytecode.clone(),
+            callable.as_object().try_clone().expect("duplicate root"),
+            bytecode.try_clone().expect("duplicate root"),
             context.realm,
             true,
         )
@@ -363,8 +368,8 @@ fn active_frame_drop_defers_nested_pops_until_the_state_borrow_ends() {
     let outer_token = outer_guard.token();
     let inner_guard = runtime
         .push_bytecode_active_frame(
-            callable.as_object().clone(),
-            bytecode.clone(),
+            callable.as_object().try_clone().expect("duplicate root"),
+            bytecode.try_clone().expect("duplicate root"),
             context.realm,
             true,
         )

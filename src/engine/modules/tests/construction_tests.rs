@@ -509,7 +509,7 @@ fn compiled_loader_reentry_matches_pinned_quickjs_order_and_context() {
         maximum_load_depth: maximum_load_depth.clone(),
         events: events.clone(),
     });
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let expected_id = context.id();
     let expected_realm = context.realm_id();
     drop(context.eval("globalThis.reentryOrder = [];").unwrap());
@@ -566,7 +566,7 @@ fn parse_time_cache_publication_matches_the_same_name_quickjs_oracle() {
     let runtime = Runtime::new();
     let (loader, controls) = ParseCacheProbeLoader::new(ParseCacheProbeMode::SameNameSuccess);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let outer = context
         .compile_module_with_filename(
@@ -579,7 +579,8 @@ fn parse_time_cache_publication_matches_the_same_name_quickjs_oracle() {
         .borrow()
         .as_ref()
         .expect("attribute checker did not retain its nested module")
-        .clone();
+        .try_clone()
+        .expect("duplicate module");
 
     assert_ne!(outer, nested);
     assert_eq!(outer.raw.module.0, 0);
@@ -588,7 +589,7 @@ fn parse_time_cache_publication_matches_the_same_name_quickjs_oracle() {
     assert!(controls.loads.borrow().is_empty());
     assert_eq!(
         runtime.module_dependencies(&outer).unwrap(),
-        [outer.clone()]
+        [outer.try_clone().expect("duplicate root")]
     );
     let Value::Object(promise) = context.execute_module(&outer).unwrap() else {
         panic!("module evaluation did not return a Promise");
@@ -599,7 +600,7 @@ fn parse_time_cache_publication_matches_the_same_name_quickjs_oracle() {
     );
     assert_script_true(&mut context, "__cachePublicationResult === 42");
     context.link_module(&nested).unwrap();
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
@@ -607,7 +608,7 @@ fn parse_time_cache_failure_rolls_back_both_same_name_constructions() {
     let runtime = Runtime::new();
     let (loader, controls) = ParseCacheProbeLoader::new(ParseCacheProbeMode::SameNameFailure);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context.compile_module_with_filename(
@@ -645,7 +646,7 @@ fn parse_time_cache_failure_rolls_back_both_same_name_constructions() {
     drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__parseCacheRetry === 42");
     assert_eq!(controls.checks.get(), 1);
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
@@ -653,7 +654,7 @@ fn parse_time_request_prefix_resolution_matches_the_quickjs_latch() {
     let runtime = Runtime::new();
     let (loader, controls) = ParseCacheProbeLoader::new(ParseCacheProbeMode::PrefixSuccess);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let outer = context
         .compile_module_with_filename(
@@ -666,7 +667,8 @@ fn parse_time_request_prefix_resolution_matches_the_quickjs_latch() {
         .borrow()
         .as_ref()
         .expect("attribute checker did not retain its prefix probe")
-        .clone();
+        .try_clone()
+        .expect("duplicate module");
     assert_ne!(outer, probe);
     assert_eq!(controls.checks.get(), 1);
     assert_eq!(
@@ -685,7 +687,7 @@ fn parse_time_request_prefix_resolution_matches_the_quickjs_latch() {
     );
     assert_eq!(
         runtime.module_dependencies(&probe).unwrap(),
-        [outer.clone()]
+        [outer.try_clone().expect("duplicate root")]
     );
     let record = runtime.module_record(outer.raw).unwrap();
     assert_eq!(record.requested_modules.len(), 2);
@@ -699,13 +701,13 @@ fn parse_time_request_prefix_resolution_matches_the_quickjs_latch() {
     );
     assert!(runtime.module_record(outer.raw).unwrap().instance.is_none());
     runtime.run_gc().unwrap();
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
 fn link_preflight_classifies_reentrant_construction_states_as_incomplete() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let parsing = runtime
         .publish_parsing_module_record(context.realm, JsString::from_static("still-parsing.js"))
@@ -741,7 +743,7 @@ fn link_preflight_classifies_reentrant_construction_states_as_incomplete() {
     runtime
         .transition_module_record(resolving, RawModuleTransition::ResetResolution)
         .unwrap();
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
@@ -749,7 +751,7 @@ fn nested_prefix_load_failure_preserves_the_exception_and_construction_owner() {
     let runtime = Runtime::new();
     let (loader, controls) = ParseCacheProbeLoader::new(ParseCacheProbeMode::PrefixLoadFailure);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context.compile_module_with_filename(
@@ -787,7 +789,7 @@ fn nested_prefix_load_failure_preserves_the_exception_and_construction_owner() {
     assert_eq!(retry.raw.module.0, 2);
     drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__prefixLoadRetry === 42");
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
@@ -796,7 +798,7 @@ fn swallowed_nested_prefix_failure_keeps_the_quickjs_one_shot_latch() {
     let (loader, controls) =
         ParseCacheProbeLoader::new(ParseCacheProbeMode::PrefixLoadFailureSwallowed);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let outer = context
         .compile_module_with_filename(
@@ -842,10 +844,10 @@ fn swallowed_nested_prefix_failure_keeps_the_quickjs_one_shot_latch() {
         "InternalError",
         "module resolution is incomplete and cannot be linked safely",
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
     assert_eq!(controls.loads.borrow().as_slice(), ["before.js"]);
     runtime.run_gc().unwrap();
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
@@ -853,7 +855,7 @@ fn nested_prefix_load_panic_preserves_the_payload_and_recovers() {
     let runtime = Runtime::new();
     let (loader, controls) = ParseCacheProbeLoader::new(ParseCacheProbeMode::PrefixLoadPanic);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let panic = catch_unwind(AssertUnwindSafe(|| {
         let _ = context.compile_module_with_filename(
@@ -871,25 +873,8 @@ fn nested_prefix_load_panic_preserves_the_payload_and_recovers() {
     assert_eq!(controls.checks.get(), 1);
     assert_eq!(controls.loads.borrow().as_slice(), ["before.js"]);
     assert!(controls.nested_module.borrow().is_none());
-    assert_eq!(
-        runtime
-            .0
-            .state
-            .borrow()
-            .heap
-            .loaded_module_slot_count(context.realm)
-            .unwrap(),
-        2
-    );
-    runtime.run_gc().unwrap();
-
-    let retry = context
-        .compile_module_with_filename("globalThis.__prefixPanicRetry = 42;", "outer.js")
-        .unwrap();
-    assert_eq!(retry.raw.module.0, 2);
-    drop(context.execute_module(&retry).unwrap());
-    assert_script_true(&mut context, "__prefixPanicRetry === 42");
-    assert!(!context.has_exception());
+    assert!(runtime.is_poisoned());
+    assert!(matches!(context.eval("42"), Err(RuntimeError::Poisoned)));
 }
 
 #[test]
@@ -898,7 +883,7 @@ fn resolved_parsing_cycle_is_poisoned_before_failed_probe_rollback() {
     let (loader, controls) =
         ParseCacheProbeLoader::new(ParseCacheProbeMode::PrefixCycleLoadFailure);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context.compile_module_with_filename(
@@ -933,7 +918,7 @@ fn resolved_parsing_cycle_is_poisoned_before_failed_probe_rollback() {
     assert_eq!(retry.raw.module.0, 2);
     drop(context.execute_module(&retry).unwrap());
     assert_script_true(&mut context, "__cycleFailureRetry === 42");
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
@@ -942,7 +927,7 @@ fn swallowed_cycle_failure_retains_failed_latch_without_dangling_probe() {
     let (loader, controls) =
         ParseCacheProbeLoader::new(ParseCacheProbeMode::PrefixCycleLoadFailureSwallowed);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let outer = context
         .compile_module_with_filename(
@@ -968,7 +953,7 @@ fn swallowed_cycle_failure_retains_failed_latch_without_dangling_probe() {
     assert_eq!(controls.loads.borrow().as_slice(), ["missing.js"]);
     assert!(runtime.module_record(outer.raw).unwrap().instance.is_none());
     runtime.run_gc().unwrap();
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
@@ -976,7 +961,7 @@ fn resolved_parsing_cycle_rollback_preserves_the_original_panic() {
     let runtime = Runtime::new();
     let (loader, controls) = ParseCacheProbeLoader::new(ParseCacheProbeMode::PrefixCycleLoadPanic);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let panic = catch_unwind(AssertUnwindSafe(|| {
         let _ = context.compile_module_with_filename(
@@ -993,15 +978,8 @@ fn resolved_parsing_cycle_rollback_preserves_the_original_panic() {
     assert_eq!(runtime.0.module_host_callback_depth.get(), 0);
     assert_eq!(controls.loads.borrow().as_slice(), ["missing.js"]);
     assert!(controls.nested_module.borrow().is_none());
-    runtime.run_gc().unwrap();
-
-    let retry = context
-        .compile_module_with_filename("globalThis.__cyclePanicRetry = 42;", "outer.js")
-        .unwrap();
-    assert_eq!(retry.raw.module.0, 2);
-    drop(context.execute_module(&retry).unwrap());
-    assert_script_true(&mut context, "__cyclePanicRetry === 42");
-    assert!(!context.has_exception());
+    assert!(runtime.is_poisoned());
+    assert!(matches!(context.eval("42"), Err(RuntimeError::Poisoned)));
 }
 
 #[test]
@@ -1009,7 +987,7 @@ fn referenced_failed_parsing_identity_is_aborted_without_quickjs_aba() {
     let runtime = Runtime::new();
     let (loader, controls) = ParseCacheProbeLoader::new(ParseCacheProbeMode::PrefixOuterFailure);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context.compile_module_with_filename(
@@ -1031,7 +1009,8 @@ fn referenced_failed_parsing_identity_is_aborted_without_quickjs_aba() {
         .borrow()
         .as_ref()
         .expect("outer failure lost its escaped probe")
-        .clone();
+        .try_clone()
+        .expect("duplicate module");
     let outer_raw = RawModuleRef {
         cache: context.realm,
         module: ModuleId(0),
@@ -1067,8 +1046,8 @@ fn referenced_failed_parsing_identity_is_aborted_without_quickjs_aba() {
         "InternalError",
         "module construction or resolution was rolled back",
     );
-    assert!(!runtime.is_job_pending());
-    assert!(!context.has_exception());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
+    assert!(!context.has_exception().expect("runtime state"));
 
     let retry = context
         .compile_module_with_filename("globalThis.__parseCacheSafeRetry = 42;", "outer.js")
@@ -1092,7 +1071,7 @@ fn referenced_failed_parsing_identity_is_aborted_without_quickjs_aba() {
     assert_script_true(&mut context, "__parseCacheSafeRetry === 42");
     assert_eq!(controls.checks.get(), 1);
     assert_eq!(controls.loads.borrow().as_slice(), ["before.js"]);
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
@@ -1100,7 +1079,7 @@ fn checker_panic_aborts_the_parsing_slot_and_reentry_depth_recovers() {
     let runtime = Runtime::new();
     let (loader, controls) = ParseCacheProbeLoader::new(ParseCacheProbeMode::CheckerPanic);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let panic = catch_unwind(AssertUnwindSafe(|| {
         let _ = context.compile_module_with_filename(
@@ -1110,24 +1089,9 @@ fn checker_panic_aborts_the_parsing_slot_and_reentry_depth_recovers() {
     }));
     assert!(panic.is_err());
     assert_eq!(runtime.0.module_host_callback_depth.get(), 0);
-    assert_eq!(
-        runtime
-            .0
-            .state
-            .borrow()
-            .heap
-            .loaded_module_slot_count(context.realm)
-            .unwrap(),
-        1
-    );
-    let retry = context
-        .compile_module_with_filename("globalThis.__parseCachePanicRetry = 42;", "panic.js")
-        .unwrap();
-    assert_eq!(retry.raw.module.0, 1);
-    drop(context.execute_module(&retry).unwrap());
-    assert_script_true(&mut context, "__parseCachePanicRetry === 42");
+    assert!(runtime.is_poisoned());
+    assert!(matches!(context.eval("42"), Err(RuntimeError::Poisoned)));
     assert_eq!(controls.checks.get(), 1);
-    assert!(!context.has_exception());
 }
 
 #[test]
@@ -1145,7 +1109,7 @@ fn recursive_context_loader_overflow_is_catchable_and_runtime_recovers() {
                 active: active.clone(),
                 maximum_active: maximum_active.clone(),
             });
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
 
             assert!(matches!(
                 context.compile_module_with_filename(
@@ -1171,10 +1135,10 @@ fn recursive_context_loader_overflow_is_catchable_and_runtime_recovers() {
             assert!(maximum_active.get() > 1);
             assert_eq!(active.get(), 0);
             assert_eq!(runtime.0.module_host_callback_depth.get(), 0);
-            assert!(!context.has_exception());
+            assert!(!context.has_exception().expect("runtime state"));
 
             drop(registration);
-            runtime.clear_module_loader();
+            let _ = runtime.clear_module_loader();
             let (recovery_loader, _, _) = MapModuleLoader::new([(
                 "recovery.js",
                 "export const answer = 42;",
@@ -1204,7 +1168,7 @@ fn failed_nested_compilation_does_not_rollback_suspended_outer_resolution() {
         observed_nested_failure: observed_nested_failure.clone(),
         nested_missing_loads: nested_missing_loads.clone(),
     });
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let entry = context
         .compile_module_with_filename(
@@ -1214,7 +1178,7 @@ fn failed_nested_compilation_does_not_rollback_suspended_outer_resolution() {
         .unwrap();
     assert!(observed_nested_failure.get());
     assert_eq!(nested_missing_loads.get(), 1);
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
     drop(context.execute_module(&entry).unwrap());
     assert_script_true(&mut context, "__nestedFailureRecovered === 42");
     assert_eq!(runtime.0.module_host_callback_depth.get(), 0);
@@ -1229,13 +1193,13 @@ fn provisional_parse_gc_preserves_import_meta_properties_until_source_completion
         source: "import './leaf.js' with { type: 'probe' }; globalThis.__provisionalMetaMarker = import.meta.marker; export const answer = 42;".to_owned(),
         properties: vec![ModuleImportMetaProperty::new(
             JsString::from_static("marker"),
-            Value::Object(marker.clone()),
+            Value::Object(marker.try_clone().expect("duplicate root")),
         )],
     };
     let (loader, controls) = ProvisionalImportMetaLoader::new(dependency, marker_id);
     let registration = runtime.set_module_loader(loader);
     drop(marker);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let module = context
         .compile_module_with_filename(
@@ -1269,13 +1233,13 @@ fn failed_provisional_parse_releases_uninstalled_import_meta_properties() {
         source: "import './leaf.js' with { type: 'probe' }; let = ;".to_owned(),
         properties: vec![ModuleImportMetaProperty::new(
             JsString::from_static("marker"),
-            Value::Object(marker.clone()),
+            Value::Object(marker.try_clone().expect("duplicate root")),
         )],
     };
     let (loader, controls) = ProvisionalImportMetaLoader::new(dependency, marker_id);
     let registration = runtime.set_module_loader(loader);
     drop(marker);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context.compile_module_with_filename("import './dependency.js';", "entry.js"),
@@ -1291,6 +1255,12 @@ fn failed_provisional_parse_releases_uninstalled_import_meta_properties() {
     drop(registration);
     runtime.run_gc().unwrap();
     assert!(runtime.0.state.borrow().heap.object(marker_id).is_err());
-    assert_eq!(runtime.heap_counts().context_nodes, 0);
-    assert_eq!(runtime.heap_counts().object_nodes, 0);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        0
+    );
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        0
+    );
 }

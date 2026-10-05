@@ -8,7 +8,7 @@ fn missing_export_fails_during_retryable_link_before_module_bodies() {
         "globalThis.__missingDependencyRan = true; export const present = 1;",
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -46,7 +46,7 @@ fn cyclic_link_failure_resets_every_active_scc_member() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename("import { a } from './a.js'; void a;", "pkg/entry.js")
         .unwrap();
@@ -84,7 +84,7 @@ fn exported_import_cycle_resolves_to_the_ultimate_live_cell() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { b } from './b.js'; globalThis.__exportCycleBody = b;",
@@ -115,7 +115,7 @@ fn circular_exported_import_alias_is_a_retryable_syntax_error() {
         ("pkg/b.js", "import { x } from './a.js'; export { x };"),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { x } from './a.js'; globalThis.__circularAliasBody = x;",
@@ -146,7 +146,7 @@ fn resolve_export_keeps_same_binding_diamonds_unambiguous() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { answer } from './barrel.js'; globalThis.__diamondAnswer = answer;",
@@ -176,7 +176,7 @@ fn namespace_exports_from_one_owner_share_quickjs_star_identity() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { x } from './barrel.js'; globalThis.__namespaceIdentity = x;",
@@ -203,7 +203,7 @@ fn resolve_export_reports_distinct_star_bindings_as_ambiguous() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { answer } from './barrel.js'; void answer;",
@@ -238,7 +238,7 @@ fn star_resolution_ignores_circular_and_not_found_branches() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { answer } from './barrel.js'; globalThis.__starBranchAnswer = answer;",
@@ -268,7 +268,7 @@ fn module_namespace_omits_an_ambiguous_star_export() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import * as ns from './barrel.js'; globalThis.__ambiguousNamespace = ns;",
@@ -291,7 +291,7 @@ fn default_is_not_resolved_through_star_exports() {
         ("pkg/barrel.js", "export * from './source.js';"),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { default as answer } from './barrel.js'; void answer;",
@@ -314,7 +314,7 @@ fn indirect_export_preflight_blames_the_public_name_and_owner() {
         "globalThis.__indirectDependencyRan = true; export const present = 1;",
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "export { absent as publicName } from './dependency.js';",
@@ -341,7 +341,7 @@ fn circular_indirect_exports_fail_without_native_recursion() {
         ("pkg/b.js", "export { answer } from './a.js';"),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { answer } from './a.js'; void answer;",

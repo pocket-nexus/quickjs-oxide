@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn pending_promise_reaction_does_not_retain_the_species_result_object() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(result) = context
         .eval(
             r#"
@@ -37,7 +37,7 @@ pendingSource.then();
 #[test]
 fn weak_ref_and_finalization_registry_globals_match_intrinsic_descriptors() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -126,7 +126,7 @@ fn weak_ref_and_finalization_registry_globals_match_intrinsic_descriptors() {
 #[test]
 fn weak_ref_and_finalization_registry_reject_invalid_calls_brands_and_registered_symbols() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -173,7 +173,7 @@ fn weak_ref_and_finalization_registry_reject_invalid_calls_brands_and_registered
 #[test]
 fn weak_ref_dereferences_object_local_and_well_known_symbol_targets() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -219,7 +219,7 @@ var weakWellKnownReference = new WeakRef(Symbol.iterator);
 #[test]
 fn weak_ref_temporaries_survive_the_current_execution_turn() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -237,7 +237,7 @@ fn weak_ref_temporaries_survive_the_current_execution_turn() {
 #[test]
 fn finalization_registry_register_unregister_and_same_value_are_observable_from_js() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -296,7 +296,7 @@ weakRegistrationResult;
     );
 
     runtime.run_gc().unwrap();
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
     assert_eq!(
         context.eval("weakRegistrationLog").unwrap(),
         Value::String(JsString::from_static(""))
@@ -306,7 +306,7 @@ weakRegistrationResult;
 #[test]
 fn explicit_turn_keeps_objects_and_symbols_across_calls_and_gc() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     runtime
         .with_execution_turn(|| {
             let _ = context
@@ -340,7 +340,7 @@ fn explicit_turn_keeps_objects_and_symbols_across_calls_and_gc() {
 #[test]
 fn successful_deref_in_a_later_turn_reestablishes_keep_alive() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let _ = context
         .eval("var target={}; var weak=new WeakRef(target)")
         .unwrap();
@@ -362,7 +362,7 @@ fn successful_deref_in_a_later_turn_reestablishes_keep_alive() {
 #[test]
 fn execution_turn_releases_kept_roots_on_error_and_host_panic() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result =
         runtime.with_execution_turn(|| context.eval("var weakError = new WeakRef({}); throw 42"));
     assert!(matches!(result, Err(RuntimeError::Exception)));
@@ -376,13 +376,14 @@ fn execution_turn_releases_kept_roots_on_error_and_host_panic() {
     }));
     assert!(panic.is_err());
     assert_eq!(runtime.0.execution_turn_depth.get(), 0);
-    assert!(runtime.0.state.borrow().kept_objects.is_empty());
+    assert!(runtime.is_poisoned());
+    assert!(matches!(context.eval("42"), Err(RuntimeError::Poisoned)));
 }
 
 #[test]
 fn pending_jobs_cannot_interrupt_a_turn_or_lose_fifo_entries() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let _ = context
         .eval("var turnLog=''; Promise.resolve().then(()=>turnLog+='p');")
         .unwrap();
@@ -407,20 +408,20 @@ fn pending_jobs_cannot_interrupt_a_turn_or_lose_fifo_entries() {
 #[test]
 fn kept_targets_delay_finalization_across_realms_and_nested_execution() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     runtime.with_execution_turn(|| {
         let _ = first.eval("var finalized=0; var registry=new FinalizationRegistry(()=>finalized++); var target={}; registry.register(target, 1); var weak=new WeakRef(target); target=null;")?;
         // Both realms participate in the runtime's synchronous sequence.
         let _ = second.eval("var otherWeak=new WeakRef(Symbol('other'))")?;
         runtime.run_gc()?;
-        assert!(!runtime.is_job_pending());
+        assert!(!runtime.is_job_pending().expect("runtime state"));
         assert_eq!(first.eval("weak.deref() !== undefined")?, Value::Bool(true));
         assert_eq!(second.eval("typeof otherWeak.deref()")?, Value::String(JsString::from_static("symbol")));
         Ok(())
     }).unwrap();
     runtime.run_gc().unwrap();
-    assert!(runtime.is_job_pending());
+    assert!(runtime.is_job_pending().expect("runtime state"));
     assert_eq!(first.eval("finalized").unwrap(), Value::Int(0));
     runtime.execute_pending_job().unwrap();
     assert_eq!(first.eval("finalized").unwrap(), Value::Int(1));
@@ -429,7 +430,7 @@ fn kept_targets_delay_finalization_across_realms_and_nested_execution() {
 #[test]
 fn finalization_jobs_share_the_promise_fifo() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     drop(
         context
@@ -501,7 +502,7 @@ weakFifoTarget = null;
 #[test]
 fn finalization_target_death_observes_mixed_weak_object_construction_order() {
     let one_pass_runtime = Runtime::new();
-    let mut one_pass = one_pass_runtime.new_context();
+    let mut one_pass = one_pass_runtime.new_context().expect("create context");
     drop(
         one_pass
             .eval(
@@ -523,7 +524,7 @@ onePassTarget = null;
     );
 
     one_pass_runtime.run_gc().unwrap();
-    assert!(one_pass_runtime.is_job_pending());
+    assert!(one_pass_runtime.is_job_pending().expect("runtime state"));
     assert_eq!(
         one_pass_runtime.execute_pending_job().unwrap().context(),
         Some(one_pass.realm)
@@ -532,10 +533,10 @@ onePassTarget = null;
         one_pass.eval("onePassLog").unwrap(),
         Value::String(JsString::from_static("one-pass"))
     );
-    assert!(!one_pass_runtime.is_job_pending());
+    assert!(!one_pass_runtime.is_job_pending().expect("runtime state"));
 
     let two_pass_runtime = Runtime::new();
-    let mut two_pass = two_pass_runtime.new_context();
+    let mut two_pass = two_pass_runtime.new_context().expect("create context");
     drop(
         two_pass
             .eval(
@@ -557,13 +558,13 @@ twoPassTarget = null;
     );
 
     two_pass_runtime.run_gc().unwrap();
-    assert!(!two_pass_runtime.is_job_pending());
+    assert!(!two_pass_runtime.is_job_pending().expect("runtime state"));
     assert_eq!(
         two_pass.eval("twoPassLog").unwrap(),
         Value::String(JsString::from_static(""))
     );
     two_pass_runtime.run_gc().unwrap();
-    assert!(two_pass_runtime.is_job_pending());
+    assert!(two_pass_runtime.is_job_pending().expect("runtime state"));
     assert_eq!(
         two_pass_runtime.execute_pending_job().unwrap().context(),
         Some(two_pass.realm)
@@ -572,13 +573,13 @@ twoPassTarget = null;
         two_pass.eval("twoPassLog").unwrap(),
         Value::String(JsString::from_static("two-pass"))
     );
-    assert!(!two_pass_runtime.is_job_pending());
+    assert!(!two_pass_runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn throwing_finalization_callback_does_not_discard_the_next_job() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(
@@ -608,7 +609,7 @@ weakThrowSecond = null;
         context.take_exception().unwrap(),
         Some(Value::String(JsString::from_static("cleanup failed")))
     );
-    assert!(runtime.is_job_pending());
+    assert!(runtime.is_job_pending().expect("runtime state"));
     assert_eq!(
         runtime.execute_pending_job().unwrap().context(),
         Some(context.realm)
@@ -617,13 +618,13 @@ weakThrowSecond = null;
         context.eval("weakThrowLog").unwrap(),
         Value::String(JsString::from_static("first,second,"))
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn unregister_cannot_cancel_an_already_queued_finalization_job() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(
@@ -646,14 +647,14 @@ queuedFinalizationTarget = null;
     );
 
     runtime.run_gc().unwrap();
-    assert!(runtime.is_job_pending());
+    assert!(runtime.is_job_pending().expect("runtime state"));
     assert_eq!(
         context
             .eval("queuedFinalizationRegistry.unregister(queuedFinalizationToken)")
             .unwrap(),
         Value::Bool(false)
     );
-    assert!(runtime.is_job_pending());
+    assert!(runtime.is_job_pending().expect("runtime state"));
     assert_eq!(
         runtime.execute_pending_job().unwrap().context(),
         Some(context.realm)
@@ -662,14 +663,14 @@ queuedFinalizationTarget = null;
         context.eval("queuedFinalizationLog").unwrap(),
         Value::String(JsString::from_static("already-queued"))
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn weak_intrinsic_constructor_fallback_uses_the_new_target_realm() {
     let runtime = Runtime::new();
-    let mut constructor_context = runtime.new_context();
-    let mut target_context = runtime.new_context();
+    let mut constructor_context = runtime.new_context().expect("create context");
+    let mut target_context = runtime.new_context().expect("create context");
     let weak_ref = global_callable(&runtime, &mut constructor_context, "WeakRef");
     let target_weak_ref = global_callable(&runtime, &mut target_context, "WeakRef");
     let finalization_registry =
@@ -745,7 +746,9 @@ fn weak_intrinsic_constructor_fallback_uses_the_new_target_realm() {
         .construct_with_new_target(
             &finalization_registry,
             &new_target,
-            &[Value::Object(callback.as_object().clone())],
+            &[Value::Object(
+                callback.as_object().try_clone().expect("duplicate root"),
+            )],
         )
         .unwrap()
     else {

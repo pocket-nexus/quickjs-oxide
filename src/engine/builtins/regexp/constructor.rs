@@ -39,7 +39,7 @@ impl Runtime {
         realm: ContextId,
         regexp: &ObjectRef,
     ) -> Result<NativeConversion<ConstructorRef>, RuntimeError> {
-        let mut step = super::species::RegExpSpeciesStep::start(self, realm, regexp.clone())?;
+        let mut step = super::species::RegExpSpeciesStep::start(self, realm, regexp.try_clone()?)?;
         loop {
             step = match step {
                 super::species::RegExpSpeciesStep::Complete(result) => return Ok(result),
@@ -53,7 +53,7 @@ impl Runtime {
                         realm,
                         &object,
                         &key,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?,
                 )?,
             };
@@ -161,7 +161,7 @@ impl Runtime {
     }
 
     fn new_uninitialized_regexp(&self, prototype: &ObjectRef) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("RegExp prototype"));
         }
@@ -233,7 +233,7 @@ impl Runtime {
         pattern: JsString,
         program: Rc<CompiledRegExp>,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let shape = self.regexp_realm_data(realm)?.object_shape;
         let object =
             self.0
@@ -357,7 +357,7 @@ impl RegExpConstructorStep {
         if let JsValue::Object(id) = &resume.pattern {
             Ok(Self::Read {
                 object: ObjectRef::from_borrowed_handle(runtime.clone(), *id)?,
-                key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match)),
+                key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match)?),
                 resume,
             })
         } else {
@@ -377,7 +377,7 @@ impl RegExpConstructorResume {
         self.0.is_regexp = is_regexp;
         if matches!(self.0.new_target, JsValue::Undefined) {
             let active = runtime.active_function()?;
-            self.0.new_target = JsValue::Object(active.clone().into_handle());
+            self.0.new_target = JsValue::Object(active.try_clone()?.into_handle());
             if is_regexp && matches!(self.0.flags, JsValue::Undefined) {
                 let JsValue::Object(id) = &self.0.pattern else {
                     return Err(RuntimeError::Invariant(
@@ -644,7 +644,7 @@ fn finish_constructor(
                     realm,
                     &object,
                     &key,
-                    JsValue::Object(object.clone().into_handle()),
+                    JsValue::Object(object.try_clone()?.into_handle()),
                 )?,
             )?,
             RegExpConstructorStep::Primitive { value, resume } => {
@@ -678,7 +678,7 @@ mod tests {
     fn unpublished_regexp_is_rooted_during_flags_conversion_and_reclaimed_on_abandonment() {
         let runtime = Runtime::new();
         let weak = Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let new_target = context.eval("(function(){})").unwrap();
         let flags = runtime.new_object(None).unwrap();
         let flags_id = flags.object_id();

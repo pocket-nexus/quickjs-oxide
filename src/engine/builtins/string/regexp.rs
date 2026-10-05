@@ -185,7 +185,7 @@ impl StringProtocolStep {
             .readable
             .first()
             .ok_or(RuntimeError::Invariant(kind.argument_invariant()))?;
-        let key = PropertyKey::from(runtime.well_known_symbol(kind.symbol()));
+        let key = PropertyKey::from(runtime.well_known_symbol(kind.symbol())?);
         let mut resume = StringProtocolResume(Box::new(StringProtocolResumeState {
             step_pending: StringProtocolStepPending::new(runtime),
             realm,
@@ -284,7 +284,7 @@ impl StringProtocolResume {
                     };
                     Ok(StringProtocolStep::make_read(
                         ObjectRef::from_borrowed_handle(runtime.clone(), *object)?,
-                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match)),
+                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match)?),
                         {
                             let updated_0 = ProtocolPhase::Match;
                             self.0.phase = updated_0;
@@ -307,7 +307,7 @@ impl StringProtocolResume {
                 let regexp = regexp?;
                 if regexp {
                     Ok(StringProtocolStep::make_read(
-                        object.clone(),
+                        object.try_clone()?,
                         runtime
                             .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
                         {
@@ -436,8 +436,8 @@ impl StringProtocolResume {
                 };
                 let regexp = ObjectRef::from_owned_handle(runtime.clone(), regexp);
                 Ok(StringProtocolStep::make_read(
-                    regexp.clone(),
-                    PropertyKey::from(runtime.well_known_symbol(self.0.kind.symbol())),
+                    regexp.try_clone()?,
+                    PropertyKey::from(runtime.well_known_symbol(self.0.kind.symbol())?),
                     {
                         let updated_0 = ProtocolPhase::ConstructMethod { regexp };
                         self.0.phase = updated_0;
@@ -520,13 +520,14 @@ fn finish(
             }
             StringProtocolStep::Construct { mut resume } => {
                 let constructor = resume.take_construct_constructor();
+                let new_target = constructor.try_clone()?;
                 let arguments = resume.take_construct_arguments();
                 resume.resume(
                     runtime,
                     runtime.construct_internal_jsvalue(
                         realm,
                         &constructor,
-                        crate::engine::vm::call::ConstructNewTarget::Validated(constructor.clone()),
+                        crate::engine::vm::call::ConstructNewTarget::Validated(new_target),
                         arguments,
                     )?,
                 )?

@@ -114,7 +114,7 @@ impl TypedSetResume {
             )));
         }
         Ok(TypedSetStep::Read {
-            object: state.source.clone(),
+            object: state.source.try_clone()?,
             key: runtime.property_key_for_index(state.index)?,
             resume: Self(Box::new(TypedSetResumeState {
                 runtime: runtime.clone(),
@@ -197,7 +197,7 @@ impl TypedSetResume {
                 let key =
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
                 Ok(TypedSetStep::Read {
-                    object: source.clone(),
+                    object: source.try_clone()?,
                     key,
                     resume: Self(Box::new(TypedSetResumeState {
                         runtime: runtime.clone(),
@@ -333,7 +333,7 @@ pub(super) fn finish(
                     realm,
                     &object,
                     &key,
-                    JsValue::Object(object.clone().into_handle()),
+                    JsValue::Object(object.try_clone()?.into_handle()),
                 )?,
             )?,
             TypedSetStep::Element {

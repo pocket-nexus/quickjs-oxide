@@ -709,11 +709,15 @@ impl Slots {
     }
 
     /// Reserve room for `additional` more slots, promoting to a spilled
-    /// vector when the inline pair cannot hold them.
+    /// vector when the inline pair cannot hold them. Existing spilled storage
+    /// reuses its capacity and the vector's amortized growth.
     pub fn try_reserve(
         &mut self,
         additional: usize,
     ) -> Result<(), std::collections::TryReserveError> {
+        if let Self::Spilled(slots) = self {
+            return slots.try_reserve(additional);
+        }
         let needed = self.len().saturating_add(additional);
         if needed <= Self::INLINE_CAPACITY {
             return Ok(());

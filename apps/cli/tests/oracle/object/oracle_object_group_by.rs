@@ -356,8 +356,8 @@ fn object_group_by_graph_matches_pinned_quickjs() {
 fn object_group_by_uses_its_defining_realm_and_preserves_user_throws() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let object = global_callable(&runtime, &mut defining, "Object");
     let group_by = property_callable(&runtime, &mut defining, object.as_object(), "groupBy");
     let source = eval_object(&mut caller, "[1,2]");
@@ -377,7 +377,7 @@ fn object_group_by_uses_its_defining_realm_and_preserves_user_throws() {
             Value::Undefined,
             &[
                 Value::Object(source),
-                Value::Object(callback.as_object().clone()),
+                Value::Object(callback.as_object().try_clone().expect("duplicate root")),
             ],
         )
         .expect("cross-realm Object.groupBy")
@@ -437,7 +437,7 @@ fn object_group_by_uses_its_defining_realm_and_preserves_user_throws() {
             .set_property(
                 &caller.global_object().unwrap(),
                 &sentinel_key,
-                Value::Object(sentinel.clone()),
+                Value::Object(sentinel.try_clone().expect("duplicate root")),
             )
             .unwrap()
     );
@@ -449,7 +449,7 @@ fn object_group_by_uses_its_defining_realm_and_preserves_user_throws() {
             Value::Undefined,
             &[
                 Value::Object(singleton),
-                Value::Object(throwing.as_object().clone()),
+                Value::Object(throwing.as_object().try_clone().expect("duplicate root")),
             ],
         ),
         Err(RuntimeError::Exception)
@@ -464,7 +464,7 @@ fn object_group_by_uses_its_defining_realm_and_preserves_user_throws() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [

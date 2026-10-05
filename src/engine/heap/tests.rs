@@ -8,6 +8,7 @@ fn collect_heap(heap: &mut Heap) -> Result<GcStats, HeapError> {
     heap.run_gc_with_finalization_sink(
         |event| Ok(matches!(event, WeakSymbolGcEvent::IsLive(_))),
         &mut gc::DiscardFinalizationJobSink,
+        &std::cell::Cell::new(false),
     )
 }
 
@@ -607,5 +608,6 @@ mod modules;
 mod native;
 mod objects;
 mod private_bytecode;
+mod slots;
 mod storage;
 mod weak_collections;

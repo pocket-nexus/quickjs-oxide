@@ -207,9 +207,15 @@ impl ConstructorResume {
         self.next(runtime)
     }
     fn next(self, runtime: &Runtime) -> Result<ConstructorStep, RuntimeError> {
-        let object = self.0.array.clone().ok_or(RuntimeError::Invariant(
-            "Array constructor allocation missing",
-        ))?;
+        let object = self
+            .0
+            .array
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
+            .ok_or(RuntimeError::Invariant(
+                "Array constructor allocation missing",
+            ))?;
         let Some(value) = self.0.arguments.get(self.0.index) else {
             return Ok(ConstructorStep::Complete(Completion::Return(
                 JsValue::Object(object.into_handle()),
@@ -271,7 +277,7 @@ pub(crate) fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }
@@ -288,20 +294,22 @@ mod tests {
     fn pending_constructor_owns_arguments_and_new_target_until_abandoned() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let target = runtime.new_object(None).unwrap();
         let argument = runtime.new_object(None).unwrap();
         let ids = [target.object_id(), argument.object_id()];
         let invocation = NativeInvocation::Construct {
             new_target: runtime
-                .unroot_value(&Value::Object(target.clone()))
+                .unroot_value(&Value::Object(target.try_clone().expect("duplicate root")))
                 .unwrap(),
         };
         let arguments = NativeArguments {
             actual_arg_count: 1,
             readable: vec![
                 runtime
-                    .unroot_value(&Value::Object(argument.clone()))
+                    .unroot_value(&Value::Object(
+                        argument.try_clone().expect("duplicate root"),
+                    ))
                     .unwrap(),
             ],
         };

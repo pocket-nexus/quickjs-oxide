@@ -6,12 +6,15 @@
 
 pub(crate) mod execution_turn;
 mod layout;
+pub(crate) mod owned_values;
 mod retained_shapes;
+mod state_storage;
 use self::error::RuntimeError;
 use self::intrinsics::promise::HostPromiseRejectionTracker;
 use self::module::ModuleLoader;
 use crate::engine::api::runtime_error as error;
 use crate::engine::host::HostServices;
+pub(crate) use state_storage::StateStorage;
 
 use crate::engine::{builtins as intrinsics, jobs, modules as module};
 
@@ -32,8 +35,14 @@ use std::sync::atomic::AtomicU64;
 pub(crate) static NEXT_RUNTIME_DOMAIN_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct RuntimeInner {
+    /// Quarantine is stored outside the state borrow, including while a
+    /// partially committed mutation is unwinding.
+    pub(crate) poisoned: Cell<bool>,
+    // Weak-backed execution storage may outlive the final public Runtime.
+    // This is a lifetime registration, not an additional state owner.
+    pub(crate) raw_execution_owners: Cell<usize>,
     pub(crate) execution_turn_depth: Cell<usize>,
-    pub(crate) state: RefCell<RuntimeState>,
+    pub(crate) state: StateStorage,
     /// Incremental activation count, readable without borrowing heap state.
     pub(crate) active_frame_depth: Rc<Cell<usize>>,
     pub(crate) deferred_references: super::deferred::DeferredOperations,
@@ -100,8 +109,14 @@ pub(crate) struct RuntimeOperation<'a>(pub(super) &'a Runtime);
 impl Drop for RuntimeOperation<'_> {
     #[inline]
     fn drop(&mut self) {
-        let result = self.0.drain_deferred_references();
-        debug_assert!(result.is_ok(), "deferred root release failed: {result:?}");
+        if self.0.skip_cleanup() {
+            return;
+        }
+        if self.0.0.deferred_references.has_pending()
+            && self.0.drain_deferred_references_slow().is_err()
+        {
+            self.0.0.poisoned.set(true);
+        }
     }
 }
 
@@ -739,43 +754,46 @@ impl RuntimeState {
 
 impl Drop for RuntimeInner {
     fn drop(&mut self) {
-        let state = self.state.get_mut();
-        let retained = state
-            .release_retained_shapes()
-            .and_then(|cleanup| state.apply_cleanup(cleanup));
-        debug_assert!(retained.is_ok(), "shape pool teardown failed: {retained:?}");
-        let clear = state.clear_kept_objects();
-        debug_assert!(clear.is_ok(), "kept-object teardown failed: {clear:?}");
-        let deferred = &self.deferred_references;
-        while let Some(operation) = deferred.pop_front() {
-            let result = state.apply_deferred_operation(operation);
-            debug_assert!(
-                result.is_ok(),
-                "runtime deferred teardown failed: {result:?}"
-            );
+        if self.poisoned.get() || std::thread::panicking() {
+            self.state.abandon();
+            return;
         }
-        while let Some(job) = state.pending_jobs.pop_front() {
-            let result = state.release_pending_job_roots(&job);
-            debug_assert!(result.is_ok(), "pending job teardown failed: {result:?}");
+        if self.raw_execution_owners.get() != 0 {
+            // No public root survives the last Runtime Rc. Remaining execution
+            // records cannot upgrade their Weak owner; ordinary Rust teardown
+            // destroys the heap instead of treating their raw edges as leaks.
+            return;
         }
-        if let Some(exception) = state.pending_exception.take() {
-            let result = state.release_owned_raw_root(exception);
-            debug_assert!(
-                result.is_ok(),
-                "pending exception teardown failed: {result:?}"
-            );
+        let teardown = (|| -> Result<(), RuntimeError> {
+            let state = self.state.get_mut();
+            let retained = state.release_retained_shapes()?;
+            state.apply_cleanup(retained)?;
+            state.clear_kept_objects()?;
+            while let Some(operation) = self.deferred_references.pop_front() {
+                state.apply_deferred_operation(operation)?;
+            }
+            while let Some(job) = state.pending_jobs.pop_front() {
+                state.release_pending_job_roots(&job)?;
+            }
+            if let Some(exception) = state.pending_exception.take() {
+                state.release_owned_raw_root(exception)?;
+            }
+            let mut stats = state.heap.run_gc_for_runtime_teardown()?;
+            state.release_atom_indices(std::mem::take(&mut stats.cleanup.atoms))?;
+            Ok(())
+        })();
+        if teardown.is_err() {
+            // Final teardown has no recovery boundary. Even resource failures
+            // stop here: later cleanup must not traverse a partially retired
+            // graph, and ordinary Rust destruction must not destroy its owners.
+            self.poisoned.set(true);
+            self.state.abandon();
+            #[cfg(debug_assertions)]
+            return;
         }
-        let result = state
-            .heap
-            .run_gc_for_runtime_teardown()
-            .map_err(RuntimeError::Heap)
-            .and_then(|mut stats| {
-                let atom_indices = std::mem::take(&mut stats.cleanup.atoms);
-                state.release_atom_indices(atom_indices)
-            });
-        debug_assert!(result.is_ok(), "runtime teardown failed: {result:?}");
         #[cfg(debug_assertions)]
         {
+            let state = self.state.get_mut();
             let live = state.heap.counts().live;
             let probe = std::env::var_os("QJS_TEARDOWN_PROBE").is_some();
             let live_atoms = state.atoms.debug_live_unpinned_count();

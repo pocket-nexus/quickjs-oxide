@@ -130,7 +130,7 @@ impl DefinitionsStep {
             }
         };
         Ok(Self::request_keys(
-            source.clone(),
+            source.try_clone()?,
             DefinitionsResume(Box::new(DefinitionsResumeState {
                 pending_effect: DefinitionsStepPending::default(),
                 realm,
@@ -177,8 +177,8 @@ impl DefinitionsResume {
             return self.next(runtime, selected.into_iter());
         };
         Ok(DefinitionsStep::request_enumerable(
-            self.0.source.clone(),
-            key.clone(),
+            self.0.source.try_clone()?,
+            key.try_clone()?,
             {
                 let updated_0 = Phase::Snapshot {
                     remaining,
@@ -233,8 +233,8 @@ impl DefinitionsResume {
             )));
         };
         Ok(DefinitionsStep::request_read(
-            self.0.source.clone(),
-            key.clone(),
+            self.0.source.try_clone()?,
+            key.try_clone()?,
             {
                 let updated_0 = Phase::Read { remaining, key };
                 self.0.phase = updated_0;
@@ -276,13 +276,16 @@ impl DefinitionsResume {
         };
         Ok(match result {
             NativeConversion::Throw(value) => DefinitionsStep::Complete(Completion::Throw(value)),
-            NativeConversion::Value(descriptor) => {
-                DefinitionsStep::request_define(self.0.target.clone(), key.clone(), descriptor, {
+            NativeConversion::Value(descriptor) => DefinitionsStep::request_define(
+                self.0.target.try_clone()?,
+                key.try_clone()?,
+                descriptor,
+                {
                     let updated_0 = Phase::Define { remaining, key };
                     self.0.phase = updated_0;
                     self
-                })
-            }
+                },
+            ),
         })
     }
     pub(crate) fn defined(

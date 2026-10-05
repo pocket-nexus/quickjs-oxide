@@ -30,7 +30,7 @@ fn eval(context: &mut Context, source: &str) -> Value {
 
 fn drain(runtime: &Runtime) -> usize {
     let mut count = 0;
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         assert!(runtime.execute_pending_job().unwrap().executed());
         count += 1;
     }
@@ -41,7 +41,7 @@ fn drain(runtime: &Runtime) -> usize {
 fn promise_constructor_and_internal_functions_have_quickjs_shapes() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let facts = text(eval(
         &mut context,
         r#"
@@ -84,7 +84,7 @@ Promise.resolve.call(CustomPromise, 1);
 fn eval_does_not_drain_and_execute_pending_job_is_fifo_one_at_a_time() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,
@@ -101,14 +101,14 @@ order.join('|');
         )),
         ""
     );
-    assert!(runtime.is_job_pending());
+    assert!(runtime.is_job_pending().expect("runtime state"));
     assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(text(eval(&mut context, "order.join('|')")), "A");
     assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(text(eval(&mut context, "order.join('|')")), "A|B");
     assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(text(eval(&mut context, "order.join('|')")), "A|B|nested");
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
     assert!(!runtime.execute_pending_job().unwrap().executed());
 }
 
@@ -116,7 +116,7 @@ order.join('|');
 fn promise_chains_thenables_rejections_and_self_resolution() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,
@@ -160,7 +160,7 @@ events.join('|');
 fn queued_jobs_retain_their_graph_across_gc() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -179,7 +179,7 @@ var gcAnswer = 0;
 fn static_identity_catch_and_species_follow_quickjs() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,
@@ -221,23 +221,30 @@ var catchResult = Promise.prototype.catch.call(receiver, 'reject-handler');
 fn host_rejection_tracker_reports_unhandled_then_late_handled() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let expected_context = context.realm_id();
     let events = Rc::new(RefCell::new(Vec::new()));
     let captured = events.clone();
-    let callback_context = Rc::new(RefCell::new(context.clone()));
+    let callback_context = Rc::new(RefCell::new(context.try_clone().expect("duplicate root")));
     let callback_realm = callback_context.clone();
-    runtime.set_host_promise_rejection_tracker(move |event| {
-        captured
-            .borrow_mut()
-            .push((event.context(), event.is_handled(), event.reason().clone()));
-        if event.is_handled() {
-            drop(eval(
-                &mut callback_realm.borrow_mut(),
-                "Promise.resolve().then(function () { trackerOrder.push('tracker'); });",
+    runtime
+        .set_host_promise_rejection_tracker(move |event| {
+            captured.borrow_mut().push((
+                event.context(),
+                event.is_handled(),
+                event
+                    .reason()
+                    .try_clone()
+                    .expect("duplicate rejection reason"),
             ));
-        }
-    });
+            if event.is_handled() {
+                drop(eval(
+                    &mut callback_realm.borrow_mut(),
+                    "Promise.resolve().then(function () { trackerOrder.push('tracker'); });",
+                ));
+            }
+        })
+        .expect("configure test runtime");
 
     drop(eval(
         &mut context,
@@ -251,16 +258,22 @@ early.then(undefined, function () {});
 rejectEarly('early');
 "#,
     ));
-    runtime.clear_host_promise_rejection_tracker();
+    let _ = runtime.clear_host_promise_rejection_tracker();
 
     let events = events.borrow();
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].0, expected_context);
     assert!(!events[0].1);
-    assert_eq!(text(events[0].2.clone()), "late");
+    assert_eq!(
+        text(events[0].2.try_clone().expect("duplicate root")),
+        "late"
+    );
     assert_eq!(events[1].0, expected_context);
     assert!(events[1].1);
-    assert_eq!(text(events[1].2.clone()), "late");
+    assert_eq!(
+        text(events[1].2.try_clone().expect("duplicate root")),
+        "late"
+    );
     drop(events);
     drain(&runtime);
     assert_eq!(
@@ -273,8 +286,8 @@ rejectEarly('early');
 fn pending_job_reports_its_originating_context_on_success_and_throw() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     drop(eval(
         &mut first,
         r#"

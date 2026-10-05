@@ -14,7 +14,7 @@ fn assert_script(context: &mut Context, source: &str) {
 #[test]
 fn constructor_global_and_prototype_descriptors_match_the_public_surface() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -120,7 +120,7 @@ fn constructor_global_and_prototype_descriptors_match_the_public_surface() {
 #[test]
 fn every_element_getter_and_setter_roundtrips_and_honors_endianness() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -204,7 +204,7 @@ fn every_element_getter_and_setter_roundtrips_and_honors_endianness() {
 #[test]
 fn array_buffer_is_view_recognizes_data_views_before_and_after_detach() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -232,7 +232,7 @@ fn array_buffer_is_view_recognizes_data_views_before_and_after_detach() {
 #[test]
 fn detached_views_keep_the_buffer_identity_but_reject_metadata_and_access() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -273,7 +273,7 @@ fn detached_views_keep_the_buffer_identity_but_reject_metadata_and_access() {
 #[test]
 fn fixed_and_tracking_views_follow_resizable_buffer_shrink_and_grow() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -340,7 +340,7 @@ fn fixed_and_tracking_views_follow_resizable_buffer_shrink_and_grow() {
 #[test]
 fn constructor_coercion_and_new_target_reentrancy_preserve_error_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -461,7 +461,7 @@ fn constructor_coercion_and_new_target_reentrancy_preserve_error_order() {
 #[test]
 fn access_methods_coerce_in_spec_order_and_revalidate_after_reentry() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -573,7 +573,7 @@ fn access_methods_coerce_in_spec_order_and_revalidate_after_reentry() {
 fn pending_data_view_access_roots_the_view_and_buffer_until_abandonment() {
     let runtime = Runtime::new();
     let weak = std::rc::Rc::downgrade(&runtime.0);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let view = context.eval("new DataView(new ArrayBuffer(8))").unwrap();
     let Value::Object(object) = &view else {
         panic!("expected view")

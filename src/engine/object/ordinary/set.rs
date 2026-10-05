@@ -7,18 +7,18 @@ use crate::engine::object::{OwnedCompletePropertyDescriptor, OwnedPropertyDescri
 // PropertyKeys/Values may clone without a heap retain, and final releases are
 // deliberately left to the unchanged ownership kernel.
 #[inline]
-fn clone_set_object(value: &ObjectRef) -> ObjectRef {
-    let copy = value.clone();
+fn clone_set_object(value: &ObjectRef) -> Result<ObjectRef, RuntimeError> {
+    let copy = value.try_clone()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("set_owner_clone.ObjectRef");
-    copy
+    Ok(copy)
 }
 #[inline]
-fn clone_set_key(value: &PropertyKey) -> PropertyKey {
-    let copy = value.clone();
+fn clone_set_key(value: &PropertyKey) -> Result<PropertyKey, RuntimeError> {
+    let copy = value.try_clone()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("set_owner_clone.PropertyKey");
-    copy
+    Ok(copy)
 }
 
 pub(crate) enum SetStep {
@@ -250,7 +250,7 @@ impl SetStep {
         receiver: JsValue,
         waiting: impl FnMut(Self),
     ) -> Result<Option<PropertySetAction>, RuntimeError> {
-        let _operation = runtime.operation();
+        let _operation = runtime.operation()?;
         let probe = match initial_set(runtime, realm, &object, &key, &value, &receiver) {
             Ok(InitialSet::Action(action)) => {
                 runtime.release_jsvalue(value)?;
@@ -279,7 +279,7 @@ impl SetStep {
         receiver: JsValue,
         waiting: impl FnMut(Self),
     ) -> Result<Option<PropertySetAction>, RuntimeError> {
-        let operation = runtime.operation();
+        let operation = runtime.operation()?;
         let object = match &receiver {
             JsValue::Object(id) => {
                 ObjectRef::from_borrowed_handle(runtime.clone(), *id).map_err(RuntimeError::from)
@@ -302,7 +302,7 @@ impl SetStep {
                 runtime,
                 Some(realm),
                 object,
-                clone_set_key(key),
+                clone_set_key(key)?,
                 value,
                 receiver,
                 probe,
@@ -600,7 +600,7 @@ fn start_waiting(
     let mut state = State {
         runtime: runtime.clone(),
         realm,
-        _target: clone_set_object(&object),
+        _target: clone_set_object(&object)?,
         key,
         value,
         receiver,
@@ -828,8 +828,8 @@ impl State {
                         PropertySetRejection::NoSetter
                     }))
                 }
-                SetProbe::Missing(_) => SelectedSet::Define(clone_set_object(&receiver), false),
-                SetProbe::Special(_) => SelectedSet::Descriptor(clone_set_object(&receiver)),
+                SetProbe::Missing(_) => SelectedSet::Define(clone_set_object(&receiver)?, false),
+                SetProbe::Special(_) => SelectedSet::Descriptor(clone_set_object(&receiver)?),
                 SetProbe::Writable => unreachable!("receiver probe commits a writable data slot"),
             },
         )
@@ -871,10 +871,10 @@ impl State {
                     if runtime.set_arguments_index_value(&receiver, &self.key, &self.value)? {
                         SelectedSet::Complete(PropertySetAction::Complete)
                     } else {
-                        SelectedSet::Define(clone_set_object(&receiver), true)
+                        SelectedSet::Define(clone_set_object(&receiver)?, true)
                     }
                 }
-                None => SelectedSet::Define(clone_set_object(&receiver), false),
+                None => SelectedSet::Define(clone_set_object(&receiver)?, false),
             },
         )
     }
@@ -972,7 +972,7 @@ impl State {
                             NativeConversion::Value(InternalDefineResult::Defined)
                         }
                         PropertyDefineOutcome::Defined(false) => NativeConversion::Value(
-                            InternalDefineResult::RejectedOrdinary(clone_set_object(&object)),
+                            InternalDefineResult::RejectedOrdinary(clone_set_object(&object)?),
                         ),
                         PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
                     };
@@ -1053,15 +1053,15 @@ impl SetResume {
             }
             SelectedSet::Proxy(object) => {
                 self.0.request_object = Some(object);
-                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.request_key = Some(clone_set_key(&self.0.state.key)?);
                 self.0.request.value = Some(runtime.dup_jsvalue(&self.0.state.value)?);
                 self.0.request.receiver = Some(runtime.dup_jsvalue(&self.0.state.receiver)?);
                 self.0.phase = Phase::Forward;
                 Ok(SetStep::Proxy { resume: self })
             }
             SelectedSet::Special(object) => {
-                self.0.request_object = Some(clone_set_object(&object));
-                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.request_object = Some(clone_set_object(&object)?);
+                self.0.request_key = Some(clone_set_key(&self.0.state.key)?);
                 self.0.request.value = Some(runtime.dup_jsvalue(&self.0.state.value)?);
                 self.0.request.receiver = Some(runtime.dup_jsvalue(&self.0.state.receiver)?);
                 self.0.phase = Phase::Special(object);
@@ -1069,20 +1069,20 @@ impl SetResume {
             }
             SelectedSet::ArrayLength(object) => {
                 self.0.request_object = Some(object);
-                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.request_key = Some(clone_set_key(&self.0.state.key)?);
                 self.0.request.value = Some(runtime.dup_jsvalue(&self.0.state.value)?);
                 self.0.phase = Phase::Forward;
                 Ok(SetStep::ArrayLength { resume: self })
             }
             SelectedSet::Descriptor(object) => {
                 self.0.request_object = Some(object);
-                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.request_key = Some(clone_set_key(&self.0.state.key)?);
                 self.0.phase = Phase::Receiver;
                 Ok(SetStep::Descriptor { resume: self })
             }
             SelectedSet::Define(object, existing) => {
-                self.0.request_object = Some(clone_set_object(&object));
-                self.0.request_key = Some(clone_set_key(&self.0.state.key));
+                self.0.request_object = Some(clone_set_object(&object)?);
+                self.0.request_key = Some(clone_set_key(&self.0.state.key)?);
                 self.0.request_descriptor = Some(self.0.state.descriptor(existing)?);
                 self.0.phase = Phase::Define(object);
                 Ok(SetStep::Define { resume: self })
@@ -1285,7 +1285,7 @@ mod tests {
     #[test]
     fn set_preserves_string_handle_for_ordinary_dense_and_sparse_storage() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = runtime
             .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
                 "same arena node",
@@ -1308,10 +1308,12 @@ mod tests {
             let mut step = SetStep::start(
                 &runtime,
                 Some(context.realm),
-                object.clone(),
-                key.clone(),
+                object.try_clone().expect("duplicate root"),
+                key.try_clone().expect("duplicate root"),
                 runtime.dup_jsvalue(&value).unwrap(),
-                runtime.into_jsvalue(Value::Object(object.clone())).unwrap(),
+                runtime
+                    .into_jsvalue(Value::Object(object.try_clone().expect("duplicate root")))
+                    .unwrap(),
             )
             .unwrap();
             loop {
@@ -1349,7 +1351,7 @@ mod tests {
     fn initial_actions_bypass_waiting_transport_and_match_owned_wrapper() {
         for entry in 0..3 {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             for (source, key, value, expected) in [
                 ("({x:1})", "x", "42", "stored"),
                 ("Object.freeze({x:1})", "x", "42", "rejected"),
@@ -1362,7 +1364,7 @@ mod tests {
                 };
                 let key = runtime.intern_property_key(key).unwrap();
                 let value = context.eval(value).unwrap();
-                let receiver = Value::Object(object.clone());
+                let receiver = Value::Object(object.try_clone().expect("duplicate root"));
                 let action = if entry == 0 {
                     let SetStep::Complete(action) = SetStep::start(
                         &runtime,
@@ -1420,7 +1422,7 @@ mod tests {
     fn initial_waiting_transport_preserves_conversion_throw_and_roots() {
         for entry in 0..3 {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(object) = context.eval("globalThis.trace=''; globalThis.marker={}; globalThis.target=new Uint8Array(1); target").unwrap() else {
                 panic!("expected target");
             };
@@ -1429,7 +1431,7 @@ mod tests {
                 .unwrap();
             let marker = context.eval("marker").unwrap();
             let key = runtime.intern_property_key("0").unwrap();
-            let receiver = Value::Object(object.clone());
+            let receiver = Value::Object(object.try_clone().expect("duplicate root"));
             let mut step = if entry == 0 {
                 SetStep::start(
                     &runtime,
@@ -1497,18 +1499,18 @@ mod tests {
     #[test]
     fn outlined_waiting_delivery_drains_initial_operation_before_advancing() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context.eval("new Proxy({}, {})").unwrap() else {
             panic!("expected proxy");
         };
         let target_id = object.object_id();
-        let receiver = Value::Object(object.clone());
+        let receiver = Value::Object(object.try_clone().expect("duplicate root"));
         let value = runtime.new_object(None).unwrap();
         let value_id = value.object_id();
         let key = runtime.intern_property_key("x").unwrap();
         let released = runtime.new_object(None).unwrap();
         let released_id = released.object_id();
-        let operation = runtime.operation();
+        let operation = runtime.operation().unwrap();
         {
             let _borrow = runtime.0.state.borrow();
             drop(released);
@@ -1551,11 +1553,11 @@ mod tests {
     #[test]
     fn outlined_start_keeps_immediate_throw_root_until_its_action_is_released() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context.eval("new Uint8Array(1)").unwrap() else {
             panic!("expected typed array");
         };
-        let receiver = Value::Object(object.clone());
+        let receiver = Value::Object(object.try_clone().expect("duplicate root"));
         let value = context.eval("Symbol()").unwrap();
         let action = SetStep::start_into(
             &runtime,
@@ -1583,7 +1585,7 @@ mod tests {
     fn borrowed_set_validates_target_key_and_value_before_storage() {
         let runtime = Runtime::new();
         let foreign = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         for (foreign_target, foreign_key, expected) in [
             (true, true, "object"),
             (false, true, "property key"),
@@ -1602,7 +1604,7 @@ mod tests {
                 target,
                 &key,
                 value,
-                receiver.clone(),
+                receiver.try_clone().expect("duplicate root"),
             );
             assert!(matches!(result, Err(RuntimeError::WrongRuntime(role)) if role == expected));
             assert!(!runtime.0.deferred_references.has_pending());
@@ -1613,7 +1615,7 @@ mod tests {
     fn resident_set_array_length_primitive_completion_uses_original_conversion() {
         for (source, expected) in [("2", 2), ("' 2 '", 2), ("true", 1), ("null", 0), ("-0", 0)] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(array) = context.eval("[1,2,3]").unwrap() else {
                 panic!("array");
             };
@@ -1623,7 +1625,9 @@ mod tests {
                 context.realm,
                 &runtime.intern_property_key("length").unwrap(),
                 runtime.into_jsvalue(value).unwrap(),
-                runtime.into_jsvalue(Value::Object(array.clone())).unwrap(),
+                runtime
+                    .into_jsvalue(Value::Object(array.try_clone().expect("duplicate root")))
+                    .unwrap(),
                 |_| panic!("primitive Array length published a waiting request"),
             )
             .unwrap();
@@ -1635,7 +1639,7 @@ mod tests {
     #[test]
     fn resident_set_array_length_keeps_callbacks_partial_shrink_and_readonly_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let a=[0,1,2,3], trace='', value={valueOf(){trace+='v';return 2}};
             a.length=value;
@@ -1658,7 +1662,7 @@ mod tests {
     #[test]
     fn selected_missing_set_preserves_prototype_and_distinct_receiver_semantics() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(() => {
             const symbol = Symbol('slot'), marker = {};
             let trace = '';
@@ -1695,7 +1699,7 @@ mod tests {
     #[test]
     fn selected_missing_append_keeps_unique_dictionary_and_shared_shape_isolation() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(() => {
             const a = {}, b = {};
             for (let i=0; i<12; i++) { a['k'+i]=i; b['k'+i]=i; }
@@ -1713,7 +1717,7 @@ mod tests {
     #[test]
     fn selected_dense_append_preserves_array_permissions_holes_and_special_keys() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(() => {
             const a = [], marker = {}, symbol = Symbol();
             a[0] = marker; a[1] = 2;
@@ -1747,7 +1751,7 @@ mod tests {
             ("Object.preventExtensions({})", "x", true),
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(target) = context.eval(source).unwrap() else {
                 panic!("target")
             };
@@ -1761,8 +1765,12 @@ mod tests {
                 &runtime,
                 context.realm,
                 &key,
-                runtime.into_jsvalue(value.clone()).unwrap(),
-                runtime.into_jsvalue(Value::Object(target.clone())).unwrap(),
+                runtime
+                    .into_jsvalue(value.try_clone().expect("duplicate root"))
+                    .unwrap(),
+                runtime
+                    .into_jsvalue(Value::Object(target.try_clone().expect("duplicate root")))
+                    .unwrap(),
                 |step| {
                     deliveries += 1;
                     let SetStep::Complete(completed) =
@@ -1847,7 +1855,7 @@ mod tests {
     #[test]
     fn local_new_property_definition_preserves_prototype_callbacks_and_key_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
@@ -1901,7 +1909,7 @@ mod tests {
         for after_descriptor in [false, true] {
             let runtime = Runtime::new();
             let weak = std::rc::Rc::downgrade(&runtime.0);
-            let context = runtime.new_context();
+            let context = runtime.new_context().expect("create context");
             let target = runtime.new_object(None).unwrap();
             let target_id = target.object_id();
             let handler = runtime.new_object(None).unwrap();
@@ -1957,7 +1965,7 @@ mod tests {
     #[test]
     fn set_rejects_an_unrelated_reply_before_mutating_the_receiver() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let target = runtime.new_object(None).unwrap();
         let NativeConversion::Value(receiver) = runtime
             .new_proxy(

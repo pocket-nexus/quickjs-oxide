@@ -217,7 +217,7 @@ impl Runtime {
         }
 
         Ok(DefineClassOutcome::Defined {
-            constructor: JsValue::Object(constructor.as_object().clone().into_handle()),
+            constructor: JsValue::Object(constructor.as_object().try_clone()?.into_handle()),
             prototype: JsValue::Object(prototype.into_handle()),
         })
     }
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn base_class_publication_creates_the_quickjs_constructor_cycle() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let constructor = class_constructor(&runtime, context.realm, true);
 
         let DefineClassOutcome::Defined {
@@ -404,7 +404,7 @@ mod tests {
             runtime
                 .root_and_release_jsvalue(returned_constructor)
                 .unwrap(),
-            Value::Object(constructor.as_object().clone())
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root"))
         );
         let Value::Object(prototype) = runtime
             .root_and_release_jsvalue(returned_prototype)
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(
             own_descriptor(&runtime, constructor.as_object(), "prototype"),
             CompleteOrdinaryPropertyDescriptor::Data {
-                value: Value::Object(prototype.clone()),
+                value: Value::Object(prototype.try_clone().expect("duplicate root")),
                 writable: false,
                 enumerable: false,
                 configurable: false,
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(
             own_descriptor(&runtime, &prototype, "constructor"),
             CompleteOrdinaryPropertyDescriptor::Data {
-                value: Value::Object(constructor.as_object().clone()),
+                value: Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
                 writable: true,
                 enumerable: false,
                 configurable: true,
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn derived_class_publication_roots_both_sides_in_the_validated_parent() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let derived = eval_object(
             &mut context,
             r#"
@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn explicit_super_initializes_one_tdz_cell_across_lexical_execution_paths() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn extends_null_uses_null_instance_parent_and_function_prototype_constructor_parent() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let derived = eval_object(
             &mut context,
             r#"
@@ -567,7 +567,7 @@ mod tests {
     #[test]
     fn heritage_validation_precedes_prototype_access_and_does_not_mutate_the_candidate() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
 
         assert_eq!(
             eval_string(
@@ -645,7 +645,7 @@ mod tests {
     #[test]
     fn class_constructor_metadata_must_match_the_heritage_form() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let base_constructor = class_constructor(&runtime, context.realm, false);
 
         let error = runtime

@@ -125,7 +125,7 @@ fn object_literal_observations_match_pinned_quickjs() {
 fn object_literal_duplicate_proto_is_an_early_error() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert!(matches!(
         context.compile("({__proto__:1,__proto__:2})"),
         Err(RuntimeError::Exception)
@@ -143,7 +143,7 @@ fn object_literal_duplicate_proto_is_an_early_error() {
 fn rust_observation() -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::String(value) = context
         .eval(PROBE)
         .expect("Rust object-literal probe failed")
@@ -195,8 +195,8 @@ fn probe_expected_shape_is_stable_without_an_oracle() {
 fn object_literal_result_uses_the_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let function = defining
         .eval("(function(){return {marker:1}})")
         .expect("object-literal factory compilation failed");

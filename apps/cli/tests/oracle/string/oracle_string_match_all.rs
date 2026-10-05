@@ -398,8 +398,8 @@ fn string_match_all_abrupt_completion_order_matches_pinned_quickjs() {
 fn string_match_all_delegation_and_fallback_preserve_cross_realm_ownership() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let method = eval_callable(
         &runtime,
@@ -454,7 +454,7 @@ fn string_match_all_delegation_and_fallback_preserve_cross_realm_ownership() {
     let Value::Object(fallback_step) = caller
         .call(
             &fallback_next,
-            Value::Object(fallback_iterator.clone()),
+            Value::Object(fallback_iterator.try_clone().expect("duplicate root")),
             &[],
         )
         .expect("fallback iterator next")
@@ -497,7 +497,7 @@ fn string_match_all_delegation_and_fallback_preserve_cross_realm_ownership() {
     let Value::Object(delegated_step) = caller
         .call(
             &delegated_next,
-            Value::Object(delegated_iterator.clone()),
+            Value::Object(delegated_iterator.try_clone().expect("duplicate root")),
             &[],
         )
         .expect("delegated iterator next")
@@ -570,7 +570,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);
         if actual != expected {

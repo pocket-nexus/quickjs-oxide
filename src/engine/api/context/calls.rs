@@ -9,6 +9,9 @@ impl Context {
     /// wrapped in a callable object in the initiating context. The call then
     /// executes in the realm captured by the bytecode.
     pub fn execute(&mut self, function: &FunctionBytecodeRef) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let callable = match self.runtime.new_bytecode_closure(self.realm, function) {
             Ok(callable) => callable,
             Err(RuntimeError::Engine(error))
@@ -37,6 +40,9 @@ impl Context {
         this_value: Value,
         arguments: &[Value],
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let completion = crate::engine::vm::entry::call(
             &self.runtime,
             self.realm,
@@ -55,6 +61,9 @@ impl Context {
         constructor: &CallableRef,
         arguments: &[Value],
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.construct_with_new_target(constructor, constructor, arguments)
     }
 
@@ -66,6 +75,9 @@ impl Context {
         new_target: &CallableRef,
         arguments: &[Value],
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let result = crate::engine::vm::entry::construct(
             &self.runtime,
             self.realm,

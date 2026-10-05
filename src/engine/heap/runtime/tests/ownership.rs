@@ -41,7 +41,7 @@ fn rooted_handles_enforce_runtime_domain_and_dup_free_counts() {
             .object_strong_count(object.object_id()),
         Ok(1)
     );
-    let value = Value::Object(object.clone());
+    let value = Value::Object(object.try_clone().expect("duplicate root"));
     assert_eq!(
         first
             .0
@@ -51,7 +51,7 @@ fn rooted_handles_enforce_runtime_domain_and_dup_free_counts() {
             .object_strong_count(object.object_id()),
         Ok(2)
     );
-    let duplicate = value.clone();
+    let duplicate = value.try_clone().expect("duplicate root");
     assert_eq!(
         first
             .0

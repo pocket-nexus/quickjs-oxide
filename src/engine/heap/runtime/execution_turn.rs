@@ -20,8 +20,11 @@ impl Runtime {
         &self,
         body: impl FnOnce() -> Result<T, RuntimeError>,
     ) -> Result<T, RuntimeError> {
+        let _operation = self.operation()?;
         let turn = self.enter_execution_turn()?;
         let result = body();
+        // The embedder may catch a child panic inside the closure.
+        self.check_poison()?;
         let cleanup = turn.finish();
         match result {
             Err(error) => Err(error),
@@ -30,6 +33,7 @@ impl Runtime {
     }
 
     pub(crate) fn enter_execution_turn(&self) -> Result<ExecutionTurn, RuntimeError> {
+        self.check_poison()?;
         let depth = self
             .0
             .execution_turn_depth
@@ -69,7 +73,6 @@ impl Runtime {
 impl RuntimeState {
     pub(super) fn clear_kept_objects(&mut self) -> Result<(), RuntimeError> {
         let mut kept = std::mem::take(&mut self.kept_objects);
-        let mut error = None;
         for target in kept.drain() {
             let result = match target {
                 WeakCollectionKey::Object(id) => self
@@ -79,12 +82,10 @@ impl RuntimeState {
                     .and_then(|cleanup| self.apply_cleanup(cleanup)),
                 WeakCollectionKey::Symbol(atom) => self.release_atoms([atom]),
             };
-            if let Err(failure) = result {
-                error.get_or_insert(failure);
-            }
+            result?;
         }
         self.kept_objects = kept;
-        error.map_or(Ok(()), Err)
+        Ok(())
     }
 }
 
@@ -102,10 +103,19 @@ impl ExecutionTurn {
             return Ok(());
         };
         let runtime = Runtime(inner);
+        let _unwind = runtime.unwind_guard();
         let depth = runtime.0.execution_turn_depth.get() - 1;
         runtime.0.execution_turn_depth.set(depth);
+        if runtime.skip_cleanup() {
+            return Ok(());
+        }
         if depth == 0 {
-            runtime.0.state.borrow_mut().clear_kept_objects()?;
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .clear_kept_objects()
+                .inspect_err(|_| runtime.0.poisoned.set(true))?;
             runtime.drain_deferred_references()?;
             runtime.collect_if_requested()?;
         }
@@ -115,7 +125,9 @@ impl ExecutionTurn {
 
 impl Drop for ExecutionTurn {
     fn drop(&mut self) {
-        let result = self.close();
-        debug_assert!(result.is_ok(), "execution turn cleanup failed: {result:?}");
+        // Explicit finish reports recoverable collection failures. Drop cannot
+        // report them; close quarantines a failed owned release before returning
+        // and never services deferred work or GC on that state.
+        let _ = self.close();
     }
 }

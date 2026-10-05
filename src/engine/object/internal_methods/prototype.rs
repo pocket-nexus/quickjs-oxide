@@ -119,9 +119,11 @@ fn method(
             drop(resume);
             match target {
                 None => {
-                    let object = rooted.target.clone();
+                    let object = rooted.target.try_clone()?;
                     let prototype = match &kind {
-                        ProxyPrototypeKind::Set(prototype) => Some(prototype.clone()),
+                        ProxyPrototypeKind::Set(prototype) => {
+                            Some(prototype.as_ref().map(ObjectRef::try_clone).transpose()?)
+                        }
                         _ => None,
                     };
                     let resume = ProxyPrototypeResume(Box::new(ProxyPrototypeResumeState {
@@ -140,11 +142,18 @@ fn method(
                     }
                 }
                 Some(target) => {
-                    let mut arguments = vec![Value::Object(rooted.target.clone())];
+                    let mut arguments = vec![Value::Object(rooted.target.try_clone()?)];
                     if let ProxyPrototypeKind::Set(prototype) = &kind {
-                        arguments.push(prototype.clone().map_or(Value::Null, Value::Object));
+                        arguments.push(
+                            prototype
+                                .as_ref()
+                                .map(ObjectRef::try_clone)
+                                .transpose()?
+                                .map_or(Value::Null, Value::Object),
+                        );
                     }
-                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let receiver =
+                        runtime.into_jsvalue(Value::Object(rooted.handler.try_clone()?))?;
                     let arguments = arguments
                         .into_iter()
                         .map(|value| runtime.into_jsvalue(value))
@@ -231,7 +240,7 @@ impl ProxyPrototypeResume {
                     }
                 };
                 Ok(ProxyPrototypeStep::request_extensible(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     Self(Box::new(ProxyPrototypeResumeState {
                         pending_effect: ProxyPrototypeStepPending::new(runtime.clone()),
                         realm: self.0.realm,
@@ -275,7 +284,7 @@ impl ProxyPrototypeResume {
                     return Ok(completed(prototype, setting));
                 }
                 Ok(ProxyPrototypeStep::request_get(
-                    rooted.target.clone(),
+                    rooted.target.try_clone()?,
                     Self(Box::new(ProxyPrototypeResumeState {
                         pending_effect: ProxyPrototypeStepPending::new(runtime.clone()),
                         realm: self.0.realm,
@@ -576,7 +585,7 @@ mod tests {
             for compare in [false, true] {
                 let runtime = Runtime::new();
                 let weak = std::rc::Rc::downgrade(&runtime.0);
-                let mut context = runtime.new_context();
+                let mut context = runtime.new_context().expect("create context");
                 let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
                     panic!("expected Proxy")
                 };
@@ -586,7 +595,9 @@ mod tests {
                 let prototype_id = prototype.object_id();
                 let callable = context.eval("(function(){return true})").unwrap();
                 let kind = if setting {
-                    ProxyPrototypeKind::Set(Some(prototype.clone()))
+                    ProxyPrototypeKind::Set(Some(
+                        prototype.try_clone().expect("duplicate prototype"),
+                    ))
                 } else {
                     ProxyPrototypeKind::Get
                 };

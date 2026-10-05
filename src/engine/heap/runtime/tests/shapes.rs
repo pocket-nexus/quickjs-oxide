@@ -190,16 +190,24 @@ fn unique_shape_append_preserves_key_categories_and_readd_order() {
     let symbol = runtime
         .new_symbol(Some(JsString::from_static("unique-symbol")))
         .unwrap();
-    let symbol_key = PropertyKey::from(&symbol);
+    let symbol_key = PropertyKey::try_from(&symbol).expect("symbol key");
     for key in &fillers {
         assert!(set_property(&runtime, &object, key, Value::Int(0)).unwrap());
     }
     for key in [&beta, &symbol_key, &index, &alpha] {
         assert!(set_property(&runtime, &object, key, Value::Int(1)).unwrap());
     }
-    let mut expected = vec![index.clone()];
-    expected.extend(fillers.iter().cloned());
-    expected.extend([beta.clone(), alpha.clone(), symbol_key.clone()]);
+    let mut expected = vec![index.try_clone().expect("duplicate root")];
+    expected.extend(
+        fillers
+            .iter()
+            .map(|value| value.try_clone().expect("duplicate root")),
+    );
+    expected.extend([
+        beta.try_clone().expect("duplicate root"),
+        alpha.try_clone().expect("duplicate root"),
+        symbol_key.try_clone().expect("duplicate root"),
+    ]);
     assert_eq!(runtime.own_property_keys(&object).unwrap(), expected);
 
     assert!(runtime.delete_property(&object, &beta).unwrap());

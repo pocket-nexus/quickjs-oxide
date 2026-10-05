@@ -45,7 +45,7 @@ pub(super) fn primitive(
                     runtime, realm, object, hint,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::Arguments { value, resume } => {
@@ -59,7 +59,7 @@ pub(super) fn primitive(
                 query.parents.push(resume);
                 *step = crate::engine::builtins::ArgumentsStep::start(runtime, realm, value)
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 continue;
             }
             Step::ArgumentsComplete(result) => {
@@ -83,7 +83,7 @@ pub(super) fn primitive(
 
                 let next = crate::engine::value::conversion::primitive::PrimitiveResume::start(
                     runtime, realm, value, hint,
-                );
+                )?;
                 *step = match next {
                     crate::engine::value::conversion::primitive::PrimitiveStep::Complete(
                         result,
@@ -92,7 +92,7 @@ pub(super) fn primitive(
                         .map_err(runtime_error_to_vm_error)?,
                     next => {
                         if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = next.into();
+                            let mut abandoned: Step = next.try_into()?;
                             abandoned.release_owned(runtime);
                             resume.release_owned();
                             return Err(Error::internal(
@@ -100,7 +100,7 @@ pub(super) fn primitive(
                             ));
                         }
                         query.parents.push(resume);
-                        next.into()
+                        next.try_into()?
                     }
                 };
                 continue;
@@ -127,13 +127,13 @@ pub(super) fn primitive(
                     }
                     next => {
                         if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = next.into();
+                            let mut abandoned: Step = next.try_into()?;
                             abandoned.release_owned(runtime);
                             resume.release_owned();
                             return Err(Error::internal("property continuation allocation failed"));
                         }
                         query.parents.push(resume);
-                        next.into()
+                        next.try_into()?
                     }
                 };
                 continue;
@@ -181,13 +181,13 @@ pub(super) fn primitive(
                         .map_err(runtime_error_to_vm_error)?,
                     next => {
                         if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = next.into();
+                            let mut abandoned: Step = next.try_into()?;
                             abandoned.release_owned(runtime);
                             resume.release_owned();
                             return Err(Error::internal("property continuation allocation failed"));
                         }
                         query.parents.push(resume);
-                        next.into()
+                        next.try_into()?
                     }
                 };
                 continue;
@@ -252,7 +252,7 @@ pub(super) fn constructor(
                     runtime, realm, new_target,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::ConstructorSourceComplete(result) => {
@@ -289,7 +289,7 @@ pub(super) fn constructor(
                     runtime, realm, source, element, buffer, offset, length,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::TypedIteratorMethod { source, resume } => {
@@ -303,7 +303,7 @@ pub(super) fn constructor(
                 *step =
                     crate::engine::builtins::TypedIteratorMethodStep::start(runtime, realm, source)
                         .map_err(runtime_error_to_vm_error)?
-                        .into();
+                        .try_into()?;
                 continue;
             }
             Step::TypedIteratorMethodComplete(result) => {
@@ -336,7 +336,7 @@ pub(super) fn constructor(
                     runtime, realm, source, method, element,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::TypedCollectComplete(result) => {
@@ -373,7 +373,7 @@ pub(super) fn constructor(
                     Some(length),
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::TypedSpecies {
@@ -395,7 +395,7 @@ pub(super) fn constructor(
                     runtime, realm, source, element, length,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::TypedSpeciesComplete(result) => {

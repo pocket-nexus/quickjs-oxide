@@ -160,14 +160,18 @@ fn global_numeric_predicates_match_pinned_quickjs() {
 fn global_numeric_predicate_errors_use_the_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_nan = global_callable(&runtime, &mut first, "isNaN");
     let first_finite = global_callable(&runtime, &mut first, "isFinite");
     let first_function_prototype = first.function_prototype().unwrap();
     assert_eq!(
         runtime.get_prototype_of(first_nan.as_object()).unwrap(),
-        Some(first_function_prototype.clone())
+        Some(
+            first_function_prototype
+                .try_clone()
+                .expect("duplicate root")
+        )
     );
     assert_eq!(
         runtime.get_prototype_of(first_finite.as_object()).unwrap(),
@@ -185,7 +189,7 @@ fn global_numeric_predicate_errors_use_the_defining_realm() {
     let constructor_error = take_exception_object(&mut second);
     assert_eq!(
         runtime.get_prototype_of(&constructor_error).unwrap(),
-        Some(second_type_error.clone()),
+        Some(second_type_error.try_clone().expect("duplicate root")),
         "non-constructor rejection must use the caller realm"
     );
 
@@ -199,7 +203,7 @@ fn global_numeric_predicate_errors_use_the_defining_realm() {
     let symbol_error = take_exception_object(&mut second);
     assert_eq!(
         runtime.get_prototype_of(&symbol_error).unwrap(),
-        Some(first_type_error.clone())
+        Some(first_type_error.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         error_text(&runtime, &mut second, &symbol_error, "message"),
@@ -223,8 +227,17 @@ fn global_numeric_predicate_errors_use_the_defining_realm() {
     define_data_key(
         &runtime,
         &bad_input,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(bad_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            bad_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     assert_eq!(
         second.call(&first_finite, Value::Undefined, &[Value::Object(bad_input)],),
@@ -245,8 +258,12 @@ fn global_numeric_predicate_errors_use_the_defining_realm() {
     define_data_key(
         &runtime,
         &throwing_input,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(user_throw.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(user_throw.as_object().try_clone().expect("duplicate root")),
     );
     assert_eq!(
         first.call(
@@ -268,15 +285,18 @@ fn global_numeric_predicate_keeps_its_defining_realm_alive_until_collection() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let predicate = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         global_callable(&runtime, &mut context, "isNaN")
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(predicate);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]
@@ -300,7 +320,7 @@ fn global_numeric_predicate_native_stacks_match_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let is_nan = global_callable(&runtime, &mut context, "isNaN");
     let is_finite = global_callable(&runtime, &mut context, "isFinite");
@@ -394,7 +414,7 @@ fn rust_observations() -> Vec<String> {
     observations.push(format!(
         "raw-isNaN={}",
         raw.iter()
-            .cloned()
+            .map(|value| value.try_clone().expect("duplicate root"))
             .map(|value| call_bool(&mut context, &is_nan, value).to_string())
             .collect::<Vec<_>>()
             .join(",")
@@ -402,7 +422,7 @@ fn rust_observations() -> Vec<String> {
     observations.push(format!(
         "raw-isFinite={}",
         raw.iter()
-            .cloned()
+            .map(|value| value.try_clone().expect("duplicate root"))
             .map(|value| call_bool(&mut context, &is_finite, value).to_string())
             .collect::<Vec<_>>()
             .join(",")
@@ -418,8 +438,17 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &extra,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(extra_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            extra_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let ignored_this = context.new_object().unwrap();
     let symbol_this = runtime
@@ -431,7 +460,7 @@ fn rust_observations() -> Vec<String> {
             Value::Object(ignored_this),
             &[
                 Value::String(JsString::try_from_utf8("x").unwrap()),
-                Value::Object(extra.clone()),
+                Value::Object(extra.try_clone().expect("duplicate root")),
             ],
         )
         .unwrap();
@@ -464,8 +493,17 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &nan_exotic,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(nan_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            nan_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let finite_exotic = context.new_object().unwrap();
     let finite_conversion = eval_callable(
@@ -476,8 +514,17 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &finite_exotic,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(finite_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            finite_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
 
     let fallback_result = context.new_object().unwrap();
@@ -502,13 +549,13 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &fallback,
         "valueOf",
-        Value::Object(value_of.as_object().clone()),
+        Value::Object(value_of.as_object().try_clone().expect("duplicate root")),
     );
     define_data(
         &runtime,
         &fallback,
         "toString",
-        Value::Object(to_string.as_object().clone()),
+        Value::Object(to_string.as_object().try_clone().expect("duplicate root")),
     );
 
     let invalid_result = context.new_object().unwrap();
@@ -527,16 +574,34 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &invalid,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(invalid_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            invalid_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let arbitrary = context.new_object().unwrap();
     let arbitrary_conversion = eval_callable(&runtime, &mut context, "(function() { throw 71; })");
     define_data_key(
         &runtime,
         &arbitrary,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(arbitrary_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            arbitrary_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
 
     let boxed_nan = expect_object(
@@ -570,14 +635,22 @@ fn rust_observations() -> Vec<String> {
         observe_call(&runtime, &mut context, &is_finite, Value::Object(arbitrary));
     observations.push(format!(
         "objects={}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        plain_value(object_results[0].clone()),
-        plain_value(object_results[1].clone()),
-        plain_value(object_results[2].clone()),
+        plain_value(object_results[0].try_clone().expect("duplicate root")),
+        plain_value(object_results[1].try_clone().expect("duplicate root")),
+        plain_value(object_results[2].try_clone().expect("duplicate root")),
         plain_value(coercion_log),
         invalid_result,
         arbitrary_result,
-        call_bool(&mut context, &is_nan, Value::Object(boxed_nan.clone())),
-        call_bool(&mut context, &is_finite, Value::Object(boxed_zero.clone())),
+        call_bool(
+            &mut context,
+            &is_nan,
+            Value::Object(boxed_nan.try_clone().expect("duplicate root"))
+        ),
+        call_bool(
+            &mut context,
+            &is_finite,
+            Value::Object(boxed_zero.try_clone().expect("duplicate root"))
+        ),
         call_bool(&mut context, &number_is_nan, Value::Object(boxed_nan)),
         call_bool(&mut context, &number_is_finite, Value::Object(boxed_zero)),
     ));
@@ -630,7 +703,12 @@ fn rust_observations() -> Vec<String> {
             .set_property(
                 &global,
                 &runtime.intern_property_key("isNaN").unwrap(),
-                Value::Object(replacement_global.as_object().clone()),
+                Value::Object(
+                    replacement_global
+                        .as_object()
+                        .try_clone()
+                        .expect("duplicate root")
+                ),
             )
             .unwrap()
     );
@@ -644,7 +722,12 @@ fn rust_observations() -> Vec<String> {
             .set_property(
                 number.as_object(),
                 &runtime.intern_property_key("isFinite").unwrap(),
-                Value::Object(replacement_static.as_object().clone()),
+                Value::Object(
+                    replacement_static
+                        .as_object()
+                        .try_clone()
+                        .expect("duplicate root")
+                ),
             )
             .unwrap()
     );
@@ -865,7 +948,7 @@ fn plain_value(value: Value) -> String {
 fn rust_uncaught_error(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context.eval_with_options(source, &EvalOptions::new("<cmdline>")),
         Err(RuntimeError::Exception)

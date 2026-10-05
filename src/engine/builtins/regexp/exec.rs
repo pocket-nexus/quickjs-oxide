@@ -688,7 +688,7 @@ mod local_exec_tests {
     #[test]
     fn primitive_regexp_exec_completes_inside_its_domain() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let this_value = runtime
             .unroot_value(&context.eval("/a/g").unwrap())
             .unwrap();
@@ -723,7 +723,7 @@ mod local_exec_tests {
     #[test]
     fn regexp_local_conversion_preserves_reentry_and_live_program() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let trace='', re=/a/g;
             const input={toString(){trace+='i';re.lastIndex={valueOf(){trace+='l';return 0}};return 'a'}};

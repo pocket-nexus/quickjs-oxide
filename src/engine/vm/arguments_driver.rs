@@ -59,7 +59,12 @@ pub(super) fn arguments(
                         .map_err(runtime_error_to_vm_error)?,
                 );
             }
-            runtime.new_mapped_arguments_object(frame.executable.realm, &frame.cold.function, roots)
+            let function = frame
+                .cold
+                .function
+                .to_root(runtime)
+                .map_err(runtime_error_to_vm_error)?;
+            runtime.new_mapped_arguments_object(frame.executable.realm, &function, roots)
         }
     }
     .map_err(runtime_error_to_vm_error)?;

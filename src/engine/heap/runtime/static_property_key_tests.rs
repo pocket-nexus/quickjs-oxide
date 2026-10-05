@@ -37,8 +37,8 @@ fn repeated_static_name_draft() -> UnlinkedFunction {
 #[test]
 fn static_property_keys_reuse_one_owned_atom_and_release_with_bytecode() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let baseline_atoms = runtime.test_atom_count();
+    let mut context = runtime.new_context().expect("create context");
+    let baseline_atoms = runtime.test_atom_count().expect("atom count");
     let bytecode = runtime
         .publish_unlinked_function(context.realm, repeated_static_name_draft())
         .unwrap();
@@ -58,10 +58,13 @@ fn static_property_keys_reuse_one_owned_atom_and_release_with_bytecode() {
         assert_eq!(state.atoms.resolve(keys[0]).unwrap().ref_count, Some(1));
         keys[0]
     };
-    assert_eq!(runtime.test_atom_count(), baseline_atoms + 1);
+    assert_eq!(
+        runtime.test_atom_count().expect("atom count"),
+        baseline_atoms + 1
+    );
     #[cfg(feature = "profiling")]
     {
-        let snapshot = runtime.memory_snapshot();
+        let snapshot = runtime.memory_snapshot().expect("runtime state");
         let keys = snapshot
             .categories
             .iter()
@@ -72,7 +75,7 @@ fn static_property_keys_reuse_one_owned_atom_and_release_with_bytecode() {
             keys.used_bytes,
             Some(size_of::<crate::engine::atom::Atom>())
         );
-        assert_eq!(snapshot, runtime.memory_snapshot());
+        assert_eq!(snapshot, runtime.memory_snapshot().expect("runtime state"));
     }
     for _ in 0..3 {
         assert_eq!(
@@ -94,26 +97,29 @@ fn static_property_keys_reuse_one_owned_atom_and_release_with_bytecode() {
     drop(bytecode);
     runtime.run_gc().unwrap();
     assert!(runtime.0.state.borrow().atoms.resolve(atom).is_err());
-    assert_eq!(runtime.test_atom_count(), baseline_atoms);
+    assert_eq!(
+        runtime.test_atom_count().expect("atom count"),
+        baseline_atoms
+    );
 }
 
 #[test]
 fn static_property_keys_are_runtime_local_and_failed_publication_rolls_back() {
     let first = Runtime::new();
-    let mut first_context = first.new_context();
+    let mut first_context = first.new_context().expect("create context");
     let second = Runtime::new();
-    let second_context = second.new_context();
-    let expired = first.new_context();
+    let second_context = second.new_context().expect("create context");
+    let expired = first.new_context().expect("create context");
     let expired_realm = expired.realm;
     drop(expired);
     first.run_gc().unwrap();
-    let baseline = first.test_atom_count();
+    let baseline = first.test_atom_count().expect("atom count");
     assert!(
         first
             .publish_unlinked_function(expired_realm, repeated_static_name_draft())
             .is_err()
     );
-    assert_eq!(first.test_atom_count(), baseline);
+    assert_eq!(first.test_atom_count().expect("atom count"), baseline);
 
     let a = first
         .publish_unlinked_function(first_context.realm, repeated_static_name_draft())
@@ -135,7 +141,7 @@ fn static_property_keys_are_runtime_local_and_failed_publication_rolls_back() {
         .unwrap()[0];
     assert_ne!(a_atom, b_atom);
     assert!(first_context.execute(&b).is_err());
-    let mut sibling = first.new_context();
+    let mut sibling = first.new_context().expect("create context");
     assert_eq!(
         sibling.execute(&a).unwrap(),
         Value::String(JsString::from_static("ordinary_constant_stays_a_string"))
@@ -145,7 +151,7 @@ fn static_property_keys_are_runtime_local_and_failed_publication_rolls_back() {
 #[test]
 fn static_property_keys_preserve_numeric_spellings_and_exact_utf16() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let mut names = ["0", "01", "2147483647", "2147483648", "属性"]
         .map(JsString::from_static)
         .to_vec();
@@ -195,7 +201,7 @@ fn static_property_keys_preserve_numeric_spellings_and_exact_utf16() {
 #[test]
 fn static_property_keys_keep_getters_proxies_and_resumed_frames_observable() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(

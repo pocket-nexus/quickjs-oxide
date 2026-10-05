@@ -307,7 +307,7 @@ impl Harness {
     fn new() -> Self {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let function_prototype = context.function_prototype().unwrap();
         let bind = property_callable(&runtime, &mut context, &function_prototype, "bind");
         let to_string = property_callable(&runtime, &mut context, &function_prototype, "toString");
@@ -332,10 +332,14 @@ impl Harness {
     ) -> Result<Value, RuntimeError> {
         let mut arguments = Vec::with_capacity(bound_arguments.len() + 1);
         arguments.push(this_value);
-        arguments.extend_from_slice(bound_arguments);
+        arguments.extend(
+            bound_arguments
+                .iter()
+                .map(|value| value.try_clone().expect("duplicate root")),
+        );
         self.context.call(
             &self.bind,
-            Value::Object(target.as_object().clone()),
+            Value::Object(target.as_object().try_clone().expect("duplicate root")),
             &arguments,
         )
     }
@@ -387,8 +391,11 @@ fn rust_intrinsic_and_source_observations() -> Vec<String> {
         "toString",
         "Symbol(Symbol.hasInstance)",
     ];
-    let has_instance_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     let implemented_keys = runtime
         .own_property_keys(&harness.function_prototype)
         .unwrap()
@@ -433,9 +440,12 @@ fn rust_intrinsic_and_source_observations() -> Vec<String> {
     let anonymous = harness.function(&format!("(0, {anonymous_source})"));
     let named_source = "function named /*kept*/ (value) {\n  return value;\n}";
     let named = harness.function(&format!("(0, {named_source})"));
-    let observed_anonymous =
-        harness.function_to_string(Value::Object(anonymous.as_object().clone()));
-    let observed_named = harness.function_to_string(Value::Object(named.as_object().clone()));
+    let observed_anonymous = harness.function_to_string(Value::Object(
+        anonymous.as_object().try_clone().expect("duplicate root"),
+    ));
+    let observed_named = harness.function_to_string(Value::Object(
+        named.as_object().try_clone().expect("duplicate root"),
+    ));
     define_value_only(
         &runtime,
         anonymous.as_object(),
@@ -448,9 +458,12 @@ fn rust_intrinsic_and_source_observations() -> Vec<String> {
         "name",
         Value::String(JsString::try_from_utf8("changed named").unwrap()),
     );
-    let renamed_anonymous =
-        harness.function_to_string(Value::Object(anonymous.as_object().clone()));
-    let renamed_named = harness.function_to_string(Value::Object(named.as_object().clone()));
+    let renamed_anonymous = harness.function_to_string(Value::Object(
+        anonymous.as_object().try_clone().expect("duplicate root"),
+    ));
+    let renamed_named = harness.function_to_string(Value::Object(
+        named.as_object().try_clone().expect("duplicate root"),
+    ));
 
     let native_target = harness.function("(function nativeTarget(a){})");
     let bound_native_target = harness.bind(&native_target, Value::Null, &[]);
@@ -466,14 +479,38 @@ fn rust_intrinsic_and_source_observations() -> Vec<String> {
         &harness.function_prototype,
         "apply",
     );
-    let fp_template = harness.function_to_string(Value::Object(harness.function_prototype.clone()));
-    let call_template = harness.function_to_string(Value::Object(call.as_object().clone()));
-    let apply_template = harness.function_to_string(Value::Object(apply.as_object().clone()));
-    let bind_template = harness.function_to_string(Value::Object(harness.bind.as_object().clone()));
-    let to_string_template =
-        harness.function_to_string(Value::Object(harness.to_string.as_object().clone()));
-    let bound_template =
-        harness.function_to_string(Value::Object(bound_native_target.as_object().clone()));
+    let fp_template = harness.function_to_string(Value::Object(
+        harness
+            .function_prototype
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let call_template = harness.function_to_string(Value::Object(
+        call.as_object().try_clone().expect("duplicate root"),
+    ));
+    let apply_template = harness.function_to_string(Value::Object(
+        apply.as_object().try_clone().expect("duplicate root"),
+    ));
+    let bind_template = harness.function_to_string(Value::Object(
+        harness
+            .bind
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let to_string_template = harness.function_to_string(Value::Object(
+        harness
+            .to_string
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let bound_template = harness.function_to_string(Value::Object(
+        bound_native_target
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
 
     let invalid_object = harness.context.new_object().unwrap();
     let invalid_object_result = harness.function_to_string_result(Value::Object(invalid_object));
@@ -482,7 +519,9 @@ fn rust_intrinsic_and_source_observations() -> Vec<String> {
     let invalid_number = observe_result(&runtime, &mut harness.context, invalid_number_result);
 
     define_value_only(&runtime, call.as_object(), "name", Value::Int(17));
-    let number_name = harness.function_to_string(Value::Object(call.as_object().clone()));
+    let number_name = harness.function_to_string(Value::Object(
+        call.as_object().try_clone().expect("duplicate root"),
+    ));
 
     let native_name_symbol = runtime
         .new_symbol(Some(JsString::try_from_utf8("native-name").unwrap()))
@@ -493,8 +532,9 @@ fn rust_intrinsic_and_source_observations() -> Vec<String> {
         "name",
         Value::Symbol(native_name_symbol),
     );
-    let symbol_name_result =
-        harness.function_to_string_result(Value::Object(apply.as_object().clone()));
+    let symbol_name_result = harness.function_to_string_result(Value::Object(
+        apply.as_object().try_clone().expect("duplicate root"),
+    ));
     let symbol_name = observe_result(&runtime, &mut harness.context, symbol_name_result);
 
     let native_name_sentinel = harness.context.new_object().unwrap();
@@ -502,7 +542,7 @@ fn rust_intrinsic_and_source_observations() -> Vec<String> {
         &runtime,
         &mut harness.context,
         "nativeNameSentinel",
-        Value::Object(native_name_sentinel.clone()),
+        Value::Object(native_name_sentinel.try_clone().expect("duplicate root")),
     );
     let native_name_getter = harness.function("(function(){ throw nativeNameSentinel; })");
     define_getter(
@@ -511,8 +551,13 @@ fn rust_intrinsic_and_source_observations() -> Vec<String> {
         "name",
         native_name_getter,
     );
-    let native_name_result =
-        harness.function_to_string_result(Value::Object(harness.bind.as_object().clone()));
+    let native_name_result = harness.function_to_string_result(Value::Object(
+        harness
+            .bind
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     let native_name_identity = thrown_identity(
         &mut harness.context,
         native_name_result,
@@ -584,7 +629,9 @@ fn rust_bind_metadata_observations() -> Vec<String> {
     for (label, length, count) in length_cases {
         let target = harness.function("(function lengthTarget(a,b,c,d,e,f){})");
         define_value_only(&runtime, target.as_object(), "length", length);
-        let arguments = vec![Value::Int(1); count];
+        let arguments = std::iter::repeat_with(|| Value::Int(1))
+            .take(count)
+            .collect::<Vec<_>>();
         let bound = harness.bind(&target, Value::Null, &arguments);
         length_parts.push(format!(
             "{label}:{}",
@@ -698,7 +745,7 @@ fn rust_bind_metadata_observations() -> Vec<String> {
         &runtime,
         &mut harness.context,
         "lengthThrowSentinel",
-        Value::Object(length_throw_sentinel.clone()),
+        Value::Object(length_throw_sentinel.try_clone().expect("duplicate root")),
     );
     define_global(
         &runtime,
@@ -736,7 +783,7 @@ fn rust_bind_metadata_observations() -> Vec<String> {
         &runtime,
         &mut harness.context,
         "nameThrowSentinel",
-        Value::Object(name_throw_sentinel.clone()),
+        Value::Object(name_throw_sentinel.try_clone().expect("duplicate root")),
     );
     define_global(
         &runtime,
@@ -849,7 +896,7 @@ fn rust_bound_execution_observations() -> Vec<String> {
     );
     let simple_bound = harness.bind(
         &call_target,
-        Value::Object(receiver.clone()),
+        Value::Object(receiver.try_clone().expect("duplicate root")),
         &[Value::Int(1)],
     );
     let simple = harness
@@ -887,7 +934,13 @@ fn rust_bound_execution_observations() -> Vec<String> {
     let ignored_bound_this = harness.context.new_object().unwrap();
     let construct_bound = harness.bind(&construct_target, Value::Object(ignored_bound_this), &[]);
     let constructed = harness.context.construct(&construct_bound, &[]).unwrap();
-    let new_target_target = constructed == Value::Object(construct_target.as_object().clone());
+    let new_target_target = constructed
+        == Value::Object(
+            construct_target
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        );
     let bound_own_prototype = runtime
         .has_own_property(
             construct_bound.as_object(),
@@ -908,7 +961,9 @@ fn rust_bound_execution_observations() -> Vec<String> {
     let construct_arg_bound = harness.bind(
         &construct_arg_target,
         Value::Null,
-        &[Value::Object(construct_arg_marker.clone())],
+        &[Value::Object(
+            construct_arg_marker.try_clone().expect("duplicate root"),
+        )],
     );
     let constructed_arg = harness
         .context
@@ -922,18 +977,26 @@ fn rust_bound_execution_observations() -> Vec<String> {
         &runtime,
         &mut harness.context,
         "instanceMarker",
-        Value::Object(instance_marker.clone()),
+        Value::Object(instance_marker.try_clone().expect("duplicate root")),
     );
     let instance_target = harness.function("(function InstanceTarget(){})");
     let custom_has_instance =
         harness.function("(function(candidate){ return candidate === instanceMarker; })");
-    let has_instance_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     define_data_key(
         &runtime,
         instance_target.as_object(),
         &has_instance_key,
-        Value::Object(custom_has_instance.as_object().clone()),
+        Value::Object(
+            custom_has_instance
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -949,15 +1012,27 @@ fn rust_bound_execution_observations() -> Vec<String> {
         .context
         .call(
             &has_instance,
-            Value::Object(instance_bound.as_object().clone()),
-            &[Value::Object(instance_marker.clone())],
+            Value::Object(
+                instance_bound
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root"),
+            ),
+            &[Value::Object(
+                instance_marker.try_clone().expect("duplicate root"),
+            )],
         )
         .unwrap();
     let custom_false = harness
         .context
         .call(
             &has_instance,
-            Value::Object(instance_bound.as_object().clone()),
+            Value::Object(
+                instance_bound
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root"),
+            ),
             &[Value::Object(instance_other)],
         )
         .unwrap();
@@ -966,18 +1041,28 @@ fn rust_bound_execution_observations() -> Vec<String> {
         &runtime,
         &mut harness.context,
         "instanceThrowSentinel",
-        Value::Object(instance_throw_sentinel.clone()),
+        Value::Object(instance_throw_sentinel.try_clone().expect("duplicate root")),
     );
     let throwing_has_instance = harness.function("(function(){ throw instanceThrowSentinel; })");
     define_value_only_key(
         &runtime,
         instance_target.as_object(),
         &has_instance_key,
-        Value::Object(throwing_has_instance.as_object().clone()),
+        Value::Object(
+            throwing_has_instance
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let instance_throw_result = harness.context.call(
         &has_instance,
-        Value::Object(instance_bound.as_object().clone()),
+        Value::Object(
+            instance_bound
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         &[Value::Object(instance_marker)],
     );
     let instance_throw_identity = thrown_identity(
@@ -1001,8 +1086,8 @@ fn rust_bound_execution_observations() -> Vec<String> {
 
     let cross_runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut target_realm = cross_runtime.new_context();
-    let mut bind_realm = cross_runtime.new_context();
+    let mut target_realm = cross_runtime.new_context().expect("create context");
+    let mut bind_realm = cross_runtime.new_context().expect("create context");
     let cross_target = function(
         &cross_runtime,
         &mut target_realm,
@@ -1023,7 +1108,12 @@ fn rust_bound_execution_observations() -> Vec<String> {
     let Value::Object(cross_bound) = bind_realm
         .call(
             &cross_bind,
-            Value::Object(cross_target.as_object().clone()),
+            Value::Object(
+                cross_target
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root"),
+            ),
             &[Value::Null],
         )
         .unwrap()

@@ -683,7 +683,7 @@ fn statement_control_flow_values_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context
             .eval(source)
             .unwrap_or_else(|error| panic!("Rust rejected {description:?} ({source:?}): {error}"));
@@ -714,7 +714,7 @@ fn statement_control_flow_diagnostics_match_pinned_quickjs() {
 fn rust_error_observation(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     take_rust_error(&runtime, &mut context)
 }

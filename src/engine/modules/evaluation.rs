@@ -105,7 +105,7 @@ impl EvaluationStep {
             ));
         }
         let capability = runtime.new_default_promise_capability(initiating_realm)?;
-        let promise = capability.promise.clone();
+        let promise = capability.promise.try_clone()?;
         runtime
             .0
             .state
@@ -199,9 +199,9 @@ impl EvaluationResume {
         self.armed = false;
         self.settling = true;
         let callable = if success {
-            self.capability.resolve.clone()
+            self.capability.resolve.try_clone()?
         } else {
-            self.capability.reject.clone()
+            self.capability.reject.try_clone()?
         };
         Ok(EvaluationStep::Call {
             callable,
@@ -219,7 +219,7 @@ impl EvaluationResume {
                     self.runtime.release_jsvalue(value)?;
                     Ok(EvaluationStep::Complete(Completion::Return(
                         self.runtime
-                            .into_jsvalue(Value::Object(self.capability.promise.clone()))?,
+                            .into_jsvalue(Value::Object(self.capability.promise.try_clone()?))?,
                     )))
                 }
                 Completion::Throw(value) => {
@@ -285,8 +285,9 @@ impl EvaluationResume {
                 match self.runtime.module_record(self.root.raw)?.evaluation {
                     ModuleEvaluationState::EvaluatingAsync => {
                         Ok(EvaluationStep::Complete(Completion::Return(
-                            self.runtime
-                                .into_jsvalue(Value::Object(self.capability.promise.clone()))?,
+                            self.runtime.into_jsvalue(Value::Object(
+                                self.capability.promise.try_clone()?,
+                            ))?,
                         )))
                     }
                     ModuleEvaluationState::Evaluated => self.settle(true, JsValue::Undefined),
@@ -600,16 +601,140 @@ impl EvaluationResume {
 }
 impl Drop for EvaluationResume {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
         if let Some(exception) = self.dfs.exception.take() {
             let _ = self.runtime.release_jsvalue(exception);
+            if self.runtime.is_poisoned() {
+                return;
+            }
         }
-        if self.armed {
-            let _ = self
+        if self.armed
+            && self
                 .runtime
-                .poison_active_module_evaluations(self.root.raw, &self.dfs.stack);
+                .poison_active_module_evaluations(self.root.raw, &self.dfs.stack)
+                .is_err()
+        {
+            self.runtime.0.poisoned.set(true);
         }
     }
 }
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<EvaluationStep>() <= 64);
+
+#[cfg(all(test, not(target_family = "wasm"), panic = "unwind"))]
+mod quarantine_tests {
+    use super::*;
+    use crate::engine::heap::ModuleId;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn evaluation_resume_abandonment_respects_quarantine() {
+        let Ok(case) = std::env::var("QJS_EVALUATION_RESUME_CHILD") else {
+            for case in ["normal", "poison", "unwind", "error", "exception-error"] {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "engine::modules::evaluation::quarantine_tests::evaluation_resume_abandonment_respects_quarantine",
+                        "--nocapture",
+                    ])
+                    .env("QJS_EVALUATION_RESUME_CHILD", case)
+                    .env("QJS_TEARDOWN_PROBE", "1")
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "evaluation cleanup {case}: {status}");
+            }
+            return;
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let module = context.compile_module("export let value = 1;").unwrap();
+        runtime
+            .link_module_graph(module.raw, context.realm)
+            .unwrap();
+        runtime
+            .transition_module_record(module.raw, RawModuleTransition::BeginEvaluation)
+            .unwrap();
+        let capability = runtime
+            .new_default_promise_capability(context.realm)
+            .unwrap();
+        let promise = capability.promise.object_id();
+        let mut dfs = ModuleEvaluationDfs::new();
+        dfs.stack.push(module.raw.module);
+        let mut resume = EvaluationResume {
+            runtime: runtime.clone(),
+            root: module.try_clone().unwrap(),
+            realm: context.realm,
+            capability,
+            dfs,
+            frames: Vec::new(),
+            pending: None,
+            armed: true,
+            settling: false,
+        };
+        let count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(promise)
+            .unwrap();
+        match case.as_str() {
+            "normal" => {
+                drop(resume);
+                assert!(!runtime.is_poisoned());
+                assert!(matches!(
+                    runtime.module_record(module.raw).unwrap().evaluation,
+                    ModuleEvaluationState::Poisoned
+                ));
+                assert_eq!(context.eval("1 + 2").unwrap(), Value::number(3.0));
+            }
+            "poison" | "unwind" => {
+                let state = runtime.0.state.borrow_mut();
+                if case == "poison" {
+                    runtime.0.poisoned.set(true);
+                    drop(resume);
+                } else {
+                    assert!(
+                        catch_unwind(AssertUnwindSafe(|| {
+                            let _resume = resume;
+                            panic!("injected evaluation abandonment panic");
+                        }))
+                        .is_err()
+                    );
+                }
+                assert!(runtime.is_poisoned());
+                assert!(matches!(
+                    state.heap.loaded_module(module.raw).unwrap().evaluation,
+                    ModuleEvaluationState::Evaluating
+                ));
+                assert_eq!(state.heap.object_strong_count(promise).unwrap(), count);
+                drop(state);
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            "error" | "exception-error" => {
+                if case == "error" {
+                    resume.dfs.stack.insert(0, ModuleId(usize::MAX));
+                } else {
+                    let invalid = runtime.new_object(None).unwrap().into_handle();
+                    runtime.release_object_handle(invalid);
+                    resume.dfs.exception = Some(JsValue::Object(invalid));
+                }
+                drop(resume);
+                assert!(runtime.is_poisoned());
+                let state = runtime.0.state.borrow();
+                assert!(matches!(
+                    state.heap.loaded_module(module.raw).unwrap().evaluation,
+                    ModuleEvaluationState::Evaluating
+                ));
+                assert_eq!(state.heap.object_strong_count(promise).unwrap(), count);
+                drop(state);
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            _ => panic!("unknown evaluation cleanup case"),
+        }
+    }
+}

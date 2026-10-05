@@ -34,7 +34,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "eval",
-            Value::Object(function.as_object().clone()),
+            Value::Object(function.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -115,7 +115,7 @@ impl Runtime {
             .iter()
             .map(|scope| scope.bindings.len())
             .sum::<usize>();
-        let expected_descriptor = environment.descriptor.clone();
+        let expected_descriptor = environment.descriptor.try_clone()?;
         let JsValue::String(id) = &invocation.input else {
             unreachable!("String direct eval was checked above");
         };
@@ -486,7 +486,7 @@ impl Runtime {
         context: EvalCompileContext,
     ) -> Result<Compilation, RuntimeError> {
         self.0.state.borrow().heap.context(realm)?;
-        let debug_info = self.debug_info_mode();
+        let debug_info = self.debug_info_mode()?;
         let function =
             match compile_unlinked_eval_source_with_filename(source, filename, debug_info, context)
             {
@@ -664,7 +664,9 @@ impl Runtime {
         // Caller roots form an exact authenticated prefix. Attach every root
         // before global declaration creation so a forged late descriptor can
         // never cause partial global state.
-        let mut slots = vec![None; closure_variables.len()];
+        let mut slots = std::iter::repeat_with(|| None)
+            .take(closure_variables.len())
+            .collect::<Vec<_>>();
         for (index, (expected, root)) in bindings.iter().zip(environment_roots).enumerate() {
             let descriptor = closure_variables[index];
             let expected_index = u16::try_from(index).map_err(|_| {
@@ -717,7 +719,7 @@ impl Runtime {
                 ));
             }
             self.validate_var_ref_metadata(root, descriptor)?;
-            slots[index] = Some(root.clone());
+            slots[index] = Some(root.try_clone()?);
         }
 
         // Every caller root is now attached. Instantiate global slots in

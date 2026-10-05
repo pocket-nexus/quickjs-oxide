@@ -1,6 +1,6 @@
 # 执行与性能
 
-当前引擎使用单一 `ExecCode` 字流和栈 VM。编译器发布指令、控制流边界、数值区域和有界快速入口；`vm/execute.rs` 执行指令，驱动器处理调用、属性语义、异常与挂起。普通绑定写入按所有权转移，命名属性读取在同一选择流程中处理数据、访问器和完整缺失。捕获变量与形状使用各自的类型化 arena。
+当前引擎使用单一 `ExecCode` 字流和栈 VM。编译器发布指令、控制流边界、数值区域和有界快速入口；`vm/execute.rs` 持有状态访问，普通调用、返回与 Base 构造在同一解释循环继续。驱动器处理剩余属性语义、内建、异常与挂起边界。普通绑定写入按所有权转移，命名属性读取在同一选择流程中处理数据、访问器和完整缺失。捕获变量与形状使用各自的类型化 arena。
 
 ## 文档入口
 
@@ -9,7 +9,10 @@
 - [执行不变量](principles.md)：所有权、借用、位置与可观察操作。
 - [类型化存储](typed-arenas.md)：捕获变量、形状和回收。
 - [测量方法](measurement.md)：构建身份、固定工作量、profile 与资源成本。
-- [当前 V8 v7 测量摘要](current-measurement.md)：main 与 PR #84 的八项原版 Score、combined 和配对变化区间。
+- [内部执行所有权阶段 A 验收](runtime-core-stage-a.md)：当前组合的原版 Score、固定时间、资源交换、机制与历史 Boa 对照。
+- [2026-10-01 提交栈测量](current-measurement.md)：旧 main 与 PR #84 的累计原版 Score，保留原来的归因范围。
+- [V8 v7 已采纳优化](v8-v7-boa-parity.md)：当前实现的提交、机制与组合验证。
+- [RegExpSplit 简化验收](v8-v7-structural-simplification.md)：2026-10-02 普通 release 原版成绩、机制与历史 Boa 对照。
 - [诊断工具](../profiling.md)与 [benchmark 工具](../../scripts/benchmark/README.md)：可运行的命令和输出契约。
 
 性能结论以受测源码、二进制、负载和原始样本为单位。改动执行路径时，同时核对语义、局部操作成本、完整程序时间、编译成本和内存生命周期。

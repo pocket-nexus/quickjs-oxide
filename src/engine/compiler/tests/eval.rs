@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn compiler_marks_only_syntactic_eval_identifier_calls() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     for source in ["eval(0)", "(eval)(0)", "((eval))(0)", r"\u0065val(0)"] {
         let root = context.compile(source).unwrap();
@@ -362,7 +362,7 @@ fn direct_eval_super_capability_is_explicit_and_independent_from_imports() {
 #[test]
 fn nested_eval_in_derived_constructor_accepts_inner_private_fields() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = r#"
         var testStr = `
             class C extends Object {
@@ -460,7 +460,7 @@ fn compiler_preserves_authenticated_with_environment_relays() {
 #[test]
 fn with_statements_execute_ordered_environment_and_reference_paths() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -1399,6 +1399,12 @@ fn eval_scope_descriptors_are_semantic_metadata_in_strip_debug_mode() {
     }));
 
     let runtime = Runtime::new();
-    runtime.set_debug_info_mode(DebugInfoMode::StripDebug);
-    runtime.new_context().compile(source).unwrap();
+    runtime
+        .set_debug_info_mode(DebugInfoMode::StripDebug)
+        .expect("set runtime configuration");
+    runtime
+        .new_context()
+        .expect("create context")
+        .compile(source)
+        .unwrap();
 }

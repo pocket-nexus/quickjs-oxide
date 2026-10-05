@@ -31,7 +31,7 @@ fn integer(value: Value) -> i32 {
 
 fn drain(runtime: &Runtime) -> usize {
     let mut count = 0;
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         assert!(runtime.execute_pending_job().unwrap().executed());
         count += 1;
     }
@@ -42,7 +42,7 @@ fn drain(runtime: &Runtime) -> usize {
 fn async_arrow_shape_source_and_await_match_pinned_quickjs() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,
@@ -99,7 +99,7 @@ try {
 fn async_arrow_keeps_lexical_this_arguments_and_new_target_across_await() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -136,7 +136,7 @@ new Outer(1).then(function (value) {
 fn async_arrow_keeps_lexical_super_and_receiver_across_await() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -171,7 +171,7 @@ new Derived().read().then(function (value) {
 fn async_arrow_parameter_abrupt_becomes_a_rejected_promise() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,

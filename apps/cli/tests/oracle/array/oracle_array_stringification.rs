@@ -446,8 +446,8 @@ fn array_stringification_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_stringification_boxing_errors_user_throws_and_overflow_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_type_error = eval_object(
         &mut defining,
@@ -536,7 +536,7 @@ fn array_stringification_boxing_errors_user_throws_and_overflow_use_pinned_realm
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

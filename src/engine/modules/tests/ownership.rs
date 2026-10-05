@@ -4,9 +4,9 @@ use crate::engine::heap::HeapError;
 #[test]
 fn module_handle_rejects_another_runtime() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context.compile_module("").unwrap();
-    let mut other = Runtime::new().new_context();
+    let mut other = Runtime::new().new_context().expect("create context");
     assert_eq!(
         other.execute_module(&module),
         Err(RuntimeError::WrongRuntime("module bytecode"))
@@ -16,7 +16,7 @@ fn module_handle_rejects_another_runtime() {
 #[test]
 fn first_execute_context_owns_module_global_resolution_and_evaluates_once() {
     let runtime = Runtime::new();
-    let mut compilation_context = runtime.new_context();
+    let mut compilation_context = runtime.new_context().expect("create context");
     drop(
         compilation_context
             .eval("globalThis.__realmMarker = 1")
@@ -31,13 +31,13 @@ fn first_execute_context_owns_module_global_resolution_and_evaluates_once() {
         )
         .unwrap();
 
-    let mut first_execute_context = runtime.new_context();
+    let mut first_execute_context = runtime.new_context().expect("create context");
     drop(
         first_execute_context
             .eval("globalThis.__realmMarker = 2")
             .unwrap(),
     );
-    let mut later_context = runtime.new_context();
+    let mut later_context = runtime.new_context().expect("create context");
     drop(later_context.eval("globalThis.__realmMarker = 3").unwrap());
 
     let first = module_evaluation_promise(&mut first_execute_context, &module);
@@ -70,20 +70,29 @@ fn first_execute_context_owns_module_global_resolution_and_evaluates_once() {
 fn cloned_module_handle_roots_compilation_and_first_link_realms() {
     let runtime = Runtime::new();
     let module = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         context
             .compile_module("globalThis.__rootedModuleRealm = 42")
             .unwrap()
     };
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
-    let surviving_handle = module.clone();
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
+    let surviving_handle = module.try_clone().expect("duplicate root");
     drop(module);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 
     {
-        let mut link_context = runtime.new_context();
-        assert_eq!(runtime.heap_counts().context_nodes, 2);
+        let mut link_context = runtime.new_context().expect("create context");
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").context_nodes,
+            2
+        );
         let snapshot = module_evaluation_snapshot(&mut link_context, &surviving_handle);
         assert_eq!(snapshot.state, PromiseState::Fulfilled);
         assert!(matches!(snapshot.result, RawValue::Undefined));
@@ -91,18 +100,24 @@ fn cloned_module_handle_roots_compilation_and_first_link_realms() {
     }
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        2
+    );
 
     drop(surviving_handle);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 0);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        0
+    );
 }
 
 #[test]
 fn cross_linked_module_caches_do_not_leak_a_context_cycle() {
     let runtime = Runtime::new();
-    let mut first_context = runtime.new_context();
-    let mut second_context = runtime.new_context();
+    let mut first_context = runtime.new_context().expect("create context");
+    let mut second_context = runtime.new_context().expect("create context");
     let first_module = first_context
         .compile_module("globalThis.__firstCrossCacheModule = 1")
         .unwrap();
@@ -121,20 +136,26 @@ fn cross_linked_module_caches_do_not_leak_a_context_cycle() {
         runtime.module_record(second_module.raw).unwrap().link_realm,
         Some(RawModuleLinkRealm::Other(realm)) if realm == first_context.realm
     ));
-    assert_eq!(runtime.heap_counts().context_nodes, 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        2
+    );
 
     drop(first_module);
     drop(second_module);
     drop(first_context);
     drop(second_context);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 0);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        0
+    );
 }
 
 #[test]
 fn loaded_module_validator_rejects_internal_sentinels_and_cache_self_edges_atomically() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context.compile_module("export const answer = 42").unwrap();
     let raw = module.raw;
 
@@ -179,7 +200,7 @@ fn json_module_handle_roots_its_parse_realm_across_context_gc() {
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
     let module = {
-        let mut compilation_context = runtime.new_context();
+        let mut compilation_context = runtime.new_context().expect("create context");
         drop(
             compilation_context
                 .eval("Object.prototype.__jsonParseRealm = 41")
@@ -199,10 +220,13 @@ fn json_module_handle_roots_its_parse_realm_across_context_gc() {
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 
     {
-        let mut execution_context = runtime.new_context();
+        let mut execution_context = runtime.new_context().expect("create context");
         drop(execution_context.execute_module(&module).unwrap());
         assert_script_true(
             &mut execution_context,
@@ -211,16 +235,22 @@ fn json_module_handle_roots_its_parse_realm_across_context_gc() {
     }
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        2
+    );
     drop(module);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 0);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        0
+    );
 }
 
 #[test]
 fn module_root_stack_frame_is_anonymous_and_retains_filename() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename("throw new Error(\"x\")", "module-stack.mjs")
         .unwrap();

@@ -471,7 +471,7 @@ fn catch_destructuring_pinned_quirks_have_exact_results() {
     for &(description, source, expected) in PINNED_QUIRK_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             expected,
@@ -522,7 +522,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),

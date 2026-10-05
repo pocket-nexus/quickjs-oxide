@@ -124,7 +124,7 @@ impl RegExpMatchResume {
         state: MatchCollection,
     ) -> Result<RegExpMatchStep, RuntimeError> {
         Ok(RegExpMatchStep::make_exec(
-            JsValue::Object(self.0.regexp.clone().into_handle()),
+            JsValue::Object(self.0.regexp.try_clone()?.into_handle()),
             runtime.dup_jsvalue(&self.0.input_value)?,
             {
                 let updated_0 = MatchPhase::Exec(state);
@@ -203,7 +203,7 @@ impl RegExpMatchResume {
                     runtime.into_jsvalue(Value::String(input.clone()))?
                 };
                 Ok(RegExpMatchStep::make_read(
-                    self.0.regexp.clone(),
+                    self.0.regexp.try_clone()?,
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
                     {
                         let updated_0 = MatchPhase::Flags(input);
@@ -231,7 +231,7 @@ impl RegExpMatchResume {
                     };
                 if !flags.utf16_units().any(|unit| unit == u16::from(b'g')) {
                     return Ok(RegExpMatchStep::make_exec(
-                        JsValue::Object(self.0.regexp.clone().into_handle()),
+                        JsValue::Object(self.0.regexp.try_clone()?.into_handle()),
                         runtime.dup_jsvalue(&self.0.input_value)?,
                         {
                             let updated_0 = MatchPhase::Single;
@@ -244,7 +244,7 @@ impl RegExpMatchResume {
                     .utf16_units()
                     .any(|unit| unit == u16::from(b'u') || unit == u16::from(b'v'));
                 Ok(RegExpMatchStep::make_set(
-                    self.0.regexp.clone(),
+                    self.0.regexp.try_clone()?,
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     runtime.into_jsvalue(Value::Int(0))?,
@@ -283,11 +283,15 @@ impl RegExpMatchResume {
                         ));
                     }
                 };
-                Ok(RegExpMatchStep::make_read(result, state.zero.clone(), {
-                    let updated_0 = MatchPhase::Match(state);
-                    self.0.phase = updated_0;
-                    self
-                }))
+                Ok(RegExpMatchStep::make_read(
+                    result,
+                    state.zero.try_clone()?,
+                    {
+                        let updated_0 = MatchPhase::Match(state);
+                        self.0.phase = updated_0;
+                        self
+                    },
+                ))
             }
             MatchPhase::Match(state) => Ok(RegExpMatchStep::make_primitive(
                 std::mem::replace(&mut self.0.converted, JsValue::Undefined),
@@ -333,7 +337,7 @@ impl RegExpMatchResume {
                 state.count = next;
                 if empty {
                     Ok(RegExpMatchStep::make_read(
-                        self.0.regexp.clone(),
+                        self.0.regexp.try_clone()?,
                         runtime.pinned_property_key(
                             crate::engine::atom::pinned::PinnedAtom::LastIndex,
                         )?,
@@ -376,7 +380,7 @@ impl RegExpMatchResume {
                     };
                 let next = advance_string_index(&state.input, current, state.unicode);
                 Ok(RegExpMatchStep::make_set(
-                    self.0.regexp.clone(),
+                    self.0.regexp.try_clone()?,
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     runtime.into_jsvalue(Value::number(next as f64))?,
@@ -438,7 +442,7 @@ impl Runtime {
                                 &object,
                                 &key,
                                 value,
-                                JsValue::Object(object.clone().into_handle()),
+                                JsValue::Object(object.try_clone()?.into_handle()),
                             )?,
                         )?
                     }

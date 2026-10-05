@@ -405,8 +405,8 @@ fn source_relational_membership_no_in_diagnostics_match_pinned_quickjs() {
 fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_type_error = intrinsic_prototype(&runtime, &mut first, "TypeError");
     let second_type_error = intrinsic_prototype(&runtime, &mut second, "TypeError");
     assert_ne!(first_type_error, second_type_error);
@@ -423,12 +423,16 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
         let error = take_exception_object(&mut second);
         assert_eq!(
             runtime.get_prototype_of(&error).unwrap(),
-            Some(first_type_error.clone()),
+            Some(first_type_error.try_clone().expect("duplicate root")),
             "opcode framework error did not use its bytecode realm for {source:?}"
         );
     }
 
-    let has_instance = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     let custom_target = second.new_object().unwrap();
     let custom_method = function(
         &runtime,
@@ -439,7 +443,12 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
         &mut second,
         &custom_target,
         &has_instance,
-        Value::Object(custom_method.as_object().clone()),
+        Value::Object(
+            custom_method
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     define_global(
         &runtime,
@@ -459,7 +468,7 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
     let custom_error = take_exception_object(&mut second);
     assert_eq!(
         runtime.get_prototype_of(&custom_error).unwrap(),
-        Some(first_type_error.clone())
+        Some(first_type_error.try_clone().expect("duplicate root"))
     );
 
     let bad_target = function(&runtime, &mut first, "(function RealmBadPrototype(){})");
@@ -473,7 +482,7 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
         &runtime,
         &mut second,
         "realmBadPrototype",
-        Value::Object(bad_target.as_object().clone()),
+        Value::Object(bad_target.as_object().try_clone().expect("duplicate root")),
     );
     let native_probe = function(
         &runtime,
@@ -487,7 +496,7 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
     let native_error = take_exception_object(&mut second);
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
-        Some(first_type_error.clone()),
+        Some(first_type_error.try_clone().expect("duplicate root")),
         "standard hasInstance error did not use the native method realm"
     );
 
@@ -507,7 +516,7 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
         &runtime,
         &mut second,
         "realmNullHasInstance",
-        Value::Object(null_target.as_object().clone()),
+        Value::Object(null_target.as_object().try_clone().expect("duplicate root")),
     );
     let null_probe = function(
         &runtime,
@@ -521,11 +530,15 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
     let null_error = take_exception_object(&mut second);
     assert_eq!(
         runtime.get_prototype_of(&null_error).unwrap(),
-        Some(second_type_error.clone()),
+        Some(second_type_error.try_clone().expect("duplicate root")),
         "nullish hasInstance fallback did not use the opcode realm"
     );
 
-    let to_primitive = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
     let throwing_key = second.new_object().unwrap();
     let throwing_conversion = function(
         &runtime,
@@ -536,7 +549,12 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
         &mut second,
         &throwing_key,
         &to_primitive,
-        Value::Object(throwing_conversion.as_object().clone()),
+        Value::Object(
+            throwing_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     define_global(
         &runtime,
@@ -572,7 +590,12 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
         &mut second,
         &invalid_key,
         &to_primitive,
-        Value::Object(invalid_conversion.as_object().clone()),
+        Value::Object(
+            invalid_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     define_global(
         &runtime,
@@ -600,13 +623,13 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let sentinel = context.new_object().unwrap();
     define_global(
         &runtime,
         &mut context,
         "membershipSentinel",
-        Value::Object(sentinel.clone()),
+        Value::Object(sentinel.try_clone().expect("duplicate root")),
     );
     define_global(&runtime, &mut context, "membershipLog", string(""));
 
@@ -634,7 +657,7 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &mut context,
         &target,
-        &PropertyKey::from(symbol.clone()),
+        &PropertyKey::from(symbol.try_clone().expect("duplicate root")),
         Value::Int(1),
     );
     define_global(
@@ -647,10 +670,14 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipTarget",
-        Value::Object(target.clone()),
+        Value::Object(target.try_clone().expect("duplicate root")),
     );
 
-    let to_primitive = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
     let key = context.new_object().unwrap();
     let key_converter = function(
         &runtime,
@@ -661,7 +688,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &key,
         &to_primitive,
-        Value::Object(key_converter.as_object().clone()),
+        Value::Object(
+            key_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     define_global(&runtime, &mut context, "membershipKey", Value::Object(key));
 
@@ -675,7 +707,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &throw_key,
         &to_primitive,
-        Value::Object(throw_key_converter.as_object().clone()),
+        Value::Object(
+            throw_key_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     define_global(
         &runtime,
@@ -708,7 +745,7 @@ fn rust_observations() -> Vec<String> {
             &runtime,
             &mut context,
             name,
-            Value::Object(callable.as_object().clone()),
+            Value::Object(callable.as_object().try_clone().expect("duplicate root")),
         );
     }
 
@@ -717,7 +754,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipCtor",
-        Value::Object(ctor.as_object().clone()),
+        Value::Object(ctor.as_object().try_clone().expect("duplicate root")),
     );
     let instance = expect_object(context.eval("new membershipCtor()").unwrap());
     define_global(
@@ -731,14 +768,14 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipOther",
-        Value::Object(other.clone()),
+        Value::Object(other.try_clone().expect("duplicate root")),
     );
     let needle = context.new_object().unwrap();
     define_global(
         &runtime,
         &mut context,
         "membershipNeedle",
-        Value::Object(needle.clone()),
+        Value::Object(needle.try_clone().expect("duplicate root")),
     );
 
     let bound = expect_object(context.eval("membershipCtor.bind(null)").unwrap());
@@ -765,19 +802,28 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipCustomCtor",
-        Value::Object(custom_ctor.as_object().clone()),
+        Value::Object(custom_ctor.as_object().try_clone().expect("duplicate root")),
     );
     let custom_method = function(
         &runtime,
         &mut context,
         "(function(candidate){ membershipLog = membershipLog + (this === membershipCustomCtor ? 'ct' : 'cw'); return candidate === membershipNeedle; })",
     );
-    let has_instance = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     define_data_key(
         &mut context,
         custom_ctor.as_object(),
         &has_instance,
-        Value::Object(custom_method.as_object().clone()),
+        Value::Object(
+            custom_method
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let custom_bound = expect_object(context.eval("membershipCustomCtor.bind(null)").unwrap());
     define_global(
@@ -795,7 +841,11 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipInheritedHasInstanceTarget",
-        Value::Object(inherited_has_instance_target.clone()),
+        Value::Object(
+            inherited_has_instance_target
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let inherited_method = function(
         &runtime,
@@ -806,7 +856,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &inherited_has_instance_proto,
         &has_instance,
-        Value::Object(inherited_method.as_object().clone()),
+        Value::Object(
+            inherited_method
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
 
     let accessor_target = context.new_object().unwrap();
@@ -814,7 +869,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipAccessorTarget",
-        Value::Object(accessor_target.clone()),
+        Value::Object(accessor_target.try_clone().expect("duplicate root")),
     );
     let accessor_method = function(
         &runtime,
@@ -825,7 +880,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipAccessorMethod",
-        Value::Object(accessor_method.as_object().clone()),
+        Value::Object(
+            accessor_method
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let accessor_getter = function(
         &runtime,
@@ -853,7 +913,7 @@ fn rust_observations() -> Vec<String> {
             &runtime,
             &mut context,
             name,
-            Value::Object(callable.as_object().clone()),
+            Value::Object(callable.as_object().try_clone().expect("duplicate root")),
         );
     }
 
@@ -872,7 +932,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipNullHasInstance",
-        Value::Object(null_has_instance.as_object().clone()),
+        Value::Object(
+            null_has_instance
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let null_instance = expect_object(context.eval("new membershipNullHasInstance()").unwrap());
     define_global(
@@ -929,7 +994,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipPrototypeThrowTarget",
-        Value::Object(call.as_object().clone()),
+        Value::Object(call.as_object().try_clone().expect("duplicate root")),
     );
 
     let invalid_target = context.new_object().unwrap();
@@ -982,7 +1047,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &method_throw_target,
         &has_instance,
-        Value::Object(method_throw.as_object().clone()),
+        Value::Object(
+            method_throw
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     define_global(
         &runtime,
@@ -1006,7 +1076,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "membershipBadPrototype",
-        Value::Object(bad_prototype.as_object().clone()),
+        Value::Object(
+            bad_prototype
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
 
     let mut output = Vec::new();
@@ -1351,7 +1426,7 @@ fn observe(runtime: &Runtime, context: &mut Context, sentinel: &ObjectRef, sourc
                 .take_exception()
                 .unwrap()
                 .expect("exception completion had no value");
-            if exception == Value::Object(sentinel.clone()) {
+            if exception == Value::Object(sentinel.try_clone().expect("duplicate root")) {
                 return "throw:sentinel".to_owned();
             }
             match exception {
@@ -1437,7 +1512,7 @@ fn oracle_observations(oracle: &OsStr) -> Vec<String> {
 fn rust_error_observation(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust parser did not materialize an Error object");

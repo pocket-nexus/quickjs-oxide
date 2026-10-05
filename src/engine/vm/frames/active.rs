@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn native_budget_matches_scan_across_mark_pop_and_exception_suffixes() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(function) = context.eval("function f(){}; f").unwrap() else {
             panic!()
         };

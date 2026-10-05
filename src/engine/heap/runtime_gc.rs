@@ -1,6 +1,7 @@
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::runtime::RuntimeState;
+use std::cell::Cell;
 
 use crate::engine::heap::{GcStats, HeapCounts, WeakSymbolGcEvent};
 use crate::engine::jobs;
@@ -14,55 +15,20 @@ use crate::engine::vm::call::NativeInvocation;
 impl Runtime {
     /// Run QuickJS-style cycle collection for this runtime.
     pub fn run_gc(&self) -> Result<GcStats, RuntimeError> {
-        let pressure = &self.0.gc_pressure;
-        if pressure.collecting.replace(true) {
-            return Err(RuntimeError::Invariant("cycle collection reentered"));
-        }
-        let _collection = CollectionGuard(&pressure.collecting);
-        let _operation = self.operation();
+        self.check_poison()?;
+        let _collection = self.0.gc_pressure.begin_collection()?;
+        self.run_gc_admitted()
+    }
+
+    fn run_gc_admitted(&self) -> Result<GcStats, RuntimeError> {
+        let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
-        // Optional shape roots must not keep prototype graphs alive across GC.
-        let retained_cleanup = state.release_retained_shapes()?;
-        let mut atom_error = None;
-        let mut stats = {
-            let RuntimeState {
-                atoms,
-                heap,
-                pending_jobs,
-                ..
-            } = &mut *state;
-            let mut finalization_sink = jobs::RuntimeFinalizationJobSink::new(pending_jobs);
-            heap.run_gc_with_finalization_sink(
-                |event| {
-                    Ok(match event {
-                        WeakSymbolGcEvent::IsLive(index) => atoms.is_live_index(index),
-                        WeakSymbolGcEvent::Release(index) => {
-                            if let Err(error) = atoms.release_index(index) {
-                                // A detached weak value owned this atom, so this
-                                // can fail only after an ownership invariant has
-                                // already been violated. Latch the exact error but
-                                // continue without scheduling a double release.
-                                atom_error.get_or_insert(error);
-                            }
-                            true
-                        }
-                    })
-                },
-                &mut finalization_sink,
-            )?
-        };
-        stats.cleanup.merge(retained_cleanup);
-        if let Some(error) = atom_error {
-            return Err(error.into());
-        }
-        let atom_indices = std::mem::take(&mut stats.cleanup.atoms);
-        state.unlink_finalized_shapes(stats.cleanup.finalized_shape_ids.iter().copied());
-        state.release_atom_indices(atom_indices)?;
-        state.atoms.sweep_released_strings();
+        let stats = state.collect_cycles(&self.0.poisoned)?;
         drop(state);
         // The operation guard drains deferred root releases. Trim only after
         // that drain, so a release queued during collection cannot be lost.
         drop(_operation);
+        self.check_poison()?;
         let mut state = self.0.state.borrow_mut();
         if !self.0.deferred_references.has_pending() {
             state.heap.trim_empty_zero_queue_after_gc();
@@ -71,14 +37,13 @@ impl Runtime {
         Ok(stats)
     }
 
-    /// The driver and outer execution turn own automatic collection. The
-    /// executor cannot allocate cycle nodes without returning to the driver.
+    /// Outside-state service at the driver and outer execution boundary.
+    /// Continuous execution services the same request under its current state
+    /// only at fully published allocation or scheduler safe points.
     #[inline]
     pub(crate) fn collect_if_requested(&self) -> Result<(), RuntimeError> {
         let pressure = &self.0.gc_pressure;
-        if pressure.remaining.get() != 0
-            || pressure.policy.get() == crate::engine::heap::GcPolicy::Manual
-        {
+        if !pressure.requested() {
             return Ok(());
         }
         self.collect_requested()
@@ -94,13 +59,12 @@ impl Runtime {
             return Ok(());
         };
         drop(borrow);
-        #[cfg(feature = "profiling")]
-        let _timer = crate::engine::api::profiling::PhaseTimer::start_vm("gc.automatic");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("gc.automatic.started");
-        // run_gc's existing operation guard drains deferred releases before
+        let Some(_collection) = self.0.gc_pressure.begin_requested_collection()? else {
+            return Ok(());
+        };
+        // The existing operation guard drains deferred releases before
         // borrowing the graph and again before rearming the allocation budget.
-        self.run_gc()?;
+        self.run_gc_admitted()?;
         Ok(())
     }
 
@@ -125,16 +89,76 @@ impl Runtime {
     }
 
     /// Runtime heap population for diagnostics and lifecycle tests.
-    #[must_use]
-    pub fn heap_counts(&self) -> HeapCounts {
-        let _operation = self.operation();
-        self.0.state.borrow().heap.counts()
+    pub fn heap_counts(&self) -> Result<HeapCounts, RuntimeError> {
+        self.check_poison()?;
+        let _unwind = self.unwind_guard();
+        Ok(self.0.state.borrow().heap.counts())
     }
 }
 
-struct CollectionGuard<'a>(&'a std::cell::Cell<bool>);
-impl Drop for CollectionGuard<'_> {
-    fn drop(&mut self) {
-        self.0.set(false);
+impl RuntimeState {
+    /// Collect a fully published graph under the executor's existing state
+    /// access. The caller owns collection admission, external-root draining
+    /// and budget rearming; this kernel neither reborrows Runtime nor executes
+    /// finalization jobs. Temporary strong edges must already have an owner.
+    pub(crate) fn collect_cycles(
+        &mut self,
+        poisoned: &Cell<bool>,
+    ) -> Result<GcStats, RuntimeError> {
+        if poisoned.get() {
+            return Err(RuntimeError::Poisoned);
+        }
+        // Optional shape roots must not keep prototype graphs alive across GC.
+        let mut retained_cleanup = self
+            .release_retained_shapes()
+            .inspect_err(|_| poisoned.set(true))?;
+        // Complete this detached ownership before the collector's preflight.
+        // Keep its scalar statistics, without replaying atom/shape cleanup.
+        self.unlink_finalized_shapes(retained_cleanup.finalized_shape_ids.drain(..));
+        self.release_atom_indices(std::mem::take(&mut retained_cleanup.atoms))
+            .inspect_err(|_| poisoned.set(true))?;
+        let mut atom_error = None;
+        let heap_result = {
+            let RuntimeState {
+                atoms,
+                heap,
+                pending_jobs,
+                ..
+            } = self;
+            let mut finalization_sink = jobs::RuntimeFinalizationJobSink::new(pending_jobs);
+            heap.run_gc_with_finalization_sink(
+                |event| {
+                    Ok(match event {
+                        WeakSymbolGcEvent::IsLive(index) => atoms.is_live_index(index),
+                        WeakSymbolGcEvent::Release(index) => {
+                            if let Err(error) = atoms.release_index(index) {
+                                // The weak entry was already detached. Stop this
+                                // sweep and return the original AtomError below;
+                                // the hook protocol itself carries HeapError.
+                                poisoned.set(true);
+                                atom_error = Some(error);
+                                return Err(crate::engine::heap::HeapError::Invariant(
+                                    "detached weak atom cleanup failed",
+                                ));
+                            }
+                            true
+                        }
+                    })
+                },
+                &mut finalization_sink,
+                poisoned,
+            )
+        };
+        if let Some(error) = atom_error {
+            return Err(error.into());
+        }
+        let mut stats = heap_result?;
+        stats.cleanup.merge(retained_cleanup);
+        let atom_indices = std::mem::take(&mut stats.cleanup.atoms);
+        self.unlink_finalized_shapes(stats.cleanup.finalized_shape_ids.iter().copied());
+        self.release_atom_indices(atom_indices)
+            .inspect_err(|_| poisoned.set(true))?;
+        self.atoms.sweep_released_strings();
+        Ok(stats)
     }
 }

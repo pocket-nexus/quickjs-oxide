@@ -321,7 +321,7 @@ fn bigint_intrinsic_matches_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
@@ -371,7 +371,11 @@ fn rust_observations() -> Vec<String> {
         own_key_names(&runtime, bigint.as_object()).join(","),
         own_key_names(&runtime, &bigint_prototype).join(",")
     ));
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     observations.push(format!(
         "descriptors={}",
         [
@@ -411,7 +415,7 @@ fn rust_observations() -> Vec<String> {
             context
                 .call(
                     &object_to_string,
-                    Value::Object(bigint_prototype.clone()),
+                    Value::Object(bigint_prototype.try_clone().expect("duplicate root")),
                     &[],
                 )
                 .unwrap()
@@ -475,8 +479,17 @@ fn rust_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &construct_bomb,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(construct_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            construct_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -486,7 +499,9 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         &bigint,
-        &[Value::Object(construct_bomb.clone())],
+        &[Value::Object(
+            construct_bomb.try_clone().expect("duplicate root"),
+        )],
     );
     let first_hit = plain_value(context.get_property(&global, &construct_hit).unwrap());
     let second_construct = observe_construct_with_new_target(
@@ -534,7 +549,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &fallback,
         "valueOf",
-        Value::Object(fallback_value_of.as_object().clone()),
+        Value::Object(
+            fallback_value_of
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -543,7 +563,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &fallback,
         "toString",
-        Value::Object(fallback_to_string.as_object().clone()),
+        Value::Object(
+            fallback_to_string
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -573,7 +598,7 @@ fn rust_observations() -> Vec<String> {
                 &mut context,
                 &bigint,
                 Value::Undefined,
-                &[Value::Object(object.clone())],
+                &[Value::Object(object.try_clone().expect("duplicate root"))],
             )
         })
         .collect::<Vec<_>>();
@@ -704,7 +729,10 @@ fn rust_observations() -> Vec<String> {
             &mut context,
             &as_uint_n,
             Value::Undefined,
-            &[Value::Int(-1), Value::Object(untouched.clone())],
+            &[
+                Value::Int(-1),
+                Value::Object(untouched.try_clone().expect("duplicate root")),
+            ],
         ),
         observe_call_args(
             &runtime,
@@ -890,7 +918,7 @@ fn rust_observations() -> Vec<String> {
             &runtime,
             &mut context,
             &value_of,
-            Value::Object(bigint_prototype.clone()),
+            Value::Object(bigint_prototype.try_clone().expect("duplicate root")),
             &[],
         ),
         observe_call_args(
@@ -953,7 +981,7 @@ fn rust_observations() -> Vec<String> {
             &runtime,
             &mut context,
             &value_of,
-            Value::Object(wrapper.clone()),
+            Value::Object(wrapper.try_clone().expect("duplicate root")),
             &[],
         ),
         (wrapper == wrapper2).to_string(),
@@ -964,14 +992,18 @@ fn rust_observations() -> Vec<String> {
         ),
         plain_value(
             context
-                .call(&object_to_string, Value::Object(wrapper.clone()), &[])
+                .call(
+                    &object_to_string,
+                    Value::Object(wrapper.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         ),
         plain_value(
             context
                 .call(
                     &object_to_string,
-                    Value::Object(bigint_prototype.clone()),
+                    Value::Object(bigint_prototype.try_clone().expect("duplicate root")),
                     &[],
                 )
                 .unwrap(),
@@ -1013,14 +1045,22 @@ fn rust_observations() -> Vec<String> {
     let sloppy_get_result = context.eval("(1n).__sloppyGet").unwrap();
     let sloppy_get_this = global_value(&runtime, &mut context, &global, "sloppyGetThis");
     let sloppy_get_unboxed = context
-        .call(&value_of, sloppy_get_this.clone(), &[])
+        .call(
+            &value_of,
+            sloppy_get_this.try_clone().expect("duplicate root"),
+            &[],
+        )
         .unwrap();
     let strict_set_result = context.eval("(1n).__strictSet = 7").unwrap();
     let strict_set_this = global_value(&runtime, &mut context, &global, "strictSetThis");
     let sloppy_set_result = context.eval("(1n).__sloppySet = 8").unwrap();
     let sloppy_set_this = global_value(&runtime, &mut context, &global, "sloppySetThis");
     let sloppy_set_unboxed = context
-        .call(&value_of, sloppy_set_this.clone(), &[])
+        .call(
+            &value_of,
+            sloppy_set_this.try_clone().expect("duplicate root"),
+            &[],
+        )
         .unwrap();
     let accessor_values = [
         strict_get_result,
@@ -1122,8 +1162,8 @@ fn rust_observations() -> Vec<String> {
 fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
     let first_prototype = first.bigint_prototype().unwrap();
@@ -1164,12 +1204,12 @@ fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_re
     );
     assert_eq!(
         runtime.get_prototype_of(&first_wrapper).unwrap(),
-        Some(first_prototype.clone()),
+        Some(first_prototype.try_clone().expect("duplicate root")),
         "primitive boxing must use the native method's defining realm"
     );
     assert_eq!(
         runtime.get_prototype_of(&second_wrapper).unwrap(),
-        Some(second_prototype.clone())
+        Some(second_prototype.try_clone().expect("duplicate root"))
     );
     for (method, wrapper, expected) in [
         (&first_value_of, &first_wrapper, 7),
@@ -1179,7 +1219,11 @@ fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_re
     ] {
         assert_eq!(
             second
-                .call(method, Value::Object(wrapper.clone()), &[])
+                .call(
+                    method,
+                    Value::Object(wrapper.try_clone().expect("duplicate root")),
+                    &[]
+                )
                 .unwrap(),
             Value::BigInt(JsBigInt::from(expected)),
             "BigInt wrapper branding must be realm-independent"
@@ -1215,7 +1259,11 @@ fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_re
         "primitive member lookup must use the bytecode function's realm"
     );
 
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     define_data_key(
         &runtime,
         &first_prototype,
@@ -1256,7 +1304,7 @@ fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_re
     let conversion_error = take_exception_object(&mut second);
     assert_eq!(
         runtime.get_prototype_of(&conversion_error).unwrap(),
-        Some(first_type_error.clone()),
+        Some(first_type_error.try_clone().expect("duplicate root")),
         "BigInt conversion errors must use the constructor's defining realm"
     );
 
@@ -1290,8 +1338,12 @@ fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_re
     define_data_key(
         &runtime,
         &throwing_input,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(user_throw.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(user_throw.as_object().try_clone().expect("duplicate root")),
         true,
         false,
         true,
@@ -1319,7 +1371,7 @@ fn bigint_wrapper_keeps_its_realm_graph_alive_until_collection() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let wrapper = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object_prototype = context.object_prototype().unwrap();
         let object_value_of =
             property_callable(&runtime, &mut context, &object_prototype, "valueOf");
@@ -1333,14 +1385,14 @@ fn bigint_wrapper_keeps_its_realm_graph_alive_until_collection() {
 
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         1,
         "the live wrapper must retain its prototype and defining context graph"
     );
     drop(wrapper);
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().live,
+        runtime.heap_counts().expect("runtime state").live,
         0,
         "BigInt contexts, prototypes, native functions, and wrappers must be collectable"
     );
@@ -1456,8 +1508,12 @@ fn conversion_object(runtime: &Runtime, context: &mut Context, source: &str) -> 
     define_data_key(
         runtime,
         &object,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(conversion.as_object().try_clone().expect("duplicate root")),
         true,
         false,
         true,
@@ -1479,7 +1535,11 @@ fn expect_object(value: Value, description: &str) -> ObjectRef {
 }
 
 fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
-    let to_string_tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let to_string_tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     runtime
         .own_property_keys(object)
         .unwrap()
@@ -1574,8 +1634,8 @@ fn object_tags(
 ) -> Vec<String> {
     [
         Value::BigInt(JsBigInt::from(123)),
-        Value::Object(wrapper.clone()),
-        Value::Object(prototype.clone()),
+        Value::Object(wrapper.try_clone().expect("duplicate root")),
+        Value::Object(prototype.try_clone().expect("duplicate root")),
     ]
     .into_iter()
     .map(|value| plain_value(context.call(object_to_string, value, &[]).unwrap()))
@@ -1730,7 +1790,7 @@ fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> 
 fn join_values(values: &[Value]) -> String {
     values
         .iter()
-        .cloned()
+        .map(|value| value.try_clone().expect("duplicate root"))
         .map(plain_value)
         .collect::<Vec<_>>()
         .join("|")

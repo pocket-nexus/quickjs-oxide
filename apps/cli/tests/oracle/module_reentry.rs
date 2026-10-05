@@ -108,7 +108,7 @@ fn dynamic_import_accepts_reentrant_compiled_modules_from_the_initiating_context
         depth: depth.clone(),
         events: events.clone(),
     });
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let expected_context_id = context.id();
     let expected_realm_id = context.realm_id();
 
@@ -185,7 +185,7 @@ fn dynamic_import_accepts_reentrant_compiled_modules_from_the_initiating_context
         .expect("dynamic import result was not a Promise");
     assert_eq!(snapshot.state(), PromiseState::Fulfilled);
     assert_eq!(snapshot.result(), &Value::Int(42));
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
     assert_eq!(context.take_exception().unwrap(), None);
 }
 

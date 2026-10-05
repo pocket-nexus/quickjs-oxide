@@ -240,7 +240,12 @@ fn push_named_script_active_frame(
         .new_bytecode_closure(context.realm, &bytecode)
         .unwrap();
     runtime
-        .push_bytecode_active_frame(callable.as_object().clone(), bytecode, context.realm, true)
+        .push_bytecode_active_frame(
+            callable.as_object().try_clone().expect("duplicate root"),
+            bytecode,
+            context.realm,
+            true,
+        )
         .unwrap()
 }
 
@@ -258,7 +263,7 @@ fn push_named_eval_active_frame(
     let function = compile_unlinked_eval_with_filename(
         "",
         filename,
-        runtime.debug_info_mode(),
+        runtime.debug_info_mode().expect("runtime configuration"),
         compile_context,
     )
     .unwrap();
@@ -269,7 +274,12 @@ fn push_named_eval_active_frame(
         .new_bytecode_closure_with_slots(context.realm, &bytecode, &[])
         .unwrap();
     runtime
-        .push_bytecode_active_frame(callable.as_object().clone(), bytecode, context.realm, false)
+        .push_bytecode_active_frame(
+            callable.as_object().try_clone().expect("duplicate root"),
+            bytecode,
+            context.realm,
+            false,
+        )
         .unwrap()
 }
 
@@ -278,8 +288,12 @@ fn push_named_module_active_frame(
     context: &crate::engine::api::context::Context,
     filename: &str,
 ) -> super::ActiveFrameGuard {
-    let module =
-        compile_unlinked_module_with_filename("", filename, runtime.debug_info_mode()).unwrap();
+    let module = compile_unlinked_module_with_filename(
+        "",
+        filename,
+        runtime.debug_info_mode().expect("runtime configuration"),
+    )
+    .unwrap();
     let function = module.into_parts().function;
     let bytecode = runtime
         .publish_unlinked_function(context.realm, function)
@@ -288,7 +302,12 @@ fn push_named_module_active_frame(
         .new_bytecode_closure_with_slots(context.realm, &bytecode, &[])
         .unwrap();
     runtime
-        .push_bytecode_active_frame(callable.as_object().clone(), bytecode, context.realm, true)
+        .push_bytecode_active_frame(
+            callable.as_object().try_clone().expect("duplicate root"),
+            bytecode,
+            context.realm,
+            true,
+        )
         .unwrap()
 }
 
@@ -399,3 +418,6 @@ mod shapes;
 mod weak_references;
 
 mod dynamic_import;
+
+#[cfg(all(not(target_family = "wasm"), panic = "unwind"))]
+mod teardown;

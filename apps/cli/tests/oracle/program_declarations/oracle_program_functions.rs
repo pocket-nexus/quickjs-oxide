@@ -250,7 +250,7 @@ fn program_function_values_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let rust = observe_rust_eval(&runtime, &mut context, source, description);
         let quickjs = observe_oracle_sequence(&oracle, &[source], description);
         assert_eq!(rust, quickjs, "Program function drifted for {description}");
@@ -322,7 +322,7 @@ fn program_function_cross_eval_state_matches_pinned_quickjs() {
     for &(description, sources) in sequences {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let rust = sources
             .iter()
             .map(|source| observe_rust_eval(&runtime, &mut context, source, description))
@@ -384,8 +384,8 @@ fn program_function_cross_realm_matches_pinned_c_api() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     drop(defining.eval("globalThis.realmTag='A'").unwrap());
     drop(caller.eval("globalThis.realmTag='B'").unwrap());
 
@@ -415,11 +415,11 @@ fn program_function_cross_realm_matches_pinned_c_api() {
     };
     assert_eq!(
         runtime.get_prototype_of(&function_a).unwrap(),
-        Some(function_prototype_a.clone())
+        Some(function_prototype_a.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         runtime.get_prototype_of(&function_b).unwrap(),
-        Some(function_prototype_a.clone())
+        Some(function_prototype_a.try_clone().expect("duplicate root"))
     );
     assert_ne!(
         runtime.get_prototype_of(&function_b).unwrap(),
@@ -563,7 +563,7 @@ fn program_function_cross_realm_matches_pinned_c_api() {
 fn rust_property_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let mut output = Vec::new();
 
     output.push(format!(

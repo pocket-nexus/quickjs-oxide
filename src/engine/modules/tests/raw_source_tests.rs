@@ -25,7 +25,7 @@ fn error_property(
 #[test]
 fn raw_module_context_apis_preserve_authored_bytes_and_execute() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let cases: &[(RawModuleApi, &[u8])] = &[
         (
             RawModuleApi::Default,
@@ -67,7 +67,7 @@ fn raw_module_context_apis_preserve_authored_bytes_and_execute() {
 #[test]
 fn raw_module_syntax_error_uses_byte_exact_filename_line_and_column() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_bytes_with_filename(b"/*\x80*/@", "raw-parse.mjs"),
@@ -112,7 +112,7 @@ impl ModuleLoader for RawBytesModuleLoader {
         .map_err(|_| ModuleLoaderError::new("raw fixture module name is not valid UTF-16"))?;
         self.modules
             .get(&normalized_name)
-            .cloned()
+            .map(|value| value.try_clone().expect("duplicate root"))
             .ok_or_else(|| ModuleLoaderError::new("raw fixture module is missing"))
     }
 }
@@ -139,7 +139,7 @@ fn loader_accepts_raw_static_and_dynamic_sources_with_import_meta() {
         ]),
     };
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let entry = context
         .compile_module_bytes_with_filename(
             b"import { value } from './static.js'; globalThis.__rawStatic = value; import('./dynamic.js').then(function (module) { globalThis.__rawDynamic = module.value; });",
@@ -168,7 +168,7 @@ fn raw_loader_syntax_error_uses_dependency_name_and_byte_column() {
         )]),
     };
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename("import './bad.js';", "pkg/entry.js"),
@@ -237,7 +237,7 @@ fn raw_json_static_loading_keeps_attributes_cache_and_import_meta_paths() {
         ),
     ]);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let entry = context
         .compile_module_with_filename(
             r#"
@@ -280,7 +280,7 @@ fn dynamic_raw_json5_loading_skips_malformed_comment_bytes() {
         ModuleLoadResult::Json5Bytes(b"/*\x80*/ {answer: 0x2a, marker:'\xed\xa0\x80',}".to_vec()),
     )]);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let promise = eval_dynamic_import(
         &mut context,
         "import('./value.data', { with: { type: 'json5' } })",
@@ -436,7 +436,7 @@ fn raw_json_errors_match_pinned_quickjs_byte_diagnostics() {
         let (loader, _, loads) =
             JsonModuleLoader::new([("pkg/value.data", case.mode.load_result(case.source))]);
         let _registration = runtime.set_module_loader(loader);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let entry = format!(
             "import value from './value.data' with {{ type: '{}' }}; globalThis.__rawJsonErrorBody = value;",
             case.mode.import_type(),

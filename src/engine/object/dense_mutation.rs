@@ -42,7 +42,7 @@ impl Runtime {
         object: &ObjectRef,
         value: &JsValue,
     ) -> Result<Option<JsValue>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property object"));
         }
@@ -100,7 +100,7 @@ impl Runtime {
         &self,
         object: &ObjectRef,
     ) -> Result<Option<JsValue>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property object"));
         }
@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn dense_endpoint_guards_decline_before_observable_effects() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "Object.freeze([1])",
             "Object.seal([1])",
@@ -193,7 +193,7 @@ mod tests {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
         {
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             for source in ["'borrowed string'", "123456789012345678901234567890n"] {
                 let payload = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
                 let Value::Object(frozen) = context.eval("Object.freeze([])").unwrap() else {
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn dense_endpoint_keeps_scalar_representation_and_reference_roots() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -272,7 +272,7 @@ mod tests {
     fn standard_regexp_and_array_sets_complete_without_waiting_owners() {
         use crate::engine::object::{SetStep, operations::PropertySetAction};
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for (source, name) in [("/a/g", "lastIndex"), ("[]", "length"), ("[]", "name")] {
             let Value::Object(object) = context.eval(source).unwrap() else {
                 panic!("object")
@@ -294,7 +294,7 @@ mod tests {
     #[test]
     fn ordinary_named_slots_keep_exotic_index_and_length_rules() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"
             var a=[]; a.name=1; a['01']=2; a['4294967295']=3;
             var r=/a/g; r.lastIndex=2; r.extra=4;

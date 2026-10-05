@@ -178,7 +178,7 @@ fn snapshot(
     after: AfterSnapshot,
 ) -> Result<ForInStep, RuntimeError> {
     Ok(ForInStep::Keys {
-        object: object.clone(),
+        object: object.try_clone()?,
         resume: ForInResume(Box::new(ForInResumeState {
             realm,
             phase: Phase::SnapshotKeys { object, after },
@@ -208,11 +208,11 @@ fn advance(
             ForInCandidate::BaseComplete { object, fast_array } => {
                 let base = ObjectRef::from_borrowed_handle(runtime.clone(), object)?;
                 return Ok(ForInStep::Prototype {
-                    object: base.clone(),
+                    object: base.try_clone()?,
                     resume: ForInResume(Box::new(ForInResumeState {
                         realm,
                         phase: Phase::ProbePrototype(Probe {
-                            iterator: iterator.clone(),
+                            iterator: iterator.try_clone()?,
                             base,
                             fast_array,
                         }),
@@ -225,7 +225,7 @@ fn advance(
                     resume: ForInResume(Box::new(ForInResumeState {
                         realm,
                         phase: Phase::LevelPrototype {
-                            iterator: iterator.clone(),
+                            iterator: iterator.try_clone()?,
                         },
                     })),
                 });
@@ -273,7 +273,7 @@ fn advance(
                 resume: ForInResume(Box::new(ForInResumeState {
                     realm,
                     phase: Phase::Candidate {
-                        iterator: iterator.clone(),
+                        iterator: iterator.try_clone()?,
                         name,
                     },
                 })),
@@ -396,7 +396,7 @@ impl ForInResume {
             Phase::ProbePrototype(probe) => {
                 if let Some(prototype) = prototype {
                     Ok(ForInStep::Keys {
-                        object: prototype.clone(),
+                        object: prototype.try_clone()?,
                         resume: Self(Box::new(ForInResumeState {
                             realm: self.0.realm,
                             phase: Phase::ProbeKeys { probe, prototype },
@@ -458,7 +458,7 @@ fn snapshot_next(
             continue;
         }
         return Ok(ForInStep::Enumerable {
-            object: pending.object.clone(),
+            object: pending.object.try_clone()?,
             key,
             resume: ForInResume(Box::new(ForInResumeState {
                 realm,
@@ -537,7 +537,7 @@ fn probe_keys(
             continue;
         }
         return Ok(ForInStep::Enumerable {
-            object: prototype.clone(),
+            object: prototype.try_clone()?,
             key,
             resume: ForInResume(Box::new(ForInResumeState {
                 realm,
@@ -605,7 +605,7 @@ mod tests {
             "(function(){var o=Object.create(null);o.a=1;o.b=2;return function(){var names='';for(var k in o){names+=k;if(k==='a'){delete o.b;o.c=3}}return names==='a'?42:0}})()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();
@@ -647,7 +647,7 @@ mod tests {
     fn for_in_local_progress_leaves_proxy_admission_and_trap_untouched() {
         use super::ForInStep;
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context.eval("globalThis.forInTrapCalls=0;new Proxy({a:1},{ownKeys(){forInTrapCalls++;throw 42}})").unwrap();
         let ForInStep::Keys { object, resume } = ForInStep::start(
             &runtime,
@@ -681,7 +681,7 @@ mod tests {
             "(function(){var base=[1,2],proto={p:3};Object.setPrototypeOf(base,proto);return function(){var names='';for(var key in base){names+=key;if(key==='0')delete base[1]}return names==='0p'?42:0}})()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();
@@ -712,7 +712,7 @@ mod resident_tests {
     #[test]
     fn dense_for_in_rechecks_descriptor_conversion_shrink_and_append() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -739,7 +739,7 @@ mod resident_tests {
     #[test]
     fn resident_for_in_keeps_snapshot_shadowing_and_live_own_checks() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let gets=0;const proto={p:1,hidden:2},a=[3,4,5];
             Object.setPrototypeOf(a,proto);

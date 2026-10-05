@@ -95,7 +95,7 @@ fn ordinary_object_core_matches_quickjs_oracle() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let mut output = Vec::new();
 
     let ordered = runtime.new_object(None).unwrap();
@@ -105,8 +105,8 @@ fn rust_observations() -> Vec<String> {
     let symbol_b = runtime
         .new_symbol(Some(JsString::try_from_utf8("b").unwrap()))
         .unwrap();
-    let symbol_key_a = PropertyKey::from(&symbol_a);
-    let symbol_key_b = PropertyKey::from(&symbol_b);
+    let symbol_key_a = PropertyKey::try_from(&symbol_a).expect("symbol key");
+    let symbol_key_b = PropertyKey::try_from(&symbol_b).expect("symbol key");
     for (key, value) in [
         (runtime.intern_property_key("beta").unwrap(), 1),
         (runtime.intern_property_key("4294967295").unwrap(), 2),
@@ -243,7 +243,7 @@ fn rust_observations() -> Vec<String> {
             &receiver_target,
             &receiver_x,
             Value::Int(2),
-            Value::Object(receiver.clone()),
+            Value::Object(receiver.try_clone().expect("duplicate root")),
         )
         .unwrap();
     output.push(format!(
@@ -287,7 +287,9 @@ fn rust_observations() -> Vec<String> {
     ));
 
     let name = JsString::try_from_utf8("Symbol.iterator").unwrap();
-    let well_known = runtime.well_known_symbol(WellKnownSymbol::Iterator);
+    let well_known = runtime
+        .well_known_symbol(WellKnownSymbol::Iterator)
+        .expect("well-known symbol");
     let registry = runtime.symbol_for(&name).unwrap();
     output.push(format!(
         "symbols={},{},{}",

@@ -22,7 +22,7 @@ mod support {
             let expected = observe_oracle(&oracle, source, description);
             let runtime =
                 Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             assert_eq!(
                 observe_rust_eval(&runtime, &mut context, source, description),
                 expected,

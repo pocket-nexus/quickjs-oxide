@@ -827,7 +827,7 @@ mod tests {
             "(function(){var a={valueOf(){return 40n}},b={valueOf(){return 2n}};return function(){return a|b}})()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();
@@ -1004,7 +1004,7 @@ mod nullish_equality_tests {
     #[test]
     fn nullish_equality_preserves_proxy_identity_and_conversion_effects() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context.eval(r#"(() => {
             let calls = 0;
             const object = { [Symbol.toPrimitive]() { calls++; return null; } };
@@ -1086,7 +1086,7 @@ mod nullish_equality_tests {
         for source in ["({})", "'heap string'", "123456789012345678901234567890n"] {
             for count in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
                 let runtime = Runtime::new();
-                let mut context = runtime.new_context();
+                let mut context = runtime.new_context().expect("create context");
                 let value = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
                 let id = match value {
                     JsValue::Object(id) => RawId::Object(id),
@@ -1133,7 +1133,7 @@ mod nullish_equality_tests {
     fn nullish_equality_preserves_symbol_checked_count_without_immortality() {
         for count in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let value = runtime
                 .into_jsvalue(context.eval("Symbol('nullish')").unwrap())
                 .unwrap();
@@ -1182,7 +1182,8 @@ mod nullish_equality_tests {
         for kind in [NumericKind::Eq, NumericKind::Neq] {
             for reverse in [false, true] {
                 for nullish in [JsValue::Null, JsValue::Undefined] {
-                    let value = JsValue::Object(object.clone().into_handle());
+                    let value =
+                        JsValue::Object(object.try_clone().expect("duplicate root").into_handle());
                     let (left, right) = if reverse {
                         (nullish, value)
                     } else {

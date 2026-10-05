@@ -1,7 +1,8 @@
 # Cycle collection policy
 
 `Runtime::gc_policy()` and `Runtime::set_gc_policy(GcPolicy)` expose the policy.
-The default is Automatic. Embedders can select Manual. Explicit `Runtime::run_gc()` always works.
+The default is Automatic. Embedders can select Manual. Explicit `Runtime::run_gc()`
+collects under either policy, subject to state admission and runtime quarantine.
 Changing policy never collects or executes JavaScript.
 
 Objects, contexts, bytecode, shapes and captured cells consume one budget unit
@@ -19,16 +20,18 @@ scans on small heaps, at the cost of retaining more nodes between collections.
 
 After successful explicit GC and deferred releases, count occupied cycle nodes
 once and rearm `max(16384, L)` headroom. Allocation never invokes the collector.
-The ready driver services requests before each operation, after internal heap
-borrows have ended. Cycle-node allocations return to this driver; the resident
-executor's pure loops allocate no cycle nodes. There is no GC-specific VM action,
-entry poll or branch/backedge poll. New resident allocation paths must preserve
-this boundary. Tests check reclamation inside long allocating turns.
+The ready driver services requests at remaining legacy operation boundaries,
+after internal heap borrows have ended. Ordinary frame installation allocates no
+cycle nodes and does not poll. Resident Base construction publishes the receiver,
+arguments and saved return owner before servicing pressure through the held state.
+Every resident cycle-node allocation must publish its owners before collection.
+There is no GC-specific VM action or branch/backedge poll. Tests check
+reclamation inside long allocating turns.
 
 The outermost execution turn also services requests after clearing kept objects.
 Nested entries share that turn. Active/suspended frames, jobs and owned temporary
-values keep their ordinary roots. Borrowed state, active collection and panic
-unwinding defer a request without blocking JS progress. Finalization jobs are
+values keep their ordinary roots. External state borrows, active collection and
+panic unwinding defer public service of a request. Finalization jobs are
 queued without running callbacks. Existing weak processing order is preserved.
 
 Collection is synchronous and full; it has no bounded-pause guarantee. Budget,

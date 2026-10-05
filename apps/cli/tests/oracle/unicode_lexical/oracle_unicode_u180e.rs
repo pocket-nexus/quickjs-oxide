@@ -185,7 +185,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let actual = observe_read_context_eval_completion_with_prelude(
             &runtime,
             &mut context,

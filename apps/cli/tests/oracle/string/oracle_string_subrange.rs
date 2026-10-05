@@ -494,8 +494,8 @@ fn string_subrange_recursion_is_catchable_and_runtime_recovers() {
 fn string_subrange_defining_realms_and_user_throw_identity_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
     let substring = property_callable(&runtime, &mut defining, &defining_prototype, "substring");
     let substr = property_callable(&runtime, &mut defining, &defining_prototype, "substr");
@@ -533,7 +533,7 @@ fn string_subrange_defining_realms_and_user_throw_identity_are_exact() {
         &runtime,
         &caller.global_object().unwrap(),
         "subrangeSentinel",
-        Value::Object(sentinel.clone()),
+        Value::Object(sentinel.try_clone().expect("duplicate root")),
     );
     let throwing_start = caller
         .eval(
@@ -554,7 +554,7 @@ fn string_subrange_defining_realms_and_user_throw_identity_are_exact() {
     );
     assert_eq!(
         caller.take_exception().unwrap(),
-        Some(Value::Object(sentinel.clone())),
+        Some(Value::Object(sentinel.try_clone().expect("duplicate root"))),
         "start conversion did not preserve the user-thrown value",
     );
 
@@ -599,8 +599,8 @@ fn string_subrange_callables_are_per_realm_distinct_and_collectable() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let retained = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_prototype = first.string_prototype().unwrap();
         let second_prototype = second.string_prototype().unwrap();
         let first_substring =
@@ -629,18 +629,21 @@ fn string_subrange_callables_are_per_realm_distinct_and_collectable() {
         (first_substring, first_substr, first_slice)
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(retained);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]
 fn string_subrange_stack_overflow_uses_the_caller_realm_and_recovers() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
     let slice = property_callable(&runtime, &mut defining, &defining_prototype, "slice");
     let defining_internal_error = intrinsic_prototype(&runtime, &mut defining, "InternalError");
@@ -651,7 +654,7 @@ fn string_subrange_stack_overflow_uses_the_caller_realm_and_recovers() {
         &runtime,
         &caller.global_object().unwrap(),
         "foreignSlice",
-        Value::Object(slice.as_object().clone()),
+        Value::Object(slice.as_object().try_clone().expect("duplicate root")),
     );
     let Value::Object(error) = caller
         .eval(

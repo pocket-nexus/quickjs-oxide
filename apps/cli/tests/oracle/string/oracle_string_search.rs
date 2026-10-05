@@ -379,8 +379,8 @@ fn regexp_symbol_search_abstract_exec_matches_pinned_quickjs() {
 fn search_intrinsics_use_defining_realms_and_accept_foreign_regexp_brands() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let string_search = eval_callable(
         &runtime,
@@ -437,7 +437,7 @@ fn search_intrinsics_use_defining_realms_and_accept_foreign_regexp_brands() {
         caller
             .call(
                 &regexp_search,
-                Value::Object(foreign_regexp.clone()),
+                Value::Object(foreign_regexp.try_clone().expect("duplicate root")),
                 &[string_value("abc")],
             )
             .unwrap(),

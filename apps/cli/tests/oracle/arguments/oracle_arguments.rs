@@ -147,7 +147,7 @@ fn arguments_values_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),
@@ -160,7 +160,7 @@ fn arguments_values_match_pinned_quickjs() {
 fn arguments_rust_smoke_runs_without_an_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let value = context
         .eval("(function(a){a=41;arguments[0]++;return a})(1)")
         .expect("execute arguments smoke");

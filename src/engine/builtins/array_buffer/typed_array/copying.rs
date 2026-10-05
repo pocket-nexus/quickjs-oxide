@@ -68,7 +68,7 @@ impl Runtime {
             .map_err(|_| RuntimeError::Invariant("validated TypedArray.with index was negative"))?;
         match super::write::TypedWriteStep::set(
             self,
-            target.clone(),
+            target.try_clone()?,
             Some(index),
             self.dup_jsvalue(replacement)?,
         )?
@@ -213,8 +213,13 @@ impl Runtime {
                 let value = self
                     .typed_array_read_index_jsvalue(source, index)?
                     .unwrap_or(JsValue::Undefined);
-                match super::write::TypedWriteStep::set(self, target.clone(), Some(index), value)?
-                    .finish_sync(self, realm)?
+                match super::write::TypedWriteStep::set(
+                    self,
+                    target.try_clone()?,
+                    Some(index),
+                    value,
+                )?
+                .finish_sync(self, realm)?
                 {
                     NativeConversion::Value(_) => {}
                     NativeConversion::Throw(value) => {
@@ -351,7 +356,7 @@ impl TypedWithResume {
                 self.0.replacement = value;
                 Ok(TypedWithStep::Complete(runtime.finish_typed_with(
                     self.0.realm,
-                    self.0.source.clone(),
+                    self.0.source.try_clone()?,
                     self.0.element,
                     self.0.length as u64,
                     index,

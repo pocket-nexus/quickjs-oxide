@@ -58,7 +58,7 @@ impl Runtime {
         function_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
         let async_function_prototype = self.new_object(Some(function_prototype))?;
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             &async_function_prototype,
             &tag,
@@ -101,14 +101,14 @@ impl Runtime {
         self.define_function_data_property(
             constructor.as_object(),
             "prototype",
-            Value::Object(async_function_prototype.clone()),
+            Value::Object(async_function_prototype.try_clone()?),
             false,
             false,
         )?;
         self.define_function_data_property(
             &async_function_prototype,
             "constructor",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             false,
             true,
         )?;
@@ -152,7 +152,7 @@ impl Runtime {
         driver_realm: ContextId,
         capability: &RootedPromiseCapability,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         let shape = state.get_or_create_shape(None, &[])?;
         let object = match state.heap.allocate_object(ObjectData::async_function_state(

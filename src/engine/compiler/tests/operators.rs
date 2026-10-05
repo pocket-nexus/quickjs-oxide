@@ -87,7 +87,7 @@ fn exponentiation_follows_quickjs_precedence_associativity_and_unary_rules() {
 #[test]
 fn update_expressions_follow_quickjs_lvalue_and_power_shapes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -253,7 +253,7 @@ fn nullish_coalescing_uses_one_quickjs_short_circuit_join() {
     assert_eq!(evaluate("false || (null ?? 8)"), Value::Int(8));
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let call = context
         .compile(
             "Function.coalesce = function(){ return this === Function; }; \
@@ -359,7 +359,7 @@ fn relational_membership_uses_runtime_object_protocols() {
     );
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(context
         .eval(
             "Function.membershipTrace=''; Function[Symbol.toPrimitive]=function(hint){ Function.membershipTrace+=hint; return 'prototype'; };",
@@ -439,7 +439,7 @@ fn untagged_templates_follow_quickjs_concat_lowering() {
     );
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     context
         .compile("(function tag(strings) { return strings[0]; })`x`")
         .expect("runtime publication should materialize tagged-template objects");

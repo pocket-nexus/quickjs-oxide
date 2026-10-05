@@ -262,8 +262,8 @@ fn array_find_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_find_native_errors_and_user_throws_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_type_error = eval_object(
         &mut defining,
@@ -296,7 +296,9 @@ fn array_find_native_errors_and_user_throws_use_pinned_realms() {
         .call(
             &find,
             Value::Object(receiver),
-            &[Value::Object(always.as_object().clone())],
+            &[Value::Object(
+                always.as_object().try_clone().expect("duplicate root"),
+            )],
         )
         .expect("cross-realm Array.find call")
     else {
@@ -320,7 +322,9 @@ fn array_find_native_errors_and_user_throws_use_pinned_realms() {
             .call(
                 &find_index,
                 Value::Object(indexed_receiver),
-                &[Value::Object(twenty.as_object().clone())],
+                &[Value::Object(
+                    twenty.as_object().try_clone().expect("duplicate root")
+                )],
             )
             .expect("cross-realm Array.findIndex call"),
         Value::Int(1),
@@ -349,7 +353,9 @@ fn array_find_native_errors_and_user_throws_use_pinned_realms() {
         caller.call(
             &find,
             Value::Object(one),
-            &[Value::Object(throwing.as_object().clone())],
+            &[Value::Object(
+                throwing.as_object().try_clone().expect("duplicate root")
+            )],
         ),
         Err(RuntimeError::Exception),
     ));
@@ -364,7 +370,7 @@ fn array_find_native_errors_and_user_throws_use_pinned_realms() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

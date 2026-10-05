@@ -49,6 +49,7 @@ fn rust_observation(source: &str) -> String {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let value = runtime
         .new_context()
+        .expect("create context")
         .eval(source)
         .unwrap_or_else(|error| panic!("Rust source failed for {source:?}: {error}"));
     match value {

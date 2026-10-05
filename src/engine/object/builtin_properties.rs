@@ -51,7 +51,7 @@ impl Runtime {
         realm: ContextId,
         methods: impl IntoIterator<Item = NativeBuiltinProperty>,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         // Consume descriptors and intern their keys before borrowing Runtime
         // state. These owning keys outlive the state borrow on every exit.
         let properties = methods

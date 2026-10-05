@@ -56,8 +56,10 @@ fn spawn_shared_waiter(
     let (result_sender, result_receiver) = mpsc::channel();
     let worker = std::thread::spawn(move || {
         let runtime = Runtime::new();
-        runtime.set_can_block(true);
-        let mut context = runtime.new_context();
+        runtime
+            .set_can_block(true)
+            .expect("set runtime configuration");
+        let mut context = runtime.new_context().expect("create context");
         publish_shared_buffer(&runtime, &mut context, "__shared", handle);
         ready_sender.send(()).unwrap();
         let result = match context.eval(wait_source) {
@@ -103,8 +105,8 @@ fn atomics_native_cproto_matches_the_pinned_function_table() {
 #[test]
 fn global_atomics_is_lazy_realm_local_and_has_the_pinned_surface() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
     let key = runtime
@@ -212,7 +214,7 @@ fn global_atomics_is_lazy_realm_local_and_has_the_pinned_surface() {
 #[test]
 fn integer_typed_array_operations_return_old_values_and_wrap_in_place() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_script(
         &mut context,
         r#"(function(){
@@ -270,7 +272,7 @@ fn integer_typed_array_operations_return_old_values_and_wrap_in_place() {
 #[test]
 fn shared_integer_typed_array_operations_linearize_each_machine_word() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_script(
         &mut context,
         r#"(function(){
@@ -313,7 +315,7 @@ fn shared_integer_typed_array_operations_linearize_each_machine_word() {
 #[test]
 fn shared_access_coercions_observe_old_length_and_revalidate_before_locking() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_script(
         &mut context,
         r#"(function(){
@@ -370,7 +372,7 @@ fn shared_add_is_atomic_across_two_runtime_threads() {
         start_senders.push(start_sender);
         workers.push(std::thread::spawn(move || {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             publish_shared_buffer(&runtime, &mut context, "__shared", worker_handle);
 
             worker_ready.send(()).unwrap();
@@ -425,7 +427,7 @@ fn distinct_shared_backings_follow_one_sequentially_consistent_order() {
         let worker_result = result_sender.clone();
         workers.push(std::thread::spawn(move || {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             publish_shared_buffer(&runtime, &mut context, "__own", own);
             publish_shared_buffer(&runtime, &mut context, "__other", other);
             drop(
@@ -497,7 +499,7 @@ fn distinct_shared_backings_follow_one_sequentially_consistent_order() {
 #[test]
 fn store_returns_the_full_converted_value_while_writing_narrow_bits() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_script(
         &mut context,
         r#"(function(){
@@ -538,7 +540,7 @@ fn store_returns_the_full_converted_value_while_writing_narrow_bits() {
 #[test]
 fn access_and_operand_coercions_revalidate_at_the_quickjs_boundaries() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_script(
         &mut context,
         r#"(function(){
@@ -618,7 +620,7 @@ fn access_and_operand_coercions_revalidate_at_the_quickjs_boundaries() {
 #[test]
 fn wait_notify_pause_and_lock_free_keep_the_non_shared_quickjs_contract() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_script(
         &mut context,
         r#"(function(){
@@ -736,8 +738,10 @@ fn wait_notify_pause_and_lock_free_keep_the_non_shared_quickjs_contract() {
 #[test]
 fn shared_wait_returns_not_equal_and_bounded_timeout_results() {
     let runtime = Runtime::new();
-    runtime.set_can_block(true);
-    let mut context = runtime.new_context();
+    runtime
+        .set_can_block(true)
+        .expect("set runtime configuration");
+    let mut context = runtime.new_context().expect("create context");
     assert_script(
         &mut context,
         r#"(function(){
@@ -770,7 +774,7 @@ fn bigint_wait_is_notified_by_int32_view_in_another_runtime() {
     );
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     publish_shared_buffer(&runtime, &mut context, "__shared", handle);
     drop(
         context
@@ -799,7 +803,7 @@ fn bigint_wait_is_notified_by_int32_view_in_another_runtime() {
 #[test]
 fn lazy_and_materialized_atomics_edges_are_released() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Atomics)
@@ -823,7 +827,7 @@ fn lazy_and_materialized_atomics_edges_are_released() {
         before - 1,
     );
 
-    let mut materialized = runtime.new_context();
+    let mut materialized = runtime.new_context().expect("create context");
     let materialized_realm = materialized.realm;
     drop(
         materialized

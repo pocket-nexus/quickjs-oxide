@@ -6,6 +6,147 @@ use crate::engine::heap::native::{
 use super::*;
 
 #[test]
+fn gc_finalization_retain_preflight_remains_recoverable() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let (root, function_prototype, realm, callback) = finalization_test_realm(&mut heap, shape);
+    let registry = heap
+        .allocate_finalization_registry_object(shape, Vec::new(), callback, realm)
+        .unwrap();
+    let target = leaf(&mut heap, shape);
+    heap.finalization_registry_register(
+        registry,
+        WeakCollectionKey::Object(target),
+        RawValue::Int(17),
+        None,
+    )
+    .unwrap();
+    heap.release_object(target).unwrap();
+    let callback_count = heap.object_strong_count(callback).unwrap();
+    let realm_count = heap.context_strong_count(realm).unwrap();
+    heap.set_strong_count_for_test(RawId::Object(callback), u32::MAX);
+    let poisoned = std::cell::Cell::new(false);
+    let mut sink = RecordingFinalizationJobSink::default();
+    assert_eq!(
+        heap.run_gc_with_finalization_sink(
+            |event| Ok(matches!(event, WeakSymbolGcEvent::IsLive(_))),
+            &mut sink,
+            &poisoned,
+        ),
+        Err(HeapError::Overflow {
+            operation: "retaining outgoing heap edges",
+        })
+    );
+    assert!(!poisoned.get());
+    assert!(sink.jobs.is_empty());
+    assert_eq!(heap.finalization_registry_len(registry), Ok(1));
+    assert_eq!(heap.context_strong_count(realm), Ok(realm_count));
+    heap.set_strong_count_for_test(RawId::Object(callback), callback_count);
+    heap.run_gc_with_finalization_sink(
+        |event| Ok(matches!(event, WeakSymbolGcEvent::IsLive(_))),
+        &mut sink,
+        &poisoned,
+    )
+    .unwrap();
+    assert_eq!(sink.jobs.len(), 1);
+    assert!(!poisoned.get());
+    heap.discard_finalization_jobs(sink.jobs).unwrap();
+    heap.release_object(registry).unwrap();
+    release_finalization_test_realm(&mut heap, shape, root, function_prototype, realm, callback);
+}
+
+#[test]
+fn gc_detached_weak_value_release_failure_is_terminal() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let map = heap
+        .allocate_object(ObjectData::weak_map(shape, Vec::new()))
+        .unwrap();
+    let key = leaf(&mut heap, shape);
+    let held = leaf(&mut heap, shape);
+    let weak_key = WeakCollectionKey::Object(key);
+    heap.weak_map_set(map, weak_key, RawValue::Object(held))
+        .unwrap();
+    heap.release_object(key).unwrap();
+    heap.release_object(held).unwrap();
+    heap.set_strong_count_for_test(RawId::Object(held), 0);
+    let poisoned = std::cell::Cell::new(false);
+    assert_eq!(
+        heap.run_gc_with_finalization_sink(
+            |event| Ok(matches!(event, WeakSymbolGcEvent::IsLive(_))),
+            &mut gc::DiscardFinalizationJobSink,
+            &poisoned,
+        ),
+        Err(HeapError::Underflow {
+            kind: HeapNodeKind::Object,
+            index: held.index,
+            generation: held.generation,
+        })
+    );
+    assert!(poisoned.get());
+    assert!(heap.weak_map_get(map, weak_key).unwrap().is_none());
+}
+
+#[test]
+fn gc_preflight_error_after_detached_cleanup_marks_lost_obligations() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let (_root, _function_prototype, realm, callback) = finalization_test_realm(&mut heap, shape);
+    let registry = heap
+        .allocate_finalization_registry_object(shape, Vec::new(), callback, realm)
+        .unwrap();
+    let target = leaf(&mut heap, shape);
+    heap.finalization_registry_register(
+        registry,
+        WeakCollectionKey::Object(target),
+        RawValue::Int(17),
+        None,
+    )
+    .unwrap();
+    heap.release_object(target).unwrap();
+    let detached_shape = heap
+        .allocate_shape(
+            Shape::new(
+                None,
+                [ShapeEntry {
+                    atom: AtomIdx::from_raw(42),
+                    flags: DATA_FLAGS,
+                }],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let queued = heap
+        .allocate_object(ObjectData::ordinary(
+            detached_shape,
+            vec![PropertySlot::Data(RawValue::Undefined)],
+        ))
+        .unwrap();
+    heap.release_shape(detached_shape).unwrap();
+    heap.queue_release_for_test(RawId::Object(queued)).unwrap();
+    heap.set_strong_count_for_test(RawId::Object(callback), u32::MAX);
+    let poisoned = std::cell::Cell::new(false);
+    let mut sink = RecordingFinalizationJobSink::default();
+    assert_eq!(
+        heap.run_gc_with_finalization_sink(
+            |event| Ok(matches!(event, WeakSymbolGcEvent::IsLive(_))),
+            &mut sink,
+            &poisoned,
+        ),
+        Err(HeapError::Overflow {
+            operation: "retaining outgoing heap edges",
+        })
+    );
+    assert!(heap.object(queued).is_err());
+    assert!(heap.shape(detached_shape).is_err());
+    assert!(poisoned.get());
+    assert!(sink.jobs.is_empty());
+    assert_eq!(heap.finalization_registry_len(registry), Ok(1));
+    // Unlike the first preflight witness, finalized atom/shape obligations
+    // were already detached and cannot be discarded followed by a retry.
+}
+
+#[test]
 fn weak_ref_target_is_non_owning_and_cleared_by_the_weak_pass() {
     let mut heap = Heap::new();
     let shape = empty_shape(&mut heap);
@@ -56,6 +197,7 @@ fn finalization_registry_transfers_held_and_job_roots_without_retain_on_adoption
     heap.run_gc_with_finalization_sink(
         |event| Ok(matches!(event, WeakSymbolGcEvent::IsLive(_))),
         &mut sink,
+        &std::cell::Cell::new(false),
     )
     .unwrap();
 
@@ -120,6 +262,7 @@ fn finalization_job_moves_held_symbol_ownership_until_job_release() {
             })
         },
         &mut sink,
+        &std::cell::Cell::new(false),
     )
     .unwrap();
     assert_eq!(sink.jobs.len(), 1);
@@ -179,6 +322,7 @@ fn weak_pass_can_prepare_a_later_zero_queued_registry_before_finalizing_it() {
         .run_gc_with_finalization_sink(
             |event| Ok(matches!(event, WeakSymbolGcEvent::IsLive(_))),
             &mut sink,
+            &std::cell::Cell::new(false),
         )
         .unwrap();
     assert_eq!(sink.jobs.len(), 1);
@@ -275,6 +419,7 @@ fn finalization_job_reservation_failure_silently_drops_the_registration() {
         .run_gc_with_finalization_sink(
             |event| Ok(matches!(event, WeakSymbolGcEvent::IsLive(_))),
             &mut sink,
+            &std::cell::Cell::new(false),
         )
         .unwrap();
     assert!(sink.jobs.is_empty());
@@ -585,6 +730,7 @@ fn weak_symbol_hook_release_precedes_later_record_liveness_query() {
                 }
             },
             &mut gc::DiscardFinalizationJobSink,
+            &std::cell::Cell::new(false),
         )
         .unwrap();
     assert_eq!(
@@ -633,6 +779,7 @@ fn gc_release_hook_can_defer_detached_value_atoms() {
                 })
             },
             &mut gc::DiscardFinalizationJobSink,
+            &std::cell::Cell::new(false),
         )
         .unwrap();
     assert!(atoms.is_live(symbol));
@@ -866,6 +1013,7 @@ fn stale_symbol_keys_are_pruned_without_owning_the_atom() {
                 })
             },
             &mut gc::DiscardFinalizationJobSink,
+            &std::cell::Cell::new(false),
         )
         .unwrap();
     assert_eq!(stats.cleanup.finalized_objects, 1);

@@ -102,7 +102,7 @@ pub(super) fn step(
                         .global_object_for_realm(realm)
                         .map_err(runtime_error_to_vm_error)?;
                     query = Some((
-                        EnvironmentStep::delete_global(realm, object, key),
+                        EnvironmentStep::delete_global(realm, object, key)?,
                         ReturnValue::Push,
                     ));
                 } else {
@@ -131,7 +131,7 @@ pub(super) fn step(
                     }
                     GlobalReference::Object { object, key } => {
                         query = Some((
-                            EnvironmentStep::reference(realm, object, key),
+                            EnvironmentStep::reference(realm, object, key)?,
                             ReturnValue::Push,
                         ));
                     }
@@ -214,9 +214,9 @@ pub(super) fn step(
                         value,
                         strict,
                         matches!(source, WriteTarget::Reference),
-                    )
+                    )?
                 } else {
-                    EnvironmentStep::set(realm, object, key, value, strict)
+                    EnvironmentStep::set(realm, object, key, value, strict)?
                 };
                 query = Some((step, ReturnValue::Discard));
             }
@@ -361,25 +361,23 @@ pub(super) fn step(
                 let array = runtime
                     .new_array_from_values_jsvalue(realm, values)
                     .map_err(runtime_error_to_vm_error)?;
-                let id = array.object_id();
-                runtime
-                    .retain_object_handle(id)
-                    .map_err(heap_error_to_vm_error)?;
-                execution
-                    .slots
-                    .push(&mut frame.window, JsValue::Object(id))?;
+                push_retained_factory_result(
+                    runtime,
+                    &mut execution.slots,
+                    &mut frame.window,
+                    array,
+                )?;
             }
             Operation::CreateObject => {
                 let object = runtime
                     .new_ordinary_object_in_realm(realm)
                     .map_err(runtime_error_to_vm_error)?;
-                let id = object.object_id();
-                runtime
-                    .retain_object_handle(id)
-                    .map_err(heap_error_to_vm_error)?;
-                execution
-                    .slots
-                    .push(&mut frame.window, JsValue::Object(id))?;
+                push_retained_factory_result(
+                    runtime,
+                    &mut execution.slots,
+                    &mut frame.window,
+                    object,
+                )?;
             }
             Operation::CreateVariable => {
                 if frame
@@ -396,13 +394,12 @@ pub(super) fn step(
                 let object = runtime
                     .new_object(None)
                     .map_err(runtime_error_to_vm_error)?;
-                let id = object.object_id();
-                runtime
-                    .retain_object_handle(id)
-                    .map_err(heap_error_to_vm_error)?;
-                execution
-                    .slots
-                    .push(&mut frame.window, JsValue::Object(id))?;
+                push_retained_factory_result(
+                    runtime,
+                    &mut execution.slots,
+                    &mut frame.window,
+                    object,
+                )?;
             }
             Operation::ToObject => {
                 let value = execution.slots.pop(&mut frame.window)?;
@@ -477,6 +474,28 @@ pub(super) fn step(
     }
 }
 
+/// Keep the original checked retain, raw slot publication and wrapper Drop.
+/// A rejected publication leaves the retained edge uncommitted; surrender it
+/// after the original Drop/drain boundary and preserve the push error.
+#[inline]
+fn push_retained_factory_result(
+    runtime: &Runtime,
+    slots: &mut super::stack::SlotStore,
+    window: &mut super::stack::FrameWindow,
+    object: crate::engine::object::ObjectRef,
+) -> Result<(), Error> {
+    let id = object.object_id();
+    runtime
+        .retain_object_handle(id)
+        .map_err(heap_error_to_vm_error)?;
+    let pushed = slots.push(window, JsValue::Object(id));
+    drop(object);
+    if pushed.is_err() {
+        runtime.release_object_handle(id);
+    }
+    pushed
+}
+
 enum BindingRead {
     Value(JsValue),
     Getter {
@@ -544,10 +563,10 @@ fn read_binding(
     }
     Ok(BindingRead::Query(EnvironmentStep::get(
         executable.realm,
-        object.clone(),
+        object.try_clone()?,
         key,
         strict,
-    )))
+    )?))
 }
 
 pub(super) fn linked_key(
@@ -589,7 +608,7 @@ pub(super) fn prepare_environment_read(
             )
         )
     };
-    let receiver = Value::Object(object.clone());
+    let receiver = Value::Object(object.try_clone()?);
     if !global
         || runtime
             .is_auto_init_own_property(object, key)
@@ -637,7 +656,7 @@ pub(super) fn prepare_environment_read(
 /// Authenticate the published name and the closure-owned cell without taking
 /// another cell owner. The view is valid only while these frame owners live.
 fn global_cell_view<'a>(
-    runtime: &Runtime,
+    runtime: &'a Runtime,
     executable: &'a crate::engine::code::runtime::PublishedFunctionSnapshot,
     roots: &'a super::closure::ClosureSlots,
     index: u16,
@@ -664,7 +683,7 @@ fn global_cell_view<'a>(
         ));
     };
     let root = roots
-        .get(usize::from(index))
+        .get(runtime, usize::from(index))
         .ok_or_else(|| Error::internal("global closure slot is out of bounds"))?;
     if !root.belongs_to(runtime) {
         return Err(Error::internal("global closure belongs to another runtime"));
@@ -672,42 +691,28 @@ fn global_cell_view<'a>(
     Ok((descriptor, root))
 }
 
-/// Complete only the initialized-cell portion of a global read. Pending cleanup
-/// and uninitialized cells retain the original environment-driver boundary.
-/// No callback, release or mutation may intervene between reading the raw cell
-/// and acquiring its checked output edge.
-pub(super) fn try_read_global_cell(
+/// Consume the initialized cell directly through the current execution access.
+/// The closure owns its raw value until the output edge is installed.
+pub(super) fn try_read_global_cell_in_state(
     runtime: &Runtime,
+    state: &mut crate::engine::heap::runtime::RuntimeState,
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
     roots: &super::closure::ClosureSlots,
     index: u16,
 ) -> Result<Option<JsValue>, Error> {
-    if runtime.0.deferred_references.has_pending() {
+    let (_, root) = global_cell_view(runtime, executable, roots, index)?;
+    let raw = state
+        .heap
+        .var_ref(root.id())
+        .map_err(heap_error_to_vm_error)?
+        .value
+        .clone();
+    if matches!(raw, crate::engine::heap::RawValue::Uninitialized) {
         return Ok(None);
     }
-    let (_, root) = global_cell_view(runtime, executable, roots, index)?;
-    let value = {
-        let Ok(state) = runtime.0.state.try_borrow() else {
-            return Ok(None);
-        };
-        if state.heap.has_pending_zero_cleanup() {
-            return Ok(None);
-        }
-        let raw = state
-            .heap
-            .var_ref(root.id())
-            .map_err(heap_error_to_vm_error)?
-            .value
-            .clone();
-        if matches!(raw, crate::engine::heap::RawValue::Uninitialized) {
-            return Ok(None);
-        }
-        JsValue::from_raw(raw)
-            .ok_or_else(|| Error::internal("global cell held an internal value sentinel"))?
-    };
-    // Keep the exact checked retain, including overflow and near-saturation
-    // behavior. The live cell owns the raw edge until this duplicate completes.
-    runtime
+    let value = JsValue::from_raw(raw)
+        .ok_or_else(|| Error::internal("global cell held an internal value sentinel"))?;
+    state
         .dup_jsvalue(&value)
         .map(Some)
         .map_err(runtime_error_to_vm_error)
@@ -797,6 +802,167 @@ pub(super) fn reply(
 #[cfg(test)]
 mod global_cell_tests;
 
+#[cfg(test)]
+mod factory_publication_cleanup_tests {
+    use super::*;
+    use crate::engine::{
+        code::runtime::PublishedFunctionSnapshot,
+        heap::{ContextId, RawId},
+        object::ObjectRef,
+        vm::stack::{FrameStorage, FrameWindow, SlotStore},
+    };
+
+    fn window(runtime: &Runtime, realm: ContextId, capacity: u16) -> (SlotStore, FrameWindow) {
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(realm);
+        executable.metadata.max_stack = capacity;
+        let mut slots = SlotStore::new(8);
+        let window = slots
+            .push_frame(
+                runtime,
+                &executable.frame_layout(),
+                FrameStorage {
+                    original_arguments: vec![],
+                    parameters: vec![],
+                    locals: vec![],
+                    operands: vec![],
+                },
+            )
+            .unwrap();
+        (slots, window)
+    }
+
+    fn factories(runtime: &Runtime, realm: ContextId) -> [ObjectRef; 3] {
+        [
+            runtime.new_object(None).unwrap(),
+            runtime.new_ordinary_object_in_realm(realm).unwrap(),
+            runtime
+                .new_array_from_values_jsvalue(realm, vec![JsValue::Int(42)])
+                .unwrap(),
+        ]
+    }
+
+    #[test]
+    fn successful_publication_keeps_one_slot_owner_for_each_factory() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().expect("create context");
+        for object in factories(&runtime, context.realm) {
+            let id = object.object_id();
+            let (mut slots, mut frame) = window(&runtime, context.realm, 1);
+            push_retained_factory_result(&runtime, &mut slots, &mut frame, object).unwrap();
+            assert_eq!(slots.peek(&frame, 0).unwrap(), &JsValue::Object(id));
+            assert_eq!(
+                runtime
+                    .0
+                    .state
+                    .borrow()
+                    .heap
+                    .object_strong_count(id)
+                    .unwrap(),
+                1
+            );
+            slots.clear_frame(&runtime, frame).unwrap();
+            assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        }
+    }
+
+    #[test]
+    fn rejected_publication_releases_the_uncommitted_edge_for_each_factory() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().expect("create context");
+        for object in factories(&runtime, context.realm) {
+            let id = object.object_id();
+            let (mut slots, mut frame) = window(&runtime, context.realm, 0);
+            let error =
+                push_retained_factory_result(&runtime, &mut slots, &mut frame, object).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("owned operand stack exceeds verified capacity")
+            );
+            assert_eq!(slots.depth(&frame), 0);
+            assert!(runtime.0.state.borrow().heap.object(id).is_err());
+            slots.clear_frame(&runtime, frame).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejected_publication_defers_both_releases_during_a_shared_borrow() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().expect("create context");
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        let (mut slots, mut frame) = window(&runtime, context.realm, 0);
+        {
+            let state = runtime.0.state.borrow();
+            let error =
+                push_retained_factory_result(&runtime, &mut slots, &mut frame, object).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("owned operand stack exceeds verified capacity")
+            );
+            assert_eq!(state.heap.object_strong_count(id).unwrap(), 2);
+            assert_eq!(slots.depth(&frame), 0);
+            assert!(runtime.0.deferred_references.has_pending());
+        }
+        runtime.drain_deferred_references().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        assert!(!runtime.0.deferred_references.has_pending());
+        slots.clear_frame(&runtime, frame).unwrap();
+    }
+
+    #[test]
+    fn rejected_publication_keeps_original_wrapper_zero_cleanup() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().expect("create context");
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        let garbage = runtime.new_object(None).unwrap().into_handle();
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .queue_release_for_test(RawId::Object(garbage))
+            .unwrap();
+        assert!(runtime.0.state.borrow().heap.has_pending_zero_cleanup());
+        let (mut slots, mut frame) = window(&runtime, context.realm, 0);
+        let error =
+            push_retained_factory_result(&runtime, &mut slots, &mut frame, object).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("owned operand stack exceeds verified capacity")
+        );
+        let state = runtime.0.state.borrow();
+        assert!(state.heap.object(id).is_err());
+        assert!(state.heap.object(garbage).is_err());
+        assert!(!state.heap.has_pending_zero_cleanup());
+        drop(state);
+        slots.clear_frame(&runtime, frame).unwrap();
+    }
+
+    #[test]
+    fn checked_retain_failure_drops_only_the_original_factory_owner() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().expect("create context");
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        let (mut slots, mut frame) = window(&runtime, context.realm, 1);
+        {
+            let _borrow = runtime.0.state.borrow_mut();
+            assert!(
+                push_retained_factory_result(&runtime, &mut slots, &mut frame, object).is_err()
+            );
+            assert_eq!(slots.depth(&frame), 0);
+            assert!(runtime.0.deferred_references.has_pending());
+        }
+        runtime.drain_deferred_references().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        slots.clear_frame(&runtime, frame).unwrap();
+    }
+}
+
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
     use crate::engine::{
@@ -814,7 +980,7 @@ mod tests {
             "(function(){var calls=0,o={x:0};Object.defineProperty(o,Symbol.unscopables,{get:new Proxy(function(){calls++;throw 42},{apply(t,r,a){return Reflect.apply(t,r,a)}})});return function(){try{with(o){return x}}catch(e){return calls===1?e:0}}})()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let function = context.eval(source).unwrap();
             let callable = runtime.callable_from_value(function).unwrap();
             let profile = CostProfile::start();

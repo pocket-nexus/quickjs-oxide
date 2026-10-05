@@ -592,8 +592,8 @@ fn regexp_split_recursion_is_catchable_and_recovers_like_pinned_quickjs() {
 fn regexp_split_intrinsics_use_defining_realms_and_foreign_species() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let regexp_split = eval_callable(
         &runtime,
@@ -632,7 +632,11 @@ fn regexp_split_intrinsics_use_defining_realms_and_foreign_species() {
     };
     assert_eq!(
         runtime.get_prototype_of(&foreign_result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "RegExp split result did not use the method defining realm Array",
     );
     assert_ne!(
@@ -744,7 +748,7 @@ fn mixed_string_and_regexp_split_recursion_guard_is_catchable_and_recovers() {
         .spawn(|| {
             let runtime =
                 Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(
                 context
                     .eval(

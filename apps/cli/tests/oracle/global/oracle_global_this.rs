@@ -232,8 +232,8 @@ fn global_this_matches_pinned_quickjs() {
 fn captured_global_this_tracks_the_defining_realm_across_property_transitions() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_global = defining.global_object().unwrap();
     let caller_global = caller.global_object().unwrap();
     let key = runtime.intern_property_key("globalThis").unwrap();
@@ -241,11 +241,11 @@ fn captured_global_this_tracks_the_defining_realm_across_property_transitions() 
     assert_ne!(defining_global, caller_global);
     assert_eq!(
         defining.eval("globalThis").unwrap(),
-        Value::Object(defining_global.clone())
+        Value::Object(defining_global.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         caller.eval("globalThis").unwrap(),
-        Value::Object(caller_global.clone())
+        Value::Object(caller_global.try_clone().expect("duplicate root"))
     );
 
     let reader = function(
@@ -255,7 +255,7 @@ fn captured_global_this_tracks_the_defining_realm_across_property_transitions() 
     );
     assert_eq!(
         caller.call(&reader, Value::Undefined, &[]).unwrap(),
-        Value::Object(defining_global.clone()),
+        Value::Object(defining_global.try_clone().expect("duplicate root")),
         "a foreign call must resolve globalThis in the bytecode's defining realm"
     );
 
@@ -281,7 +281,7 @@ fn captured_global_this_tracks_the_defining_realm_across_property_transitions() 
     );
     assert_eq!(
         caller.call(&reader, Value::Undefined, &[]).unwrap(),
-        Value::Object(defining_global.clone()),
+        Value::Object(defining_global.try_clone().expect("duplicate root")),
         "the captured global VarRef must fall through to the replacement accessor"
     );
 
@@ -320,7 +320,7 @@ fn global_this_var_ref_cycle_is_collectable_after_context_drop() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let global = context.global_object().unwrap();
         let reader = function(
             &runtime,
@@ -331,7 +331,7 @@ fn global_this_var_ref_cycle_is_collectable_after_context_drop() {
             context.call(&reader, Value::Undefined, &[]).unwrap(),
             Value::Object(global)
         );
-        let counts = runtime.heap_counts();
+        let counts = runtime.heap_counts().expect("runtime state");
         assert_eq!(counts.context_nodes, 1);
         assert!(
             counts.var_ref_nodes > 0,
@@ -339,9 +339,12 @@ fn global_this_var_ref_cycle_is_collectable_after_context_drop() {
         );
     }
 
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     runtime.run_gc().unwrap();
-    let counts = runtime.heap_counts();
+    let counts = runtime.heap_counts().expect("runtime state");
     assert_eq!(counts.context_nodes, 0);
     assert_eq!(counts.object_nodes, 0);
     assert_eq!(counts.shape_nodes, 0);
@@ -353,10 +356,14 @@ fn global_this_var_ref_cycle_is_collectable_after_context_drop() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let key = runtime.intern_property_key("globalThis").unwrap();
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     let reader = function(
         &runtime,
         &mut context,
@@ -396,8 +403,8 @@ fn rust_observations() -> Vec<String> {
         .join(",");
     let expected_keys = implemented_keys
         .iter()
-        .map(|(_, key)| key.clone())
-        .chain(std::iter::once(tag.clone()))
+        .map(|(_, key)| key.try_clone().expect("duplicate key"))
+        .chain(std::iter::once(tag.try_clone().expect("duplicate root")))
         .collect::<Vec<_>>();
     assert_eq!(
         keys, expected_keys,
@@ -432,7 +439,7 @@ fn rust_observations() -> Vec<String> {
     ));
     assert_eq!(
         context.eval("globalThis = this").unwrap(),
-        Value::Object(global.clone())
+        Value::Object(global.try_clone().expect("duplicate root"))
     );
 
     let deleted = context.eval("delete globalThis").unwrap();
@@ -461,7 +468,7 @@ fn rust_observations() -> Vec<String> {
 
     assert_eq!(
         context.eval("globalThis = this").unwrap(),
-        Value::Object(global.clone())
+        Value::Object(global.try_clone().expect("duplicate root"))
     );
     observations.push(format!(
         "sloppy={}|{}",
@@ -562,7 +569,9 @@ fn define_global_this(context: &mut Context, global: &ObjectRef, key: &PropertyK
                 global,
                 key,
                 &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Value::Object(global.clone())),
+                    value: DescriptorField::Present(Value::Object(
+                        global.try_clone().expect("duplicate root")
+                    )),
                     writable: DescriptorField::Present(true),
                     enumerable: DescriptorField::Present(false),
                     configurable: DescriptorField::Present(true),

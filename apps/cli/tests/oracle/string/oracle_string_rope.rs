@@ -149,8 +149,8 @@ fn string_rope_matches_pinned_quickjs() {
 fn string_rope_overflow_uses_vm_and_native_defining_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_string = first.string_prototype().unwrap();
     let concat = property_callable(&runtime, &mut first, &first_string, "concat");
     let first_internal_error = intrinsic_prototype(&runtime, &mut first, "InternalError");
@@ -198,7 +198,7 @@ fn string_rope_dag_does_not_keep_its_realm_graph_alive() {
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let rope = near_limit_rope();
     let method = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let global = context.global_object().unwrap();
         define_data(&runtime, &global, "rootedRope", Value::String(rope.clone()));
         let prototype = context.string_prototype().unwrap();
@@ -206,23 +206,26 @@ fn string_rope_dag_does_not_keep_its_realm_graph_alive() {
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     assert_eq!(rope.len(), 536_936_448);
     assert_eq!(rope.code_unit_at(0), Some(u16::from(b'x')));
     assert_eq!(rope.code_unit_at(rope.len() - 1), Some(u16::from(b'x')));
 
     drop(method);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
     drop(rope);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let prototype = context.string_prototype().unwrap();
     let concat = property_callable(&runtime, &mut context, &prototype, "concat");
@@ -235,7 +238,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &global,
         "savedConcat",
-        Value::Object(concat.as_object().clone()),
+        Value::Object(concat.as_object().try_clone().expect("duplicate root")),
     );
     define_data(&runtime, &global, "near", Value::String(near.clone()));
     define_data(&runtime, &global, "ordinary", Value::String(ordinary));

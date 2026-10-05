@@ -519,8 +519,8 @@ fn match_protocol_recursion_is_catchable_and_recovers_like_pinned_quickjs() {
 fn match_intrinsics_use_defining_realms_and_accept_foreign_regexp_brands() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let string_match = eval_callable(
         &runtime,
@@ -666,7 +666,7 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
         .spawn(|| {
             let runtime =
                 Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             drop(
                 context
                     .eval(
@@ -745,7 +745,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);
         if actual != expected {

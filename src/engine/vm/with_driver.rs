@@ -33,7 +33,7 @@ pub(super) fn start(
             object,
             key,
             matches!(source, DynamicEnvironmentSource::With(_)),
-        );
+        )?;
         super::proxy_get_driver::start_environment(
             runtime,
             execution,

@@ -105,7 +105,9 @@ impl Runtime {
     /// catch the overflow error.
     pub(super) fn host_stack_would_overflow(&self) -> bool {
         let current = current_host_stack_address();
-        let active_frames = !self.0.state.borrow().active_frames.is_empty();
+        // ActiveFrames updates this existing header fact on every push/pop.
+        // Stack admission therefore also works inside a held state segment.
+        let active_frames = self.0.active_frame_depth.get() != 0;
         let active_chain = active_frames
             || self.0.proxy_method_depth.get() != 0
             || self.0.module_host_callback_depth.get() != 0;
@@ -366,7 +368,7 @@ mod tests {
     fn thirty_two_nested_bytecode_calls_fit_on_two_mib_stack() {
         on_two_mib_stack(|| {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             // Keep the parser nesting shallow so this isolates the execution
             // stack. The pinned Test262 Sputnik case separately covers the
             // equivalent 32 nested IIFE calls end to end.
@@ -383,7 +385,7 @@ mod tests {
     fn generator_delegation_reaches_the_portable_floor_and_recovers_after_overflow() {
         on_two_mib_stack(|| {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             assert_eq!(
                 context
                     .eval(
@@ -437,7 +439,7 @@ mod tests {
     fn infinite_bytecode_calls_and_constructors_throw_and_recover() {
         on_two_mib_stack(|| {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let value = context
                 .eval(
                     r#"(function(){
@@ -473,7 +475,7 @@ mod tests {
     fn finite_array_stringification_and_recursive_cycle_fit_on_two_mib_stack() {
         on_two_mib_stack(|| {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             assert_eq!(
                 context
                     .eval(
@@ -528,7 +530,7 @@ mod tests {
     fn finite_typed_array_stringification_and_recursive_cycle_fit_on_two_mib_stack() {
         on_two_mib_stack(|| {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             assert_eq!(
                 context
                     .eval(
@@ -590,7 +592,7 @@ mod tests {
     fn typed_and_array_sort_share_a_catchable_two_mib_stack_budget() {
         on_two_mib_stack(|| {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             assert_eq!(
                 context
                     .eval(

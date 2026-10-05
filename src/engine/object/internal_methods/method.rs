@@ -150,10 +150,10 @@ impl Search {
             return resume.resume(runtime, Completion::Return(value));
         }
         let rooted = runtime.root_proxy_snapshot(&proxy, data)?;
-        let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+        let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.try_clone()?))?;
         Ok(MethodStep::request_read(
-            rooted.handler.clone(),
-            self.key.clone(),
+            rooted.handler.try_clone()?,
+            self.key.try_clone()?,
             receiver,
             MethodResume(super::reuse::PooledBox::new(MethodResumeState {
                 pending_effect: MethodStepPending::new(runtime.clone()),
@@ -187,7 +187,13 @@ impl MethodResume {
         // level first tries the trap cache and otherwise keeps the dynamic read.
         loop {
             if matches!(value, JsValue::Undefined | JsValue::Null) {
-                let target = self.0.rooted.as_ref().expect("proxy owner").target.clone();
+                let target = self
+                    .0
+                    .rooted
+                    .as_ref()
+                    .expect("proxy owner")
+                    .target
+                    .try_clone()?;
                 let Some(data) = runtime.proxy_snapshot_if_any(&target)? else {
                     return Ok(MethodStep::Complete { resume: self });
                 };
@@ -229,9 +235,9 @@ impl MethodResume {
                         let (object, receiver, key) = {
                             let rooted = self.0.rooted.as_ref().expect("proxy owner");
                             (
-                                rooted.handler.clone(),
-                                runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?,
-                                self.0.search.key.clone(),
+                                rooted.handler.try_clone()?,
+                                runtime.into_jsvalue(Value::Object(rooted.handler.try_clone()?))?,
+                                self.0.search.key.try_clone()?,
                             )
                         };
                         let step = MethodStep::request_read(object, key, receiver, self);
@@ -330,13 +336,17 @@ mod resident_tests {
     #[test]
     fn proxy_method_completion_reuses_the_pending_owner() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
             panic!("proxy")
         };
-        let MethodStep::Read { mut resume } =
-            MethodStep::start(&runtime, context.realm, proxy.clone(), "get").unwrap()
-        else {
+        let MethodStep::Read { mut resume } = MethodStep::start(
+            &runtime,
+            context.realm,
+            proxy.try_clone().expect("duplicate root"),
+            "get",
+        )
+        .unwrap() else {
             panic!("read")
         };
         let address = (&*resume.0) as *const MethodResumeState;
@@ -376,13 +386,19 @@ mod trap_cache_tests {
     }
 
     fn start_get(runtime: &Runtime, realm: ContextId, proxy: &ObjectRef) -> MethodStep {
-        MethodStep::start(runtime, realm, proxy.clone(), "get").unwrap()
+        MethodStep::start(
+            runtime,
+            realm,
+            proxy.try_clone().expect("duplicate root"),
+            "get",
+        )
+        .unwrap()
     }
 
     #[test]
     fn trap_cache_skips_the_dynamic_read_and_follows_same_shape_overwrite() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(
             context
                 .eval(
@@ -421,7 +437,7 @@ mod trap_cache_tests {
     #[test]
     fn accessor_proxy_handler_trap_always_uses_the_dynamic_read() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context
             .eval(
                 "var accessorReads=0;var accessorHandler={};\
@@ -444,7 +460,7 @@ mod trap_cache_tests {
     #[test]
     fn proxy_handler_trap_declines_the_cache() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(
             context
                 .eval(
@@ -466,7 +482,7 @@ mod trap_cache_tests {
     #[test]
     fn deleted_trap_location_falls_back_to_the_dynamic_read() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context
             .eval(
                 "var delHandler={get:function(){return 1}};var delProxy=new Proxy({},delHandler);",
@@ -494,7 +510,7 @@ mod trap_cache_tests {
     #[test]
     fn revoked_proxy_is_rejected_before_the_cache_is_consulted() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context
             .eval("var revocable=Proxy.revocable({},{get:function(){return 1}});var revoked=revocable.proxy;")
             .unwrap());
@@ -516,7 +532,7 @@ mod trap_cache_tests {
     #[test]
     fn proxy_method_chain_limit_still_bounds_cached_descent() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         // Empty handlers forward by returning a non-method, so an end-to-end
         // lookup descends the whole chain and trips the closed logical budget.
         assert_eq!(

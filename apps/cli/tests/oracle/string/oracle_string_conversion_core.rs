@@ -123,7 +123,7 @@ fn string_conversion_core_matches_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let prototype = context.string_prototype().unwrap();
     let object_prototype = context.object_prototype().unwrap();
@@ -169,9 +169,17 @@ fn rust_observations() -> Vec<String> {
         "brand={}|{}|{}|{}|{}|{}",
         call_string(&mut context, &ts, Value::String(source.clone())),
         call_string(&mut context, &vo, Value::Object(wrapper)),
-        call_string(&mut context, &ts, Value::Object(prototype.clone())),
+        call_string(
+            &mut context,
+            &ts,
+            Value::Object(prototype.try_clone().expect("duplicate root"))
+        ),
         observe_call(&runtime, &mut context, &ts, Value::Object(spoof)),
-        call_string(&mut context, &vo, Value::Object(changed.clone())),
+        call_string(
+            &mut context,
+            &vo,
+            Value::Object(changed.try_clone().expect("duplicate root"))
+        ),
         call_string(&mut context, &ots, Value::Object(changed))
     ));
 
@@ -183,7 +191,8 @@ fn rust_observations() -> Vec<String> {
         Value::Object(
             eval_callable(&runtime, &mut context, "(function(){return 'override';})")
                 .as_object()
-                .clone(),
+                .try_clone()
+                .expect("duplicate root"),
         ),
     );
     define_data(
@@ -193,18 +202,23 @@ fn rust_observations() -> Vec<String> {
         Value::Object(
             eval_callable(&runtime, &mut context, "(function(){return 7;})")
                 .as_object()
-                .clone(),
+                .try_clone()
+                .expect("duplicate root"),
         ),
     );
     define_data(
         &runtime,
         &global,
         "conversionWrapper",
-        Value::Object(ordinary.clone()),
+        Value::Object(ordinary.try_clone().expect("duplicate root")),
     );
     out.push(format!(
         "override={}|{}|{}|{}|{}",
-        call_string(&mut context, &ts, Value::Object(ordinary.clone())),
+        call_string(
+            &mut context,
+            &ts,
+            Value::Object(ordinary.try_clone().expect("duplicate root"))
+        ),
         call_string(&mut context, &vo, Value::Object(ordinary)),
         eval_value(&mut context, "decodeURI(conversionWrapper)"),
         eval_value(&mut context, "conversionWrapper + 1"),
@@ -261,8 +275,13 @@ fn rust_observations() -> Vec<String> {
         call_string(&mut context, &ots, Value::String(source.clone())),
         call_string(&mut context, &ols, Value::String(source.clone())),
         box_a != box_b,
-        runtime.get_prototype_of(&box_a).unwrap() == Some(prototype.clone()),
-        call_string(&mut context, &vo, Value::Object(box_a.clone())),
+        runtime.get_prototype_of(&box_a).unwrap()
+            == Some(prototype.try_clone().expect("duplicate root")),
+        call_string(
+            &mut context,
+            &vo,
+            Value::Object(box_a.try_clone().expect("duplicate root"))
+        ),
         own_key_names(&runtime, &box_a)
             .into_iter()
             .map(|key| hex(&JsString::try_from_utf8(key.as_str()).unwrap()))
@@ -271,7 +290,11 @@ fn rust_observations() -> Vec<String> {
         data_flags(&runtime, &box_a, "length")
     ));
 
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     define_data_key(
         &runtime,
         &prototype,
@@ -299,7 +322,11 @@ fn rust_observations() -> Vec<String> {
     assert!(runtime.delete_property(&prototype, &tag).unwrap());
     out.push(format!(
         "tag-throw={tag_throw}|{}|{}",
-        call_string(&mut context, &vo, Value::Object(tag_this.clone())),
+        call_string(
+            &mut context,
+            &vo,
+            Value::Object(tag_this.try_clone().expect("duplicate root"))
+        ),
         runtime.get_prototype_of(&tag_this).unwrap() == Some(prototype)
     ));
 
@@ -310,8 +337,8 @@ fn rust_observations() -> Vec<String> {
 fn string_conversion_core_cross_realm_and_error_realm_match_quickjs() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_string = first.string_prototype().unwrap();
     let second_string = second.string_prototype().unwrap();
     let first_object = first.object_prototype().unwrap();
@@ -324,7 +351,7 @@ fn string_conversion_core_cross_realm_and_error_realm_match_quickjs() {
     let wrapper = box_string(&mut second, &first_ovo, source.clone());
     assert_eq!(
         runtime.get_prototype_of(&wrapper).unwrap(),
-        Some(first_string.clone())
+        Some(first_string.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         second
@@ -333,7 +360,11 @@ fn string_conversion_core_cross_realm_and_error_realm_match_quickjs() {
         Value::String(source)
     );
 
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     define_data_key(
         &runtime,
         &first_string,
@@ -375,7 +406,7 @@ fn string_conversion_core_wrapper_realm_graph_is_collectable() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let wrapper = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object = context.object_prototype().unwrap();
         let ovo = property_callable(&runtime, &mut context, &object, "valueOf");
         box_string(
@@ -385,11 +416,14 @@ fn string_conversion_core_wrapper_realm_graph_is_collectable() {
         )
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     assert_eq!(own_key_names(&runtime, &wrapper), ["0", "1", "2", "length"]);
     drop(wrapper);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn box_string(context: &mut Context, ovo: &CallableRef, value: JsString) -> ObjectRef {

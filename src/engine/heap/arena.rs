@@ -332,9 +332,8 @@ impl Heap {
         Ok(index)
     }
 
-    /// Shared-borrow leaf slot in any payload state. Test-only: production
-    /// callers use the typed wrappers or the live accessors.
-    #[cfg(test)]
+    /// Shared-borrow leaf slot in any payload state, for count diagnostics.
+    /// Root promotion still uses the checked live accessor.
     fn leaf_slot(&self, id: RawId) -> Result<&LeafSlot, HeapError> {
         let index = self.validate_leaf_identity(id)?;
         Ok(&self.leaf_slots[index])
@@ -488,7 +487,8 @@ impl Heap {
         })
     }
 
-    #[cfg(test)]
+    /// Read a checked reference count without promoting an owner. Admission
+    /// uses this to leave saturation transitions to the canonical protocol.
     pub(crate) fn strong_count(&self, id: RawId) -> Result<u32, HeapError> {
         if id.is_leaf() {
             return Ok(self.leaf_slot(id)?.strong.get());

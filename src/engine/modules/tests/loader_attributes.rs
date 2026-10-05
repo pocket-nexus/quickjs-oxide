@@ -48,7 +48,7 @@ fn import_attribute_states_preserve_syntax_and_fold_empty_for_hosts() {
 #[test]
 fn loader2_observes_effective_attributes_only_on_cache_miss() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     context
         .compile_module_with_filename("export const value = 39;", "pkg/cached.js")
         .unwrap();
@@ -125,7 +125,7 @@ fn attribute_check_precedes_following_syntax_and_all_resolution_callbacks() {
         AttributeModuleLoader::new([("pkg/dependency.js", "export const value = 42;")]);
     controls.reject_checks.set(true);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename(
@@ -184,7 +184,7 @@ fn dependency_attribute_check_failure_rolls_back_graph_for_retry() {
     ]);
     controls.reject_checks.set(true);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename(
@@ -235,7 +235,7 @@ fn loader2_failure_unpublishes_root_and_retries_with_same_attributes() {
         AttributeModuleLoader::new([("pkg/dependency.js", "export const value = 42;")]);
     controls.fail_loads.set(true);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = r#"
         import { value } from "./dependency.js" with { type: "javascript" };
         globalThis.__loader2Retry = value;

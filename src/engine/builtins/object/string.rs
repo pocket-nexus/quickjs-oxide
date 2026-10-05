@@ -114,7 +114,7 @@ impl ObjectStringStep {
                 let receiver = runtime.into_jsvalue(Value::Object(object))?;
                 Ok(Self::request_read(
                     runtime.dup_jsvalue(&receiver)?,
-                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag)),
+                    PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag)?),
                     ObjectStringResume(Box::new(ObjectStringResumeState {
                         runtime: runtime.clone(),
                         pending_effect: ObjectStringStepPending::default(),

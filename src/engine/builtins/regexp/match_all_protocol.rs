@@ -117,7 +117,7 @@ impl RegExpMatchAllResume {
             ));
         };
         Ok(RegExpMatchAllStep::make_read(
-            self.0.regexp.clone(),
+            self.0.regexp.try_clone()?,
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?,
             {
                 let updated_0 = Phase::Flags { input, constructor };
@@ -158,11 +158,14 @@ impl RegExpMatchAllResume {
                         return Ok(RegExpMatchAllStep::Complete(Completion::Throw(value)));
                     }
                 };
-                Ok(RegExpMatchAllStep::make_species(self.0.regexp.clone(), {
-                    let updated_0 = Phase::Species(input);
-                    self.0.phase = updated_0;
-                    self
-                }))
+                Ok(RegExpMatchAllStep::make_species(
+                    self.0.regexp.try_clone()?,
+                    {
+                        let updated_0 = Phase::Species(input);
+                        self.0.phase = updated_0;
+                        self
+                    },
+                ))
             }
             Phase::Flags { input, constructor } => Ok(RegExpMatchAllStep::make_primitive(
                 value,
@@ -192,7 +195,7 @@ impl RegExpMatchAllResume {
                         )?,
                     )));
                 }
-                arguments.push(JsValue::Object(self.0.regexp.clone().into_handle()));
+                arguments.push(JsValue::Object(self.0.regexp.try_clone()?.into_handle()));
                 arguments.push(flags_value);
                 Ok(RegExpMatchAllStep::make_construct(
                     constructor,
@@ -213,7 +216,7 @@ impl RegExpMatchAllResume {
                 };
                 let matcher = ObjectRef::from_owned_handle(runtime.clone(), matcher);
                 Ok(RegExpMatchAllStep::make_read(
-                    self.0.regexp.clone(),
+                    self.0.regexp.try_clone()?,
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     {
@@ -256,7 +259,7 @@ impl RegExpMatchAllResume {
                     }
                 };
                 Ok(RegExpMatchAllStep::make_set(
-                    matcher.clone(),
+                    matcher.try_clone()?,
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     runtime.into_jsvalue(Value::number(length as f64))?,
@@ -334,13 +337,14 @@ pub(super) fn finish(
             }
             RegExpMatchAllStep::Construct { mut resume } => {
                 let constructor = resume.take_construct_constructor();
+                let new_target = constructor.try_clone()?;
                 let arguments = resume.take_construct_arguments();
                 resume.resume(
                     runtime,
                     runtime.construct_internal_jsvalue(
                         realm,
                         &constructor,
-                        crate::engine::vm::call::ConstructNewTarget::Validated(constructor.clone()),
+                        crate::engine::vm::call::ConstructNewTarget::Validated(new_target),
                         arguments,
                     )?,
                 )?
@@ -356,7 +360,7 @@ pub(super) fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?,
                 )?
             }

@@ -138,7 +138,7 @@ fn update_expressions_match_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let mut output = Vec::new();
 
     output.push(format!(
@@ -168,7 +168,11 @@ fn rust_observations() -> Vec<String> {
         "log",
         Value::String(JsString::try_from_utf8("").unwrap()),
     );
-    let to_primitive = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
 
     let coercible = context.new_object().unwrap();
     let coercible_converter = function(
@@ -180,7 +184,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &coercible,
         &to_primitive,
-        Value::Object(coercible_converter.as_object().clone()),
+        Value::Object(
+            coercible_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -209,7 +218,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &bigint_coercible,
         &to_primitive,
-        Value::Object(bigint_coercible_converter.as_object().clone()),
+        Value::Object(
+            bigint_coercible_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -248,7 +262,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &computed_old,
         &to_primitive,
-        Value::Object(computed_converter.as_object().clone()),
+        Value::Object(
+            computed_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -291,7 +310,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &key,
         &to_primitive,
-        Value::Object(key_converter.as_object().clone()),
+        Value::Object(
+            key_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -305,7 +329,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "baseExpr",
-        Value::Object(base_expr.as_object().clone()),
+        Value::Object(base_expr.as_object().try_clone().expect("duplicate root")),
     );
     let key_expr = function(
         &runtime,
@@ -316,7 +340,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "keyExpr",
-        Value::Object(key_expr.as_object().clone()),
+        Value::Object(key_expr.as_object().try_clone().expect("duplicate root")),
     );
 
     for (label, source) in [
@@ -344,7 +368,12 @@ fn rust_observations() -> Vec<String> {
         &mut context,
         &readonly_old,
         &to_primitive,
-        Value::Object(readonly_converter.as_object().clone()),
+        Value::Object(
+            readonly_converter
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         true,
     );
@@ -352,7 +381,7 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         "readonlyOld",
-        Value::Object(readonly_old.clone()),
+        Value::Object(readonly_old.try_clone().expect("duplicate root")),
     );
     let readonly_target = context.new_object().unwrap();
     let readonly_value = runtime.intern_property_key("value").unwrap();

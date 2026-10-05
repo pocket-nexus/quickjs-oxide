@@ -88,7 +88,7 @@ fn for_await_contextual_grammar_matches_pinned_quickjs() {
 fn pending_for_await_next_record_survives_repeated_gc() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -165,7 +165,7 @@ generatorGate = null;
         runtime.run_gc().unwrap();
     }
     drop(eval(&mut context, "release(); generatorRelease();"));
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         assert!(runtime.execute_pending_job().unwrap().executed());
         runtime.run_gc().unwrap();
     }

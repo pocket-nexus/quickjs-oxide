@@ -60,7 +60,7 @@ fn native_error_format_matches_pinned_quickjs() {
 fn explicit_error_constructor_message_bypasses_the_native_throw_buffer() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let error_key = runtime.intern_property_key("Error").unwrap();
     let Value::Object(error_constructor) = context.get_property(&global, &error_key).unwrap()
@@ -106,7 +106,7 @@ fn native_error_name_cases() -> Vec<Vec<u16>> {
 fn rust_observations(cases: &[Vec<u16>]) -> Vec<Observation> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let number_key = runtime.intern_property_key("Number").unwrap();
     let Value::Object(number) = context.get_property(&global, &number_key).unwrap() else {

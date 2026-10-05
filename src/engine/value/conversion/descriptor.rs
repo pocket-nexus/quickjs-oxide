@@ -126,8 +126,8 @@ impl DescriptorResume {
             return Ok(DescriptorStep::Complete(self));
         };
         let key = runtime.intern_property_key(name)?;
-        self.phase = Phase::Has(key.clone());
-        let object = self.state.object.clone();
+        self.phase = Phase::Has(key.try_clone()?);
+        let object = self.state.object.try_clone()?;
         Ok(DescriptorStep::request_has(object, key, self))
     }
     pub(crate) fn take_descriptor(self) -> OwnedPropertyDescriptor {
@@ -159,8 +159,8 @@ impl DescriptorResume {
         if let NativeConversion::Throw(value) = result {
             runtime.release_jsvalue(value)?;
         }
-        let object = state.object.clone();
-        let receiver = JsValue::Object(state.object.clone().into_handle());
+        let object = state.object.try_clone()?;
+        let receiver = JsValue::Object(state.object.try_clone()?.into_handle());
         Ok(DescriptorStep::request_read(object, key, receiver, self))
     }
 
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn descriptor_completion_reuses_the_original_resume_allocation() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let object = runtime.new_object(None).unwrap();
         let mut resume = take_has(
             DescriptorStep::start(&runtime, context.realm, Value::Object(object)).unwrap(),
@@ -396,7 +396,7 @@ mod tests {
     fn abandoned_descriptor_keeps_then_releases_its_source_and_selected_value() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let object = runtime.new_object(None).unwrap();
         let object_id = object.object_id();
         let value = runtime.new_object(None).unwrap();
@@ -437,7 +437,7 @@ mod tests {
     #[test]
     fn descriptor_reply_kind_is_checked_before_applying_it() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
         let DescriptorStep::Has { mut resume } =

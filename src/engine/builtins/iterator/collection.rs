@@ -214,13 +214,17 @@ impl CollectionResume {
     fn collection(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
             .collection
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("collection result missing"))
     }
     fn iterator(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
             .iterator
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("collection iterator missing"))
     }
     fn abrupt(mut self, runtime: &Runtime, value: JsValue) -> Result<CollectionStep, RuntimeError> {
@@ -285,7 +289,7 @@ impl CollectionResume {
             NativeConversion::Value(source) => source,
         };
         let collection = new_collection_for_source(runtime, self.0.kind, source)?;
-        self.0.collection = Some(collection.clone());
+        self.0.collection = Some(collection.try_clone()?);
         if self
             .0
             .iterable
@@ -349,7 +353,7 @@ impl CollectionResume {
                             .ok_or(RuntimeError::Invariant("collection iterable missing"))?,
                     )?;
                     let __pending_field_key =
-                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?);
                     let __pending_field_resume = self;
                     CollectionStep::request_read(
                         __pending_field_receiver,
@@ -402,7 +406,7 @@ impl CollectionResume {
                     return self.abrupt(runtime, error);
                 };
                 let iterator = ObjectRef::from_owned_handle(runtime.clone(), iterator);
-                self.0.iterator = Some(iterator.clone());
+                self.0.iterator = Some(iterator.try_clone()?);
                 self.0.phase = Phase::NextMethod;
                 Ok({
                     let __pending_field_key = runtime
@@ -422,7 +426,7 @@ impl CollectionResume {
             }
             Phase::Key(item) => {
                 self.0.phase = Phase::Value {
-                    item: item.clone(),
+                    item: item.try_clone()?,
                     key: value,
                 };
                 Ok({
@@ -467,7 +471,9 @@ impl CollectionResume {
         let __pending_field_callable = self
             .0
             .adder
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("collection adder missing"))?;
         let __pending_field_receiver = JsValue::Object(self.collection()?.into_handle());
         Ok(CollectionStep::request_call(
@@ -514,7 +520,7 @@ impl CollectionResume {
             return self.abrupt(runtime, error);
         };
         let item = ObjectRef::from_owned_handle(runtime.clone(), item);
-        self.0.phase = Phase::Key(item.clone());
+        self.0.phase = Phase::Key(item.try_clone()?);
         Ok({
             let __pending_field_key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?;
@@ -629,7 +635,7 @@ mod owned_tests {
             "(function(){let target={...{get x(){return 42}}};let {x,...rest}=target;return x})()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let profile = CostProfile::start();
             if source.contains("get 0(){") {
                 profile.capture_disassembly();

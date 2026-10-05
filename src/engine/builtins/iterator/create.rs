@@ -101,13 +101,13 @@ impl CreateStep {
 impl CreateResume {
     fn close(self, _runtime: &Runtime, value: JsValue) -> Result<CreateStep, RuntimeError> {
         Ok(CreateStep::Close {
-            iterator: self.0.source.clone(),
+            iterator: self.0.source.try_clone()?,
             completion: Completion::Throw(value),
         })
     }
     fn read(self, runtime: &Runtime) -> Result<CreateStep, RuntimeError> {
         Ok(CreateStep::Read {
-            object: self.0.source.clone(),
+            object: self.0.source.try_clone()?,
             key: runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
             resume: self,
         })
@@ -130,7 +130,7 @@ impl CreateResume {
         };
         if number.is_nan() || number == f64::NEG_INFINITY || count < 0 {
             return Ok(CreateStep::CloseInvalidCount {
-                iterator: self.0.source.clone(),
+                iterator: self.0.source.try_clone()?,
                 resume: self,
             });
         }
@@ -197,7 +197,7 @@ pub(crate) fn finish(
                     realm,
                     &object,
                     &key,
-                    JsValue::Object(object.clone().into_handle()),
+                    JsValue::Object(object.try_clone()?.into_handle()),
                 )?,
             )?,
             CreateStep::CloseInvalidCount { iterator, resume } => {

@@ -496,8 +496,8 @@ fn json_raw_brand_and_native_errors_cross_realms() {
     // intrinsic method's defining realm.
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_syntax_error = eval_object(
         &mut defining,
         "SyntaxError.prototype",
@@ -535,7 +535,11 @@ fn json_raw_brand_and_native_errors_cross_realms() {
     ] {
         assert_eq!(
             context
-                .call(predicate, Value::Undefined, &[Value::Object(raw.clone())],)
+                .call(
+                    predicate,
+                    Value::Undefined,
+                    &[Value::Object(raw.try_clone().expect("duplicate root"))],
+                )
                 .unwrap_or_else(|error| panic!("{description} isRawJSON call: {error}")),
             Value::Bool(true),
             "{description} realm did not recognize the shared RawJSON brand",
@@ -586,7 +590,7 @@ fn json_raw_brand_and_native_errors_cross_realms() {
 fn rust_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(case.source) {
         Ok(value) => format!(
             "return|{}|{}",

@@ -328,7 +328,7 @@ fn symbol_intrinsic_matches_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
@@ -338,8 +338,11 @@ fn rust_observations() -> Vec<String> {
     let key_for = property_callable(&runtime, &mut context, symbol.as_object(), "keyFor");
     let to_string = property_callable(&runtime, &mut context, &symbol_prototype, "toString");
     let value_of = property_callable(&runtime, &mut context, &symbol_prototype, "valueOf");
-    let to_primitive_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
     let to_primitive = property_callable_key(
         &runtime,
         &mut context,
@@ -420,7 +423,11 @@ fn rust_observations() -> Vec<String> {
             data_flags_key(
                 &runtime,
                 &symbol_prototype,
-                &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag)),
+                &PropertyKey::from(
+                    runtime
+                        .well_known_symbol(WellKnownSymbol::ToStringTag)
+                        .expect("well-known symbol")
+                ),
             ),
         ]
         .join("|")
@@ -437,13 +444,14 @@ fn rust_observations() -> Vec<String> {
                 .unwrap(),
             Value::Object(object) if object == *symbol.as_object()
         ),
-        runtime.get_prototype_of(&symbol_prototype).unwrap() == Some(object_prototype.clone()),
+        runtime.get_prototype_of(&symbol_prototype).unwrap()
+            == Some(object_prototype.try_clone().expect("duplicate root")),
         render_value(
             &runtime,
             context
                 .call(
                     &object_to_string,
-                    Value::Object(symbol_prototype.clone()),
+                    Value::Object(symbol_prototype.try_clone().expect("duplicate root")),
                     &[],
                 )
                 .unwrap(),
@@ -532,7 +540,9 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &mut context,
         &symbol,
-        &[Value::Object(construct_bomb.clone())],
+        &[Value::Object(
+            construct_bomb.try_clone().expect("duplicate root"),
+        )],
     );
     let first_hit = render_value(
         &runtime,
@@ -586,7 +596,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &fallback,
         "toString",
-        Value::Object(fallback_to_string.as_object().clone()),
+        Value::Object(
+            fallback_to_string
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -595,7 +610,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &fallback,
         "valueOf",
-        Value::Object(fallback_value_of.as_object().clone()),
+        Value::Object(
+            fallback_value_of
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -668,7 +688,9 @@ fn rust_observations() -> Vec<String> {
             .call(
                 &key_for,
                 Value::Undefined,
-                &[Value::Symbol(registered.clone())],
+                &[Value::Symbol(
+                    registered.try_clone().expect("duplicate root"),
+                )],
             )
             .unwrap();
         let Value::String(key) = key else {
@@ -715,7 +737,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &registry_fallback,
         "toString",
-        Value::Object(registry_to_string.as_object().clone()),
+        Value::Object(
+            registry_to_string
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -724,7 +751,12 @@ fn rust_observations() -> Vec<String> {
         &runtime,
         &registry_fallback,
         "valueOf",
-        Value::Object(registry_value_of.as_object().clone()),
+        Value::Object(
+            registry_value_of
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
         true,
         false,
         true,
@@ -788,7 +820,9 @@ fn rust_observations() -> Vec<String> {
             &key_for,
             Value::Undefined,
             &[Value::Symbol(
-                runtime.well_known_symbol(WellKnownSymbol::Iterator),
+                runtime
+                    .well_known_symbol(WellKnownSymbol::Iterator)
+                    .expect("well-known symbol"),
             )],
         ),
         observe_call(
@@ -829,9 +863,9 @@ fn rust_observations() -> Vec<String> {
             else {
                 panic!("Symbol.{name} was not a Symbol");
             };
-            let stable = value == runtime.well_known_symbol(*kind);
+            let stable = value == runtime.well_known_symbol(*kind).expect("well-known symbol");
             let unique = !seen.contains(&value);
-            seen.push(value.clone());
+            seen.push(value.try_clone().expect("duplicate root"));
             format!(
                 "{name}:{}:{}:{stable}:{unique}",
                 utf16_units(&runtime.symbol_description(&value).unwrap().unwrap()),
@@ -847,7 +881,11 @@ fn rust_observations() -> Vec<String> {
     let no_description = runtime.new_symbol(None).unwrap();
     let wrapper = expect_object(
         context
-            .call(&object_value_of, Value::Symbol(primitive.clone()), &[])
+            .call(
+                &object_value_of,
+                Value::Symbol(primitive.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         "Symbol wrapper",
     );
@@ -865,35 +903,35 @@ fn rust_observations() -> Vec<String> {
         render_value(
             &runtime,
             context
-                .call(&to_string, Value::Symbol(primitive.clone()), &[])
+                .call(&to_string, Value::Symbol(primitive.try_clone().expect("duplicate root")), &[])
                 .unwrap(),
         ),
         render_value(
             &runtime,
             context
-                .call(&to_string, Value::Object(wrapper.clone()), &[])
+                .call(&to_string, Value::Object(wrapper.try_clone().expect("duplicate root")), &[])
                 .unwrap(),
         ),
         render_value(
             &runtime,
             context
-                .call(&to_string, Value::Symbol(no_description.clone()), &[])
+                .call(&to_string, Value::Symbol(no_description.try_clone().expect("duplicate root")), &[])
                 .unwrap(),
         ),
         matches!(
-            context.call(&value_of, Value::Symbol(primitive.clone()), &[]),
+            context.call(&value_of, Value::Symbol(primitive.try_clone().expect("duplicate root")), &[]),
             Ok(Value::Symbol(value)) if value == primitive
         )
         .to_string(),
         matches!(
-            context.call(&value_of, Value::Object(wrapper.clone()), &[]),
+            context.call(&value_of, Value::Object(wrapper.try_clone().expect("duplicate root")), &[]),
             Ok(Value::Symbol(value)) if value == primitive
         )
         .to_string(),
         matches!(
             context.call(
                 &to_primitive,
-                Value::Symbol(primitive.clone()),
+                Value::Symbol(primitive.try_clone().expect("duplicate root")),
                 &[Value::String(JsString::try_from_utf8("default").unwrap())],
             ),
             Ok(Value::Symbol(value)) if value == primitive
@@ -902,7 +940,7 @@ fn rust_observations() -> Vec<String> {
         matches!(
             context.call(
                 &to_primitive,
-                Value::Symbol(primitive.clone()),
+                Value::Symbol(primitive.try_clone().expect("duplicate root")),
                 &[Value::String(JsString::try_from_utf8("string").unwrap())],
             ),
             Ok(Value::Symbol(value)) if value == primitive
@@ -911,7 +949,7 @@ fn rust_observations() -> Vec<String> {
         matches!(
             context.call(
                 &to_primitive,
-                Value::Symbol(primitive.clone()),
+                Value::Symbol(primitive.try_clone().expect("duplicate root")),
                 &[Value::String(JsString::try_from_utf8("number").unwrap())],
             ),
             Ok(Value::Symbol(value)) if value == primitive
@@ -920,21 +958,21 @@ fn rust_observations() -> Vec<String> {
         matches!(
             context.call(
                 &to_primitive,
-                Value::Symbol(primitive.clone()),
-                &[Value::Object(hostile_hint.clone())],
+                Value::Symbol(primitive.try_clone().expect("duplicate root")),
+                &[Value::Object(hostile_hint.try_clone().expect("duplicate root"))],
             ),
             Ok(Value::Symbol(value)) if value == primitive
         )
         .to_string(),
         utf16_units(&expect_string(
             context
-                .call(&description_getter, Value::Symbol(primitive.clone()), &[])
+                .call(&description_getter, Value::Symbol(primitive.try_clone().expect("duplicate root")), &[])
                 .unwrap(),
             "Symbol description",
         )),
         match context.call(
             &description_getter,
-            Value::Symbol(no_description.clone()),
+            Value::Symbol(no_description.try_clone().expect("duplicate root")),
             &[],
         ) {
             Ok(Value::Undefined) => "undefined".to_owned(),
@@ -945,7 +983,7 @@ fn rust_observations() -> Vec<String> {
             &runtime,
             &mut context,
             &value_of,
-            Value::Object(symbol_prototype.clone()),
+            Value::Object(symbol_prototype.try_clone().expect("duplicate root")),
             &[],
         ),
         observe_call(
@@ -967,7 +1005,7 @@ fn rust_observations() -> Vec<String> {
             context
                 .call(
                     &to_string,
-                    Value::Symbol(primitive.clone()),
+                    Value::Symbol(primitive.try_clone().expect("duplicate root")),
                     &[Value::Object(hostile_hint)],
                 )
                 .unwrap(),
@@ -977,36 +1015,40 @@ fn rust_observations() -> Vec<String> {
 
     let wrapper2 = expect_object(
         context
-            .call(&object_value_of, Value::Symbol(primitive.clone()), &[])
+            .call(
+                &object_value_of,
+                Value::Symbol(primitive.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         "second Symbol wrapper",
     );
     let objects = [
         "object".to_owned(),
-        (runtime.get_prototype_of(&wrapper).unwrap() == Some(symbol_prototype.clone())).to_string(),
+        (runtime.get_prototype_of(&wrapper).unwrap() == Some(symbol_prototype.try_clone().expect("duplicate root"))).to_string(),
         runtime
             .own_property_keys(&wrapper)
             .unwrap()
             .len()
             .to_string(),
         matches!(
-            context.call(&value_of, Value::Object(wrapper.clone()), &[]),
+            context.call(&value_of, Value::Object(wrapper.try_clone().expect("duplicate root")), &[]),
             Ok(Value::Symbol(value)) if value == primitive
         )
         .to_string(),
         (wrapper == wrapper2).to_string(),
-        (runtime.get_prototype_of(&wrapper2).unwrap() == Some(symbol_prototype.clone()))
+        (runtime.get_prototype_of(&wrapper2).unwrap() == Some(symbol_prototype.try_clone().expect("duplicate root")))
             .to_string(),
         render_value(
             &runtime,
             context
-                .call(&object_to_string, Value::Symbol(primitive.clone()), &[])
+                .call(&object_to_string, Value::Symbol(primitive.try_clone().expect("duplicate root")), &[])
                 .unwrap(),
         ),
         render_value(
             &runtime,
             context
-                .call(&object_to_string, Value::Object(wrapper.clone()), &[])
+                .call(&object_to_string, Value::Object(wrapper.try_clone().expect("duplicate root")), &[])
                 .unwrap(),
         ),
         render_value(
@@ -1014,7 +1056,7 @@ fn rust_observations() -> Vec<String> {
             context
                 .call(
                     &object_to_string,
-                    Value::Object(symbol_prototype.clone()),
+                    Value::Object(symbol_prototype.try_clone().expect("duplicate root")),
                     &[],
                 )
                 .unwrap(),
@@ -1024,7 +1066,7 @@ fn rust_observations() -> Vec<String> {
             context
                 .call(
                     &object_to_locale_string,
-                    Value::Symbol(primitive.clone()),
+                    Value::Symbol(primitive.try_clone().expect("duplicate root")),
                     &[],
                 )
                 .unwrap(),
@@ -1032,7 +1074,11 @@ fn rust_observations() -> Vec<String> {
     ];
     observations.push(format!("objects={}", objects.join("|")));
 
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     assert!(runtime.delete_property(&symbol_prototype, &tag).unwrap());
     observations.push(format!(
         "tag-delete={}",
@@ -1104,19 +1150,33 @@ fn rust_observations() -> Vec<String> {
     let sloppy_set_this = global_value(&runtime, &mut context, &global, "sloppySetThis");
     let sloppy_get_unboxed = expect_symbol(
         context
-            .call(&value_of, sloppy_get_this.clone(), &[])
+            .call(
+                &value_of,
+                sloppy_get_this.try_clone().expect("duplicate root"),
+                &[],
+            )
             .unwrap(),
         "sloppy getter wrapper",
     );
     let sloppy_set_unboxed = expect_symbol(
         context
-            .call(&value_of, sloppy_set_this.clone(), &[])
+            .call(
+                &value_of,
+                sloppy_set_this.try_clone().expect("duplicate root"),
+                &[],
+            )
             .unwrap(),
         "sloppy setter wrapper",
     );
-    let strict_get_symbol = expect_symbol(strict_get_result.clone(), "strict getter result");
+    let strict_get_symbol = expect_symbol(
+        strict_get_result.try_clone().expect("duplicate root"),
+        "strict getter result",
+    );
     let sloppy_get_symbol = expect_symbol(sloppy_get_result, "sloppy getter result");
-    let strict_set_symbol = expect_symbol(strict_set_this.clone(), "strict setter receiver");
+    let strict_set_symbol = expect_symbol(
+        strict_set_this.try_clone().expect("duplicate root"),
+        "strict setter receiver",
+    );
     let accessors = [
         "symbol".to_owned(),
         symbol_description_units(&runtime, &strict_get_symbol),
@@ -1212,8 +1272,8 @@ fn rust_observations() -> Vec<String> {
 fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
     let first_symbol = property_callable(&runtime, &mut first, &first_global, "Symbol");
@@ -1299,23 +1359,31 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
         .unwrap();
     let first_wrapper = expect_object(
         second
-            .call(&first_object_value_of, Value::Symbol(seven.clone()), &[])
+            .call(
+                &first_object_value_of,
+                Value::Symbol(seven.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         "first-realm Symbol wrapper",
     );
     let second_wrapper = expect_object(
         first
-            .call(&second_object_value_of, Value::Symbol(nine.clone()), &[])
+            .call(
+                &second_object_value_of,
+                Value::Symbol(nine.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         "second-realm Symbol wrapper",
     );
     assert_eq!(
         runtime.get_prototype_of(&first_wrapper).unwrap(),
-        Some(first_prototype.clone())
+        Some(first_prototype.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         runtime.get_prototype_of(&second_wrapper).unwrap(),
-        Some(second_prototype.clone())
+        Some(second_prototype.try_clone().expect("duplicate root"))
     );
     for (method, wrapper, expected) in [
         (&first_value_of, &first_wrapper, &seven),
@@ -1325,9 +1393,13 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
     ] {
         assert_eq!(
             second
-                .call(method, Value::Object(wrapper.clone()), &[])
+                .call(
+                    method,
+                    Value::Object(wrapper.try_clone().expect("duplicate root")),
+                    &[]
+                )
                 .unwrap(),
-            Value::Symbol(expected.clone()),
+            Value::Symbol(expected.try_clone().expect("duplicate root")),
             "Symbol wrapper branding must be realm-independent"
         );
     }
@@ -1361,7 +1433,11 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
         "primitive member lookup must use the bytecode function's realm"
     );
 
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     define_data_key(
         &runtime,
         &first_prototype,
@@ -1382,7 +1458,11 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
     );
     assert_eq!(
         second
-            .call(&first_object_to_string, Value::Symbol(seven.clone()), &[],)
+            .call(
+                &first_object_to_string,
+                Value::Symbol(seven.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::String(JsString::try_from_utf8("[object FirstSymbol]").unwrap()),
         "Object.prototype.toString must box in the method's defining realm"
@@ -1406,7 +1486,7 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
         runtime
             .get_prototype_of(&take_exception_object(&mut second))
             .unwrap(),
-        Some(first_type_error.clone()),
+        Some(first_type_error.try_clone().expect("duplicate root")),
         "Symbol conversion TypeError must use the constructor's defining realm"
     );
     assert_eq!(
@@ -1417,7 +1497,7 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
         runtime
             .get_prototype_of(&take_exception_object(&mut second))
             .unwrap(),
-        Some(first_type_error.clone())
+        Some(first_type_error.try_clone().expect("duplicate root"))
     );
     let spoof = second.new_object().unwrap();
     assert_eq!(
@@ -1428,7 +1508,7 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
         runtime
             .get_prototype_of(&take_exception_object(&mut second))
             .unwrap(),
-        Some(first_type_error.clone())
+        Some(first_type_error.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         second.construct(&first_symbol, &[]),
@@ -1450,8 +1530,12 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
     define_data_key(
         &runtime,
         &throwing_input,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(user_throw.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(user_throw.as_object().try_clone().expect("duplicate root")),
         true,
         false,
         true,
@@ -1490,7 +1574,7 @@ fn symbol_primitives_do_not_retain_realms_but_wrappers_do_and_atoms_survive() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let primitive = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let global = context.global_object().unwrap();
         let constructor = property_callable(&runtime, &mut context, &global, "Symbol");
         call_symbol(
@@ -1503,7 +1587,7 @@ fn symbol_primitives_do_not_retain_realms_but_wrappers_do_and_atoms_survive() {
     };
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         0,
         "a realm-neutral Symbol primitive must not retain its creating context"
     );
@@ -1514,10 +1598,10 @@ fn symbol_primitives_do_not_retain_realms_but_wrappers_do_and_atoms_survive() {
     );
     drop(primitive);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 
     let wrapper = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let object_prototype = context.object_prototype().unwrap();
         let object_value_of =
             property_callable(&runtime, &mut context, &object_prototype, "valueOf");
@@ -1533,14 +1617,14 @@ fn symbol_primitives_do_not_retain_realms_but_wrappers_do_and_atoms_survive() {
     };
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         1,
         "a live Symbol wrapper must retain its prototype and defining realm graph"
     );
     drop(wrapper);
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().live,
+        runtime.heap_counts().expect("runtime state").live,
         0,
         "Symbol contexts, prototypes, native functions, wrappers, and atoms must collect"
     );
@@ -1730,8 +1814,12 @@ fn conversion_object(runtime: &Runtime, context: &mut Context, source: &str) -> 
     define_data_key(
         runtime,
         &object,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(conversion.as_object().try_clone().expect("duplicate root")),
         true,
         false,
         true,
@@ -1748,7 +1836,11 @@ fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
             well_known_entries()
                 .into_iter()
                 .find_map(|(_, symbol)| {
-                    let symbol_key = PropertyKey::from(runtime.well_known_symbol(symbol));
+                    let symbol_key = PropertyKey::from(
+                        runtime
+                            .well_known_symbol(symbol)
+                            .expect("well-known symbol"),
+                    );
                     (key == &symbol_key).then(|| format!("Symbol({})", symbol.description()))
                 })
                 .unwrap_or_else(|| {
@@ -1965,7 +2057,11 @@ fn symbol_record_via_to_string(
 ) -> String {
     let description_units = symbol_description_units(runtime, symbol);
     let value = context
-        .call(to_string, Value::Symbol(symbol.clone()), &[])
+        .call(
+            to_string,
+            Value::Symbol(symbol.try_clone().expect("duplicate root")),
+            &[],
+        )
         .expect("Symbol.prototype.toString must accept a Symbol primitive");
     let Value::String(text) = value else {
         panic!("Symbol.prototype.toString did not return a string");
@@ -1998,9 +2094,9 @@ fn symbol_tags(
     primitive: &SymbolRef,
 ) -> Vec<String> {
     [
-        Value::Symbol(primitive.clone()),
-        Value::Object(wrapper.clone()),
-        Value::Object(prototype.clone()),
+        Value::Symbol(primitive.try_clone().expect("duplicate root")),
+        Value::Object(wrapper.try_clone().expect("duplicate root")),
+        Value::Object(prototype.try_clone().expect("duplicate root")),
     ]
     .into_iter()
     .map(|value| render_value(runtime, context.call(object_to_string, value, &[]).unwrap()))
@@ -2053,7 +2149,8 @@ fn object_has_prototype(runtime: &Runtime, value: &Value, prototype: &ObjectRef)
     let Value::Object(object) = value else {
         return false;
     };
-    runtime.get_prototype_of(object).unwrap() == Some(prototype.clone())
+    runtime.get_prototype_of(object).unwrap()
+        == Some(prototype.try_clone().expect("duplicate root"))
 }
 
 fn expect_object(value: Value, description: &str) -> ObjectRef {

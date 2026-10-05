@@ -502,7 +502,8 @@ impl Runtime {
         value: Value,
         hint: ToPrimitiveHint,
     ) -> Result<Completion, RuntimeError> {
-        let step = primitive::PrimitiveResume::start(self, realm, self.unroot_value(&value)?, hint);
+        let step =
+            primitive::PrimitiveResume::start(self, realm, self.unroot_value(&value)?, hint)?;
         self.finish_primitive_steps(realm, step)
     }
 
@@ -513,7 +514,7 @@ impl Runtime {
         value: crate::engine::value::JsValue,
         hint: ToPrimitiveHint,
     ) -> Result<Completion, RuntimeError> {
-        let step = primitive::PrimitiveResume::start(self, realm, value, hint);
+        let step = primitive::PrimitiveResume::start(self, realm, value, hint)?;
         self.finish_primitive_steps(realm, step)
     }
 

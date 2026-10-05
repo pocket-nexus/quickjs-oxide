@@ -23,12 +23,16 @@ impl DeferredOperations {
 
     /// Releases keep their existing FIFO order behind restoration operations.
     pub(crate) fn push_back(&self, operation: DeferredRefOp) {
+        #[cfg(feature = "profiling")]
+        record_enqueue(operation);
         self.queue.borrow_mut().push_back(operation);
         self.pending.set(true);
     }
 
     /// Frame/backtrace restoration retains its existing unwind priority.
     pub(crate) fn push_front(&self, operation: DeferredRefOp) {
+        #[cfg(feature = "profiling")]
+        record_enqueue(operation);
         self.queue.borrow_mut().push_front(operation);
         self.pending.set(true);
     }
@@ -51,6 +55,19 @@ impl DeferredOperations {
     #[cfg(test)]
     pub(crate) fn borrow(&self) -> std::cell::Ref<'_, VecDeque<DeferredRefOp>> {
         self.queue.borrow()
+    }
+}
+
+#[cfg(feature = "profiling")]
+fn record_enqueue(operation: DeferredRefOp) {
+    use crate::engine::api::profiling::record_runtime_event;
+    match operation {
+        DeferredRefOp::ActiveFramePop { .. }
+        | DeferredRefOp::ActiveCollectionRecordsTruncate { .. }
+        | DeferredRefOp::BacktraceBarrierRestore { .. } => {
+            record_runtime_event("runtime.deferred.restore", "core.deferred.restore");
+        }
+        _ => record_runtime_event("runtime.deferred.release", "core.deferred.release"),
     }
 }
 

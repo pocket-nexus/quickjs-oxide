@@ -121,7 +121,7 @@ impl SortStep {
                 }
             };
         Ok(Self::request_read(
-            object.clone(),
+            object.try_clone()?,
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             SortResume(Box::new(SortResumeState {
                 runtime: runtime.clone(),
@@ -251,7 +251,7 @@ impl SortResume {
         }
         self.0.phase = Phase::CollectHas;
         Ok(SortStep::request_has(
-            self.0.object.clone(),
+            self.0.object.try_clone()?,
             runtime.property_key_for_index(self.0.cursor)?,
             self,
         ))
@@ -289,7 +289,7 @@ impl SortResume {
                 }
                 self.0.phase = Phase::CollectRead;
                 Ok(SortStep::request_read(
-                    self.0.object.clone(),
+                    self.0.object.try_clone()?,
                     runtime.property_key_for_index(self.0.cursor)?,
                     self,
                 ))
@@ -339,7 +339,7 @@ impl SortResume {
                             );
                             continue;
                         }
-                        let callable = callable.clone();
+                        let callable = callable.try_clone()?;
                         self.0.phase = Phase::CompareCall;
                         let left = runtime.dup_jsvalue(&self.0.slots[left].value)?;
                         let right = match runtime.dup_jsvalue(&self.0.slots[right].value) {
@@ -448,7 +448,7 @@ impl SortResume {
             }
             self.0.phase = Phase::Write;
             return Ok(SortStep::request_set(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 runtime.property_key_for_index(self.0.cursor)?,
                 value,
                 self,
@@ -458,7 +458,7 @@ impl SortResume {
         if self.0.cursor < self.0.defined_count + self.0.undefined_count {
             self.0.phase = Phase::Write;
             return Ok(SortStep::request_set(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 runtime.property_key_for_index(self.0.cursor)?,
                 JsValue::Undefined,
                 self,
@@ -467,13 +467,13 @@ impl SortResume {
         if self.0.cursor < self.0.length {
             self.0.phase = Phase::Delete;
             return Ok(SortStep::request_delete(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 runtime.property_key_for_index(self.0.cursor)?,
                 self,
             ));
         }
         Ok(SortStep::Complete(Completion::Return(
-            runtime.into_jsvalue(Value::Object(self.0.object.clone()))?,
+            runtime.into_jsvalue(Value::Object(self.0.object.try_clone()?))?,
         )))
     }
     pub(crate) fn set(
@@ -559,7 +559,7 @@ pub(crate) fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }

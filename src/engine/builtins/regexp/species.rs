@@ -98,7 +98,7 @@ impl RegExpSpeciesResume {
         };
         Ok(RegExpSpeciesStep::Read {
             object: ObjectRef::from_owned_handle(runtime.clone(), id),
-            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
+            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)?),
             resume: {
                 let updated_0 = true;
                 self.0.species = updated_0;

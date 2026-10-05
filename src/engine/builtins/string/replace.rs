@@ -169,7 +169,7 @@ impl StringReplaceStep {
             if matches!(selector, StringReplaceKind::ReplaceAll) {
                 resume.phase = Phase::Match;
                 StringReplaceAction::Read(PropertyKey::from(
-                    runtime.well_known_symbol(WellKnownSymbol::Match),
+                    runtime.well_known_symbol(WellKnownSymbol::Match)?,
                 ))
             } else {
                 resume.method(runtime)?
@@ -237,7 +237,7 @@ impl StringReplaceResumeState {
         }
         self.phase = Phase::Method;
         Ok(StringReplaceAction::Read(PropertyKey::from(
-            runtime.well_known_symbol(WellKnownSymbol::Replace),
+            runtime.well_known_symbol(WellKnownSymbol::Replace)?,
         )))
     }
     fn source(&mut self) -> Result<StringReplaceAction, RuntimeError> {
@@ -608,7 +608,7 @@ impl StringReplaceResumeState {
                     .expect("replacement arguments");
                 self.phase = Phase::Callback { position };
                 return Ok(StringReplaceAction::Call {
-                    target: DirectCallTarget::Callable(callable.clone()),
+                    target: DirectCallTarget::Callable(callable.try_clone()?),
                     receiver: JsValue::Undefined,
                     arguments,
                 });
@@ -778,7 +778,7 @@ mod tests {
     #[test]
     fn completed_string_replacement_never_allocates_a_resident_owner() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let invocation = NativeInvocation::Call {
             this_value: runtime
                 .into_jsvalue(Value::String(JsString::from_static("aba")))
@@ -829,7 +829,7 @@ mod tests {
     fn pending_replacer_roots_callback_and_receiver_until_abandonment() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let receiver = runtime.new_object(None).unwrap();
         let receiver_id = receiver.object_id();
         let callback = context.eval("(function(){return 'x'})").unwrap();
@@ -917,7 +917,7 @@ mod local_replace_tests {
     #[test]
     fn selected_replace_getter_is_consumed_once_with_reentry() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

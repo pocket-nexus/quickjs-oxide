@@ -34,7 +34,7 @@ fn match_match_all_search_and_split_entries_preserve_pinned_cproto_and_order() {
     assert!(!regexp_split_descriptor.cproto.default_is_constructor());
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let string_prototype = context.string_prototype().unwrap();
     let Value::Object(regexp_prototype) = context.eval("RegExp.prototype").unwrap() else {
         panic!("RegExp.prototype was not an object");
@@ -44,10 +44,26 @@ fn match_match_all_search_and_split_entries_preserve_pinned_cproto_and_order() {
     let string_match_all = runtime.intern_property_key("matchAll").unwrap();
     let string_search = runtime.intern_property_key("search").unwrap();
     let split = runtime.intern_property_key("split").unwrap();
-    let symbol_match = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match));
-    let symbol_match_all = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::MatchAll));
-    let symbol_search = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Search));
-    let symbol_split = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Split));
+    let symbol_match = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Match)
+            .expect("well-known symbol"),
+    );
+    let symbol_match_all = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::MatchAll)
+            .expect("well-known symbol"),
+    );
+    let symbol_search = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Search)
+            .expect("well-known symbol"),
+    );
+    let symbol_split = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Split)
+            .expect("well-known symbol"),
+    );
     {
         let state = runtime.0.state.borrow();
         let string_object = state.heap.object(string_prototype.object_id()).unwrap();
@@ -381,7 +397,7 @@ fn replace_entries_preserve_pinned_cproto_autoinit_and_table_order() {
     assert!(!regexp_descriptor.cproto.default_is_constructor());
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let string_prototype = context.string_prototype().unwrap();
     let Value::Object(regexp_prototype) = context.eval("RegExp.prototype").unwrap() else {
         panic!("RegExp.prototype was not an object");
@@ -390,8 +406,16 @@ fn replace_entries_preserve_pinned_cproto_autoinit_and_table_order() {
     let replace_key = runtime.intern_property_key("replace").unwrap();
     let replace_all_key = runtime.intern_property_key("replaceAll").unwrap();
     let pad_end_key = runtime.intern_property_key("padEnd").unwrap();
-    let symbol_replace = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Replace));
-    let symbol_match = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Match));
+    let symbol_replace = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Replace)
+            .expect("well-known symbol"),
+    );
+    let symbol_match = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Match)
+            .expect("well-known symbol"),
+    );
 
     {
         let state = runtime.0.state.borrow();

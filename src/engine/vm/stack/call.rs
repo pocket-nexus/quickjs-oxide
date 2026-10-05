@@ -2,13 +2,57 @@
 use super::*;
 pub(in crate::engine::vm) struct InstalledOrdinaryFrame {
     pub window: FrameWindow,
-    pub function: crate::engine::object::ObjectRef,
+    pub function: crate::engine::heap::ObjectId,
     pub input: crate::engine::vm::CallInput,
 }
+
+/// Unpublished initialized ranges. Every fallible owner-producing operation has
+/// completed; callers immediately move their inputs and publish this window.
+#[must_use]
+pub(super) struct PreparedOrdinaryWindow {
+    pub(super) window: FrameWindow,
+    pub(super) start: usize,
+    next_window: u64,
+    #[cfg(feature = "profiling")]
+    before: usize,
+    #[cfg(feature = "profiling")]
+    initialized: usize,
+    #[cfg(feature = "profiling")]
+    keep_originals: bool,
+    #[cfg(feature = "profiling")]
+    roots: usize,
+    #[cfg(feature = "profiling")]
+    function_name: bool,
+}
 impl SlotStore {
+    #[cfg(test)]
     pub(in crate::engine::vm) fn push_ordinary_frame(
         &mut self,
         runtime: &Runtime,
+        layout: &FrameLayout<'_>,
+        parent: &mut FrameWindow,
+        checked: CheckedOrdinaryCallOperands,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<InstalledOrdinaryFrame, Error> {
+        let _unwind = runtime.unwind_guard();
+        self.push_ordinary_frame_in_state(
+            runtime,
+            &mut runtime.0.state.borrow_mut(),
+            layout,
+            parent,
+            checked,
+            function,
+            observes_arguments,
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn push_ordinary_frame_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
         layout: &FrameLayout<'_>,
         parent: &mut FrameWindow,
         checked: CheckedOrdinaryCallOperands,
@@ -21,12 +65,88 @@ impl SlotStore {
                 "ordinary call operands changed after validation",
             ));
         }
+        self.push_current_ordinary_frame_in_state(
+            runtime,
+            state,
+            layout,
+            parent,
+            checked,
+            function,
+            observes_arguments,
+        )
+    }
+
+    /// Called only by a checked legacy adapter or by the current transaction
+    /// producer, which holds the exclusive store and caller window together.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_current_ordinary_frame_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &FrameLayout<'_>,
+        parent: &mut FrameWindow,
+        checked: CheckedOrdinaryCallOperands,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<InstalledOrdinaryFrame, Error> {
         let count = checked.count;
         let method = checked.method;
         let consumed = count
             .checked_add(1 + usize::from(method))
             .filter(|n| *n <= parent.depth)
             .ok_or_else(|| Error::internal("outgoing call exceeds caller operands"))?;
+        let prepared = self.prepare_ordinary_window_in_state(
+            runtime,
+            state,
+            layout,
+            parent,
+            count,
+            function,
+            observes_arguments,
+        )?;
+        let start = prepared.start;
+        let base = prepared.window.base;
+        for index in 0..count {
+            self.slots[base + index] = self.slots[start + index].take();
+        }
+        // All fallible work has completed. Transfer these roots directly from
+        // caller operands; no retain/release round trip or JS re-entry occurs.
+        let Some(FrameBinding::Direct(JsValue::Object(callee))) = self.slots[start - 1].take()
+        else {
+            unreachable!("authenticated ordinary callee is an object")
+        };
+        let receiver = if method {
+            let Some(FrameBinding::Direct(receiver)) = self.slots[start - 2].take() else {
+                unreachable!("checked receiver is direct")
+            };
+            receiver
+        } else {
+            JsValue::Undefined
+        };
+        let function = callee;
+        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
+        let window = self.publish_ordinary_window(parent, consumed, prepared);
+        Ok(InstalledOrdinaryFrame {
+            function,
+            input,
+            window,
+        })
+    }
+
+    /// Prepare the unpublished parameter/local suffix while the caller owns
+    /// all operands. Ordinary calls and Base constructors share this initializer;
+    /// their distinct input owners move only after all fallible work succeeds.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare_ordinary_window_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &FrameLayout<'_>,
+        parent: &FrameWindow,
+        count: usize,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<PreparedOrdinaryWindow, Error> {
         let start = parent.operands().start + parent.depth - count;
         // Only language-visible original arguments need a second owner.
         // WeakRef liveness belongs to the enclosing execution turn.
@@ -78,13 +198,19 @@ impl SlotStore {
                 {
                     roots += usize::from(matches!(value, JsValue::Object(_) | JsValue::Symbol(_)));
                 }
-                match copy_value(runtime, value) {
-                    Ok(value) => {
-                        self.slots[original_end + index] = Some(FrameBinding::Direct(value))
+                match state.dup_jsvalue(value) {
+                    Ok(copied) => {
+                        #[cfg(feature = "profiling")]
+                        record_copy(value);
+                        self.slots[original_end + index] = Some(FrameBinding::Direct(copied));
                     }
                     Err(error) => {
-                        let _ = self.clear_unpublished(runtime, original_end..original_end + index);
-                        return Err(error);
+                        self.clear_unpublished_owned_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            original_end..original_end + index,
+                        )?;
+                        return Err(runtime_error_to_vm_error(error));
                     }
                 }
             }
@@ -100,8 +226,8 @@ impl SlotStore {
                 .fill_with(|| Some(FrameBinding::Direct(JsValue::Undefined)));
         } else {
             for (index, definition) in layout.locals().iter().enumerate() {
-                let binding = match super::super::call::prepare::initial_local_binding_id(
-                    runtime,
+                let binding = match initial_local_binding_in_state(
+                    state,
                     definition.is_lexical,
                     function_name == Some(index as u16),
                     function,
@@ -111,48 +237,84 @@ impl SlotStore {
                         // Parameters and preceding locals were installed only in
                         // the unpublished suffix. The caller still owns every
                         // outgoing operand, including the method receiver.
-                        let _ =
-                            self.clear_unpublished(runtime, original_end..parameters_end + index);
+                        self.clear_unpublished_owned_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            original_end..parameters_end + index,
+                        )?;
                         return Err(runtime_error_to_vm_error(error));
                     }
                 };
                 self.slots[parameters_end + index] = Some(binding);
             }
         }
-        for index in 0..count {
-            self.slots[base + index] = self.slots[start + index].take();
-        }
-        // All fallible work has completed. Transfer these roots directly from
-        // caller operands; no retain/release round trip or JS re-entry occurs.
-        let Some(FrameBinding::Direct(JsValue::Object(callee))) = self.slots[start - 1].take()
-        else {
-            unreachable!("authenticated ordinary callee is an object")
-        };
-        let receiver = if method {
-            let Some(FrameBinding::Direct(receiver)) = self.slots[start - 2].take() else {
-                unreachable!("checked receiver is direct")
-            };
-            receiver
-        } else {
-            JsValue::Undefined
-        };
-        let function = crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), callee);
-        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
+        Ok(PreparedOrdinaryWindow {
+            start,
+            next_window,
+            window: FrameWindow {
+                owner: self.owner.clone(),
+                id: self.next_window,
+                base,
+                original_end,
+                parameters_end,
+                locals_end,
+                end,
+                depth: 0,
+                actual_count: count,
+            },
+            #[cfg(feature = "profiling")]
+            before,
+            #[cfg(feature = "profiling")]
+            initialized,
+            #[cfg(feature = "profiling")]
+            keep_originals,
+            #[cfg(feature = "profiling")]
+            roots,
+            #[cfg(feature = "profiling")]
+            function_name: function_name.is_some(),
+        })
+    }
+
+    /// Publish a prepared window after its caller edges have moved. There is
+    /// no allocation, checked retain, cleanup or callback after that transfer.
+    #[inline]
+    pub(super) fn publish_ordinary_window(
+        &mut self,
+        parent: &mut FrameWindow,
+        consumed: usize,
+        prepared: PreparedOrdinaryWindow,
+    ) -> FrameWindow {
+        let PreparedOrdinaryWindow {
+            window,
+            next_window,
+            ..
+        } = &prepared;
+        #[cfg(feature = "profiling")]
+        let count = window.actual_count;
+        #[cfg(feature = "profiling")]
+        let base = window.base;
+        let end = window.end;
+        #[cfg(feature = "profiling")]
+        let originals = window.original_arguments().len();
+        #[cfg(feature = "profiling")]
+        let parameter_count = window.parameters().len();
+        #[cfg(feature = "profiling")]
+        let local_count = window.locals().len();
         parent.depth -= consumed;
         self.active_end = end;
         let id = self.next_window;
-        self.next_window = next_window;
+        self.next_window = *next_window;
         self.windows.push(id);
         #[cfg(feature = "profiling")]
         {
             self.live_slots -= consumed;
             self.live_slots += originals + parameter_count + local_count;
             record_owned_storage(Cost::SlotCapacity {
-                before,
+                before: prepared.before,
                 after: self.slots.capacity(),
             });
             record_owned_storage(Cost::NoneInitialization {
-                count: self.slots.len() - initialized,
+                count: self.slots.len() - prepared.initialized,
                 high_water: self.slots.len(),
             });
             record_owned_storage(Cost::Clear(consumed - count));
@@ -164,9 +326,9 @@ impl SlotStore {
                 0,
                 local_count,
                 0,
-                if keep_originals { count } else { 0 },
-                roots,
-                usize::from(function_name.is_some()),
+                if prepared.keep_originals { count } else { 0 },
+                prepared.roots,
+                usize::from(prepared.function_name),
             );
             crate::engine::api::profiling::record_owned_execution_event(
                 "call_bindings_initialized_in_window",
@@ -174,25 +336,85 @@ impl SlotStore {
             crate::engine::api::profiling::record_owned_execution_event(
                 "call_outgoing_tail_transferred",
             );
-            if !keep_originals {
+            if !prepared.keep_originals {
                 crate::engine::api::profiling::record_owned_execution_event("ordinary_argv_elided");
             }
         }
-        Ok(InstalledOrdinaryFrame {
-            function,
-            input,
-            window: FrameWindow {
-                owner: self.owner.clone(),
-                id,
-                base,
-                original_end,
-                parameters_end,
-                locals_end,
-                end,
-                depth: 0,
-                actual_count: count,
-            },
-        })
+        prepared.window
+    }
+    fn clear_unpublished_owned_in_state(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        range: std::ops::Range<usize>,
+    ) -> Result<(), Error> {
+        for index in range {
+            if let Some(binding) = self.slots[index].take() {
+                if let Err(error) =
+                    crate::engine::vm::bindings::release_frame_binding_in_state(state, binding)
+                {
+                    poisoned.set(true);
+                    return Err(runtime_error_to_vm_error(error));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Clear the actual current window under the executor's state access.
+    /// The result owner remains in execution storage throughout retirement.
+    pub(in crate::engine::vm) fn clear_frame_owned_in_state(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        window: FrameWindow,
+    ) -> Result<(), Error> {
+        self.check_current(&window)?;
+        self.clear_current_frame_owned_in_state(state, poisoned, window)
+    }
+
+    /// The exclusive execution producer supplies the actual retiring window.
+    /// No detached window/currentness proof is accepted outside this module.
+    pub(super) fn clear_current_frame_owned_in_state(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        window: FrameWindow,
+    ) -> Result<(), Error> {
+        #[cfg(feature = "profiling")]
+        {
+            let cleared = self.slots[window.whole()]
+                .iter()
+                .filter(|slot| slot.is_some())
+                .count();
+            self.live_slots -= cleared;
+            record_owned_storage(Cost::Clear(cleared));
+        }
+        self.active_end = window.whole().start;
+        self.clear_unpublished_owned_in_state(
+            state,
+            poisoned,
+            window.whole().start..window.operands().start + window.depth,
+        )?;
+        debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
+        self.windows.pop();
+        Ok(())
+    }
+}
+
+fn initial_local_binding_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    lexical: bool,
+    function_name: bool,
+    function: crate::engine::heap::ObjectId,
+) -> Result<FrameBinding, crate::engine::api::runtime_error::RuntimeError> {
+    if function_name {
+        state.heap.retain_object(function)?;
+        Ok(FrameBinding::Direct(JsValue::Object(function)))
+    } else if lexical {
+        Ok(FrameBinding::Uninitialized)
+    } else {
+        Ok(FrameBinding::Direct(JsValue::Undefined))
     }
 }
 
@@ -201,6 +423,16 @@ mod tests {
     use super::*;
     use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
+
+    fn take_installed_window(
+        runtime: &Runtime,
+        mut installed: InstalledOrdinaryFrame,
+    ) -> FrameWindow {
+        let mut state = runtime.0.state.borrow_mut();
+        installed.input.release(&mut state).unwrap();
+        state.release_object_handle(installed.function).unwrap();
+        installed.window
+    }
 
     fn checked_operands(
         slots: &mut SlotStore,
@@ -227,7 +459,7 @@ mod tests {
     #[test]
     fn ordinary_local_initialization_uses_published_plain_fact_and_preserves_tdz() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let definition = VariableDefinition {
             name: None,
@@ -247,7 +479,9 @@ mod tests {
             .push_frame(
                 &runtime,
                 &caller.frame_layout(),
-                storage(vec![JsValue::Object(function.clone().into_handle())]),
+                storage(vec![JsValue::Object(
+                    function.try_clone().expect("duplicate root").into_handle(),
+                )]),
             )
             .unwrap();
         assert!(executable.frame_layout().plain_local_initializers());
@@ -261,7 +495,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(matches!(
             slots.local(&child, 0).unwrap(),
@@ -285,7 +519,10 @@ mod tests {
         ]);
         assert!(!executable.frame_layout().plain_local_initializers());
         slots
-            .push(&mut parent, JsValue::Object(function.clone().into_handle()))
+            .push(
+                &mut parent,
+                JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
+            )
             .unwrap();
         let checked = checked_operands(&mut slots, &mut parent, 0, false);
         let child = slots
@@ -297,7 +534,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(matches!(
             slots.local(&child, 0).unwrap(),
@@ -313,7 +550,7 @@ mod tests {
     #[test]
     fn argument_transfer_preserves_arity_and_releases_overwritten_parameters() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
         executable.metadata.max_stack = 4;
@@ -323,7 +560,7 @@ mod tests {
                 &runtime,
                 &executable.frame_layout(),
                 storage(vec![
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Int(7),
                 ]),
             )
@@ -338,7 +575,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(child.original_arguments().is_empty());
         assert_eq!(slots.actual_argument_count(&child).unwrap(), 1);
@@ -356,7 +593,10 @@ mod tests {
         let marker = runtime.new_object(None).unwrap();
         let marker_id = marker.object_id();
         slots
-            .push(&mut parent, JsValue::Object(function.clone().into_handle()))
+            .push(
+                &mut parent,
+                JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
+            )
             .unwrap();
         slots
             .push(&mut parent, JsValue::Object(marker.into_handle()))
@@ -371,7 +611,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(child.original_arguments().is_empty());
         let replaced = slots
@@ -387,7 +627,7 @@ mod tests {
     #[test]
     fn ordinary_retain_failure_keeps_the_entire_parent_and_rolls_back_suffix() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let first = runtime.new_object(None).unwrap();
         let blocked = runtime.new_object(None).unwrap();
@@ -406,7 +646,7 @@ mod tests {
                 &runtime,
                 &executable.frame_layout(),
                 storage(vec![
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Object(first.into_handle()),
                     JsValue::Object(stale_handle),
                 ]),
@@ -424,7 +664,7 @@ mod tests {
                     function.object_id(),
                     true
                 )
-                .map(|installed| installed.window)
+                .map(|installed| take_installed_window(&runtime, installed))
                 .is_err()
         );
         assert_eq!(slots.active_end, end);
@@ -442,7 +682,7 @@ mod tests {
     #[test]
     fn method_receiver_copy_survives_operand_release_until_input_teardown() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let receiver = runtime.new_object(None).unwrap();
         let receiver_id = receiver.object_id();
@@ -455,7 +695,7 @@ mod tests {
                 &executable.frame_layout(),
                 storage(vec![
                     JsValue::Object(receiver.into_handle()),
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                 ]),
             )
             .unwrap();
@@ -470,7 +710,10 @@ mod tests {
         );
         let checked = checked_operands(&mut slots, &mut parent, 0, true);
         let receiver = copy_value(&runtime, slots.peek(&parent, 1).unwrap()).unwrap();
-        let input = crate::engine::vm::CallInput::new(&runtime, receiver, JsValue::Undefined, None);
+        let input = crate::engine::vm::protocol::CallInputGuard::new(
+            &runtime,
+            crate::engine::vm::CallInput::new(&runtime, receiver, JsValue::Undefined, None),
+        );
         assert_eq!(
             runtime
                 .0
@@ -489,7 +732,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(matches!(
             &input.this_value,
@@ -518,7 +761,7 @@ mod tests {
     #[test]
     fn failed_method_argument_copy_keeps_receiver_and_rolls_back_suffix() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let receiver = runtime.new_object(None).unwrap();
         let receiver_id = receiver.object_id();
@@ -538,7 +781,7 @@ mod tests {
                 &executable.frame_layout(),
                 storage(vec![
                     JsValue::Object(receiver.into_handle()),
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Object(first.into_handle()),
                     JsValue::Object(stale_handle),
                 ]),
@@ -547,8 +790,10 @@ mod tests {
         let end = slots.active_end;
         let checked = checked_operands(&mut slots, &mut parent, 2, true);
         let receiver_copy = copy_value(&runtime, slots.peek(&parent, 3).unwrap()).unwrap();
-        let input =
-            crate::engine::vm::CallInput::new(&runtime, receiver_copy, JsValue::Undefined, None);
+        let input = crate::engine::vm::protocol::CallInputGuard::new(
+            &runtime,
+            crate::engine::vm::CallInput::new(&runtime, receiver_copy, JsValue::Undefined, None),
+        );
         assert_eq!(
             runtime
                 .0
@@ -568,7 +813,7 @@ mod tests {
                     function.object_id(),
                     true,
                 )
-                .map(|installed| installed.window)
+                .map(|installed| take_installed_window(&runtime, installed))
                 .is_err()
         );
         assert_eq!(slots.active_end, end);
@@ -607,7 +852,7 @@ mod tests {
     #[test]
     fn failed_named_local_retain_clears_staged_parameter_and_earlier_local() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let callee = runtime.new_object(None).unwrap();
         let receiver = runtime.new_object(None).unwrap();
         let receiver_id = receiver.object_id();
@@ -644,7 +889,7 @@ mod tests {
                 &caller.frame_layout(),
                 storage(vec![
                     JsValue::Object(receiver.into_handle()),
-                    JsValue::Object(callee.clone().into_handle()),
+                    JsValue::Object(callee.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Object(argument.into_handle()),
                 ]),
             )
@@ -660,7 +905,7 @@ mod tests {
                 stale_function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .err()
             .expect("the named local must reject a stale function handle");
         // Disarm the synthetic wrapper without releasing a nonexistent edge.
@@ -710,7 +955,7 @@ mod tests {
     #[test]
     fn checked_ordinary_operands_reject_depth_change_without_moving_owners() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let marker = runtime.new_object(None).unwrap();
         let marker_id = marker.object_id();
@@ -722,7 +967,7 @@ mod tests {
                 &runtime,
                 &executable.frame_layout(),
                 storage(vec![
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Object(marker.into_handle()),
                 ]),
             )
@@ -739,7 +984,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .err()
             .unwrap();
         assert_eq!(
@@ -757,7 +1002,7 @@ mod tests {
     #[test]
     fn checked_ordinary_operands_preserve_method_domain_error_order() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
         executable.metadata.max_stack = 3;

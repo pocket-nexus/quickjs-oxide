@@ -112,7 +112,7 @@ impl SumStep {
         let iterable = runtime.dup_jsvalue(iterable)?;
         Ok({
             let __pending_field_key =
-                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?);
             let __pending_field_resume = SumResume(Box::new(SumResumeState {
                 pending_effect: SumStepPending::default(),
                 realm,
@@ -187,7 +187,7 @@ impl SumResume {
                 let iterator = ObjectRef::from_owned_handle(runtime.clone(), id);
                 runtime
                     .release_jsvalue(std::mem::replace(&mut self.0.iterable, JsValue::Undefined))?;
-                self.0.iterator = Some(iterator.clone());
+                self.0.iterator = Some(iterator.try_clone()?);
                 self.0.phase = Phase::NextMethod;
                 Ok({
                     let __pending_field_key = runtime
@@ -218,7 +218,9 @@ impl SumResume {
             let __pending_field_iterator = self
                 .0
                 .iterator
-                .clone()
+                .as_ref()
+                .map(|value| value.try_clone())
+                .transpose()?
                 .ok_or(RuntimeError::Invariant("Math sum iterator missing"))?;
             let __pending_field_next = self.0.runtime.dup_jsvalue(&self.0.next)?;
             let __pending_field_resume = self;
@@ -334,7 +336,7 @@ pub(crate) fn finish(
 #[test]
 fn sum_resume_keeps_one_resident_owner_across_iterator_transitions() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let callable = context.eval("(function(){})").unwrap();
     let object = runtime.new_object(None).unwrap();
     let invocation = NativeInvocation::Call {
@@ -342,7 +344,9 @@ fn sum_resume_keeps_one_resident_owner_across_iterator_transitions() {
     };
     let arguments = NativeArguments {
         actual_arg_count: 1,
-        readable: vec![JsValue::Object(object.clone().into_handle())],
+        readable: vec![JsValue::Object(
+            object.try_clone().expect("duplicate root").into_handle(),
+        )],
     };
     let SumStep::Read { mut resume } =
         SumStep::start(&runtime, context.realm, &invocation, &arguments).unwrap()
@@ -371,7 +375,9 @@ fn sum_resume_keeps_one_resident_owner_across_iterator_transitions() {
     let SumStep::Read { mut resume } = resume
         .resume(
             &runtime,
-            Completion::Return(JsValue::Object(object.clone().into_handle())),
+            Completion::Return(JsValue::Object(
+                object.try_clone().expect("duplicate root").into_handle(),
+            )),
         )
         .unwrap()
     else {

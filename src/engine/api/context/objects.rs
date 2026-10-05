@@ -10,6 +10,9 @@ impl Context {
         is_const: bool,
         initial_value: Option<Value>,
     ) -> Result<(), RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .create_global_lexical_for_test(self.realm, name, is_const, initial_value)
     }
@@ -20,23 +23,35 @@ impl Context {
         name: &str,
         value: Value,
     ) -> Result<(), RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .initialize_global_lexical_for_test(self.realm, name, value)
     }
 
     /// Allocate an ordinary object with this realm's `%Object.prototype%`.
     pub fn new_object(&mut self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let prototype = self.object_prototype()?;
         self.runtime.new_object(Some(&prototype))
     }
 
     /// Allocate one genuine empty Array in this realm.
     pub fn new_array(&mut self) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime.new_array(self.realm)
     }
 
     /// Allocate one genuine Array initialized from consecutive values.
     pub fn new_array_from_values(&mut self, values: Vec<Value>) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime.new_array_from_values(self.realm, values)
     }
 
@@ -45,6 +60,9 @@ impl Context {
         &mut self,
         prototype: Option<&ObjectRef>,
     ) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         self.runtime.new_object(prototype)
     }
 
@@ -53,6 +71,9 @@ impl Context {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let result = crate::engine::vm::entry::own(&self.runtime, self.realm, object, key)?;
 
         match result {
@@ -70,6 +91,9 @@ impl Context {
         key: &PropertyKey,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<bool, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         {
             self.finish_property_bool(crate::engine::vm::entry::define(
                 &self.runtime,
@@ -86,12 +110,15 @@ impl Context {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let completion = crate::engine::vm::entry::get(
             &self.runtime,
             self.realm,
             object,
             key,
-            Value::Object(object.clone()),
+            Value::Object(object.try_clone()?),
         )?;
 
         self.finish_completion(completion)
@@ -103,6 +130,9 @@ impl Context {
         key: &PropertyKey,
         receiver: Value,
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         let completion =
             crate::engine::vm::entry::get(&self.runtime, self.realm, object, key, receiver)?;
 
@@ -115,6 +145,9 @@ impl Context {
         key: &PropertyKey,
         value: Value,
     ) -> Result<bool, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         {
             self.finish_property_bool(crate::engine::vm::entry::set(
                 &self.runtime,
@@ -122,7 +155,7 @@ impl Context {
                 object,
                 key,
                 value,
-                Value::Object(object.clone()),
+                Value::Object(object.try_clone()?),
             )?)
         }
     }
@@ -134,6 +167,9 @@ impl Context {
         value: Value,
         receiver: Value,
     ) -> Result<bool, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation()?;
         {
             self.finish_property_bool(crate::engine::vm::entry::set(
                 &self.runtime,

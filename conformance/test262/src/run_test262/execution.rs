@@ -417,7 +417,9 @@ pub(super) fn run_worker(options: &WorkerOptions) -> Result<WorkerResult, String
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    runtime.set_dynamic_import_bytecode_allowed(false);
+    runtime
+        .set_dynamic_import_bytecode_allowed(false)
+        .map_err(|error| format!("set dynamic import policy: {error}"))?;
     let module_resolution_started = Rc::new(Cell::new(false));
     let graph_loader_goal = if exact_module.is_some_and(ExactModuleTest::is_fixture_graph) {
         Some(ModuleGraphRootGoal::StaticModule)
@@ -426,17 +428,24 @@ pub(super) fn run_worker(options: &WorkerOptions) -> Result<WorkerResult, String
     } else {
         None
     };
-    let _module_loader_registration = graph_loader_goal.map(|goal| {
-        runtime.set_module_loader(ExactTest262ModuleLoader {
-            admissions: admissions.clone(),
-            suite: options.suite.clone(),
-            root: options.test.clone(),
-            goal,
-            resolution_started: module_resolution_started.clone(),
+    let _module_loader_registration = graph_loader_goal
+        .map(|goal| {
+            runtime.set_module_loader(ExactTest262ModuleLoader {
+                admissions: admissions.clone(),
+                suite: options.suite.clone(),
+                root: options.test.clone(),
+                goal,
+                resolution_started: module_resolution_started.clone(),
+            })
         })
-    });
-    configure_runtime_can_block(&runtime, &metadata);
-    let mut context = runtime.new_context();
+        .transpose()
+        .map_err(|error| format!("install module loader: {error}"))?;
+    runtime
+        .set_can_block(!metadata.flags.contains("CanBlockIsFalse"))
+        .map_err(|error| format!("configure worker runtime: {error}"))?;
+    let mut context = runtime
+        .new_context()
+        .map_err(|error| format!("create worker context: {error}"))?;
     let mut agent_run = AgentRunGuard::new(options.allow_agent_host);
     install_worker_host(&runtime, &mut context, async_test, agent_run.session())?;
     // The progress baseline follows the pinned Test262 interpretation rather
@@ -658,7 +667,9 @@ fn authenticate_dynamic_import_bytecode(
         )),
         (true, Some(DynamicImportRootPolicy::InitialImportTree))
         | (false, Some(DynamicImportRootPolicy::RuntimeCompiledImport)) => {
-            runtime.set_dynamic_import_bytecode_allowed(true);
+            runtime
+                .set_dynamic_import_bytecode_allowed(true)
+                .expect("dynamic import policy");
             Ok(())
         }
         (false, None) => Ok(()),
@@ -698,7 +709,9 @@ fn authenticate_dynamic_import_module_graph(
         )),
         (true, Some(DynamicImportRootPolicy::InitialImportTree))
         | (false, Some(DynamicImportRootPolicy::RuntimeCompiledImport)) => {
-            runtime.set_dynamic_import_bytecode_allowed(true);
+            runtime
+                .set_dynamic_import_bytecode_allowed(true)
+                .expect("dynamic import policy");
             Ok(())
         }
         (false, None) => Ok(()),
@@ -834,8 +847,11 @@ fn module_compile_failure_phase(
     }
 }
 
+#[cfg(test)]
 fn configure_runtime_can_block(runtime: &Runtime, metadata: &Metadata) {
-    runtime.set_can_block(!metadata.flags.contains("CanBlockIsFalse"));
+    runtime
+        .set_can_block(!metadata.flags.contains("CanBlockIsFalse"))
+        .expect("set runtime configuration");
 }
 
 fn finish_async_test(
@@ -873,7 +889,11 @@ fn finish_module_evaluation(
     };
     match snapshot.state() {
         PromiseState::Rejected => {
-            let diagnostic = exception_diagnostic(runtime, snapshot.result().clone());
+            let rejection = match snapshot.result().try_clone() {
+                Ok(value) => value,
+                Err(error) => return engine_fault("engine-fault", "module-promise", error, None),
+            };
+            let diagnostic = exception_diagnostic(runtime, rejection);
             classify_completion(metadata, "runtime", &diagnostic)
         }
         PromiseState::Pending => WorkerResult::failure(
@@ -894,7 +914,12 @@ fn drain_pending_jobs(
     context: &mut Context,
     metadata: &Metadata,
 ) -> Result<(), WorkerResult> {
-    while runtime.is_job_pending() {
+    loop {
+        match runtime.is_job_pending() {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(error) => return Err(engine_fault("engine-fault", "async-job", error, None)),
+        }
         match runtime
             .execute_pending_job()
             .map_err(|error| error.into_error())
@@ -925,7 +950,6 @@ fn drain_pending_jobs(
             }
         }
     }
-    Ok(())
 }
 
 fn finish_async_test_after_jobs(
@@ -1069,6 +1093,7 @@ fn engine_fault(
     prefix: Option<&str>,
 ) -> WorkerResult {
     let actual_type = match &error {
+        RuntimeError::Poisoned => "Poisoned",
         RuntimeError::ExecutionActive => "ExecutionActive",
         RuntimeError::WrongRuntime(_) => "WrongRuntime",
         RuntimeError::WrongContext(_) => "WrongContext",
@@ -1720,7 +1745,7 @@ mod tests {
     fn finish_async_module_promise(source: &str) -> super::WorkerResult {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         install_worker_host(&runtime, &mut context, true, None).unwrap();
         let Value::Object(promise) = evaluate(&mut context, source) else {
             panic!("module evaluation fixture did not return a Promise");
@@ -1734,7 +1759,7 @@ mod tests {
     fn exact_test262_loader_selects_json_text_only_for_type_json() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         const JSON_SOURCE: &str = "{\"note\":\"/*--- raw JSON, not Test262 metadata\"}\n";
         const JSON_SHA256: &str =
             "8b784bbd9f9603a60109942d4c921d11179a674463fa073416a3d2f38235802f";
@@ -1797,11 +1822,18 @@ mod tests {
             }
             let runtime =
                 Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-            assert!(!runtime.can_block(), "runtime default changed for {flag:?}");
+            assert!(
+                !runtime.can_block().expect("runtime configuration"),
+                "runtime default changed for {flag:?}"
+            );
 
             configure_runtime_can_block(&runtime, &metadata);
 
-            assert_eq!(runtime.can_block(), expected, "flag {flag:?}");
+            assert_eq!(
+                runtime.can_block().expect("runtime configuration"),
+                expected,
+                "flag {flag:?}"
+            );
         }
     }
 
@@ -2038,11 +2070,13 @@ mod tests {
     fn runtime_compiled_dynamic_import_expectation_is_bidirectional() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let initial = context.compile("0;").unwrap();
         let path = PathBuf::from("test/runtime-compiled-import.js");
 
-        runtime.set_dynamic_import_bytecode_allowed(false);
+        runtime
+            .set_dynamic_import_bytecode_allowed(false)
+            .expect("dynamic import policy");
         authenticate_dynamic_import_bytecode(
             &runtime,
             &initial,
@@ -2071,7 +2105,7 @@ mod tests {
     fn module_graph_dynamic_import_verifier_walks_dependencies_and_function_children() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let module = compile_single_dependency_graph(
             &runtime,
             &mut context,
@@ -2090,7 +2124,7 @@ mod tests {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
         let _loader = runtime.set_module_loader(VerifyDfsLoader);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let module = context
             .compile_module_with_filename(
                 "import './verify-dfs-a_FIXTURE.js'; import './verify-dfs-b_FIXTURE.js';",
@@ -2109,7 +2143,7 @@ mod tests {
     fn module_graph_dynamic_import_policy_is_bidirectional_and_fails_closed() {
         let dynamic_runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut dynamic_context = dynamic_runtime.new_context();
+        let mut dynamic_context = dynamic_runtime.new_context().expect("create context");
         let dynamic_module = compile_single_dependency_graph(
             &dynamic_runtime,
             &mut dynamic_context,
@@ -2117,7 +2151,7 @@ mod tests {
         );
         let plain_runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut plain_context = plain_runtime.new_context();
+        let mut plain_context = plain_runtime.new_context().expect("create context");
         let plain_module = compile_single_dependency_graph(
             &plain_runtime,
             &mut plain_context,
@@ -2130,7 +2164,9 @@ mod tests {
             Ok(false)
         );
 
-        dynamic_runtime.set_dynamic_import_bytecode_allowed(false);
+        dynamic_runtime
+            .set_dynamic_import_bytecode_allowed(false)
+            .expect("dynamic import policy");
         let unauthenticated =
             authenticate_dynamic_import_module_graph(&dynamic_runtime, &dynamic_module, None, path)
                 .unwrap_err();
@@ -2151,7 +2187,9 @@ mod tests {
             "{wrong_runtime_policy}"
         );
 
-        plain_runtime.set_dynamic_import_bytecode_allowed(false);
+        plain_runtime
+            .set_dynamic_import_bytecode_allowed(false)
+            .expect("dynamic import policy");
         let missing_initial = authenticate_dynamic_import_module_graph(
             &plain_runtime,
             &plain_module,
@@ -2184,8 +2222,10 @@ mod tests {
     fn temporary_dynamic_import_compile_capability_restores_closed_policy() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
-        runtime.set_dynamic_import_bytecode_allowed(false);
+        let mut context = runtime.new_context().expect("create context");
+        runtime
+            .set_dynamic_import_bytecode_allowed(false)
+            .expect("dynamic import policy");
 
         let admitted = runtime.with_dynamic_import_bytecode_allowed(true, || {
             context.compile("import('./fixture.js');")
@@ -2439,7 +2479,7 @@ mod tests {
     fn ordinary_error_stack_supplies_runtime_location_without_invoking_accessors() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let diagnostic = execute_thrown(&runtime, &mut context, "throw new TypeError('boom');");
         assert_eq!(diagnostic.error_type, "TypeError");
         assert_eq!(diagnostic.message, "boom");
@@ -2460,7 +2500,7 @@ mod tests {
     fn native_syntax_error_own_data_exposes_message_and_location() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let error = context
             .compile_module_with_filename(
                 "import { eval } from './dependency.js';",
@@ -2478,7 +2518,7 @@ mod tests {
     fn test262_error_uses_its_side_effect_free_constructor_name() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let diagnostic = execute_thrown(
             &runtime,
             &mut context,
@@ -2501,7 +2541,7 @@ throw new Test262Error("sentinel");
     fn ordinary_thrown_object_does_not_claim_the_object_constructor_name() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let diagnostic = execute_thrown(&runtime, &mut context, "throw {};");
 
         assert_eq!(diagnostic.error_type, "ThrownObject");
@@ -2511,7 +2551,7 @@ throw new Test262Error("sentinel");
     fn diagnostic_constructor_fallback_does_not_run_getters_or_proxy_traps() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let getter = execute_thrown(
             &runtime,
             &mut context,
@@ -2535,7 +2575,7 @@ throw Object.create(getterPrototype);
 
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let proxy = execute_thrown(
             &runtime,
             &mut context,
@@ -3186,7 +3226,7 @@ if (capped.length !== 2 || capped.codePointAt(0) !== 0x10FFFF) {
 
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         context
             .compile(SOURCE)
             .expect("default compile rejected a valid ImportCall");
@@ -3194,7 +3234,7 @@ if (capped.length !== 2 || capped.codePointAt(0) !== 0x10FFFF) {
 
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let options = CompileOptions::new("dynamic-import.js");
         context
             .compile_with_options(SOURCE, &options)

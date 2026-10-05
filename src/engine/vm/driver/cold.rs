@@ -275,7 +275,7 @@ pub(super) fn dispatch(
             define_class(&mut context, name, has_heritage)?
         }
         VmAction::ClassInitializer(mode) => class_initializer(&mut context, mode)?,
-        VmAction::Construct(count) => construct(&mut context, count)?,
+        VmAction::Construct { arguments, .. } => construct(&mut context, arguments)?,
         VmAction::Apply(kind) => apply(&mut context, kind)?,
         VmAction::InitDerivedConstructor => init_derived_constructor(&mut context)?,
         VmAction::ConvertAdd => convert(&mut context, true, false)?,
@@ -311,7 +311,7 @@ pub(super) fn dispatch(
         }
         VmAction::Bridge => Disposition::Bridge,
         VmAction::Suspend(kind) => Disposition::Suspend(kind),
-        VmAction::Materialize | VmAction::Pure(_) | VmAction::StrictEquality(_) => {
+        VmAction::Materialize | VmAction::Pure(_) => {
             return Err(Error::internal("resident-only exit reached cold dispatch"));
         }
     })

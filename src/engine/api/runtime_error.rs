@@ -12,6 +12,9 @@ use std::fmt;
 /// Checked failures at the public runtime-domain boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeError {
+    /// A panic or failed owned cleanup quarantined this runtime. No further
+    /// heap operation may use its state.
+    Poisoned,
     /// Pending jobs cannot interrupt a synchronous execution turn.
     ExecutionActive,
     WrongRuntime(&'static str),
@@ -36,6 +39,9 @@ pub enum RuntimeError {
 impl fmt::Display for RuntimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Poisoned => {
+                formatter.write_str("runtime is poisoned after a panic or failed owned cleanup")
+            }
             Self::ExecutionActive => {
                 formatter.write_str("pending jobs cannot interrupt synchronous execution")
             }
@@ -59,6 +65,15 @@ impl fmt::Display for RuntimeError {
 }
 
 impl StdError for RuntimeError {}
+
+impl From<RuntimeError> for Error {
+    fn from(error: RuntimeError) -> Self {
+        match error {
+            RuntimeError::Engine(error) => error,
+            error => Error::internal(error.to_string()),
+        }
+    }
+}
 
 impl From<Error> for RuntimeError {
     fn from(error: Error) -> Self {
@@ -93,5 +108,17 @@ impl From<ShapeError> for RuntimeError {
 impl From<PropertyDefinitionError> for RuntimeError {
     fn from(error: PropertyDefinitionError) -> Self {
         Self::Property(error)
+    }
+}
+
+impl From<std::convert::Infallible> for RuntimeError {
+    fn from(never: std::convert::Infallible) -> Self {
+        match never {}
+    }
+}
+
+impl From<std::convert::Infallible> for Error {
+    fn from(never: std::convert::Infallible) -> Self {
+        match never {}
     }
 }

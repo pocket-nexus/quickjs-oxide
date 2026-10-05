@@ -43,8 +43,8 @@ impl OwnedPropertyDescriptor {
         runtime.validate_descriptor_domains(source)?;
         let mut result = Self::new(runtime);
         result.writable = source.writable;
-        result.get = source.get.clone();
-        result.set = source.set.clone();
+        result.get = source.get.try_map(|value| value.try_clone())?;
+        result.set = source.set.try_map(|value| value.try_clone())?;
         result.enumerable = source.enumerable;
         result.configurable = source.configurable;
         if let DescriptorField::Present(value) = &source.value {
@@ -68,15 +68,19 @@ impl OwnedPropertyDescriptor {
             configurable: self.configurable.as_ref().into_option().copied(),
         }
     }
-    pub(crate) fn attributes_public(&self) -> OrdinaryPropertyDescriptor {
-        OrdinaryPropertyDescriptor {
-            value: DescriptorField::Absent,
-            writable: self.writable,
-            get: self.get.clone(),
-            set: self.set.clone(),
-            enumerable: self.enumerable,
-            configurable: self.configurable,
-        }
+    pub(crate) fn attributes_public(
+        &self,
+    ) -> Result<OrdinaryPropertyDescriptor, crate::engine::api::RuntimeError> {
+        Ok({
+            OrdinaryPropertyDescriptor {
+                value: DescriptorField::Absent,
+                writable: self.writable,
+                get: self.get.try_map(|value| value.try_clone())?,
+                set: self.set.try_map(|value| value.try_clone())?,
+                enumerable: self.enumerable,
+                configurable: self.configurable,
+            }
+        })
     }
     pub(crate) fn is_mixed_descriptor(&self) -> bool {
         (self.value.is_present() || self.writable.is_present())
@@ -227,7 +231,13 @@ impl Runtime {
                 true,
             ))));
         };
-        TypedWriteStep::set(self, object.clone(), Some(index), self.dup_jsvalue(value)?).map(Some)
+        TypedWriteStep::set(
+            self,
+            object.try_clone()?,
+            Some(index),
+            self.dup_jsvalue(value)?,
+        )
+        .map(Some)
     }
 }
 

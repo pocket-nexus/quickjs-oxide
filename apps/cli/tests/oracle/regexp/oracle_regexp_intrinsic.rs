@@ -621,8 +621,8 @@ fn regexp_literal_allocation_and_intrinsic_bypass_match_pinned_quickjs() {
 fn regexp_literal_uses_the_bytecode_realm_and_is_fresh_on_every_execution() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = eval_object(
         &mut defining,
         "RegExp.prototype",
@@ -691,7 +691,7 @@ fn regexp_exec_reentrant_compile_matches_pinned_quickjs() {
     for &(description, source, expected) in EXEC_REENTRANT_COMPILE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let oxide = observe_rust_eval(&runtime, &mut context, source, description);
         let quickjs =
             observe_quickjs_completion_with_prelude(PRELUDE, &oracle, source, description);
@@ -719,7 +719,7 @@ fn regexp_test_and_abstract_exec_match_pinned_quickjs() {
 fn regexp_test_calls_callable_proxy_exec_without_an_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         observe_rust_eval(
             &runtime,
@@ -735,8 +735,8 @@ fn regexp_test_calls_callable_proxy_exec_without_an_oracle() {
 fn regexp_cross_realm_prototypes_results_fallback_and_errors_use_exact_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let defining_constructor = regexp_constructor(&runtime, &mut defining);
     let defining_regexp_prototype = eval_object(
@@ -768,13 +768,20 @@ fn regexp_cross_realm_prototypes_results_fallback_and_errors_use_exact_realms() 
     let flags = Value::String(JsString::try_from_utf8("g").unwrap());
     let foreign_regexp = expect_object(
         caller
-            .construct(&defining_constructor, &[pattern.clone(), flags])
+            .construct(
+                &defining_constructor,
+                &[pattern.try_clone().expect("duplicate root"), flags],
+            )
             .unwrap(),
         "foreign RegExp construction",
     );
     assert_eq!(
         runtime.get_prototype_of(&foreign_regexp).unwrap(),
-        Some(defining_regexp_prototype.clone()),
+        Some(
+            defining_regexp_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "RegExp construction did not use the constructor defining prototype",
     );
 
@@ -782,7 +789,9 @@ fn regexp_cross_realm_prototypes_results_fallback_and_errors_use_exact_realms() 
         .call(
             &defining_constructor,
             Value::Undefined,
-            &[Value::Object(foreign_regexp.clone())],
+            &[Value::Object(
+                foreign_regexp.try_clone().expect("duplicate root"),
+            )],
         )
         .unwrap();
     assert_eq!(

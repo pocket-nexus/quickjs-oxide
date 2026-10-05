@@ -628,7 +628,7 @@ fn array_assignment_parser_diagnostics_match_pinned_quickjs() {
 fn nested_object_assignments_run_without_an_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for source in [
         "(function(){var value;({value}={value:42});return value})()",
         "(function(){var value;[{value}]=[{value:42}];return value})()",
@@ -710,7 +710,7 @@ fn invalid_array_assignment_leaf_is_syntax_after_object_patterns() {
 fn array_assignment_smoke_runs_without_an_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         observe_rust_eval(
             &runtime,
@@ -730,7 +730,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),

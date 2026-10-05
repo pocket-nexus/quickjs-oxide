@@ -123,7 +123,7 @@ impl RegExpIteratorStep {
         }
         let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), regexp_id)?;
         Ok(Self::make_exec(
-            JsValue::Object(regexp.clone().into_handle()),
+            JsValue::Object(regexp.try_clone()?.into_handle()),
             runtime.into_jsvalue(Value::String(string.clone()))?,
             RegExpIteratorResume(Box::new(RegExpIteratorResumeState {
                 step_pending: RegExpIteratorStepPending::new(runtime),
@@ -232,7 +232,7 @@ impl RegExpIteratorResume {
                 }
                 self.0.phase = Phase::MatchString;
                 Ok(RegExpIteratorStep::make_read(
-                    self.0.matched.as_ref().unwrap().clone(),
+                    self.0.matched.as_ref().unwrap().try_clone()?,
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)?,
                     self,
@@ -269,7 +269,7 @@ impl RegExpIteratorResume {
                 let next = advance_string_index(&self.0.string, current, self.0.full_unicode);
                 self.0.phase = Phase::Set;
                 Ok(RegExpIteratorStep::make_set(
-                    self.0.regexp.clone(),
+                    self.0.regexp.try_clone()?,
                     runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
                     runtime.into_jsvalue(Value::number(next as f64))?,
@@ -303,7 +303,7 @@ impl RegExpIteratorResume {
         }
         self.0.phase = Phase::LastIndex;
         Ok(RegExpIteratorStep::make_read(
-            self.0.regexp.clone(),
+            self.0.regexp.try_clone()?,
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
             self,
         ))
@@ -366,13 +366,13 @@ pub(crate) fn finish(
                 let value = resume.take_set_value();
                 resume.set(
                     runtime,
-                    key.clone(),
+                    key.try_clone()?,
                     runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?,
                 )?
             }

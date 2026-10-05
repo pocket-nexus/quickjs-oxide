@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn object_to_primitive_string_drives_error_message_and_to_string_values() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let error = global_callable(&runtime, &mut context, "Error");
     let prototype_key = runtime.intern_property_key("prototype").unwrap();
     let message_key = runtime.intern_property_key("message").unwrap();
@@ -82,7 +82,11 @@ fn object_to_primitive_string_drives_error_message_and_to_string_values() {
         panic!("@@toPrimitive probe was not a function");
     };
     let exotic = context.new_object().unwrap();
-    let to_primitive = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
     assert!(
         runtime
             .define_own_property(
@@ -162,12 +166,16 @@ fn object_to_primitive_string_drives_error_message_and_to_string_values() {
 #[test]
 fn to_primitive_string_rejects_exotic_failures_and_skips_noncallable_ordinary_methods() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let error = global_callable(&runtime, &mut context, "Error");
     let message_key = runtime.intern_property_key("message").unwrap();
     let to_string_key = runtime.intern_property_key("toString").unwrap();
     let value_of_key = runtime.intern_property_key("valueOf").unwrap();
-    let to_primitive = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+    let to_primitive = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
+    );
 
     let noncallable = context.new_object().unwrap();
     assert!(

@@ -11,7 +11,7 @@ fn import_meta_is_cached_per_defining_module() {
         "#,
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -47,7 +47,7 @@ fn import_meta_is_cached_per_defining_module() {
 #[test]
 fn host_gets_the_canonical_import_meta_before_linking() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -92,7 +92,7 @@ fn host_gets_the_canonical_import_meta_before_linking() {
     let observed = runtime.intern_property_key("__hostMeta").unwrap();
     assert_eq!(
         context.get_property(&global, &observed).unwrap(),
-        Value::Object(first.clone())
+        Value::Object(first.try_clone().expect("duplicate root"))
     );
     assert_script_true(&mut context, "__hostMetaAnswer === 42");
 
@@ -103,15 +103,19 @@ fn host_gets_the_canonical_import_meta_before_linking() {
 fn module_record_owns_import_meta_through_gc_and_releases_cycles_with_its_cache() {
     let runtime = Runtime::new();
     let module = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         context.compile_module("export const answer = 42;").unwrap()
     };
-    let mut host_context = runtime.new_context();
+    let mut host_context = runtime.new_context().expect("create context");
     let meta = host_context.get_module_import_meta(&module).unwrap();
     let self_key = runtime.intern_property_key("self").unwrap();
     assert!(
         host_context
-            .set_property(&meta, &self_key, Value::Object(meta.clone()))
+            .set_property(
+                &meta,
+                &self_key,
+                Value::Object(meta.try_clone().expect("duplicate root"))
+            )
             .unwrap()
     );
     let meta_id = meta.object_id();
@@ -125,8 +129,14 @@ fn module_record_owns_import_meta_through_gc_and_releases_cycles_with_its_cache(
     drop(module);
     drop(host_context);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 0);
-    assert_eq!(runtime.heap_counts().object_nodes, 0);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        0
+    );
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        0
+    );
 }
 
 #[test]
@@ -152,13 +162,13 @@ fn loader_initializes_dependency_import_meta_before_source_completion() {
             ModuleImportMetaProperty::new(JsString::from_static("main"), Value::Bool(false)),
             ModuleImportMetaProperty::new(
                 JsString::from_static("marker"),
-                Value::Object(marker.clone()),
+                Value::Object(marker.try_clone().expect("duplicate root")),
             ),
         ],
     };
     let (loader, _, _) = JsonModuleLoader::new([("pkg/dependency.js", dependency)]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import { answer } from './dependency.js'; globalThis.__entryAnswer = answer;",
@@ -203,7 +213,7 @@ fn loader_initializes_dependency_import_meta_before_source_completion() {
 #[test]
 fn import_meta_host_values_must_belong_to_the_loading_runtime() {
     let runtime = Runtime::new();
-    let baseline_objects = runtime.heap_counts().object_nodes;
+    let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
     let local = runtime.new_object(None).unwrap();
     let foreign = Runtime::new().new_object(None).unwrap();
     let result = ModuleLoadResult::SourceTextWithImportMeta {
@@ -211,14 +221,14 @@ fn import_meta_host_values_must_belong_to_the_loading_runtime() {
         properties: vec![
             ModuleImportMetaProperty::new(
                 JsString::from_static("local"),
-                Value::Object(local.clone()),
+                Value::Object(local.try_clone().expect("duplicate root")),
             ),
             ModuleImportMetaProperty::new(JsString::from_static("foreign"), Value::Object(foreign)),
         ],
     };
     let (loader, _, _) = JsonModuleLoader::new([("pkg/dependency.js", result)]);
     let loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename("import './dependency.js';", "pkg/entry.js",),
@@ -239,24 +249,27 @@ fn import_meta_host_values_must_belong_to_the_loading_runtime() {
     drop(local);
     drop(context);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects
+    );
 }
 
 #[test]
 fn failed_deep_resolution_releases_published_dependency_import_meta() {
     let runtime = Runtime::new();
-    let baseline_objects = runtime.heap_counts().object_nodes;
+    let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
     let marker = runtime.new_object(None).unwrap();
     let dependency = ModuleLoadResult::SourceTextWithImportMeta {
         source: "import './missing.js'; export const answer = 42;".to_owned(),
         properties: vec![ModuleImportMetaProperty::new(
             JsString::from_static("marker"),
-            Value::Object(marker.clone()),
+            Value::Object(marker.try_clone().expect("duplicate root")),
         )],
     };
     let (loader, _, _) = JsonModuleLoader::new([("pkg/dependency.js", dependency)]);
     let loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename("import './dependency.js';", "pkg/entry.js"),
@@ -278,5 +291,8 @@ fn failed_deep_resolution_releases_published_dependency_import_meta() {
     drop(marker);
     drop(context);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects
+    );
 }

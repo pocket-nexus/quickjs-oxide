@@ -25,8 +25,8 @@ impl PromiseStep {
         ))?;
         let (resolve, reject) = runtime.create_promise_resolving_functions(realm, &promise)?;
         let arguments = vec![
-            JsValue::Object(resolve.as_object().clone().into_handle()),
-            JsValue::Object(reject.as_object().clone().into_handle()),
+            JsValue::Object(resolve.as_object().try_clone()?.into_handle()),
+            JsValue::Object(reject.as_object().try_clone()?.into_handle()),
         ];
         Ok({
             let __pending_field_callable = then;

@@ -503,8 +503,8 @@ fn string_create_html_recursion_is_catchable_shared_and_recovers() {
 fn string_create_html_defining_realms_user_throw_identity_and_caller_construct_error_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
     let anchor = property_callable(&runtime, &mut defining, &defining_prototype, "anchor");
     let big = property_callable(&runtime, &mut defining, &defining_prototype, "big");
@@ -549,7 +549,7 @@ fn string_create_html_defining_realms_user_throw_identity_and_caller_construct_e
         &runtime,
         &caller.global_object().unwrap(),
         "htmlSentinel",
-        Value::Object(sentinel.clone()),
+        Value::Object(sentinel.try_clone().expect("duplicate root")),
     );
     let throwing_attribute = caller
         .eval(
@@ -589,8 +589,8 @@ fn string_create_html_callables_are_per_realm_distinct_and_collectable() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let retained = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_prototype = first.string_prototype().unwrap();
         let second_prototype = second.string_prototype().unwrap();
         let names = [
@@ -631,18 +631,21 @@ fn string_create_html_callables_are_per_realm_distinct_and_collectable() {
         first_functions
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(retained);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]
 fn string_create_html_stack_overflow_uses_the_caller_realm_and_recovers() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
     let bold = property_callable(&runtime, &mut defining, &defining_prototype, "bold");
     let defining_internal_error = intrinsic_prototype(&runtime, &mut defining, "InternalError");
@@ -653,7 +656,7 @@ fn string_create_html_stack_overflow_uses_the_caller_realm_and_recovers() {
         &runtime,
         &caller.global_object().unwrap(),
         "foreignBold",
-        Value::Object(bold.as_object().clone()),
+        Value::Object(bold.as_object().try_clone().expect("duplicate root")),
     );
     let Value::Object(error) = caller
         .eval(

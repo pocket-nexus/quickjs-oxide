@@ -492,8 +492,8 @@ fn array_mutator_prototype_order_metadata_and_constructability_match_pinned_quic
 fn array_mutator_boxing_native_errors_and_user_throws_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_number_prototype = eval_object(
         &mut defining,
@@ -552,7 +552,7 @@ fn array_mutator_boxing_native_errors_and_user_throws_use_pinned_realms() {
     let native_error = take_exception_object(&mut caller, "Array.push MAX_SAFE TypeError");
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "Array.push native TypeError did not use the method defining realm",
     );
 
@@ -592,7 +592,7 @@ fn array_mutator_boxing_native_errors_and_user_throws_use_pinned_realms() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

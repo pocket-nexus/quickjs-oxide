@@ -44,7 +44,7 @@ impl TypedIteratorMethodStep {
             )));
         }
         Ok(Self::Read {
-            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
+            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
             resume: TypedIteratorMethodResume(Box::new(TypedIteratorMethodResumeState {
                 runtime: runtime.clone(),
                 realm,
@@ -175,7 +175,7 @@ impl TypedCollectStep {
         element: TypedArrayElementKind,
     ) -> Result<Self, RuntimeError> {
         Ok(Self::Call {
-            callable: method.clone(),
+            callable: method.try_clone()?,
             resume: TypedCollectResume(Box::new(TypedCollectResumeState {
                 runtime: runtime.clone(),
                 receiver: Some(source),
@@ -215,7 +215,7 @@ impl TypedCollectResume {
                 .ok_or(RuntimeError::Invariant(
                     "TypedArray collection lost iterator",
                 ))?
-                .clone()
+                .try_clone()?
                 .into_handle(),
         ));
         Ok(TypedCollectStep::Call {
@@ -226,7 +226,7 @@ impl TypedCollectResume {
                 .ok_or(RuntimeError::Invariant(
                     "TypedArray iterator lost cached next",
                 ))?
-                .clone(),
+                .try_clone()?,
             resume: self,
         })
     }
@@ -248,7 +248,7 @@ impl TypedCollectResume {
                     return self.fail(runtime, "not an object");
                 };
                 let iterator = ObjectRef::from_owned_handle(runtime.clone(), id);
-                self.0.iterator = Some(iterator.clone());
+                self.0.iterator = Some(iterator.try_clone()?);
                 self.0.phase = Phase::NextMethod;
                 Ok(TypedCollectStep::Read {
                     object: iterator,
@@ -282,7 +282,7 @@ impl TypedCollectResume {
                     return self.fail(runtime, "iterator must return an object");
                 };
                 let iteration = ObjectRef::from_owned_handle(runtime.clone(), id);
-                self.0.iteration = Some(iteration.clone());
+                self.0.iteration = Some(iteration.try_clone()?);
                 self.0.phase = Phase::Done;
                 Ok(TypedCollectStep::Read {
                     object: iteration,
@@ -291,7 +291,7 @@ impl TypedCollectResume {
                         .done_key
                         .as_ref()
                         .ok_or(RuntimeError::Invariant("TypedArray iterator lost done key"))?
-                        .clone(),
+                        .try_clone()?,
                     resume: self,
                 })
             }
@@ -316,7 +316,7 @@ impl TypedCollectResume {
                         .iteration
                         .as_ref()
                         .ok_or(RuntimeError::Invariant("TypedArray iterator lost result"))?
-                        .clone(),
+                        .try_clone()?,
                     key: self
                         .0
                         .value_key
@@ -324,7 +324,7 @@ impl TypedCollectResume {
                         .ok_or(RuntimeError::Invariant(
                             "TypedArray iterator lost value key",
                         ))?
-                        .clone(),
+                        .try_clone()?,
                     resume: self,
                 })
             }
