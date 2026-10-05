@@ -24,7 +24,6 @@ struct PrimitiveResumeState {
     hint: ToPrimitiveHint,
     phase: Phase,
     read: Option<StateReadEffect>,
-    atom: Option<Atom>,
     callable: Option<ObjectId>,
     receiver: Option<JsValue>,
     arguments: Vec<JsValue>,
@@ -90,9 +89,6 @@ impl PrimitiveResumeState {
         let poisoned = &runtime.0.poisoned;
         if let Some(effect) = self.read.take() {
             effect.release_in_state(state, runtime)?;
-        }
-        if let Some(atom) = self.atom.take() {
-            state.atoms.release(atom)?;
         }
         if let Some(callee) = self.callable.take() {
             state.release_owned_jsvalue(poisoned, JsValue::Object(callee))?;
@@ -198,13 +194,10 @@ impl MachineGuard<'_> {
             }
             crate::engine::object::ProxyGetStep::Effect(effect) => effect,
         };
-        let needs_key = matches!(effect, StateReadEffect::Proxy { .. });
+        // The canonical boundary resolver owns Get's key in its real effect.
+        // Getter/shared selections consume no key after the synchronous prefix.
         let machine = self.machine.as_mut().expect("primitive owner");
         machine.read = Some(effect);
-        if needs_key {
-            self.state.atoms.retain(atom)?;
-            machine.atom = Some(atom);
-        }
         Ok(self.publish(false))
     }
     fn reply(&mut self, completion: Completion) -> Result<PrimitiveStep, RuntimeError> {
@@ -305,10 +298,7 @@ impl PrimitiveResume {
         self.0.realm
     }
     pub(crate) fn take_state_read(&mut self) -> (StateReadEffect, Option<Atom>) {
-        (
-            self.0.read.take().expect("primitive selected read"),
-            self.0.atom.take(),
-        )
+        (self.0.read.take().expect("primitive selected read"), None)
     }
     pub(crate) fn take_callable(&mut self, runtime: &Runtime) -> CallableRef {
         CallableRef::from_validated_object(ObjectRef::from_owned_handle(
@@ -362,7 +352,6 @@ impl PrimitiveResume {
                 hint,
                 phase: Phase::ExoticMethod,
                 read: None,
-                atom: None,
                 callable: None,
                 receiver: None,
                 arguments: Vec::new(),
@@ -389,7 +378,6 @@ impl PrimitiveResume {
                 hint,
                 phase: Phase::OrdinaryMethod(false),
                 read: None,
-                atom: None,
                 callable: None,
                 receiver: None,
                 arguments: Vec::new(),

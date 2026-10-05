@@ -12,8 +12,8 @@ use crate::engine::vm::frame::{FrameId, ReturnTarget};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
 
 mod owners;
-use owners::TaskScope;
 pub(in crate::engine::vm) use owners::{ConversionSlotScope, ConversionWaitScope};
+use owners::{KeyInputScope, TaskScope};
 
 enum Finish {
     Predicate(Option<Box<super::predicate_driver::Input>>),
@@ -453,26 +453,54 @@ impl ConversionTask {
         keep_receiver: bool,
         keep_key: bool,
         fallthrough: super::execute::FallthroughPc,
-    ) -> Result<Self, Error> {
+    ) -> Result<Progress, Error> {
         let parent = execution.frames.current_mut(frame)?;
         execution.slots.peek(&parent.window, 1)?;
         execution.slots.peek(&parent.window, 0)?;
         let key = execution.slots.pop(&mut parent.window)?;
         let base = execution.slots.pop(&mut parent.window)?;
-        Self::start_owned_input(
-            runtime,
-            Finish::PropertyRead {
-                base,
-                keep_receiver,
-                keep_key,
-                fallthrough,
-            },
-            frame,
-            identity,
-            parent.executable.realm,
-            key,
-            ToPrimitiveHint::String,
-        )
+        let mut inputs = KeyInputScope::new(runtime, base, None);
+        let realm = parent.executable.realm;
+        let step = PrimitiveResume::start(runtime, realm, key, ToPrimitiveHint::String)
+            .map_err(runtime_error_to_vm_error)?;
+        match step {
+            PrimitiveStep::Complete(completion) => {
+                let mut state = runtime.0.state.borrow_mut();
+                let (is_throw, value) = match completion {
+                    Completion::Throw(value) => (true, value),
+                    Completion::Return(value) => (false, value),
+                };
+                let mut value = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+                    &mut state,
+                    &runtime.0.poisoned,
+                    value,
+                );
+                let (state, value) = value.parts();
+                inputs
+                    .release_in_state(state)
+                    .map_err(runtime_error_to_vm_error)?;
+                if !is_throw {
+                    return Err(Error::internal(
+                        "object property key completed without a callback",
+                    ));
+                }
+                Ok(Progress::Complete(Completion::Throw(value.take().unwrap())))
+            }
+            step @ (PrimitiveStep::Get { .. } | PrimitiveStep::Call { .. }) => {
+                Ok(Progress::Ready(Self::new(
+                    runtime,
+                    Finish::PropertyRead {
+                        base: inputs.take_base(),
+                        keep_receiver,
+                        keep_key,
+                        fallthrough,
+                    },
+                    frame,
+                    identity,
+                    step,
+                )))
+            }
+        }
     }
 
     pub(super) fn reply(
