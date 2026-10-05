@@ -8,49 +8,11 @@ use super::{
 impl TryFrom<ProxyGetStep> for Step {
     type Error = crate::engine::api::RuntimeError;
     fn try_from(step: ProxyGetStep) -> Result<Self, Self::Error> {
-        Ok({
-            match step {
-                ProxyGetStep::Complete(result) => Self::Complete(Some(result)),
-                ProxyGetStep::StateRead { mut resume } => {
-                    let (effect, atom) = resume.take_state_read();
-                    Self::StateRead {
-                        effect: Some(effect),
-                        atom: Some(atom),
-                        resume: Some(Resume::Get(resume)),
-                    }
-                }
-                ProxyGetStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    Self::Read {
-                        object: Some(object),
-                        key: Some(key),
-                        receiver: Some(receiver),
-                        resume: Some(Resume::Get(resume)),
-                    }
-                }
-                ProxyGetStep::Call { mut resume } => {
-                    let target = resume.take_call_target();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(target),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::Get(resume)),
-                    }
-                }
-                ProxyGetStep::Descriptor { mut resume } => {
-                    let object = resume.take_descriptor_object();
-                    let key = resume.take_descriptor_key();
-                    Self::Descriptor {
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::Get(resume)),
-                    }
-                }
-            }
+        Ok(match step {
+            ProxyGetStep::Complete(result) => Self::Complete(Some(result)),
+            ProxyGetStep::Effect(effect) => Self::StateRead {
+                effect: Some(effect), atom: None, resume: Some(Resume::Identity),
+            },
         })
     }
 }
