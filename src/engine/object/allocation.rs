@@ -778,16 +778,7 @@ impl Runtime {
         &self,
         object: crate::engine::heap::ObjectId,
     ) -> Result<bool, RuntimeError> {
-        Ok(matches!(
-            self.0.state.borrow().heap.object(object)?.payload,
-            crate::engine::heap::ObjectPayload::NativeFunction { .. }
-                | crate::engine::heap::ObjectPayload::BoundFunction { .. }
-                | crate::engine::heap::ObjectPayload::BytecodeFunction { .. }
-                | crate::engine::heap::ObjectPayload::Proxy(crate::engine::heap::ProxyData {
-                    is_callable: true,
-                    ..
-                })
-        ))
+        self.0.state.borrow().object_id_has_call_capability(object)
     }
 
     /// The inner error returns the unchanged non-callable owner so callers can
@@ -1343,5 +1334,24 @@ impl RuntimeState {
             unreachable!("native function factory allocated an object")
         };
         Ok(object)
+    }
+}
+
+impl RuntimeState {
+    /// Callability is a payload fact, including a revoked Proxy's cached bit.
+    pub(crate) fn object_id_has_call_capability(
+        &self,
+        object: ObjectId,
+    ) -> Result<bool, RuntimeError> {
+        Ok(matches!(
+            self.heap.object(object)?.payload,
+            ObjectPayload::NativeFunction { .. }
+                | ObjectPayload::BoundFunction { .. }
+                | ObjectPayload::BytecodeFunction { .. }
+                | ObjectPayload::Proxy(crate::engine::heap::ProxyData {
+                    is_callable: true,
+                    ..
+                })
+        ))
     }
 }

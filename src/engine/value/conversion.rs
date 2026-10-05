@@ -236,19 +236,20 @@ impl Runtime {
         loop {
             step = match step {
                 number::NumberStep::Complete(result) => return Ok(result),
-                number::NumberStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?
+                number::NumberStep::Read { resume } => {
+                    let mut resume = number::NumberScope::new(self, resume);
+                    let (effect, atom) = resume.take_state_read();
+                    let completion = self.finish_primitive_read(realm, effect, atom)?;
+                    resume.take().resume(self, completion)?
                 }
-                number::NumberStep::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
+                number::NumberStep::Call { resume } => {
+                    let mut resume = number::NumberScope::new(self, resume);
+                    let callable = resume.take_call_callable(self);
                     let receiver = resume.take_call_receiver();
                     let arguments = resume.take_call_arguments();
-                    resume.resume(
-                        self,
-                        self.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
-                    )?
+                    let completion =
+                        self.call_internal_jsvalue(realm, &callable, receiver, arguments)?;
+                    resume.take().resume(self, completion)?
                 }
             };
         }

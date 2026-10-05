@@ -1421,6 +1421,9 @@ impl Resume {
             | Self::OwnFlagReply { resume, .. }
             | Self::PrototypeGetReply(resume)
             | Self::PrototypeSetReply(resume) => resume.release_owned(runtime),
+            Self::Primitive(resume) => resume.release_owned(runtime),
+            Self::Number(resume) => resume.release_owned(runtime),
+            Self::Element(resume) => resume.release_owned(runtime),
             Self::DefineTyped { payload } => payload.resume.release_owned(runtime),
             Self::DefineLength { payload } => payload.resume.release_owned(runtime),
             _ => {}
@@ -2032,7 +2035,9 @@ impl Resume {
             Self::Keys(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::PropertyKey(resume) => resume.key(runtime, completion).and_then(Step::try_from),
             Self::Property(resume) => resume.read(runtime, completion).and_then(Step::try_from),
-            Self::Primitive(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Primitive(resume) => resume
+                .resume(runtime, completion)
+                .and_then(|next| Step::from_primitive(runtime, next)),
             Self::BuiltinPrototype(_) => {
                 let (Completion::Return(value) | Completion::Throw(value)) = completion;
                 let _ = runtime.release_jsvalue(value);
@@ -2091,8 +2096,12 @@ impl Resume {
                 ))
             }
             Self::ReadOwner(_owner) => Ok(Step::Complete(Some(completion))),
-            Self::Element(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
-            Self::Number(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Element(resume) => resume
+                .resume(runtime, completion)
+                .and_then(|next| Step::from_element(runtime, next)),
+            Self::Number(resume) => resume
+                .resume(runtime, completion)
+                .and_then(|next| Step::from_number(runtime, next)),
             abandoned @ (Self::IteratorConstructor(_)
             | Self::IteratorTag(_)
             | Self::ArrayConstructorSet { .. }

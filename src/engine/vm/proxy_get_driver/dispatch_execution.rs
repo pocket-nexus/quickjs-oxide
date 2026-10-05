@@ -126,11 +126,14 @@ pub(super) fn finish(
                         .map(Next::Done);
                     }
                     Finish::Conversion(wait) => {
+                        let mut wait = super::super::conversion_driver::ConversionWaitScope::new(
+                            runtime, wait,
+                        );
                         let frame = owner.frame()?;
                         return super::super::conversion_driver::ConversionTask::from_wait(
                             runtime,
                             frame,
-                            wait,
+                            wait.take(),
                             completion.take().expect("selected Step field"),
                         )
                         .map(Progress::Conversion)

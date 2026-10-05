@@ -81,6 +81,43 @@ impl Drop for QueryScope<'_> {
     }
 }
 
+/// Selected real effects have no contextless destructor. This borrowed guard
+/// covers failures before Query acquisition without introducing a Runtime owner.
+pub(super) struct StepScope<'a> {
+    runtime: &'a Runtime,
+    step: Option<super::Step>,
+}
+impl<'a> StepScope<'a> {
+    pub(super) fn new(runtime: &'a Runtime, step: super::Step) -> Self {
+        Self {
+            runtime,
+            step: Some(step),
+        }
+    }
+    pub(super) fn take(&mut self) -> super::Step {
+        self.step.take().expect("selected step owner")
+    }
+}
+impl std::ops::Deref for StepScope<'_> {
+    type Target = super::Step;
+    fn deref(&self) -> &Self::Target {
+        self.step.as_ref().expect("selected step owner")
+    }
+}
+impl std::ops::DerefMut for StepScope<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.step.as_mut().expect("selected step owner")
+    }
+}
+impl Drop for StepScope<'_> {
+    fn drop(&mut self) {
+        if let Some(step) = self.step.as_mut() {
+            let _unwind = self.runtime.unwind_guard();
+            step.release_owned(self.runtime);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

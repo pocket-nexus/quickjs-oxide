@@ -250,7 +250,9 @@ impl Query {
                 resume.release_owned(runtime);
             }
         }
-        self.finish = None;
+        if let Some(Finish::Conversion(wait)) = self.finish.take() {
+            wait.release_owned(runtime);
+        }
     }
 }
 
@@ -393,7 +395,10 @@ pub(super) fn start(
         })();
         match finish_error(runtime, realm, result)? {
             Progress::Call(step) => Ok(step),
-            Progress::Conversion(_) => Err(Error::internal("property read returned a conversion")),
+            Progress::Conversion(task) => {
+                task.release_owned(runtime);
+                Err(Error::internal("property read returned a conversion"))
+            }
         }
     })();
     if let Some(receiver) = receiver {
@@ -446,7 +451,10 @@ pub(super) fn start_owned_read(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("super read returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("super read returned a conversion"))
+        }
     }
 }
 
@@ -544,7 +552,10 @@ pub(super) fn start_boolean(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("boolean query returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("boolean query returned a conversion"))
+        }
     }
 }
 
@@ -585,13 +596,15 @@ pub(super) fn start_prototype(
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("prototype query returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("prototype query returned a conversion"))
+        }
     }
 }
 
 /// The lookup and its receiver selection are already complete. Only the
 /// selected callback/service is scheduled; no property lookup is replayed.
-#[allow(dead_code)] // Used by the parallel conversion consumer batch.
 pub(super) fn start_conversion_state_read(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -600,6 +613,7 @@ pub(super) fn start_conversion_state_read(
     atom: crate::engine::atom::Atom,
     wait: super::conversion_driver::ConversionWait,
 ) -> Result<Progress, Error> {
+    let mut wait = super::conversion_driver::ConversionWaitScope::new(runtime, wait);
     let mut step = Step::StateRead {
         effect: Some(effect),
         atom: Some(atom),
@@ -628,41 +642,8 @@ pub(super) fn start_conversion_state_read(
         identity,
         Vec::new(),
         step,
-        Finish::Conversion(wait),
+        Finish::Conversion(wait.take()),
     );
-    finish_error(runtime, realm, result)
-}
-
-pub(super) fn start_conversion(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    frame: FrameId,
-    object: ObjectRef,
-    key: PropertyKey,
-    wait: super::conversion_driver::ConversionWait,
-) -> Result<Progress, Error> {
-    let parent = execution.frames.current_mut(frame)?;
-    let identity = parent
-        .property_generation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.property_generation = identity;
-    let realm = parent.executable.realm;
-    let result = (|| {
-        let arguments = execution.slots.take_argument_buffer(3)?;
-        let receiver = JsValue::Object(object.try_clone()?.into_handle());
-        let step = ProxyGetStep::start_buffered(runtime, realm, object, key, receiver, arguments)
-            .map_err(runtime_error_to_vm_error)?;
-        advance(
-            runtime,
-            execution,
-            frame,
-            identity,
-            Vec::new(),
-            Step::try_from(step)?,
-            Finish::Conversion(wait),
-        )
-    })();
     finish_error(runtime, realm, result)
 }
 
@@ -687,7 +668,10 @@ pub(super) fn start_call(
         Finish::Call { depth, tail },
     )? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("Proxy call returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("Proxy call returned a conversion"))
+        }
     }
 }
 
@@ -712,7 +696,10 @@ pub(super) fn start_callback_call(
         Finish::Call { depth, tail },
     )? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("native call returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("native call returned a conversion"))
+        }
     }
 }
 
@@ -1011,7 +998,10 @@ fn drive_native_call<'a>(
     match drive(runtime, execution, owner, identity, query, result)? {
         Progress::Call(step) => Ok(step),
         // Internal invariant errors pass unchanged through throw_error.
-        Progress::Conversion(_) => Err(Error::internal("native call returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("native call returned a conversion"))
+        }
     }
 }
 
@@ -1039,7 +1029,10 @@ pub(super) fn start_apply(
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("Apply returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("Apply returned a conversion"))
+        }
     }
 }
 
@@ -1101,7 +1094,10 @@ pub(super) fn start_construct(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("Construct returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("Construct returned a conversion"))
+        }
     }
 }
 
@@ -1174,7 +1170,10 @@ fn start_local_array_construct(
             );
             match finish_error(runtime, realm, result)? {
                 Progress::Call(step) => Ok(step),
-                Progress::Conversion(_) => Err(Error::internal("Construct returned a conversion")),
+                Progress::Conversion(task) => {
+                    task.release_owned(runtime);
+                    Err(Error::internal("Construct returned a conversion"))
+                }
             }
         }
         result => {
@@ -1265,6 +1264,24 @@ fn start_owned_callback(
     arguments: Vec<JsValue>,
     finish: Finish,
 ) -> Result<Progress, Error> {
+    let (mut conversion, finish) = match finish {
+        Finish::Conversion(wait) => (
+            Some(super::conversion_driver::ConversionWaitScope::new(
+                runtime, wait,
+            )),
+            None,
+        ),
+        other => (None, Some(other)),
+    };
+    let mut step = query_owner::StepScope::new(
+        runtime,
+        Step::Call {
+            target: Some(DirectCallTarget::Callable(callable)),
+            receiver: Some(receiver),
+            arguments: Some(arguments),
+            resume: Some(Resume::Identity),
+        },
+    );
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
         .property_generation
@@ -1278,13 +1295,10 @@ fn start_owned_callback(
         frame,
         identity,
         Vec::new(),
-        Step::Call {
-            target: Some(DirectCallTarget::Callable(callable)),
-            receiver: Some(receiver),
-            arguments: Some(arguments),
-            resume: Some(Resume::Identity),
-        },
-        finish,
+        step.take(),
+        finish.unwrap_or_else(|| {
+            Finish::Conversion(conversion.as_mut().expect("conversion finish owner").take())
+        }),
     );
     finish_error(runtime, realm, result)
 }
@@ -1318,6 +1332,15 @@ fn start_proxy_call(
     arguments: Vec<JsValue>,
     finish: Finish,
 ) -> Result<Progress, Error> {
+    let (mut conversion, finish) = match finish {
+        Finish::Conversion(wait) => (
+            Some(super::conversion_driver::ConversionWaitScope::new(
+                runtime, wait,
+            )),
+            None,
+        ),
+        other => (None, Some(other)),
+    };
     let parent = execution.frames.current_mut(frame)?;
     let identity = parent
         .property_generation
@@ -1336,7 +1359,9 @@ fn start_proxy_call(
             identity,
             Vec::new(),
             Step::try_from(step)?,
-            finish,
+            finish.unwrap_or_else(|| {
+                Finish::Conversion(conversion.as_mut().expect("conversion finish owner").take())
+            }),
         )
     })();
     finish_error(runtime, realm, result)
@@ -1578,23 +1603,30 @@ fn schedule_write(
     parent.property_generation = identity;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("set_wait_handoff");
-    write_call_progress(advance(
+    write_call_progress(
         runtime,
-        execution,
-        frame,
-        identity,
-        Vec::new(),
-        step,
-        Finish::Write { key, strict, depth },
-    )?)
+        advance(
+            runtime,
+            execution,
+            frame,
+            identity,
+            Vec::new(),
+            step,
+            Finish::Write { key, strict, depth },
+        )?,
+    )
 }
 
 fn write_call_progress(
+    runtime: &Runtime,
     progress: Progress,
 ) -> Result<super::property_driver::PropertyProgress, Error> {
     match progress {
         Progress::Call(step) => Ok(super::property_driver::PropertyProgress::Deferred(step)),
-        Progress::Conversion(_) => Err(Error::internal("Set returned a conversion operation")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("Set returned a conversion operation"))
+        }
     }
 }
 
@@ -1829,7 +1861,20 @@ fn advance(
     step: Step,
     finish: Finish,
 ) -> Result<Progress, Error> {
-    let realm = execution.frames.current_mut(frame)?.executable.realm;
+    let realm = match execution.frames.current_mut(frame) {
+        Ok(frame) => frame.executable.realm,
+        Err(error) => {
+            let mut step = step;
+            step.release_owned(runtime);
+            for parent in parents {
+                parent.release_owned(runtime);
+            }
+            if let Finish::Conversion(wait) = finish {
+                wait.release_owned(runtime);
+            }
+            return Err(error);
+        }
+    };
     let query = execution
         .query_storage
         .acquire(runtime, realm, parents, finish);
@@ -2951,7 +2996,8 @@ pub(super) fn start_iterator_next(
         let result = start_array_next_direct(runtime, execution, pending, step);
         return match finish_error(runtime, realm, result)? {
             Progress::Call(step) => Ok(step),
-            Progress::Conversion(_) => {
+            Progress::Conversion(task) => {
+                task.release_owned(runtime);
                 Err(Error::internal("iterator returned unrelated conversion"))
             }
         };
@@ -3057,7 +3103,10 @@ pub(super) fn start_array_next_without_pending(
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("Array-next returned unrelated conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("Array-next returned unrelated conversion"))
+        }
     }
 }
 
@@ -3237,7 +3286,10 @@ fn start_iterator_query(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("iterator returned unrelated conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("iterator returned unrelated conversion"))
+        }
     }
 }
 pub(super) fn start_instance(
@@ -3277,7 +3329,10 @@ pub(super) fn start_instance(
     })();
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("instanceof returned conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("instanceof returned conversion"))
+        }
     }
 }
 
@@ -3383,7 +3438,10 @@ pub(super) fn start_object_copy(
     }
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("object copy returned conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("object copy returned conversion"))
+        }
     }
 }
 
@@ -3407,7 +3465,10 @@ pub(super) fn start_vm_call(
         Finish::VmCall(value_use),
     )? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("VM callback returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("VM callback returned a conversion"))
+        }
     }
 }
 
@@ -3441,7 +3502,10 @@ pub(super) fn start_environment(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("environment returned a conversion")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("environment returned a conversion"))
+        }
     }
 }
 
@@ -3563,9 +3627,12 @@ pub(super) fn start_numeric(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(NumericProgress::Deferred(step)),
-        Progress::Conversion(_) => Err(Error::internal(
-            "numeric operation returned conversion task",
-        )),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal(
+                "numeric operation returned conversion task",
+            ))
+        }
     }
 }
 
@@ -3675,7 +3742,10 @@ pub(super) fn start_public_field(
     });
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("public field returned a conversion task")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("public field returned a conversion task"))
+        }
     }
 }
 
@@ -3710,7 +3780,10 @@ fn start_public_field_pending(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("instruction returned a conversion task")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("instruction returned a conversion task"))
+        }
     }
 }
 
@@ -3742,7 +3815,10 @@ fn start_instruction_query(
     );
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("instruction returned a conversion task")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("instruction returned a conversion task"))
+        }
     }
 }
 
@@ -3808,7 +3884,10 @@ fn start_for_in_pending(
         Finish::ForIn(depth),
     )? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal("instruction returned a conversion task")),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal("instruction returned a conversion task"))
+        }
     }
 }
 
@@ -3886,9 +3965,12 @@ pub(super) fn start_import(
     .and_then(|step| start_instruction(runtime, execution, frame, Step::try_from(step)?, 2));
     match finish_error(runtime, realm, result)? {
         Progress::Call(step) => Ok(step),
-        Progress::Conversion(_) => Err(Error::internal(
-            "dynamic import returned an untyped conversion",
-        )),
+        Progress::Conversion(task) => {
+            task.release_owned(runtime);
+            Err(Error::internal(
+                "dynamic import returned an untyped conversion",
+            ))
+        }
     }
 }
 

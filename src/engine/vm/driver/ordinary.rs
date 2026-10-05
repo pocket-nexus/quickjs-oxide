@@ -535,7 +535,8 @@ pub(super) fn finish(
             crate::engine::vm::proxy_get_driver::Progress::Call(step) => {
                 Ok(ReturnProgress::Property(step))
             }
-            crate::engine::vm::proxy_get_driver::Progress::Conversion(_) => {
+            crate::engine::vm::proxy_get_driver::Progress::Conversion(task) => {
+                task.release_owned(runtime);
                 Err(Error::internal("property read returned conversion"))
             }
         };

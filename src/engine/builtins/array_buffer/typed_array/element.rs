@@ -1,13 +1,13 @@
 //! Element conversion owns ToPrimitive; no buffer credential crosses a callback.
 use super::{typed_array_encode_bigint, typed_array_encode_number};
-use crate::engine::object::CallableRef;
+use crate::engine::atom::Atom;
+use crate::engine::object::{CallableRef, StateReadEffect};
 use crate::engine::value::conversion::primitive::{PrimitiveResume, PrimitiveStep};
 use crate::engine::vm::ToPrimitiveHint;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::TypedArrayElementKind,
     heap::ContextId,
-    object::{ObjectRef, PropertyKey},
     value::{JsValue, conversion::NativeConversion},
     vm::Completion,
 };
@@ -18,20 +18,8 @@ pub(crate) enum ElementStep {
     Call { resume: ElementResume },
 }
 pub(crate) struct ElementResume(Box<ElementResumeState>);
-impl std::ops::Deref for ElementResume {
-    type Target = ElementResumeState;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl std::ops::DerefMut for ElementResume {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-const _: () = assert!(std::mem::size_of::<ElementResume>() <= 8);
-pub(crate) struct ElementResumeState {
-    pending_effect: ElementStepPending,
+const _: () = assert!(size_of::<ElementResume>() <= 8);
+struct ElementResumeState {
     realm: ContextId,
     element: TypedArrayElementKind,
     primitive: PrimitiveResume,
@@ -58,22 +46,20 @@ impl ElementStep {
         loop {
             self = match self {
                 Self::Complete(result) => return Ok(result),
-                Self::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    resume.resume(
-                        runtime,
-                        runtime.get_property_in_realm(realm, &object, &key)?,
-                    )?
+                Self::Read { resume } => {
+                    let mut resume = ElementScope::new(runtime, resume);
+                    let (effect, atom) = resume.take_state_read();
+                    let completion = runtime.finish_primitive_read(realm, effect, atom)?;
+                    resume.take().resume(runtime, completion)?
                 }
-                Self::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
+                Self::Call { resume } => {
+                    let mut resume = ElementScope::new(runtime, resume);
+                    let callable = resume.take_call_callable(runtime);
                     let receiver = resume.take_call_receiver();
                     let arguments = resume.take_call_arguments();
-                    resume.resume(
-                        runtime,
-                        runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
-                    )?
+                    let completion =
+                        runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?;
+                    resume.take().resume(runtime, completion)?
                 }
             };
         }
@@ -120,35 +106,20 @@ fn from_primitive(
             let bytes = encode_primitive(runtime, realm, element, value)?;
             ElementStep::Complete(bytes)
         }
-        PrimitiveStep::Get { mut resume } => {
-            let (object, key) = resume.take_get();
-            ElementStep::request_read(
-                object,
-                key,
-                ElementResume(Box::new(ElementResumeState {
-                    pending_effect: ElementStepPending::default(),
-                    realm,
-                    element,
-                    primitive: resume,
-                })),
-            )
-        }
-        PrimitiveStep::Call { mut resume } => {
-            let callable = resume.take_callable();
-            let receiver = resume.take_receiver();
-            let arguments = resume.take_arguments();
-            ElementStep::request_call(
-                callable,
-                receiver,
-                arguments,
-                ElementResume(Box::new(ElementResumeState {
-                    pending_effect: ElementStepPending::default(),
-                    realm,
-                    element,
-                    primitive: resume,
-                })),
-            )
-        }
+        PrimitiveStep::Get { resume } => ElementStep::Read {
+            resume: ElementResume(Box::new(ElementResumeState {
+                realm,
+                element,
+                primitive: resume,
+            })),
+        },
+        PrimitiveStep::Call { resume } => ElementStep::Call {
+            resume: ElementResume(Box::new(ElementResumeState {
+                realm,
+                element,
+                primitive: resume,
+            })),
+        },
     })
 }
 impl ElementResume {
@@ -164,76 +135,53 @@ impl ElementResume {
             self.0.primitive.resume(runtime, completion)?,
         )
     }
-}
-
-#[derive(Default)]
-struct ElementStepPending {
-    read_object: Option<ObjectRef>,
-    read_key: Option<PropertyKey>,
-    call_callable: Option<CallableRef>,
-    call_receiver: Option<JsValue>,
-    call_arguments: Option<Vec<JsValue>>,
-}
-impl ElementStep {
-    pub(crate) fn request_read(
-        object: ObjectRef,
-        key: PropertyKey,
-        mut resume: ElementResume,
-    ) -> Self {
-        resume.0.pending_effect.read_object = Some(object);
-        resume.0.pending_effect.read_key = Some(key);
-        Self::Read { resume }
+    pub(crate) fn take_state_read(&mut self) -> (StateReadEffect, Atom) {
+        self.0.primitive.take_state_read()
     }
-    pub(crate) fn request_call(
-        callable: CallableRef,
-        receiver: JsValue,
-        arguments: Vec<JsValue>,
-        mut resume: ElementResume,
-    ) -> Self {
-        resume.0.pending_effect.call_callable = Some(callable);
-        resume.0.pending_effect.call_receiver = Some(receiver);
-        resume.0.pending_effect.call_arguments = Some(arguments);
-        Self::Call { resume }
-    }
-}
-impl ElementResume {
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .read_object
-            .take()
-            .expect("ElementStep Read object")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .read_key
-            .take()
-            .expect("ElementStep Read key")
-    }
-    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
-        self.0
-            .pending_effect
-            .call_callable
-            .take()
-            .expect("ElementStep Call callable")
+    pub(crate) fn take_call_callable(&mut self, runtime: &Runtime) -> CallableRef {
+        self.0.primitive.take_callable(runtime)
     }
     pub(crate) fn take_call_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .call_receiver
-            .take()
-            .expect("ElementStep Call receiver")
+        self.0.primitive.take_receiver()
     }
     pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
-        self.0
-            .pending_effect
-            .call_arguments
-            .take()
-            .expect("ElementStep Call arguments")
+        self.0.primitive.take_arguments()
+    }
+    pub(crate) fn release_owned(self, runtime: &Runtime) {
+        self.0.primitive.release_owned(runtime);
     }
 }
-const _: () = assert!(std::mem::size_of::<ElementStep>() <= 64);
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<ElementStep>() <= 64);
+struct ElementScope<'a> {
+    runtime: &'a Runtime,
+    resume: Option<ElementResume>,
+}
+impl<'a> ElementScope<'a> {
+    fn new(runtime: &'a Runtime, resume: ElementResume) -> Self {
+        Self {
+            runtime,
+            resume: Some(resume),
+        }
+    }
+    fn take(&mut self) -> ElementResume {
+        self.resume.take().expect("element scope owner")
+    }
+}
+impl std::ops::Deref for ElementScope<'_> {
+    type Target = ElementResume;
+    fn deref(&self) -> &Self::Target {
+        self.resume.as_ref().expect("element scope owner")
+    }
+}
+impl std::ops::DerefMut for ElementScope<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.resume.as_mut().expect("element scope owner")
+    }
+}
+impl Drop for ElementScope<'_> {
+    fn drop(&mut self) {
+        if let Some(resume) = self.resume.take() {
+            resume.release_owned(self.runtime);
+        }
+    }
+}
+const _: () = assert!(size_of::<ElementStep>() <= 64);

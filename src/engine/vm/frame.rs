@@ -640,7 +640,9 @@ impl FrameCold {
                 pending.release(runtime);
             }
             rare.iterator_wait = None;
-            rare.conversion = None;
+            if let Some(wait) = rare.conversion.take() {
+                wait.release_owned(runtime);
+            }
         }
     }
 

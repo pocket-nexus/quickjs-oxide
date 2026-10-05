@@ -2,24 +2,24 @@
 use super::JsValue;
 use super::{DirectCallTarget, ElementStep, Resume, Step, TypedWriteStep};
 
-impl TryFrom<ElementStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: ElementStep) -> Result<Self, Self::Error> {
+impl Step {
+    pub(in crate::engine::vm::proxy_get_driver) fn from_element(
+        runtime: &super::Runtime,
+        step: ElementStep,
+    ) -> Result<Self, crate::engine::api::RuntimeError> {
         Ok({
             match step {
                 ElementStep::Complete(result) => Self::ElementComplete(Some(result)),
                 ElementStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    Self::Read {
-                        receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                        object: Some(object),
-                        key: Some(key),
+                    let (effect, atom) = resume.take_state_read();
+                    Self::StateRead {
+                        effect: Some(effect),
+                        atom: Some(atom),
                         resume: Some(Resume::Element(resume)),
                     }
                 }
                 ElementStep::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
+                    let callable = resume.take_call_callable(runtime);
                     let receiver = resume.take_call_receiver();
                     let arguments = resume.take_call_arguments();
                     Self::Call {
