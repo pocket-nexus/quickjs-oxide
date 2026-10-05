@@ -144,6 +144,17 @@ impl Runtime {
         if !self.module_namespace_export_slot(object, key)? {
             return Ok(None);
         }
+        // TDZ is observed before admitting public values, which can allocate.
+        // The admission cannot call JS; the final borrowed kernel remains the
+        // only compatibility algorithm and uses the live cell again.
+        self.0
+            .state
+            .borrow()
+            .define_module_namespace_export_in_state(
+                object.object_id(),
+                key.atom(),
+                &PropertyDescriptor::new(),
+            )?;
         // Public descriptor values are admitted once at this external adapter.
         // The borrowed State kernel remains the only compatibility algorithm.
         let descriptor =

@@ -1609,6 +1609,7 @@ fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
         Err(RuntimeError::WrongRuntime(_))
     ));
     drop(error);
+    drop(key);
     runtime.release_jsvalue(symbol).unwrap();
     drop(view);
     runtime.run_gc().unwrap();
