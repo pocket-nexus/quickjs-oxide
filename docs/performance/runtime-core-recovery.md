@@ -402,3 +402,61 @@ D Ir −2.50%、Dw −3.10%；NS Ir +0.73%、Dw +0.11%。模拟缓存不是硬�
 回执：`recovery-native-autoinit-{vs-A-abba-20261005,gates.json,callgrind-vs-A.json,code-size.json}`、
 `recovery-native-publication-local-abba-20261005/`，各 `recovery-callgrind-{b4c745d7,65e2eaf6,ad96318a,7a2b74e9}/`，
 以及 native 输入、publication、AutoInit 的测试与逐层 profile 比较记录。
+
+
+### B1/R2：dense heap 值直接消费
+
+采纳 `82c22ba3`，运行时代码与测量候选 `a9ba7b6a` 完全一致。
+现有 dense 入口统一读取 immediate、object、string、BigInt、Symbol。
+当前 State 借出元素，消费者按现有复制规则取得结果 owner，先发布到帧槽，
+再退休 receiver/key。保留 receiver 或 key 的 opcode 使用同一契约；缺失、
+空洞、accessor、Proxy 和特殊索引仍进入权威查找。未创建 Query、持久
+progress 或 continuation；没有删除原有数字、Arguments 或 typed-number 路径。
+
+核心测试 2475/2475；新增覆盖所有值种类、数组自引用、相邻栈值、保留输入、
+retain 溢出和容量失败。诊断测试确认 dense 对象读取不交接属性 driver。
+workspace all-targets、全部 CI fast gate 和 focused Test262 6844/6844 通过。
+生产目标及工作区检查通过。
+
+相对前一验收运行时 `7a2b74e9`，同冻结工作量一个 ABBA 块：D −5.39%
+（−5.20% / −5.58%）；R −4.74%（−7.94% / −1.53%，幅度未稳定）。
+其他子项的局部短测没有两对均超出既有 A/A 范围的回退；Crypto +1.22%、
+Splay +1.05%、NS +0.58% 未分辨，不能宣布这些项改善。
+
+最终累计对 A 的全九项 ABBA，36/36 完整语义输出通过。以下是固定工作量
+配对耗时反馈，不是原版 Score 或正式置信区间：
+
+| 子项 | 耗时变化 | 两对变化 |
+| --- | ---: | --- |
+| Richards | -21.64% | -22.07% / -21.20% |
+| DeltaBlue | -5.16% | -5.85% / -4.46% |
+| Crypto | -0.38% | -0.30% / -0.47% |
+| RayTrace | -8.01% | -8.69% / -7.33% |
+| EarleyBoyer | -9.39% | -8.75% / -10.03% |
+| RegExp | -0.05% | -1.02% / +0.92% |
+| Splay | -6.18% | -5.55% / -6.80% |
+| NavierStokes | -1.03% | -1.98% / -0.09% |
+| Combined | -6.26% | -6.72% / -5.79% |
+
+Crypto、RegExp、NavierStokes 变化未分辨。各项独立判断，Combined 不替代
+单项验收。日常短测不宣告阶段 B 通过。
+
+R/D/NS 各一个完整 callgrind 记录，相对前版：R Ir −2.54%、Dw −3.46%；
+D Ir −5.19%、Dw −6.19%；NS Ir +0.08%、Dw +0.05%。D 的属性 driver
+`read_progress_selected` 自身 Ir 从 54,450,236 降到 4,224，`complete_read`
+从 42,654,386 降到 1,734；执行循环自身 Ir 从 2,136,517,467 降到
+2,133,107,018，没有把被删的费用等量搬回循环。仅比较 self costs，未累加
+inclusive costs 或给各 helper 编造独立耗时收益。
+
+累计相对 A：R Ir −18.45%、Dw −23.06%；D Ir −7.56%、Dw −9.10%；
+NS Ir +0.81%、Dw +0.16%。NS 的模拟 I1mr 相对前版 +32.87%，原生时间
+未分辨；保留这一代价，不把模拟缓存结果换算成提速。text＋rodata 相对
+A +0.59%；RSS、停顿、正式 Score 和架构零残留指标尚未验收。
+
+此提交落实 dense 读取消费者，不代表通用属性读取、Array native 方法、
+B3 生命周期、B4 或 B5 已完成。
+
+回执：`recovery-dense-read-{local-abba-20261005,array-local-abba-20261005,vs-A-abba-20261005}/`、
+`recovery-dense-read-{callgrind-comparison.json,code-size.json}`、
+`recovery-callgrind-a9ba7b6a/`、`recovery-dense-read-a9ba7b6a-gates.json`，
+以及核心测试和 D 的两个 self profile。
