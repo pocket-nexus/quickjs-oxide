@@ -1,5 +1,6 @@
 //! Rooted adapters retained by unmigrated descriptor and exotic consumers.
 
+mod state_complete;
 mod state_owned;
 use super::property::PropertyDescriptor;
 use super::{AccessorValue, DescriptorField, OrdinaryPropertyDescriptor};
@@ -8,6 +9,7 @@ use crate::engine::{
     heap::RawValue,
     value::JsValue,
 };
+pub(crate) use state_complete::StateOwnedCompleteDescriptor;
 pub(crate) use state_owned::{StateDescriptorGuard, StatePropertyDescriptor};
 
 pub(crate) struct OwnedPropertyDescriptor {
@@ -254,76 +256,11 @@ impl OwnedCompletePropertyDescriptor {
         runtime: &Runtime,
         source: &super::property::CompletePropertyDescriptor<RawValue>,
     ) -> Result<Self, RuntimeError> {
-        use super::property::CompletePropertyDescriptor;
-        let mut owned = Self {
-            runtime: runtime.clone(),
-            record: CompletePropertyDescriptor::Accessor {
-                get: None,
-                set: None,
-                enumerable: false,
-                configurable: false,
-            },
-        };
-        match source {
-            CompletePropertyDescriptor::Data {
-                value,
-                writable,
-                enumerable,
-                configurable,
-            } => {
-                let value =
-                    runtime
-                        .dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
-                            RuntimeError::Invariant("descriptor held internal sentinel"),
-                        )?)?;
-                owned.record = CompletePropertyDescriptor::Data {
-                    value: value.into_raw(),
-                    writable: *writable,
-                    enumerable: *enumerable,
-                    configurable: *configurable,
-                };
-            }
-            CompletePropertyDescriptor::Accessor {
-                get,
-                set,
-                enumerable,
-                configurable,
-            } => {
-                let CompletePropertyDescriptor::Accessor {
-                    get: owned_get,
-                    set: owned_set,
-                    enumerable: e,
-                    configurable: c,
-                } = &mut owned.record
-                else {
-                    unreachable!()
-                };
-                *e = *enumerable;
-                *c = *configurable;
-                if let Some(value) = get {
-                    *owned_get = Some(
-                        runtime
-                            .dup_jsvalue(
-                                &JsValue::from_raw(value.clone())
-                                    .ok_or(RuntimeError::Invariant("invalid getter sentinel"))?,
-                            )?
-                            .into_raw(),
-                    );
-                }
-                if let Some(value) = set {
-                    *owned_set = Some(
-                        runtime
-                            .dup_jsvalue(
-                                &JsValue::from_raw(value.clone())
-                                    .ok_or(RuntimeError::Invariant("invalid setter sentinel"))?,
-                            )?
-                            .into_raw(),
-                    );
-                }
-            }
-        }
-        Ok(owned)
+        let mut state = runtime.0.state.borrow_mut();
+        StateOwnedCompleteDescriptor::retain_in_state(&mut state, &runtime.0.poisoned, source)
+            .map(|owned| owned.into_legacy(runtime))
     }
+
     pub(crate) fn record(&self) -> &super::property::CompletePropertyDescriptor<RawValue> {
         &self.record
     }

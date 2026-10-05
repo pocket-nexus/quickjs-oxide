@@ -1102,8 +1102,9 @@ mod owned_descriptor;
 pub mod property;
 pub(crate) use owned_descriptor::{
     DefinitionInput, OwnedCompletePropertyDescriptor, OwnedPropertyDescriptor,
-    StateDescriptorGuard, StatePropertyDescriptor,
+    StateDescriptorGuard, StateOwnedCompleteDescriptor, StatePropertyDescriptor,
 };
+pub(crate) use properties::StateOwnPropertySnapshot;
 pub mod shape;
 
 pub(crate) mod allocation;
