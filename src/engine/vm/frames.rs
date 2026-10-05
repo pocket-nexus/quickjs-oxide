@@ -334,7 +334,9 @@ pub(in crate::engine::vm) fn publish_native_in_state(
     })
 }
 
-#[inline]
+// Keep publication beside its consumer. Returning the token pair through an
+// outlined helper adds a stack record even when the frame is purely local.
+#[inline(always)]
 fn publish_borrowed_native_frame_in_state(
     state: &mut crate::engine::heap::runtime::RuntimeState,
     function: ObjectId,

@@ -465,6 +465,9 @@ fn capture_waiting_step(
     Ok(None)
 }
 
+// This selects a body; it must not introduce another call frame and copy the
+// native arguments before either body begins. The bodies remain outlined.
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn begin_local(
     runtime: &Runtime,
