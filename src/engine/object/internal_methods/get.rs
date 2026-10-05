@@ -316,7 +316,7 @@ fn after_method(
     scope.finish(result)
 }
 
-pub(super) fn resolve_boundary(
+pub(crate) fn resolve_boundary(
     runtime: &Runtime,
     state: &mut RuntimeState,
     realm: ContextId,
