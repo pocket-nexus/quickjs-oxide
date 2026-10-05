@@ -654,6 +654,8 @@ mod local_set_tests {
         let mut query = Query {
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            consumer: crate::engine::vm::proxy_get_driver::QueryConsumer::Write,
             realm: context.realm,
             parents: Parents::default(),
             natives: Vec::new(),

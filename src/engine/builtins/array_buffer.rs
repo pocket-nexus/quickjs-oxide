@@ -44,6 +44,8 @@ pub(crate) use data_view::{
 pub(crate) use mutation::BufferMutationResume;
 pub(crate) use mutation::BufferMutationStep;
 #[cfg(test)]
+mod owned_invocation_tests;
+#[cfg(test)]
 mod tests;
 pub(crate) mod typed_array;
 
@@ -216,17 +218,17 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        match kind {
+        self.dispatch_borrowed_invocation(invocation, |invocation| match kind {
             ArrayBufferNativeKind::Constructor => {
                 self.call_array_buffer_constructor(realm, invocation, arguments)
             }
-            ArrayBufferNativeKind::IsView => self.call_array_buffer_is_view(&invocation, arguments),
-            ArrayBufferNativeKind::Species => self.call_array_buffer_species(&invocation),
+            ArrayBufferNativeKind::IsView => self.call_array_buffer_is_view(invocation, arguments),
+            ArrayBufferNativeKind::Species => self.call_array_buffer_species(invocation),
             ArrayBufferNativeKind::ByteLength
             | ArrayBufferNativeKind::MaxByteLength
             | ArrayBufferNativeKind::Resizable
             | ArrayBufferNativeKind::Detached => {
-                self.call_array_buffer_getter(realm, kind, &invocation)
+                self.call_array_buffer_getter(realm, kind, invocation)
             }
             ArrayBufferNativeKind::Resize => {
                 self.call_array_buffer_resize(realm, invocation, arguments)
@@ -240,7 +242,7 @@ impl Runtime {
             ArrayBufferNativeKind::TransferToFixedLength => {
                 self.call_array_buffer_transfer(realm, invocation, arguments, true)
             }
-        }
+        })
     }
 
     /// Pinned QuickJS `JS_ToInt64`: number-hint coercion followed by its
@@ -248,13 +250,13 @@ impl Runtime {
     fn call_array_buffer_constructor(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         constructor::finish(
             self,
             realm,
-            BufferConstructorStep::start(self, realm, &invocation, arguments)?,
+            BufferConstructorStep::start(self, realm, invocation, arguments)?,
         )
     }
     fn finish_array_buffer_construction(
@@ -385,7 +387,7 @@ impl Runtime {
     fn call_array_buffer_resize(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         mutation::finish(
@@ -395,7 +397,7 @@ impl Runtime {
                 self,
                 realm,
                 ArrayBufferNativeKind::Resize,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -449,7 +451,7 @@ impl Runtime {
     fn call_array_buffer_slice(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         slice::finish(
@@ -459,7 +461,7 @@ impl Runtime {
                 self,
                 realm,
                 slice::BufferSliceKind::Array,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -594,7 +596,7 @@ impl Runtime {
     fn call_array_buffer_transfer(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
         to_fixed_length: bool,
     ) -> Result<Completion, RuntimeError> {
@@ -606,7 +608,7 @@ impl Runtime {
         mutation::finish(
             self,
             realm,
-            BufferMutationStep::start(self, realm, kind, &invocation, arguments)?,
+            BufferMutationStep::start(self, realm, kind, invocation, arguments)?,
         )
     }
     fn finish_array_buffer_transfer(

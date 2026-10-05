@@ -167,17 +167,17 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        match kind {
+        self.dispatch_borrowed_invocation(invocation, |invocation| match kind {
             SharedArrayBufferNativeKind::Constructor => {
                 self.call_shared_array_buffer_constructor(realm, invocation, arguments)
             }
             SharedArrayBufferNativeKind::Species => {
-                self.call_shared_array_buffer_species(&invocation)
+                self.call_shared_array_buffer_species(invocation)
             }
             SharedArrayBufferNativeKind::ByteLength
             | SharedArrayBufferNativeKind::MaxByteLength
             | SharedArrayBufferNativeKind::Growable => {
-                self.call_shared_array_buffer_getter(realm, kind, &invocation)
+                self.call_shared_array_buffer_getter(realm, kind, invocation)
             }
             SharedArrayBufferNativeKind::Grow => {
                 self.call_shared_array_buffer_grow(realm, invocation, arguments)
@@ -185,23 +185,20 @@ impl Runtime {
             SharedArrayBufferNativeKind::Slice => {
                 self.call_shared_array_buffer_slice(realm, invocation, arguments)
             }
-        }
+        })
     }
 
     fn call_shared_array_buffer_constructor(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         super::array_buffer::constructor::finish(
             self,
             realm,
             super::array_buffer::BufferConstructorStep::start_shared(
-                self,
-                realm,
-                &invocation,
-                arguments,
+                self, realm, invocation, arguments,
             )?,
         )
     }
@@ -310,17 +307,14 @@ impl Runtime {
     fn call_shared_array_buffer_grow(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         super::array_buffer::mutation::finish(
             self,
             realm,
             super::array_buffer::BufferMutationStep::start_grow(
-                self,
-                realm,
-                &invocation,
-                arguments,
+                self, realm, invocation, arguments,
             )?,
         )
     }
@@ -362,7 +356,7 @@ impl Runtime {
     fn call_shared_array_buffer_slice(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         super::array_buffer::slice::finish(
@@ -372,7 +366,7 @@ impl Runtime {
                 self,
                 realm,
                 super::array_buffer::slice::BufferSliceKind::Shared,
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )

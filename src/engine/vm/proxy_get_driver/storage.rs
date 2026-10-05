@@ -76,6 +76,8 @@ impl QueryStorage {
         let empty = Query {
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            consumer: super::QueryConsumer::Other,
             realm: pending.query.realm,
             parents: Parents::default(),
             natives: Vec::new(),
@@ -177,9 +179,15 @@ impl QueryStorage {
                 buffers.parents = Parents(parents);
             }
         }
+        #[cfg(feature = "profiling")]
+        let consumer = super::QueryConsumer::for_finish(&finish);
+        #[cfg(feature = "profiling")]
+        consumer.acquired();
         Query {
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            consumer,
             realm,
             parents: buffers.parents,
             natives: buffers.natives,

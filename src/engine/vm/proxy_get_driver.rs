@@ -66,6 +66,8 @@ impl PendingProxyGet {
             query: Query {
                 #[cfg(feature = "profiling")]
                 had_callback: false,
+                #[cfg(feature = "profiling")]
+                consumer: QueryConsumer::Other,
                 realm,
                 parents: Parents((0..depth).map(|_| Resume::Identity).collect()),
                 natives: Vec::new(),
@@ -118,9 +120,55 @@ impl Parents {
     }
 }
 
+// Diagnostic classification follows the actual consumer, never dispatches it.
+#[cfg(feature = "profiling")]
+#[derive(Clone, Copy)]
+enum QueryConsumer {
+    Read,
+    Write,
+    Conversion,
+    Native,
+    ArrayNative,
+    Other,
+}
+#[cfg(feature = "profiling")]
+impl QueryConsumer {
+    fn for_finish(finish: &Finish) -> Self {
+        match finish {
+            Finish::PropertyRead(_) => Self::Read,
+            Finish::Write { .. } => Self::Write,
+            Finish::Conversion(_) => Self::Conversion,
+            Finish::Call { .. } | Finish::VmCall(_) => Self::Native,
+            _ => Self::Other,
+        }
+    }
+    fn acquired(self) {
+        crate::engine::api::profiling::record_owned_execution_event(match self {
+            Self::Read => "query.read.acquired",
+            Self::Write => "query.write.acquired",
+            Self::Conversion => "query.conversion.acquired",
+            Self::Native => "query.native.acquired",
+            Self::ArrayNative => "query.array_native.acquired",
+            Self::Other => "query.other.acquired",
+        });
+    }
+    fn completed_without_callback(self) {
+        crate::engine::api::profiling::record_owned_execution_event(match self {
+            Self::Read => "query.read.completed_without_callback",
+            Self::Write => "query.write.completed_without_callback",
+            Self::Conversion => "query.conversion.completed_without_callback",
+            Self::Native => "query.native.completed_without_callback",
+            Self::ArrayNative => "query.array_native.completed_without_callback",
+            Self::Other => "query.other.completed_without_callback",
+        });
+    }
+}
+
 struct Query {
     #[cfg(feature = "profiling")]
     had_callback: bool,
+    #[cfg(feature = "profiling")]
+    consumer: QueryConsumer,
     realm: crate::engine::heap::ContextId,
     parents: Parents,
     natives: Vec<NativeScope>,
@@ -1632,6 +1680,9 @@ fn drive_inner(
     #[cfg(feature = "profiling")]
     {
         use crate::engine::api::profiling::record_owned_execution_layout as layout;
+        layout::<Query>("Query");
+        layout::<NativeScope>("NativeScope");
+        layout::<super::call::PreparedNativeCall>("PreparedNativeCall");
         layout::<Step>("Step");
         layout::<Resume>("Resume");
         layout::<Next>("Next");
@@ -1658,6 +1709,10 @@ fn drive_inner(
                         "query_completed_without_callback"
                     },
                 );
+                #[cfg(feature = "profiling")]
+                if !query.had_callback {
+                    query.consumer.completed_without_callback();
+                }
                 query.recycle(&mut execution.query_storage);
                 return Ok(result);
             }
@@ -2527,6 +2582,8 @@ mod native_scope_tests {
         let mut query = Query {
             #[cfg(feature = "profiling")]
             had_callback: false,
+            #[cfg(feature = "profiling")]
+            consumer: QueryConsumer::Other,
             realm: inner.realm,
             parents: Parents(vec![Resume::Identity]),
             saved_native_depth: 4,
@@ -3682,6 +3739,15 @@ mod iterator_resident_layout_tests {
                 < size_of::<super::super::iterator_driver::PendingIteratorState>()
         );
         assert!(size_of::<super::super::iterator_driver::PendingIterator>() <= 8);
+        println!(
+            "Step={} Resume={} Next={} NativeStep={} PreparedNativeCall={} NativeWaitRecord={}",
+            size_of::<super::Step>(),
+            size_of::<super::Resume>(),
+            size_of::<super::Next>(),
+            size_of::<crate::engine::builtins::continuation::NativeStep>(),
+            size_of::<super::super::call::PreparedNativeCall>(),
+            size_of::<super::native::NativeWaitRecord>()
+        );
         println!(
             "Finish={} Query={} PendingIterator={} FrameRare={}",
             size_of::<super::Finish>(),

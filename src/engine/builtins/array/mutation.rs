@@ -215,6 +215,10 @@ impl MutationStep {
         kind: MutationKind,
         object: ObjectRef,
     ) -> MutationResume {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "progress.array_mutation.created",
+        );
         MutationResume(Box::new(MutationResumeState {
             runtime: runtime.clone(),
             pending_effect: MutationStepPending::default(),
@@ -1095,3 +1099,6 @@ const _: () = assert!(std::mem::size_of::<MutationStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<MutationStep>() <= 64);
+
+#[cfg(test)]
+mod behavior_tests;

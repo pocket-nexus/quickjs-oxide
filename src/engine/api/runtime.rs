@@ -593,3 +593,6 @@ mod poison_tests {
         drop(runtime);
     }
 }
+
+#[cfg(test)]
+mod behavior_asset_tests;

@@ -165,34 +165,32 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        match kind {
+        self.dispatch_borrowed_invocation(invocation, |invocation| match kind {
             DataViewNativeKind::Constructor => {
                 self.call_data_view_constructor(realm, invocation, arguments)
             }
             DataViewNativeKind::Buffer
             | DataViewNativeKind::ByteLength
-            | DataViewNativeKind::ByteOffset => {
-                self.call_data_view_getter(realm, kind, &invocation)
-            }
+            | DataViewNativeKind::ByteOffset => self.call_data_view_getter(realm, kind, invocation),
             DataViewNativeKind::Get(element) => {
                 self.call_data_view_get(realm, element, invocation, arguments)
             }
             DataViewNativeKind::Set(element) => {
                 self.call_data_view_set(realm, element, invocation, arguments)
             }
-        }
+        })
     }
 
     fn call_data_view_constructor(
         &self,
         realm: ContextId,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         finish_constructor(
             self,
             realm,
-            DataViewConstructorStep::start(self, realm, &invocation, arguments)?,
+            DataViewConstructorStep::start(self, realm, invocation, arguments)?,
         )
     }
     fn finish_data_view_construction(
@@ -286,7 +284,7 @@ impl Runtime {
         &self,
         realm: ContextId,
         element: DataViewElementKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         finish_access(
@@ -296,7 +294,7 @@ impl Runtime {
                 self,
                 realm,
                 DataViewNativeKind::Get(element),
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
@@ -305,7 +303,7 @@ impl Runtime {
         &self,
         realm: ContextId,
         element: DataViewElementKind,
-        invocation: NativeInvocation,
+        invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         finish_access(
@@ -315,7 +313,7 @@ impl Runtime {
                 self,
                 realm,
                 DataViewNativeKind::Set(element),
-                &invocation,
+                invocation,
                 arguments,
             )?,
         )
