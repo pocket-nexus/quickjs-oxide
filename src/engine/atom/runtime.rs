@@ -78,16 +78,7 @@ impl Runtime {
         &self,
         value: &crate::engine::value::JsValue,
     ) -> Option<PropertyKey> {
-        let index = match value {
-            crate::engine::value::JsValue::Int(value) => u32::try_from(*value).ok()?,
-            crate::engine::value::JsValue::Float(value)
-                if *value >= 0.0 && *value <= u32::MAX as f64 && value.fract() == 0.0 =>
-            {
-                *value as u32
-            }
-            _ => return None,
-        };
-        Atom::from_immediate_integer(index)
+        crate::engine::value::conversion::immediate_numeric_key_atom(value)
             .map(|atom| PropertyKey::from_owned_atom(self.clone(), atom))
     }
 

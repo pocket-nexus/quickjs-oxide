@@ -2612,6 +2612,26 @@ pub(super) fn execute_frame_in_state(
                     named_read::Progress::Throw => return Ok(VmAction::ThrowPrepared),
                 }
             }
+            VmAction::GetElement {
+                keep_receiver,
+                keep_key,
+                fallthrough,
+            } => {
+                match super::property_driver::execute_computed(
+                    runtime,
+                    state,
+                    &mut segment,
+                    keep_receiver,
+                    keep_key,
+                    fallthrough,
+                )? {
+                    super::property_driver::ComputedReadProgress::Completed => continue,
+                    super::property_driver::ComputedReadProgress::Boundary => return Ok(action),
+                    super::property_driver::ComputedReadProgress::Throw => {
+                        return Ok(VmAction::ThrowPrepared);
+                    }
+                }
+            }
             VmAction::Object { fallthrough } => {
                 // FrameCursor has published the allocation's fault PC. Use
                 // the one suffix protocol before allocation can be observed.

@@ -1,39 +1,32 @@
-//! Owned ToPrimitive phases. A reply consumes its continuation exactly once.
+//! ToPrimitive consumes synchronous State lookups before publishing an effect.
+//! A pending phase owns raw edges; its execution scope supplies cleanup context.
 use super::*;
-use crate::engine::object::{CallableRef, ObjectRef};
-use crate::engine::value::{JsValue, Value};
+use crate::engine::atom::{Atom, pinned::PinnedAtom};
+use crate::engine::heap::{
+    ObjectId,
+    runtime::{RuntimeState, owned_values::OwnedValueGuard},
+};
+use crate::engine::object::{CallableRef, ObjectRef, ReadBoundary, StateReadEffect};
 
 pub(crate) enum PrimitiveStep {
     Get { resume: PrimitiveResume },
     Call { resume: PrimitiveResume },
     Complete(Completion),
 }
-const _: () = assert!(std::mem::size_of::<PrimitiveStep>() <= 64);
+const _: () = assert!(size_of::<PrimitiveStep>() <= 64);
 
 pub(crate) struct PrimitiveResume(Box<PrimitiveResumeState>);
-impl std::ops::Deref for PrimitiveResume {
-    type Target = PrimitiveResumeState;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl std::ops::DerefMut for PrimitiveResume {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-const _: () = assert!(std::mem::size_of::<PrimitiveResume>() <= 8);
-pub(crate) struct PrimitiveResumeState {
-    runtime: Runtime,
-    object: ObjectRef,
+const _: () = assert!(size_of::<PrimitiveResume>() <= 8);
+struct PrimitiveResumeState {
+    object: ObjectId,
     realm: ContextId,
+    domain_id: u64,
     hint: ToPrimitiveHint,
     phase: Phase,
-    requested_object: Option<ObjectRef>,
-    requested_key: Option<PropertyKey>,
-    requested_callable: Option<CallableRef>,
-    requested_receiver: Option<JsValue>,
-    requested_arguments: Vec<JsValue>,
+    read: Option<StateReadEffect>,
+    callable: Option<ObjectId>,
+    receiver: Option<JsValue>,
+    arguments: Vec<JsValue>,
 }
 
 #[derive(Clone, Copy)]
@@ -44,211 +37,417 @@ enum Phase {
     OrdinaryResult(bool),
 }
 
-impl Drop for PrimitiveResumeState {
-    /// Release the internal edges still owned when the request is abandoned
-    /// before its call step consumed them. Taken fields are empty here.
-    fn drop(&mut self) {
-        if let Some(receiver) = self.requested_receiver.take() {
-            let _ = self.runtime.release_jsvalue(receiver);
-        }
-        for argument in self.requested_arguments.drain(..) {
-            let _ = self.runtime.release_jsvalue(argument);
+/// First entry stays on the Rust stack. Only a selected real effect needs a
+/// resident allocation; replies reuse that same allocation.
+enum Machine {
+    Local(PrimitiveResumeState),
+    Pending(Box<PrimitiveResumeState>),
+}
+impl std::ops::Deref for Machine {
+    type Target = PrimitiveResumeState;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Local(state) => state,
+            Self::Pending(state) => state,
         }
     }
 }
-
-impl PrimitiveResume {
-    fn get(mut self, object: ObjectRef, key: PropertyKey) -> PrimitiveStep {
-        self.requested_object = Some(object);
-        self.requested_key = Some(key);
-        PrimitiveStep::Get { resume: self }
-    }
-    fn call(
-        mut self,
-        callable: CallableRef,
-        receiver: JsValue,
-        arguments: Vec<JsValue>,
-    ) -> PrimitiveStep {
-        self.requested_callable = Some(callable);
-        self.requested_receiver = Some(receiver);
-        self.requested_arguments = arguments;
-        PrimitiveStep::Call { resume: self }
-    }
-    pub(crate) fn take_get(&mut self) -> (ObjectRef, PropertyKey) {
-        (
-            self.requested_object.take().expect("primitive get object"),
-            self.requested_key.take().expect("primitive get key"),
-        )
-    }
-    pub(crate) fn take_callable(&mut self) -> CallableRef {
-        self.requested_callable
-            .take()
-            .expect("primitive call callee")
-    }
-    pub(crate) fn take_receiver(&mut self) -> JsValue {
-        self.requested_receiver
-            .take()
-            .expect("primitive call receiver")
-    }
-    pub(crate) fn take_arguments(&mut self) -> Vec<JsValue> {
-        std::mem::take(&mut self.requested_arguments)
-    }
-
-    pub(crate) fn start(
-        runtime: &Runtime,
-        realm: ContextId,
-        value: JsValue,
-        hint: ToPrimitiveHint,
-    ) -> Result<PrimitiveStep, crate::engine::api::RuntimeError> {
-        Ok({
-            let JsValue::Object(object) = value else {
-                return Ok(PrimitiveStep::Complete(Completion::Return(value)));
-            };
-            let object = ObjectRef::from_owned_handle(runtime.clone(), object);
-            let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)?);
-            let requested = object.try_clone()?;
-            Self(Box::new(PrimitiveResumeState {
-                runtime: runtime.clone(),
-                object,
-                realm,
-                hint,
-                phase: Phase::ExoticMethod,
-                requested_object: None,
-                requested_key: None,
-                requested_callable: None,
-                requested_receiver: None,
-                requested_arguments: Vec::new(),
-            }))
-            .get(requested, key)
-        })
-    }
-
-    pub(crate) fn ordinary(
-        runtime: &Runtime,
-        realm: ContextId,
-        object: ObjectRef,
-        hint: ToPrimitiveHint,
-    ) -> Result<PrimitiveStep, RuntimeError> {
-        Self(Box::new(PrimitiveResumeState {
-            runtime: runtime.clone(),
-            object,
-            realm,
-            hint,
-            phase: Phase::OrdinaryMethod(false),
-            requested_object: None,
-            requested_key: None,
-            requested_callable: None,
-            requested_receiver: None,
-            requested_arguments: Vec::new(),
-        }))
-        .read_ordinary(runtime, false)
-    }
-
-    fn read_ordinary(
-        mut self,
-        runtime: &Runtime,
-        second: bool,
-    ) -> Result<PrimitiveStep, RuntimeError> {
-        let string_first = matches!(self.0.hint, ToPrimitiveHint::String);
-        let name = if string_first != second {
-            crate::engine::atom::pinned::PinnedAtom::ToString
-        } else {
-            crate::engine::atom::pinned::PinnedAtom::ValueOf
-        };
-        let key = runtime.pinned_property_key(name)?;
-        self.0.phase = Phase::OrdinaryMethod(second);
-        let object = self.0.object.try_clone()?;
-        Ok(self.get(object, key))
-    }
-
-    fn failed_method(self, runtime: &Runtime, second: bool) -> Result<PrimitiveStep, RuntimeError> {
-        if second {
-            self.type_error(runtime, "toPrimitive")
-        } else {
-            self.read_ordinary(runtime, true)
+impl std::ops::DerefMut for Machine {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Local(state) => state,
+            Self::Pending(state) => state,
         }
     }
-
-    fn type_error(self, runtime: &Runtime, message: &str) -> Result<PrimitiveStep, RuntimeError> {
-        Ok(PrimitiveStep::Complete(Completion::Throw(
-            runtime.new_native_error_jsvalue(self.0.realm, NativeErrorKind::Type, message)?,
-        )))
+}
+struct MachineGuard<'a> {
+    state: &'a mut RuntimeState,
+    runtime: &'a Runtime,
+    machine: Option<Machine>,
+}
+impl Drop for MachineGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.runtime.0.poisoned.set(true);
+        }
+        if self.runtime.0.poisoned.get() {
+            return;
+        }
+        if let Some(mut machine) = self.machine.take()
+            && machine.release_in_state(self.state, self.runtime).is_err()
+        {
+            self.runtime.0.poisoned.set(true);
+        }
     }
-
-    pub(crate) fn resume(
-        mut self,
+}
+impl PrimitiveResumeState {
+    fn release_in_state(
+        &mut self,
+        state: &mut RuntimeState,
         runtime: &Runtime,
-        completion: Completion,
+    ) -> Result<(), RuntimeError> {
+        let poisoned = &runtime.0.poisoned;
+        if let Some(effect) = self.read.take() {
+            effect.release_in_state(state, runtime)?;
+        }
+        if let Some(callee) = self.callable.take() {
+            state.release_owned_jsvalue(poisoned, JsValue::Object(callee))?;
+        }
+        if let Some(receiver) = self.receiver.take() {
+            state.release_owned_jsvalue(poisoned, receiver)?;
+        }
+        for argument in self.arguments.drain(..) {
+            state.release_owned_jsvalue(poisoned, argument)?;
+        }
+        state.release_owned_jsvalue(poisoned, JsValue::Object(self.object))
+    }
+}
+impl MachineGuard<'_> {
+    /// A result cannot leave the machine before its remaining owners finish
+    /// cleanup. A destructive cleanup failure quarantines even a normal reply.
+    fn finish(
+        self,
+        result: Result<PrimitiveStep, RuntimeError>,
     ) -> Result<PrimitiveStep, RuntimeError> {
+        let poisoned = &self.runtime.0.poisoned;
+        drop(self);
+        if poisoned.get() {
+            Err(RuntimeError::Poisoned)
+        } else {
+            result
+        }
+    }
+    fn publish(&mut self, call: bool) -> PrimitiveStep {
+        let machine = self.machine.take().expect("owned primitive machine");
+        let state = match machine {
+            Machine::Local(state) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "primitive.real_effect_resume_created",
+                );
+                Box::new(state)
+            }
+            Machine::Pending(state) => state,
+        };
+        let resume = PrimitiveResume(state);
+        if call {
+            PrimitiveStep::Call { resume }
+        } else {
+            PrimitiveStep::Get { resume }
+        }
+    }
+    fn type_error(&mut self, message: &str) -> Result<PrimitiveStep, RuntimeError> {
+        let realm = self.machine.as_ref().expect("primitive owner").realm;
+        let error = self.state.new_native_error_from_message(
+            &self.runtime.0.poisoned,
+            realm,
+            NativeErrorKind::Type,
+            crate::engine::api::error::NativeErrorMessage::from_utf8(message),
+        )?;
+        Ok(PrimitiveStep::Complete(Completion::Throw(JsValue::Object(
+            error,
+        ))))
+    }
+    fn read_method(&mut self, second: bool) -> Result<PrimitiveStep, RuntimeError> {
+        let machine = self.machine.as_mut().expect("primitive owner");
+        let string_first = matches!(machine.hint, ToPrimitiveHint::String);
+        machine.phase = Phase::OrdinaryMethod(second);
+        let name = if string_first != second {
+            PinnedAtom::ToString
+        } else {
+            PinnedAtom::ValueOf
+        };
+        self.read(self.state.pinned_atoms.get(name))
+    }
+    fn read(&mut self, atom: Atom) -> Result<PrimitiveStep, RuntimeError> {
+        let machine = self.machine.as_ref().expect("primitive owner");
+        let receiver = JsValue::Object(machine.object);
+        let mut boundary = None;
+        let value = self.state.select_value_read_in_state(
+            &self.runtime.0.poisoned,
+            machine.realm,
+            &receiver,
+            atom,
+            machine.domain_id,
+            &mut boundary,
+            None,
+        )?;
+        if let Some(value) = value {
+            return self.reply(Completion::Return(value));
+        }
+        let boundary = boundary.ok_or(RuntimeError::Invariant(
+            "primitive method read omitted its boundary",
+        ))?;
+        if matches!(boundary, ReadBoundary::Absent) {
+            return self.reply(Completion::Return(JsValue::Undefined));
+        }
+        let effect = match crate::engine::object::internal_methods::resolve_read_boundary_in_state(
+            self.runtime,
+            self.state,
+            machine.realm,
+            atom,
+            &receiver,
+            boundary,
+        )? {
+            crate::engine::object::ProxyGetStep::Complete(completion) => {
+                return self.reply(completion);
+            }
+            crate::engine::object::ProxyGetStep::Effect(effect) => effect,
+        };
+        // The canonical boundary resolver owns Get's key in its real effect.
+        // Getter/shared selections consume no key after the synchronous prefix.
+        let machine = self.machine.as_mut().expect("primitive owner");
+        machine.read = Some(effect);
+        Ok(self.publish(false))
+    }
+    fn reply(&mut self, completion: Completion) -> Result<PrimitiveStep, RuntimeError> {
         let value = match completion {
             Completion::Throw(value) => {
                 return Ok(PrimitiveStep::Complete(Completion::Throw(value)));
             }
             Completion::Return(value) => value,
         };
-        match self.0.phase {
-            Phase::ExoticMethod => {
-                if matches!(value, JsValue::Undefined | JsValue::Null) {
-                    runtime.release_jsvalue(value)?;
-                    return self.read_ordinary(runtime, false);
+        enum Reply {
+            Call,
+            Complete(JsValue),
+            Ordinary(bool),
+            Error(&'static str),
+        }
+        let reply = {
+            let mut incoming = OwnedValueGuard::new(self.state, &self.runtime.0.poisoned, value);
+            let (state, value) = incoming.parts();
+            let machine = self.machine.as_mut().expect("primitive owner");
+            match machine.phase {
+                phase @ (Phase::ExoticMethod | Phase::OrdinaryMethod(_)) => {
+                    let callable = match value.as_ref().expect("method reply owner") {
+                        JsValue::Object(method)
+                            if state.object_id_has_call_capability(*method)? =>
+                        {
+                            Some(*method)
+                        }
+                        _ => None,
+                    };
+                    if let Some(callable) = callable {
+                        let receiver = state.dup_jsvalue(&JsValue::Object(machine.object))?;
+                        machine.receiver = Some(receiver);
+                        if matches!(phase, Phase::ExoticMethod) {
+                            let hint = match machine.hint {
+                                ToPrimitiveHint::String => "string",
+                                ToPrimitiveHint::Number => "number",
+                                ToPrimitiveHint::Default => "default",
+                            };
+                            machine.arguments.try_reserve(1).map_err(|_| {
+                                RuntimeError::Invariant("primitive argument allocation failed")
+                            })?;
+                            machine.arguments.push(JsValue::String(
+                                state.heap.allocate_string(JsString::from_static(hint))?,
+                            ));
+                            machine.phase = Phase::ExoticResult;
+                        } else if let Phase::OrdinaryMethod(second) = phase {
+                            machine.phase = Phase::OrdinaryResult(second);
+                        }
+                        machine.callable = Some(callable);
+                        value.take(); // Transfer the method result's edge to the callee.
+                        Reply::Call
+                    } else {
+                        match phase {
+                            Phase::ExoticMethod
+                                if matches!(
+                                    value.as_ref(),
+                                    Some(JsValue::Undefined | JsValue::Null)
+                                ) =>
+                            {
+                                Reply::Ordinary(false)
+                            }
+                            Phase::ExoticMethod => Reply::Error("not a function"),
+                            Phase::OrdinaryMethod(false) => Reply::Ordinary(true),
+                            Phase::OrdinaryMethod(true) => Reply::Error("toPrimitive"),
+                            _ => unreachable!(),
+                        }
+                    }
                 }
-                let JsValue::Object(method) = &value else {
-                    runtime.release_jsvalue(value)?;
-                    return self.type_error(runtime, "not a function");
-                };
-                let method = ObjectRef::from_borrowed_handle(runtime.clone(), *method)?;
-                runtime.release_jsvalue(value)?;
-                let Some(callable) = runtime.as_callable(&method)? else {
-                    return self.type_error(runtime, "not a function");
-                };
-                let argument = runtime.into_jsvalue(Value::String(JsString::from_static(
-                    match self.0.hint {
-                        ToPrimitiveHint::String => "string",
-                        ToPrimitiveHint::Number => "number",
-                        ToPrimitiveHint::Default => "default",
-                    },
-                )))?;
-                self.0.phase = Phase::ExoticResult;
-                let receiver = JsValue::Object(self.0.object.try_clone()?.into_handle());
-                Ok(self.call(callable, receiver, vec![argument]))
-            }
-            Phase::ExoticResult => {
-                if matches!(value, JsValue::Object(_)) {
-                    runtime.release_jsvalue(value)?;
-                    self.type_error(runtime, "toPrimitive")
-                } else {
-                    Ok(PrimitiveStep::Complete(Completion::Return(value)))
+                phase @ (Phase::ExoticResult | Phase::OrdinaryResult(_)) => {
+                    if !matches!(value.as_ref(), Some(JsValue::Object(_))) {
+                        Reply::Complete(value.take().expect("primitive result owner"))
+                    } else {
+                        match phase {
+                            Phase::ExoticResult | Phase::OrdinaryResult(true) => {
+                                Reply::Error("toPrimitive")
+                            }
+                            Phase::OrdinaryResult(false) => Reply::Ordinary(true),
+                            _ => unreachable!(),
+                        }
+                    }
                 }
             }
-            Phase::OrdinaryMethod(second) => {
-                let JsValue::Object(method) = &value else {
-                    runtime.release_jsvalue(value)?;
-                    return self.failed_method(runtime, second);
-                };
-                let method = ObjectRef::from_borrowed_handle(runtime.clone(), *method)?;
-                runtime.release_jsvalue(value)?;
-                let Some(callable) = runtime.as_callable(&method)? else {
-                    return self.failed_method(runtime, second);
-                };
-                self.0.phase = Phase::OrdinaryResult(second);
-                let receiver = JsValue::Object(self.0.object.try_clone()?.into_handle());
-                Ok(self.call(callable, receiver, Vec::new()))
-            }
-            Phase::OrdinaryResult(second) => {
-                if matches!(value, JsValue::Object(_)) {
-                    runtime.release_jsvalue(value)?;
-                    self.failed_method(runtime, second)
-                } else {
-                    Ok(PrimitiveStep::Complete(Completion::Return(value)))
-                }
-            }
+        }; // The incoming-owner guard ends before the next State operation.
+        if self.runtime.0.poisoned.get() {
+            return Err(RuntimeError::Poisoned);
+        }
+        match reply {
+            Reply::Call => Ok(self.publish(true)),
+            Reply::Complete(value) => Ok(PrimitiveStep::Complete(Completion::Return(value))),
+            Reply::Ordinary(second) => self.read_method(second),
+            Reply::Error(message) => self.type_error(message),
+        }
+    }
+}
+
+impl PrimitiveResume {
+    pub(crate) fn realm(&self) -> ContextId {
+        self.0.realm
+    }
+    pub(crate) fn take_state_read(&mut self) -> (StateReadEffect, Option<Atom>) {
+        (self.0.read.take().expect("primitive selected read"), None)
+    }
+    pub(crate) fn take_callable(&mut self, runtime: &Runtime) -> CallableRef {
+        CallableRef::from_validated_object(ObjectRef::from_owned_handle(
+            runtime.clone(),
+            self.0.callable.take().expect("primitive call callee"),
+        ))
+    }
+    pub(crate) fn take_receiver(&mut self) -> JsValue {
+        self.0.receiver.take().expect("primitive call receiver")
+    }
+    pub(crate) fn take_arguments(&mut self) -> Vec<JsValue> {
+        std::mem::take(&mut self.0.arguments)
+    }
+    pub(crate) fn release_in_state(
+        mut self,
+        state: &mut RuntimeState,
+        runtime: &Runtime,
+    ) -> Result<(), RuntimeError> {
+        self.0.release_in_state(state, runtime)
+    }
+    pub(crate) fn release_owned(self, runtime: &Runtime) {
+        if runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = runtime.unwind_guard();
+        if self
+            .release_in_state(&mut runtime.0.state.borrow_mut(), runtime)
+            .is_err()
+        {
+            runtime.0.poisoned.set(true);
+        }
+    }
+    pub(crate) fn start(
+        runtime: &Runtime,
+        realm: ContextId,
+        value: JsValue,
+        hint: ToPrimitiveHint,
+    ) -> Result<PrimitiveStep, RuntimeError> {
+        let JsValue::Object(object) = value else {
+            return Ok(PrimitiveStep::Complete(Completion::Return(value)));
+        };
+        let mut state = runtime.0.state.borrow_mut();
+        let atom = state.well_known_symbols[&WellKnownSymbol::ToPrimitive];
+        let mut guard = MachineGuard {
+            state: &mut state,
+            runtime,
+            machine: Some(Machine::Local(PrimitiveResumeState {
+                object,
+                realm,
+                domain_id: runtime.domain_id(),
+                hint,
+                phase: Phase::ExoticMethod,
+                read: None,
+                callable: None,
+                receiver: None,
+                arguments: Vec::new(),
+            })),
+        };
+        let result = guard.read(atom);
+        guard.finish(result)
+    }
+    pub(crate) fn ordinary(
+        runtime: &Runtime,
+        realm: ContextId,
+        object: ObjectRef,
+        hint: ToPrimitiveHint,
+    ) -> Result<PrimitiveStep, RuntimeError> {
+        let object = object.into_handle();
+        let mut state = runtime.0.state.borrow_mut();
+        let mut guard = MachineGuard {
+            state: &mut state,
+            runtime,
+            machine: Some(Machine::Local(PrimitiveResumeState {
+                object,
+                realm,
+                domain_id: runtime.domain_id(),
+                hint,
+                phase: Phase::OrdinaryMethod(false),
+                read: None,
+                callable: None,
+                receiver: None,
+                arguments: Vec::new(),
+            })),
+        };
+        let result = guard.read_method(false);
+        guard.finish(result)
+    }
+    pub(crate) fn resume(
+        self,
+        runtime: &Runtime,
+        completion: Completion,
+    ) -> Result<PrimitiveStep, RuntimeError> {
+        let mut state = runtime.0.state.borrow_mut();
+        let mut guard = MachineGuard {
+            state: &mut state,
+            runtime,
+            machine: Some(Machine::Pending(self.0)),
+        };
+        let result = guard.reply(completion);
+        guard.finish(result)
+    }
+}
+
+/// Outside-State scope for an unpublished real effect. Taking it transfers
+/// cleanup to execution storage; an error releases through the caller's Runtime.
+pub(crate) struct PrimitiveScope<'a> {
+    runtime: &'a Runtime,
+    resume: Option<PrimitiveResume>,
+}
+impl<'a> PrimitiveScope<'a> {
+    pub(crate) fn new(runtime: &'a Runtime, resume: PrimitiveResume) -> Self {
+        Self {
+            runtime,
+            resume: Some(resume),
+        }
+    }
+    pub(crate) fn take(&mut self) -> PrimitiveResume {
+        self.resume.take().expect("primitive scope owner")
+    }
+}
+impl std::ops::Deref for PrimitiveScope<'_> {
+    type Target = PrimitiveResume;
+    fn deref(&self) -> &Self::Target {
+        self.resume.as_ref().expect("primitive scope owner")
+    }
+}
+impl std::ops::DerefMut for PrimitiveScope<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.resume.as_mut().expect("primitive scope owner")
+    }
+}
+impl Drop for PrimitiveScope<'_> {
+    fn drop(&mut self) {
+        if let Some(resume) = self.resume.take() {
+            resume.release_owned(self.runtime);
         }
     }
 }
 
 impl Runtime {
-    /// Transitional synchronous consumer. The domain steps themselves never
-    /// invoke JavaScript; the explicit driver can own the same continuations.
+    /// Remaining embedding boundary consumes an already selected effect.
+    pub(crate) fn finish_primitive_read(
+        &self,
+        realm: ContextId,
+        effect: StateReadEffect,
+        atom: Option<Atom>,
+    ) -> Result<Completion, RuntimeError> {
+        self.finish_state_read_effect(realm, effect, atom)
+    }
     pub(super) fn finish_primitive_steps(
         &self,
         realm: ContextId,
@@ -257,23 +456,24 @@ impl Runtime {
         loop {
             step = match step {
                 PrimitiveStep::Complete(completion) => return Ok(completion),
-                PrimitiveStep::Get { mut resume } => {
-                    let (object, key) = resume.take_get();
-                    let completion = self.get_property_in_realm(realm, &object, &key)?;
-                    resume.resume(self, completion)?
+                PrimitiveStep::Get { resume } => {
+                    let mut resume = PrimitiveScope::new(self, resume);
+                    let (effect, atom) = resume.take_state_read();
+                    let completion = self.finish_primitive_read(realm, effect, atom)?;
+                    resume.take().resume(self, completion)?
                 }
-                PrimitiveStep::Call { mut resume } => {
-                    let callable = resume.take_callable();
+                PrimitiveStep::Call { resume } => {
+                    let mut resume = PrimitiveScope::new(self, resume);
+                    let callable = resume.take_callable(self);
                     let receiver = resume.take_receiver();
                     let arguments = resume.take_arguments();
                     let completion =
                         self.call_internal_jsvalue(realm, &callable, receiver, arguments)?;
-                    resume.resume(self, completion)?
+                    resume.take().resume(self, completion)?
                 }
             };
         }
     }
-
     pub(crate) fn ordinary_to_primitive(
         &self,
         realm: ContextId,
@@ -285,57 +485,272 @@ impl Runtime {
     }
 }
 
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<PrimitiveStep>() <= 64);
-
 #[cfg(test)]
-mod resident_request_tests {
+mod state_phase_tests {
     use super::*;
+    use crate::engine::api::Value;
+
+    #[cfg(feature = "profiling")]
     #[test]
-    fn property_and_call_requests_reuse_the_primitive_resume_allocation() {
+    fn synchronous_method_prefix_publishes_only_the_actual_call() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let mut context = runtime.new_context().unwrap();
         let value = context.eval("({valueOf(){return 7}})").unwrap();
-        let value = runtime.unroot_value(&value).unwrap();
-        let PrimitiveStep::Get { mut resume } =
-            PrimitiveResume::start(&runtime, context.realm, value, ToPrimitiveHint::Number)
-                .expect("prepare primitive")
-        else {
-            panic!("first get")
+        let Value::Object(object) = &value else {
+            panic!("object")
         };
+        let object = object.object_id();
+        let input = runtime.unroot_value(&value).unwrap();
+        let owners = std::rc::Rc::strong_count(&runtime.0);
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
+        let PrimitiveStep::Call { resume } =
+            PrimitiveResume::start(&runtime, context.realm, input, ToPrimitiveHint::Number)
+                .unwrap()
+        else {
+            panic!("selected valueOf call")
+        };
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners);
+        let events = profile.snapshot().owned_execution_events;
+        assert_eq!(events.get("primitive.real_effect_resume_created"), Some(&1));
+        assert_eq!(events.get("core.runtime_clone").copied().unwrap_or(0), 0);
+        assert_eq!(events.get("query.read.acquired").copied().unwrap_or(0), 0);
+        resume.release_owned(&runtime);
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(object)
+                .unwrap(),
+            1
+        );
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn synchronous_proxy_method_prefix_does_not_publish_a_primitive_phase() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let value = context
+            .eval("new Proxy({[Symbol.toPrimitive]:null,valueOf:null,toString:null},{})")
+            .unwrap();
+        let input = runtime.unroot_value(&value).unwrap();
+        let owners = std::rc::Rc::strong_count(&runtime.0);
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
+        let PrimitiveStep::Complete(Completion::Throw(error)) =
+            PrimitiveResume::start(&runtime, context.realm, input, ToPrimitiveHint::Number)
+                .unwrap()
+        else {
+            panic!("synchronous ToPrimitive rejection")
+        };
+        let events = profile.snapshot().owned_execution_events;
+        for event in [
+            "primitive.real_effect_resume_created",
+            "get_resume_allocation",
+            "query.read.acquired",
+            "core.runtime_clone",
+        ] {
+            assert_eq!(events.get(event).copied().unwrap_or(0), 0, "{event}");
+        }
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners);
+        runtime.release_jsvalue(error).unwrap();
+    }
+
+    #[test]
+    fn getter_replies_reuse_the_resident_phase_and_never_repeat_selection() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let value = context.eval("({get [Symbol.toPrimitive](){return undefined}, get valueOf(){return function(){return 7}}})").unwrap();
+        let input = runtime.unroot_value(&value).unwrap();
+        let PrimitiveStep::Get { resume } =
+            PrimitiveResume::start(&runtime, context.realm, input, ToPrimitiveHint::Number)
+                .unwrap()
+        else {
+            panic!("exotic getter")
+        };
+        let mut resume = PrimitiveScope::new(&runtime, resume);
         let address = &*resume.0 as *const PrimitiveResumeState;
-        let (object, key) = resume.take_get();
+        let (effect, atom) = resume.take_state_read();
         let completion = runtime
-            .get_property_in_realm(context.realm, &object, &key)
+            .finish_primitive_read(context.realm, effect, atom)
             .unwrap();
-        let PrimitiveStep::Get { mut resume } = resume.resume(&runtime, completion).unwrap() else {
-            panic!("ordinary get")
-        };
-        assert_eq!(&*resume.0 as *const PrimitiveResumeState, address);
-        let (object, key) = resume.take_get();
-        let completion = runtime
-            .get_property_in_realm(context.realm, &object, &key)
-            .unwrap();
-        let PrimitiveStep::Call { mut resume } = resume.resume(&runtime, completion).unwrap()
+        let PrimitiveStep::Get { resume } = resume.take().resume(&runtime, completion).unwrap()
         else {
-            panic!("ordinary call")
+            panic!("ordinary getter")
+        };
+        let mut resume = PrimitiveScope::new(&runtime, resume);
+        assert_eq!(&*resume.0 as *const PrimitiveResumeState, address);
+        let (effect, atom) = resume.take_state_read();
+        let completion = runtime
+            .finish_primitive_read(context.realm, effect, atom)
+            .unwrap();
+        let PrimitiveStep::Call { resume } = resume.take().resume(&runtime, completion).unwrap()
+        else {
+            panic!("ordinary method")
         };
         assert_eq!(&*resume.0 as *const PrimitiveResumeState, address);
-        let callable = resume.take_callable();
-        let receiver = runtime
-            .root_and_release_jsvalue(resume.take_receiver())
-            .unwrap();
-        let arguments = resume
-            .take_arguments()
-            .into_iter()
-            .map(|argument| runtime.root_and_release_jsvalue(argument).unwrap())
-            .collect::<Vec<_>>();
-        let completion = runtime
-            .call_internal(context.realm, &callable, receiver, &arguments)
-            .unwrap();
         assert!(matches!(
-            resume.resume(&runtime, completion).unwrap(),
-            PrimitiveStep::Complete(Completion::Return(JsValue::Int(7)))
+            runtime
+                .finish_primitive_steps(context.realm, PrimitiveStep::Call { resume })
+                .unwrap(),
+            Completion::Return(JsValue::Int(7))
         ));
+    }
+
+    #[test]
+    fn rejected_resume_scope_cleans_object_and_selected_receiver() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(value) = context
+            .eval("({get [Symbol.toPrimitive](){return function(){return 7}}})")
+            .unwrap()
+        else {
+            panic!("object")
+        };
+        let object = value.object_id();
+        let PrimitiveStep::Get { resume } = PrimitiveResume::start(
+            &runtime,
+            context.realm,
+            JsValue::Object(value.into_handle()),
+            ToPrimitiveHint::Number,
+        )
+        .unwrap() else {
+            panic!("getter")
+        };
+        drop(PrimitiveScope::new(&runtime, resume));
+        assert!(runtime.0.state.borrow().heap.object(object).is_err());
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn destructive_reply_cleanup_does_not_advance_to_the_next_method() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(method) = context
+            .eval("var method = function(){return '7'}; method")
+            .unwrap()
+        else {
+            panic!("method")
+        };
+        let Value::Object(object) = context
+            .eval("({get valueOf(){return undefined},toString:method})")
+            .unwrap()
+        else {
+            panic!("object")
+        };
+        let PrimitiveStep::Get { mut resume } = PrimitiveResume::ordinary(
+            &runtime,
+            context.realm,
+            object.try_clone().unwrap(),
+            ToPrimitiveHint::Number,
+        )
+        .unwrap() else {
+            panic!("valueOf getter")
+        };
+        let (effect, atom) = resume.take_state_read();
+        let _ = runtime
+            .finish_primitive_read(context.realm, effect, atom)
+            .unwrap();
+        let method_id = method.object_id();
+        let before = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(method_id)
+            .unwrap();
+        let invalid = runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .allocate_string(JsString::from_static("invalid"))
+            .unwrap();
+        runtime.release_jsvalue(JsValue::String(invalid)).unwrap();
+        assert!(matches!(
+            resume.resume(&runtime, Completion::Return(JsValue::String(invalid))),
+            Err(RuntimeError::Poisoned)
+        ));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(method_id)
+                .unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn successful_reply_is_rejected_if_final_machine_cleanup_poisons() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let value = context.eval("({valueOf(){return 7}})").unwrap();
+        let PrimitiveStep::Call { mut resume } = PrimitiveResume::start(
+            &runtime,
+            context.realm,
+            runtime.unroot_value(&value).unwrap(),
+            ToPrimitiveHint::Number,
+        )
+        .unwrap() else {
+            panic!("method")
+        };
+        let invalid = runtime.new_object(None).unwrap().into_handle();
+        runtime.release_jsvalue(JsValue::Object(invalid)).unwrap();
+        let previous = std::mem::replace(&mut resume.0.object, invalid);
+        runtime.release_jsvalue(JsValue::Object(previous)).unwrap();
+        assert!(matches!(
+            resume.resume(&runtime, Completion::Return(JsValue::Int(7))),
+            Err(RuntimeError::Poisoned)
+        ));
+        assert!(runtime.0.poisoned.get());
+        drop(value); // Poisoned root cleanup cannot retry the failed release.
+    }
+
+    #[test]
+    fn destructive_cleanup_failure_poisons_before_visiting_remaining_owners() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let value = context.eval("({valueOf(){return 7}})").unwrap();
+        let PrimitiveStep::Call { mut resume } = PrimitiveResume::start(
+            &runtime,
+            context.realm,
+            runtime.unroot_value(&value).unwrap(),
+            ToPrimitiveHint::Number,
+        )
+        .unwrap() else {
+            panic!("method")
+        };
+        let invalid = runtime.new_object(None).unwrap().into_handle();
+        runtime.release_jsvalue(JsValue::Object(invalid)).unwrap();
+        let previous = resume.0.callable.replace(invalid).unwrap();
+        runtime.release_jsvalue(JsValue::Object(previous)).unwrap();
+        let object = resume.0.object;
+        let before = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(object)
+            .unwrap();
+        drop(PrimitiveScope::new(&runtime, resume));
+        assert!(runtime.0.poisoned.get());
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(object)
+                .unwrap(),
+            before
+        );
+        drop(value); // Poisoned public-root cleanup must not traverse the heap.
     }
 }

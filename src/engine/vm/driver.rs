@@ -671,11 +671,12 @@ fn run_frames_with_state(
     runtime: &Runtime,
     mut execution: RunningExecution,
     mut forwarded: Option<Completion>,
-    mut conversion: Option<super::conversion_driver::ConversionTask>,
+    conversion: Option<super::conversion_driver::ConversionTask>,
     mut next_operation: u64,
 ) -> Result<RunningExit, Error> {
     #[cfg(feature = "profiling")]
     let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
+    let mut conversion = super::conversion_driver::ConversionSlotScope::new(runtime, conversion);
     loop {
         if let Some(result) = execution.root_descriptor.take() {
             if execution.frames.current_id().is_some()
@@ -715,7 +716,7 @@ fn run_frames_with_state(
                 &mut execution,
             )? {
                 Progress::Ready(task) => {
-                    conversion = Some(task);
+                    *conversion = Some(task);
                     continue;
                 }
                 Progress::Entered => continue,
@@ -783,12 +784,18 @@ fn run_frames_with_state(
                         }
                     }
                 }
-                Progress::PropertyRead(input) => {
-                    match super::property_driver::read_converted(
+                Progress::PropertyRead {
+                    keep_receiver,
+                    keep_key,
+                    fallthrough,
+                } => {
+                    match super::property_driver::read(
                         runtime,
                         &mut execution,
                         id,
-                        input,
+                        super::property_driver::ReadKey::Computed { keep_key },
+                        keep_receiver,
+                        fallthrough,
                     )? {
                         CallStep::Entered => continue,
                         CallStep::Complete(completion) => {
@@ -865,7 +872,7 @@ fn run_frames_with_state(
                     target,
                     outcome,
                 )? {
-                    super::proxy_get_driver::Progress::Conversion(task) => conversion = Some(task),
+                    super::proxy_get_driver::Progress::Conversion(task) => *conversion = Some(task),
                     super::proxy_get_driver::Progress::Call(CallStep::Entered) => {}
                     super::proxy_get_driver::Progress::Call(CallStep::Complete(completion)) => {
                         if matches!(target.owner, super::frame::ReturnOwner::Root) {
@@ -909,7 +916,7 @@ fn run_frames_with_state(
         ) {
             match super::proxy_get_driver::reply(runtime, &mut execution, target, completion)? {
                 super::proxy_get_driver::Progress::Conversion(task) => {
-                    conversion = Some(task);
+                    *conversion = Some(task);
                     continue;
                 }
                 super::proxy_get_driver::Progress::Call(CallStep::Entered) => continue,
@@ -959,7 +966,7 @@ fn run_frames_with_state(
             continue;
         }
         if target.operation.is_some() {
-            conversion = Some(crate::engine::vm::conversion_driver::ConversionTask::reply(
+            *conversion = Some(crate::engine::vm::conversion_driver::ConversionTask::reply(
                 runtime,
                 &mut execution,
                 target,

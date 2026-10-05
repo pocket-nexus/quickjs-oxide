@@ -41,11 +41,11 @@ pub(super) fn primitive(
                 let object = object.take().expect("selected Step field");
                 let hint = hint.take().expect("selected Step field");
 
-                *step = crate::engine::value::conversion::primitive::PrimitiveResume::ordinary(
+                let next = crate::engine::value::conversion::primitive::PrimitiveResume::ordinary(
                     runtime, realm, object, hint,
                 )
-                .map_err(runtime_error_to_vm_error)?
-                .try_into()?;
+                .map_err(runtime_error_to_vm_error)?;
+                *step = Step::from_primitive(runtime, next)?;
                 continue;
             }
             Step::Arguments { value, resume } => {
@@ -92,7 +92,7 @@ pub(super) fn primitive(
                         .map_err(runtime_error_to_vm_error)?,
                     next => {
                         if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = next.try_into()?;
+                            let mut abandoned = Step::from_primitive(runtime, next)?;
                             abandoned.release_owned(runtime);
                             resume.release_owned(runtime);
                             return Err(Error::internal(
@@ -100,7 +100,7 @@ pub(super) fn primitive(
                             ));
                         }
                         query.parents.push(resume);
-                        next.try_into()?
+                        Step::from_primitive(runtime, next)?
                     }
                 };
                 continue;
@@ -127,13 +127,13 @@ pub(super) fn primitive(
                     }
                     next => {
                         if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = next.try_into()?;
+                            let mut abandoned = Step::from_number(runtime, next)?;
                             abandoned.release_owned(runtime);
                             resume.release_owned(runtime);
                             return Err(Error::internal("property continuation allocation failed"));
                         }
                         query.parents.push(resume);
-                        next.try_into()?
+                        Step::from_number(runtime, next)?
                     }
                 };
                 continue;
@@ -181,13 +181,13 @@ pub(super) fn primitive(
                         .map_err(runtime_error_to_vm_error)?,
                     next => {
                         if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = next.try_into()?;
+                            let mut abandoned = Step::from_element(runtime, next)?;
                             abandoned.release_owned(runtime);
                             resume.release_owned(runtime);
                             return Err(Error::internal("property continuation allocation failed"));
                         }
                         query.parents.push(resume);
-                        next.try_into()?
+                        Step::from_element(runtime, next)?
                     }
                 };
                 continue;

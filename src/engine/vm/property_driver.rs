@@ -1,5 +1,6 @@
 //! Schedule prepared property reads without replaying observable key conversion.
 //! Storage selection remains in object; VM owns input transfer and child replies.
+mod computed;
 use super::{
     Completion,
     call::{BytecodeCallRequest, CallableExecution},
@@ -15,6 +16,9 @@ use crate::engine::{
     heap::ContextId,
     object::{OrdinaryRead, PropertyKey},
     value::{JsValue, conversion::NativeConversion},
+};
+pub(in crate::engine::vm) use computed::{
+    Effect as ComputedReadEffect, Progress as ComputedReadProgress, execute as execute_computed,
 };
 
 #[derive(Clone, Copy)]
@@ -194,15 +198,6 @@ impl PropertyProgress {
     }
 }
 
-/// Converted inputs stay owned after ToPrimitive's reply, even if lookup next
-/// reaches a Proxy or a callable whose domain continuation is still pending.
-pub(super) struct ConvertedRead {
-    pub base: JsValue,
-    pub key: JsValue,
-    pub keep_receiver: bool,
-    pub keep_key: bool,
-}
-
 pub(super) fn throw_error(
     runtime: &Runtime,
     realm: ContextId,
@@ -354,8 +349,8 @@ pub(super) fn read_progress_selected(
     fallthrough: FallthroughPc,
     selected: Option<SelectedNamedRead>,
 ) -> Result<PropertyProgress, Error> {
-    if let ReadKey::Static(index) = key_kind {
-        return read_named_progress_selected(
+    match key_kind {
+        ReadKey::Static(index) => read_named_progress_selected(
             runtime,
             execution,
             id,
@@ -363,226 +358,15 @@ pub(super) fn read_progress_selected(
             keep_receiver,
             fallthrough,
             selected,
-        );
-    }
-    let selected = NamedHandoffGuard { runtime, selected };
-    if selected.selected.is_some() {
-        return Err(Error::internal(
-            "named selection supplied to a computed read",
-        ));
-    }
-    let frame = execution.frames.current_mut(id)?;
-    let computed = true;
-    let realm = frame.executable.realm;
-    let next_pc = fallthrough.index();
-    let base = execution.slots.peek(&frame.window, usize::from(computed))?;
-    if computed && matches!(base, JsValue::Null | JsValue::Undefined) {
-        let key = execution.slots.peek(&frame.window, 0)?;
-        let message = if matches!(key_kind, ReadKey::Computed { keep_key: true })
-            && !matches!(
-                key,
-                JsValue::Int(_) | JsValue::String(_) | JsValue::Symbol(_)
-            ) {
-            "value has no property"
-        } else if matches!(base, JsValue::Null) {
-            "cannot read property of null"
-        } else {
-            "cannot read property of undefined"
-        };
-        return throw_error(
-            runtime,
-            realm,
-            Error::new(crate::engine::api::error::ErrorKind::Type, message),
-        )
-        .map(PropertyProgress::Deferred);
-    }
-    let depth = execution.slots.depth(&frame.window);
-    let (key, retained_key) = match key_kind {
-        ReadKey::Static(_) => unreachable!("named reads use the State consumer"),
+        ),
         ReadKey::Computed { keep_key } => {
-            let value = execution.slots.peek(&frame.window, 0)?;
-            if matches!(value, JsValue::Object(_)) {
-                return Err(Error::internal(
-                    "object property key did not enter its conversion operation",
-                ));
+            let selected = NamedHandoffGuard { runtime, selected };
+            if selected.selected.is_some() {
+                return Err(Error::internal("computed read received a named selection"));
             }
-            let owned = runtime
-                .dup_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
-            let key = match runtime
-                .native_to_property_key_jsvalue(realm, owned)
-                .map_err(runtime_error_to_vm_error)?
-            {
-                NativeConversion::Value(key) => key,
-                NativeConversion::Throw(value) => {
-                    return Ok(PropertyProgress::Deferred(CallStep::Complete(
-                        Completion::Throw(value),
-                    )));
-                }
-            };
-            let retained = keep_key
-                .then(|| match value {
-                    JsValue::Int(_) | JsValue::String(_) | JsValue::Symbol(_) => runtime
-                        .dup_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error),
-                    value => Ok(super::numeric::allocate_string_jsvalue(
-                        runtime,
-                        super::numeric::to_js_string_jsvalue(runtime, value)?,
-                    )?),
-                })
-                .transpose()?;
-            (Some(key), retained)
-        }
-    };
-    // Lookup borrows the original rooted operand. Only a pending callback
-    // needs a second receiver owner; completed reads move this slot directly.
-    let read = match runtime.prepare_value_property_read_selected_jsvalue(
-        realm,
-        base,
-        key.as_ref()
-            .ok_or(crate::engine::api::runtime_error::RuntimeError::Invariant(
-                "fallback read lost its key",
-            ))?,
-        None,
-    ) {
-        Ok(read) => read,
-        Err(error) => {
-            return throw_error(runtime, realm, runtime_error_to_vm_error(error))
-                .map(PropertyProgress::Deferred);
-        }
-    };
-    let key = if matches!(read, OrdinaryRead::Special { .. }) {
-        key
-    } else {
-        None
-    };
-    match read {
-        OrdinaryRead::Complete(value) => complete_read(
-            runtime,
-            execution,
-            id,
-            None,
-            retained_key,
-            keep_receiver,
-            1 + usize::from(computed),
-            value.unwrap_or(JsValue::Undefined),
-            depth,
-            next_pc,
-        )
-        .map(|()| PropertyProgress::Completed),
-        read => {
-            let preserved_receiver = runtime
-                .dup_jsvalue(base)
-                .map_err(runtime_error_to_vm_error)?;
-            read_pending(
-                runtime,
-                execution,
-                id,
-                preserved_receiver,
-                key,
-                read,
-                retained_key,
-                keep_receiver,
-                1 + usize::from(computed),
-                depth,
-            )
-            .map(PropertyProgress::Deferred)
+            computed::read(runtime, execution, id, keep_receiver, keep_key, fallthrough)
         }
     }
-}
-
-// The conversion reply already owns this boxed operand bundle; avoid moving it through the driver stack.
-#[allow(clippy::boxed_local)]
-pub(super) fn read_converted(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    input: Box<ConvertedRead>,
-) -> Result<CallStep, Error> {
-    let ConvertedRead {
-        base,
-        key,
-        keep_receiver,
-        keep_key,
-    } = *input;
-    if matches!(key, JsValue::Object(_)) {
-        return Err(Error::internal(
-            "ToPrimitive returned an object property key",
-        ));
-    }
-    let frame = execution.frames.current_mut(id)?;
-    let realm = frame.executable.realm;
-    let depth = execution.slots.depth(&frame.window) + 2;
-    // After an object-key conversion, GetArrayEl3 retains String/Symbol, even
-    // if ToPrimitive returned an Int. Direct Int keys retain their original tag.
-    let retained = if keep_key {
-        Some(match &key {
-            JsValue::Symbol(_) | JsValue::String(_) => runtime
-                .dup_jsvalue(&key)
-                .map_err(runtime_error_to_vm_error)?,
-            value => super::numeric::allocate_string_jsvalue(
-                runtime,
-                super::numeric::to_js_string_jsvalue(runtime, value)?,
-            )?,
-        })
-    } else {
-        None
-    };
-    let key = match runtime
-        .native_to_property_key_jsvalue(realm, key)
-        .map_err(runtime_error_to_vm_error)?
-    {
-        NativeConversion::Value(key) => key,
-        NativeConversion::Throw(value) => {
-            return Ok(CallStep::Complete(Completion::Throw(value)));
-        }
-    };
-    finish_read(
-        runtime,
-        execution,
-        id,
-        base,
-        key,
-        retained,
-        keep_receiver,
-        0,
-        depth,
-    )
-    .map(PropertyProgress::into_call_step)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn finish_read(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    base: JsValue,
-    key: PropertyKey,
-    retained_key: Option<JsValue>,
-    keep_receiver: bool,
-    consume: usize,
-    depth: usize,
-) -> Result<PropertyProgress, Error> {
-    let realm = execution.frames.current_mut(id)?.executable.realm;
-    let read = match runtime.prepare_value_property_read_borrowed_jsvalue(realm, &base, &key) {
-        Ok(read) => read,
-        Err(error) => {
-            return throw_error(runtime, realm, runtime_error_to_vm_error(error))
-                .map(PropertyProgress::Deferred);
-        }
-    };
-    read_prepared_progress(
-        runtime,
-        execution,
-        id,
-        base,
-        key,
-        read,
-        retained_key,
-        keep_receiver,
-        consume,
-        depth,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1641,37 +1425,29 @@ pub(in crate::engine::vm) mod read_completion_tests {
                     .push(&mut frame.window, JsValue::Bool(true))
                     .unwrap();
             }
-            let action = execute_frame(&runtime, &mut execution, id).unwrap();
-            let (key, keep_receiver, fallthrough) = match action {
-                VmAction::GetField {
-                    index,
-                    keep_receiver,
-                    fallthrough,
-                } => (ReadKey::Static(index), keep_receiver, fallthrough),
-                VmAction::GetElement {
-                    keep_receiver,
-                    keep_key,
-                    fallthrough,
-                } => (ReadKey::Computed { keep_key }, keep_receiver, fallthrough),
-                _ => panic!("{source} produced {action:?} instead of a property action"),
-            };
-            assert_eq!(keep_receiver, expected_receiver);
-            assert_eq!(
-                matches!(key, ReadKey::Computed { keep_key: true }),
-                expected_key
+            let frame = execution.frames.current_mut(id).unwrap();
+            let fault = frame.fault_pc;
+            let fallthrough = FallthroughPc::from_decoded(
+                frame
+                    .executable
+                    .exec
+                    .decode_published(frame.resume_pc as u32)
+                    .unwrap(),
             );
-            let fault = execution.frames.current_mut(id).unwrap().fault_pc;
             let (progress, recovery_calls) = count_next_pc_calls(|| {
-                read_progress(
+                let mut state = runtime.0.state.borrow_mut();
+                let mut segment =
+                    crate::engine::vm::stack::FrameExecution::admit(&mut execution, id).unwrap();
+                computed::execute(
                     &runtime,
-                    &mut execution,
-                    id,
-                    key,
-                    keep_receiver,
+                    &mut state,
+                    &mut segment,
+                    expected_receiver,
+                    expected_key,
                     fallthrough,
                 )
             });
-            assert!(matches!(progress.unwrap(), PropertyProgress::Completed));
+            assert!(matches!(progress.unwrap(), computed::Progress::Completed));
             assert_eq!(recovery_calls, 0);
             let frame = execution.frames.current_mut(id).unwrap();
             assert_eq!(
@@ -1883,16 +1659,16 @@ pub(in crate::engine::vm) mod read_completion_tests {
             Value::Int(7)
         );
         let events = profile.snapshot().owned_execution_events;
-        assert!(
+        assert_eq!(
             events
                 .get("property_read_action_exit")
                 .copied()
-                .unwrap_or(0)
-                > 0
+                .unwrap_or(0),
+            0
         );
         assert!(
             events
-                .get("property_read_completed_with_carried_fallthrough")
+                .get("computed_read.completed_in_segment")
                 .copied()
                 .unwrap_or(0)
                 > 0

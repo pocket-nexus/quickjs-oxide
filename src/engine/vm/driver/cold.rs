@@ -663,17 +663,24 @@ fn get_element(
         (*context.next_operation) = (*context.next_operation)
             .checked_add(1)
             .ok_or_else(|| Error::internal("property conversion identity exhausted"))?;
-        *context.conversion = Some(
-            super::super::conversion_driver::ConversionTask::start_property_read(
-                runtime,
-                execution,
-                id,
-                *context.next_operation,
-                keep_receiver,
-                keep_key,
-            )?,
-        );
-        return Ok(Disposition::Entered);
+        match super::super::conversion_driver::ConversionTask::start_property_read(
+            runtime,
+            execution,
+            id,
+            *context.next_operation,
+            keep_receiver,
+            keep_key,
+            fallthrough,
+        )? {
+            super::super::conversion_driver::Progress::Ready(task) => {
+                *context.conversion = Some(task);
+                return Ok(Disposition::Entered);
+            }
+            super::super::conversion_driver::Progress::Complete(completion) => {
+                return Ok(context.complete(completion));
+            }
+            _ => unreachable!("property key entry publishes only a reply or actual effect"),
+        }
     }
     match super::super::property_driver::read(
         runtime,

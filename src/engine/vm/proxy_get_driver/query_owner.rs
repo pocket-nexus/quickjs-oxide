@@ -86,6 +86,8 @@ impl Drop for QueryScope<'_> {
     }
 }
 
+/// Selected real effects have no contextless destructor. This borrowed guard
+/// covers failures before Query acquisition without introducing a Runtime owner.
 pub(super) struct StepScope<'a> {
     runtime: &'a Runtime,
     step: Option<super::Step>,

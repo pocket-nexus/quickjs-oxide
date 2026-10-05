@@ -248,39 +248,12 @@ pub(crate) fn to_number_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<f6
 
 /// Primitive `ToString` payload for internal values (no object conversion).
 pub(crate) fn to_js_string_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<JsString, Error> {
-    Ok(match value {
-        JsValue::String(id) => string_payload(runtime, *id)?,
-        JsValue::Undefined => JsString::from_static("undefined"),
-        JsValue::Null => JsString::from_static("null"),
-        JsValue::Bool(true) => JsString::from_static("true"),
-        JsValue::Bool(false) => JsString::from_static("false"),
-        JsValue::Int(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
-        JsValue::Float(value) => {
-            JsString::from_owned_latin1(crate::engine::value::number_to_string(*value).into_bytes())
+    match value {
+        JsValue::String(_) | JsValue::BigInt(_) => {
+            runtime.0.state.borrow().primitive_to_js_string(value)
         }
-        JsValue::ShortBigInt(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
-        JsValue::BigInt(id) => {
-            let bigint = bigint_payload(runtime, *id)?;
-            if bigint.exceeds_allocation_limit() {
-                return Err(Error::new(
-                    ErrorKind::Range,
-                    "BigInt is too large to allocate",
-                ));
-            }
-            JsString::from_owned_latin1(bigint.to_string().into_bytes())
-        }
-        JsValue::Symbol(_) => {
-            return Err(Error::new(
-                ErrorKind::Type,
-                "cannot convert symbol to string",
-            ));
-        }
-        JsValue::Object(_) => {
-            return Err(Error::internal(
-                "object ToPrimitive requires an execution context",
-            ));
-        }
-    })
+        value => crate::engine::value::conversion::primitive_to_js_string_scalar(value),
+    }
 }
 
 pub(in crate::engine::vm) fn to_numeric_primitive(
