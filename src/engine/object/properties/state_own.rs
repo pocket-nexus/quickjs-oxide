@@ -204,16 +204,22 @@ impl RuntimeState {
         // consumed through the same slot snapshot as an already eager value.
         let data = self.heap.object(object)?;
         let shape = self.heap.shape(data.shape)?;
-        if let Some(index) = shape.find(AtomIdx::from_raw(atom.raw()))
-            && matches!(data.slots[index as usize], PropertySlot::AutoInit(_))
-        {
+        let Some(mut index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+            return Ok(StateOwnPropertySnapshot::Absent);
+        };
+        if matches!(data.slots[index as usize], PropertySlot::AutoInit(_)) {
             self.materialize_auto_init_property(poisoned, object, atom)?;
+            // Materialization may publish a different layout. Ordinary slots
+            // keep the location already selected under this State access.
+            let data = self.heap.object(object)?;
+            let shape = self.heap.shape(data.shape)?;
+            let Some(materialized_index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
+                return Ok(StateOwnPropertySnapshot::Absent);
+            };
+            index = materialized_index;
         }
         let data = self.heap.object(object)?;
         let shape = self.heap.shape(data.shape)?;
-        let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
-            return Ok(StateOwnPropertySnapshot::Absent);
-        };
         let index = index as usize;
         let flags = shape.entries()[index].flags;
         let record = match &data.slots[index] {
