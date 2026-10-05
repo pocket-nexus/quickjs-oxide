@@ -15,8 +15,8 @@ use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
 pub(crate) enum ProxyDefineStep {
+    StateRead { resume: ProxyDefineResume },
     Complete(NativeConversion<InternalDefineResult>),
-    Read { resume: ProxyDefineResume },
     Call { resume: ProxyDefineResume },
     Define { resume: ProxyDefineResume },
     Descriptor { resume: ProxyDefineResume },
@@ -82,25 +82,17 @@ fn method(
         MethodStep::Throw(value) => {
             ProxyDefineStep::Complete(NativeConversion::Throw(value.take()))
         }
-        MethodStep::Read { mut resume } => {
-            let object = resume.take_read_object();
-            let method_key = resume.take_read_key();
-            let receiver = resume.take_read_receiver();
-            ProxyDefineStep::request_read(
-                object,
-                method_key,
-                receiver,
-                ProxyDefineResume(Box::new(ProxyDefineResumeState {
-                    pending_effect: ProxyDefineStepPending::new(runtime.clone()),
-                    realm,
-                    phase: Phase::Method {
-                        resume,
-                        key,
-                        descriptor,
-                    },
-                })),
-            )
-        }
+        MethodStep::Read { resume } => ProxyDefineStep::StateRead {
+            resume: ProxyDefineResume(Box::new(ProxyDefineResumeState {
+                pending_effect: ProxyDefineStepPending::new(runtime.clone()),
+                realm,
+                phase: Phase::Method {
+                    resume,
+                    key,
+                    descriptor,
+                },
+            })),
+        },
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
             let target = resume.take_completed_target();
@@ -150,6 +142,17 @@ fn method(
     })
 }
 impl ProxyDefineResume {
+    pub(crate) fn take_state_read(
+        &mut self,
+    ) -> (
+        crate::engine::object::StateReadEffect,
+        crate::engine::atom::Atom,
+    ) {
+        let Phase::Method { resume, .. } = &mut self.0.phase else {
+            unreachable!("selected method read phase")
+        };
+        resume.take_state_read()
+    }
     pub(crate) fn resume(
         self,
         runtime: &Runtime,
@@ -249,9 +252,6 @@ impl ProxyDefineResume {
 
 struct ProxyDefineStepPending {
     runtime: Runtime,
-    read_object: Option<ObjectRef>,
-    read_key: Option<PropertyKey>,
-    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
     call_receiver: Option<JsValue>,
     call_arguments: Option<Vec<JsValue>>,
@@ -265,9 +265,6 @@ impl ProxyDefineStepPending {
     fn new(runtime: Runtime) -> Self {
         Self {
             runtime,
-            read_object: None,
-            read_key: None,
-            read_receiver: None,
             call_target: None,
             call_receiver: None,
             call_arguments: None,
@@ -284,9 +281,6 @@ impl Drop for ProxyDefineStepPending {
     /// Consumption goes through `Option::take`; releases are defer-safe and
     /// nothrow, and never run JavaScript.
     fn drop(&mut self) {
-        if let Some(value) = self.read_receiver.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
         if let Some(value) = self.call_receiver.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -298,17 +292,6 @@ impl Drop for ProxyDefineStepPending {
     }
 }
 impl ProxyDefineStep {
-    pub(crate) fn request_read(
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: JsValue,
-        mut resume: ProxyDefineResume,
-    ) -> Self {
-        resume.0.pending_effect.read_object = Some(object);
-        resume.0.pending_effect.read_key = Some(key);
-        resume.0.pending_effect.read_receiver = Some(receiver);
-        Self::Read { resume }
-    }
     pub(crate) fn request_call(
         target: DirectCallTarget,
         receiver: JsValue,
@@ -342,27 +325,6 @@ impl ProxyDefineStep {
     }
 }
 impl ProxyDefineResume {
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .read_object
-            .take()
-            .expect("ProxyDefineStep Read object")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .read_key
-            .take()
-            .expect("ProxyDefineStep Read key")
-    }
-    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .read_receiver
-            .take()
-            .expect("ProxyDefineStep Read receiver")
-    }
     pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
         self.0
             .pending_effect

@@ -11,6 +11,14 @@ impl TryFrom<ProxyGetStep> for Step {
         Ok({
             match step {
                 ProxyGetStep::Complete(result) => Self::Complete(Some(result)),
+                ProxyGetStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    Self::StateRead {
+                        effect: Some(effect),
+                        atom: Some(atom),
+                        resume: Some(Resume::Get(resume)),
+                    }
+                }
                 ProxyGetStep::Read { mut resume } => {
                     let object = resume.take_read_object();
                     let key = resume.take_read_key();
@@ -53,17 +61,15 @@ impl TryFrom<ProxyOwnStep> for Step {
         Ok({
             match step {
                 ProxyOwnStep::Complete(result) => Self::OwnComplete(Some(result)),
-                ProxyOwnStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    Self::Read {
-                        object: Some(object),
-                        key: Some(key),
-                        receiver: Some(receiver),
+                ProxyOwnStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    Self::StateRead {
+                        effect: Some(effect),
+                        atom: Some(atom),
                         resume: Some(Resume::Own(resume)),
                     }
                 }
+
                 ProxyOwnStep::Call { mut resume } => {
                     let target = resume.take_call_target();
                     let receiver = resume.take_call_receiver();
@@ -163,17 +169,15 @@ impl TryFrom<ProxyBooleanStep> for Step {
                     }
                 }
                 ProxyBooleanStep::Complete(result) => Self::BooleanComplete(Some(result)),
-                ProxyBooleanStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    Self::Read {
-                        object: Some(object),
-                        key: Some(key),
-                        receiver: Some(receiver),
+                ProxyBooleanStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    Self::StateRead {
+                        effect: Some(effect),
+                        atom: Some(atom),
                         resume: Some(Resume::Boolean(resume)),
                     }
                 }
+
                 ProxyBooleanStep::Call { mut resume } => {
                     let target = resume.take_call_target();
                     let receiver = resume.take_call_receiver();
@@ -322,17 +326,15 @@ impl TryFrom<ProxySetStep> for Step {
         Ok({
             match step {
                 ProxySetStep::Complete(result) => Self::SetComplete(Some(set_completion(result))),
-                ProxySetStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    Self::Read {
-                        object: Some(object),
-                        key: Some(key),
-                        receiver: Some(receiver),
+                ProxySetStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    Self::StateRead {
+                        effect: Some(effect),
+                        atom: Some(atom),
                         resume: Some(Resume::ProxySet(resume)),
                     }
                 }
+
                 ProxySetStep::Call { mut resume } => {
                     let target = resume.take_call_target();
                     let receiver = resume.take_call_receiver();
@@ -377,17 +379,15 @@ impl TryFrom<ProxyDefineStep> for Step {
         Ok({
             match step {
                 ProxyDefineStep::Complete(result) => Self::Defined(Some(result)),
-                ProxyDefineStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    Self::Read {
-                        object: Some(object),
-                        key: Some(key),
-                        receiver: Some(receiver),
+                ProxyDefineStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    Self::StateRead {
+                        effect: Some(effect),
+                        atom: Some(atom),
                         resume: Some(Resume::Define(resume)),
                     }
                 }
+
                 ProxyDefineStep::Call { mut resume } => {
                     let target = resume.take_call_target();
                     let receiver = resume.take_call_receiver();
@@ -445,17 +445,15 @@ impl TryFrom<ProxyPrototypeStep> for Step {
         Ok({
             match step {
                 ProxyPrototypeStep::Complete(result) => Self::Complete(Some(result)),
-                ProxyPrototypeStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    Self::Read {
-                        object: Some(object),
-                        key: Some(key),
-                        receiver: Some(receiver),
+                ProxyPrototypeStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    Self::StateRead {
+                        effect: Some(effect),
+                        atom: Some(atom),
                         resume: Some(Resume::Prototype(resume)),
                     }
                 }
+
                 ProxyPrototypeStep::Call { mut resume } => {
                     let target = resume.take_call_target();
                     let receiver = resume.take_call_receiver();
@@ -502,6 +500,14 @@ impl TryFrom<crate::engine::object::KeysStep> for Step {
             use crate::engine::object::KeysStep;
             match step {
                 KeysStep::Complete(result) => Self::KeysComplete(Some(result)),
+                KeysStep::StateRead { mut resume } => {
+                    let (effect, atom) = resume.take_state_read();
+                    Self::StateRead {
+                        effect: Some(effect),
+                        atom: Some(atom),
+                        resume: Some(Resume::Keys(resume)),
+                    }
+                }
                 KeysStep::Read { mut resume } => {
                     let receiver = resume.take_read_receiver();
                     let key = resume.take_read_key();

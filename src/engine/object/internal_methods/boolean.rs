@@ -16,10 +16,10 @@ pub(crate) enum ProxyBooleanKind {
     PreventExtensions,
 }
 pub(crate) enum ProxyBooleanStep {
+    StateRead { resume: ProxyBooleanResume },
     Delete { resume: ProxyBooleanResume },
     PreventExtensions { resume: ProxyBooleanResume },
     Complete(NativeConversion<bool>),
-    Read { resume: ProxyBooleanResume },
     Call { resume: ProxyBooleanResume },
     Has { resume: ProxyBooleanResume },
     Extensible { resume: ProxyBooleanResume },
@@ -110,21 +110,13 @@ fn method(
         MethodStep::Throw(value) => {
             ProxyBooleanStep::Complete(NativeConversion::Throw(value.take()))
         }
-        MethodStep::Read { mut resume } => {
-            let object = resume.take_read_object();
-            let key = resume.take_read_key();
-            let receiver = resume.take_read_receiver();
-            ProxyBooleanStep::request_read(
-                object,
-                key,
-                receiver,
-                ProxyBooleanResume(Box::new(ProxyBooleanResumeState {
-                    pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
-                    realm,
-                    phase: Phase::Method { resume, kind },
-                })),
-            )
-        }
+        MethodStep::Read { resume } => ProxyBooleanStep::StateRead {
+            resume: ProxyBooleanResume(Box::new(ProxyBooleanResumeState {
+                pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
+                realm,
+                phase: Phase::Method { resume, kind },
+            })),
+        },
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
             let target = resume.take_completed_target();
@@ -188,6 +180,17 @@ fn method(
 }
 
 impl ProxyBooleanResume {
+    pub(crate) fn take_state_read(
+        &mut self,
+    ) -> (
+        crate::engine::object::StateReadEffect,
+        crate::engine::atom::Atom,
+    ) {
+        let Phase::Method { resume, .. } = &mut self.0.phase else {
+            unreachable!("selected method read phase")
+        };
+        resume.take_state_read()
+    }
     pub(crate) fn resume(
         self,
         runtime: &Runtime,
@@ -390,15 +393,14 @@ pub(super) fn finish(
                 )?
             }
             ProxyBooleanStep::Complete(result) => return Ok(result),
-            ProxyBooleanStep::Read { mut resume } => {
-                let object = resume.take_read_object();
-                let key = resume.take_read_key();
-                let receiver = resume.take_read_receiver();
+            ProxyBooleanStep::StateRead { mut resume } => {
+                let (effect, atom) = resume.take_state_read();
                 resume.resume(
                     runtime,
-                    runtime.internal_get_jsvalue(realm, &object, &key, receiver)?,
+                    runtime.finish_selected_method_read(realm, effect, atom)?,
                 )?
             }
+
             ProxyBooleanStep::Call { mut resume } => {
                 let target = resume.take_call_target();
                 let receiver = resume.take_call_receiver();
@@ -444,9 +446,6 @@ struct ProxyBooleanStepPending {
     delete_object: Option<ObjectRef>,
     delete_key: Option<PropertyKey>,
     prevent_extensions_object: Option<ObjectRef>,
-    read_object: Option<ObjectRef>,
-    read_key: Option<PropertyKey>,
-    read_receiver: Option<JsValue>,
     call_target: Option<DirectCallTarget>,
     call_receiver: Option<JsValue>,
     call_arguments: Option<Vec<JsValue>>,
@@ -463,9 +462,6 @@ impl ProxyBooleanStepPending {
             delete_object: None,
             delete_key: None,
             prevent_extensions_object: None,
-            read_object: None,
-            read_key: None,
-            read_receiver: None,
             call_target: None,
             call_receiver: None,
             call_arguments: None,
@@ -482,9 +478,6 @@ impl Drop for ProxyBooleanStepPending {
     /// Consumption goes through `Option::take`; releases are defer-safe and
     /// nothrow, and never run JavaScript.
     fn drop(&mut self) {
-        if let Some(value) = self.read_receiver.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
         if let Some(value) = self.call_receiver.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -512,17 +505,7 @@ impl ProxyBooleanStep {
         resume.0.pending_effect.prevent_extensions_object = Some(object);
         Self::PreventExtensions { resume }
     }
-    pub(crate) fn request_read(
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: JsValue,
-        mut resume: ProxyBooleanResume,
-    ) -> Self {
-        resume.0.pending_effect.read_object = Some(object);
-        resume.0.pending_effect.read_key = Some(key);
-        resume.0.pending_effect.read_receiver = Some(receiver);
-        Self::Read { resume }
-    }
+
     pub(crate) fn request_call(
         target: DirectCallTarget,
         receiver: JsValue,
@@ -579,27 +562,7 @@ impl ProxyBooleanResume {
             .take()
             .expect("ProxyBooleanStep PreventExtensions object")
     }
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .read_object
-            .take()
-            .expect("ProxyBooleanStep Read object")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .read_key
-            .take()
-            .expect("ProxyBooleanStep Read key")
-    }
-    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .read_receiver
-            .take()
-            .expect("ProxyBooleanStep Read receiver")
-    }
+
     pub(crate) fn take_call_target(&mut self) -> DirectCallTarget {
         self.0
             .pending_effect
@@ -667,7 +630,7 @@ mod tests {
     use super::*;
 
     fn take_read(step: ProxyBooleanStep) -> ProxyBooleanResume {
-        let ProxyBooleanStep::Read { resume, .. } = step else {
+        let ProxyBooleanStep::StateRead { resume, .. } = step else {
             panic!("expected method read")
         };
         resume
@@ -697,7 +660,10 @@ mod tests {
             let runtime = Runtime::new();
             let weak = std::rc::Rc::downgrade(&runtime.0);
             let mut context = runtime.new_context().expect("create context");
-            let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
+            let Value::Object(proxy) = context
+                .eval("new Proxy({}, {get deleteProperty(){return undefined}})")
+                .unwrap()
+            else {
                 panic!("expected Proxy")
             };
             let callable = context.eval("(function(){return true})").unwrap();

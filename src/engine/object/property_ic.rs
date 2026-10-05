@@ -2,7 +2,7 @@
 //! A hit reads today's parallel data slot, never a value retained by the cache.
 use std::cell::Cell;
 
-use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
+use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx, AtomTable};
 #[cfg(test)]
 use crate::engine::code::bytecode::Instruction;
@@ -322,50 +322,41 @@ impl PropertyReadCache {
     }
 }
 
-impl Runtime {
-    /// Resolve one Proxy trap method through the per-trap location cache.
-    ///
-    /// A hit reads today's data slot and returns an owned value retained under
-    /// the exclusive heap borrow. A miss records the location (data slots only)
-    /// and returns `None`, so the caller keeps its canonical dynamic read.
-    pub(crate) fn proxy_trap_read(
-        &self,
+impl crate::engine::heap::runtime::RuntimeState {
+    /// Read today's trap value through a cached location under the caller's
+    /// current State access. A cold location still trains the same cache.
+    pub(crate) fn proxy_trap_read_in_state(
+        &mut self,
+        domain_id: u64,
         trap: usize,
         realm: ContextId,
         handler: ObjectId,
         atom: Atom,
     ) -> Result<Option<crate::engine::value::JsValue>, RuntimeError> {
-        let raw = {
-            let state = self.0.state.borrow();
-            let cache = &state.proxy_trap_reads[trap];
-            match cache.read(&state.heap, self.domain_id(), realm, handler) {
-                Some(raw) => {
-                    if matches!(
-                        raw,
-                        RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception
-                    ) {
-                        return Ok(None);
-                    }
-                    raw.clone()
-                }
-                None => {
-                    cache.miss(
-                        &state.heap,
-                        &state.atoms,
-                        self.domain_id(),
-                        realm,
-                        Some(handler),
-                        atom,
-                    );
+        let cache = &self.proxy_trap_reads[trap];
+        let raw = match cache.read(&self.heap, domain_id, realm, handler) {
+            Some(raw) => {
+                if matches!(
+                    raw,
+                    RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception
+                ) {
                     return Ok(None);
                 }
+                raw.clone()
+            }
+            None => {
+                cache.miss(
+                    &self.heap,
+                    &self.atoms,
+                    domain_id,
+                    realm,
+                    Some(handler),
+                    atom,
+                );
+                return Ok(None);
             }
         };
-        // Retain the same handle; the handler slot keeps the source alive
-        // until this owned result has acquired its edge.
-        let mut state = self.0.state.borrow_mut();
-        state.retain_raw_root(raw.clone())?;
-        drop(state);
+        self.retain_raw_root(raw.clone())?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("proxy_trap_read.hit");
         Ok(Some(
