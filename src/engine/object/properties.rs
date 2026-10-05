@@ -49,6 +49,8 @@ pub(crate) const MIN_UNIQUE_SHAPE_APPEND_ENTRIES: usize = 1;
 mod autoinit_state_tests;
 
 mod state_define;
+mod state_own;
+pub(crate) use state_own::StateOwnPropertySnapshot;
 
 impl RuntimeState {
     #[cfg(test)]
@@ -361,77 +363,45 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Option<super::OwnedCompletePropertyDescriptor>, RuntimeError> {
-        use super::property::CompletePropertyDescriptor;
         self.validate_object_and_key(object, key)?;
-        // These virtual properties construct their language value on demand.
-        if self.typed_array_is_object(object)?
-            && self.typed_array_canonical_numeric_index(key)?.is_some()
-        {
-            return self
-                .get_own_property(object, key)?
-                .as_ref()
-                .map(|v| super::OwnedCompletePropertyDescriptor::from_public(self, v))
-                .transpose();
-        }
-        if let Some(value) = self.string_exotic_own_property(object, key)? {
-            return super::OwnedCompletePropertyDescriptor::from_public(self, &value).map(Some);
-        }
-        if let Some(value) = self.dense_array_index_value(object, key)? {
-            return super::OwnedCompletePropertyDescriptor::from_raw(
-                self,
-                &CompletePropertyDescriptor::Data {
-                    value,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true,
-                },
-            )
-            .map(Some);
-        }
-        let record = {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(object.object_id())?;
-            let shape = state.heap.shape(data.shape)?;
-            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(None);
-            };
-            let flags = shape.entries()[index as usize].flags;
-            match &data.slots[index as usize] {
-                PropertySlot::Data(value) => Some(CompletePropertyDescriptor::Data {
-                    value: value.clone(),
-                    writable: flags.writable,
-                    enumerable: flags.enumerable,
-                    configurable: flags.configurable,
-                }),
-                PropertySlot::VarRef(id) => {
-                    let value = state.heap.var_ref(*id)?.value.clone();
-                    if matches!(value, RawValue::Uninitialized) {
-                        None
-                    } else {
-                        Some(CompletePropertyDescriptor::Data {
-                            value,
-                            writable: flags.writable,
-                            enumerable: flags.enumerable,
-                            configurable: flags.configurable,
-                        })
-                    }
+        let selected = {
+            let mut state = self.0.state.borrow_mut();
+            match state.own_property_snapshot_in_state(
+                &self.0.poisoned,
+                object.object_id(),
+                key.atom(),
+            )? {
+                crate::engine::object::StateOwnPropertySnapshot::Absent => return Ok(None),
+                StateOwnPropertySnapshot::Borrowed(snapshot) => {
+                    let record = snapshot.record().clone();
+                    return crate::engine::object::StateOwnedCompleteDescriptor::retain_in_state(
+                        &mut state,
+                        &self.0.poisoned,
+                        &record,
+                    )
+                    .map(|owner| Some(owner.into_legacy(self)));
                 }
-                PropertySlot::Accessor { get, set } => Some(CompletePropertyDescriptor::Accessor {
-                    get: get.option().map(RawValue::Object),
-                    set: set.option().map(RawValue::Object),
-                    enumerable: flags.enumerable,
-                    configurable: flags.configurable,
-                }),
-                PropertySlot::AutoInit(_) => None,
+                StateOwnPropertySnapshot::Owned(owner) => return Ok(Some(owner.into_legacy(self))),
+                StateOwnPropertySnapshot::Shared(read) => read,
+                StateOwnPropertySnapshot::Proxy => {
+                    return Err(RuntimeError::Invariant(
+                        "Proxy own descriptor requires the internal-method effect",
+                    ));
+                }
             }
         };
-        if let Some(record) = record {
-            return super::OwnedCompletePropertyDescriptor::from_raw(self, &record).map(Some);
-        }
-        // Preserve lazy initialization and uninitialized-binding errors before
-        // reacquiring the canonical raw slot; this branch cannot cache a root.
-        drop(self.get_own_property(object, key)?);
-        self.get_own_property_owned(object, key)
+        let (element, bytes) = selected.read()?;
+        let value = self
+            .0
+            .state
+            .borrow_mut()
+            .decode_typed_index(element, bytes)?;
+        Ok(Some(
+            crate::engine::object::StateOwnedCompleteDescriptor::from_owned_data(
+                value, true, true, true,
+            )
+            .into_legacy(self),
+        ))
     }
 
     pub(super) fn materialize_property_snapshot(
