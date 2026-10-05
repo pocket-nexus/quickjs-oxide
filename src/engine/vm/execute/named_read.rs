@@ -32,10 +32,14 @@ pub(super) fn execute(
     keep_receiver: bool,
     fallthrough: FallthroughPc,
 ) -> Result<Progress, Error> {
-    // A cache-selected getter already owns its exact callee/receiver. Never
-    // redo its lookup. The next batch replaces the remaining effect adapter.
+    // A cache-selected getter already owns its exact callee/receiver. The
+    // ordinary installer consumes those edges without replay or public roots.
     if segment.frame().selected_named_read.is_some() {
-        return Ok(Progress::Boundary);
+        return if segment.enter_selected_getter(runtime, state, keep_receiver, fallthrough)? {
+            Ok(Progress::Completed)
+        } else {
+            Ok(Progress::Boundary)
+        };
     }
     // Lazy materialization and String/BigInt publication may allocate. Publish
     // fault frames before selection; all input edges remain in their slots.
@@ -116,7 +120,14 @@ pub(super) fn execute(
                 OwnedGetterSelection::prepare(state, &runtime.0.poisoned, slots.peek(0)?, getter)
             })?;
             *selected_named_read = Some(SelectedNamedRead::Getter(selected));
-            return Ok(Progress::Boundary);
+            // End the parent projection before the installer lends its actual
+            // current window and publishes a child frame.
+            drop(cursor);
+            return if segment.enter_selected_getter(runtime, state, keep_receiver, fallthrough)? {
+                Ok(Progress::Completed)
+            } else {
+                Ok(Progress::Boundary)
+            };
         }
         (None, Some(ReadBoundary::Shared(read))) => {
             *selected_named_read = Some(SelectedNamedRead::Shared(read));

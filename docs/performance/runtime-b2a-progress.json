@@ -1,6 +1,6 @@
 {
   "schema": "oxide-runtime-b2a-progress-v1",
-  "status": "in progress; candidate under investigation",
+  "status": "B2a in progress; synchronous read consumer passed corrected per-batch tripwire and native review",
   "b2a_complete": false,
   "pr": 92,
   "baseline": "B1 760443cb",
@@ -510,10 +510,286 @@
         "interpretation": "Instructions essentially unchanged, real instruction-cache misses decrease while front-end no-ops increase. This is evidence of front-end sensitivity, not proof of the exact layout cause. Perf observations are diagnostic, not acceptance timings."
       },
       "remaining": "Recover the confirmed R/D native regression before expanding getter/Proxy migration. Legacy effect adapters remain."
+    },
+    {
+      "runtime_commit": "a6fedd0f4a5b7e6e37a0895396eb4edd8815d7c8",
+      "binary": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/a6fedd0f/qjs",
+        "sha256": "434bf712c624496c08300701359bb7e63462fee2f253adfa1f4831eae04d1c4c"
+      },
+      "build_receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/a6fedd0f/qjs.build.json",
+        "sha256": "5bdbb901869b69a193be562cbf79b94813b8cc9bdd00d8d1eed84259b6aad1ce"
+      },
+      "scope": "Mark the genuinely cold general read consumer as cold; no padding or section reordering. R/D native regression recovery investigation.",
+      "adopted": true,
+      "native": {
+        "baseline_commit": "ed4f457ad6bc3d86f41f3a90ea6213f4446bcc57",
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-a6fedd-vs-ed4f-abba/results.json",
+          "sha256": "913d011e480cc2d64980eaa88039fff3f8ca5b48aab41da038c6c519b6609bf4"
+        },
+        "changes": [
+          {
+            "case": "richards",
+            "median_elapsed_change_percent": 5.131329600871403,
+            "paired_elapsed_change_percent": [
+              2.390164082982471,
+              7.8724951187603365
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "deltablue",
+            "median_elapsed_change_percent": -0.4113522790530011,
+            "paired_elapsed_change_percent": [
+              2.580852249916954,
+              -3.403556808022956
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "crypto",
+            "median_elapsed_change_percent": -4.6055690997396646,
+            "paired_elapsed_change_percent": [
+              -5.119960073094765,
+              -4.091178126384564
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "raytrace",
+            "median_elapsed_change_percent": -0.03735382837343204,
+            "paired_elapsed_change_percent": [
+              -0.21207919340746617,
+              0.1373715366606021
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "earley-boyer",
+            "median_elapsed_change_percent": 1.387677211802052,
+            "paired_elapsed_change_percent": [
+              1.1877696247714065,
+              1.5875847988326974
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "regexp",
+            "median_elapsed_change_percent": 0.6440949620308056,
+            "paired_elapsed_change_percent": [
+              0.8995390090863475,
+              0.3886509149752637
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "splay",
+            "median_elapsed_change_percent": 0.6156594168269414,
+            "paired_elapsed_change_percent": [
+              0.8008029566264119,
+              0.43051587702747085
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "navier-stokes",
+            "median_elapsed_change_percent": 0.7018644281546416,
+            "paired_elapsed_change_percent": [
+              0.9256771136263442,
+              0.47805174268293893
+            ],
+            "pairs": 2
+          },
+          {
+            "case": "combined",
+            "median_elapsed_change_percent": 0.07361341321657777,
+            "paired_elapsed_change_percent": [
+              -0.5213446548231859,
+              0.6685714812563415
+            ],
+            "pairs": 2
+          }
+        ],
+        "classification": "Daily observations only. R/EB suspicion reviewed with targeted six pairs; no beyond-AA regression confirmed. Not formal original Score acceptance."
+      },
+      "native_review": {
+        "receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-a6fedd-recovery-paired.json",
+          "sha256": "a70996684fb33944ef23b0e7aef0c246976d3687ae0486759549196b12e9fc66"
+        },
+        "results": [
+          {
+            "case": "richards",
+            "measurement": "process_wall_ns",
+            "workload_sha256": "1ff2efa622460bc5cfead264606ec85cfe7a92ba2fa1d363aba001effcbeffb5",
+            "unit": "nanoseconds",
+            "pairs": 6,
+            "baseline_median": 479705965.0,
+            "candidate_median": 487682610.5,
+            "paired_gain_percent": [
+              -1.2209872910346586,
+              -0.9514425940202464,
+              -1.9155497904807195,
+              -1.8601423750309154,
+              -2.0500304021714433,
+              -2.1202428831190723
+            ],
+            "median_gain_percent": -1.8878460827558174,
+            "gain_ci95_percent": [
+              -2.0851366426452578,
+              -1.0862149425274525
+            ]
+          },
+          {
+            "case": "earley-boyer",
+            "measurement": "process_wall_ns",
+            "workload_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+            "unit": "nanoseconds",
+            "pairs": 6,
+            "baseline_median": 1033199874.0,
+            "candidate_median": 1034496180.5,
+            "paired_gain_percent": [
+              -0.3326472521643975,
+              0.5927222660685794,
+              -0.7413720663699497,
+              -0.6820807948696661,
+              3.20668317904087,
+              -0.6168603752795931
+            ],
+            "median_gain_percent": -0.4747538137219953,
+            "gain_ci95_percent": [
+              -0.7117264306198079,
+              1.8997027225547247
+            ]
+          }
+        ],
+        "classification": "R elapsed +1.888%, CI [+1.086,+2.085], entirely within existing 2.780% AA threshold. EB +0.475%, CI [-1.900,+0.712], within 1.100% at median and crosses zero. Neither confirms a regression beyond noise."
+      },
+      "tripwire": {
+        "reference_receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-ed4f-callgrind/results.json",
+          "sha256": "0499fa1b9f83a36c357a886e3c1ef71f3cf0053439caedd1574e9ccfdc216071"
+        },
+        "candidate_receipt": {
+          "path": "/home/eric/.cache/oxide-runtime-core-20261003/b2a-a6fedd-callgrind/results.json",
+          "sha256": "3ac58b5fe62580bec1adc859138858ec62c3151c37010b3737c707fcea6fa402"
+        },
+        "hard_events": [
+          "Ir",
+          "Dw"
+        ],
+        "maximum_growth_percent": 0.1,
+        "i1mr_policy": "diagnostic only",
+        "cases": [
+          {
+            "case": "richards",
+            "values": {
+              "Ir": 6416654483,
+              "Dr": 1882054829,
+              "Dw": 1078303233,
+              "I1mr": 47492054,
+              "D1mr": 18852633,
+              "D1mw": 1347608,
+              "ILmr": 16519,
+              "DLmr": 8074,
+              "DLmw": 31408,
+              "Bc": 786448207,
+              "Bcm": 42742944,
+              "Bi": 71994117,
+              "Bim": 27740757
+            },
+            "relative_to_baseline_percent": {
+              "Ir": -0.004235002707464464,
+              "Dr": -0.0007342452686187606,
+              "Dw": -0.0009529696061716386,
+              "I1mr": -7.861558287974557,
+              "D1mr": 1.473124788268354,
+              "D1mw": 0.4172103167713548,
+              "ILmr": -1.1903337719822993,
+              "DLmr": -2.4761444618915274,
+              "DLmw": -0.012733987011337433,
+              "Bc": -0.0009781858079982442,
+              "Bcm": 17.723890170018876,
+              "Bi": -0.0008653409957481983,
+              "Bim": 3.99094276350751
+            },
+            "hard_gate_passed": true
+          },
+          {
+            "case": "deltablue",
+            "values": {
+              "Ir": 7097301114,
+              "Dr": 2149468028,
+              "Dw": 1356189234,
+              "I1mr": 101889511,
+              "D1mr": 21826537,
+              "D1mw": 3166025,
+              "ILmr": 19246,
+              "DLmr": 71418,
+              "DLmw": 134792,
+              "Bc": 846046243,
+              "Bcm": 41129217,
+              "Bi": 65692845,
+              "Bim": 25498357
+            },
+            "relative_to_baseline_percent": {
+              "Ir": 0.01048781848409508,
+              "Dr": 0.04967099026940147,
+              "Dw": 0.016890466179364516,
+              "I1mr": -13.089880848205205,
+              "D1mr": 7.849481089054322,
+              "D1mw": -4.383293724893644,
+              "ILmr": -1.2569904058283288,
+              "DLmr": -0.11189124171305798,
+              "DLmw": -0.08820629896746368,
+              "Bc": -0.007602552474439417,
+              "Bcm": 12.955395638405133,
+              "Bi": -0.0010579426835577443,
+              "Bim": 1.6876937798814051
+            },
+            "hard_gate_passed": true
+          },
+          {
+            "case": "navier-stokes",
+            "values": {
+              "Ir": 8320673415,
+              "Dr": 2131574572,
+              "Dw": 1101165135,
+              "I1mr": 41601814,
+              "D1mr": 1416468,
+              "D1mw": 273260,
+              "ILmr": 17405,
+              "DLmr": 8114,
+              "DLmw": 73572,
+              "Bc": 1167468234,
+              "Bcm": 27790819,
+              "Bi": 103671621,
+              "Bim": 46323004
+            },
+            "relative_to_baseline_percent": {
+              "Ir": 0.005362029003275204,
+              "Dr": 0.09477782160929316,
+              "Dw": 0.0828860136381282,
+              "I1mr": 24.083256353866922,
+              "D1mr": -0.6585508514873162,
+              "D1mw": -2.2717193825729898,
+              "ILmr": -1.0686068322628306,
+              "DLmr": -2.2762856798747455,
+              "DLmw": 0.0027184993883322406,
+              "Bc": -0.04248280104711677,
+              "Bcm": -2.080969992066639,
+              "Bi": -0.00046010451143496667,
+              "Bim": 0.16532910728790373
+            },
+            "hard_gate_passed": true
+          }
+        ]
+      }
     }
   ],
   "remaining": [
-    "R/D native timing regression investigation",
     "direct raw getter/Proxy effect handoff and corresponding old-adapter deletion",
     "full B2a correctness/mechanism/resource closure"
   ],

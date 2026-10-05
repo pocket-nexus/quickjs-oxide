@@ -29,10 +29,14 @@ fn lazy_getters_and_proxy_traps_reuse_storage_and_return_directly() {
     let costs = profile.snapshot();
     let event = |name| costs.owned_execution_events.get(name).copied().unwrap_or(0);
     assert!(
-        event("property_callback_lazy_install") >= 40,
+        event("property_callback_lazy_install") >= 20,
         "{:?}",
         costs.owned_execution_events
     );
+    // All twenty ordinary getters now enter the resident State segment; only
+    // the Proxy callbacks still use the legacy query's lazy installer.
+    assert_eq!(event("named_read.getter_entered_in_state"), 20);
+    assert_eq!(event("query.read.acquired"), 20);
     assert_eq!(event("property_return_direct"), 20);
     assert!(event("method_resume_allocation") <= 1);
     assert!(event("get_resume_allocation") <= 1);
