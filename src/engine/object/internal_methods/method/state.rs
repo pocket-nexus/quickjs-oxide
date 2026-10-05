@@ -182,7 +182,7 @@ impl StateMethodStep {
                     search: Some(resume.0.into_inner()),
                     value: None,
                 };
-                effect.release_in_state(scope.state, &runtime.0.poisoned)?;
+                effect.release_in_state(scope.state, runtime)?;
                 scope.state.release_atoms([atom])?;
                 scope.cleanup()
             }
@@ -343,26 +343,34 @@ impl Scope<'_> {
                 } else {
                     let boundary = boundary
                         .ok_or(RuntimeError::Invariant("method read omitted its selection"))?;
-                    self.state.atoms.retain(atom)?;
-                    let effect = match StateReadEffect::prepare(
+                    match super::super::get::resolve_boundary(
+                        self.runtime,
                         self.state,
-                        &self.runtime.0.poisoned,
-                        boundary,
-                        &JsValue::Object(handler),
-                    ) {
-                        Ok(effect) => effect,
-                        Err(error) => {
-                            self.state.release_atoms([atom])?;
-                            return Err(error);
-                        }
-                    };
-                    return Ok(StateMethodStep::Read {
-                        effect,
+                        realm,
                         atom,
-                        resume: StateMethodResume(super::super::reuse::PooledBox::new(
-                            self.search.take().unwrap(),
-                        )),
-                    });
+                        &JsValue::Object(handler),
+                        boundary,
+                    )? {
+                        super::super::get::ProxyGetStep::Complete(Completion::Return(value)) => {
+                            self.value = Some(value);
+                        }
+                        super::super::get::ProxyGetStep::Complete(Completion::Throw(value)) => {
+                            return Ok(StateMethodStep::Throw(value));
+                        }
+                        super::super::get::ProxyGetStep::Effect(effect) => {
+                            if let Err(error) = self.state.atoms.retain(atom) {
+                                effect.release_in_state(self.state, self.runtime)?;
+                                return Err(error.into());
+                            }
+                            return Ok(StateMethodStep::Read {
+                                effect,
+                                atom,
+                                resume: StateMethodResume(super::super::reuse::PooledBox::new(
+                                    self.search.take().unwrap(),
+                                )),
+                            });
+                        }
+                    }
                 }
             }
             if matches!(self.value, Some(JsValue::Undefined | JsValue::Null)) {
@@ -489,6 +497,11 @@ pub(super) fn release_read_legacy(runtime: &Runtime, effect: StateReadEffect, at
             let _ = runtime.release_jsvalue(receiver);
         }
         StateReadEffect::Shared(_) => {}
+        StateReadEffect::Get(effect) => {
+            if !runtime.skip_cleanup() {
+                let _ = effect.release_in_state(&mut runtime.0.state.borrow_mut(), runtime);
+            }
+        }
     }
 }
 
@@ -514,6 +527,10 @@ impl Runtime {
                 let object = ObjectRef::from_owned_handle(self.clone(), object);
                 let key = crate::engine::object::PropertyKey::from_owned_atom(self.clone(), atom);
                 self.proxy_get_jsvalue(realm, &object, &key, receiver)
+            }
+            StateReadEffect::Get(effect) => {
+                self.release_atom_handle(atom);
+                self.finish_proxy_get_effect(realm, effect)
             }
             StateReadEffect::Shared(read) => {
                 self.release_atom_handle(atom);
