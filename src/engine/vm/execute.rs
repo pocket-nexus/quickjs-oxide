@@ -457,6 +457,10 @@ pub(super) fn execute_frame_in_state(
                     .exec
                     .decode_published(pc as u32)
                     .map_err(|_| Error::internal("published execution word is invalid"))?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    decoded.opcode.profiling_label(),
+                );
                 let mut next = decoded.next_pc as usize;
                 let operand = decoded.operand(0);
                 match decoded.opcode {

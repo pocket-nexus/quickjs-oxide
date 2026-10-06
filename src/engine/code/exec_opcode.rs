@@ -13,6 +13,13 @@ macro_rules! execution_opcodes {
         }
 
         impl Opcode {
+            #[cfg(feature = "profiling")]
+            pub(crate) fn profiling_label(self) -> &'static str {
+                match self {
+                    $(Self::$name => concat!("opcode.", stringify!($name)),)*
+                }
+            }
+
             #[inline(always)]
             pub(crate) fn from_raw(raw: u16) -> Option<Self> {
                 match raw {

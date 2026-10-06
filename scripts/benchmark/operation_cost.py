@@ -21,6 +21,10 @@ def iteration_costs(report):
         if sample['status'] != 'ok' or sample['semantic_status'] != 'ok':
             raise ValueError('cannot report costs from a failed workload')
         workload = workloads[sample['case']]
+        if (digest(workload['path']) != workload['sha256']
+                or Path(sample['stdout']).read_bytes() != workload['expected'].encode()
+                or Path(sample['stderr']).read_bytes()):
+            raise ValueError('workload or output evidence changed')
         match = re.fullmatch(r'(.+)_n([0-9]+)', sample['case'])
         if not match or int(match[2]) != workload['size'] or sample['size'] != workload['size']:
             raise ValueError('cost slopes require explicitly scaled workloads')
@@ -32,6 +36,8 @@ def iteration_costs(report):
             raise ValueError('reported counts differ from raw evidence')
         series[sample['engine'], match[1]][workload['size']].append(values)
     results = []
+    if not series:
+        raise ValueError('no operation samples')
     for (engine, case), points in sorted(series.items()):
         counts = sorted(points)
         if len(counts) < 3:
