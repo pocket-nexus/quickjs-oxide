@@ -4,9 +4,11 @@
 运行时代码与冻结二进制 `a9ba7b6a` 一致。旧 PR #88 的实现不继续扩展或
 逐项移植；独立正确性修复和行为见证按 B0 审计单收割。
 
-本次授权范围：**B0 → B1 → 检查点 1 → B2a–f → 检查点 2，之后停止**。
-B3、B4、C 的顺序由检查点 2 重新决定。阶段 B 最终的零残留目标保留，
-本次不宣称全阶段完成，也不以后续 C 抵消 B 的性能缺口。
+已完成：**B0 → B1 → 检查点 1 → B2a**。B2a 之后的 B2b–f 原顺序已停止，
+由下文“[B2a 之后：按成本中心推进](#b2a-之后按成本中心推进)”替代：
+热路径条目同时完成迁移和删除工作，以每操作指令数验收；冷路径只迁移、不回退。
+最终目标不变：无 PGO 原版 V8 v7 八项及 Combined 全部超过历史 Boa；
+阶段 B 的六项零残留硬门槛保留，在第 8 项统一验收。
 
 ## 一页技术合同
 
@@ -37,15 +39,10 @@ B3、B4、C 的顺序由检查点 2 重新决定。阶段 B 最终的零残留�
 | B1 | native 生命周期与实际 Array 消费者 | 当前 State 下的 owner/清理；同步消费者不建 Query/持久 progress；仅真实效果发布恢复记录 |
 | 检查点 1 | 合同小复盘 | DeltaBlue Array 无效果 Query/记录为零；错误/poison 清理全过；R/D/NS Ir/Dw 增长 ≤0.1%；I1mr 仅作诊断 |
 | B2a | 静态字段读取 | 普通完成直接提交；getter/Proxy 保留已选进展；删除对应适配器 |
-| B2b | computed 读取与 key 转换 | primitive 同步完成；转换回调按顺序执行一次；heap 元素不因类型进入 Query |
-| B2c | 静态字段写入 | 共享 Set 语义与直接帧消费者同批；替换 owner 直接移动 |
-| B2d | computed 写入 | 数字索引不先恢复属性键；数组权限/hole/length 与转换顺序保留 |
-| B2e | 追加与 define | canonical shape 发布共享；显式 atom/shape/值转移与失败回滚 |
-| B2f | Reflect/Proxy Set | 实际 receiver、trap 选择和恢复各消费一次；同步非 Proxy 分支不建运输层 |
-| 检查点 2 | 完整复盘并停止 | 新全八项 profile；A/起点/Boa 对照；残留编号关闭；决定后续顺序与布局/GC 实验是否集成 |
+| B2b–f、检查点 2 | 已停止 | 由按成本中心推进的第 1–8 项替代；写入与 define 并入第 3、1 项，computed/Reflect/Proxy 并入第 7 项 |
 
-PR #89 收口为新 B 起点。B0、B1、B2a–f 分小的 stacked PR，各自带门槛，
-通常不超过五个运行时提交。独立布局/GC 只允许最多两个机制实验，本次不集成。
+PR #89 收口为新 B 起点。B0、B1、B2a 已完成；后续条目各自为小的 stacked PR，
+通常不超过三个运行时提交，只改本条目的消费者。
 
 ## 测量和停止规则
 
@@ -89,23 +86,9 @@ A/A 噪声内，未分辨。按照用户最新决定，不补跑六对作为 B1 
 从 544633 降到 121883。其余 native 族和全局残留仍需后续迁移。
 完整数据与各提交回执见 [B1 检查点记录](runtime-b1-checkpoint.json)。
 
-## B2 实施顺序
+## 已完成的 B2 部分
 
-每项一个可独立审查与回退的 stacked PR，通常三个运行时提交。
-每个提交保持可编译并通过相关测试；共享主体、实际消费者和旧通道删除
-在同一个 PR 内完成。保留命名 IC、dense 读取和直接写入；不复制两套语义。
-
-按用户最新要求，B2 的实现现在并行推进：B2a 负责读取效果和共享取消清理，
-B2b 负责 computed/key，B2c–d 负责 Set，B2e–f 负责 define/Reflect。
-各线使用独立 worktree 和提交，不在同一份源码上交叉修改。共享接口先对齐；
-集成仍按依赖顺序组成上述小 PR，各批的机制与正确性门槛保持。
-原生计时期间所有线暂停编译、测试和 profile，只有源码工作继续；
-原生计时统一调度并排他运行；独立冻结构建、正确性和确定性 profile 可在不同 CPU
-并行，profile 的墙钟时间不作为原生速度。无依赖的布局/GC 机制实验可在独立
-分支先做，满足集成门槛前不进入 B 栈。完成 B2 后仍在检查点 2 停止，
-这次并行授权不展开 B3/B4 或集成 C 实验。
-
-### B2a：静态字段读取（B2-R01）
+### B2a：静态字段读取（B2-R01，已采纳）
 
 1. 当前 State 完成 own/prototype/missing/getterless 和 primitive/string 同步读取；
    静态 key 使用发布代码已链接 atom，不创建 owning PropertyKey。
@@ -117,80 +100,107 @@ B2b 负责 computed/key，B2c–d 负责 Set，B2e–f 负责 define/Reflect。
 验收：同步记录创建为零；getter/trap 一次；最后 receiver 的子引用、别名、
 部分输出失败和原始错误位置正确；warm IC 保持直接完成。重点短测 R/D/RayTrace。
 
-### B2b：computed 读取与 key 转换（B2-K01）
 
-1. primitive key 转换使用 State；合法 dense 数字索引继续直接读取所有值种类；
-   字符串、Symbol、非索引 key 进入共享读取主体。
-2. 对象 key 的 ToPrimitive 只在真实子调用时保存 owner/进展，恢复消费结果，
-   不重复转换。共享转换 helper 的其他消费者继续公开列为残留。
-3. 接入各 GetArrayEl 变体与转换恢复，保持 receiver/key 的保留表示；
-   删除该路径 boxed operand 运输和公共 key/root 中间表示。
+## B2a 之后：按成本中心推进
 
-验收：heap dense 值不创建 Query；GetArrayEl3 直接 Int 与转换后 key 的表示保持；
--0、非整数、大索引、Symbol、nullish、转换抛错/修改原型、typed 特殊索引正确。
-重点短测 D/RayTrace/Splay；检查 B2a 计数不回升。
+### 为什么改变顺序
 
-### B2c：静态写入（B2-S01）
+- **只迁移、保留全部检查，收益约等于零。** A（调用/返回留在循环内）、#89（直接写入）、
+  B1（Array 同步完成）的收益都来自删掉的工作；B2b 的迁移没有删掉工作，原生短测也无法分辨。
+- **每操作指令数是主指标。** 它是确定性的，差距是几倍而不是 0.1%。
+  原生短测在当前环境下分辨不了 5% 以下的变化（同一二进制 DeltaBlue 曾在两次会话间相差 46%）。
+- **差距最大的是具体操作的固定成本**（B1 主线测得的净指令/次，oxide 对 QuickJS）：
+  对象字面量约 9×、`new` 约 7×、写属性约 19×、读对象数组元素约 20×、函数调用约 7.7×，
+  一对 dup/release 约 300 条。分配的逐行账本见
+  [对象分配成本账本](runtime-allocation-ledger.md)。
 
-1. State 下完成 Set 的 target/prototype/receiver 选择；同步拒绝、数据写入、
-   内部阶段推进不建 SetResume；明确完成、抛错和真实效果。
-2. PutField 使用已链接 atom，允许移动时将源 owner 转交存储并直接退休旧值；
-   源值仍需保留或别名时取得必要 owner，保留现有循环内入口。
-3. setter 交接保存已选 callee 和实际 receiver，直接进入内部调用；
-   删除静态写入中的 ObjectRef/PropertyKey 包装与 Runtime 持有者。
+### 解释循环实验（E）的结论
 
-验收：不先搭 SetOperands；heap 替换、自赋值/别名、继承 setter、只读属性、
-primitive receiver、strict/sloppy 正确；准入失败保留输入，提交后不重放。
-重点短测 R/D/RayTrace，并检查写入、retain/release 和 Dw。
+`perf/verified-loop-experiment` 上的 E0–E3 不合入主线，E4 不实施。保留 E0 的
+N/2N/4N 斜率探针和实际分派计数作为测量工具。结论留给第 5 项：
 
-### B2d：computed 写入（B2-S02）
+- 数值循环每轮 12 次分派，E3 后约 73 Ir/分派（QuickJS 约 14）。
+- 剩余成本主要是取指解析（字流读取、PC 推进、解码与 tag 选择约 28 Ir/分派）
+  和巨型解释函数的寄存器压力（E3 栈帧 2,008 字节；数值循环 24% 的指令访问栈）。
+- 在巨型函数内部做局部优化会被溢出和数据缺失抵消：E3 的指令减少伴随
+  cycles 上升（DeltaBlue +8.6%、Crypto +11.5%，L1d 缺失 +13–15%）。
+- 第 5 项必须先拆小热循环（热状态为局部变量，冷路径显式同步状态），
+  再单独验证预解码；不在巨型函数内继续做局部实验。
 
-1. 合法 dense 数字索引直接使用 State 存储内核，不先生成属性键；
-   immediate 与 heap 替换/追加使用同一所有权合同。
-2. 复用 B2b 转换和 B2c Set；转换后只写一次，移除该路径 ConvertedWrite Runtime。
-3. 同步处理数组权限、hole、length 和 prototype 条件；仅真实值转换/回调保存记录。
+### 新顺序
 
-验收：替换/追加/hole、冻结/密封、不可写 length、索引原型 setter、非索引 key 正确；
-typed 转换回调后重取 view，保留 detach/resize；缓存失效通知保持。
-重点短测 NS/D/Splay；float 写入无新增 key 转换或持久记录。
+| 顺序 | 条目 | 主要影响 | 验收（净指令/次） |
+| --- | --- | --- | --- |
+| 1 | 对象分配：字面量、`new`、define | RayTrace、EarleyBoyer、Splay、DeltaBlue | 字面量 11,568 → ≤3,000；`new` 12,186 → ≤5,500（构造调用部分随第 4 项继续下降） |
+| 2 | 引用计数与已认证句柄的快速路径 | 全部 | 一对 dup/release 约 300 → ≤30 |
+| 3 | 属性写入与写缓存（原 B2c、B2d） | Richards、DeltaBlue、RayTrace | 写属性约 968 → ≤150 |
+| 4 | 调用与返回的剩余成本 | Richards、DeltaBlue、EarleyBoyer | 函数调用约 2,100 → ≤700 |
+| 检查点 | 全八项及 Combined 六对正式 Score，对照 A、#89、B2a 与历史 Boa | — | 按剩余差距决定 5、6 的先后 |
+| 5 | 解释循环结构：先拆小热循环，再验证预解码（一轮，有时间上限） | 全部 | ≤40 Ir/分派，Dw 2–3/分派 |
+| 6 | GC 扫描与对象记录体积 | Splay、EarleyBoyer | 由检查点 profile 决定 |
+| 7 | 其余迁移：computed 读取、Reflect/Proxy Set（原 B2b、B2f）、B3、B4 | 冷路径 | Ir/Dw 不回退 |
+| 8 | 删除旧协议与零残留验收（原 B5） | 架构 | 六项硬门槛归零 |
 
-### B2e：追加与 define（B2-P01）
+第 1 项的基线是 B2a `f2501839` 以 Rust 1.88 普通 release 构建的实测值；第 2–4 项的基线来自 B1 主线，
+开始该项前在当时的已采纳版本上用同一探针重测。目标是待校准的操作预算，
+不直接换算成 Score，也不保证超过 Boa。
 
-1. 使用共享 canonical shape/slot 发布内核，明确 atom/shape/value/accessor 边转移；
-   保留容量增长与直接追加入口。
-2. 内部 descriptor 存字段和 JS owner，使用 State guard/执行存储清理，不存 Runtime；
-   同步定义不建恢复记录。
-3. descriptor getter、Proxy define、对象值 length 转换按既有顺序执行，
-   恢复消费已完成字段读取与转换；删除对应旧通道。
+### 第 1 项：对象分配（任务清单）
 
-验收：数据/accessor 转换、Absent/undefined、Symbol/key 顺序、不可扩展和权限正确；
-故障覆盖 retain/扩容/shape 发布/部分 descriptor 获取；提交前失败保持状态，
-数组缩短失败保留规范要求的部分删除；Object/Reflect define 返回分别正确。
-重点短测 D/RayTrace/EB/Splay，并检查分配和资源。
+逐行账本（[runtime-allocation-ledger.md](runtime-allocation-ledger.md)）把
+字面量的 12,215 Ir/迭代和 `new` 的 12,833 Ir/迭代（空循环 647）分到互斥的阶段与机制。
+任务按账本中的成本块组织，每个任务对应可删除的工作：
 
-### B2f：Reflect/Proxy Set（B2-X01）
+| 任务 | 删除的工作 | 账本来源 | 预期 |
+| --- | --- | --- | --- |
+| 1a 追加缓存 | 每个 DefineField/PutField 追加站点缓存（父 shape → 后继 shape、slot 下标、原型链有效性）。命中时不做 `canonical_successor` 的嵌套哈希、`record_transition` 重写、临时 shape 引用的 retain/release 与 `apply_cleanup`、O(n) 前缀比较、缺失属性的原型链遍历 | W 全部（4,741）；D 中 slot、shape、边与 atom、引用计数四类（约 3,960） | 每个追加 ≤150 |
+| 1b 字面量字段留在循环内 | 普通数据字段定义不再经过 `cold::dispatch`、`start_public_field`、公共 `Runtime::try_define_owned_property`、`PropertyKey`/`ObjectRef`/描述符包装，不触发帧 materialize；使用 1a 的追加内核 | D 的包装、准入与驱动（约 2,830）和 R（1,474） | 字面量减少约 4,300 |
+| 1c 分配路径 | 空对象 shape 按 realm/原型缓存；发布时不重复完整布局校验；分配期间不建临时 owner 再释放；减少 `ObjectData` 搬运 | A（约 1,300） | ≤400 |
+| 1d 释放路径 | 释放对象时不建边快照 `Vec` 与 atom `Vec`，不重复校验身份三次；保留零引用队列语义 | F（913） | ≤250 |
+| 1e `this.x = …` 的值传递 | 追加字段时移动源 owner，不做 insert_copy/rotate 与额外 dup/retain | `new` 的 S（1,172） | ≤200 |
 
-1. 普通 Reflect Set 复用 B2c–e，保留实际 receiver，直接返回 accepted/rejected。
-2. Proxy trap 查找、缺失 trap 转发、结果和 invariant 使用 State；
-   必要 owner 进入执行存储，不保存 Runtime。
-3. 接入 VM/Reflect/Proxy，删除 root 转换及旧 SetInputs/pending 清理通道。
+构造调用本身（C，1,979）归第 4 项；解释循环自身（I）归第 5 项。
 
-验收：缺失/不可调用/revoked/nested Proxy、false/invariant/throw、不同 receiver、
-自引用、trap 修改 target、放弃恢复正确；strict VM 与 Reflect 返回保持各自合同。
-无实际回调的同步转发不建持久记录；行为/差分用例及 R/D/NS 检查前五批计数。
+提交顺序：1a（共享追加内核与站点缓存，先接 `this.x = …`）→ 1b（字面量消费者）
+→ 1c、1d → 1e。每个任务一个 PR，不超过三个运行时提交。1b 同时关闭字面量定义路径
+上的公共 root 中间转换与 Runtime 包装残留，对应 B0 残留清单中 B2e 的编号。
+
+验收：
+
+- 账本工具（`docs/performance/probes/allocation/ledger.py`）重跑，相关阶段达到预算，
+  其他阶段不增加；斜率 N→2N 与 2N→4N 一致。
+- R/D/NS 及 RayTrace、EarleyBoyer、Splay 的 Ir、Dw 同时下降。
+- 第 1 项收口时跑全八项及 Combined 的一个 ABBA 块，对照 B2a。
+- 正确性：shape 缓存失效（原型变化、不可扩展、冻结、字典模式、accessor 原型属性）、
+  setter 与 Proxy 原型、getter 中修改 shape、追加失败回滚、GC 与 owner 计数。
+
+### 执行规则
+
+- 每个热路径 PR 同时交付迁移和删除的工作；冷路径 PR 只迁移，要求 Ir/Dw 不回退。
+- 每个提交：相关正确性测试，加相关探针与 R/D/NS 的 Ir、Dw。
+- 只在条目收口、检查点，或 R/D/NS 的 Ir 变化超过 5% 时跑原生 ABBA。
+- 完整回执和阶段文档只在条目收口时出一次。
+- 技术合同、B0 残留清单、poison 合同不变；每个条目关闭对应残留编号。
+
+### 从 B2b（#94）收割的内容
+
+保留 State 下原始值转属性键的内核（`property_key_atom_from_primitive`、
+`primitive_to_js_string`），单独提交；保留能通过 JS 可观察行为验证的边界测试。
+放弃其 computed 消费者、`FrameRare` 新字段、共享转换运输改造和越界的
+Number/typed-element 迁移。第 7 项重做 computed 读取时：等待状态先统一为一个枚举，
+对象 key 的 ToPrimitive 复用现有转换等待，每批只迁移自己的消费者。
 
 ### 残留、正确性与最终停止
 
-每批关闭对应消费者编号。共享类型仅在最后一个消费者迁走后删除；
+每个条目关闭对应消费者编号。共享类型仅在最后一个消费者迁走后删除；
 其他族的残留继续公开，不以单路径归零冒充类型或全阶段归零。
 每提交相关测试；每 PR 收口 CI fast、架构检查和 focused Test262，
 覆盖缓存失效、别名、故障、throw/poison/放弃及错误位置，复用 B0 行为资产。
 
-B2f 后重新采集全八项 profile，分别对照 A、#89 起点和 B1；正式原版 Score
-全八项及独立 Combined 至少六对及 bootstrap 95% 区间，列历史 Boa 对照。
-审计六个编号、Runtime owner/State 重借用/internal deferred/root 适配器和旧协议，
-报告每批/累计机制、时间、资源和未分辨结果，然后停止，重新决定 B3/B4/C 顺序。
+第 8 项验收六项硬门槛：内部 Runtime 强引用、State 重借用、内部 deferred、
+普通调用返回外退、公共 root 中间转换，以及迁移适配器和旧实现全部为零。
+原版八项及 Combined 未全部超过 Boa 时，报告真实差距，不宣布目标完成。
 
-布局校准不阻塞 B2：仅在需要调查时使用同一 B0 链接输入、lld 未打乱对照及
-seed 1–5 收集 R/D/NS。正式二进制当前为 GNU ld，lld 范围不能套成其数值门槛；
-不选择有利布局、不加 padding。硬件计数辅助归因，计时不并行构建/profile。
+布局校准不作为门槛：仅在需要调查时使用同一链接输入、lld 未打乱对照及
+seed 1–5 收集 R/D/NS。不选择有利布局、不加 padding。硬件计数辅助归因，
+计时不并行构建或 profile。
