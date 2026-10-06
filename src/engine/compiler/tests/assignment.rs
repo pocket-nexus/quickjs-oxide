@@ -1336,3 +1336,56 @@ fn identifier_compound_assignment_uses_resolved_get_set_paths() {
         Value::Bool(true)
     );
 }
+
+#[test]
+fn discarded_field_assignments_lower_to_a_single_put_field() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    let code = |context: &mut crate::engine::api::Context, source: &str| {
+        let callable = runtime
+            .callable_from_value(context.eval(source).unwrap())
+            .unwrap();
+        let crate::engine::vm::call::CallableExecution::Bytecode { bytecode, .. } =
+            runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("bytecode")
+        };
+        runtime
+            .snapshot_function_bytecode(&bytecode)
+            .unwrap()
+            .exec
+            .test_ir()
+            .to_vec()
+    };
+    let count =
+        |code: &[Instruction], f: fn(&Instruction) -> bool| code.iter().filter(|i| f(i)).count();
+
+    // Statements discard the assignment value: QuickJS keeps only put_field.
+    let statements = code(&mut context, "(function (x) { this.a = x; this.b = x; })");
+    assert_eq!(
+        count(&statements, |i| matches!(i, Instruction::PutField(_))),
+        2
+    );
+    assert_eq!(count(&statements, |i| matches!(i, Instruction::Insert2)), 0);
+    assert!(
+        !statements
+            .windows(2)
+            .any(|w| matches!(w, [Instruction::PutField(_), Instruction::Drop]))
+    );
+
+    // A used value keeps insert2; a conditional value's join lands on put_field.
+    let used = code(
+        &mut context,
+        "(function (x, c) { var v = (this.a = x); this.b = c ? x : -x; return v; })",
+    );
+    assert_eq!(count(&used, |i| matches!(i, Instruction::Insert2)), 1);
+    assert_eq!(count(&used, |i| matches!(i, Instruction::PutField(_))), 2);
+    let put = used
+        .iter()
+        .rposition(|i| matches!(i, Instruction::PutField(_)))
+        .unwrap();
+    assert!(
+        used.iter()
+            .any(|i| matches!(i, Instruction::Goto(t) if *t as usize == put))
+    );
+}

@@ -141,6 +141,18 @@ pub(super) fn relocate_lowered_instruction(
     Ok(())
 }
 
+/// The IR index a jump-like instruction targets, if any.
+pub(super) fn instruction_target(instruction: &Instruction) -> Option<u32> {
+    match instruction {
+        Instruction::Goto(target)
+        | Instruction::IfFalse(target)
+        | Instruction::IfTrue(target)
+        | Instruction::Catch(target)
+        | Instruction::Gosub(target) => Some(*target),
+        _ => None,
+    }
+}
+
 fn instruction_target_mut(instruction: &mut Instruction) -> Option<&mut u32> {
     match instruction {
         Instruction::Goto(target)
