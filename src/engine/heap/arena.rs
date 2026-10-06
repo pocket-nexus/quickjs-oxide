@@ -444,7 +444,7 @@ impl Heap {
 
     /// Trusted mutable access for an object handle validated earlier under
     /// the same exclusive borrow. Release builds keep only the bounds check.
-    #[inline]
+    #[inline(always)]
     pub(in crate::engine::heap) fn object_mut_fast(&mut self, id: ObjectId) -> &mut ObjectData {
         debug_assert!(
             self.validate_slot_identity(RawId::Object(id)).is_ok(),

@@ -219,7 +219,7 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
         }
     }
 
-    #[cfg(test)]
+    #[inline(always)]
     pub(super) fn live_fast_mut(&mut self, id: T::Id) -> &mut AuxiliaryNode<T> {
         debug_assert!(self.validate_identity(id).is_ok());
         match &mut self.slots[T::parts(id).0 as usize].state {

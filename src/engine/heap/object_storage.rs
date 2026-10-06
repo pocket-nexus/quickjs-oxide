@@ -1444,8 +1444,8 @@ impl Heap {
 
     /// Site-cache hit: move an owned data value into a new slot under the
     /// recorded successor. The caller proved under this borrow that the
-    /// object's shape is the recorded shared parent and that the successor's
-    /// generation and revision are unchanged; the value owner and its atom
+    /// object's shape is the recorded shared parent and validated the
+    /// successor's generation and revision; the value owner and its atom
     /// edge move with the input, so only the two shape counts change.
     pub(crate) fn append_cached_owned_slot(
         &mut self,
@@ -1466,7 +1466,8 @@ impl Heap {
             })?;
             object.used_as_prototype
         };
-        let strong = &self.shapes.live_mut(successor).map_err(unpublished)?.strong;
+        // The site validated the successor's generation under this borrow.
+        let strong = &self.shapes.live_fast_mut(successor).strong;
         strong.set(
             strong
                 .get()
@@ -1483,11 +1484,24 @@ impl Heap {
             object.slots.push(PropertySlot::Data(value));
             std::mem::replace(&mut object.shape, successor)
         };
-        self.release_reference(RawId::Shape(previous_shape))
-            .map_err(|error| SlotReplacementError {
-                error,
-                published: true,
-            })
+        // A shape is never a leaf node: release it through its own arena.
+        let drained = self
+            .shapes
+            .release_no_drain(previous_shape)
+            .and_then(|zero| {
+                if zero {
+                    self.zero_queue.push_back(RawId::Shape(previous_shape));
+                }
+                if self.zero_queue.is_empty() {
+                    Ok(None)
+                } else {
+                    self.drain_zero_queue().map(Some)
+                }
+            });
+        drained.map_err(|error| SlotReplacementError {
+            error,
+            published: true,
+        })
     }
 
     /// Transactionally replace an object's complete shape/slot layout.
