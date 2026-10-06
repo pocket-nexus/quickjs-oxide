@@ -1,0 +1,933 @@
+{
+  "scope": "E0/E1/E2 pilot only; pause before expanding or rewriting the B/C plan",
+  "base_runtime_commit": "f25018397d822eb8d0fc02f85c29845e9dae9a41",
+  "base_binary_commit": "85e8c55b4895b817dd216e950af80ac1f05d46e5",
+  "runtime_source_equivalence_paths": [
+    "src",
+    "apps/cli",
+    "adapters"
+  ],
+  "commits": [
+    {
+      "id": "a5bbac70",
+      "purpose": "scaled workloads and authenticated marginal iteration costs"
+    },
+    {
+      "id": "208de930",
+      "purpose": "diagnostic published opcode counters, absent in ordinary builds"
+    },
+    {
+      "id": "755c9b5c",
+      "purpose": "admit capacity once and consume numeric local destination in one borrow"
+    },
+    {
+      "id": "afadba63",
+      "purpose": "dispatch raw published tags, restore typed opcodes only in consumers"
+    }
+  ],
+  "loop_dispatches_per_iteration": {
+    "count": 4,
+    "opcode_counts_at_n100000": {
+      "CompareBranchLocalLt": 100001,
+      "UpdateLocalDiscard": 100000,
+      "Goto": 200000
+    }
+  },
+  "configuration": {
+    "rust": "1.88.0",
+    "build": "ordinary release",
+    "pgo": false,
+    "features": [],
+    "lto": "fat",
+    "codegen_units": 1,
+    "cpu_affinity": 4,
+    "native_order": "ABBA",
+    "native_samples_per_side": 2,
+    "sizes": [
+      100000,
+      200000,
+      400000
+    ]
+  },
+  "preserved_contracts": [
+    "safe Rust",
+    "compact published word format",
+    "publication and external decode validation",
+    "dynamic binding/number guards",
+    "owner and callback semantics",
+    "fallthrough/PC bounds-safe access"
+  ],
+  "status": "pilot complete; stop for review; not whole-stage performance acceptance",
+  "schema": "oxide-verified-loop-experiment-v1",
+  "artifacts": {
+    "B2a": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/85e8c55b/qjs",
+      "sha256": "72b5e285b19aae64227d41e6851b6086efb91ad382df6d311531cb370fc47b48",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/recovery-artifacts/85e8c55b/qjs.build.json",
+        "sha256": "977f11063d374c8efdb5b71796e146d36cafdf7ee290e802350c742b3da908d2",
+        "commit": "85e8c55b4895b817dd216e950af80ac1f05d46e5"
+      }
+    },
+    "E1": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/755c9b5c/qjs",
+      "sha256": "1f7d8b7b72b68ad83e54209623ab4f2da4c5f8c0187f7816e49e7d9c0ac4874a",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/755c9b5c/qjs.build.json",
+        "sha256": "6e2b261bb030000fd7a16e14797aba26b88ca84133a1ea25d6dcf19f5cd21888",
+        "commit": "755c9b5cc99ae0ffca91ca1cf94e770a052fab09"
+      }
+    },
+    "E2": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/afadba63/qjs",
+      "sha256": "a32658f149ad1e1975f70408ac16ae4f91e6761a2aa10b4224b5838b54a17fd5",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/afadba63/qjs.build.json",
+        "sha256": "f55a4f91ff36ae38f2a6dc383f1c96ff87bad695ac77bd9b6c9e7b2bf96ee304",
+        "commit": "afadba637c7b64433c4996dd3f82ba2b7336a23e"
+      }
+    },
+    "QuickJS": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/a-stage-e034-correctness/quickjs-diff/pinned-reference-qjs",
+      "sha256": "b2f8494ceee444455d240d7834ff4ba7ff5d9ca631f0d8a136fdbab85d931acf"
+    }
+  },
+  "probes": {
+    "B2a": {
+      "empty_loop": {
+        "Ir": 348.00062749999995,
+        "Dr": 69.0001625,
+        "Dw": 31.000149999999998,
+        "linearity_difference_percent": 0.000251436644327363
+      },
+      "numeric_local_loop": {
+        "Ir": 1101.9994824999999,
+        "Dr": 247.999845,
+        "Dw": 142.9998775,
+        "linearity_difference_percent": 0.0002037208113314648
+      }
+    },
+    "QuickJS": {
+      "empty_loop": {
+        "Ir": 90.00265250000001,
+        "Dr": 31.0006825,
+        "Dw": 10.0004,
+        "linearity_difference_percent": 0.00108329553835107
+      },
+      "numeric_local_loop": {
+        "Ir": 167.00241499999998,
+        "Dr": 51.000605,
+        "Dw": 19.0004,
+        "linearity_difference_percent": 0.0006766346325237649
+      }
+    },
+    "E1": {
+      "empty_loop": {
+        "Ir": 290.00089,
+        "Dr": 68.000155,
+        "Dw": 33.0001525,
+        "linearity_difference_percent": 0.00034482712247818625
+      },
+      "numeric_local_loop": {
+        "Ir": 1124.00019,
+        "Dr": 265.00010999999995,
+        "Dw": 159.00003750000002,
+        "linearity_difference_percent": 3.558717625029573e-05
+      }
+    },
+    "E2": {
+      "empty_loop": {
+        "Ir": 276.0007425,
+        "Dr": 62.000052499999995,
+        "Dw": 27.0000475,
+        "linearity_difference_percent": 0.00064673948194649
+      },
+      "numeric_local_loop": {
+        "Ir": 1073.9996725,
+        "Dr": 252.99998499999998,
+        "Dw": 132.99997,
+        "linearity_difference_percent": 1.4432033146327683e-05
+      }
+    }
+  },
+  "tripwire": [
+    {
+      "case": "richards",
+      "B2a": {
+        "Ir": 6403542752,
+        "Dr": 1876739354,
+        "Dw": 1074983856,
+        "I1mr": 41568624,
+        "D1mr": 18815784,
+        "D1mw": 1829795,
+        "ILmr": 16481,
+        "DLmr": 8093,
+        "DLmw": 31425,
+        "Bc": 785118132,
+        "Bcm": 42015629,
+        "Bi": 71994135,
+        "Bim": 27742748
+      },
+      "E1": {
+        "Ir": 6425725703,
+        "Dr": 1889769493,
+        "Dw": 1092324085,
+        "I1mr": 55827136,
+        "D1mr": 17701433,
+        "D1mw": 1307568,
+        "ILmr": 16461,
+        "DLmr": 8094,
+        "DLmw": 31432,
+        "Bc": 783892002,
+        "Bcm": 47262400,
+        "Bi": 71994145,
+        "Bim": 26678355
+      },
+      "E2": {
+        "Ir": 6346981902,
+        "Dr": 1870674691,
+        "Dw": 1057555348,
+        "I1mr": 40246823,
+        "D1mr": 17642802,
+        "D1mw": 1299196,
+        "ILmr": 16450,
+        "DLmr": 8094,
+        "DLmw": 31432,
+        "Bc": 765736121,
+        "Bcm": 33683884,
+        "Bi": 72103055,
+        "Bim": 26679172
+      },
+      "E2_vs_B2a_percent": {
+        "Ir": -0.8832743403225374,
+        "Dr": -0.3231489224688522,
+        "Dw": -1.6212809060083266,
+        "I1mr": -3.179804556436605
+      }
+    },
+    {
+      "case": "deltablue",
+      "B2a": {
+        "Ir": 7069816642,
+        "Dr": 2137774457,
+        "Dw": 1349658456,
+        "I1mr": 98308337,
+        "D1mr": 23495807,
+        "D1mw": 3390558,
+        "ILmr": 100360,
+        "DLmr": 156631,
+        "DLmw": 135602,
+        "Bc": 843456510,
+        "Bcm": 42736426,
+        "Bi": 65691992,
+        "Bim": 25484702
+      },
+      "E1": {
+        "Ir": 7086137219,
+        "Dr": 2153358327,
+        "Dw": 1364584577,
+        "I1mr": 114302427,
+        "D1mr": 20480500,
+        "D1mw": 3097911,
+        "ILmr": 114316,
+        "DLmr": 170684,
+        "DLmw": 135092,
+        "Bc": 839935903,
+        "Bcm": 45369435,
+        "Bi": 65691984,
+        "Bim": 25152928
+      },
+      "E2": {
+        "Ir": 7020996694,
+        "Dr": 2133316309,
+        "Dw": 1336313388,
+        "I1mr": 91343313,
+        "D1mr": 20720196,
+        "D1mw": 3260713,
+        "ILmr": 125005,
+        "DLmr": 182082,
+        "DLmw": 135021,
+        "Bc": 825596753,
+        "Bcm": 38559093,
+        "Bi": 65696032,
+        "Bim": 25337664
+      },
+      "E2_vs_B2a_percent": {
+        "Ir": -0.6905405114748353,
+        "Dr": -0.20854155055516355,
+        "Dw": -0.9887737109098627,
+        "I1mr": -7.084876229774895
+      }
+    },
+    {
+      "case": "navier-stokes",
+      "B2a": {
+        "Ir": 8316519920,
+        "Dr": 2128584124,
+        "Dw": 1100013554,
+        "I1mr": 26000755,
+        "D1mr": 1417932,
+        "D1mw": 275706,
+        "ILmr": 17349,
+        "DLmr": 8106,
+        "DLmw": 73603,
+        "Bc": 1167463224,
+        "Bcm": 38812361,
+        "Bi": 103671667,
+        "Bim": 45792345
+      },
+      "E1": {
+        "Ir": 8299937992,
+        "Dr": 2177672494,
+        "Dw": 1143874745,
+        "I1mr": 29292161,
+        "D1mr": 1421266,
+        "D1mw": 280347,
+        "ILmr": 17333,
+        "DLmr": 8106,
+        "DLmw": 73604,
+        "Bc": 1125559403,
+        "Bcm": 36184701,
+        "Bi": 103671665,
+        "Bim": 45563260
+      },
+      "E2": {
+        "Ir": 8117728622,
+        "Dr": 2123598058,
+        "Dw": 1059007086,
+        "I1mr": 18936353,
+        "D1mr": 1414913,
+        "D1mw": 273070,
+        "ILmr": 17325,
+        "DLmr": 8105,
+        "DLmw": 73591,
+        "Bc": 1075785903,
+        "Bcm": 38496035,
+        "Bi": 103805046,
+        "Bim": 45639963
+      },
+      "E2_vs_B2a_percent": {
+        "Ir": -2.3903183051595445,
+        "Dr": -0.23424331431309842,
+        "Dw": -3.7278147938166195,
+        "I1mr": -27.169987948426876
+      }
+    }
+  ],
+  "native": {
+    "E1_vs_B2a": [
+      {
+        "case": "richards",
+        "samples_ns": {
+          "base": [
+            750434963,
+            471971023
+          ],
+          "candidate": [
+            505609109,
+            480707271
+          ]
+        },
+        "medians_ns": {
+          "base": 611202993.0,
+          "candidate": 493158190.0
+        },
+        "change_percent": -19.313518479448945
+      },
+      {
+        "case": "deltablue",
+        "samples_ns": {
+          "base": [
+            542301273,
+            544865752
+          ],
+          "candidate": [
+            853875726,
+            817282237
+          ]
+        },
+        "medians_ns": {
+          "base": 543583512.5,
+          "candidate": 835578981.5
+        },
+        "change_percent": 53.71676334646003
+      },
+      {
+        "case": "crypto",
+        "samples_ns": {
+          "base": [
+            506525076,
+            515152378
+          ],
+          "candidate": [
+            518351183,
+            521257020
+          ]
+        },
+        "medians_ns": {
+          "base": 510838727.0,
+          "candidate": 519804101.5
+        },
+        "change_percent": 1.7550303111611987
+      },
+      {
+        "case": "raytrace",
+        "samples_ns": {
+          "base": [
+            802618731,
+            818670921
+          ],
+          "candidate": [
+            810034582,
+            845442518
+          ]
+        },
+        "medians_ns": {
+          "base": 810644826.0,
+          "candidate": 827738550.0
+        },
+        "change_percent": 2.108657633003874
+      },
+      {
+        "case": "earley-boyer",
+        "samples_ns": {
+          "base": [
+            1056268767,
+            1064231654
+          ],
+          "candidate": [
+            1061806361,
+            1042878698
+          ]
+        },
+        "medians_ns": {
+          "base": 1060250210.5,
+          "candidate": 1052342529.5
+        },
+        "change_percent": -0.7458315897217127
+      },
+      {
+        "case": "regexp",
+        "samples_ns": {
+          "base": [
+            2187523696,
+            2219794153
+          ],
+          "candidate": [
+            2222351367,
+            2233427856
+          ]
+        },
+        "medians_ns": {
+          "base": 2203658924.5,
+          "candidate": 2227889611.5
+        },
+        "change_percent": 1.0995661229878273
+      },
+      {
+        "case": "splay",
+        "samples_ns": {
+          "base": [
+            1520033527,
+            1490683430
+          ],
+          "candidate": [
+            1498702580,
+            1500757271
+          ]
+        },
+        "medians_ns": {
+          "base": 1505358478.5,
+          "candidate": 1499729925.5
+        },
+        "change_percent": -0.37390117240436727
+      },
+      {
+        "case": "navier-stokes",
+        "samples_ns": {
+          "base": [
+            535397462,
+            519058436
+          ],
+          "candidate": [
+            517817159,
+            521166309
+          ]
+        },
+        "medians_ns": {
+          "base": 527227949.0,
+          "candidate": 519491734.0
+        },
+        "change_percent": -1.467337802306079
+      },
+      {
+        "case": "combined",
+        "samples_ns": {
+          "base": [
+            7633684758,
+            7656494621
+          ],
+          "candidate": [
+            7696756120,
+            7647927408
+          ]
+        },
+        "medians_ns": {
+          "base": 7645089689.5,
+          "candidate": 7672341764.0
+        },
+        "change_percent": 0.35646507244289083
+      }
+    ],
+    "E2_vs_E1": [
+      {
+        "case": "richards",
+        "samples_ns": {
+          "base": [
+            484532513,
+            489156691
+          ],
+          "candidate": [
+            482236619,
+            479791877
+          ]
+        },
+        "medians_ns": {
+          "base": 486844602.0,
+          "candidate": 481014248.0
+        },
+        "change_percent": -1.1975800853184726
+      },
+      {
+        "case": "deltablue",
+        "samples_ns": {
+          "base": [
+            575332762,
+            570920345
+          ],
+          "candidate": [
+            547838855,
+            549337328
+          ]
+        },
+        "medians_ns": {
+          "base": 573126553.5,
+          "candidate": 548588091.5
+        },
+        "change_percent": -4.281508481878427
+      },
+      {
+        "case": "crypto",
+        "samples_ns": {
+          "base": [
+            523045062,
+            532284273
+          ],
+          "candidate": [
+            710954695,
+            516738202
+          ]
+        },
+        "medians_ns": {
+          "base": 527664667.5,
+          "candidate": 613846448.5
+        },
+        "change_percent": 16.332679883289703
+      },
+      {
+        "case": "raytrace",
+        "samples_ns": {
+          "base": [
+            817385241,
+            815808724
+          ],
+          "candidate": [
+            802040325,
+            809525947
+          ]
+        },
+        "medians_ns": {
+          "base": 816596982.5,
+          "candidate": 805783136.0
+        },
+        "change_percent": -1.324257465034162
+      },
+      {
+        "case": "earley-boyer",
+        "samples_ns": {
+          "base": [
+            1049548199,
+            1053078621
+          ],
+          "candidate": [
+            1031007968,
+            1040939544
+          ]
+        },
+        "medians_ns": {
+          "base": 1051313410.0,
+          "candidate": 1035973756.0
+        },
+        "change_percent": -1.459094296152852
+      },
+      {
+        "case": "regexp",
+        "samples_ns": {
+          "base": [
+            2217443708,
+            2250265123
+          ],
+          "candidate": [
+            2224435558,
+            2199778991
+          ]
+        },
+        "medians_ns": {
+          "base": 2233854415.5,
+          "candidate": 2212107274.5
+        },
+        "change_percent": -0.9735254387709169
+      },
+      {
+        "case": "splay",
+        "samples_ns": {
+          "base": [
+            1527524966,
+            1500667018
+          ],
+          "candidate": [
+            1517224694,
+            1505957604
+          ]
+        },
+        "medians_ns": {
+          "base": 1514095992.0,
+          "candidate": 1511591149.0
+        },
+        "change_percent": -0.1654348874334799
+      },
+      {
+        "case": "navier-stokes",
+        "samples_ns": {
+          "base": [
+            513207553,
+            518576407
+          ],
+          "candidate": [
+            525106892,
+            512241852
+          ]
+        },
+        "medians_ns": {
+          "base": 515891980.0,
+          "candidate": 518674372.0
+        },
+        "change_percent": 0.5393361610312342
+      },
+      {
+        "case": "combined",
+        "samples_ns": {
+          "base": [
+            7731734228,
+            7642196151
+          ],
+          "candidate": [
+            7612477982,
+            7524454753
+          ]
+        },
+        "medians_ns": {
+          "base": 7686965189.5,
+          "candidate": 7568466367.5
+        },
+        "change_percent": -1.5415553352819078
+      }
+    ],
+    "E2_vs_B2a": [
+      {
+        "case": "richards",
+        "samples_ns": {
+          "base": [
+            469235972,
+            468079609
+          ],
+          "candidate": [
+            488001771,
+            482851021
+          ]
+        },
+        "medians_ns": {
+          "base": 468657790.5,
+          "candidate": 485426396.0
+        },
+        "change_percent": 3.5780063491764436
+      },
+      {
+        "case": "deltablue",
+        "samples_ns": {
+          "base": [
+            546264844,
+            540166685
+          ],
+          "candidate": [
+            563539004,
+            560972422
+          ]
+        },
+        "medians_ns": {
+          "base": 543215764.5,
+          "candidate": 562255713.0
+        },
+        "change_percent": 3.5050434365661687
+      },
+      {
+        "case": "crypto",
+        "samples_ns": {
+          "base": [
+            509881069,
+            516772871
+          ],
+          "candidate": [
+            520371844,
+            519426370
+          ]
+        },
+        "medians_ns": {
+          "base": 513326970.0,
+          "candidate": 519899107.0
+        },
+        "change_percent": 1.2803022993317592
+      },
+      {
+        "case": "raytrace",
+        "samples_ns": {
+          "base": [
+            800135470,
+            803462512
+          ],
+          "candidate": [
+            795738699,
+            799454915
+          ]
+        },
+        "medians_ns": {
+          "base": 801798991.0,
+          "candidate": 797596807.0
+        },
+        "change_percent": -0.5240944485049859
+      },
+      {
+        "case": "earley-boyer",
+        "samples_ns": {
+          "base": [
+            1065483520,
+            1057581720
+          ],
+          "candidate": [
+            1041158512,
+            1043298430
+          ]
+        },
+        "medians_ns": {
+          "base": 1061532620.0,
+          "candidate": 1042228471.0
+        },
+        "change_percent": -1.8185167969685168
+      },
+      {
+        "case": "regexp",
+        "samples_ns": {
+          "base": [
+            2209234726,
+            2222215923
+          ],
+          "candidate": [
+            2217452695,
+            2234618845
+          ]
+        },
+        "medians_ns": {
+          "base": 2215725324.5,
+          "candidate": 2226035770.0
+        },
+        "change_percent": 0.4653304895689825
+      },
+      {
+        "case": "splay",
+        "samples_ns": {
+          "base": [
+            1478477636,
+            1477019004
+          ],
+          "candidate": [
+            1485214612,
+            1484606670
+          ]
+        },
+        "medians_ns": {
+          "base": 1477748320.0,
+          "candidate": 1484910641.0
+        },
+        "change_percent": 0.4846779998369355
+      },
+      {
+        "case": "navier-stokes",
+        "samples_ns": {
+          "base": [
+            514622124,
+            519007170
+          ],
+          "candidate": [
+            509657116,
+            511053127
+          ]
+        },
+        "medians_ns": {
+          "base": 516814647.0,
+          "candidate": 510355121.5
+        },
+        "change_percent": -1.2498727614428495
+      },
+      {
+        "case": "combined",
+        "samples_ns": {
+          "base": [
+            7563854953,
+            7613479986
+          ],
+          "candidate": [
+            7653082236,
+            7618547635
+          ]
+        },
+        "medians_ns": {
+          "base": 7588667469.5,
+          "candidate": 7635814935.5
+        },
+        "change_percent": 0.621287810929827
+      }
+    ]
+  },
+  "hot_loop_symbols": [
+    {
+      "candidate": "base",
+      "address": 6136560,
+      "size_bytes": 64821
+    },
+    {
+      "candidate": "e1",
+      "address": 6136784,
+      "size_bytes": 65059
+    },
+    {
+      "candidate": "e2",
+      "address": 6136784,
+      "size_bytes": 63888
+    }
+  ],
+  "elf_sections": [
+    {
+      "candidate": "base",
+      ".text": 6778105,
+      ".rodata": 714488
+    },
+    {
+      "candidate": "e1",
+      ".text": 6778201,
+      ".rodata": 714472
+    },
+    {
+      "candidate": "e2",
+      ".text": 6776841,
+      ".rodata": 714592
+    }
+  ],
+  "evidence": [
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e0-cost/results.json",
+      "sha256": "bc1ab99535018966568d12524c59c332874c4064b2da56d07f323bea0db8219d"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e1-cost/results.json",
+      "sha256": "9d9339917a9113b23aba9f83a37a4236fb2ef3a5ddcd7412c57503b0a93c8835"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e2-cost/results.json",
+      "sha256": "41fcdf55ff3ca24c23e7d26bbf8956e33a9cd7a17e20f5753eb9318018dd5b9f"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e1-rdns-cost/results.json",
+      "sha256": "2ad4de68012d54dd7208ffb3e35ae9e5c1e220a4dc9b719e5f395dc45d4d785a"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e2-rdns-cost/results.json",
+      "sha256": "bc2f4d39bf892383089fa19e7a699b9a496ba3a85f41b5f68aa48918cac0d671"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e1-native/results.json",
+      "sha256": "68eb4586b196c8793ec32cb13477beeb5b2043e875a3b456e6f16b0483584f21"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e2-native/results.json",
+      "sha256": "12d8296412600bb904d917699536dc0ec595793521053ba9f6ec402025872326"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-cumulative-native/results.json",
+      "sha256": "309aa4074559c0bf03ed1ed0e3b4b618726d9c3ca1abced88a215414ea78b5e9"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e0-published-profile.json",
+      "sha256": "ecb241389b70215dc9c52aa5cd6b9f7034df1c9972804f361d9eea1d1d551e1e"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e1-tests.log",
+      "sha256": "a9750da6f3bd812fb785d4deab19b0087eb09cd1321948960e57ebe5ef2f4bfd"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e2-tests.log",
+      "sha256": "0ade0c946de55f7b9272f2837c89d839c3aad8b15b4ed975e586d7f7b2e11588"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e2-clippy.log",
+      "sha256": "70782e3088d4aeb786c7fe703f2ad53730fdd34bb2b1be9f0f2e8fb0c9457650"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e1-clippy.log",
+      "sha256": "ff90c61ed065b0be61dd8836a3642d67721520178efe534e4ad4ac0bcb800f11"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e0-hot-instructions.json",
+      "sha256": "2c4239898c5c112d6dc690f074c71e2fe761e867c34a6274f6b4111ed310529a"
+    }
+  ],
+  "correctness": {
+    "lib_tests": 2330,
+    "failures": 0,
+    "clippy": "passed with profiling feature and -D warnings",
+    "benchmark_semantics": "all replays passed fixed workload/stdout validation"
+  },
+  "generated_code": {
+    "before": "header tag was range-validated before a second dispatch range guard",
+    "after": "hot loop has one tag dispatch; typed restoration remains in selected consumers/cold fallback",
+    "retained": "safe bounds loads and external publication validation"
+  },
+  "decision": {
+    "pilot_empty_loop_target_below_300": "met at 276 Ir per JS iteration",
+    "whole_workload_speedup": "not established; last cumulative ABBA R/D +3.58%/+3.51%, Combined +0.62%",
+    "runtime_stage_completion": false,
+    "production_adoption": false,
+    "next_scope": "review before continuing larger frame-window/RC work or rewriting runtime-bc-plan.md"
+  },
+  "limitations": [
+    "Native samples are two per side, no formal confidence interval or original adaptive Score acceptance.",
+    "Same E1 artifact DeltaBlue median changed from ~835.6 ms to ~573.1 ms across timing sessions; an earlier +53.7% cannot be assigned to code.",
+    "I1mr is simulated/layout-sensitive and is diagnostic only.",
+    "QuickJS is the existing authenticated oracle binary; C compiler flags were not re-audited.",
+    "RSS and GC pause changes were not measured; no new runtime state fields or heap allocation mechanisms were added.",
+    "No PGO, Boa rerun, frequency changes, shuffling, padding, or new benchmark execution framework."
+  ],
+  "preserved_references": {
+    "pr94": "OPEN DRAFT, b0db0a50ee4003c5a74e5dbbb4543dc0e8393c57; not changed",
+    "B_C_plan": "not rewritten in this pilot"
+  }
+}
