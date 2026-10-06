@@ -1,0 +1,1355 @@
+{
+  "schema": "oxide-verified-loop-e3-v1",
+  "runtime_commit": "f0e98a3b36082825df1212507c3a890688f920b1",
+  "baseline": "E2 ordinary release, not accepted stage A or B2a",
+  "configuration": {
+    "rust": "1.88.0",
+    "release": "ordinary, fat LTO, codegen-units=1",
+    "PGO": false,
+    "profiling_features_for_timing": false,
+    "cpu_for_native": 4,
+    "native_order": "A/B/B/A",
+    "native_samples_per_side": 2,
+    "frozen_work_and_output_validation": true,
+    "I1mr_role": "diagnostic only"
+  },
+  "commits": [
+    {
+      "sha": "869e337973193505cdc3bcb985e46dffe4edda2e",
+      "purpose": "canonical owning operand Vec; call/constructor/native transfers and cleanup"
+    },
+    {
+      "sha": "455d6b30f5eed9eb2de2777e7d0286886aea3c4a",
+      "purpose": "one segment borrowing canonical slices; local depth with publication on scope exit"
+    },
+    {
+      "sha": "0be51bfeb813fe7287b3fbf99269d026f45e2552",
+      "purpose": "published numeric consumers and binding access; checked allocation producer commit retained"
+    },
+    {
+      "sha": "f0e98a3b36082825df1212507c3a890688f920b1",
+      "purpose": "reduce segment binding metadata; remove redundant FrameWindow endpoint"
+    }
+  ],
+  "artifacts": {
+    "E2": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/afadba63/qjs",
+      "sha256": "a32658f149ad1e1975f70408ac16ae4f91e6761a2aa10b4224b5838b54a17fd5",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/afadba63/qjs.build.json",
+        "sha256": "f55a4f91ff36ae38f2a6dc383f1c96ff87bad695ac77bd9b6c9e7b2bf96ee304"
+      },
+      "source_commit": "afadba637c7b64433c4996dd3f82ba2b7336a23e",
+      "source_tree": "b96727a25b501e9447ae77e05a4a4018090265a5",
+      "build_was_clean": true
+    },
+    "c1": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/869e3379/qjs",
+      "sha256": "b0057ea009e3eaa0360f768797229439f94ffe385817e64915b1e822ddd8f2f8",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/869e3379/qjs.build.json",
+        "sha256": "7dcb15899de970f2ab0ef6a20a4ab96336d0ffbacebf3d6ad0f659549ff4444f"
+      },
+      "source_commit": "869e337973193505cdc3bcb985e46dffe4edda2e",
+      "source_tree": "cf01990ffdbe0851a0401b921b0231f1206e99cc",
+      "build_was_clean": true
+    },
+    "c2": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/455d6b30/qjs",
+      "sha256": "5d3cd95adb08773a5f71d77ae4e12bc57b52019f1987b79de645444637a13119",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/455d6b30/qjs.build.json",
+        "sha256": "ded4fbef0d0e82ec644136c8921fbfebf061861b0d4f808727fcb4a74901d150"
+      },
+      "source_commit": "455d6b30f5eed9eb2de2777e7d0286886aea3c4a",
+      "source_tree": "bd987090b2375941e9eaa375efc9030f5629d5c6",
+      "build_was_clean": true
+    },
+    "c3": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/0be51bfe/qjs",
+      "sha256": "6ea809bf61329c9da50902f6ce99ca1103746b76a1e4e7c7daabda241813a109",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/0be51bfe/qjs.build.json",
+        "sha256": "2ad3c3a47e807b214c7bbf4f51b0c4329305decb7105d5d121d7c66a25487480"
+      },
+      "source_commit": "0be51bfeb813fe7287b3fbf99269d026f45e2552",
+      "source_tree": "0660de927d5c80295d899e6cd7992867bceef5bf",
+      "build_was_clean": true
+    },
+    "final": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/f0e98a3b/qjs",
+      "sha256": "f0837decdcb3410faa9666652e36bd0203d80f62f33d6f0ccbecdba46ad3d60c",
+      "receipt": {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/f0e98a3b/qjs.build.json",
+        "sha256": "7f36d8c8929183a493ead0dcc8fb14ea24ac98e07078c57eac26eb52ea0a9a89"
+      },
+      "source_commit": "f0e98a3b36082825df1212507c3a890688f920b1",
+      "source_tree": "11792e8e6b560fb924e553b6f36a28c2a66d2c09",
+      "build_was_clean": true
+    }
+  },
+  "step_gates": {
+    "c1_Ir_growth_at_most_1_percent": true,
+    "c2_Ir_growth_at_most_1_percent": true,
+    "numeric_loop_400_to_500_Ir": false,
+    "numeric_dispatch_at_most_40_Ir": false,
+    "net_native_speedup_accepted": false
+  },
+  "probes": {
+    "B2a": {
+      "empty_loop": {
+        "Ir": 348.00062749999995,
+        "Dr": 69.0001625,
+        "Dw": 31.000149999999998,
+        "linearity_difference_percent": 0.000251436644327363
+      },
+      "numeric_local_loop": {
+        "Ir": 1101.9994824999999,
+        "Dr": 247.999845,
+        "Dw": 142.9998775,
+        "linearity_difference_percent": 0.0002037208113314648
+      }
+    },
+    "QuickJS": {
+      "empty_loop": {
+        "Ir": 90.00265250000001,
+        "Dr": 31.0006825,
+        "Dw": 10.0004,
+        "linearity_difference_percent": 0.00108329553835107
+      },
+      "numeric_local_loop": {
+        "Ir": 167.00241499999998,
+        "Dr": 51.000605,
+        "Dw": 19.0004,
+        "linearity_difference_percent": 0.0006766346325237649
+      }
+    },
+    "E1": {
+      "empty_loop": {
+        "Ir": 290.00089,
+        "Dr": 68.000155,
+        "Dw": 33.0001525,
+        "linearity_difference_percent": 0.00034482712247818625
+      },
+      "numeric_local_loop": {
+        "Ir": 1124.00019,
+        "Dr": 265.00010999999995,
+        "Dw": 159.00003750000002,
+        "linearity_difference_percent": 3.558717625029573e-05
+      }
+    },
+    "E2": {
+      "empty_loop": {
+        "Ir": 276.0007425,
+        "Dr": 62.000052499999995,
+        "Dw": 27.0000475,
+        "linearity_difference_percent": 0.00064673948194649
+      },
+      "numeric_local_loop": {
+        "Ir": 1073.9996725,
+        "Dr": 252.99998499999998,
+        "Dw": 132.99997,
+        "linearity_difference_percent": 1.4432033146327683e-05
+      }
+    },
+    "E3": {
+      "empty_loop": {
+        "Ir": 277.00031,
+        "Dr": 57.0000325,
+        "Dw": 32.000045,
+        "linearity_difference_percent": 0.0003393503765325434,
+        "Ir_per_dispatch": 69.2500775
+      },
+      "numeric_local_loop": {
+        "Ir": 873.9999825,
+        "Dr": 203.00003750000002,
+        "Dw": 136.0000325,
+        "linearity_difference_percent": 2.80320410883661e-05,
+        "Ir_per_dispatch": 72.833331875
+      }
+    }
+  },
+  "actual_dispatches": {
+    "numeric_local_loop": 12,
+    "empty_loop": 4,
+    "diagnostic_source_commit": "0be51bfeb813fe7287b3fbf99269d026f45e2552",
+    "evidence": [
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-dispatch-n100000.json",
+        "sha256": "88db16c29630d0ce8107ae9afbf97b645471ab08a1ff241b296d517ed620e547"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-dispatch-n200000.json",
+        "sha256": "70849194ab7eb4e86f094ff6f16d9adc7bbe354d182ffbaa102d48e09957cddf"
+      }
+    ],
+    "scope_note": "numeric opcode slopes measured on c3 profiling binary; refinement changes only binding metadata, not compiler/publication/opcode consumers"
+  },
+  "tripwire": {
+    "c1_vs_E2": {
+      "richards": {
+        "baseline": {
+          "Ir": 6346978094,
+          "Dr": 1870673982,
+          "Dw": 1057554585,
+          "I1mr": 40246748,
+          "D1mr": 17546567,
+          "D1mw": 1472955,
+          "ILmr": 16453,
+          "DLmr": 8095,
+          "DLmw": 31431,
+          "Bc": 765735366,
+          "Bcm": 33683949,
+          "Bi": 72103049,
+          "Bim": 26679169
+        },
+        "candidate": {
+          "Ir": 6214089697,
+          "Dr": 1845693964,
+          "Dw": 1079412740,
+          "I1mr": 50237092,
+          "D1mr": 18741529,
+          "D1mw": 1984802,
+          "ILmr": 16412,
+          "DLmr": 8024,
+          "DLmw": 31425,
+          "Bc": 730449571,
+          "Bcm": 32048064,
+          "Bi": 72103069,
+          "Bim": 26676181
+        },
+        "changes_percent": {
+          "Ir": -2.0937270466653057,
+          "Dr": -1.3353485556736655,
+          "Dw": 2.0668583267501095,
+          "I1mr": 24.82273598850768,
+          "D1mr": 6.810232451738285,
+          "D1mw": 34.749669881293045,
+          "Bcm": -4.856571300473112,
+          "Bim": -0.01119974913761368
+        }
+      },
+      "deltablue": {
+        "baseline": {
+          "Ir": 7020989940,
+          "Dr": 2133295465,
+          "Dw": 1336291536,
+          "I1mr": 91344225,
+          "D1mr": 21249591,
+          "D1mw": 3108081,
+          "ILmr": 120494,
+          "DLmr": 177661,
+          "DLmw": 135195,
+          "Bc": 825575568,
+          "Bcm": 38559039,
+          "Bi": 65696026,
+          "Bim": 25337663
+        },
+        "candidate": {
+          "Ir": 6958434061,
+          "Dr": 2127394597,
+          "Dw": 1360745447,
+          "I1mr": 102326021,
+          "D1mr": 25543245,
+          "D1mw": 3537156,
+          "ILmr": 59504,
+          "DLmr": 112323,
+          "DLmw": 135246,
+          "Bc": 807166195,
+          "Bcm": 41149337,
+          "Bi": 65696002,
+          "Bim": 25186254
+        },
+        "changes_percent": {
+          "Ir": -0.8909837435260637,
+          "Dr": -0.27660809750983395,
+          "Dw": 1.8299832290489038,
+          "I1mr": 12.022430536796392,
+          "D1mr": 20.205819490831622,
+          "D1mw": 13.805142143978877,
+          "Bcm": 6.717745221814275,
+          "Bim": -0.5975649766910229
+        }
+      },
+      "navier-stokes": {
+        "baseline": {
+          "Ir": 8117732555,
+          "Dr": 2123598514,
+          "Dw": 1059007873,
+          "I1mr": 18936370,
+          "D1mr": 1415348,
+          "D1mw": 273222,
+          "ILmr": 17329,
+          "DLmr": 8107,
+          "DLmw": 73588,
+          "Bc": 1075786827,
+          "Bcm": 38495928,
+          "Bi": 103805049,
+          "Bim": 45639964
+        },
+        "candidate": {
+          "Ir": 7801149555,
+          "Dr": 2087302987,
+          "Dw": 1049504310,
+          "I1mr": 11355724,
+          "D1mr": 1506405,
+          "D1mw": 277429,
+          "ILmr": 17287,
+          "DLmr": 8036,
+          "DLmw": 73591,
+          "Bc": 987550507,
+          "Bcm": 31158281,
+          "Bi": 103805070,
+          "Bim": 45561451
+        },
+        "changes_percent": {
+          "Ir": -3.899894433021267,
+          "Dr": -1.7091520247692116,
+          "Dw": -0.8974024879605413,
+          "I1mr": -40.03220258159299,
+          "D1mr": 6.433541432919676,
+          "D1mw": 1.5397735175059157,
+          "Bcm": -19.06083936981594,
+          "Bim": -0.17202686662942668
+        }
+      }
+    },
+    "c2_vs_c1": {
+      "richards": {
+        "baseline": {
+          "Ir": 6214089697,
+          "Dr": 1845693964,
+          "Dw": 1079412740,
+          "I1mr": 50237092,
+          "D1mr": 18741529,
+          "D1mw": 1984802,
+          "ILmr": 16412,
+          "DLmr": 8024,
+          "DLmw": 31425,
+          "Bc": 730449571,
+          "Bcm": 32048064,
+          "Bi": 72103069,
+          "Bim": 26676181
+        },
+        "candidate": {
+          "Ir": 6139429537,
+          "Dr": 1786395539,
+          "Dw": 1088240565,
+          "I1mr": 61435616,
+          "D1mr": 19021811,
+          "D1mw": 1250301,
+          "ILmr": 16517,
+          "DLmr": 8036,
+          "DLmw": 31423,
+          "Bc": 728225209,
+          "Bcm": 36462452,
+          "Bi": 72103057,
+          "Bim": 27851093
+        },
+        "changes_percent": {
+          "Ir": -1.2014657599172418,
+          "Dr": -3.212798338002254,
+          "Dw": 0.8178359095520671,
+          "I1mr": 22.291346003865044,
+          "D1mr": 1.4955129861603078,
+          "D1mw": -37.0062605741026,
+          "Bcm": 13.774273541141202,
+          "Bim": 4.404348583479778
+        }
+      },
+      "deltablue": {
+        "baseline": {
+          "Ir": 6958434061,
+          "Dr": 2127394597,
+          "Dw": 1360745447,
+          "I1mr": 102326021,
+          "D1mr": 25543245,
+          "D1mw": 3537156,
+          "ILmr": 59504,
+          "DLmr": 112323,
+          "DLmw": 135246,
+          "Bc": 807166195,
+          "Bcm": 41149337,
+          "Bi": 65696002,
+          "Bim": 25186254
+        },
+        "candidate": {
+          "Ir": 7027791612,
+          "Dr": 2125866478,
+          "Dw": 1392870023,
+          "I1mr": 103869946,
+          "D1mr": 25810443,
+          "D1mw": 3902915,
+          "ILmr": 49146,
+          "DLmr": 101759,
+          "DLmw": 134493,
+          "Bc": 816816193,
+          "Bcm": 44998989,
+          "Bi": 65695970,
+          "Bim": 25822536
+        },
+        "changes_percent": {
+          "Ir": 0.9967407952994556,
+          "Dr": -0.07183053873290879,
+          "Dw": 2.360807164251355,
+          "I1mr": 1.5088293133180608,
+          "D1mr": 1.0460612972235994,
+          "D1mw": 10.3404825797901,
+          "Bcm": 9.355319625198334,
+          "Bim": 2.526306611535012
+        }
+      },
+      "navier-stokes": {
+        "baseline": {
+          "Ir": 7801149555,
+          "Dr": 2087302987,
+          "Dw": 1049504310,
+          "I1mr": 11355724,
+          "D1mr": 1506405,
+          "D1mw": 277429,
+          "ILmr": 17287,
+          "DLmr": 8036,
+          "DLmw": 73591,
+          "Bc": 987550507,
+          "Bcm": 31158281,
+          "Bi": 103805070,
+          "Bim": 45561451
+        },
+        "candidate": {
+          "Ir": 7512334900,
+          "Dr": 1930678310,
+          "Dw": 1024459499,
+          "I1mr": 19205330,
+          "D1mr": 1419341,
+          "D1mw": 277344,
+          "ILmr": 17367,
+          "DLmr": 8055,
+          "DLmw": 73583,
+          "Bc": 967173763,
+          "Bcm": 18182065,
+          "Bi": 103805064,
+          "Bim": 45822788
+        },
+        "changes_percent": {
+          "Ir": -3.702206360277882,
+          "Dr": -7.503686718003055,
+          "Dw": -2.3863466554034485,
+          "I1mr": 69.12466347368076,
+          "D1mr": -5.779587826646882,
+          "D1mw": -0.030638469662502832,
+          "Bcm": -41.6461229038919,
+          "Bim": 0.573592355520014
+        }
+      }
+    },
+    "c3_vs_c2": {
+      "richards": {
+        "baseline": {
+          "Ir": 6139429537,
+          "Dr": 1786395539,
+          "Dw": 1088240565,
+          "I1mr": 61435616,
+          "D1mr": 19021811,
+          "D1mw": 1250301,
+          "ILmr": 16517,
+          "DLmr": 8036,
+          "DLmw": 31423,
+          "Bc": 728225209,
+          "Bcm": 36462452,
+          "Bi": 72103057,
+          "Bim": 27851093
+        },
+        "candidate": {
+          "Ir": 6049197286,
+          "Dr": 1781678140,
+          "Dw": 1087717065,
+          "I1mr": 46839142,
+          "D1mr": 17923294,
+          "D1mw": 1677504,
+          "ILmr": 16551,
+          "DLmr": 8110,
+          "DLmw": 31438,
+          "Bc": 709005534,
+          "Bcm": 38285665,
+          "Bi": 72803247,
+          "Bim": 27494833
+        },
+        "changes_percent": {
+          "Ir": -1.469717185549646,
+          "Dr": -0.2640735994359211,
+          "Dw": -0.04810517240735335,
+          "I1mr": -23.758977203060837,
+          "D1mr": -5.775038980252722,
+          "D1mw": 34.1680123426279,
+          "Bcm": 5.00024792627769,
+          "Bim": -1.2791598520029313
+        }
+      },
+      "deltablue": {
+        "baseline": {
+          "Ir": 7027791612,
+          "Dr": 2125866478,
+          "Dw": 1392870023,
+          "I1mr": 103869946,
+          "D1mr": 25810443,
+          "D1mw": 3902915,
+          "ILmr": 49146,
+          "DLmr": 101759,
+          "DLmw": 134493,
+          "Bc": 816816193,
+          "Bcm": 44998989,
+          "Bi": 65695970,
+          "Bim": 25822536
+        },
+        "candidate": {
+          "Ir": 6993571410,
+          "Dr": 2126218511,
+          "Dw": 1404874877,
+          "I1mr": 92369620,
+          "D1mr": 25766249,
+          "D1mw": 3731511,
+          "ILmr": 308478,
+          "DLmr": 362206,
+          "DLmw": 135215,
+          "Bc": 807820368,
+          "Bcm": 36888065,
+          "Bi": 66149437,
+          "Bim": 26229095
+        },
+        "changes_percent": {
+          "Ir": -0.48692681697574125,
+          "Dr": 0.0165595066126345,
+          "Dw": 0.8618789838080954,
+          "I1mr": -11.071851332241955,
+          "D1mr": -0.17122526723001297,
+          "D1mw": -4.391691850834567,
+          "Bcm": -18.024680510044345,
+          "Bim": 1.5744348270053665
+        }
+      },
+      "navier-stokes": {
+        "baseline": {
+          "Ir": 7512334900,
+          "Dr": 1930678310,
+          "Dw": 1024459499,
+          "I1mr": 19205330,
+          "D1mr": 1419341,
+          "D1mw": 277344,
+          "ILmr": 17367,
+          "DLmr": 8055,
+          "DLmw": 73583,
+          "Bc": 967173763,
+          "Bcm": 18182065,
+          "Bi": 103805064,
+          "Bim": 45822788
+        },
+        "candidate": {
+          "Ir": 7379226798,
+          "Dr": 1931260812,
+          "Dw": 1071121517,
+          "I1mr": 21028276,
+          "D1mr": 1415563,
+          "D1mw": 277969,
+          "ILmr": 17434,
+          "DLmr": 8155,
+          "DLmw": 73588,
+          "Bc": 935393852,
+          "Bcm": 25020673,
+          "Bi": 102432620,
+          "Bim": 45560931
+        },
+        "changes_percent": {
+          "Ir": -1.7718605968964463,
+          "Dr": 0.030170847053234695,
+          "Dw": 4.554793824992398,
+          "I1mr": 9.491875432497121,
+          "D1mr": -0.2661798679809868,
+          "D1mw": 0.22535190954193762,
+          "Bcm": 37.61183341936134,
+          "Bim": -0.5714558441969997
+        }
+      }
+    },
+    "refinement_vs_c3": {
+      "richards": {
+        "baseline": {
+          "Ir": 6049197286,
+          "Dr": 1781678140,
+          "Dw": 1087717065,
+          "I1mr": 46839142,
+          "D1mr": 17923294,
+          "D1mw": 1677504,
+          "ILmr": 16551,
+          "DLmr": 8110,
+          "DLmw": 31438,
+          "Bc": 709005534,
+          "Bcm": 38285665,
+          "Bi": 72803247,
+          "Bim": 27494833
+        },
+        "candidate": {
+          "Ir": 6022977101,
+          "Dr": 1774545945,
+          "Dw": 1078780426,
+          "I1mr": 28768686,
+          "D1mr": 18310565,
+          "D1mw": 2037686,
+          "ILmr": 16414,
+          "DLmr": 8063,
+          "DLmw": 31431,
+          "Bc": 709005588,
+          "Bcm": 35948160,
+          "Bi": 72803229,
+          "Bim": 26915536
+        },
+        "changes_percent": {
+          "Ir": -0.4334489976163147,
+          "Dr": -0.40030771214378813,
+          "Dw": -0.8215959175008392,
+          "I1mr": -38.579818562859245,
+          "D1mr": 2.160713315309115,
+          "D1mw": 21.47130498645606,
+          "Bcm": -6.105431367066494,
+          "Bim": -2.106930418526276
+        }
+      },
+      "deltablue": {
+        "baseline": {
+          "Ir": 6993571410,
+          "Dr": 2126218511,
+          "Dw": 1404874877,
+          "I1mr": 92369620,
+          "D1mr": 25766249,
+          "D1mw": 3731511,
+          "ILmr": 308478,
+          "DLmr": 362206,
+          "DLmw": 135215,
+          "Bc": 807820368,
+          "Bcm": 36888065,
+          "Bi": 66149437,
+          "Bim": 26229095
+        },
+        "candidate": {
+          "Ir": 6951176049,
+          "Dr": 2116243541,
+          "Dw": 1389577215,
+          "I1mr": 89102093,
+          "D1mr": 21189993,
+          "D1mw": 3321163,
+          "ILmr": 106304,
+          "DLmr": 160921,
+          "DLmw": 134587,
+          "Bc": 807828576,
+          "Bcm": 46576953,
+          "Bi": 66149431,
+          "Bim": 25542471
+        },
+        "changes_percent": {
+          "Ir": -0.6062047345277599,
+          "Dr": -0.4691413393493882,
+          "Dw": -1.08889853825751,
+          "I1mr": -3.537447701960883,
+          "D1mr": -17.760660467109513,
+          "D1mw": -10.99683211439012,
+          "Bcm": 26.265644457089298,
+          "Bim": -2.6177952384556114
+        }
+      },
+      "navier-stokes": {
+        "baseline": {
+          "Ir": 7379226798,
+          "Dr": 1931260812,
+          "Dw": 1071121517,
+          "I1mr": 21028276,
+          "D1mr": 1415563,
+          "D1mw": 277969,
+          "ILmr": 17434,
+          "DLmr": 8155,
+          "DLmw": 73588,
+          "Bc": 935393852,
+          "Bcm": 25020673,
+          "Bi": 102432620,
+          "Bim": 45560931
+        },
+        "candidate": {
+          "Ir": 7375387785,
+          "Dr": 1907838149,
+          "Dw": 1069480136,
+          "I1mr": 20678955,
+          "D1mr": 1414602,
+          "D1mw": 275982,
+          "ILmr": 17287,
+          "DLmr": 8099,
+          "DLmw": 73597,
+          "Bc": 933190745,
+          "Bcm": 19663455,
+          "Bi": 102432622,
+          "Bim": 45561211
+        },
+        "changes_percent": {
+          "Ir": -0.05202459695425876,
+          "Dr": -1.2128171842177848,
+          "Dw": -0.15323947600242027,
+          "I1mr": -1.6611965717018395,
+          "D1mr": -0.0678881830056266,
+          "D1mw": -0.7148279124650547,
+          "Bcm": -21.411166678050584,
+          "Bim": 0.000614561629563859
+        }
+      }
+    },
+    "final_vs_E2": {
+      "richards": {
+        "baseline": {
+          "Ir": 6346978094,
+          "Dr": 1870673982,
+          "Dw": 1057554585,
+          "I1mr": 40246748,
+          "D1mr": 17546567,
+          "D1mw": 1472955,
+          "ILmr": 16453,
+          "DLmr": 8095,
+          "DLmw": 31431,
+          "Bc": 765735366,
+          "Bcm": 33683949,
+          "Bi": 72103049,
+          "Bim": 26679169
+        },
+        "candidate": {
+          "Ir": 6022977101,
+          "Dr": 1774545945,
+          "Dw": 1078780426,
+          "I1mr": 28768686,
+          "D1mr": 18310565,
+          "D1mw": 2037686,
+          "ILmr": 16414,
+          "DLmr": 8063,
+          "DLmw": 31431,
+          "Bc": 709005588,
+          "Bcm": 35948160,
+          "Bi": 72803229,
+          "Bim": 26915536
+        },
+        "changes_percent": {
+          "Ir": -5.104807172822734,
+          "Dr": -5.138684662584891,
+          "Dw": 2.0070681268901103,
+          "I1mr": -28.519228435549625,
+          "D1mr": 4.354116677068509,
+          "D1mw": 38.34000359820904,
+          "Bcm": 6.721928595723736,
+          "Bim": 0.8859608783167161
+        }
+      },
+      "deltablue": {
+        "baseline": {
+          "Ir": 7020989940,
+          "Dr": 2133295465,
+          "Dw": 1336291536,
+          "I1mr": 91344225,
+          "D1mr": 21249591,
+          "D1mw": 3108081,
+          "ILmr": 120494,
+          "DLmr": 177661,
+          "DLmw": 135195,
+          "Bc": 825575568,
+          "Bcm": 38559039,
+          "Bi": 65696026,
+          "Bim": 25337663
+        },
+        "candidate": {
+          "Ir": 6951176049,
+          "Dr": 2116243541,
+          "Dw": 1389577215,
+          "I1mr": 89102093,
+          "D1mr": 21189993,
+          "D1mw": 3321163,
+          "ILmr": 106304,
+          "DLmr": 160921,
+          "DLmw": 134587,
+          "Bc": 807828576,
+          "Bcm": 46576953,
+          "Bi": 66149431,
+          "Bim": 25542471
+        },
+        "changes_percent": {
+          "Ir": -0.994359650086607,
+          "Dr": -0.7993231261099631,
+          "Dw": 3.9875788751534857,
+          "I1mr": -2.4545963360026346,
+          "D1mr": -0.2804665746272472,
+          "D1mw": 6.85574153311963,
+          "Bcm": 20.793863664496403,
+          "Bim": 0.8083144842521595
+        }
+      },
+      "navier-stokes": {
+        "baseline": {
+          "Ir": 8117732555,
+          "Dr": 2123598514,
+          "Dw": 1059007873,
+          "I1mr": 18936370,
+          "D1mr": 1415348,
+          "D1mw": 273222,
+          "ILmr": 17329,
+          "DLmr": 8107,
+          "DLmw": 73588,
+          "Bc": 1075786827,
+          "Bcm": 38495928,
+          "Bi": 103805049,
+          "Bim": 45639964
+        },
+        "candidate": {
+          "Ir": 7375387785,
+          "Dr": 1907838149,
+          "Dw": 1069480136,
+          "I1mr": 20678955,
+          "D1mr": 1414602,
+          "D1mw": 275982,
+          "ILmr": 17287,
+          "DLmr": 8099,
+          "DLmw": 73597,
+          "Bc": 933190745,
+          "Bcm": 19663455,
+          "Bi": 102432622,
+          "Bim": 45561211
+        },
+        "changes_percent": {
+          "Ir": -9.144730563250247,
+          "Dr": -10.160129778655513,
+          "Dw": 0.9888748957393334,
+          "I1mr": 9.202318078913763,
+          "D1mr": -0.052707885269209775,
+          "D1mw": 1.0101675560533208,
+          "Bcm": -48.920688442684124,
+          "Bim": -0.17255272155779489
+        }
+      }
+    },
+    "crypto_final_vs_E2": {
+      "crypto": {
+        "baseline": {
+          "Ir": 7640533566,
+          "Dr": 1965023312,
+          "Dw": 1136539082,
+          "I1mr": 116542444,
+          "D1mr": 1489288,
+          "D1mw": 328917,
+          "ILmr": 18730,
+          "DLmr": 9264,
+          "DLmw": 66687,
+          "Bc": 975921787,
+          "Bcm": 34831586,
+          "Bi": 97393240,
+          "Bim": 55374420
+        },
+        "candidate": {
+          "Ir": 6896175169,
+          "Dr": 1778331190,
+          "Dw": 1170699667,
+          "I1mr": 89021498,
+          "D1mr": 1695469,
+          "D1mw": 342943,
+          "ILmr": 18674,
+          "DLmr": 9210,
+          "DLmw": 66709,
+          "Bc": 811455633,
+          "Bcm": 30358642,
+          "Bi": 94047490,
+          "Bim": 55312860
+        },
+        "changes_percent": {
+          "Ir": -9.742230572906042,
+          "Dr": -9.500758635274654,
+          "Dw": 3.00566742851347,
+          "I1mr": -23.61452622359628,
+          "D1mr": 13.844266521989024,
+          "D1mw": 4.264297679961815,
+          "Bcm": -12.841631730464409,
+          "Bim": -0.11117046462969515
+        }
+      }
+    }
+  },
+  "native_feedback": {
+    "scope": "whole-process frozen work; not original adaptive Score; one ABBA block is feedback only",
+    "cases": {
+      "richards": {
+        "samples_ms": {
+          "base": [
+            482.771201,
+            490.736761
+          ],
+          "candidate": [
+            495.278897,
+            504.59075
+          ]
+        },
+        "base_median_ms": 486.753981,
+        "candidate_median_ms": 499.9348235,
+        "change_percent": 2.7079064608615866
+      },
+      "deltablue": {
+        "samples_ms": {
+          "base": [
+            562.537662,
+            561.783566
+          ],
+          "candidate": [
+            598.467696,
+            600.332736
+          ]
+        },
+        "base_median_ms": 562.1606139999999,
+        "candidate_median_ms": 599.400216,
+        "change_percent": 6.624370521980416
+      },
+      "crypto": {
+        "samples_ms": {
+          "base": [
+            526.928268,
+            515.366363
+          ],
+          "candidate": [
+            570.789045,
+            568.70509
+          ]
+        },
+        "base_median_ms": 521.1473155,
+        "candidate_median_ms": 569.7470675,
+        "change_percent": 9.325530527461767
+      },
+      "raytrace": {
+        "samples_ms": {
+          "base": [
+            807.782677,
+            799.346126
+          ],
+          "candidate": [
+            798.195131,
+            789.36785
+          ]
+        },
+        "base_median_ms": 803.5644015,
+        "candidate_median_ms": 793.7814905,
+        "change_percent": -1.2174395707099994
+      },
+      "earley-boyer": {
+        "samples_ms": {
+          "base": [
+            1050.985977,
+            1036.146451
+          ],
+          "candidate": [
+            997.415569,
+            998.230744
+          ]
+        },
+        "base_median_ms": 1043.566214,
+        "candidate_median_ms": 997.8231565,
+        "change_percent": -4.383340212277131
+      },
+      "regexp": {
+        "samples_ms": {
+          "base": [
+            2216.565221,
+            2208.277579
+          ],
+          "candidate": [
+            2212.813663,
+            2233.777304
+          ]
+        },
+        "base_median_ms": 2212.4214,
+        "candidate_median_ms": 2223.2954835,
+        "change_percent": 0.4915014607976609
+      },
+      "splay": {
+        "samples_ms": {
+          "base": [
+            1503.126938,
+            1477.887575
+          ],
+          "candidate": [
+            1484.939826,
+            1476.294844
+          ]
+        },
+        "base_median_ms": 1490.5072565,
+        "candidate_median_ms": 1480.617335,
+        "change_percent": -0.6635272291946825
+      },
+      "navier-stokes": {
+        "samples_ms": {
+          "base": [
+            529.890388,
+            505.159891
+          ],
+          "candidate": [
+            523.455998,
+            523.715292
+          ]
+        },
+        "base_median_ms": 517.5251395,
+        "candidate_median_ms": 523.585645,
+        "change_percent": 1.1710552855181522
+      },
+      "combined": {
+        "samples_ms": {
+          "base": [
+            7635.206373,
+            7516.776903
+          ],
+          "candidate": [
+            7732.282198,
+            7757.549953
+          ]
+        },
+        "base_median_ms": 7575.9916379999995,
+        "candidate_median_ms": 7744.916075499999,
+        "change_percent": 2.2297336846664573
+      }
+    }
+  },
+  "address_attribution": {
+    "evidence": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-final-address-ledger.json",
+      "sha256": "84dc1ddcbe722e7441daad1fb9167e222fd150d48ab12e6624cf06fb87f9d945"
+    },
+    "analysis_script": {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-address-analysis.py",
+      "sha256": "762eda43e3f144c12f8a8ed1a10029682598e83705e884fc047f932950963528"
+    },
+    "sum_Ir_per_iteration": 873.99986,
+    "categories": {
+      "other memory/address instruction": 166.00011000000003,
+      "register/immediate instruction": 338.9997900000005,
+      "control transfer": 155.99993999999998,
+      "instruction using stack memory": 213.0005000000001,
+      "other images / unattributed": -0.0004800000000000006
+    },
+    "functions": [
+      [
+        "quickjs_oxide::engine::vm::execute::execute_frame_in_state",
+        847.0
+      ],
+      [
+        "quickjs_oxide::engine::vm::execute::binary_number_result",
+        27.0
+      ],
+      [
+        "hashbrown::map::HashMap<K,V,S,A>::get_inner",
+        0.0006800000000000005
+      ],
+      [
+        "quickjs_oxide::engine::compiler::names::NameTable::intern",
+        0.0005400000000000001
+      ],
+      [
+        "hashbrown::rustc_entry::<impl hashbrown::map::HashMap<K,V,S,A>>::rustc_entry",
+        0.00013000000000000002
+      ],
+      [
+        "qjs::profiling::Session::runtime",
+        6e-05
+      ],
+      [
+        "0x00000000000a4fa0",
+        -8e-05
+      ],
+      [
+        "std::collections::hash::map::Entry<K,V>::or_default",
+        -8e-05
+      ],
+      [
+        "0x00000000000a6de0",
+        -0.00011
+      ],
+      [
+        "free",
+        -0.00013000000000000002
+      ],
+      [
+        "0x00000000000a4ed0",
+        -0.00016
+      ],
+      [
+        "quickjs_oxide::engine::atom::AtomTable::intern_js_string",
+        -0.00030000000000000003
+      ],
+      [
+        "hashbrown::map::HashMap<K,V,S,A>::remove",
+        -0.00033000000000000005
+      ],
+      [
+        "hashbrown::map::HashMap<K,V,S,A>::insert",
+        -0.0003600000000000003
+      ]
+    ],
+    "code_word_cursor_dispatch_block": {
+      "start": "0x5da2bb",
+      "end_exclusive": "0x5da35e",
+      "Ir_per_iteration": 340.0
+    },
+    "limits": "exclusive object/instruction addresses, self costs only; categories describe assembly forms, not source responsibility; control block is a second view and must not be added to categories"
+  },
+  "resources": {
+    "code_size": {
+      "afadba63": {
+        "file_bytes": 10011384,
+        "text_bytes": 6776841,
+        "rodata_bytes": 714592,
+        "text_plus_rodata": 7491433,
+        "execute_symbols": [
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state",
+            "bytes": 63888
+          },
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state::{{closure}}",
+            "bytes": 140
+          }
+        ],
+        "execute_symbols_total": 64028
+      },
+      "869e3379": {
+        "file_bytes": 10002416,
+        "text_bytes": 6771433,
+        "rodata_bytes": 714032,
+        "text_plus_rodata": 7485465,
+        "execute_symbols": [
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state",
+            "bytes": 62393
+          },
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state::{{closure}}",
+            "bytes": 110
+          }
+        ],
+        "execute_symbols_total": 62503
+      },
+      "455d6b30": {
+        "file_bytes": 10002528,
+        "text_bytes": 6770841,
+        "rodata_bytes": 714000,
+        "text_plus_rodata": 7484841,
+        "execute_symbols": [
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state",
+            "bytes": 61739
+          },
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state::{{closure}}",
+            "bytes": 105
+          }
+        ],
+        "execute_symbols_total": 61844
+      },
+      "0be51bfe": {
+        "file_bytes": 10002184,
+        "text_bytes": 6772697,
+        "rodata_bytes": 715752,
+        "text_plus_rodata": 7488449,
+        "execute_symbols": [
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state",
+            "bytes": 65362
+          },
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state::{{closure}}",
+            "bytes": 110
+          }
+        ],
+        "execute_symbols_total": 65472
+      },
+      "f0e98a3b": {
+        "file_bytes": 10002184,
+        "text_bytes": 6772025,
+        "rodata_bytes": 715752,
+        "text_plus_rodata": 7487777,
+        "execute_symbols": [
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state",
+            "bytes": 64924
+          },
+          {
+            "name": "quickjs_oxide::engine::vm::execute::execute_frame_in_state::{{closure}}",
+            "bytes": 110
+          }
+        ],
+        "execute_symbols_total": 65034
+      }
+    },
+    "rss_samples": [
+      {
+        "case": "splay",
+        "engine": "base",
+        "max_rss_kib": 338392,
+        "binary_sha256": "a32658f149ad1e1975f70408ac16ae4f91e6761a2aa10b4224b5838b54a17fd5",
+        "workload_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+        "status": "ok",
+        "command": [
+          "taskset",
+          "-c",
+          "5",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/afadba63/qjs",
+          "/home/eric/.cache/oxide-v8v7-boa-campaign/structural-simplification-20261002/split/fixed-authenticated/generated/final/splay.js"
+        ],
+        "measurement": "Linux wait4 child ru_maxrss; single sample; time not used"
+      },
+      {
+        "case": "splay",
+        "engine": "candidate",
+        "max_rss_kib": 338624,
+        "binary_sha256": "f0837decdcb3410faa9666652e36bd0203d80f62f33d6f0ccbecdba46ad3d60c",
+        "workload_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+        "status": "ok",
+        "command": [
+          "taskset",
+          "-c",
+          "5",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/f0e98a3b/qjs",
+          "/home/eric/.cache/oxide-v8v7-boa-campaign/structural-simplification-20261002/split/fixed-authenticated/generated/final/splay.js"
+        ],
+        "measurement": "Linux wait4 child ru_maxrss; single sample; time not used"
+      },
+      {
+        "case": "earley-boyer",
+        "engine": "base",
+        "max_rss_kib": 41632,
+        "binary_sha256": "a32658f149ad1e1975f70408ac16ae4f91e6761a2aa10b4224b5838b54a17fd5",
+        "workload_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+        "status": "ok",
+        "command": [
+          "taskset",
+          "-c",
+          "5",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/afadba63/qjs",
+          "/home/eric/.cache/oxide-v8v7-boa-campaign/structural-simplification-20261002/split/fixed-authenticated/generated/final/earley-boyer.js"
+        ],
+        "measurement": "Linux wait4 child ru_maxrss; single sample; time not used"
+      },
+      {
+        "case": "earley-boyer",
+        "engine": "candidate",
+        "max_rss_kib": 41372,
+        "binary_sha256": "f0837decdcb3410faa9666652e36bd0203d80f62f33d6f0ccbecdba46ad3d60c",
+        "workload_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+        "status": "ok",
+        "command": [
+          "taskset",
+          "-c",
+          "5",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/f0e98a3b/qjs",
+          "/home/eric/.cache/oxide-v8v7-boa-campaign/structural-simplification-20261002/split/fixed-authenticated/generated/final/earley-boyer.js"
+        ],
+        "measurement": "Linux wait4 child ru_maxrss; single sample; time not used"
+      }
+    ],
+    "rss_limits": "one sample each for Splay/EarleyBoyer; Linux wait4 peak RSS; not a resource stage acceptance",
+    "plain_64_bit_FrameSlots_bytes": 56,
+    "plain_64_bit_FrameWindow_bytes": 80,
+    "FrameSlots_before_metadata_refinement_bytes": 80
+  },
+  "correctness": {
+    "lib_tests_passed": 2334,
+    "profiling_stack_tests_passed": 68,
+    "profiling_clippy_warnings_denied": "pass",
+    "focused_test262_variants": 6844,
+    "focused_test262_vector": "matches frozen complete focused body",
+    "full_test262": "not run in this experiment",
+    "logs": [
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-correctness/lib-tests.log",
+        "sha256": "25bb4fd8e112815370741b7403af5db57011d6d1bf9589ea3a300ab10ccc6c1e"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-correctness/profiling-clippy.log",
+        "sha256": "601e2e552df1cb00e34f5f8a70ec7669ffa78735ed40fd3d254c6fc9c95182df"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-correctness/profiling-stack-tests.log",
+        "sha256": "a7fb6c1b8d16a7e31a2511de12539e99ea81a3099b77f7e000058d20e5988716"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-correctness/test262-focused.log",
+        "sha256": "6efbd6f49096088aed9b569823864b5bcad7bf416008976e106246ec967bf94c"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-correctness/focused.tsv",
+        "sha256": "f9bc9a17e250378a0e89decd64cce12443224b15d1359f64e92c69424ecd7e67"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-correctness/focused.jsonl",
+        "sha256": "cdbd86798f3576aad3cec15ac1e1ab001a78e37727b1879fbc02b40db14144a6"
+      },
+      {
+        "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-correctness/focused-exit.json",
+        "sha256": "02b556b26342b412359eae4c37de534fb1761bac7bc98a0dc8b7a9f122b7c3f5"
+      }
+    ],
+    "root_contract": "trial deletion discovers external owners from strong counts minus internal edges; no SlotStore scanner introduced",
+    "specific_tests": [
+      "operand_cycle_is_an_external_root_until_its_active_owner_is_retired",
+      "automatic_cycle_gc_keeps_caller_operand_through_allocating_callback",
+      "execution_slice_publishes_depth_on_error_and_roots_its_active_prefix",
+      "numeric_reduction_may_leave_inactive_immediates_and_reuse_them"
+    ],
+    "setup_failures": "initial focused attempts stopped on inherited Git environment or disk capacity; final authenticated run reused cached inputs in tmpfs with system Git/Node; no runtime workaround"
+  },
+  "evidence": [
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-c1-rdns-cost/results.json",
+      "sha256": "2bf6832d2be4e3044575d11a5b31d5be0e36280a78d24245300a57e37d00b665"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-c2-rdns-cost/results.json",
+      "sha256": "c1d4f9edd37eb20330febd72dd403f30d87f94a31509945dfaf36feacb9f74fa"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-c3-rdns-cost/results.json",
+      "sha256": "1b91e29234972f55b1d0a16104aa0e44ddaa8f6171034cd8b2e01f8950c1aee6"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-final-rdns-cost/results.json",
+      "sha256": "556fd817cf49163572e4acb90c5ec702899e4623a232fc0fe0d083c134a7035e"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-crypto-cost/results.json",
+      "sha256": "feb411eade99768662f19d3229c6b3cfb29da46ba352eb2ba35d061065f7302c"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-final-native/results.json",
+      "sha256": "2f0042e2d74bfa89c2e0c1483b3e1b596c25682b794412755ad38a2683069410"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-final-cost/results.json",
+      "sha256": "f2104e71b98746c42a90edf0d61c89185fc11c74a04c8385ab0193f3f467ffb3"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-final-iteration-costs.json",
+      "sha256": "d0c28963f3148252bc88fefc2814e34b4d2462fa284ec92d85c28d149c4cd18b"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-rss.json",
+      "sha256": "36d1b248d65b82f09e99d3161fc3a53142bd68cd53a7d5f606ceb02713cf295b"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e3-code-size.json",
+      "sha256": "041723200698a8bb935300b1278bbe648ba4dfbe5159fd779ac31e7d2aa7bf42"
+    }
+  ],
+  "decision": "keep on experiment branch; E3 mechanism/correctness implemented but gain gate not met; do not adopt in production or resume broad B/C migration on this evidence",
+  "remaining_costs": [
+    "numeric loop 874 Ir/iteration and 72.83 Ir/dispatch still exceed targets",
+    "numeric probe Dw rises 133 to 136; R/D/NS/Crypto Dw also grows",
+    "hot execute symbol grows 1.62 percent versus E2 despite smaller full image",
+    "native DeltaBlue/Crypto slow in this short block; causal attribution unresolved; Crypto also has more simulated L1 data read misses"
+  ],
+  "preserved_references": {
+    "B2b_draft_PR": "https://github.com/pocket-nexus/quickjs-oxide/pull/94",
+    "B2b_head_unchanged": "b0db0a50ee4003c5a74e5dbbb4543dc0e8393c57",
+    "Boa": "historical reference unchanged; not rerun; no scores inferred from fixed-work times"
+  }
+}

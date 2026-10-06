@@ -29,7 +29,7 @@ are outside this experiment.
 - Debug checks at frame retirement and tests reject reference-bearing inactive
   slots. Cleanup releases only the active operand prefix, plus binding owners.
 
-## Three commits and gates
+## Three steps and gates
 
 1. **Canonical storage:** move existing producers, consumers, ordinary and
    constructor calls, native argv, frame handoff and retirement to the operand
@@ -57,3 +57,11 @@ diagnostic, not a zero-growth gate. No host frequency changes or layout tuning.
 
 Results and any unmet targets belong in the experiment report; infrastructure
 commits alone do not establish a performance gain.
+
+## Checkpoint
+
+The three steps and a measured metadata refinement are implemented. Steps 1/2
+pass their correctness and Ir gates. Step 3 does not meet the 400–500 Ir/iteration
+or 40 Ir/dispatch targets; the native short block does not establish a speedup.
+The implementation remains on the experiment branch. See
+[the E3 report](verified-loop-e3.md) for all measurements and remaining costs.

@@ -72,9 +72,9 @@ pub(crate) fn test_numeric_region_hits<T>(run: impl FnOnce() -> T) -> (T, usize)
     (result, hits)
 }
 
-/// Short-lived access to one frame's slots and execution word cursor. The
-/// transaction owns the frame window; `with_slots` ends its borrow before a
-/// caller can publish a PC, invoke JavaScript, or perform observable cleanup.
+/// One execution segment borrows a frame's canonical binding and operand
+/// slices across instructions. Scope exit publishes its cursor and local depth
+/// before the driver can switch frames, invoke JavaScript, or suspend.
 struct FrameCursor<'a> {
     slots: FrameSlots<'a>,
     published_fault: &'a mut usize,
