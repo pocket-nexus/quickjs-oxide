@@ -132,13 +132,13 @@ impl FrameSlots<'_> {
         destination: u16,
     ) -> Result<super::StoreProgress, Error> {
         let index = self.destination_index(super::DirectSlot::Local(destination))?;
-        match self.store.slots[index].as_ref() {
+        match self.bindings[index].as_ref() {
             Some(FrameBinding::Uninitialized) => return Ok(super::StoreProgress::Committed),
             Some(FrameBinding::Direct(_)) => {}
             Some(_) => return Ok(super::StoreProgress::NeedsObservation),
             None => return Err(Error::internal("owned local is vacant")),
         }
-        let FrameBinding::Direct(old) = self.store.slots[index]
+        let FrameBinding::Direct(old) = self.bindings[index]
             .replace(FrameBinding::Uninitialized)
             .expect("admitted direct local")
         else {
@@ -158,7 +158,7 @@ impl FrameSlots<'_> {
         keep: bool,
     ) -> Result<super::StoreProgress, Error> {
         let index = self.destination_index(destination)?;
-        let old = self.store.slots[index]
+        let old = self.bindings[index]
             .as_ref()
             .ok_or_else(|| Error::internal("owned destination is vacant"))?;
         self.peek(0)?;
@@ -173,7 +173,7 @@ impl FrameSlots<'_> {
         } else {
             self.pop()?
         };
-        let old = self.store.slots[index]
+        let old = self.bindings[index]
             .replace(FrameBinding::Direct(value))
             .expect("admitted direct destination");
         match old {
@@ -198,7 +198,7 @@ impl FrameSlots<'_> {
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
     ) -> Result<PropertyReadProgress, Error> {
         let output_index = if operation.keep_receiver {
-            let Ok(index) = self.store.operand_push_index(self.window) else {
+            let Ok(index) = self.operand_push_index() else {
                 return Ok(PropertyReadProgress::Driver);
             };
             Some(index)
@@ -228,10 +228,10 @@ impl FrameSlots<'_> {
             },
         };
         if let Some(index) = output_index {
-            self.store.install_operand(self.window, index, value);
+            self.install_operand(index, value);
         } else {
-            let index = self.window.operands().start + self.window.depth - 1;
-            let base = std::mem::replace(&mut self.store.operands[index], value);
+            let index = self.depth - 1;
+            let base = std::mem::replace(&mut self.operands[index], value);
             state
                 .release_owned_jsvalue(poisoned, base)
                 .map_err(runtime_error_to_vm_error)?;
@@ -246,12 +246,12 @@ impl FrameSlots<'_> {
         destination: usize,
     ) -> Result<(), Error> {
         self.peek(source)?;
-        if destination > self.window.depth {
+        if destination > self.depth {
             return Err(Error::internal("owned insertion exceeds verified capacity"));
         }
-        let index = self.store.operand_push_index(self.window)?;
+        let index = self.operand_push_index()?;
         let copied = copy_value_in_state(state, self.peek(source)?)?;
-        self.store.install_operand(self.window, index, copied);
+        self.install_operand(index, copied);
         self.rotate_operands(0, destination + 1, false)
     }
 
@@ -271,9 +271,9 @@ impl FrameSlots<'_> {
         }
         for _ in 0..count {
             // A failed retain leaves each completed copy in execution storage.
-            let index = self.store.operand_push_index(self.window)?;
+            let index = self.operand_push_index()?;
             let copied = copy_value_in_state(state, self.peek(source)?)?;
-            self.store.install_operand(self.window, index, copied);
+            self.install_operand(index, copied);
         }
         Ok(())
     }
@@ -301,7 +301,7 @@ impl FrameSlots<'_> {
         };
         // Capacity is checked before any owner moves out of its slot.
         if keep_key {
-            self.store.operand_push_index(self.window)?;
+            self.operand_push_index()?;
         } else {
             self.top_direct_mut()?;
         }
@@ -396,6 +396,7 @@ impl FrameSlots<'_> {
         pressure: &crate::engine::heap::gc_pressure::GcPressure,
     ) -> Result<(), Error> {
         self.retire_field_write(state, poisoned)?;
+        self.publish_depth();
         state
             .collect_if_requested(pressure, poisoned)
             .map_err(runtime_error_to_vm_error)
@@ -426,8 +427,8 @@ impl FrameSlots<'_> {
     /// declined operation leaves the exact value and stack depth unchanged.
     fn top_direct_mut(&mut self) -> Result<&mut JsValue, Error> {
         self.peek(0)?;
-        let top = self.window.operands().start + self.window.depth - 1;
-        Ok(&mut self.store.operands[top])
+        let top = self.depth - 1;
+        Ok(&mut self.operands[top])
     }
 
     pub(in crate::engine::vm) fn try_owned_element_write_in_state(
@@ -557,13 +558,10 @@ mod tests {
                         &JsValue::from_raw(raw.clone()).unwrap()
                     );
                     assert_eq!(
-                        slots.window.depth,
+                        slots.depth,
                         2 + usize::from(keep_receiver) + usize::from(keep_key)
                     );
-                    assert_eq!(
-                        slots.peek(slots.window.depth - 1).unwrap(),
-                        &JsValue::Int(99)
-                    );
+                    assert_eq!(slots.peek(slots.depth - 1).unwrap(), &JsValue::Int(99));
                     if keep_receiver {
                         assert_eq!(
                             slots.peek(1 + usize::from(keep_key)).unwrap(),
@@ -671,7 +669,7 @@ mod tests {
                     slots.array_read_in_state(&mut state, &runtime.0.poisoned)
                 };
                 assert!(result.is_err());
-                assert_eq!(slots.window.depth, 2);
+                assert_eq!(slots.depth, 2);
                 assert_eq!(slots.peek(0).unwrap(), &JsValue::Int(0));
                 assert_eq!(slots.peek(1).unwrap(), &JsValue::Object(array));
                 assert_eq!(
@@ -784,7 +782,7 @@ mod tests {
             );
             let mut slots = store.borrow_frame_slots(&mut window).unwrap();
             assert!(slots.duplicate_operands_in_state(&mut state, 2).is_err());
-            assert_eq!(slots.window.depth, 3);
+            assert_eq!(slots.depth, 3);
             assert_eq!(state.heap.object_strong_count(first_id).unwrap(), 2);
             // Restore the injected count so the ordinary teardown checks all edges.
             state

@@ -1,67 +1,6 @@
-//! Direct Number writes within an authenticated frame window.
-use super::window::DirectSlot;
-#[cfg(feature = "profiling")]
-use super::{Cost, record_owned_storage};
-use super::{FrameBinding, FrameWindow, SlotStore};
-
-impl SlotStore {
-    /// Commit an ordinary Put/Set from a Number operand into a direct Number
-    /// binding. The caller has just authenticated the destination in this
-    /// execution borrow. A non-Number or missing operand declines without
-    /// changing either slot, so the canonical instruction handles its error
-    /// and ownership rules.
-    #[inline]
-    pub(super) fn store_proven_number_operand_current(
-        &mut self,
-        window: &mut FrameWindow,
-        destination: DirectSlot,
-        keep: bool,
-    ) -> bool {
-        let destination_index = match destination {
-            DirectSlot::Local(index) => window.locals().start + usize::from(index),
-            DirectSlot::Argument(index) => window.parameters().start + usize::from(index),
-        };
-        debug_assert!(matches!(
-            self.slots.get(destination_index),
-            Some(Some(FrameBinding::Direct(value))) if value.as_number_repr().is_some()
-        ));
-        let Some(top) = window.depth.checked_sub(1) else {
-            return false;
-        };
-        let operand_index = window.operands().start + top;
-        let Some(value) = self.operands.get(operand_index) else {
-            return false;
-        };
-        let Some(value) = value.as_number_repr() else {
-            return false;
-        };
-
-        // Both overwritten values are inline scalars. This cannot retain,
-        // release, allocate, or call back into JavaScript.
-        self.slots[destination_index] = Some(FrameBinding::Direct(value.into()));
-        if !keep {
-            // The inactive Number owns no reference.
-            window.depth -= 1;
-        }
-        #[cfg(feature = "profiling")]
-        {
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_store.complete_scalar",
-            );
-            crate::engine::api::profiling::record_owned_execution_event("local_completion.store");
-            record_owned_storage(Cost::Move(1));
-            if !keep {
-                self.live_slots -= 1;
-                record_owned_storage(Cost::Clear(1));
-            }
-        }
-        true
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::{DirectSlot, FrameBinding, FrameWindow, SlotStore};
     use crate::engine::api::Runtime;
     use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
     use crate::engine::code::runtime::PublishedFunctionSnapshot;

@@ -304,6 +304,7 @@ impl Drop for StateFrameStorageGuard<'_> {
 
 #[cfg(test)]
 mod nullish;
+#[cfg(test)]
 mod number;
 mod state;
 mod transfer;
@@ -497,10 +498,7 @@ impl SlotStore {
         window: &'a mut FrameWindow,
     ) -> Result<FrameSlots<'a>, Error> {
         self.check_current(window)?;
-        Ok(FrameSlots {
-            store: self,
-            window,
-        })
+        Ok(FrameSlots::new(self, window))
     }
 
     /// All capacity checks precede ownership installation. Arguments already
@@ -954,6 +952,7 @@ impl SlotStore {
     }
 
     #[inline]
+    #[cfg(test)]
     fn binary_number_current(
         &mut self,
         window: &mut FrameWindow,
@@ -985,70 +984,6 @@ impl SlotStore {
         Ok(true)
     }
 
-    /// A published comparison/branch consumes two immediate numbers without
-    /// materializing the intermediate Boolean. A guard miss leaves both owners
-    /// and the operand depth intact for the generic comparison.
-    #[inline]
-    fn number_pair_branch_current(
-        &mut self,
-        window: &mut FrameWindow,
-        compare: impl FnOnce(
-            crate::engine::value::number::operations::Number,
-            crate::engine::value::number::operations::Number,
-        ) -> bool,
-    ) -> Result<Option<bool>, Error> {
-        let offset = window
-            .depth
-            .checked_sub(2)
-            .ok_or_else(Self::operand_stack_underflow)?;
-        let index = window.operands().start + offset;
-        let left = &self.operands[index];
-        let right = &self.operands[index + 1];
-        let (Some(left), Some(right)) = (left.as_number_repr(), right.as_number_repr()) else {
-            return Ok(None);
-        };
-        let decision = compare(left, right);
-        // Both inactive values are numbers and own no references.
-        window.depth -= 2;
-        #[cfg(feature = "profiling")]
-        {
-            self.live_slots -= 2;
-            record_owned_storage(Cost::Move(2));
-            crate::engine::api::profiling::record_owned_execution_event("number_pair_branch");
-        }
-        Ok(Some(decision))
-    }
-
-    #[cfg(test)]
-    fn ordinary_field_immediate_read_current(
-        &mut self,
-        window: &mut FrameWindow,
-        runtime: &Runtime,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        key_index: u32,
-    ) -> Result<bool, Error> {
-        let base = self.peek_current(window, 0)?;
-        let Some(value) = runtime.try_ordinary_field_immediate_read(base, executable, key_index)
-        else {
-            return Ok(false);
-        };
-        // No owner or runtime state can change between the leaf's no-drain
-        // proof and replacing this already-validated top operand.
-        let index = window.operands().start + window.depth - 1;
-        let base = std::mem::replace(&mut self.operands[index], value);
-        runtime
-            .release_jsvalue(base)
-            .map_err(runtime_error_to_vm_error)?;
-        #[cfg(feature = "profiling")]
-        {
-            record_owned_storage(Cost::Move(2));
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_field_immediate_read_in_run",
-            );
-        }
-        Ok(true)
-    }
-
     /// Move an owned value into an already reserved, empty operand slot.
     pub(in crate::engine::vm) fn push(
         &mut self,
@@ -1075,17 +1010,6 @@ impl SlotStore {
     fn push_current(&mut self, window: &mut FrameWindow, value: JsValue) -> Result<(), Error> {
         let index = self.operand_push_index(window)?;
         self.install_operand(window, index, value);
-        Ok(())
-    }
-
-    #[inline]
-    fn push_pending_current(
-        &mut self,
-        window: &mut FrameWindow,
-        value: &mut Option<JsValue>,
-    ) -> Result<(), Error> {
-        let index = self.operand_push_index(window)?;
-        self.install_operand(window, index, value.take().expect("pending operand owner"));
         Ok(())
     }
 
@@ -1135,6 +1059,7 @@ impl SlotStore {
         self.rotate_operands_current(window, skip_top, count, left)
     }
 
+    #[cfg(test)]
     fn rotate_operands_current(
         &mut self,
         window: &FrameWindow,
@@ -1417,6 +1342,7 @@ impl SlotStore {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     fn replace_parameter_current(
         &mut self,
         window: &FrameWindow,

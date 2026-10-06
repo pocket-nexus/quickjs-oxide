@@ -76,7 +76,7 @@ pub(crate) fn test_numeric_region_hits<T>(run: impl FnOnce() -> T) -> (T, usize)
 /// transaction owns the frame window; `with_slots` ends its borrow before a
 /// caller can publish a PC, invoke JavaScript, or perform observable cleanup.
 struct FrameCursor<'a> {
-    transaction: FrameTransaction<'a>,
+    slots: FrameSlots<'a>,
     published_fault: &'a mut usize,
     published_resume: &'a mut usize,
     poisoned: &'a std::cell::Cell<bool>,
@@ -92,7 +92,7 @@ impl<'a> FrameCursor<'a> {
         poisoned: &'a std::cell::Cell<bool>,
     ) -> Self {
         Self {
-            transaction,
+            slots: transaction.into_slots(),
             fault: *fault,
             resume: *resume,
             published_fault: fault,
@@ -114,8 +114,7 @@ impl<'a> FrameCursor<'a> {
         &mut self,
         operation: impl FnOnce(&mut FrameSlots<'_>) -> Result<T, Error>,
     ) -> Result<T, Error> {
-        let mut slots = self.transaction.slots();
-        operation(&mut slots)
+        operation(&mut self.slots)
     }
 
     fn move_owned(&mut self) -> Result<JsValue, Error> {
@@ -173,6 +172,7 @@ impl<'a> FrameCursor<'a> {
         state: &mut RuntimeState,
         token: ActiveFrameToken,
     ) -> Result<(), Error> {
+        self.slots.publish_depth();
         *self.published_fault = self.fault;
         if token.is_materialized() {
             state
@@ -1061,7 +1061,7 @@ pub(super) fn execute_frame_in_state(
                             runtime, executable, pc, true,
                         );
                         let hit = {
-                            let mut slots = cursor.transaction.slots();
+                            let slots = &mut cursor.slots;
                             if let Some((destination, old)) = slots.admit_numeric_local(index) {
                                 destination.commit(old.update(descriptor & 1 != 0));
                                 true
