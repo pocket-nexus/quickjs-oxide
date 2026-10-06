@@ -1329,6 +1329,7 @@ impl Heap {
 
     /// The enclosing state transaction transfers an existing value owner only
     /// when this result reports publication. Shape ownership remains retained.
+    #[cfg(test)]
     pub(crate) fn append_object_slot_with_shape_input(
         &mut self,
         id: ObjectId,
@@ -1336,18 +1337,62 @@ impl Heap {
         replacement: PropertySlot,
         retain_value: bool,
     ) -> Result<HeapCleanup, SlotReplacementError> {
-        let prepare = (|| {
+        let extends = (|| {
             let object = self.object(id)?;
             let previous = self.shape(object.shape)?;
             let successor = self.shape(shape)?;
             let count = object.slots.len();
-            if previous.is_dictionary()
-                || successor.is_dictionary()
-                || previous.entries().len() != count
-                || successor.entries().len() != count.saturating_add(1)
-                || successor.prototype() != previous.prototype()
-                || successor.entries().get(..count) != Some(previous.entries())
-            {
+            Ok::<_, HeapError>(
+                !previous.is_dictionary()
+                    && previous.entries().len() == count
+                    && successor.prototype() == previous.prototype()
+                    && successor.entries().get(..count) == Some(previous.entries()),
+            )
+        })()
+        .map_err(|error| SlotReplacementError {
+            error,
+            published: false,
+        })?;
+        if !extends {
+            return Err(SlotReplacementError {
+                error: HeapError::Invariant(
+                    "property append shape does not extend the existing layout",
+                ),
+                published: false,
+            });
+        }
+        self.append_successor_slot(id, shape, replacement, retain_value, false)
+            .map(Option::unwrap_or_default)
+    }
+
+    /// Publish one slot under a successor already selected for the object's
+    /// current shared layout: a live transition edge, a verified canonical
+    /// successor, or a site fact guarded by both shape revisions. Selection
+    /// established the prefix and prototype; only O(1) facts are checked here.
+    ///
+    /// With `owned_shape` the caller's successor reference moves into the
+    /// object on publication; otherwise the object acquires its own. The old
+    /// shape reference is released, and cleanup is returned only when that
+    /// release drained nodes.
+    pub(crate) fn append_successor_slot(
+        &mut self,
+        id: ObjectId,
+        shape: ShapeId,
+        replacement: PropertySlot,
+        retain_value: bool,
+        owned_shape: bool,
+    ) -> Result<Option<HeapCleanup>, SlotReplacementError> {
+        let prepare = (|| {
+            let object = self.object(id)?;
+            let count = object.slots.len();
+            let successor = self.shape(shape)?;
+            debug_assert!(self.shape(object.shape).is_ok_and(|previous| {
+                !previous.is_dictionary()
+                    && previous.entries().len() == count
+                    && successor.prototype() == previous.prototype()
+                    && successor.entries().get(..count) == Some(previous.entries())
+            }));
+            if successor.is_dictionary() || successor.entries().len() != count.saturating_add(1) {
                 return Err(HeapError::Invariant(
                     "property append shape does not extend the existing layout",
                 ));
@@ -1368,7 +1413,9 @@ impl Heap {
             } else {
                 super::edges::Edges::new()
             };
-            edges.push(RawId::Shape(shape));
+            if !owned_shape {
+                edges.push(RawId::Shape(shape));
+            }
             self.retain_edges_transactionally(&edges)
         })();
         prepare.map_err(|error| SlotReplacementError {
@@ -1388,7 +1435,7 @@ impl Heap {
         crate::engine::api::profiling::record_owned_execution_event(
             "shape_append_existing_owners_preserved",
         );
-        self.release_and_drain(RawId::Shape(previous_shape))
+        self.release_reference(RawId::Shape(previous_shape))
             .map_err(|error| SlotReplacementError {
                 error,
                 published: true,

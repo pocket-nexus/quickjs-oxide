@@ -795,21 +795,21 @@ impl RuntimeState {
         if !dictionary {
             state.retain_construction_shape(shape_id)?;
         }
+        let entry = ShapeEntry {
+            atom: AtomIdx::from_raw(atom.raw()),
+            flags,
+        };
+        let successor = if dictionary {
+            None
+        } else {
+            state.select_successor(shape_id, entry)
+        };
         // An exclusively owned layout may append in place only when no
         // canonical successor already exists; otherwise the successor (and the
         // sharing it enables) would be stranded by an equivalent duplicate.
         if (dictionary || shape_len >= properties::MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
+            && successor.is_none()
             && state.heap.shape_strong_count(shape_id)? == 1
-            && (dictionary
-                || state
-                    .canonical_successor(
-                        shape_id,
-                        ShapeEntry {
-                            atom: AtomIdx::from_raw(atom.raw()),
-                            flags,
-                        },
-                    )
-                    .is_none())
         {
             return state
                 .append_selected_unique_layout_input(
@@ -825,14 +825,13 @@ impl RuntimeState {
                 )
                 .map(|()| true);
         }
+        if let Some(successor) = successor {
+            return state
+                .append_successor_slot_input(poisoned, object_id, successor, input)
+                .map(|()| true);
+        }
         if !dictionary {
-            let target = state.append_transition(
-                shape_id,
-                ShapeEntry {
-                    atom: AtomIdx::from_raw(atom.raw()),
-                    flags,
-                },
-            )?;
+            let target = state.create_successor(shape_id, entry)?;
             return state
                 .append_slot_with_owned_shape_input(poisoned, object_id, target, input)
                 .map(|()| true);
