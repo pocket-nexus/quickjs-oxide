@@ -12,6 +12,13 @@ macro_rules! execution_opcodes {
             $($(#[$attr])* $name = $raw,)*
         }
 
+        // The published VM dispatches these verified tags directly. Keep the
+        // wire tags and the checked external decoder in the same definition.
+        #[allow(dead_code, non_upper_case_globals)]
+        pub(crate) mod tags {
+            $($(#[$attr])* pub(crate) const $name: u16 = $raw;)*
+        }
+
         impl Opcode {
             #[cfg(feature = "profiling")]
             pub(crate) fn profiling_label(self) -> &'static str {

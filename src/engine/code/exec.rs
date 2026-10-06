@@ -80,8 +80,8 @@ impl Decoded {
 /// A published word is already authenticated. Keep its extensions in the
 /// code stream until the selected handler actually needs them.
 #[derive(Clone, Copy)]
-pub(crate) struct PublishedDecoded<'a> {
-    pub opcode: Opcode,
+pub(crate) struct PublishedDecoded<'a, Tag = Opcode> {
+    pub opcode: Tag,
     word: u32,
     pc: u32,
     words: &'a [Cell<u32>],
@@ -90,7 +90,7 @@ pub(crate) struct PublishedDecoded<'a> {
     pub next_pc: u32,
 }
 
-impl PublishedDecoded<'_> {
+impl<Tag: Copy> PublishedDecoded<'_, Tag> {
     #[inline(always)]
     pub fn operand_or_zero(self, index: usize) -> u32 {
         if index >= usize::from(self.count) {
@@ -107,6 +107,14 @@ impl PublishedDecoded<'_> {
         }
         let offset = if self.first_wide { index + 1 } else { index };
         self.words[self.pc as usize + offset].get()
+    }
+}
+
+impl PublishedDecoded<'_, u16> {
+    /// Called inside a selected dispatch arm, where the tag is already known.
+    #[inline(always)]
+    pub(crate) fn opcode(self) -> Opcode {
+        Opcode::from_raw(self.opcode).expect("selected published opcode")
     }
 }
 
@@ -350,15 +358,36 @@ impl ExecCode {
     /// Published words and all static control-flow targets were verified once.
     /// The execution loop needs only bounds-safe loads and the encoded layout;
     /// it does not recheck the immutable header contract on every visit.
+    #[cfg(test)]
     #[inline(always)]
     pub(crate) fn decode_published(&self, pc: u32) -> Result<PublishedDecoded<'_>, ExecCodeError> {
+        let decoded = self.decode_published_tag(pc)?;
+        let opcode = Opcode::from_raw(decoded.opcode).ok_or(ExecCodeError::BadOpcode)?;
+        Ok(PublishedDecoded {
+            opcode,
+            word: decoded.word,
+            pc: decoded.pc,
+            words: decoded.words,
+            count: decoded.count,
+            first_wide: decoded.first_wide,
+            next_pc: decoded.next_pc,
+        })
+    }
+
+    /// Publication checked the tag; the interpreter's match is its sole
+    /// dispatch. External decoding and synthetic test admissions remain checked.
+    #[inline(always)]
+    pub(crate) fn decode_published_tag(
+        &self,
+        pc: u32,
+    ) -> Result<PublishedDecoded<'_, u16>, ExecCodeError> {
         let word = self
             .words
             .get(pc as usize)
             .ok_or(ExecCodeError::InvalidBoundary)?
             .get();
         let header = (word >> 16) as u16;
-        let opcode = Opcode::from_raw(header & OPCODE_MASK).ok_or(ExecCodeError::BadOpcode)?;
+        let opcode = header & OPCODE_MASK;
         let count = u32::from((header >> COUNT_SHIFT) & 3);
         let first_wide = header & WIDE_FIRST != 0;
         let next_pc = pc + u32::from(((header >> WIDTH_SHIFT) & 3) + 1);
@@ -3492,8 +3521,11 @@ mod tests {
         for source in 0..code.instruction_len() {
             let pc = code.exec_pc(source as u32).unwrap();
             let published = code.decode_published(pc).unwrap();
+            let tag = code.decode_published_tag(pc).unwrap();
             let verified = code.decode(pc).unwrap();
             assert_eq!(published.opcode, verified.opcode);
+            assert_eq!(tag.opcode, verified.opcode as u16);
+            assert_eq!(tag.next_pc, verified.next_pc);
             assert_eq!(published.next_pc, verified.next_pc);
             for index in 0..usize::from(verified.count) {
                 let expected = if index == 0
@@ -3505,6 +3537,7 @@ mod tests {
                     verified.operand(index)
                 };
                 assert_eq!(published.operand(index), expected);
+                assert_eq!(tag.operand(index), expected);
             }
             for index in usize::from(verified.count)..3 {
                 assert_eq!(published.operand_or_zero(index), 0);

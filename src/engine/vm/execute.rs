@@ -8,7 +8,7 @@ use crate::engine::code::bytecode::{
     IteratorCallKind, PrivateNameSource, WithObjectSource,
 };
 use crate::engine::code::exec::PublishedDecoded;
-use crate::engine::code::exec_opcode::Opcode;
+use crate::engine::code::exec_opcode::{Opcode, tags};
 use crate::engine::code::region::{DirectSource, NumberSource, PublishedNumericRegion};
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{BytecodeConstant, RawValue};
@@ -203,7 +203,7 @@ pub(super) enum BindingSource {
 pub(super) struct FallthroughPc(u32);
 
 impl FallthroughPc {
-    pub(super) fn from_decoded(decoded: PublishedDecoded<'_>) -> Self {
+    pub(super) fn from_decoded<Tag: Copy>(decoded: PublishedDecoded<'_, Tag>) -> Self {
         Self(decoded.next_pc)
     }
 
@@ -455,17 +455,17 @@ pub(super) fn execute_frame_in_state(
                 );
                 let decoded = executable
                     .exec
-                    .decode_published(pc as u32)
+                    .decode_published_tag(pc as u32)
                     .map_err(|_| Error::internal("published execution word is invalid"))?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
-                    decoded.opcode.profiling_label(),
+                    decoded.opcode().profiling_label(),
                 );
                 let mut next = decoded.next_pc as usize;
                 let operand = decoded.operand(0);
                 match decoded.opcode {
-                    Opcode::Nop | Opcode::MarkSuperCall => {}
-                    Opcode::PushI32 => {
+                    tags::Nop | tags::MarkSuperCall => {}
+                    tags::PushI32 => {
                         let value = if decoded.next_pc == pc as u32 + 1 {
                             i32::from(operand as i16)
                         } else {
@@ -473,11 +473,11 @@ pub(super) fn execute_frame_in_state(
                         };
                         cursor.commit_push(JsValue::Int(value))?;
                     }
-                    Opcode::Undefined => cursor.commit_push(JsValue::Undefined)?,
-                    Opcode::Null => cursor.commit_push(JsValue::Null)?,
-                    Opcode::PushFalse => cursor.commit_push(JsValue::Bool(false))?,
-                    Opcode::PushTrue => cursor.commit_push(JsValue::Bool(true))?,
-                    Opcode::PushConst => match executable.constant(operand) {
+                    tags::Undefined => cursor.commit_push(JsValue::Undefined)?,
+                    tags::Null => cursor.commit_push(JsValue::Null)?,
+                    tags::PushFalse => cursor.commit_push(JsValue::Bool(false))?,
+                    tags::PushTrue => cursor.commit_push(JsValue::Bool(true))?,
+                    tags::PushConst => match executable.constant(operand) {
                         Some(BytecodeConstant::Value(RawValue::Int(value))) => {
                             cursor.commit_push(JsValue::Int(*value))?
                         }
@@ -510,12 +510,12 @@ pub(super) fn execute_frame_in_state(
                             ));
                         }
                     },
-                    Opcode::PushThis | Opcode::BorrowedFieldThis => {
+                    tags::PushThis | tags::BorrowedFieldThis => {
                         let normalized = owners
                             .rare
                             .get()
                             .and_then(|rare| rare.normalized_this.as_ref());
-                        if decoded.opcode == Opcode::BorrowedFieldThis {
+                        if decoded.opcode() == Opcode::BorrowedFieldThis {
                             let base = normalized.unwrap_or(&owners.input.this_value);
                             // Capture only the field key: capturing PublishedDecoded here
                             // duplicates its aggregate in the shared dispatch loop.
@@ -587,11 +587,11 @@ pub(super) fn execute_frame_in_state(
                         };
                         cursor.commit_owned(state, value)?;
                     }
-                    Opcode::PushNewTarget => {
+                    tags::PushNewTarget => {
                         let value = cursor.copy_owned(state, &owners.input.new_target)?;
                         cursor.commit_owned(state, value)?;
                     }
-                    Opcode::PushActiveFunction => {
+                    tags::PushActiveFunction => {
                         let object = owners.function.object_id();
                         state
                             .heap
@@ -599,25 +599,25 @@ pub(super) fn execute_frame_in_state(
                             .map_err(|error| Error::internal(error.to_string()))?;
                         cursor.commit_owned(state, JsValue::Object(object))?;
                     }
-                    Opcode::Object => {
+                    tags::Object => {
                         break 'dispatch Ok(VmAction::Object {
                             fallthrough: FallthroughPc::from_decoded(decoded),
                         });
                     }
-                    Opcode::ArrayFrom => {
+                    tags::ArrayFrom => {
                         break 'dispatch Ok(VmAction::ArrayFrom {
                             count: published_u16(operand),
                             fallthrough: FallthroughPc::from_decoded(decoded),
                         });
                     }
-                    Opcode::CheckCtor => {
+                    tags::CheckCtor => {
                         if matches!(owners.input.new_target, JsValue::Undefined) {
                             break 'dispatch Ok(VmAction::Pure(
                                 super::pure_operations::PureOperation::ConstructorWithoutNew,
                             ));
                         }
                     }
-                    Opcode::NumberLocalInc => {
+                    tags::NumberLocalInc => {
                         let index = published_u16(operand);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
@@ -657,13 +657,13 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::NumericArrayAccumulate
-                    | Opcode::NumericArrayStoreProduct
-                    | Opcode::NumericArrayCopyElement
-                    | Opcode::NumericArrayAddPreInc
-                    | Opcode::NumericArrayStoreAndLocal
-                    | Opcode::NumericArrayUpdateElement
-                    | Opcode::NumericArrayCompareBranch => {
+                    tags::NumericArrayAccumulate
+                    | tags::NumericArrayStoreProduct
+                    | tags::NumericArrayCopyElement
+                    | tags::NumericArrayAddPreInc
+                    | tags::NumericArrayStoreAndLocal
+                    | tags::NumericArrayUpdateElement
+                    | tags::NumericArrayCompareBranch => {
                         let region = executable.exec.numeric_region(operand).ok_or_else(|| {
                             Error::internal("published numeric region is missing")
                         })?;
@@ -674,14 +674,14 @@ pub(super) fn execute_frame_in_state(
                             runtime, executable, pc, true,
                         );
                         let mut miss_reason = None;
-                        let hit = match decoded.opcode {
+                        let hit = match decoded.opcode() {
                             Opcode::NumericArrayAccumulate | Opcode::NumericArrayStoreProduct => {
                                 match cursor.with_slots(|slots| {
                                     Ok(numeric_local_array_region(
                                         slots,
                                         state,
                                         region,
-                                        decoded.opcode == Opcode::NumericArrayAccumulate,
+                                        decoded.opcode() == Opcode::NumericArrayAccumulate,
                                     ))
                                 })? {
                                     Ok(()) => true,
@@ -992,7 +992,7 @@ pub(super) fn execute_frame_in_state(
                             runtime,
                             executable,
                             pc,
-                            match decoded.opcode {
+                            match decoded.opcode() {
                                 Opcode::NumericArrayAccumulate => "numeric_array_accumulate",
                                 Opcode::NumericArrayStoreProduct => "numeric_array_store_product",
                                 Opcode::NumericArrayCopyElement => "numeric_array_copy_element",
@@ -1020,7 +1020,7 @@ pub(super) fn execute_frame_in_state(
                         }
                         #[cfg(test)]
                         NUMERIC_REGION_MISSES.set(NUMERIC_REGION_MISSES.get() + 1);
-                        let first = match decoded.opcode {
+                        let first = match decoded.opcode() {
                             Opcode::NumericArrayStoreAndLocal => {
                                 cursor.with_slots(|slots| {
                                     slots.peek(2)?;
@@ -1053,7 +1053,7 @@ pub(super) fn execute_frame_in_state(
                         cursor.advance(decoded.operand(2) as usize);
                         continue;
                     }
-                    Opcode::UpdateLocalDiscard | Opcode::UpdateLocalDiscardCheck => {
+                    tags::UpdateLocalDiscard | tags::UpdateLocalDiscardCheck => {
                         let index = published_u16(operand & 0x1fff);
                         let descriptor = operand >> 13;
                         #[cfg(feature = "profiling")]
@@ -1084,7 +1084,7 @@ pub(super) fn execute_frame_in_state(
                             );
                             continue;
                         }
-                        if decoded.opcode == Opcode::UpdateLocalDiscardCheck {
+                        if decoded.opcode() == Opcode::UpdateLocalDiscardCheck {
                             if let Some(action) = read_local::<true>(&mut cursor, state, index)? {
                                 break 'dispatch Ok(action);
                             }
@@ -1093,7 +1093,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::GetLocal => {
+                    tags::GetLocal => {
                         let index = published_u16(operand);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
@@ -1103,7 +1103,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::GetLocalCheck => {
+                    tags::GetLocalCheck => {
                         let index = published_u16(operand);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
@@ -1113,7 +1113,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::NumberArgInc => {
+                    tags::NumberArgInc => {
                         let index = published_u16(operand);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
@@ -1153,14 +1153,14 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::DensePreUpdateLocal
-                    | Opcode::DensePreUpdateArg
-                    | Opcode::DensePostUpdateLocal
-                    | Opcode::DensePostUpdateLocalCheck
-                    | Opcode::DensePostUpdateArg => {
+                    tags::DensePreUpdateLocal
+                    | tags::DensePreUpdateArg
+                    | tags::DensePostUpdateLocal
+                    | tags::DensePostUpdateLocalCheck
+                    | tags::DensePostUpdateArg => {
                         let base_index = published_u16(operand);
                         let postfix = matches!(
-                            decoded.opcode,
+                            decoded.opcode(),
                             Opcode::DensePostUpdateLocal
                                 | Opcode::DensePostUpdateLocalCheck
                                 | Opcode::DensePostUpdateArg
@@ -1172,7 +1172,7 @@ pub(super) fn execute_frame_in_state(
                         let update = decoded.operand(1);
                         let update_index = published_u16(update & 0xffff);
                         let base = if matches!(
-                            decoded.opcode,
+                            decoded.opcode(),
                             Opcode::DensePreUpdateLocal
                                 | Opcode::DensePostUpdateLocal
                                 | Opcode::DensePostUpdateLocalCheck
@@ -1230,14 +1230,14 @@ pub(super) fn execute_frame_in_state(
                             cursor.advance(decoded.operand(2) as usize);
                             continue;
                         }
-                        if decoded.opcode == Opcode::DensePostUpdateLocalCheck {
+                        if decoded.opcode() == Opcode::DensePostUpdateLocalCheck {
                             if let Some(action) =
                                 read_local::<true>(&mut cursor, state, base_index)?
                             {
                                 break 'dispatch Ok(action);
                             }
                         } else if matches!(
-                            decoded.opcode,
+                            decoded.opcode(),
                             Opcode::DensePreUpdateLocal | Opcode::DensePostUpdateLocal
                         ) {
                             if let Some(action) =
@@ -1249,7 +1249,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::FieldAccSetDrop => {
+                    tags::FieldAccSetDrop => {
                         let accumulator = published_u16(operand);
                         let packed = decoded.operand(1);
                         let base_index = published_u16(packed & 0xffff);
@@ -1302,7 +1302,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::DenseAccIndexSetDrop => {
+                    tags::DenseAccIndexSetDrop => {
                         let accumulator = published_u16(operand);
                         let packed = decoded.operand(1);
                         let base_index = published_u16(packed & 0xffff);
@@ -1358,7 +1358,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::DenseIndexBinaryLocal | Opcode::DenseIndexBinaryArg => {
+                    tags::DenseIndexBinaryLocal | tags::DenseIndexBinaryArg => {
                         let base_index = published_u16(operand);
                         let slots_operand = decoded.operand(1);
                         let descriptor = decoded.operand(2);
@@ -1366,7 +1366,7 @@ pub(super) fn execute_frame_in_state(
                             .expect("published numeric operation was verified");
                         let key_index = published_u16(slots_operand & 0xffff);
                         let rhs_bits = published_u16(slots_operand >> 16);
-                        let base = if decoded.opcode == Opcode::DenseIndexBinaryLocal {
+                        let base = if decoded.opcode() == Opcode::DenseIndexBinaryLocal {
                             DirectSlot::Local(base_index)
                         } else {
                             DirectSlot::Argument(base_index)
@@ -1399,7 +1399,7 @@ pub(super) fn execute_frame_in_state(
                             cursor.advance((decoded.next_pc + 4) as usize);
                             continue;
                         }
-                        if decoded.opcode == Opcode::DenseIndexBinaryLocal {
+                        if decoded.opcode() == Opcode::DenseIndexBinaryLocal {
                             if let Some(action) =
                                 read_local::<false>(&mut cursor, state, base_index)?
                             {
@@ -1409,7 +1409,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::DenseReadBinaryLocal | Opcode::DenseReadBinaryArg => {
+                    tags::DenseReadBinaryLocal | tags::DenseReadBinaryArg => {
                         let base_index = published_u16(operand);
                         let slots_operand = decoded.operand(1);
                         let descriptor = decoded.operand(2);
@@ -1417,7 +1417,7 @@ pub(super) fn execute_frame_in_state(
                             .expect("published numeric operation was verified");
                         let key_index = published_u16(slots_operand & 0xffff);
                         let rhs_index = published_u16(slots_operand >> 16);
-                        let base = if decoded.opcode == Opcode::DenseReadBinaryLocal {
+                        let base = if decoded.opcode() == Opcode::DenseReadBinaryLocal {
                             DirectSlot::Local(base_index)
                         } else {
                             DirectSlot::Argument(base_index)
@@ -1454,7 +1454,7 @@ pub(super) fn execute_frame_in_state(
                             cursor.advance((decoded.next_pc + 4) as usize);
                             continue;
                         }
-                        if decoded.opcode == Opcode::DenseReadBinaryLocal {
+                        if decoded.opcode() == Opcode::DenseReadBinaryLocal {
                             if let Some(action) =
                                 read_local::<false>(&mut cursor, state, base_index)?
                             {
@@ -1464,7 +1464,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::DenseReadLocal | Opcode::DenseReadArg => {
+                    tags::DenseReadLocal | tags::DenseReadArg => {
                         let base_index = published_u16(operand);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
@@ -1472,7 +1472,7 @@ pub(super) fn execute_frame_in_state(
                         );
                         let key = decoded.operand(1);
                         let key_index = published_u16(key & 0xffff);
-                        let base = if decoded.opcode == Opcode::DenseReadLocal {
+                        let base = if decoded.opcode() == Opcode::DenseReadLocal {
                             DirectSlot::Local(base_index)
                         } else {
                             DirectSlot::Argument(base_index)
@@ -1511,7 +1511,7 @@ pub(super) fn execute_frame_in_state(
                             cursor.advance(decoded.operand(2) as usize);
                             continue;
                         }
-                        if decoded.opcode == Opcode::DenseReadLocal {
+                        if decoded.opcode() == Opcode::DenseReadLocal {
                             if let Some(action) =
                                 read_local::<false>(&mut cursor, state, base_index)?
                             {
@@ -1521,13 +1521,13 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg => {
+                    tags::BorrowedFieldLocal | tags::BorrowedFieldArg => {
                         let base_index = published_u16(operand);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
                             runtime, executable, pc, true,
                         );
-                        let base = if decoded.opcode == Opcode::BorrowedFieldLocal {
+                        let base = if decoded.opcode() == Opcode::BorrowedFieldLocal {
                             DirectSlot::Local(base_index)
                         } else {
                             DirectSlot::Argument(base_index)
@@ -1594,7 +1594,7 @@ pub(super) fn execute_frame_in_state(
                                         getter,
                                     )
                                 })?;
-                                let load = if decoded.opcode == Opcode::BorrowedFieldLocal {
+                                let load = if decoded.opcode() == Opcode::BorrowedFieldLocal {
                                     read_local::<false>(&mut cursor, state, base_index)
                                 } else {
                                     read_arg(&mut cursor, state, base_index)
@@ -1630,7 +1630,7 @@ pub(super) fn execute_frame_in_state(
                                 unreachable!("absence completed above")
                             }
                         }
-                        if decoded.opcode == Opcode::BorrowedFieldLocal {
+                        if decoded.opcode() == Opcode::BorrowedFieldLocal {
                             if let Some(action) =
                                 read_local::<false>(&mut cursor, state, base_index)?
                             {
@@ -1640,7 +1640,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::CompareBranchStack => {
+                    tags::CompareBranchStack => {
                         let descriptor = operand;
                         let comparison = Opcode::from_raw((descriptor & 0x3ff) as u16)
                             .ok_or_else(|| Error::internal("invalid published comparison"))?;
@@ -1715,11 +1715,11 @@ pub(super) fn execute_frame_in_state(
                             });
                         }
                     }
-                    Opcode::CompareBranchLocalLt | Opcode::CompareBranchArgLt => {
+                    tags::CompareBranchLocalLt | tags::CompareBranchArgLt => {
                         let left_index = published_u16(operand);
                         let descriptor = decoded.operand(1);
                         let right_index = published_u16(descriptor & 0xffff);
-                        let left = if decoded.opcode == Opcode::CompareBranchLocalLt {
+                        let left = if decoded.opcode() == Opcode::CompareBranchLocalLt {
                             DirectSlot::Local(left_index)
                         } else {
                             DirectSlot::Argument(left_index)
@@ -1761,7 +1761,7 @@ pub(super) fn execute_frame_in_state(
                             cursor.advance(target);
                             continue;
                         }
-                        if decoded.opcode == Opcode::CompareBranchLocalLt {
+                        if decoded.opcode() == Opcode::CompareBranchLocalLt {
                             if let Some(action) =
                                 read_local::<false>(&mut cursor, state, left_index)?
                             {
@@ -1771,11 +1771,11 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::CompareBranchLocal | Opcode::CompareBranchArg => {
+                    tags::CompareBranchLocal | tags::CompareBranchArg => {
                         let left_index = published_u16(operand);
                         let descriptor = decoded.operand(1);
                         let right_index = published_u16(descriptor & 0xffff);
-                        let left = if decoded.opcode == Opcode::CompareBranchLocal {
+                        let left = if decoded.opcode() == Opcode::CompareBranchLocal {
                             DirectSlot::Local(left_index)
                         } else {
                             DirectSlot::Argument(left_index)
@@ -1824,7 +1824,7 @@ pub(super) fn execute_frame_in_state(
                             cursor.advance(target);
                             continue;
                         }
-                        if decoded.opcode == Opcode::CompareBranchLocal {
+                        if decoded.opcode() == Opcode::CompareBranchLocal {
                             if let Some(action) =
                                 read_local::<false>(&mut cursor, state, left_index)?
                             {
@@ -1834,7 +1834,7 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::GetVarRef | Opcode::GetVarRefCheck => {
+                    tags::GetVarRef | tags::GetVarRefCheck => {
                         let index = published_u16(operand);
                         let value = if cursor
                             .with_slots(|slots| Ok(slots.has_operand_capacity(1)))?
@@ -1865,12 +1865,12 @@ pub(super) fn execute_frame_in_state(
                                 source: BindingSource::Closure,
                                 index,
                                 write: false,
-                                checked: decoded.opcode == Opcode::GetVarRefCheck,
+                                checked: decoded.opcode() == Opcode::GetVarRefCheck,
                                 keep: false,
                             });
                         }
                     }
-                    Opcode::GetVar | Opcode::GetVarUndef => {
+                    tags::GetVar | tags::GetVarUndef => {
                         let index = published_u16(operand);
                         // Check space before taking the output edge. The cell keeps its
                         // own edge through commit; errors publish this cursor's fault
@@ -1894,12 +1894,12 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(VmAction::Environment(
                                 super::environment_driver::Operation::GlobalGet {
                                     index,
-                                    strict: decoded.opcode == Opcode::GetVar,
+                                    strict: decoded.opcode() == Opcode::GetVar,
                                 },
                             ));
                         }
                     }
-                    Opcode::GetArg => {
+                    tags::GetArg => {
                         let index = published_u16(operand);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
@@ -1909,15 +1909,12 @@ pub(super) fn execute_frame_in_state(
                             break 'dispatch Ok(action);
                         }
                     }
-                    Opcode::PutLocal
-                    | Opcode::SetLocal
-                    | Opcode::PutLocalCheck
-                    | Opcode::SetLocalCheck => {
+                    tags::PutLocal | tags::SetLocal | tags::PutLocalCheck | tags::SetLocalCheck => {
                         let index = published_u16(operand);
                         let keep =
-                            matches!(decoded.opcode, Opcode::SetLocal | Opcode::SetLocalCheck);
+                            matches!(decoded.opcode(), Opcode::SetLocal | Opcode::SetLocalCheck);
                         let checked = matches!(
-                            decoded.opcode,
+                            decoded.opcode(),
                             Opcode::PutLocalCheck | Opcode::SetLocalCheck
                         );
                         let binding =
@@ -1980,9 +1977,9 @@ pub(super) fn execute_frame_in_state(
                             },
                         )?;
                     }
-                    Opcode::PutArg | Opcode::SetArg => {
+                    tags::PutArg | tags::SetArg => {
                         let index = published_u16(operand);
-                        let keep = decoded.opcode == Opcode::SetArg;
+                        let keep = decoded.opcode() == Opcode::SetArg;
                         let binding = cursor
                             .with_slots(|slots| Ok(binding_class(slots.parameter(index)?)))?;
                         if binding == BindingClass::Captured {
@@ -2040,7 +2037,7 @@ pub(super) fn execute_frame_in_state(
                             },
                         )?;
                     }
-                    Opcode::InitializeLocal => {
+                    tags::InitializeLocal => {
                         let index = published_u16(operand);
                         let definition = executable.local_definitions[usize::from(index)];
                         use crate::engine::code::function::metadata::ClosureVariableKind;
@@ -2097,7 +2094,7 @@ pub(super) fn execute_frame_in_state(
                             },
                         )?;
                     }
-                    Opcode::CloseLocal => {
+                    tags::CloseLocal => {
                         let index = published_u16(operand);
                         let class =
                             cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
@@ -2110,7 +2107,7 @@ pub(super) fn execute_frame_in_state(
                             *flag = false;
                         }
                     }
-                    Opcode::SetLocalUninitialized => {
+                    tags::SetLocalUninitialized => {
                         let index = published_u16(operand);
                         let class =
                             cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
@@ -2148,15 +2145,15 @@ pub(super) fn execute_frame_in_state(
                             *flag = false;
                         }
                     }
-                    Opcode::Dup | Opcode::Dup1 | Opcode::Dup3 => {
-                        cursor.with_slots(|slots| match decoded.opcode {
+                    tags::Dup | tags::Dup1 | tags::Dup3 => {
+                        cursor.with_slots(|slots| match decoded.opcode() {
                             Opcode::Dup => slots.insert_copy_in_state(state, 0, 0),
                             Opcode::Dup1 => slots.insert_copy_in_state(state, 1, 1),
                             _ => slots.duplicate_operands_in_state(state, 3),
                         })?;
                     }
-                    Opcode::Insert2 | Opcode::Insert3 | Opcode::Insert4 => {
-                        let count = match decoded.opcode {
+                    tags::Insert2 | tags::Insert3 | tags::Insert4 => {
+                        let count = match decoded.opcode() {
                             Opcode::Insert2 => 2,
                             Opcode::Insert3 => 3,
                             _ => 4,
@@ -2166,29 +2163,27 @@ pub(super) fn execute_frame_in_state(
                             slots.insert_copy_in_state(state, 0, count)
                         })?;
                     }
-                    Opcode::Perm3 | Opcode::Perm4 | Opcode::Perm5 => {
-                        let count = match decoded.opcode {
+                    tags::Perm3 | tags::Perm4 | tags::Perm5 => {
+                        let count = match decoded.opcode() {
                             Opcode::Perm3 => 2,
                             Opcode::Perm4 => 3,
                             _ => 4,
                         };
                         cursor.with_slots(|slots| slots.rotate_operands(1, count, false))?;
                     }
-                    Opcode::Rot4Left => {
+                    tags::Rot4Left => {
                         cursor.with_slots(|slots| slots.rotate_operands(0, 4, true))?
                     }
-                    Opcode::Swap => {
-                        cursor.with_slots(|slots| slots.rotate_operands(0, 2, false))?
-                    }
-                    Opcode::Drop | Opcode::Nip => {
-                        let removed_offset = usize::from(decoded.opcode == Opcode::Nip);
+                    tags::Swap => cursor.with_slots(|slots| slots.rotate_operands(0, 2, false))?,
+                    tags::Drop | tags::Nip => {
+                        let removed_offset = usize::from(decoded.opcode() == Opcode::Nip);
                         let immediate = cursor
                             .with_slots(|slots| Ok(is_immediate(slots.peek(removed_offset)?)))?;
                         if !immediate {
                             cursor.publish_fault(state, active_frame)?;
                         }
                         let removed = cursor.with_slots(|slots| {
-                            if decoded.opcode == Opcode::Drop {
+                            if decoded.opcode() == Opcode::Drop {
                                 slots.pop()
                             } else {
                                 slots.peek(1)?;
@@ -2204,47 +2199,47 @@ pub(super) fn execute_frame_in_state(
                                 .map_err(runtime_error_to_vm_error)?;
                         }
                     }
-                    Opcode::Add
-                    | Opcode::Sub
-                    | Opcode::Mul
-                    | Opcode::Div
-                    | Opcode::Mod
-                    | Opcode::Pow
-                    | Opcode::Shl
-                    | Opcode::Sar
-                    | Opcode::Shr
-                    | Opcode::BitAnd
-                    | Opcode::BitOr
-                    | Opcode::BitXor
-                    | Opcode::Eq
-                    | Opcode::Neq
-                    | Opcode::Lt
-                    | Opcode::Lte
-                    | Opcode::Gt
-                    | Opcode::Gte
-                    | Opcode::StrictEq
-                    | Opcode::StrictNeq => {
+                    tags::Add
+                    | tags::Sub
+                    | tags::Mul
+                    | tags::Div
+                    | tags::Mod
+                    | tags::Pow
+                    | tags::Shl
+                    | tags::Sar
+                    | tags::Shr
+                    | tags::BitAnd
+                    | tags::BitOr
+                    | tags::BitXor
+                    | tags::Eq
+                    | tags::Neq
+                    | tags::Lt
+                    | tags::Lte
+                    | tags::Gt
+                    | tags::Gte
+                    | tags::StrictEq
+                    | tags::StrictNeq => {
                         let completed = cursor.with_slots(|slots| {
                             slots.binary_number(|left, right| {
-                                binary_number_result(decoded.opcode, left, right)
+                                binary_number_result(decoded.opcode(), left, right)
                             })
                         })?;
                         if !completed {
-                            if matches!(decoded.opcode, Opcode::Eq | Opcode::Neq) {
+                            if matches!(decoded.opcode(), Opcode::Eq | Opcode::Neq) {
                                 if let Some(equal) = cursor.with_slots(|slots| {
                                     slots.nullish_equality_in_state(state, &runtime.0.poisoned)
                                 })? {
                                     cursor.commit_push(JsValue::Bool(
-                                        equal != (decoded.opcode == Opcode::Neq),
+                                        equal != (decoded.opcode() == Opcode::Neq),
                                     ))?;
                                     cursor.advance(next);
                                     continue;
                                 }
                             }
-                            if matches!(decoded.opcode, Opcode::StrictEq | Opcode::StrictNeq) {
+                            if matches!(decoded.opcode(), Opcode::StrictEq | Opcode::StrictNeq) {
                                 let equal = cursor.strict_comparison(state, active_frame)?;
                                 cursor.commit_push(JsValue::Bool(
-                                    equal != (decoded.opcode == Opcode::StrictNeq),
+                                    equal != (decoded.opcode() == Opcode::StrictNeq),
                                 ))?;
                                 #[cfg(feature = "profiling")]
                                 crate::engine::api::profiling::record_owned_execution_event(
@@ -2255,7 +2250,7 @@ pub(super) fn execute_frame_in_state(
                             }
                             break 'dispatch Ok(VmAction::Numeric {
                                 kind: super::numeric::operation::NumericKind::for_opcode(
-                                    decoded.opcode,
+                                    decoded.opcode(),
                                 )
                                 .ok_or_else(|| {
                                     Error::internal("numeric opcode has no operation")
@@ -2264,44 +2259,44 @@ pub(super) fn execute_frame_in_state(
                             });
                         }
                     }
-                    Opcode::Neg
-                    | Opcode::Plus
-                    | Opcode::BitNot
-                    | Opcode::Inc
-                    | Opcode::Dec
-                    | Opcode::PostInc
-                    | Opcode::PostDec => {
+                    tags::Neg
+                    | tags::Plus
+                    | tags::BitNot
+                    | tags::Inc
+                    | tags::Dec
+                    | tags::PostInc
+                    | tags::PostDec => {
                         let completed = cursor.with_slots(|slots| {
                             let Some(old) = slots.peek(0)?.as_number_repr() else {
                                 return Ok(false);
                             };
-                            if matches!(decoded.opcode, Opcode::PostInc | Opcode::PostDec)
+                            if matches!(decoded.opcode(), Opcode::PostInc | Opcode::PostDec)
                                 && !slots.has_operand_capacity(1)
                             {
                                 return Ok(false);
                             }
-                            let value = match decoded.opcode {
+                            let value = match decoded.opcode() {
                                 Opcode::Neg => old.negate(),
                                 Opcode::Plus => old,
                                 Opcode::BitNot => Number::Int(!old.int32()),
                                 _ => old.update(matches!(
-                                    decoded.opcode,
+                                    decoded.opcode(),
                                     Opcode::Inc | Opcode::PostInc
                                 )),
                             };
-                            if !matches!(decoded.opcode, Opcode::PostInc | Opcode::PostDec) {
+                            if !matches!(decoded.opcode(), Opcode::PostInc | Opcode::PostDec) {
                                 let _ = slots.pop()?;
                             }
                             slots.push(number_value(value))?;
                             Ok(true)
                         })?;
                         if !completed {
-                            if decoded.opcode == Opcode::Plus {
+                            if decoded.opcode() == Opcode::Plus {
                                 break 'dispatch Ok(VmAction::ConvertPlus);
                             }
                             break 'dispatch Ok(VmAction::Numeric {
                                 kind: super::numeric::operation::NumericKind::for_opcode(
-                                    decoded.opcode,
+                                    decoded.opcode(),
                                 )
                                 .ok_or_else(|| {
                                     Error::internal("numeric opcode has no operation")
@@ -2310,7 +2305,7 @@ pub(super) fn execute_frame_in_state(
                             });
                         }
                     }
-                    Opcode::Not => {
+                    tags::Not => {
                         let immediate =
                             cursor.with_slots(|slots| Ok(is_immediate(slots.peek(0)?)))?;
                         if immediate {
@@ -2331,8 +2326,8 @@ pub(super) fn execute_frame_in_state(
                             .release_owned_jsvalue(&runtime.0.poisoned, old)
                             .map_err(runtime_error_to_vm_error)?;
                     }
-                    Opcode::GetFieldCached | Opcode::GetField2Cached => {
-                        let keep_receiver = decoded.opcode == Opcode::GetField2Cached;
+                    tags::GetFieldCached | tags::GetField2Cached => {
+                        let keep_receiver = decoded.opcode() == Opcode::GetField2Cached;
                         let mut native = None;
                         let pending = PendingNamedRead {
                             index: operand,
@@ -2403,11 +2398,9 @@ pub(super) fn execute_frame_in_state(
                             }
                         }
                     }
-                    Opcode::GetArrayElDense
-                    | Opcode::GetArrayEl2Dense
-                    | Opcode::GetArrayEl3Dense => {
-                        let keep_receiver = decoded.opcode != Opcode::GetArrayElDense;
-                        let keep_key = decoded.opcode == Opcode::GetArrayEl3Dense;
+                    tags::GetArrayElDense | tags::GetArrayEl2Dense | tags::GetArrayEl3Dense => {
+                        let keep_receiver = decoded.opcode() != Opcode::GetArrayElDense;
+                        let keep_key = decoded.opcode() == Opcode::GetArrayEl3Dense;
                         let hit = cursor.with_slots(|slots| {
                             if keep_receiver {
                                 slots.array_kept_read_in_state(state, &runtime.0.poisoned, keep_key)
@@ -2431,7 +2424,7 @@ pub(super) fn execute_frame_in_state(
                             });
                         }
                     }
-                    Opcode::PutField => {
+                    tags::PutField => {
                         let Some(generation) = property_generation.checked_add(1) else {
                             break 'dispatch Ok(VmAction::SetProperty(Some(operand)));
                         };
@@ -2449,7 +2442,7 @@ pub(super) fn execute_frame_in_state(
                         }
                         *property_generation = generation;
                     }
-                    Opcode::PutArrayEl => {
+                    tags::PutArrayEl => {
                         let Some(generation) = property_generation.checked_add(1) else {
                             break 'dispatch Ok(VmAction::SetProperty(None));
                         };
@@ -2460,13 +2453,13 @@ pub(super) fn execute_frame_in_state(
                         }
                         *property_generation = generation;
                     }
-                    Opcode::Goto => next = operand as usize,
-                    Opcode::IfTrue | Opcode::IfFalse => {
+                    tags::Goto => next = operand as usize,
+                    tags::IfTrue | tags::IfFalse => {
                         let immediate =
                             cursor.with_slots(|slots| Ok(is_immediate(slots.peek(0)?)))?;
                         if immediate {
                             let truthy = cursor.move_owned()?.to_boolean_primitive();
-                            if truthy == (decoded.opcode == Opcode::IfTrue) {
+                            if truthy == (decoded.opcode() == Opcode::IfTrue) {
                                 next = operand as usize;
                             }
                         } else {
@@ -2480,18 +2473,18 @@ pub(super) fn execute_frame_in_state(
                             state
                                 .release_owned_jsvalue(&runtime.0.poisoned, condition)
                                 .map_err(runtime_error_to_vm_error)?;
-                            if truthy == (decoded.opcode == Opcode::IfTrue) {
+                            if truthy == (decoded.opcode() == Opcode::IfTrue) {
                                 next = operand as usize;
                             }
                         }
                     }
-                    Opcode::Gosub => {
+                    tags::Gosub => {
                         let return_pc = i32::try_from(next)
                             .map_err(|_| Error::internal("gosub return PC exceeds Int"))?;
                         cursor.commit_push(JsValue::Int(return_pc))?;
                         next = operand as usize;
                     }
-                    Opcode::Ret => {
+                    tags::Ret => {
                         // A dynamic target is not a published static continuation.
                         // Validate it while its owner remains in the frame storage.
                         next = cursor.with_slots(|slots| {
@@ -2509,7 +2502,7 @@ pub(super) fn execute_frame_in_state(
                         })?;
                         let _address = cursor.move_owned()?;
                     }
-                    Opcode::DropGosub => {
+                    tags::DropGosub => {
                         cursor.with_slots(|slots| {
                             if !matches!(slots.peek(0)?, JsValue::Int(_)) {
                                 return Err(Error::internal("invalid gosub cleanup value"));
@@ -2518,12 +2511,12 @@ pub(super) fn execute_frame_in_state(
                         })?;
                         let _address = cursor.move_owned()?;
                     }
-                    Opcode::InitialYield
-                    | Opcode::Yield
-                    | Opcode::YieldStar
-                    | Opcode::AsyncYieldStar
-                    | Opcode::Await => {
-                        let kind = match decoded.opcode {
+                    tags::InitialYield
+                    | tags::Yield
+                    | tags::YieldStar
+                    | tags::AsyncYieldStar
+                    | tags::Await => {
+                        let kind = match decoded.opcode() {
                             Opcode::InitialYield => super::VmSuspendKind::Initial,
                             Opcode::Yield => super::VmSuspendKind::Yield,
                             Opcode::YieldStar => super::VmSuspendKind::YieldStar,
@@ -2539,39 +2532,41 @@ pub(super) fn execute_frame_in_state(
                         cursor.advance(next);
                         break 'dispatch Ok(VmAction::Suspend(kind));
                     }
-                    Opcode::Call
-                    | Opcode::TailCall
-                    | Opcode::CallMethod
-                    | Opcode::TailCallMethod => {
+                    tags::Call | tags::TailCall | tags::CallMethod | tags::TailCallMethod => {
                         break 'dispatch Ok(VmAction::Call {
                             arguments: published_u16(operand),
                             method: matches!(
-                                decoded.opcode,
+                                decoded.opcode(),
                                 Opcode::CallMethod | Opcode::TailCallMethod
                             ),
                             tail: matches!(
-                                decoded.opcode,
+                                decoded.opcode(),
                                 Opcode::TailCall | Opcode::TailCallMethod
                             ),
                             fallthrough: FallthroughPc::from_decoded(decoded),
                         });
                     }
-                    Opcode::Return => {
+                    tags::Return => {
                         *pending = Some(cursor.move_owned()?);
                         cursor.advance(next);
                         break 'dispatch Ok(VmAction::Complete);
                     }
-                    Opcode::ReturnUndefined => {
+                    tags::ReturnUndefined => {
                         *pending = Some(JsValue::Undefined);
                         cursor.advance(next);
                         break 'dispatch Ok(VmAction::Complete);
                     }
-                    Opcode::Throw => break 'dispatch Ok(VmAction::Throw),
+                    tags::Throw => {
+                        break 'dispatch Ok(VmAction::Throw);
+                    }
                     _ => {
                         // Materialize only the fallback operands here. Passing the whole
                         // decoder makes its aggregate spill on every dispatch iteration.
+                        let opcode = Opcode::from_raw(decoded.opcode).ok_or_else(|| {
+                            Error::internal("published execution word is invalid")
+                        })?;
                         break 'dispatch deferred_action(
-                            decoded.opcode,
+                            opcode,
                             operand,
                             decoded.operand_or_zero(1),
                             decoded.operand_or_zero(2),
