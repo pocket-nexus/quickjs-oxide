@@ -231,11 +231,7 @@ impl FrameSlots<'_> {
             self.store.install_operand(self.window, index, value);
         } else {
             let index = self.window.operands().start + self.window.depth - 1;
-            let Some(FrameBinding::Direct(base)) =
-                self.store.slots[index].replace(FrameBinding::Direct(value))
-            else {
-                unreachable!("selected property receiver occupied its authenticated slot")
-            };
+            let base = std::mem::replace(&mut self.store.operands[index], value);
             state
                 .release_owned_jsvalue(poisoned, base)
                 .map_err(runtime_error_to_vm_error)?;
@@ -431,10 +427,7 @@ impl FrameSlots<'_> {
     fn top_direct_mut(&mut self) -> Result<&mut JsValue, Error> {
         self.peek(0)?;
         let top = self.window.operands().start + self.window.depth - 1;
-        match self.store.slots[top].as_mut() {
-            Some(FrameBinding::Direct(value)) => Ok(value),
-            _ => Err(Error::internal("admitted operand is not direct")),
-        }
+        Ok(&mut self.store.operands[top])
     }
 
     pub(in crate::engine::vm) fn try_owned_element_write_in_state(

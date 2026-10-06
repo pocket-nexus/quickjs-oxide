@@ -997,7 +997,7 @@ impl FrameSlots<'_> {
             Number::Float(value) => JsValue::Float(value),
         };
         self.store.slots[local] = Some(FrameBinding::Direct(number_value(updated)));
-        self.store.slots[top] = Some(FrameBinding::Direct(number_value(result)));
+        self.store.operands[top] = number_value(result);
         Ok(())
     }
 
@@ -1023,7 +1023,7 @@ impl FrameSlots<'_> {
         self.window
             .depth
             .checked_add(extra)
-            .is_some_and(|depth| depth <= self.window.end - self.window.locals_end)
+            .is_some_and(|depth| depth <= self.window.operand_end - self.window.operand_base)
     }
 
     pub(in crate::engine::vm) fn peek(&self, from_top: usize) -> Result<&JsValue, Error> {

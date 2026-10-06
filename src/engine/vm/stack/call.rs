@@ -107,19 +107,20 @@ impl SlotStore {
         let start = prepared.start;
         let base = prepared.window.base;
         for index in 0..count {
-            self.slots[base + index] = self.slots[start + index].take();
+            self.slots[base + index] = Some(FrameBinding::Direct(std::mem::replace(
+                &mut self.operands[start + index],
+                JsValue::Undefined,
+            )));
         }
         // All fallible work has completed. Transfer these roots directly from
         // caller operands; no retain/release round trip or JS re-entry occurs.
-        let Some(FrameBinding::Direct(JsValue::Object(callee))) = self.slots[start - 1].take()
+        let JsValue::Object(callee) =
+            std::mem::replace(&mut self.operands[start - 1], JsValue::Undefined)
         else {
             unreachable!("authenticated ordinary callee is an object")
         };
         let receiver = if method {
-            let Some(FrameBinding::Direct(receiver)) = self.slots[start - 2].take() else {
-                unreachable!("checked receiver is direct")
-            };
-            receiver
+            std::mem::replace(&mut self.operands[start - 2], JsValue::Undefined)
         } else {
             JsValue::Undefined
         };
@@ -166,20 +167,33 @@ impl SlotStore {
         let original_end = base.checked_add(originals);
         let parameters_end = original_end.and_then(|n| n.checked_add(parameter_count));
         let locals_end = parameters_end.and_then(|n| n.checked_add(local_count));
+        let operand_base = self.operand_active_end;
+        let operand_end = operand_base.checked_add(layout.operand_capacity());
         let end = locals_end
-            .and_then(|n| n.checked_add(layout.operand_capacity()))
-            .filter(|end| *end <= self.limit)
+            .filter(|end| {
+                operand_end
+                    .and_then(|ops| end.checked_add(ops))
+                    .is_some_and(|total| total <= self.limit)
+            })
             .ok_or_else(|| Error::internal("execution slot limit exceeded"))?;
         #[cfg(feature = "profiling")]
-        let before = self.slots.capacity();
+        let before = self.slots.capacity() + self.operands.capacity();
         self.slots
             .try_reserve(end.saturating_sub(self.slots.len()))
             .map_err(|_| Error::internal("execution slot allocation failed"))?;
+        #[cfg(feature = "profiling")]
+        let initialized = self.slots.len() + self.operands.len();
+        let operand_end = operand_end.unwrap();
+        self.operands
+            .try_reserve(operand_end.saturating_sub(self.operands.len()))
+            .map_err(|_| Error::internal("execution operand allocation failed"))?;
+        if operand_end > self.operands.len() {
+            self.operands
+                .resize_with(operand_end, || JsValue::Undefined);
+        }
         self.windows
             .try_reserve(1)
             .map_err(|_| Error::internal("execution window allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        let initialized = self.slots.len();
         if end > self.slots.len() {
             self.slots.resize_with(end, || None);
         }
@@ -191,9 +205,7 @@ impl SlotStore {
         if keep_originals {
             // Complete all fallible retains before moving any caller owner.
             for index in 0..count {
-                let Some(FrameBinding::Direct(value)) = &self.slots[start + index] else {
-                    unreachable!()
-                };
+                let value = &self.operands[start + index];
                 #[cfg(feature = "profiling")]
                 {
                     roots += usize::from(matches!(value, JsValue::Object(_) | JsValue::Symbol(_)));
@@ -259,6 +271,8 @@ impl SlotStore {
                 parameters_end,
                 locals_end,
                 end,
+                operand_base,
+                operand_end,
                 depth: 0,
                 actual_count: count,
             },
@@ -302,6 +316,7 @@ impl SlotStore {
         let local_count = window.locals().len();
         parent.depth -= consumed;
         self.active_end = end;
+        self.operand_active_end = window.operand_end;
         let id = self.next_window;
         self.next_window = *next_window;
         self.windows.push(id);
@@ -311,14 +326,14 @@ impl SlotStore {
             self.live_slots += originals + parameter_count + local_count;
             record_owned_storage(Cost::SlotCapacity {
                 before: prepared.before,
-                after: self.slots.capacity(),
+                after: self.slots.capacity() + self.operands.capacity(),
             });
             record_owned_storage(Cost::NoneInitialization {
-                count: self.slots.len() - prepared.initialized,
-                high_water: self.slots.len(),
+                count: self.slots.len() + self.operands.len() - prepared.initialized,
+                high_water: self.slots.len() + self.operands.len(),
             });
             record_owned_storage(Cost::Clear(consumed - count));
-            record_owned_storage(Cost::Initialize(end - base));
+            record_owned_storage(Cost::Initialize(end - base + window.operands().len()));
             record_owned_storage(Cost::Move(count + parameter_count + local_count));
             self.record_occupancy();
             crate::engine::api::profiling::record_call_preparation(
@@ -387,15 +402,21 @@ impl SlotStore {
                 .iter()
                 .filter(|slot| slot.is_some())
                 .count();
+            let cleared = cleared + window.depth;
             self.live_slots -= cleared;
             record_owned_storage(Cost::Clear(cleared));
         }
         self.active_end = window.whole().start;
-        self.clear_unpublished_owned_in_state(
-            state,
-            poisoned,
-            window.whole().start..window.operands().start + window.depth,
-        )?;
+        self.operand_active_end = window.operand_base;
+        self.assert_inactive_operands(&window);
+        self.clear_unpublished_owned_in_state(state, poisoned, window.whole())?;
+        for value in &mut self.operands[window.operand_base..window.operand_base + window.depth] {
+            let value = std::mem::replace(value, JsValue::Undefined);
+            if let Err(error) = state.release_owned_jsvalue(poisoned, value) {
+                poisoned.set(true);
+                return Err(runtime_error_to_vm_error(error));
+            }
+        }
         debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
         self.windows.pop();
         Ok(())
@@ -739,7 +760,9 @@ mod tests {
             JsValue::Object(id) if *id == receiver_id
         ));
         assert_eq!(slots.depth(&parent), 0);
-        assert!(slots.slots[parent.operands().start].is_none());
+        assert!(operand_is_immediate(
+            &slots.operands[parent.operands().start]
+        ));
         assert_eq!(
             runtime
                 .0
@@ -921,12 +944,12 @@ mod tests {
         assert_eq!(slots.depth(&parent), 3);
         assert!(slots.slots[end..].iter().all(Option::is_none));
         assert!(matches!(
-            &slots.slots[parent.operands().start],
-            Some(FrameBinding::Direct(JsValue::Object(id))) if *id == receiver_id
+            &slots.operands[parent.operands().start],
+            JsValue::Object(id) if *id == receiver_id
         ));
         assert!(matches!(
-            &slots.slots[parent.operands().start + 2],
-            Some(FrameBinding::Direct(JsValue::Object(id))) if *id == argument_id
+            &slots.operands[parent.operands().start + 2],
+            JsValue::Object(id) if *id == argument_id
         ));
         assert_eq!(
             runtime
@@ -1017,8 +1040,8 @@ mod tests {
                 ]),
             )
             .unwrap();
-        let argument_index = parent.operands().start + 1;
-        slots.slots[argument_index] = Some(FrameBinding::Uninitialized);
+        // Operands can no longer represent a TDZ binding. Missing receiver
+        // still rejects before an ordinary call can consume any tail owner.
         let error = slots
             .frame_transaction(&mut parent)
             .unwrap()

@@ -3,6 +3,7 @@
 //! A window contains indices, never addresses into the arena. Growing another
 //! window therefore cannot invalidate a retained frame identity. Empty slots
 //! have no Value owner; TDZ is the distinct FrameBinding::Uninitialized state.
+//! Operands use a separate value array: only the live prefix owns references.
 
 use crate::engine::api::error::Error;
 #[cfg(feature = "profiling")]
@@ -22,6 +23,9 @@ pub(in crate::engine::vm) struct SlotStore {
     // active_end participates in frame authority and the logical slot limit.
     slots: Vec<Option<FrameBinding>>,
     active_end: usize,
+    // Canonical operands. Inactive slots may keep immediates, never references.
+    operands: Vec<JsValue>,
+    operand_active_end: usize,
     // Outgoing synchronous call argument buffer (internal values).
     argument_buffer: Vec<JsValue>,
     // Native readable-argument buffers: internal values recycled across
@@ -51,6 +55,8 @@ pub(in crate::engine::vm) struct FrameWindow {
     parameters_end: usize,
     locals_end: usize,
     end: usize,
+    operand_base: usize,
+    operand_end: usize,
     depth: usize,
 }
 
@@ -77,7 +83,7 @@ impl FrameWindow {
 
     #[inline]
     fn operands(&self) -> Range<usize> {
-        self.locals_end..self.end
+        self.operand_base..self.operand_end
     }
 }
 
@@ -327,6 +333,8 @@ impl SlotStore {
         Self {
             slots: Vec::new(),
             active_end: 0,
+            operands: Vec::new(),
+            operand_active_end: 0,
             argument_buffer: Vec::new(),
             native_argument_buffers: Vec::new(),
             owner: Rc::new(()),
@@ -428,11 +436,8 @@ impl SlotStore {
             );
         }
         let start = window.operands().start + window.depth - count;
-        for slot in &mut self.slots[start..start + count] {
-            let Some(FrameBinding::Direct(value)) = slot.take() else {
-                unreachable!("native operand transaction authenticated each slot")
-            };
-            arguments.push(value);
+        for value in &mut self.operands[start..start + count] {
+            arguments.push(std::mem::replace(value, JsValue::Undefined));
         }
         window.depth -= count;
         #[cfg(feature = "profiling")]
@@ -614,15 +619,18 @@ impl SlotStore {
         let original_end = base.checked_add(actual_count);
         let parameters_end = original_end.and_then(|n| n.checked_add(parameter_count));
         let locals_end = parameters_end.and_then(|n| n.checked_add(local_count));
-        let Some(end) = locals_end
-            .and_then(|n| n.checked_add(layout.operand_capacity()))
-            .filter(|end| *end <= self.limit)
-        else {
+        let operand_base = self.operand_active_end;
+        let operand_end = operand_base.checked_add(layout.operand_capacity());
+        let Some(end) = locals_end.filter(|end| {
+            operand_end
+                .and_then(|ops| end.checked_add(ops))
+                .is_some_and(|total| total <= self.limit)
+        }) else {
             release_frame_storage_tolerant(runtime, storage);
             return Err(Error::internal("execution slot limit exceeded"));
         };
         #[cfg(feature = "profiling")]
-        let capacity_before = self.slots.capacity();
+        let capacity_before = self.slots.capacity() + self.operands.capacity();
         if self
             .slots
             .try_reserve(end.saturating_sub(self.slots.len()))
@@ -632,10 +640,25 @@ impl SlotStore {
             return Err(Error::internal("execution slot allocation failed"));
         }
         #[cfg(feature = "profiling")]
+        let operand_initialized_before = self.operands.len();
+        let operand_end = operand_end.unwrap();
+        if self
+            .operands
+            .try_reserve(operand_end.saturating_sub(self.operands.len()))
+            .is_err()
+        {
+            release_frame_storage_tolerant(runtime, storage);
+            return Err(Error::internal("execution operand allocation failed"));
+        }
+        #[cfg(feature = "profiling")]
         record_owned_storage(Cost::SlotCapacity {
             before: capacity_before,
-            after: self.slots.capacity(),
+            after: self.slots.capacity() + self.operands.capacity(),
         });
+        if operand_end > self.operands.len() {
+            self.operands
+                .resize_with(operand_end, || JsValue::Undefined);
+        }
         if self.windows.try_reserve(1).is_err() {
             release_frame_storage_tolerant(runtime, storage);
             return Err(Error::internal("execution window allocation failed"));
@@ -651,8 +674,9 @@ impl SlotStore {
         }
         #[cfg(feature = "profiling")]
         record_owned_storage(Cost::NoneInitialization {
-            count: self.slots.len() - initialized_before,
-            high_water: self.slots.len(),
+            count: self.slots.len() - initialized_before + self.operands.len()
+                - operand_initialized_before,
+            high_water: self.slots.len() + self.operands.len(),
         });
         debug_assert!(self.slots[base..end].iter().all(Option::is_none));
         #[cfg(feature = "profiling")]
@@ -664,12 +688,7 @@ impl SlotStore {
             let mut root_copies = 0;
             for index in 0..actual_count {
                 let value = if let Some(start) = source_start {
-                    let Some(FrameBinding::Direct(value)) = &self.slots[start + index] else {
-                        self.clear_unpublished(runtime, original_end..original_end + index)?;
-                        release_frame_storage_tolerant(runtime, storage);
-                        return Err(Error::internal("outgoing argument is not a direct owner"));
-                    };
-                    value
+                    &self.operands[start + index]
                 } else {
                     &storage.original_arguments[index]
                 };
@@ -727,13 +746,17 @@ impl SlotStore {
             if let Some((parent, count, method)) = source {
                 let start = source_start.unwrap();
                 for index in 0..count {
-                    self.slots[base + index] = self.slots[start + index].take();
+                    self.slots[base + index] = Some(FrameBinding::Direct(std::mem::replace(
+                        &mut self.operands[start + index],
+                        JsValue::Undefined,
+                    )));
                 }
                 let consumed = count + 1 + usize::from(method);
                 for index in start - 1 - usize::from(method)..start {
-                    if let Some(binding) = self.slots[index].take() {
-                        release_binding(runtime, binding)?;
-                    }
+                    let value = std::mem::replace(&mut self.operands[index], JsValue::Undefined);
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
                 }
                 parent.depth -= consumed;
                 #[cfg(feature = "profiling")]
@@ -768,16 +791,17 @@ impl SlotStore {
             }
         }
         for (index, value) in storage.operands.into_iter().enumerate() {
-            self.slots[locals_end + index] = Some(FrameBinding::Direct(value));
+            self.operands[operand_base + index] = value;
         }
         self.active_end = end;
+        self.operand_active_end = operand_end;
         let id = self.next_window;
         self.next_window = next_window;
         self.windows.push(id);
         #[cfg(feature = "profiling")]
         {
             self.live_slots += installed;
-            record_owned_storage(Cost::Initialize(end - base));
+            record_owned_storage(Cost::Initialize(end - base + operand_end - operand_base));
             record_owned_storage(Cost::Move(installed));
             self.record_occupancy();
         }
@@ -790,8 +814,18 @@ impl SlotStore {
             parameters_end,
             locals_end,
             end,
+            operand_base,
+            operand_end,
             depth,
         })
+    }
+
+    fn assert_inactive_operands(&self, window: &FrameWindow) {
+        debug_assert!(
+            self.operands[window.operand_base + window.depth..window.operand_end]
+                .iter()
+                .all(operand_is_immediate)
+        );
     }
 
     // Only fallible parameter copies can reach this unpublished rollback.
@@ -808,7 +842,7 @@ impl SlotStore {
     #[cfg(feature = "profiling")]
     fn record_occupancy(&self) {
         record_owned_storage(Cost::Occupancy {
-            reserved: self.active_end,
+            reserved: self.active_end + self.operand_active_end,
             live: self.live_slots,
         });
     }
@@ -819,6 +853,7 @@ impl SlotStore {
         if !Rc::ptr_eq(&self.owner, &window.owner)
             || self.windows.last() != Some(&window.id)
             || self.active_end != window.whole().end
+            || self.operand_active_end != window.operand_end
         {
             return Err(Error::internal(
                 "frame window is not the active arena window",
@@ -839,12 +874,6 @@ impl SlotStore {
         Error::internal("owned operand stack underflow")
     }
 
-    #[cold]
-    #[inline(never)]
-    pub(super) fn operand_slot_not_a_value() -> Error {
-        Error::internal("owned operand slot is not a value")
-    }
-
     pub(in crate::engine::vm) fn peek(
         &self,
         window: &FrameWindow,
@@ -860,10 +889,7 @@ impl SlotStore {
             .checked_add(1)
             .and_then(|offset| window.depth.checked_sub(offset))
             .ok_or_else(Self::operand_stack_underflow)?;
-        match &self.slots[window.operands().start + offset] {
-            Some(FrameBinding::Direct(value)) => Ok(value),
-            _ => Err(Self::operand_slot_not_a_value()),
-        }
+        Ok(&self.operands[window.operands().start + offset])
     }
 
     /// Validate only the receiver and argument domains, in the original call
@@ -941,19 +967,13 @@ impl SlotStore {
             .checked_sub(2)
             .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
-        let [
-            Some(FrameBinding::Direct(left)),
-            Some(FrameBinding::Direct(right)),
-        ] = &self.slots[index..index + 2]
-        else {
-            return Err(Self::operand_slot_not_a_value());
-        };
+        let left = &self.operands[index];
+        let right = &self.operands[index + 1];
         let (Some(left), Some(right)) = (left.as_number_repr(), right.as_number_repr()) else {
             return Ok(false);
         };
         let result = operation(left, right);
-        self.slots[index] = Some(FrameBinding::Direct(result));
-        self.slots[index + 1] = None;
+        self.operands[index] = result;
         window.depth -= 1;
         #[cfg(feature = "profiling")]
         {
@@ -982,19 +1002,13 @@ impl SlotStore {
             .checked_sub(2)
             .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
-        let [
-            Some(FrameBinding::Direct(left)),
-            Some(FrameBinding::Direct(right)),
-        ] = &self.slots[index..index + 2]
-        else {
-            return Err(Self::operand_slot_not_a_value());
-        };
+        let left = &self.operands[index];
+        let right = &self.operands[index + 1];
         let (Some(left), Some(right)) = (left.as_number_repr(), right.as_number_repr()) else {
             return Ok(None);
         };
         let decision = compare(left, right);
-        self.slots[index] = None;
-        self.slots[index + 1] = None;
+        // Both inactive values are numbers and own no references.
         window.depth -= 2;
         #[cfg(feature = "profiling")]
         {
@@ -1021,10 +1035,10 @@ impl SlotStore {
         // No owner or runtime state can change between the leaf's no-drain
         // proof and replacing this already-validated top operand.
         let index = window.operands().start + window.depth - 1;
-        let base = self.slots[index].replace(FrameBinding::Direct(value));
-        if let Some(binding) = base {
-            release_binding(runtime, binding)?;
-        }
+        let base = std::mem::replace(&mut self.operands[index], value);
+        runtime
+            .release_jsvalue(base)
+            .map_err(runtime_error_to_vm_error)?;
         #[cfg(feature = "profiling")]
         {
             record_owned_storage(Cost::Move(2));
@@ -1083,9 +1097,7 @@ impl SlotStore {
             return Err(Self::operand_stack_capacity_exceeded());
         }
         let index = window.operands().start + window.depth;
-        if self.slots[index].is_some() {
-            return Err(Self::operand_push_replaces_live_value());
-        }
+        debug_assert!(operand_is_immediate(&self.operands[index]));
         Ok(index)
     }
 
@@ -1097,16 +1109,10 @@ impl SlotStore {
         Error::internal("owned operand stack exceeds verified capacity")
     }
 
-    #[cold]
-    #[inline(never)]
-    fn operand_push_replaces_live_value() -> Error {
-        Error::internal("owned operand push would replace a live value")
-    }
-
     /// The checked index is private and consumed without an observable boundary.
     #[inline]
     fn install_operand(&mut self, window: &mut FrameWindow, index: usize, value: JsValue) {
-        self.slots[index] = Some(FrameBinding::Direct(value));
+        self.operands[index] = value;
         window.depth += 1;
         #[cfg(feature = "profiling")]
         {
@@ -1146,7 +1152,7 @@ impl SlotStore {
         if count > 1 {
             record_owned_storage(Cost::Move(count));
         }
-        let values = &mut self.slots[end - count..end];
+        let values = &mut self.operands[end - count..end];
         if left {
             values.rotate_left(1);
         } else {
@@ -1208,11 +1214,10 @@ impl SlotStore {
             self.live_slots -= 1;
             record_owned_storage(Cost::Move(1));
         }
-        let Some(FrameBinding::Direct(value)) =
-            self.slots[window.operands().start + window.depth].take()
-        else {
-            unreachable!("peek authenticated this slot before the move")
-        };
+        let value = std::mem::replace(
+            &mut self.operands[window.operands().start + window.depth],
+            JsValue::Undefined,
+        );
         Ok(value)
     }
 
@@ -1228,11 +1233,7 @@ impl SlotStore {
         let index = window.operands().start + window.depth - from_top - 1;
         #[cfg(feature = "profiling")]
         record_owned_storage(Cost::Move(2));
-        let Some(FrameBinding::Direct(previous)) =
-            self.slots[index].replace(FrameBinding::Direct(value))
-        else {
-            unreachable!()
-        };
+        let previous = std::mem::replace(&mut self.operands[index], value);
         Ok(previous)
     }
 
@@ -1258,9 +1259,7 @@ impl SlotStore {
     ) -> Result<bool, Error> {
         self.peek_current(window, from_top)?;
         let index = window.operands().start + window.depth - from_top - 1;
-        let Some(FrameBinding::Direct(value)) = &mut self.slots[index] else {
-            unreachable!()
-        };
+        let value = &mut self.operands[index];
         runtime
             .try_release_slot_value_jsvalue(value)
             .map_err(runtime_error_to_vm_error)
@@ -1531,10 +1530,10 @@ impl SlotStore {
             taken.locals.push(self.slots[index].take().unwrap());
         }
         for index in window.operands().start..window.operands().start + window.depth {
-            let Some(FrameBinding::Direct(value)) = self.slots[index].take() else {
-                return Err(Error::internal("operand is not an owned value"));
-            };
-            taken.operands.push(value);
+            taken.operands.push(std::mem::replace(
+                &mut self.operands[index],
+                JsValue::Undefined,
+            ));
         }
         #[cfg(feature = "profiling")]
         {
@@ -1559,6 +1558,8 @@ impl SlotStore {
         }
         debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
         self.active_end = window.whole().start;
+        self.operand_active_end = window.operand_base;
+        self.assert_inactive_operands(&window);
         self.windows.pop();
         Ok(taken)
     }
@@ -1576,6 +1577,20 @@ impl SlotStore {
             window,
         )
     }
+}
+
+/// Immediates carry neither heap nor atom ownership. An inactive slot may
+/// contain one of these values; all other values must belong to an active owner.
+fn operand_is_immediate(value: &JsValue) -> bool {
+    matches!(
+        value,
+        JsValue::Undefined
+            | JsValue::Null
+            | JsValue::Bool(_)
+            | JsValue::Int(_)
+            | JsValue::Float(_)
+            | JsValue::ShortBigInt(_)
+    )
 }
 
 /// The running stack's copy boundary. Scalars copy inline; every heap-backed
@@ -1654,6 +1669,68 @@ impl Drop for SlotStore {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn operand_cycle_is_an_external_root_until_its_active_owner_is_retired() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.max_stack = 2;
+        let mut slots = SlotStore::new(2);
+        let mut window = slots
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
+            .unwrap();
+        let value = runtime
+            .into_jsvalue(
+                context
+                    .eval("(()=>{let o={};o.self=o;return o})()")
+                    .unwrap(),
+            )
+            .unwrap();
+        let JsValue::Object(id) = &value else {
+            panic!("cycle object");
+        };
+        let id = *id;
+        slots.push(&mut window, value).unwrap();
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+        slots.assert_inactive_operands(&window);
+        let value = slots.pop(&mut window).unwrap();
+        slots.assert_inactive_operands(&window);
+        runtime.release_jsvalue(value).unwrap();
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        slots.clear_frame(&runtime, window).unwrap();
+    }
+
+    #[test]
+    fn numeric_reduction_may_leave_inactive_immediates_and_reuse_them() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.max_stack = 2;
+        let mut slots = SlotStore::new(2);
+        let mut window = slots
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
+            .unwrap();
+        slots.push(&mut window, JsValue::Int(1)).unwrap();
+        slots.push(&mut window, JsValue::Int(2)).unwrap();
+        assert!(
+            slots
+                .binary_number(&mut window, |_, _| JsValue::Int(3))
+                .unwrap()
+        );
+        assert_eq!(window.depth, 1);
+        assert_eq!(slots.operands[1], JsValue::Int(2));
+        slots.assert_inactive_operands(&window);
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        slots
+            .push(&mut window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        slots.clear_frame(&runtime, window).unwrap();
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+    }
 
     #[test]
     fn owned_property_ic_capacity_preflight_and_receiver_forms_preserve_owners() {
@@ -2098,44 +2175,41 @@ mod tests {
     }
 
     #[test]
-    fn call_domain_validation_preserves_receiver_then_argument_rejection_order() {
-        // Internal values carry no runtime branding, so domain validation only
-        // enforces receiver/left-to-right slot presence.
-        for removed_index in [0, 2, 3] {
-            let runtime = Runtime::new();
-            let context = runtime.new_context().expect("create context");
-            let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
-            owner.metadata.max_stack = 4;
-            let mut slots = SlotStore::new(4);
-            let mut window = slots
-                .push_frame(&runtime, &owner.frame_layout(), empty_storage())
-                .unwrap();
-            // Caller shape is [receiver, callee, first argument, second argument].
-            for value in [
-                Value::Object(runtime.new_object(None).unwrap()),
-                Value::Int(0),
-                Value::Object(runtime.new_object(None).unwrap()),
-                Value::Object(runtime.new_object(None).unwrap()),
-            ] {
-                slots
-                    .push(&mut window, into_internal(&runtime, value))
-                    .unwrap();
-            }
-            let removed = slots.slots[removed_index].take();
-            let error = slots
-                .validate_call_value_domains(&window, &runtime, 2, true)
-                .unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .contains("owned operand slot is not a value"),
-                "removed slot {removed_index}: {error}"
-            );
-            assert_eq!(window.depth, 4);
-            assert!(slots.slots[removed_index].is_none());
-            slots.slots[removed_index] = removed;
-            slots.clear_frame(&runtime, window).unwrap();
-        }
+    fn call_domain_validation_rejects_missing_tail_without_changing_owners() {
+        // A value-only operand vector cannot represent vacant or TDZ operands.
+        // Malformed call arity still rejects before any source owner moves.
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.max_stack = 2;
+        let mut slots = SlotStore::new(2);
+        let mut window = slots
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
+            .unwrap();
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        slots
+            .push(&mut window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        slots.push(&mut window, JsValue::Int(7)).unwrap();
+        let error = slots
+            .validate_call_value_domains(&window, &runtime, 1, true)
+            .unwrap_err();
+        assert_eq!(error.message(), "owned operand stack underflow");
+        assert_eq!(window.depth, 2);
+        assert!(matches!(slots.peek(&window, 1), Ok(JsValue::Object(actual)) if *actual == id));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .unwrap(),
+            1
+        );
+        slots.clear_frame(&runtime, window).unwrap();
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
     }
 
     #[test]
@@ -2535,11 +2609,11 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(child.whole(), 1..8);
-        assert_eq!(child.original_arguments(), 1..2);
-        assert_eq!(child.parameters(), 2..4);
-        assert_eq!(child.locals(), 4..6);
-        assert_eq!(child.operands(), 6..8);
+        assert_eq!(child.whole(), 0..5);
+        assert_eq!(child.original_arguments(), 0..1);
+        assert_eq!(child.parameters(), 1..3);
+        assert_eq!(child.locals(), 3..5);
+        assert_eq!(child.operands(), 1..3);
         assert!(slots.peek(&parent, 0).is_err());
         assert!(slots.parameter(&child, 2).is_err());
         assert!(slots.local(&child, 2).is_err());
@@ -2577,7 +2651,7 @@ mod tests {
         assert!(slots.slots.iter().all(Option::is_none));
         #[cfg(target_pointer_width = "64")]
         // Actual arity remains independent when unobservable originals are omitted.
-        assert_eq!(std::mem::size_of::<super::FrameWindow>(), 72);
+        assert_eq!(std::mem::size_of::<super::FrameWindow>(), 88);
     }
 
     #[test]
@@ -2689,9 +2763,9 @@ mod tests {
             Value::Int(99)
         );
         assert!(
-            slots.slots[parent.operands().start + 1..parent.operands().end]
+            slots.operands[parent.operands().start + 1..parent.operands().end]
                 .iter()
-                .all(Option::is_none)
+                .all(super::operand_is_immediate)
         );
         super::release_frame_storage(&runtime, storage);
         slots.clear_frame(&runtime, parent).unwrap();
@@ -2795,8 +2869,8 @@ mod tests {
                     .unwrap();
                 windows.push(window);
             }
-            assert_eq!(slots.active_end, 12);
-            assert_eq!(slots.slots.len(), 12);
+            assert_eq!(slots.operand_active_end, 12);
+            assert_eq!(slots.operands.len(), 12);
             while let Some(window) = windows.pop() {
                 slots.clear_frame(&runtime, window).unwrap();
                 assert!(slots.slots[slots.active_end..].iter().all(Option::is_none));
@@ -2808,11 +2882,11 @@ mod tests {
                 }
             }
             assert_eq!(slots.active_end, 0);
-            assert_eq!(slots.slots.len(), 12);
+            assert_eq!(slots.operands.len(), 12);
             if let Some(previous) = capacity {
-                assert_eq!(slots.slots.capacity(), previous);
+                assert_eq!(slots.operands.capacity(), previous);
             }
-            capacity = Some(slots.slots.capacity());
+            capacity = Some(slots.operands.capacity());
         }
         #[cfg(feature = "profiling")]
         {
@@ -3022,7 +3096,9 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(slots.depth(&window), 1);
-        assert!(slots.slots[window.operands().start + 1].is_none());
+        assert!(super::operand_is_immediate(
+            &slots.operands[window.operands().start + 1]
+        ));
         assert_eq!(
             take_public(&runtime, slots.pop(&mut window).unwrap()),
             Value::Int(4)
@@ -3045,26 +3121,28 @@ mod tests {
         slots
             .push(&mut parent, into_internal(&runtime, Value::Object(object)))
             .unwrap();
-        let original_capacity = slots.slots.capacity();
+        let original_capacity = slots.operands.capacity();
         owner.metadata.max_stack = 4096;
         let child = slots
             .push_frame(&runtime, &owner.frame_layout(), empty_storage())
             .unwrap();
-        assert!(slots.slots.capacity() > original_capacity);
+        assert!(slots.operands.capacity() > original_capacity);
         assert!(
             slots.peek(&parent, 0).is_err(),
             "an inactive parent cannot access the current window"
         );
         slots.clear_frame(&runtime, child).unwrap();
         let result = slots.pop(&mut parent).unwrap();
-        assert!(slots.slots[parent.operands().start].is_none());
+        assert!(super::operand_is_immediate(
+            &slots.operands[parent.operands().start]
+        ));
         slots.clear_frame(&runtime, parent).unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_ok());
         runtime.release_jsvalue(result).unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
         assert_eq!(slots.active_end, 0);
         assert!(slots.slots.iter().all(Option::is_none));
-        assert!(slots.slots.capacity() >= original_capacity);
+        assert!(slots.operands.capacity() >= original_capacity);
     }
 
     #[test]
@@ -3202,7 +3280,7 @@ mod tests {
         assert!(!runtime.0.deferred_references.has_pending());
         // The intentionally stale handle owns no edge: it was never retained by
         // the failed transaction, so it must not reach frame teardown.
-        slots.slots[window.operands().start + 1].take();
+        slots.operands[window.operands().start + 1] = JsValue::Undefined;
         slots.clear_frame(&runtime, window).unwrap();
     }
 

@@ -1,6 +1,6 @@
 //! A selected getter transfers its existing edges to the ordinary installer.
 //! The caller slot is not padded with a synthetic callee or argument buffer.
-use super::{Error, FrameBinding, FrameExecution, JsValue, Runtime};
+use super::{Error, FrameExecution, JsValue, Runtime};
 use crate::engine::{
     heap::runtime::RuntimeState,
     vm::{
@@ -75,10 +75,10 @@ impl FrameExecution<'_> {
         let retired_receiver = if keep_receiver {
             None
         } else {
-            let Some(FrameBinding::Direct(value)) = execution.slots.slots[window.start - 1].take()
-            else {
-                unreachable!("checked getter input is a direct operand")
-            };
+            let value = std::mem::replace(
+                &mut execution.slots.operands[window.start - 1],
+                JsValue::Undefined,
+            );
             Some(value)
         };
         let Some(SelectedNamedRead::Getter(selected)) = execution.selected_named_read.take() else {

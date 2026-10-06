@@ -33,6 +33,33 @@ fn automatic_cycle_gc_bounds_unreachable_loops_and_keeps_active_roots() {
 }
 
 #[test]
+fn automatic_cycle_gc_keeps_caller_operand_through_allocating_callback() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    pressure(&runtime);
+    // The receiver has no global/local owner in the caller. It remains on the
+    // caller's operand stack while the key callback allocates and collects.
+    assert_eq!(
+        context
+            .eval(
+                r#"
+        function receiver() { let o={tag:42}; o.self=o; return o; }
+        function key() {
+            for(let i=0;i<20000;i++) { let dead={}; dead.self=dead; }
+            return 'tag';
+        }
+        receiver()[key()]
+    "#
+            )
+            .unwrap(),
+        Value::Int(42)
+    );
+    assert!(
+        runtime.heap_counts().unwrap().object_nodes < super::gc_pressure::MIN_GC_HEADROOM + 1024
+    );
+}
+
+#[test]
 fn automatic_cycle_gc_keeps_weak_targets_until_outer_turn_and_queues_cleanup() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context().expect("create context");

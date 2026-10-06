@@ -80,15 +80,17 @@ impl SlotStore {
         let start = prepared.start;
         let base = prepared.window.base;
         for index in 0..count {
-            self.slots[base + index] = self.slots[start + index].take();
+            self.slots[base + index] = Some(FrameBinding::Direct(std::mem::replace(
+                &mut self.operands[start + index],
+                JsValue::Undefined,
+            )));
         }
-        let Some(FrameBinding::Direct(JsValue::Object(function))) = self.slots[start - 2].take()
+        let JsValue::Object(function) =
+            std::mem::replace(&mut self.operands[start - 2], JsValue::Undefined)
         else {
             unreachable!("selected constructor slot owns its function")
         };
-        let Some(FrameBinding::Direct(new_target)) = self.slots[start - 1].take() else {
-            unreachable!("selected newTarget slot owns its value")
-        };
+        let new_target = std::mem::replace(&mut self.operands[start - 1], JsValue::Undefined);
         let receiver = receiver
             .take()
             .expect("constructor receiver guard owns its edge");

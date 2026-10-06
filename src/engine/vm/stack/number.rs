@@ -29,7 +29,7 @@ impl SlotStore {
             return false;
         };
         let operand_index = window.operands().start + top;
-        let Some(Some(FrameBinding::Direct(value))) = self.slots.get(operand_index) else {
+        let Some(value) = self.operands.get(operand_index) else {
             return false;
         };
         let Some(value) = value.as_number_repr() else {
@@ -40,7 +40,7 @@ impl SlotStore {
         // release, allocate, or call back into JavaScript.
         self.slots[destination_index] = Some(FrameBinding::Direct(value.into()));
         if !keep {
-            self.slots[operand_index] = None;
+            // The inactive Number owns no reference.
             window.depth -= 1;
         }
         #[cfg(feature = "profiling")]
