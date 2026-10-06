@@ -9,8 +9,8 @@ use crate::engine::builtins::native::{
     NativeFunctionId, ObjectAccessorKind, ObjectExtensibilityKind, ObjectIntegrityKind,
     ObjectKeysKind, ObjectOwnPropertyKeysKind, PrimitiveKind,
 };
-use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
-use crate::engine::heap::{ContextId, ObjectData, ObjectId, ObjectPayload, PrimitiveObjectData};
+use crate::engine::heap::runtime::RuntimeState;
+use crate::engine::heap::{ContextId, ObjectId, ObjectPayload, PrimitiveObjectData};
 use crate::engine::object::operations::{ArrayOwnKey, InternalDefineResult};
 use crate::engine::object::{
     AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, SymbolRef,
@@ -1315,30 +1315,22 @@ impl Runtime {
 const _: () = assert!(std::mem::size_of::<ObjectIteratorStep>() <= 64);
 
 impl RuntimeState {
-    /// The checked prototype temporary preserves the public factory's retain
-    /// overflow boundary even when its empty layout is already cached.
+    /// The realm owns its Object.prototype and allocation runs no JS, so the
+    /// object needs no temporary prototype owner; its shape holds that edge.
+    /// The factory still rejects a prototype that could not take another
+    /// reference, checked without retaining it (a frozen B0 witness).
     pub(crate) fn new_ordinary_object_in_realm(
         &mut self,
         poisoned: &Cell<bool>,
         realm: ContextId,
     ) -> Result<ObjectId, RuntimeError> {
         let prototype = self.heap.context(realm)?.object_prototype;
-        self.heap.retain_object(prototype)?;
-        let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
-        let (state, prototype_owner) = prototype_owner.parts();
-        let object = state.allocate_object_with_layout(
-            poisoned,
-            Some(prototype),
-            &[],
-            Vec::new(),
-            ObjectData::ordinary,
-        )?;
-        let mut object_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(object));
-        let (state, object_owner) = object_owner.parts();
-        state.release_owned_jsvalue(poisoned, prototype_owner.take().expect("prototype owner"))?;
-        let JsValue::Object(object) = object_owner.take().expect("new object owner") else {
-            unreachable!("ordinary factory allocated an object")
-        };
-        Ok(object)
+        self.heap
+            .object_strong_count(prototype)?
+            .checked_add(1)
+            .ok_or(crate::engine::heap::HeapError::Overflow {
+                operation: "retaining a heap reference",
+            })?;
+        self.new_empty_ordinary_object(poisoned, prototype)
     }
 }

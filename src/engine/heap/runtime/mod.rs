@@ -4,6 +4,7 @@
 //! each context is a separate realm and execution surface. The heap and
 //! intrinsics extend this boundary; they are not hidden in the compiler or VM.
 
+mod empty_shapes;
 pub(crate) mod execution_turn;
 mod layout;
 pub(crate) mod owned_values;
@@ -140,6 +141,7 @@ pub(crate) struct RuntimeState {
     /// weak and are validated before reuse. Buckets are keyed by
     /// [`shape::compute_fingerprint_hash`] and collisions compare layouts.
     pub(crate) retained_shapes: retained_shapes::RetainedShapes,
+    pub(crate) empty_shapes: empty_shapes::EmptyShapes,
     pub(crate) shape_cache: HashMap<u64, Vec<ShapeId>, FxBuildHasher>,
     pub(crate) shape_hashes: HashMap<ShapeId, u64, FxBuildHasher>,
     pub(crate) shape_transitions:
