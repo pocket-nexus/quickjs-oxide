@@ -42,6 +42,11 @@ impl<'a> FrameExecution<'a> {
     ) -> Result<Self, Error> {
         let frame = execution.frames.current_mut(id)?;
         execution.slots.check_current(&frame.window)?;
+        if frame.window.operands().len() < frame.executable.frame_layout().operand_capacity() {
+            return Err(Error::internal(
+                "execution window is smaller than verified stack",
+            ));
+        }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("core.window_authentication");
         #[cfg(feature = "profiling")]
@@ -860,10 +865,41 @@ impl FrameSlots<'_> {
         let index = match source {
             DirectSlot::Local(index) | DirectSlot::Argument(index) => usize::from(index),
         };
-        let FrameBinding::Direct(value) = self.store.slots[region].get(index)?.as_ref()? else {
+        if index >= region.len() {
+            return None;
+        }
+        // Admission fixes the region within this store. Avoid revalidating
+        // both slice endpoints for every published local or argument read.
+        let FrameBinding::Direct(value) = self.store.slots[region.start + index].as_ref()? else {
             return None;
         };
         Some(value)
+    }
+
+    /// Borrow the selected numeric destination once. A caller may compute and
+    /// commit while this borrow excludes changes to the binding or its owner.
+    #[inline(always)]
+    pub(in crate::engine::vm) fn admit_numeric_local(
+        &mut self,
+        index: u16,
+    ) -> Option<(AdmittedLocalDestination<'_>, Number)> {
+        let index = usize::from(index);
+        if index >= self.window.locals().len() {
+            return None;
+        }
+        let FrameBinding::Direct(slot) =
+            self.store.slots[self.window.locals().start + index].as_mut()?
+        else {
+            return None;
+        };
+        let number = slot.as_number_repr()?;
+        Some((
+            AdmittedLocalDestination {
+                slot,
+                old_number: Some(number),
+            },
+            number,
+        ))
     }
 
     /// Move a scalar copy straight from a direct binding into the operand

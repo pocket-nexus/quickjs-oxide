@@ -1060,23 +1060,15 @@ pub(super) fn execute_frame_in_state(
                         crate::engine::api::profiling::record_execution_dispatch(
                             runtime, executable, pc, true,
                         );
-                        let hit = cursor.with_slots(|slots| {
-                            if !slots.has_operand_capacity(if descriptor & 2 != 0 { 2 } else { 1 })
-                            {
-                                return Ok(false);
+                        let hit = {
+                            let mut slots = cursor.transaction.slots();
+                            if let Some((destination, old)) = slots.admit_numeric_local(index) {
+                                destination.commit(old.update(descriptor & 1 != 0));
+                                true
+                            } else {
+                                false
                             }
-                            let Some(old) = slots
-                                .direct_value(DirectSlot::Local(index))
-                                .and_then(JsValue::as_number_repr)
-                            else {
-                                return Ok(false);
-                            };
-                            slots.commit_number_local_discard(
-                                index,
-                                old.update(descriptor & 1 != 0),
-                            )?;
-                            Ok(true)
-                        })?;
+                        };
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_outcome(
                             runtime,
@@ -1742,9 +1734,6 @@ pub(super) fn execute_frame_in_state(
                             runtime, executable, pc, true,
                         );
                         let decision = cursor.with_slots(|slots| {
-                            if !slots.has_operand_capacity(2) {
-                                return Ok(None);
-                            }
                             let left = slots.direct_value(left).and_then(JsValue::as_number_repr);
                             let right = slots.direct_value(right).and_then(JsValue::as_number_repr);
                             Ok(left
