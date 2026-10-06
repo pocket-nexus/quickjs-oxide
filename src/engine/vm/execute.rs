@@ -118,7 +118,7 @@ impl<'a> FrameCursor<'a> {
     }
 
     fn move_owned(&mut self) -> Result<JsValue, Error> {
-        self.with_slots(|slots| slots.pop())
+        Ok(self.slots.pop_published())
     }
 
     fn copy_owned(&self, state: &mut RuntimeState, value: &JsValue) -> Result<JsValue, Error> {
@@ -126,12 +126,15 @@ impl<'a> FrameCursor<'a> {
     }
 
     fn commit_push(&mut self, value: JsValue) -> Result<(), Error> {
-        self.with_slots(|slots| slots.push(value))
+        self.slots.push_published(value);
+        Ok(())
     }
 
+    // Internal producers outside bytecode dispatch retain a checked commit:
+    // their newly allocated edge must be released if the destination rejects.
     fn commit_owned(&mut self, state: &mut RuntimeState, value: JsValue) -> Result<(), Error> {
         let mut pending = Some(value);
-        let result = self.with_slots(|slots| slots.push_pending(&mut pending));
+        let result = self.slots.push_pending(&mut pending);
         if let Some(value) = pending {
             state
                 .release_owned_jsvalue(self.poisoned, value)
@@ -151,7 +154,7 @@ impl<'a> FrameCursor<'a> {
         self.publish_fault(state, token)?;
         let equal = self.with_slots(|slots| {
             state
-                .strict_equal_jsvalue(slots.peek(1)?, slots.peek(0)?)
+                .strict_equal_jsvalue(slots.peek_published(1), slots.peek_published(0))
                 .map_err(runtime_error_to_vm_error)
         })?;
         // Both slots were authenticated above. A comparison error leaves both
@@ -623,15 +626,10 @@ pub(super) fn execute_frame_in_state(
                         crate::engine::api::profiling::record_execution_dispatch(
                             runtime, executable, pc, true,
                         );
-                        let result = cursor.with_slots(|slots| {
-                            let Some(value) = slots.immediate_local(index) else {
-                                return Ok(None);
-                            };
-                            if !slots.has_operand_capacity(2) {
-                                return Ok(None);
-                            }
-                            Ok(Some(value.add(Number::Int(1))))
-                        })?;
+                        let result = cursor
+                            .slots
+                            .number_published(DirectSlot::Local(index))
+                            .map(|value| value.add(Number::Int(1)));
                         if let Some(value) = result {
                             #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_execution_outcome(
@@ -828,7 +826,7 @@ pub(super) fn execute_frame_in_state(
                                             return Ok(Err(Miss::OperandCapacity));
                                         }
                                         let Some(accumulator) =
-                                            slots.peek(0).ok().and_then(JsValue::as_number_repr)
+                                            slots.peek_published(0).as_number_repr()
                                         else {
                                             return Ok(Err(Miss::AccumulatorNotNumber));
                                         };
@@ -839,7 +837,8 @@ pub(super) fn execute_frame_in_state(
                                             )) => slot,
                                             _ => unreachable!("verified preincrement index"),
                                         };
-                                        let Some(old_index) = slots.immediate_local(index_slot)
+                                        let Some(old_index) =
+                                            slots.number_published(DirectSlot::Local(index_slot))
                                         else {
                                             return Ok(Err(Miss::IndexNotNumber));
                                         };
@@ -882,11 +881,14 @@ pub(super) fn execute_frame_in_state(
                                     if !slots.has_operand_capacity(region.peak as usize) {
                                         return Ok(Err(Miss::OperandCapacity));
                                     }
-                                    let Some(value) = slots.peek(0)?.as_number_repr() else {
+                                    let Some(value) = slots.peek_published(0).as_number_repr()
+                                    else {
                                         return Ok(Err(Miss::DeltaNotNumber));
                                     };
-                                    let Some(index) =
-                                        slots.peek(1)?.as_number_repr().and_then(array_index)
+                                    let Some(index) = slots
+                                        .peek_published(1)
+                                        .as_number_repr()
+                                        .and_then(array_index)
                                     else {
                                         return Ok(Err(Miss::IndexNotNumericInteger));
                                     };
@@ -903,7 +905,7 @@ pub(super) fn execute_frame_in_state(
                                     if !eligible {
                                         return Ok(Err(Miss::DestinationOrReceiverUnavailable));
                                     }
-                                    let base = slots.peek(2)?;
+                                    let base = slots.peek_published(2);
                                     if let Err(reason) =
                                         state.try_replace_array_own_number(base, index, value)
                                     {
@@ -1023,7 +1025,7 @@ pub(super) fn execute_frame_in_state(
                         let first = match decoded.opcode() {
                             Opcode::NumericArrayStoreAndLocal => {
                                 cursor.with_slots(|slots| {
-                                    slots.peek(2)?;
+                                    slots.peek_published(2);
                                     slots.insert_copy_in_state(state, 0, 3)
                                 })?;
                                 None
@@ -1062,7 +1064,9 @@ pub(super) fn execute_frame_in_state(
                         );
                         let hit = {
                             let slots = &mut cursor.slots;
-                            if let Some((destination, old)) = slots.admit_numeric_local(index) {
+                            if let Some((destination, old)) =
+                                slots.admit_numeric_local_published(index)
+                            {
                                 destination.commit(old.update(descriptor & 1 != 0));
                                 true
                             } else {
@@ -1120,7 +1124,8 @@ pub(super) fn execute_frame_in_state(
                             runtime, executable, pc, true,
                         );
                         let result = cursor.with_slots(|slots| {
-                            let Some(value) = slots.immediate_parameter(index) else {
+                            let Some(value) = slots.number_published(DirectSlot::Argument(index))
+                            else {
                                 return Ok(None);
                             };
                             if !slots.has_operand_capacity(2) {
@@ -1642,17 +1647,13 @@ pub(super) fn execute_frame_in_state(
                     }
                     tags::CompareBranchStack => {
                         let descriptor = operand;
-                        let comparison = Opcode::from_raw((descriptor & 0x3ff) as u16)
-                            .ok_or_else(|| Error::internal("invalid published comparison"))?;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
                             runtime, executable, pc, true,
                         );
-                        let decision = cursor.with_slots(|slots| {
-                            slots.number_pair_branch(|left, right| {
-                                compare_direct_numbers(comparison as u16, left, right)
-                            })
-                        })?;
+                        let decision = cursor.slots.number_pair_branch_published(|left, right| {
+                            compare_direct_numbers((descriptor & 0x3ff) as u16, left, right)
+                        });
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_outcome(
                             runtime,
@@ -1673,6 +1674,8 @@ pub(super) fn execute_frame_in_state(
                             });
                             continue;
                         }
+                        let comparison = Opcode::from_raw((descriptor & 0x3ff) as u16)
+                            .ok_or_else(|| Error::internal("invalid published comparison"))?;
                         if matches!(comparison, Opcode::Eq | Opcode::Neq) {
                             if let Some(equal) = cursor.with_slots(|slots| {
                                 slots.nullish_equality_in_state(state, &runtime.0.poisoned)
@@ -1686,11 +1689,9 @@ pub(super) fn execute_frame_in_state(
                                 continue;
                             }
                         }
-                        let completed = cursor.with_slots(|slots| {
-                            slots.binary_number(|left, right| {
-                                binary_number_result(comparison, left, right)
-                            })
-                        })?;
+                        let completed = cursor.slots.binary_number_published(|left, right| {
+                            binary_number_result(comparison, left, right)
+                        });
                         if !completed {
                             if matches!(comparison, Opcode::StrictEq | Opcode::StrictNeq) {
                                 let decision = cursor.strict_comparison(state, active_frame)?
@@ -1917,6 +1918,13 @@ pub(super) fn execute_frame_in_state(
                             decoded.opcode(),
                             Opcode::PutLocalCheck | Opcode::SetLocalCheck
                         );
+                        if cursor
+                            .slots
+                            .try_store_number_published(DirectSlot::Local(index), keep)
+                        {
+                            cursor.advance(next);
+                            continue;
+                        }
                         let binding =
                             cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
                         if binding == BindingClass::Captured {
@@ -1931,15 +1939,6 @@ pub(super) fn execute_frame_in_state(
                         if checked && binding == BindingClass::Uninitialized {
                             break 'dispatch Ok(VmAction::LexicalUninitialized(index));
                         }
-                        if binding == BindingClass::DirectNumber
-                            && cursor.with_slots(|slots| {
-                                Ok(slots
-                                    .store_proven_number_operand(DirectSlot::Local(index), keep))
-                            })?
-                        {
-                            cursor.advance(next);
-                            continue;
-                        }
                         let progress = cursor.with_slots(|slots| {
                             if keep {
                                 slots.set_direct_in_state(
@@ -1965,7 +1964,7 @@ pub(super) fn execute_frame_in_state(
                         cursor.publish_fault(state, active_frame)?;
                         let old = cursor.with_slots(|slots| {
                             let next = if keep {
-                                copy_value_in_state(state, slots.peek(0)?)?
+                                copy_value_in_state(state, slots.peek_published(0))?
                             } else {
                                 slots.pop()?
                             };
@@ -1980,6 +1979,13 @@ pub(super) fn execute_frame_in_state(
                     tags::PutArg | tags::SetArg => {
                         let index = published_u16(operand);
                         let keep = decoded.opcode() == Opcode::SetArg;
+                        if cursor
+                            .slots
+                            .try_store_number_published(DirectSlot::Argument(index), keep)
+                        {
+                            cursor.advance(next);
+                            continue;
+                        }
                         let binding = cursor
                             .with_slots(|slots| Ok(binding_class(slots.parameter(index)?)))?;
                         if binding == BindingClass::Captured {
@@ -1990,15 +1996,6 @@ pub(super) fn execute_frame_in_state(
                                 checked: false,
                                 keep,
                             });
-                        }
-                        if binding == BindingClass::DirectNumber
-                            && cursor.with_slots(|slots| {
-                                Ok(slots
-                                    .store_proven_number_operand(DirectSlot::Argument(index), keep))
-                            })?
-                        {
-                            cursor.advance(next);
-                            continue;
                         }
                         let progress = cursor.with_slots(|slots| {
                             if keep {
@@ -2025,7 +2022,7 @@ pub(super) fn execute_frame_in_state(
                         cursor.publish_fault(state, active_frame)?;
                         let old = cursor.with_slots(|slots| {
                             let next = if keep {
-                                copy_value_in_state(state, slots.peek(0)?)?
+                                copy_value_in_state(state, slots.peek_published(0))?
                             } else {
                                 slots.pop()?
                             };
@@ -2159,7 +2156,7 @@ pub(super) fn execute_frame_in_state(
                             _ => 4,
                         };
                         cursor.with_slots(|slots| {
-                            slots.peek(count - 1)?;
+                            slots.peek_published(count - 1);
                             slots.insert_copy_in_state(state, 0, count)
                         })?;
                     }
@@ -2176,27 +2173,30 @@ pub(super) fn execute_frame_in_state(
                     }
                     tags::Swap => cursor.with_slots(|slots| slots.rotate_operands(0, 2, false))?,
                     tags::Drop | tags::Nip => {
-                        let removed_offset = usize::from(decoded.opcode() == Opcode::Nip);
-                        let immediate = cursor
-                            .with_slots(|slots| Ok(is_immediate(slots.peek(removed_offset)?)))?;
-                        if !immediate {
-                            cursor.publish_fault(state, active_frame)?;
-                        }
-                        let removed = cursor.with_slots(|slots| {
-                            if decoded.opcode() == Opcode::Drop {
-                                slots.pop()
-                            } else {
-                                slots.peek(1)?;
-                                let kept = slots.pop()?;
-                                let removed = slots.pop()?;
-                                slots.push(kept)?;
-                                Ok(removed)
+                        if decoded.opcode == tags::Drop
+                            && cursor.slots.discard_immediate_published()
+                        {
+                            // No owned edge and no clearing write.
+                        } else {
+                            let removed_offset = usize::from(decoded.opcode == tags::Nip);
+                            let immediate =
+                                is_immediate(cursor.slots.peek_published(removed_offset));
+                            if !immediate {
+                                cursor.publish_fault(state, active_frame)?;
                             }
-                        })?;
-                        if !immediate {
-                            state
-                                .release_owned_jsvalue(&runtime.0.poisoned, removed)
-                                .map_err(runtime_error_to_vm_error)?;
+                            let removed = if decoded.opcode == tags::Drop {
+                                cursor.slots.pop_published()
+                            } else {
+                                let kept = cursor.slots.pop_published();
+                                let removed = cursor.slots.pop_published();
+                                cursor.slots.push_published(kept);
+                                removed
+                            };
+                            if !immediate {
+                                state
+                                    .release_owned_jsvalue(&runtime.0.poisoned, removed)
+                                    .map_err(runtime_error_to_vm_error)?;
+                            }
                         }
                     }
                     tags::Add
@@ -2219,11 +2219,9 @@ pub(super) fn execute_frame_in_state(
                     | tags::Gte
                     | tags::StrictEq
                     | tags::StrictNeq => {
-                        let completed = cursor.with_slots(|slots| {
-                            slots.binary_number(|left, right| {
-                                binary_number_result(decoded.opcode(), left, right)
-                            })
-                        })?;
+                        let completed = cursor.slots.binary_number_published(|left, right| {
+                            binary_number_result(decoded.opcode(), left, right)
+                        });
                         if !completed {
                             if matches!(decoded.opcode(), Opcode::Eq | Opcode::Neq) {
                                 if let Some(equal) = cursor.with_slots(|slots| {
@@ -2267,7 +2265,7 @@ pub(super) fn execute_frame_in_state(
                     | tags::PostInc
                     | tags::PostDec => {
                         let completed = cursor.with_slots(|slots| {
-                            let Some(old) = slots.peek(0)?.as_number_repr() else {
+                            let Some(old) = slots.peek_published(0).as_number_repr() else {
                                 return Ok(false);
                             };
                             if matches!(decoded.opcode(), Opcode::PostInc | Opcode::PostDec)
@@ -2307,7 +2305,7 @@ pub(super) fn execute_frame_in_state(
                     }
                     tags::Not => {
                         let immediate =
-                            cursor.with_slots(|slots| Ok(is_immediate(slots.peek(0)?)))?;
+                            cursor.with_slots(|slots| Ok(is_immediate(slots.peek_published(0))))?;
                         if immediate {
                             let value = cursor.move_owned()?;
                             cursor.commit_push(JsValue::Bool(!value.to_boolean_primitive()))?;
@@ -2316,7 +2314,7 @@ pub(super) fn execute_frame_in_state(
                         }
                         let truthy = cursor.with_slots(|slots| {
                             state
-                                .value_to_boolean_jsvalue(slots.peek(0)?)
+                                .value_to_boolean_jsvalue(slots.peek_published(0))
                                 .map_err(runtime_error_to_vm_error)
                         })?;
                         cursor.publish_fault(state, active_frame)?;
@@ -2379,7 +2377,7 @@ pub(super) fn execute_frame_in_state(
                                     Ok(super::property_driver::OwnedGetterSelection::prepare(
                                         state,
                                         &runtime.0.poisoned,
-                                        slots.peek(0)?,
+                                        slots.peek_published(0),
                                         getter,
                                     ))
                                 })?;
@@ -2456,7 +2454,7 @@ pub(super) fn execute_frame_in_state(
                     tags::Goto => next = operand as usize,
                     tags::IfTrue | tags::IfFalse => {
                         let immediate =
-                            cursor.with_slots(|slots| Ok(is_immediate(slots.peek(0)?)))?;
+                            cursor.with_slots(|slots| Ok(is_immediate(slots.peek_published(0))))?;
                         if immediate {
                             let truthy = cursor.move_owned()?.to_boolean_primitive();
                             if truthy == (decoded.opcode() == Opcode::IfTrue) {
@@ -2465,7 +2463,7 @@ pub(super) fn execute_frame_in_state(
                         } else {
                             let truthy = cursor.with_slots(|slots| {
                                 state
-                                    .value_to_boolean_jsvalue(slots.peek(0)?)
+                                    .value_to_boolean_jsvalue(slots.peek_published(0))
                                     .map_err(runtime_error_to_vm_error)
                             })?;
                             cursor.publish_fault(state, active_frame)?;
@@ -2488,7 +2486,7 @@ pub(super) fn execute_frame_in_state(
                         // A dynamic target is not a published static continuation.
                         // Validate it while its owner remains in the frame storage.
                         next = cursor.with_slots(|slots| {
-                            let JsValue::Int(target) = slots.peek(0)? else {
+                            let JsValue::Int(target) = slots.peek_published(0) else {
                                 return Err(Error::internal("invalid ret value"));
                             };
                             let target = usize::try_from(*target)
@@ -2504,7 +2502,7 @@ pub(super) fn execute_frame_in_state(
                     }
                     tags::DropGosub => {
                         cursor.with_slots(|slots| {
-                            if !matches!(slots.peek(0)?, JsValue::Int(_)) {
+                            if !matches!(slots.peek_published(0), JsValue::Int(_)) {
                                 return Err(Error::internal("invalid gosub cleanup value"));
                             }
                             Ok(())
@@ -2525,7 +2523,7 @@ pub(super) fn execute_frame_in_state(
                         };
                         if kind != super::VmSuspendKind::Initial {
                             cursor.with_slots(|slots| {
-                                slots.peek(0)?;
+                                slots.peek_published(0);
                                 Ok(())
                             })?;
                         }
@@ -2777,22 +2775,17 @@ fn read_local<const CHECKED: bool>(
     state: &mut RuntimeState,
     index: u16,
 ) -> Result<Option<VmAction>, Error> {
-    if cursor.with_slots(|slots| slots.push_direct_immediate(DirectSlot::Local(index)))? {
-        return Ok(None);
-    }
-    let (copied, uninitialized) = cursor.with_slots(|slots| match slots.local(index)? {
-        FrameBinding::Direct(value) => {
-            copy_value_in_state(state, value).map(|value| (Some(value), false))
-        }
-        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok((
+    let (copied, uninitialized) = match cursor.slots.binding_published(DirectSlot::Local(index)) {
+        FrameBinding::Direct(value) => (Some(copy_value_in_state(state, value)?), false),
+        FrameBinding::Captured(id) => (
             super::bindings::try_read_captured_immediate_in_state(state, *id),
             false,
-        )),
-        FrameBinding::Uninitialized => Ok((None, true)),
-        _ => Ok((None, false)),
-    })?;
+        ),
+        FrameBinding::Uninitialized => (None, true),
+        _ => (None, false),
+    };
     if let Some(value) = copied {
-        cursor.commit_owned(state, value)?;
+        cursor.commit_push(value)?;
         return Ok(None);
     }
     if CHECKED && uninitialized {
@@ -2813,18 +2806,15 @@ fn read_arg(
     state: &mut RuntimeState,
     index: u16,
 ) -> Result<Option<VmAction>, Error> {
-    if cursor.with_slots(|slots| slots.push_direct_immediate(DirectSlot::Argument(index)))? {
-        return Ok(None);
-    }
-    let copied = cursor.with_slots(|slots| match slots.parameter(index)? {
-        FrameBinding::Direct(value) => copy_value_in_state(state, value).map(Some),
-        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok(
-            super::bindings::try_read_captured_immediate_in_state(state, *id),
-        ),
-        _ => Ok(None),
-    })?;
+    let copied = match cursor.slots.binding_published(DirectSlot::Argument(index)) {
+        FrameBinding::Direct(value) => Some(copy_value_in_state(state, value)?),
+        FrameBinding::Captured(id) => {
+            super::bindings::try_read_captured_immediate_in_state(state, *id)
+        }
+        _ => None,
+    };
     if let Some(value) = copied {
-        cursor.commit_owned(state, value)?;
+        cursor.commit_push(value)?;
         return Ok(None);
     }
     Ok(Some(VmAction::Binding {

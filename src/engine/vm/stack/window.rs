@@ -797,6 +797,122 @@ impl<'a> FrameSlots<'a> {
         }
     }
 
+    /// Published bytecode stack effects were verified before this frame was
+    /// admitted. Keep safe slice bounds checks; do not recheck occupancy,
+    /// arithmetic overflow or return an error for those same static facts.
+    #[inline(always)]
+    pub(in crate::engine::vm) fn peek_published(&self, from_top: usize) -> &JsValue {
+        &self.operands[self.depth - 1 - from_top]
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn push_published(&mut self, value: JsValue) {
+        debug_assert!(super::operand_is_immediate(&self.operands[self.depth]));
+        self.install_operand(self.depth, value);
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn pop_published(&mut self) -> JsValue {
+        self.retire_numeric(1);
+        let value = &mut self.operands[self.depth];
+        // Immediates can remain outside the owning prefix. Reference owners
+        // move exactly once, leaving Undefined in their previous position.
+        match value {
+            JsValue::Undefined => JsValue::Undefined,
+            JsValue::Null => JsValue::Null,
+            JsValue::Bool(v) => JsValue::Bool(*v),
+            JsValue::Int(v) => JsValue::Int(*v),
+            JsValue::Float(v) => JsValue::Float(*v),
+            JsValue::ShortBigInt(v) => JsValue::ShortBigInt(*v),
+            _ => std::mem::replace(value, JsValue::Undefined),
+        }
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn discard_immediate_published(&mut self) -> bool {
+        if !super::operand_is_immediate(self.peek_published(0)) {
+            return false;
+        }
+        self.retire_numeric(1);
+        true
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn binding_published(&self, source: DirectSlot) -> &FrameBinding {
+        let index = match source {
+            DirectSlot::Local(index) => self.locals.start + usize::from(index),
+            DirectSlot::Argument(index) => self.parameters.start + usize::from(index),
+        };
+        self.bindings[index]
+            .as_ref()
+            .expect("published binding owns an initialized slot")
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn number_published(&self, source: DirectSlot) -> Option<Number> {
+        let FrameBinding::Direct(value) = self.binding_published(source) else {
+            return None;
+        };
+        value.as_number_repr()
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn admit_numeric_local_published(
+        &mut self,
+        index: u16,
+    ) -> Option<(AdmittedLocalDestination<'_>, Number)> {
+        let FrameBinding::Direct(slot) =
+            self.bindings[self.locals.start + usize::from(index)].as_mut()?
+        else {
+            return None;
+        };
+        let number = slot.as_number_repr()?;
+        Some((
+            AdmittedLocalDestination {
+                slot,
+                old_number: Some(number),
+            },
+            number,
+        ))
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn try_store_number_published(
+        &mut self,
+        destination: DirectSlot,
+        keep: bool,
+    ) -> bool {
+        let Some(value) = self.peek_published(0).as_number_repr() else {
+            return false;
+        };
+        let index = match destination {
+            DirectSlot::Local(index) => self.locals.start + usize::from(index),
+            DirectSlot::Argument(index) => self.parameters.start + usize::from(index),
+        };
+        let Some(FrameBinding::Direct(old)) = &mut self.bindings[index] else {
+            return false;
+        };
+        if old.as_number_repr().is_none() {
+            return false;
+        }
+        *old = value.into();
+        if !keep {
+            self.retire_numeric(1);
+        }
+        #[cfg(feature = "profiling")]
+        {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_store.complete_scalar",
+            );
+            crate::engine::api::profiling::record_owned_execution_event("local_completion.store");
+            record_owned_storage(Cost::Move(1));
+            if !keep {
+                record_owned_storage(Cost::Clear(1));
+            }
+        }
+        true
+    }
+
     pub(in crate::engine::vm) fn publish_depth(&mut self) {
         *self.published_depth = self.depth;
     }
@@ -957,53 +1073,6 @@ impl FrameSlots<'_> {
             return None;
         };
         Some(value)
-    }
-
-    /// Borrow the selected numeric destination once. A caller may compute and
-    /// commit while this borrow excludes changes to the binding or its owner.
-    #[inline(always)]
-    pub(in crate::engine::vm) fn admit_numeric_local(
-        &mut self,
-        index: u16,
-    ) -> Option<(AdmittedLocalDestination<'_>, Number)> {
-        let index = usize::from(index);
-        if index >= self.locals.clone().len() {
-            return None;
-        }
-        let FrameBinding::Direct(slot) =
-            self.bindings[self.locals.clone().start + index].as_mut()?
-        else {
-            return None;
-        };
-        let number = slot.as_number_repr()?;
-        Some((
-            AdmittedLocalDestination {
-                slot,
-                old_number: Some(number),
-            },
-            number,
-        ))
-    }
-
-    /// Move a scalar copy straight from a direct binding into the operand
-    /// window. No owner is acquired, so a failed capacity check needs no
-    /// pending-owner cleanup. Other bindings keep the ordinary owning read.
-    #[inline(always)]
-    pub(in crate::engine::vm) fn push_direct_immediate(
-        &mut self,
-        source: DirectSlot,
-    ) -> Result<bool, Error> {
-        let value = match self.direct_value(source) {
-            Some(JsValue::Undefined) => JsValue::Undefined,
-            Some(JsValue::Null) => JsValue::Null,
-            Some(JsValue::Bool(value)) => JsValue::Bool(*value),
-            Some(JsValue::Int(value)) => JsValue::Int(*value),
-            Some(JsValue::Float(value)) => JsValue::Float(*value),
-            Some(JsValue::ShortBigInt(value)) => JsValue::ShortBigInt(*value),
-            _ => return Ok(false),
-        };
-        self.push(value)?;
-        Ok(true)
     }
 
     /// The caller has verified a direct numeric binding and one free operand
@@ -1196,37 +1265,16 @@ impl FrameSlots<'_> {
         value.as_number_repr()
     }
 
-    #[inline]
+    #[cfg(test)]
     pub(in crate::engine::vm) fn store_proven_number_operand(
         &mut self,
         destination: DirectSlot,
         keep: bool,
     ) -> bool {
-        let Ok(index) = self.destination_index(destination) else {
+        if self.depth == 0 || self.destination_index(destination).is_err() {
             return false;
-        };
-        debug_assert!(
-            matches!(&self.bindings[index], Some(FrameBinding::Direct(value)) if value.as_number_repr().is_some())
-        );
-        let Some(value) = self.peek(0).ok().and_then(JsValue::as_number_repr) else {
-            return false;
-        };
-        self.bindings[index] = Some(FrameBinding::Direct(value.into()));
-        if !keep {
-            self.retire_numeric(1);
         }
-        #[cfg(feature = "profiling")]
-        {
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_store.complete_scalar",
-            );
-            crate::engine::api::profiling::record_owned_execution_event("local_completion.store");
-            record_owned_storage(Cost::Move(1));
-            if !keep {
-                record_owned_storage(Cost::Clear(1));
-            }
-        }
-        true
+        self.try_store_number_published(destination, keep)
     }
 
     #[inline(always)]
@@ -1317,46 +1365,42 @@ impl FrameSlots<'_> {
         Ok(true)
     }
 
-    pub(in crate::engine::vm) fn binary_number(
+    #[inline(always)]
+    pub(in crate::engine::vm) fn binary_number_published(
         &mut self,
         operation: impl FnOnce(Number, Number) -> JsValue,
-    ) -> Result<bool, Error> {
-        let index = self
-            .depth
-            .checked_sub(2)
-            .ok_or_else(SlotStore::operand_stack_underflow)?;
+    ) -> bool {
+        let index = self.depth - 2;
         let (Some(left), Some(right)) = (
             self.operands[index].as_number_repr(),
             self.operands[index + 1].as_number_repr(),
         ) else {
-            return Ok(false);
+            return false;
         };
         self.operands[index] = operation(left, right);
         self.retire_numeric(1);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("binary_number_in_place");
-        Ok(true)
+        true
     }
 
-    pub(in crate::engine::vm) fn number_pair_branch(
+    #[inline(always)]
+    pub(in crate::engine::vm) fn number_pair_branch_published(
         &mut self,
         compare: impl FnOnce(Number, Number) -> bool,
-    ) -> Result<Option<bool>, Error> {
-        let index = self
-            .depth
-            .checked_sub(2)
-            .ok_or_else(SlotStore::operand_stack_underflow)?;
+    ) -> Option<bool> {
+        let index = self.depth - 2;
         let (Some(left), Some(right)) = (
             self.operands[index].as_number_repr(),
             self.operands[index + 1].as_number_repr(),
         ) else {
-            return Ok(None);
+            return None;
         };
         let decision = compare(left, right);
         self.retire_numeric(2);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("number_pair_branch");
-        Ok(Some(decision))
+        Some(decision)
     }
 }
 
