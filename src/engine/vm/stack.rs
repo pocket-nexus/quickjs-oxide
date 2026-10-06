@@ -53,7 +53,6 @@ pub(in crate::engine::vm) struct FrameWindow {
     base: usize,
     original_end: usize,
     parameters_end: usize,
-    locals_end: usize,
     end: usize,
     operand_base: usize,
     operand_end: usize,
@@ -78,7 +77,7 @@ impl FrameWindow {
 
     #[inline]
     fn locals(&self) -> Range<usize> {
-        self.parameters_end..self.locals_end
+        self.parameters_end..self.end
     }
 
     #[inline]
@@ -663,7 +662,6 @@ impl SlotStore {
         }
         let original_end = original_end.unwrap();
         let parameters_end = parameters_end.unwrap();
-        let locals_end = locals_end.unwrap();
         let depth = storage.operands.len();
         #[cfg(feature = "profiling")]
         let initialized_before = self.slots.len();
@@ -810,7 +808,6 @@ impl SlotStore {
             base,
             original_end,
             parameters_end,
-            locals_end,
             end,
             operand_base,
             operand_end,
@@ -2577,7 +2574,7 @@ mod tests {
         assert!(slots.slots.iter().all(Option::is_none));
         #[cfg(target_pointer_width = "64")]
         // Actual arity remains independent when unobservable originals are omitted.
-        assert_eq!(std::mem::size_of::<super::FrameWindow>(), 88);
+        assert_eq!(std::mem::size_of::<super::FrameWindow>(), 80);
     }
 
     #[test]

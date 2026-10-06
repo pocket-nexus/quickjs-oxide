@@ -11,8 +11,8 @@ pub(in crate::engine::vm) enum StoreProgress {
 impl FrameSlots<'_> {
     pub(super) fn destination_index(&self, destination: DirectSlot) -> Result<usize, Error> {
         let (region, index) = match destination {
-            DirectSlot::Local(index) => (self.locals.clone(), usize::from(index)),
-            DirectSlot::Argument(index) => (self.parameters.clone(), usize::from(index)),
+            DirectSlot::Local(index) => (self.local_range(), usize::from(index)),
+            DirectSlot::Argument(index) => (self.parameter_range(), usize::from(index)),
         };
         if index >= region.len() {
             return Err(Error::internal("owned destination index is out of bounds"));

@@ -769,8 +769,9 @@ pub(in crate::engine::vm) struct FrameSlots<'a> {
     pub(super) operands: &'a mut [JsValue],
     pub(super) depth: usize,
     published_depth: &'a mut usize,
-    pub(super) locals: std::ops::Range<usize>,
-    pub(super) parameters: std::ops::Range<usize>,
+    // Parameter prefix, followed by locals. Originals are owned outside this
+    // execution slice. One boundary replaces four redundant range endpoints.
+    pub(super) parameter_count: usize,
     #[cfg(feature = "profiling")]
     live_slots: &'a mut usize,
     #[cfg(feature = "profiling")]
@@ -779,22 +780,28 @@ pub(in crate::engine::vm) struct FrameSlots<'a> {
 
 impl<'a> FrameSlots<'a> {
     pub(super) fn new(store: &'a mut SlotStore, window: &'a mut FrameWindow) -> Self {
-        let parameters = window.original_end - window.base..window.parameters_end - window.base;
-        let locals = window.parameters_end - window.base..window.locals_end - window.base;
-        let bindings = &mut store.slots[window.whole()];
+        let parameter_count = window.parameters_end - window.original_end;
+        let bindings = &mut store.slots[window.original_end..window.end];
         let operands = &mut store.operands[window.operands()];
         Self {
             bindings,
             operands,
             depth: window.depth,
             published_depth: &mut window.depth,
-            locals,
-            parameters,
+            parameter_count,
             #[cfg(feature = "profiling")]
             live_slots: &mut store.live_slots,
             #[cfg(feature = "profiling")]
             reserved: store.active_end + store.operand_active_end,
         }
+    }
+
+    pub(super) fn local_range(&self) -> std::ops::Range<usize> {
+        self.parameter_count..self.bindings.len()
+    }
+
+    pub(super) fn parameter_range(&self) -> std::ops::Range<usize> {
+        0..self.parameter_count
     }
 
     /// Published bytecode stack effects were verified before this frame was
@@ -840,8 +847,8 @@ impl<'a> FrameSlots<'a> {
     #[inline(always)]
     pub(in crate::engine::vm) fn binding_published(&self, source: DirectSlot) -> &FrameBinding {
         let index = match source {
-            DirectSlot::Local(index) => self.locals.start + usize::from(index),
-            DirectSlot::Argument(index) => self.parameters.start + usize::from(index),
+            DirectSlot::Local(index) => self.parameter_count + usize::from(index),
+            DirectSlot::Argument(index) => usize::from(index),
         };
         self.bindings[index]
             .as_ref()
@@ -862,7 +869,7 @@ impl<'a> FrameSlots<'a> {
         index: u16,
     ) -> Option<(AdmittedLocalDestination<'_>, Number)> {
         let FrameBinding::Direct(slot) =
-            self.bindings[self.locals.start + usize::from(index)].as_mut()?
+            self.bindings[self.parameter_count + usize::from(index)].as_mut()?
         else {
             return None;
         };
@@ -886,8 +893,8 @@ impl<'a> FrameSlots<'a> {
             return false;
         };
         let index = match destination {
-            DirectSlot::Local(index) => self.locals.start + usize::from(index),
-            DirectSlot::Argument(index) => self.parameters.start + usize::from(index),
+            DirectSlot::Local(index) => self.parameter_count + usize::from(index),
+            DirectSlot::Argument(index) => usize::from(index),
         };
         let Some(FrameBinding::Direct(old)) = &mut self.bindings[index] else {
             return false;
@@ -1008,14 +1015,14 @@ impl FrameSlots<'_> {
         source: DirectSlot,
         require_numeric: bool,
     ) -> Option<(AdmittedLocalDestination<'_>, &JsValue)> {
-        let locals = self.locals.clone();
+        let locals = self.local_range();
         let destination = locals.start.checked_add(usize::from(destination))?;
         if destination >= locals.end {
             return None;
         }
         let (source_range, source_index) = match source {
             DirectSlot::Local(index) => (locals, usize::from(index)),
-            DirectSlot::Argument(index) => (self.parameters.clone(), usize::from(index)),
+            DirectSlot::Argument(index) => (self.parameter_range(), usize::from(index)),
         };
         let source = source_range.start.checked_add(source_index)?;
         if source >= source_range.end || source == destination {
@@ -1058,8 +1065,8 @@ impl FrameSlots<'_> {
 
     pub(in crate::engine::vm) fn direct_value(&self, source: DirectSlot) -> Option<&JsValue> {
         let region = match source {
-            DirectSlot::Local(_) => self.locals.clone(),
-            DirectSlot::Argument(_) => self.parameters.clone(),
+            DirectSlot::Local(_) => self.local_range(),
+            DirectSlot::Argument(_) => self.parameter_range(),
         };
         let index = match source {
             DirectSlot::Local(index) | DirectSlot::Argument(index) => usize::from(index),
@@ -1118,7 +1125,8 @@ impl FrameSlots<'_> {
             Number::Int(value) => JsValue::Int(value),
             Number::Float(value) => JsValue::Float(value),
         };
-        let Some(FrameBinding::Direct(old)) = self.bindings[self.locals.clone()]
+        let locals = self.local_range();
+        let Some(FrameBinding::Direct(old)) = self.bindings[locals]
             .get_mut(usize::from(index))
             .and_then(Option::as_mut)
         else {
@@ -1142,7 +1150,7 @@ impl FrameSlots<'_> {
         if self.immediate_local(index).is_none() || self.peek(0)?.as_number_repr().is_none() {
             return Err(Error::internal("numeric preincrement admission changed"));
         }
-        let local = self.locals.clone().start + usize::from(index);
+        let local = self.local_range().start + usize::from(index);
         let top = self.depth - 1;
         let number_value = |number| match number {
             Number::Int(value) => JsValue::Int(value),
@@ -1214,20 +1222,20 @@ impl FrameSlots<'_> {
 
     #[inline(always)]
     pub(in crate::engine::vm) fn local(&self, index: u16) -> Result<&FrameBinding, Error> {
-        if usize::from(index) >= self.locals.len() {
+        if usize::from(index) >= (self.bindings.len() - self.parameter_count) {
             return Err(Error::internal("owned local index is out of bounds"));
         }
-        self.bindings[self.locals.start + usize::from(index)]
+        self.bindings[self.parameter_count + usize::from(index)]
             .as_ref()
             .ok_or_else(|| Error::internal("owned local is vacant"))
     }
 
     #[inline(always)]
     pub(in crate::engine::vm) fn parameter(&self, index: u16) -> Result<&FrameBinding, Error> {
-        if usize::from(index) >= self.parameters.len() {
+        if usize::from(index) >= self.parameter_count {
             return Err(Error::internal("owned parameter index is out of bounds"));
         }
-        self.bindings[self.parameters.start + usize::from(index)]
+        self.bindings[usize::from(index)]
             .as_ref()
             .ok_or_else(|| Error::internal("owned parameter is vacant"))
     }
@@ -1238,11 +1246,11 @@ impl FrameSlots<'_> {
     #[inline]
     pub(in crate::engine::vm) fn immediate_local(&self, index: u16) -> Option<Number> {
         let index = usize::from(index);
-        if index >= self.locals.clone().len() {
+        if index >= self.local_range().len() {
             return None;
         }
         let FrameBinding::Direct(value) =
-            self.bindings[self.locals.clone().start + index].as_ref()?
+            self.bindings[self.local_range().start + index].as_ref()?
         else {
             return None;
         };
@@ -1254,11 +1262,11 @@ impl FrameSlots<'_> {
     #[inline]
     pub(in crate::engine::vm) fn immediate_parameter(&self, index: u16) -> Option<Number> {
         let index = usize::from(index);
-        if index >= self.parameters.clone().len() {
+        if index >= self.parameter_range().len() {
             return None;
         }
         let FrameBinding::Direct(value) =
-            self.bindings[self.parameters.clone().start + index].as_ref()?
+            self.bindings[self.parameter_range().start + index].as_ref()?
         else {
             return None;
         };
@@ -1286,7 +1294,7 @@ impl FrameSlots<'_> {
         self.local(index)?;
         #[cfg(feature = "profiling")]
         record_owned_storage(Cost::Move(2));
-        Ok(self.bindings[self.locals.start + usize::from(index)]
+        Ok(self.bindings[self.parameter_count + usize::from(index)]
             .replace(value)
             .unwrap())
     }
@@ -1300,9 +1308,7 @@ impl FrameSlots<'_> {
         self.parameter(index)?;
         #[cfg(feature = "profiling")]
         record_owned_storage(Cost::Move(2));
-        Ok(self.bindings[self.parameters.start + usize::from(index)]
-            .replace(value)
-            .unwrap())
+        Ok(self.bindings[usize::from(index)].replace(value).unwrap())
     }
 
     pub(in crate::engine::vm) fn rotate_operands(

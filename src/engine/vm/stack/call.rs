@@ -269,7 +269,6 @@ impl SlotStore {
                 base,
                 original_end,
                 parameters_end,
-                locals_end,
                 end,
                 operand_base,
                 operand_end,
