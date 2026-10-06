@@ -1,0 +1,285 @@
+{
+  "schema": "oxide-verified-loop-e4-evidence-v1",
+  "scope": "E4 design evidence; no E4 runtime candidate implemented",
+  "source_head": "022e5e1dad98219ca990f83c031d84233e1860ce",
+  "hardware": {
+    "deltablue": {
+      "samples": {
+        "E2": {
+          "cycles": 2555150301.0,
+          "instructions": 7013798758.0,
+          "L1d_load_misses": 42458817.0,
+          "frontend_bound_percent": 16.5,
+          "CPI": 0.3643033381996558,
+          "L1d_load_misses_per_1000_instructions": 6.053612095951727,
+          "minimum_running_percent": 100.0
+        },
+        "E3": {
+          "cycles": 2775178716.0,
+          "instructions": 6943958737.0,
+          "L1d_load_misses": 47888624.0,
+          "frontend_bound_percent": 18.9,
+          "CPI": 0.3996536876310646,
+          "L1d_load_misses_per_1000_instructions": 6.896444206217926,
+          "minimum_running_percent": 100.0
+        }
+      },
+      "changes_percent": {
+        "cycles": 8.611173084960534,
+        "instructions": -0.9957517090198764,
+        "L1d_load_misses": 12.788408588962795,
+        "CPI": 9.703548039418486
+      },
+      "frontend_bound_change_percentage_points": 2.3999999999999986
+    },
+    "crypto": {
+      "samples": {
+        "E2": {
+          "cycles": 2356342880.0,
+          "instructions": 7638394615.0,
+          "L1d_load_misses": 3733608.0,
+          "frontend_bound_percent": 17.9,
+          "CPI": 0.30848666490373516,
+          "L1d_load_misses_per_1000_instructions": 0.4887948565354397,
+          "minimum_running_percent": 100.0
+        },
+        "E3": {
+          "cycles": 2626835186.0,
+          "instructions": 6894012087.0,
+          "L1d_load_misses": 4294096.0,
+          "frontend_bound_percent": 17.2,
+          "CPI": 0.3810314157924684,
+          "L1d_load_misses_per_1000_instructions": 0.6228732914607668,
+          "minimum_running_percent": 100.0
+        }
+      },
+      "changes_percent": {
+        "cycles": 11.479327066356326,
+        "instructions": -9.745274570368611,
+        "L1d_load_misses": 15.011966976715275,
+        "CPI": 23.516332840958043
+      },
+      "frontend_bound_change_percentage_points": -0.6999999999999993
+    }
+  },
+  "assembly": {
+    "E2": {
+      "stack_reservation_bytes": 1784,
+      "static_instructions": 13195,
+      "static_rsp_memory_or_address_instructions": 2930,
+      "distinct_constant_rsp_displacements": 251,
+      "asm_path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-E2-execute.asm",
+      "asm_sha256": "2900004fb871458a2dc1d9350ed20148b9777d9ded90b04afb4a953eaaa23e57",
+      "binary_sha256": "a32658f149ad1e1975f70408ac16ae4f91e6761a2aa10b4224b5838b54a17fd5"
+    },
+    "E3": {
+      "stack_reservation_bytes": 2008,
+      "static_instructions": 13067,
+      "static_rsp_memory_or_address_instructions": 3177,
+      "distinct_constant_rsp_displacements": 296,
+      "asm_path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-E3-execute.asm",
+      "asm_sha256": "162eb729cf9d514460314d03bcb00cd9b407f1d24b52dc6831a8421f481aaa2b",
+      "binary_sha256": "f0837decdcb3410faa9666652e36bd0203d80f62f33d6f0ccbecdba46ad3d60c"
+    }
+  },
+  "sampling": {
+    "manifest_sha256": "379dccf675a638aad91e2e3d112448543d179bef92842b11d6da80490bb8229e",
+    "perf_version": "perf version 7.2.8-1",
+    "samples": [
+      {
+        "case": "deltablue",
+        "engine": "E2",
+        "command": [
+          "perf",
+          "stat",
+          "--no-big-num",
+          "-x,",
+          "-o",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E2.perf.csv",
+          "-e",
+          "cycles,instructions,L1-dcache-load-misses",
+          "-M",
+          "frontend_bound",
+          "--",
+          "taskset",
+          "-c",
+          "4",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/afadba63/qjs",
+          "/home/eric/.cache/oxide-v8v7-boa-campaign/structural-simplification-20261002/split/fixed-authenticated/generated/final/deltablue.js"
+        ],
+        "binary_sha256": "a32658f149ad1e1975f70408ac16ae4f91e6761a2aa10b4224b5838b54a17fd5",
+        "workload_sha256": "738029e9fb88bd5ed59049376777ae482e0d56dc256f2f65c87147cdc0c09411",
+        "perf_csv": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E2.perf.csv",
+        "perf_csv_sha256": "0d8d6a99a29316cfbea8d9817190b42d46cb79fa5b207f634f383911e57322aa",
+        "stdout_sha256": "2577e367de8b1a031183cddc3420a75200bf49a9e3ba83752c80583e43537850",
+        "status": "ok",
+        "samples": 1,
+        "counter_scope": "userspace; whole process; fixed work including startup/teardown"
+      },
+      {
+        "case": "deltablue",
+        "engine": "E3",
+        "command": [
+          "perf",
+          "stat",
+          "--no-big-num",
+          "-x,",
+          "-o",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E3.perf.csv",
+          "-e",
+          "cycles,instructions,L1-dcache-load-misses",
+          "-M",
+          "frontend_bound",
+          "--",
+          "taskset",
+          "-c",
+          "4",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/f0e98a3b/qjs",
+          "/home/eric/.cache/oxide-v8v7-boa-campaign/structural-simplification-20261002/split/fixed-authenticated/generated/final/deltablue.js"
+        ],
+        "binary_sha256": "f0837decdcb3410faa9666652e36bd0203d80f62f33d6f0ccbecdba46ad3d60c",
+        "workload_sha256": "738029e9fb88bd5ed59049376777ae482e0d56dc256f2f65c87147cdc0c09411",
+        "perf_csv": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E3.perf.csv",
+        "perf_csv_sha256": "b87f26c3cca962221b6dec2a0ae156bc6881fcf031d70b5527b771d9462467cb",
+        "stdout_sha256": "2577e367de8b1a031183cddc3420a75200bf49a9e3ba83752c80583e43537850",
+        "status": "ok",
+        "samples": 1,
+        "counter_scope": "userspace; whole process; fixed work including startup/teardown"
+      },
+      {
+        "case": "crypto",
+        "engine": "E2",
+        "command": [
+          "perf",
+          "stat",
+          "--no-big-num",
+          "-x,",
+          "-o",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E2.perf.csv",
+          "-e",
+          "cycles,instructions,L1-dcache-load-misses",
+          "-M",
+          "frontend_bound",
+          "--",
+          "taskset",
+          "-c",
+          "4",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/afadba63/qjs",
+          "/home/eric/.cache/oxide-v8v7-boa-campaign/structural-simplification-20261002/split/fixed-authenticated/generated/final/crypto.js"
+        ],
+        "binary_sha256": "a32658f149ad1e1975f70408ac16ae4f91e6761a2aa10b4224b5838b54a17fd5",
+        "workload_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+        "perf_csv": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E2.perf.csv",
+        "perf_csv_sha256": "f7b3b6b0c572dd59bd91bc504e2ad1d0ffd012e845c118cf9443508677308339",
+        "stdout_sha256": "c46907269bee2dc54d651d7ea3c44fd75ad95328a40b363f5232b0ed2fd33738",
+        "status": "ok",
+        "samples": 1,
+        "counter_scope": "userspace; whole process; fixed work including startup/teardown"
+      },
+      {
+        "case": "crypto",
+        "engine": "E3",
+        "command": [
+          "perf",
+          "stat",
+          "--no-big-num",
+          "-x,",
+          "-o",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E3.perf.csv",
+          "-e",
+          "cycles,instructions,L1-dcache-load-misses",
+          "-M",
+          "frontend_bound",
+          "--",
+          "taskset",
+          "-c",
+          "4",
+          "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-artifacts/f0e98a3b/qjs",
+          "/home/eric/.cache/oxide-v8v7-boa-campaign/structural-simplification-20261002/split/fixed-authenticated/generated/final/crypto.js"
+        ],
+        "binary_sha256": "f0837decdcb3410faa9666652e36bd0203d80f62f33d6f0ccbecdba46ad3d60c",
+        "workload_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+        "perf_csv": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E3.perf.csv",
+        "perf_csv_sha256": "e004a51acc956ea44b9d652b78efbbad7f77200e20bcdbd9bea0337dc6b98b6a",
+        "stdout_sha256": "c46907269bee2dc54d651d7ea3c44fd75ad95328a40b363f5232b0ed2fd33738",
+        "status": "ok",
+        "samples": 1,
+        "counter_scope": "userspace; whole process; fixed work including startup/teardown"
+      }
+    ],
+    "cpu": 4,
+    "repeat": 1,
+    "governor_changed": false,
+    "builds_tests_callgrind_concurrent": false,
+    "metric": "hardware counters, not a stage acceptance"
+  },
+  "evidence": [
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/assembly.json",
+      "sha256": "533815c91efa2464a634786c2384933d8ea6c830d1fd55dddceedce56e969e60"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E2.perf.csv",
+      "sha256": "f7b3b6b0c572dd59bd91bc504e2ad1d0ffd012e845c118cf9443508677308339"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E2.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E2.stdout",
+      "sha256": "c46907269bee2dc54d651d7ea3c44fd75ad95328a40b363f5232b0ed2fd33738"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E3.perf.csv",
+      "sha256": "e004a51acc956ea44b9d652b78efbbad7f77200e20bcdbd9bea0337dc6b98b6a"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E3.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/crypto-E3.stdout",
+      "sha256": "c46907269bee2dc54d651d7ea3c44fd75ad95328a40b363f5232b0ed2fd33738"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E2.perf.csv",
+      "sha256": "0d8d6a99a29316cfbea8d9817190b42d46cb79fa5b207f634f383911e57322aa"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E2.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E2.stdout",
+      "sha256": "2577e367de8b1a031183cddc3420a75200bf49a9e3ba83752c80583e43537850"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E3.perf.csv",
+      "sha256": "b87f26c3cca962221b6dec2a0ae156bc6881fcf031d70b5527b771d9462467cb"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E3.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/deltablue-E3.stdout",
+      "sha256": "2577e367de8b1a031183cddc3420a75200bf49a9e3ba83752c80583e43537850"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/receipt.json",
+      "sha256": "fbe99c67fdebaaf0a34c8debb7149877a477c886bd7273285bf98cfd6aa0d0be"
+    },
+    {
+      "path": "/home/eric/.cache/oxide-runtime-core-20261003/verified-loop-e4-hardware/summary.json",
+      "sha256": "fcef3fb816dd1c68ca1899665fdaf722eacaa49362d8f5e780a08f6aaf10c21b"
+    }
+  ],
+  "limits": [
+    "one sample per binary/workload; not a formal regression confidence interval",
+    "frontend_bound is an AMD dispatch-slot fraction, not instruction-cache miss count",
+    "rsp forms and distinct displacements do not identify all logical spill slots",
+    "340 Ir shared block includes PC/state handling and safe loads, not only header parsing",
+    "L1 data misses may originate in heap, arrays, frames or other data; counters alone do not assign them to register spills"
+  ]
+}
