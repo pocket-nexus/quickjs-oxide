@@ -116,8 +116,9 @@ A/A 噪声内，未分辨。按照用户最新决定，不补跑六对作为 B1 
 
 ### 解释循环实验（E）的结论
 
-`perf/verified-loop-experiment` 上的 E0–E3 不合入主线，E4 不实施。保留 E0 的
-N/2N/4N 斜率探针和实际分派计数作为测量工具。结论留给第 5 项：
+E0–E3 的实验代码不合入主线，实验分支已删除，E4 不实施。N/2N/4N 斜率测量方法
+由 `docs/performance/probes/allocation/ledger.py` 沿用；第 5 项需要实际分派计数时重新添加。
+结论留给第 5 项：
 
 - 数值循环每轮 12 次分派，E3 后约 73 Ir/分派（QuickJS 约 14）。
 - 剩余成本主要是取指解析（字流读取、PC 推进、解码与 tag 选择约 28 Ir/分派）
@@ -182,13 +183,12 @@ N/2N/4N 斜率探针和实际分派计数作为测量工具。结论留给第 5 
 - 完整回执和阶段文档只在条目收口时出一次。
 - 技术合同、B0 残留清单、poison 合同不变；每个条目关闭对应残留编号。
 
-### 从 B2b（#94）收割的内容
+### B2b（#94）的教训
 
-保留 State 下原始值转属性键的内核（`property_key_atom_from_primitive`、
-`primitive_to_js_string`），单独提交；保留能通过 JS 可观察行为验证的边界测试。
-放弃其 computed 消费者、`FrameRare` 新字段、共享转换运输改造和越界的
-Number/typed-element 迁移。第 7 项重做 computed 读取时：等待状态先统一为一个枚举，
-对象 key 的 ToPrimitive 复用现有转换等待，每批只迁移自己的消费者。
+B2b 未通过验收，#94 已关闭，实现不保留。第 7 项在当时的基线上重做 computed 读取，
+并遵守三条：等待状态先统一为一个枚举，不为每种等待增加 `FrameRare` 字段；
+对象 key 的 ToPrimitive 复用现有转换等待；每批只迁移自己的消费者，
+共享转换 helper 的其他消费者（Number、typed-element 等）留作残留。
 
 ### 残留、正确性与最终停止
 
