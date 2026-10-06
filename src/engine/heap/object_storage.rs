@@ -38,6 +38,9 @@ fn exchange_public_owner_cold(previous: &mut RawValue, input: &mut JsValue) -> b
 impl Heap {
     /// Exchange two existing public owners. This leaf changes no layout,
     /// reference count or Atom count; permissions are selected by ordinary Set.
+    /// Both the field store and field definition consumers inline it; as an
+    /// outlined call it costs the hot existing-slot write a call frame.
+    #[inline(always)]
     pub(crate) fn exchange_owned_data_slot(
         &mut self,
         id: ObjectId,
@@ -1447,6 +1450,7 @@ impl Heap {
     /// object's shape is the recorded shared parent and validated the
     /// successor's generation and revision; the value owner and its atom
     /// edge move with the input, so only the two shape counts change.
+    #[inline(always)]
     pub(crate) fn append_cached_owned_slot(
         &mut self,
         id: ObjectId,

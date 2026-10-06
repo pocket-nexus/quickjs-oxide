@@ -696,7 +696,9 @@ impl SiteCacheTable<PropertyReadCache> {
 impl SiteCacheTable<super::append_ic::PropertyAppendCache> {
     pub(crate) fn new_exec(code: &crate::engine::code::exec::ExecCode) -> Self {
         use crate::engine::code::exec_opcode::Opcode;
-        Self::new_exec_sites(code, |opcode| opcode == Opcode::PutField)
+        Self::new_exec_sites(code, |opcode| {
+            matches!(opcode, Opcode::PutField | Opcode::DefineField)
+        })
     }
 }
 

@@ -150,8 +150,111 @@ impl RuntimeState {
         Ok(FieldStore::LayoutPublished)
     }
 
+    /// CreateDataPropertyOrThrow for a static literal or class-field key.
+    /// Definition never consults the prototype chain: a missing key on an
+    /// extensible plain ordinary receiver appends, and an existing all-true
+    /// data property exchanges its value. Every other case declines with the
+    /// input untouched so the definition driver reports or redefines it.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn try_define_owned_linked_field(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        domain: u64,
+        object: ObjectId,
+        input: &mut JsValue,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        key: u32,
+        appends: Option<AppendSite<'_>>,
+    ) -> Result<FieldStore, RuntimeError> {
+        let Some(atom) = super::linked_field_atom_in_domain(domain, executable, key) else {
+            return Ok(FieldStore::Miss);
+        };
+        let data = self.heap.object(object)?;
+        if !is_ordinary(data) {
+            return Ok(FieldStore::Miss);
+        }
+        if let Some(selected) = locate(self, object, atom)? {
+            if selected.flags != crate::engine::object::shape::PropertyFlags::data(true, true, true)
+                || !matches!(data.slots[selected.index], PropertySlot::Data(_))
+            {
+                return Ok(FieldStore::Miss);
+            }
+            return Ok(
+                if self
+                    .heap
+                    .exchange_owned_data_slot(object, selected.index, input)?
+                {
+                    FieldStore::Existing
+                } else {
+                    FieldStore::Miss
+                },
+            );
+        }
+        self.define_missing_owned_data(poisoned, domain, object, atom, input, appends)
+    }
+
+    #[inline(never)]
+    fn define_missing_owned_data(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        domain: u64,
+        object: ObjectId,
+        atom: Atom,
+        input: &mut JsValue,
+        appends: Option<AppendSite<'_>>,
+    ) -> Result<FieldStore, RuntimeError> {
+        let site = appends.and_then(|(table, pc)| table.site(pc));
+        // A definition site's fact never depends on prototypes; the parent
+        // layout alone proves the key missing on an ordinary receiver.
+        if let Some(site) = site
+            && let Some(successor) =
+                site.successor(&self.heap, domain, self.heap.object_fast(object))
+        {
+            self.append_cached_owned_slot(poisoned, object, successor, input)?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_owned_field_define_site_hit",
+            );
+            return Ok(FieldStore::LayoutPublished);
+        }
+        let data = self.heap.object(object)?;
+        if !data.extensible {
+            return Ok(FieldStore::Miss);
+        }
+        let parent = data.shape;
+        let parent_shape = self.heap.shape(parent)?;
+        let learn = site.is_some() && !parent_shape.is_dictionary();
+        let miss = AppendMiss {
+            domain,
+            parent,
+            parent_revision: parent_shape.layout_revision(),
+            has_prototype: false,
+            prototype_epoch: 0,
+        };
+        if !self.append_selected_missing_slot(
+            Some(poisoned),
+            object,
+            atom,
+            crate::engine::object::shape::PropertyFlags::data(true, true, true),
+            crate::engine::object::SlotAppendInput::Owned(input),
+        )? {
+            return Ok(FieldStore::Miss);
+        }
+        if learn && let Some(site) = site {
+            site.learn(&self.heap, miss, self.heap.object(object)?.shape);
+        }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "ordinary_owned_field_define_in_state",
+        );
+        Ok(FieldStore::LayoutPublished)
+    }
+
     /// Consume a site hit. The input's owner moves into the slot only on
     /// publication; a rejected append leaves it and both shapes unchanged.
+    /// Store and definition hits each inline it into their miss consumers.
+    #[inline(always)]
     fn append_cached_owned_slot(
         &mut self,
         poisoned: &std::cell::Cell<bool>,
@@ -885,5 +988,108 @@ mod tests {
         let count = |name| events.get(name).copied().unwrap_or(0);
         assert!(count("ordinary_owned_field_append_site_hit") >= 198);
         assert!(count("ordinary_owned_field_append_in_state") <= 2);
+    }
+
+    #[test]
+    fn literal_and_class_field_definitions_keep_define_semantics() {
+        // Expected output was checked against Node.js 24.
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let result = context.eval(r#"(() => {
+var out = [];
+function lit(i){ return {a:i, b:i, a:i+1}; }
+for (var i=0;i<5;i++) { var o = lit(i); out.push(JSON.stringify(o), Object.keys(o).join()); }
+var g = {get a(){return 1}, a: 2}; out.push(JSON.stringify(Object.getOwnPropertyDescriptor(g,'a')));
+var f = {set a(v){}, a: 3}; out.push(f.a);
+Object.defineProperty(Object.prototype, 'q', {set(v){ out.push('setter!') }, configurable:true});
+var withQ = {q: 1}; out.push(Object.getOwnPropertyDescriptor(withQ,'q').value);
+delete Object.prototype.q;
+Object.defineProperty(Object.prototype, 'r', {value: 0, writable:false, configurable:true});
+var withR = {r: 5}; out.push(withR.r);
+delete Object.prototype.r;
+var p = {__proto__: {z:1}, y:2}; out.push(p.z, Object.keys(p).join());
+var sym = Symbol('s'); var s = {[sym]: 1, 0: 'zero', 1: 'one', x: 1}; out.push(Object.keys(s).join(), s[sym]);
+var log = [];
+class Base { constructor(){ return new Proxy({}, {defineProperty(t,k,d){ log.push(k); return Reflect.defineProperty(t,k,d); }}); } }
+class D extends Base { f1 = 1; f2 = 2; }
+var d1 = new D(); var d2 = new D(); out.push(log.join(), d2.f2);
+class Fr { constructor(){ return Object.preventExtensions({}); } }
+class E extends Fr { x = 1; }
+try { new E(); out.push('no throw'); } catch (e) { out.push(e instanceof TypeError); }
+class C { a = 1; b = this.a + 1; }
+for (var k=0;k<3;k++) { var c = new C(); out.push(c.a + c.b); }
+class Arr extends Array { tag = 'arr'; } var arr = new Arr(); out.push(arr.tag, Array.isArray(arr));
+return out.join('|');
+
+        })()"#).unwrap();
+        let Value::String(result) = result else {
+            panic!("string result")
+        };
+        assert_eq!(
+            result.to_string(),
+            r#"{"a":1,"b":0}|a,b|{"a":2,"b":1}|a,b|{"a":3,"b":2}|a,b|{"a":4,"b":3}|a,b|{"a":5,"b":4}|a,b|{"value":2,"writable":true,"enumerable":true,"configurable":true}|3|1|5|1|y|0,1,x|1|f1,f2,f1,f2|2|true|3|3|3|arr|true"#
+        );
+        runtime.run_gc().unwrap();
+        assert!(!runtime.0.poisoned.get());
+    }
+
+    #[test]
+    fn literal_definitions_keep_values_alive_across_collection() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+            globalThis.kept = [];
+            for (let i = 0; i < 2000; i++) {
+                const o = {self: null, value: {i}, tag: Symbol('t')};
+                o.self = o;
+                if (i % 100 === 0) kept.push(o);
+            }
+            kept.length
+        "#
+                )
+                .unwrap(),
+            Value::Int(20)
+        );
+        runtime.run_gc().unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+            kept.every((o, k) => o.self === o && o.value.i === k * 100 && typeof o.tag === 'symbol')
+        "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        drop(context.eval("kept = null").unwrap());
+        runtime.run_gc().unwrap();
+        assert!(!runtime.0.poisoned.get());
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn warm_literal_fields_define_in_the_loop_and_hit_their_sites() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(() => {
+            let s; for (let i = 0; i < 100; i++) s = {a: i, b: i};
+            return s.b;
+        })()"#
+                )
+                .unwrap(),
+            Value::Int(99)
+        );
+        let events = profile.snapshot().owned_execution_events;
+        let count = |name| events.get(name).copied().unwrap_or(0);
+        assert!(count("ordinary_owned_field_define_site_hit") >= 198);
+        assert!(count("ordinary_owned_field_define_in_state") <= 2);
+        assert_eq!(count("public_field_query_fallback"), 0);
     }
 }

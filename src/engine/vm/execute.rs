@@ -2457,6 +2457,31 @@ pub(super) fn execute_frame_in_state(
                         }
                         *property_generation = generation;
                     }
+                    Opcode::DefineField => {
+                        let Some(generation) = property_generation.checked_add(1) else {
+                            break 'dispatch Ok(VmAction::DefineProperty {
+                                key: Some(operand),
+                                method: None,
+                            });
+                        };
+                        if !cursor.with_slots(|slots| {
+                            slots.try_owned_field_define_in_state(
+                                state,
+                                &runtime.0.poisoned,
+                                &runtime.0.gc_pressure,
+                                runtime.domain_id(),
+                                executable,
+                                pc,
+                                operand,
+                            )
+                        })? {
+                            break 'dispatch Ok(VmAction::DefineProperty {
+                                key: Some(operand),
+                                method: None,
+                            });
+                        }
+                        *property_generation = generation;
+                    }
                     Opcode::PutArrayEl => {
                         let Some(generation) = property_generation.checked_add(1) else {
                             break 'dispatch Ok(VmAction::SetProperty(None));

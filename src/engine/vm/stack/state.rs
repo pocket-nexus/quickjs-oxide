@@ -399,6 +399,51 @@ impl FrameSlots<'_> {
         Ok(true)
     }
 
+    /// DefineField keeps the literal or instance target on the stack and
+    /// consumes only the value. A declined definition leaves both owners and
+    /// the stack depth unchanged for the definition driver.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn try_owned_field_define_in_state(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        pressure: &crate::engine::heap::gc_pressure::GcPressure,
+        domain: u64,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        site: usize,
+        key: u32,
+    ) -> Result<bool, Error> {
+        let JsValue::Object(object) = self.peek(1)? else {
+            return Ok(false);
+        };
+        let object = *object;
+        let input = self.top_direct_mut()?;
+        let stored = state
+            .try_define_owned_linked_field(
+                poisoned,
+                domain,
+                object,
+                input,
+                executable,
+                key,
+                Some((&executable.property_append_ic, site)),
+            )
+            .map_err(runtime_error_to_vm_error)?;
+        if stored == crate::engine::object::FieldStore::Miss {
+            return Ok(false);
+        }
+        // The input now owns the replaced value or nothing; the target stays.
+        state
+            .release_owned_jsvalue(poisoned, self.pop()?)
+            .map_err(runtime_error_to_vm_error)?;
+        if stored == crate::engine::object::FieldStore::LayoutPublished {
+            state
+                .collect_if_requested(pressure, poisoned)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        Ok(true)
+    }
+
     /// Only a new layout needs a collection checkpoint. Keep this scheduling
     /// boundary outside the existing-slot consumer; no tag or pressure borrow
     /// survives across that consumer's two owner releases.
