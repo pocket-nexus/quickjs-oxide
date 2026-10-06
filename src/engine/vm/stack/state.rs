@@ -375,7 +375,7 @@ impl FrameSlots<'_> {
         let object = *object;
         let input = self.top_direct_mut()?;
         let stored = state
-            .try_store_owned_linked_field(poisoned, domain, object, input, executable, key)
+            .try_store_owned_linked_field(poisoned, domain, object, input, executable, key, None)
             .map_err(runtime_error_to_vm_error)?;
         match stored {
             crate::engine::object::FieldStore::Miss => return Ok(false),

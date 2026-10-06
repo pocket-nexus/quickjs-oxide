@@ -1124,6 +1124,7 @@ pub(crate) use ordinary_storage::FieldStore;
 pub(crate) use ordinary_storage::SpecialKind;
 pub(crate) use ordinary_storage::prototypes_allow_dense_append;
 
+pub(crate) mod append_ic;
 pub(crate) mod property_ic;
 
 pub(crate) use ordinary_storage::LinkedNativeSelection;

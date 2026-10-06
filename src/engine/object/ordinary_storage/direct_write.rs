@@ -1,5 +1,6 @@
 //! Exchange existing owners under one state access; no pending representation.
 use super::*;
+use crate::engine::object::append_ic::{AppendMiss, PropertyAppendCache};
 
 /// A named store publishes either an existing slot or a new layout. Only the
 /// latter can allocate cycle-collectable shapes and needs a publication safe
@@ -20,7 +21,10 @@ impl FieldStore {
 impl RuntimeState {
     /// Resolve a static key owned by the current published executable, then
     /// consume the frame's existing value owner through the ordinary selector.
+    /// A store site's append fact replaces the prototype walk and successor
+    /// selection for a missing key; a miss teaches the site after publication.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn try_store_owned_linked_field(
         &mut self,
         poisoned: &std::cell::Cell<bool>,
@@ -29,11 +33,12 @@ impl RuntimeState {
         input: &mut JsValue,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         key: u32,
+        site: Option<&PropertyAppendCache>,
     ) -> Result<FieldStore, RuntimeError> {
         let Some(atom) = super::linked_field_atom_in_domain(domain, executable, key) else {
             return Ok(FieldStore::Miss);
         };
-        self.try_store_owned_own_data(poisoned, object, atom, input)
+        self.try_store_owned_own_data(poisoned, domain, object, atom, input, site)
     }
 
     /// A missing ordinary property consumes the same canonical append policy
@@ -43,9 +48,11 @@ impl RuntimeState {
     fn try_store_owned_own_data(
         &mut self,
         poisoned: &std::cell::Cell<bool>,
+        domain: u64,
         object: ObjectId,
         atom: Atom,
         input: &mut JsValue,
+        site: Option<&PropertyAppendCache>,
     ) -> Result<FieldStore, RuntimeError> {
         let prototype = match select_set_slot(self, object, atom)? {
             BorrowedSet::Missing(prototype) => prototype,
@@ -65,24 +72,58 @@ impl RuntimeState {
                 return Ok(FieldStore::Miss);
             }
         };
-        self.append_missing_owned_data(poisoned, object, atom, prototype, input)
+        if let Some(successor) =
+            site.and_then(|site| site.successor(&self.heap, domain, self.heap.object_fast(object)))
+        {
+            self.append_successor_slot_input(
+                Some(poisoned),
+                object,
+                successor,
+                crate::engine::object::SlotAppendInput::Owned(input),
+            )?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_owned_field_append_site_hit",
+            );
+            return Ok(FieldStore::LayoutPublished);
+        }
+        self.append_missing_owned_data(poisoned, domain, object, atom, prototype, input, site)
     }
 
     #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
     fn append_missing_owned_data(
         &mut self,
         poisoned: &std::cell::Cell<bool>,
+        domain: u64,
         object: ObjectId,
         atom: Atom,
         prototype: Option<ObjectId>,
         input: &mut JsValue,
+        site: Option<&PropertyAppendCache>,
     ) -> Result<FieldStore, RuntimeError> {
+        // Observe the epoch before the walk whose result the site may keep.
+        let prototype_epoch = self.heap.property_layout_epoch();
         if !matches!(
             set_missing_local(self, object, atom, prototype)?,
             MissingSelection::Define
         ) {
             return Ok(FieldStore::Miss);
         }
+        let parent = self.heap.object(object)?.shape;
+        let parent_shape = self.heap.shape(parent)?;
+        // Indexed keys can be decided by dense Array prototypes, whose
+        // elements change without a layout change; they stay uncached.
+        let learn = site.is_some()
+            && !parent_shape.is_dictionary()
+            && self.atoms.array_index(atom)?.is_none();
+        let miss = AppendMiss {
+            domain,
+            parent,
+            parent_revision: parent_shape.layout_revision(),
+            has_prototype: prototype.is_some(),
+            prototype_epoch,
+        };
         if !self.append_selected_missing_slot(
             Some(poisoned),
             object,
@@ -91,6 +132,9 @@ impl RuntimeState {
             crate::engine::object::SlotAppendInput::Owned(input),
         )? {
             return Ok(FieldStore::Miss);
+        }
+        if learn && let Some(site) = site {
+            site.learn(&self.heap, miss, self.heap.object(object)?.shape);
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
@@ -192,9 +236,11 @@ mod tests {
                 state
                     .try_store_owned_own_data(
                         &runtime.0.poisoned,
+                        runtime.domain_id(),
                         object(&first),
                         key.atom(),
-                        &mut input
+                        &mut input,
+                        None
                     )
                     .unwrap(),
                 FieldStore::LayoutPublished,
@@ -230,9 +276,11 @@ mod tests {
                 state
                     .try_store_owned_own_data(
                         &runtime.0.poisoned,
+                        runtime.domain_id(),
                         object(&second),
                         key.atom(),
-                        &mut other
+                        &mut other,
+                        None
                     )
                     .unwrap()
                     .committed()
@@ -272,9 +320,11 @@ mod tests {
                 !state
                     .try_store_owned_own_data(
                         &runtime.0.poisoned,
+                        runtime.domain_id(),
                         object(&receiver),
                         key.atom(),
-                        &mut input
+                        &mut input,
+                        None
                     )
                     .unwrap()
                     .committed(),
@@ -541,9 +591,11 @@ mod tests {
             state
                 .try_store_owned_own_data(
                     &runtime.0.poisoned,
+                    runtime.domain_id(),
                     object(&base),
                     key.atom(),
-                    &mut input
+                    &mut input,
+                    None
                 )
                 .unwrap()
                 .committed()
@@ -581,9 +633,11 @@ mod tests {
                 !state
                     .try_store_owned_own_data(
                         &runtime.0.poisoned,
+                        runtime.domain_id(),
                         object(&base),
                         key.atom(),
-                        &mut input
+                        &mut input,
+                        None
                     )
                     .unwrap()
                     .committed()

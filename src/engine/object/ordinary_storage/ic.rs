@@ -645,7 +645,8 @@ mod tests {
                     object(&base),
                     &mut JsValue::Int(42),
                     &code,
-                    key
+                    key,
+                    None
                 )
                 .unwrap()
                 .committed()
@@ -658,7 +659,8 @@ mod tests {
                     object(&frozen),
                     &mut JsValue::Int(42),
                     &code,
-                    key
+                    key,
+                    None
                 )
                 .unwrap()
                 .committed()
@@ -752,7 +754,8 @@ mod tests {
                     object(&base),
                     &mut JsValue::Int(42),
                     &code,
-                    key
+                    key,
+                    None
                 )
                 .unwrap()
                 .committed()
@@ -795,7 +798,8 @@ mod tests {
                         object(&base),
                         &mut JsValue::Int(42),
                         &code,
-                        key
+                        key,
+                        None
                     )
                     .unwrap()
                     .committed(),
@@ -819,6 +823,7 @@ mod tests {
                     &mut JsValue::Int(42),
                     &code,
                     key,
+                    None,
                 )
                 .unwrap()
                 .committed()
@@ -1378,5 +1383,272 @@ mod tests {
         runtime.release_jsvalue(first).unwrap();
         runtime.release_jsvalue(second).unwrap();
         runtime.release_jsvalue(base).unwrap();
+    }
+
+    fn store_site_for(runtime: &Runtime) -> (PublishedFunctionSnapshot, u32) {
+        let (code, _, key) = site(runtime);
+        (code, key)
+    }
+
+    fn store(
+        runtime: &Runtime,
+        code: &PublishedFunctionSnapshot,
+        key: u32,
+        receiver: &JsValue,
+        input: &mut JsValue,
+        site: &crate::engine::object::append_ic::PropertyAppendCache,
+    ) -> Result<crate::engine::object::FieldStore, crate::engine::api::runtime_error::RuntimeError>
+    {
+        runtime.0.state.borrow_mut().try_store_owned_linked_field(
+            &runtime.0.poisoned,
+            runtime.domain_id(),
+            object(receiver),
+            input,
+            code,
+            key,
+            Some(site),
+        )
+    }
+
+    fn site_hits(
+        runtime: &Runtime,
+        site: &crate::engine::object::append_ic::PropertyAppendCache,
+        receiver: &JsValue,
+    ) -> bool {
+        let state = runtime.0.state.borrow();
+        site.successor(
+            &state.heap,
+            runtime.domain_id(),
+            state.heap.object(object(receiver)).unwrap(),
+        )
+        .is_some()
+    }
+
+    #[test]
+    fn append_site_learns_then_moves_owners_into_the_shared_successor() {
+        use crate::engine::object::FieldStore;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let (code, key) = store_site_for(&runtime);
+        let site = crate::engine::object::append_ic::PropertyAppendCache::default();
+        let value = runtime
+            .into_jsvalue(context.eval("({marker:1})").unwrap())
+            .unwrap();
+        let receivers = (0..3)
+            .map(|_| runtime.into_jsvalue(context.eval("({})").unwrap()).unwrap())
+            .collect::<Vec<_>>();
+        assert!(!site_hits(&runtime, &site, &receivers[0]));
+        let value_count = |runtime: &Runtime| {
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(object(&value))
+                .unwrap()
+        };
+        let before = value_count(&runtime);
+        for (index, receiver) in receivers.iter().enumerate() {
+            assert_eq!(site_hits(&runtime, &site, receiver), index != 0);
+            let mut input = runtime.dup_jsvalue(&value).unwrap();
+            assert!(
+                store(&runtime, &code, key, receiver, &mut input, &site).unwrap()
+                    == FieldStore::LayoutPublished
+            );
+            // The frame's owner moved into the slot; nothing was duplicated.
+            assert!(matches!(input, JsValue::Undefined));
+            assert_eq!(value_count(&runtime), before + index as u32 + 1);
+        }
+        let state = runtime.0.state.borrow();
+        let parent_count = |state: &RuntimeState| {
+            state
+                .heap
+                .shape_strong_count(state.heap.object(object(&receivers[0])).unwrap().shape)
+                .unwrap()
+        };
+        let shape = state.heap.object(object(&receivers[0])).unwrap().shape;
+        assert!(
+            receivers
+                .iter()
+                .all(|receiver| state.heap.object(object(receiver)).unwrap().shape == shape)
+        );
+        // Three objects plus at most the bounded construction-prefix pool.
+        assert!((3..=4).contains(&parent_count(&state)));
+        drop(state);
+        assert_eq!(
+            context.eval("1").unwrap(),
+            crate::engine::value::Value::Int(1)
+        );
+        for receiver in receivers {
+            runtime.release_jsvalue(receiver).unwrap();
+        }
+        assert_eq!(value_count(&runtime), before);
+        runtime.release_jsvalue(value).unwrap();
+        runtime.run_gc().unwrap();
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn append_site_declines_changed_prototypes_and_receiver_capabilities() {
+        use crate::engine::object::FieldStore;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let (code, key) = store_site_for(&runtime);
+        let site = crate::engine::object::append_ic::PropertyAppendCache::default();
+        drop(
+            context
+                .eval("globalThis.proto = {}; globalThis.make = () => Object.create(proto);")
+                .unwrap(),
+        );
+        let fresh = |context: &mut crate::engine::api::Context| {
+            runtime
+                .into_jsvalue(context.eval("make()").unwrap())
+                .unwrap()
+        };
+        let learned = fresh(&mut context);
+        assert!(
+            store(&runtime, &code, key, &learned, &mut JsValue::Int(1), &site).unwrap()
+                == FieldStore::LayoutPublished
+        );
+        let probe = fresh(&mut context);
+        assert!(site_hits(&runtime, &site, &probe));
+
+        // A receiver capability is per object, not part of the shape.
+        let sealed = runtime
+            .into_jsvalue(context.eval("Object.preventExtensions(make())").unwrap())
+            .unwrap();
+        assert!(!site_hits(&runtime, &site, &sealed));
+        assert!(
+            store(&runtime, &code, key, &sealed, &mut JsValue::Int(2), &site).unwrap()
+                == FieldStore::Miss
+        );
+        let frozen = runtime
+            .into_jsvalue(context.eval("Object.freeze(make())").unwrap())
+            .unwrap();
+        assert!(!site_hits(&runtime, &site, &frozen));
+
+        // A dictionary receiver has its own layout; it is never learned.
+        let dictionary = runtime
+            .into_jsvalue(
+                context
+                    .eval("var d = make(); d.a = 1; d.b = 2; delete d.a; d")
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(!site_hits(&runtime, &site, &dictionary));
+        assert!(
+            store(
+                &runtime,
+                &code,
+                key,
+                &dictionary,
+                &mut JsValue::Int(3),
+                &site
+            )
+            .unwrap()
+                == FieldStore::LayoutPublished
+        );
+        assert!(site_hits(&runtime, &site, &probe));
+
+        // Prototype setters and read-only properties invalidate by epoch.
+        drop(context
+            .eval(
+                "Object.defineProperty(proto, 'x', {set(v){ this.seen = v }, configurable: true})",
+            )
+            .unwrap());
+        assert!(!site_hits(&runtime, &site, &probe));
+        assert!(
+            store(&runtime, &code, key, &probe, &mut JsValue::Int(4), &site).unwrap()
+                == FieldStore::Miss
+        );
+        drop(context
+            .eval("delete proto.x; Object.defineProperty(Object.prototype, 'x', {value: 0, writable: false, configurable: true})")
+            .unwrap());
+        assert!(
+            store(&runtime, &code, key, &probe, &mut JsValue::Int(5), &site).unwrap()
+                == FieldStore::Miss
+        );
+        drop(context.eval("delete Object.prototype.x").unwrap());
+        assert!(
+            store(&runtime, &code, key, &probe, &mut JsValue::Int(6), &site).unwrap()
+                == FieldStore::LayoutPublished
+        );
+        for owner in [learned, probe, sealed, frozen, dictionary] {
+            runtime.release_jsvalue(owner).unwrap();
+        }
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn rejected_append_site_hit_restores_input_and_both_shapes() {
+        use crate::engine::heap::RawId;
+        use crate::engine::object::FieldStore;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let (code, key) = store_site_for(&runtime);
+        let site = crate::engine::object::append_ic::PropertyAppendCache::default();
+        let learned = runtime.into_jsvalue(context.eval("({})").unwrap()).unwrap();
+        assert!(
+            store(&runtime, &code, key, &learned, &mut JsValue::Int(1), &site).unwrap()
+                == FieldStore::LayoutPublished
+        );
+        let receiver = runtime.into_jsvalue(context.eval("({})").unwrap()).unwrap();
+        let mut input = runtime
+            .into_jsvalue(context.eval("Symbol('kept')").unwrap())
+            .unwrap();
+        let raw = input.as_raw();
+        let (parent, successor) = {
+            let state = runtime.0.state.borrow();
+            (
+                state.heap.object(object(&receiver)).unwrap().shape,
+                state.heap.object(object(&learned)).unwrap().shape,
+            )
+        };
+        assert!(site_hits(&runtime, &site, &receiver));
+        let counts = |runtime: &Runtime| {
+            let state = runtime.0.state.borrow();
+            (
+                state.heap.shape_strong_count(parent).unwrap(),
+                state.heap.shape_strong_count(successor).unwrap(),
+            )
+        };
+        let (parent_count, successor_count) = counts(&runtime);
+        // The successor cannot take another owner: preparation rejects
+        // before publication and the hit consumes nothing.
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Shape(successor), u32::MAX);
+        assert!(store(&runtime, &code, key, &receiver, &mut input, &site).is_err());
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Shape(successor), successor_count);
+        assert_eq!(JsValue::from_raw(input.as_raw()), JsValue::from_raw(raw));
+        assert_eq!(counts(&runtime), (parent_count, successor_count));
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object(object(&receiver))
+                .unwrap()
+                .slots
+                .is_empty()
+        );
+        assert!(!runtime.is_poisoned());
+        assert!(
+            store(&runtime, &code, key, &receiver, &mut input, &site).unwrap()
+                == FieldStore::LayoutPublished
+        );
+        for owner in [learned, receiver] {
+            runtime.release_jsvalue(owner).unwrap();
+        }
+        runtime.run_gc().unwrap();
     }
 }
