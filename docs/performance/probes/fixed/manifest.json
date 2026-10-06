@@ -2,7 +2,7 @@
   "metadata": {
     "suite": "project-authored-fixed-vm-diagnostics",
     "generator": "docs/performance/probes/build_fixed_matrix.py",
-    "generator_sha256": "0cfeac72c95c83d9b27f8f00a10f4beb782cfeed6e965166043f0ab54ec6e286",
+    "generator_sha256": "c06bcaca11dabdb226ea314bdeab9808d1a1a728250508154a1ccd7a39b5a84f",
     "smoke": false,
     "workloads": {
       "workloads": [
