@@ -424,3 +424,97 @@ fn arguments_prefix_reserves_headroom_for_self_aliases_and_pinned_length() {
     }
     drop(carrier);
 }
+
+#[test]
+fn ordinary_object_finalization_releases_slot_atoms_edges_and_brands() {
+    use crate::engine::value::JsValue;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    drop(
+        context
+            .eval(
+                r#"globalThis.sym = Symbol('held only by the object');
+                globalThis.tgt = {marker: 1};
+                class Branded { #p() {} static has(o) { return #p in o; } }
+                globalThis.Branded = Branded;"#,
+            )
+            .unwrap(),
+    );
+    let JsValue::Symbol(index) = runtime.into_jsvalue(context.eval("sym").unwrap()).unwrap() else {
+        panic!("symbol")
+    };
+    let target = runtime.into_jsvalue(context.eval("tgt").unwrap()).unwrap();
+    let JsValue::Object(target_id) = target else {
+        panic!("object")
+    };
+    let target_count = |runtime: &Runtime| {
+        runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(target_id)
+            .unwrap()
+    };
+    let before = target_count(&runtime);
+    drop(
+        context
+            .eval(
+                r#"globalThis.h = {sym, tgt, get g() { return tgt; }};
+                h.self = h;
+                sym = null;"#,
+            )
+            .unwrap(),
+    );
+    // The holder's data slot and the getter closure's capture keep the target.
+    assert!(target_count(&runtime) > before);
+    // The symbol's last owners are the holder slot and this test's handle.
+    runtime.release_jsvalue(JsValue::Symbol(index)).unwrap();
+    assert!(runtime.0.state.borrow().atoms.is_live_index(index));
+    // The self-edge makes the holder a cycle: collection finalizes it.
+    drop(context.eval("h = null").unwrap());
+    runtime.run_gc().unwrap();
+    assert_eq!(target_count(&runtime), before);
+    assert!(!runtime.0.state.borrow().atoms.is_live_index(index));
+    // Acyclic ordinary objects, including private-brand homes and objects
+    // whose last slot holds a symbol, finalize through the zero queue.
+    assert_eq!(
+        context
+            .eval(
+                r#"(() => {
+                    let ok = true;
+                    for (let i = 0; i < 200; i++) {
+                        const b = new Branded();
+                        const plain = {s: Symbol('t'), n: i, o: {i}};
+                        ok = ok && Branded.has(b) && plain.o.i === i;
+                    }
+                    return ok;
+                })()"#
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+    // An acyclic holder finalizes through the zero queue when its last owner
+    // goes away, releasing its symbol atom without a collection.
+    drop(
+        context
+            .eval("globalThis.sym2 = Symbol('acyclic'); globalThis.h2 = {s: sym2, tgt};")
+            .unwrap(),
+    );
+    let JsValue::Symbol(acyclic) = runtime.into_jsvalue(context.eval("sym2").unwrap()).unwrap()
+    else {
+        panic!("symbol")
+    };
+    drop(context.eval("sym2 = null").unwrap());
+    runtime.release_jsvalue(JsValue::Symbol(acyclic)).unwrap();
+    assert!(runtime.0.state.borrow().atoms.is_live_index(acyclic));
+    let held = target_count(&runtime);
+    drop(context.eval("h2 = null").unwrap());
+    assert!(!runtime.0.state.borrow().atoms.is_live_index(acyclic));
+    assert_eq!(target_count(&runtime), held - 1);
+    runtime.release_jsvalue(target).unwrap();
+    drop(context.eval("tgt = null").unwrap());
+    runtime.run_gc().unwrap();
+    assert!(!runtime.0.poisoned.get());
+    assert!(!runtime.0.deferred_references.has_pending());
+}
