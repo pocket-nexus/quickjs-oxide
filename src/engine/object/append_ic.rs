@@ -95,3 +95,5 @@ impl PropertyAppendCache {
         }));
     }
 }
+
+pub(crate) type PropertyAppendCacheTable = super::property_ic::SiteCacheTable<PropertyAppendCache>;

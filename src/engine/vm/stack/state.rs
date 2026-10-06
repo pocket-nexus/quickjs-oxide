@@ -360,6 +360,7 @@ impl FrameSlots<'_> {
         Ok(true)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn try_owned_field_write_in_state(
         &mut self,
         state: &mut RuntimeState,
@@ -367,6 +368,7 @@ impl FrameSlots<'_> {
         pressure: &crate::engine::heap::gc_pressure::GcPressure,
         domain: u64,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        site: usize,
         key: u32,
     ) -> Result<bool, Error> {
         let JsValue::Object(object) = self.peek(1)? else {
@@ -375,7 +377,15 @@ impl FrameSlots<'_> {
         let object = *object;
         let input = self.top_direct_mut()?;
         let stored = state
-            .try_store_owned_linked_field(poisoned, domain, object, input, executable, key, None)
+            .try_store_owned_linked_field(
+                poisoned,
+                domain,
+                object,
+                input,
+                executable,
+                key,
+                Some((&executable.property_append_ic, site)),
+            )
             .map_err(runtime_error_to_vm_error)?;
         match stored {
             crate::engine::object::FieldStore::Miss => return Ok(false),

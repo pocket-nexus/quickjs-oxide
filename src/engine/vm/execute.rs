@@ -2449,6 +2449,7 @@ pub(super) fn execute_frame_in_state(
                                 &runtime.0.gc_pressure,
                                 runtime.domain_id(),
                                 executable,
+                                pc,
                                 operand,
                             )
                         })? {

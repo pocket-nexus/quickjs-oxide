@@ -1,6 +1,9 @@
 //! Exchange existing owners under one state access; no pending representation.
 use super::*;
-use crate::engine::object::append_ic::{AppendMiss, PropertyAppendCache};
+use crate::engine::object::append_ic::{AppendMiss, PropertyAppendCacheTable};
+
+/// A store site's append table and execution PC, resolved only on a miss.
+pub(crate) type AppendSite<'a> = (&'a PropertyAppendCacheTable, usize);
 
 /// A named store publishes either an existing slot or a new layout. Only the
 /// latter can allocate cycle-collectable shapes and needs a publication safe
@@ -21,8 +24,8 @@ impl FieldStore {
 impl RuntimeState {
     /// Resolve a static key owned by the current published executable, then
     /// consume the frame's existing value owner through the ordinary selector.
-    /// A store site's append fact replaces the prototype walk and successor
-    /// selection for a missing key; a miss teaches the site after publication.
+    /// For a missing key, the store site's append fact replaces the prototype
+    /// walk and successor selection; a miss teaches the site after publication.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn try_store_owned_linked_field(
@@ -33,12 +36,12 @@ impl RuntimeState {
         input: &mut JsValue,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         key: u32,
-        site: Option<&PropertyAppendCache>,
+        appends: Option<AppendSite<'_>>,
     ) -> Result<FieldStore, RuntimeError> {
         let Some(atom) = super::linked_field_atom_in_domain(domain, executable, key) else {
             return Ok(FieldStore::Miss);
         };
-        self.try_store_owned_own_data(poisoned, domain, object, atom, input, site)
+        self.try_store_owned_own_data(poisoned, domain, object, atom, input, appends)
     }
 
     /// A missing ordinary property consumes the same canonical append policy
@@ -52,7 +55,7 @@ impl RuntimeState {
         object: ObjectId,
         atom: Atom,
         input: &mut JsValue,
-        site: Option<&PropertyAppendCache>,
+        appends: Option<AppendSite<'_>>,
     ) -> Result<FieldStore, RuntimeError> {
         let prototype = match select_set_slot(self, object, atom)? {
             BorrowedSet::Missing(prototype) => prototype,
@@ -72,22 +75,7 @@ impl RuntimeState {
                 return Ok(FieldStore::Miss);
             }
         };
-        if let Some(successor) =
-            site.and_then(|site| site.successor(&self.heap, domain, self.heap.object_fast(object)))
-        {
-            self.append_successor_slot_input(
-                Some(poisoned),
-                object,
-                successor,
-                crate::engine::object::SlotAppendInput::Owned(input),
-            )?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_owned_field_append_site_hit",
-            );
-            return Ok(FieldStore::LayoutPublished);
-        }
-        self.append_missing_owned_data(poisoned, domain, object, atom, prototype, input, site)
+        self.append_missing_owned_data(poisoned, domain, object, atom, prototype, input, appends)
     }
 
     #[inline(never)]
@@ -100,8 +88,26 @@ impl RuntimeState {
         atom: Atom,
         prototype: Option<ObjectId>,
         input: &mut JsValue,
-        site: Option<&PropertyAppendCache>,
+        appends: Option<AppendSite<'_>>,
     ) -> Result<FieldStore, RuntimeError> {
+        // Only a missing key reaches the store site's table; existing-slot
+        // writes never address it.
+        let site = appends.and_then(|(table, pc)| table.site(pc));
+        // The selector proved the key missing on this receiver. A recorded
+        // parent layout proves the rest of the walk's result.
+        if let Some(site) = site {
+            let data = self.heap.object_fast(object);
+            if is_ordinary(data)
+                && let Some(successor) = site.successor(&self.heap, domain, data)
+            {
+                self.append_cached_owned_slot(poisoned, object, successor, input)?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "ordinary_owned_field_append_site_hit",
+                );
+                return Ok(FieldStore::LayoutPublished);
+            }
+        }
         // Observe the epoch before the walk whose result the site may keep.
         let prototype_epoch = self.heap.property_layout_epoch();
         if !matches!(
@@ -116,6 +122,7 @@ impl RuntimeState {
         // elements change without a layout change; they stay uncached.
         let learn = site.is_some()
             && !parent_shape.is_dictionary()
+            && is_ordinary(self.heap.object(object)?)
             && self.atoms.array_index(atom)?.is_none();
         let miss = AppendMiss {
             domain,
@@ -141,6 +148,39 @@ impl RuntimeState {
             "ordinary_owned_field_append_in_state",
         );
         Ok(FieldStore::LayoutPublished)
+    }
+
+    /// Consume a site hit. The input's owner moves into the slot only on
+    /// publication; a rejected append leaves it and both shapes unchanged.
+    fn append_cached_owned_slot(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        object: ObjectId,
+        successor: crate::engine::heap::ShapeId,
+        input: &mut JsValue,
+    ) -> Result<(), RuntimeError> {
+        match self
+            .heap
+            .append_cached_owned_slot(object, successor, input.as_raw())
+        {
+            Ok(cleanup) => {
+                *input = JsValue::Undefined;
+                match cleanup {
+                    Some(cleanup) => self
+                        .apply_cleanup(cleanup)
+                        .inspect_err(|_| poisoned.set(true)),
+                    None => Ok(()),
+                }
+            }
+            Err(failure) => {
+                if failure.published {
+                    // Quarantine before cleanup reaches an inconsistent heap.
+                    *input = JsValue::Undefined;
+                    poisoned.set(true);
+                }
+                Err(failure.error.into())
+            }
+        }
     }
 
     pub(crate) fn try_exchange_dense_value(
@@ -452,13 +492,13 @@ mod tests {
             const p=new Proxy({}, {set(t,k,v,r){calls++;return Reflect.set(t,k,v,r)}});p.x=value;
             return calls===2 && !Object.hasOwn(o,'x') && p.x===value;
         })()"#).unwrap(), Value::Bool(true));
+        // The second construction may consume its sites' append facts; both
+        // paths complete in State.
+        let events = profile.snapshot().owned_execution_events;
+        let count = |name| events.get(name).copied().unwrap_or(0);
         assert!(
-            profile
-                .snapshot()
-                .owned_execution_events
-                .get("ordinary_owned_field_append_in_state")
-                .copied()
-                .unwrap_or(0)
+            count("ordinary_owned_field_append_in_state")
+                + count("ordinary_owned_field_append_site_hit")
                 >= 6
         );
         assert!(!runtime.0.poisoned.get());
@@ -734,5 +774,116 @@ mod tests {
         state
             .release_owned_jsvalue(&runtime.0.poisoned, array)
             .unwrap();
+    }
+
+    #[test]
+    fn constructor_append_sites_follow_prototype_receiver_and_getter_changes() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(context.eval(r#"(() => {
+            function P(x, y) { this.a = x; this.b = y; }
+            const made = [];
+            for (let i = 0; i < 8; i++) made.push(new P(i, {i}));
+            if (!made.every((o, i) => o.a === i && o.b.i === i)) return 1;
+
+            // A setter added to the constructor prototype after the site learned.
+            let seen = 0;
+            Object.defineProperty(P.prototype, 'b', {set(v) { seen++; }, configurable: true});
+            const withSetter = new P(1, 2);
+            if (seen !== 1 || Object.hasOwn(withSetter, 'b')) return 2;
+            delete P.prototype.b;
+            if (!Object.hasOwn(new P(1, 2), 'b')) return 3;
+
+            // A read-only property further up the chain.
+            Object.defineProperty(Object.prototype, 'a', {value: 0, writable: false, configurable: true});
+            const readOnly = new P(1, 2);
+            if (Object.hasOwn(readOnly, 'a') || readOnly.a !== 0) return 4;
+            function S(x) { 'use strict'; this.a = x; }
+            try { new S(1); return 5; } catch (e) { if (!(e instanceof TypeError)) return 6; }
+            delete Object.prototype.a;
+            if (new S(7).a !== 7) return 7;
+
+            // Receivers that lost extensibility or already have the key.
+            function Q(seal, x) { if (seal === 1) Object.preventExtensions(this);
+                                  if (seal === 2) Object.freeze(this);
+                                  if (seal === 3) { this.z = 0; delete this.z; }
+                                  this.a = x; this.b = x; }
+            for (let i = 0; i < 4; i++) new Q(0, i);
+            const closed = new Q(1, 5), frozen = new Q(2, 5), dictionary = new Q(3, 5);
+            if (Object.hasOwn(closed, 'a') || Object.hasOwn(frozen, 'b')) return 8;
+            if (dictionary.a !== 5 || dictionary.b !== 5) return 9;
+            function T(x) { 'use strict'; Object.preventExtensions(this); this.a = x; }
+            try { new T(1); return 10; } catch (e) { if (!(e instanceof TypeError)) return 11; }
+
+            // A getter evaluated for the stored value changes the receiver
+            // shape and the prototype chain between two cached appends.
+            let mode = 0;
+            const source = { get v() {
+                if (mode === 1) self.extra = 1;
+                if (mode === 2) Object.setPrototypeOf(self, {set b(v) { seen += 10; }});
+                return 3;
+            } };
+            let self;
+            function G() { self = this; this.a = source.v; this.b = source.v; }
+            for (let i = 0; i < 4; i++) new G();
+            mode = 1; const grown = new G();
+            if (Object.keys(grown).join() !== 'extra,a,b') return 12;
+            mode = 2; seen = 0; const redirected = new G();
+            if (seen !== 10 || Object.hasOwn(redirected, 'b') || redirected.a !== 3) return 13;
+            mode = 0; const plain = new G();
+            return Object.keys(plain).join() === 'a,b' ? 0 : 14;
+        })()"#).unwrap(), Value::Int(0));
+        runtime.run_gc().unwrap();
+        assert!(!runtime.0.poisoned.get());
+    }
+
+    #[test]
+    fn constructor_append_sites_keep_values_alive_across_collection() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(context.eval(r#"
+            function N(v) { this.self = this; this.value = v; this.tag = Symbol('t'); }
+            globalThis.kept = [];
+            for (let i = 0; i < 2000; i++) { const n = new N({i}); if (i % 100 === 0) kept.push(n); }
+            kept.length
+        "#).unwrap(), Value::Int(20));
+        runtime.run_gc().unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+            kept.every((n, k) => n.self === n && n.value.i === k * 100 && typeof n.tag === 'symbol')
+        "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        drop(context.eval("kept = null").unwrap());
+        runtime.run_gc().unwrap();
+        assert!(!runtime.0.poisoned.get());
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn warm_constructor_appends_hit_their_sites() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(() => {
+            function P(x) { this.a = x; this.b = x; }
+            let s; for (let i = 0; i < 100; i++) s = new P(i);
+            return s.b;
+        })()"#
+                )
+                .unwrap(),
+            Value::Int(99)
+        );
+        let events = profile.snapshot().owned_execution_events;
+        let count = |name| events.get(name).copied().unwrap_or(0);
+        assert!(count("ordinary_owned_field_append_site_hit") >= 198);
+        assert!(count("ordinary_owned_field_append_in_state") <= 2);
     }
 }
