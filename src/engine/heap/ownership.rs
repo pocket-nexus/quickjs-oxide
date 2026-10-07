@@ -738,9 +738,9 @@ impl RuntimeState {
     #[inline(never)]
     fn release_jsvalue_checked(&mut self, value: JsValue) -> Result<(), RuntimeError> {
         match value {
-            JsValue::Object(id) => self.release_heap_reference(RawId::Object(id)),
-            JsValue::String(id) => self.release_heap_reference(RawId::String(id)),
-            JsValue::BigInt(id) => self.release_heap_reference(RawId::BigInt(id)),
+            JsValue::Object(id) => self.release_declined_reference(RawId::Object(id)),
+            JsValue::String(id) => self.release_declined_reference(RawId::String(id)),
+            JsValue::BigInt(id) => self.release_declined_reference(RawId::BigInt(id)),
             JsValue::Symbol(index) => self.release_atom_index(index),
             JsValue::Undefined
             | JsValue::Null
@@ -762,7 +762,18 @@ impl RuntimeState {
 
     #[inline(never)]
     fn release_heap_reference_checked(&mut self, id: RawId) -> Result<(), RuntimeError> {
-        self.release_heap_reference(id)
+        self.release_declined_reference(id)
+    }
+
+    /// Checked release after the trusted nonfinal path declined: the nonfinal
+    /// attempt is not repeated. [`super::Heap::release_reference`] validates the
+    /// handle, decrements, and drains any queued work.
+    #[inline(always)]
+    fn release_declined_reference(&mut self, id: RawId) -> Result<(), RuntimeError> {
+        if let Some(cleanup) = self.heap.release_reference(id)? {
+            self.apply_cleanup(cleanup)?;
+        }
+        Ok(())
     }
 
     #[inline]
