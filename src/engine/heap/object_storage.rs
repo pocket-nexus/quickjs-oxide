@@ -1491,7 +1491,13 @@ impl Heap {
         if prototype {
             self.property_layout_epoch = self.property_layout_epoch.saturating_add(1);
         }
-        // A shape is never a leaf node: release it through its own arena.
+        // The object owned its previous shape: a nonfinal decrement needs no
+        // handle check. A shape is never a leaf node; a possibly final release
+        // goes through its own arena's checked path.
+        // Pending zero-queue work is still drained below, as before.
+        if self.zero_queue.is_empty() && self.shapes.release_nonfinal_fast(previous_shape) {
+            return Ok(None);
+        }
         let drained = self
             .shapes
             .release_no_drain(previous_shape)
