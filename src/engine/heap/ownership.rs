@@ -720,23 +720,6 @@ impl RuntimeState {
         if self.heap.try_release_nonfinal(id) {
             return Ok(());
         }
-        self.release_final_reference(id)
-    }
-
-    /// Possible finalization, kept out of line so inlined release sites hold
-    /// only the nonfinal decrement. A plain object's last reference finalizes
-    /// directly; everything else takes the queue-draining release.
-    #[inline(never)]
-    fn release_final_reference(&mut self, id: RawId) -> Result<(), RuntimeError> {
-        if let RawId::Object(object) = id {
-            match self.heap.try_release_final_ordinary(object)? {
-                super::gc::FinalRelease::Released(Some(cleanup)) => {
-                    return self.apply_cleanup(cleanup);
-                }
-                super::gc::FinalRelease::Released(None) => return Ok(()),
-                super::gc::FinalRelease::Declined => {}
-            }
-        }
         if let Some(cleanup) = self.heap.release_reference(id)? {
             self.apply_cleanup(cleanup)?;
         }
