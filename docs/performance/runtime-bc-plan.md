@@ -26,21 +26,21 @@
 - Splay 快 27.2%，EarleyBoyer 快 12.0%，RayTrace 快 10.0%，Richards 快 4.0%；
 - 其余各项未分辨，八项全部通过非劣门槛。
 
-## 3. 总顺序（不变）
+## 3. 总顺序
 
 | 顺序 | 条目 | 验收（每操作净指令数） |
 |---|---|---|
 | **1** | 对象分配：字面量、`new`、define | 字面量 ≤3,000；`new` ≤5,500 |
 | 2 | 引用计数与已认证句柄的快速路径 | 一对 dup/release ≤30 |
-| 3 | 属性写入与写缓存（原 B2c、B2d） | 写属性 ≤150 |
-| 4 | 调用与返回的剩余成本（包括构造调用） | 函数调用 ≤700 |
+| 3 | 属性访问：读缓存与写缓存（原 B2c、B2d，并入读取） | 读取命中 ≤80；写已有字段 ≤150 |
+| 4 | 调用与返回的剩余成本（包括构造调用；4a 与第 2 项并行） | 函数调用 ≤700；`new` ≤1,500 |
 | 检查点 | 全八项加 Combined，六对正式 Score，对照 A、B2a 和历史 Boa | 决定第 5、6 项的先后 |
 | 5 | 解释循环结构：先拆小热循环，再验证预解码（一轮，有时间上限） | ≤40 条/分派，Dw 2–3/分派 |
 | 6 | GC 扫描与对象记录体积 | 由检查点的 profile 决定 |
 | 7 | 其余迁移：computed 读取、Reflect/Proxy、B3、B4 | Ir/Dw 不回退 |
 | 8 | 删除旧协议，零残留验收 | 六项硬门槛归零 |
 
-第 2–4 项开始前，用同一套探针在当时已采纳的版本上重新测基线。预算都是待校准的目标，不直接换算成 Score。
+第 2–4 项的详细计划见第 5 节；开始前用同一套探针在当时已采纳的版本上重新测基线。预算都是待校准的目标，不直接换算成 Score。
 
 ## 4. 第 1 项：剩余工作
 
@@ -68,7 +68,7 @@
 3. **1a：** 把缓存检查提前到属性选择（`select_set_slot`/`locate`）之前，命中时只比较 shape 然后直接追加，目标每个追加 ≤150。
 4. **1d：** 释放旧对象从 740 降到 ≤250，处理身份校验、引用计数和零引用队列的残余成本。
 5. **1e：** 先在账本里把字段值的传递和构造调用的参数复制（`retain_raw_root`、`dup_jsvalue`）分开。字段值传递部分压到 ≤200，参数复制归第 2、4 项。
-6. **收口验收：** 重跑 `ledger.py`，各阶段达到预算；R/D/NS 和 RayTrace、EarleyBoyer、Splay 按下面第 6 节的两级门槛检查；全八项加 Combined 的 ABBA，对照 B2a；正确性覆盖：
+6. **收口验收：** 重跑 `ledger.py`，各阶段达到预算；R/D/NS 和 RayTrace、EarleyBoyer、Splay 按下面第 7 节的两级门槛检查；全八项加 Combined 的 ABBA，对照 B2a；正确性覆盖：
    - shape 缓存失效：原型变化、不可扩展、冻结、字典模式、原型上的 accessor；
    - setter 与 Proxy 原型；
    - getter 中修改 shape；
@@ -83,11 +83,153 @@
 
 #95 用一个 PR 承载 1a–1e，偏离了“每个任务一个 PR、不超过三个运行时提交”的规则。按现状保留，但改为逐个提交做测量来归因；以后的条目恢复按任务拆 PR。
 
-## 5. 第 2–8 项要点
+## 5. 第 2–4 项详细计划
 
-- **第 2 项：** frame、slot 或 heap 边持有的句柄只认证一次，之后走快速访问；饱和加减，不返回 `Result`；debug 构建保留完整校验。
-- **第 3 项：** Set 语义的迁移和写缓存（shape/槽位）放在同一个 PR，源 owner 直接移动；复用第 1 项的追加内核。
-- **第 4 项：** 帧安装和回收不再逐个槽位检查 `Option` 和 `try_reserve`；构造调用（C，现在 2,233）在这一项处理。
+### 基线与依据
+
+数据来自 #95 head `2253139`（Rust 1.88 普通 release），用 Callgrind 调用链拆分的微基准测得。
+“净值”扣除同形空循环（649 Ir/迭代）。R/D 中各类成本的 self 占比（10 次迭代）：
+
+| 成本类别 | Richards | DeltaBlue |
+|---|---:|---:|
+| 属性读取缓存（`select_linked_data_into`、`PropertyReadCache::read`、`promote_field`） | 21.5% | 21.4% |
+| 调用与返回 | 13.9% | 21.8% |
+| 引用计数 | 10.6% | 10.3% |
+| 属性写入 | 6.0% | 1.6% |
+| 解释循环自身（第 5 项） | 34.0% | 30.2% |
+
+属性读取是这三项里最大的单项，因此并入第 3 项并先做。开始每一项前，在当时已采纳的版本上
+用同一组探针重测基线。
+
+新增探针（并入 `ledger.py` 或固定探针 manifest，N/2N 斜率，输出校验）：
+`s=o`、`s=o.x`、`o.x=i`、`o.x=p`、`a[i&1023]=i`、`a[i&15]=p`、`f(i)`、`o.m(i)`、`g(p)`、`new E()`。
+
+### 进度安排
+
+- **第 2 项**与 **4a（调用站点缓存）并行**。4a 不依赖快速引用计数，两条线改动的代码基本不重叠；
+  各自独立 PR，集成时按依赖顺序叠放，原生计时串行。
+- 第 2 项完成后做**第 3 项**（读取优先），再做 **4b–4e**。
+
+### 第 2 项：引用计数与已认证句柄的快速路径
+
+**现状**
+
+| 探针 | 净 Ir/次 | 说明 |
+|---|---:|---|
+| `s=o` | 652 | 执行 2 次 dup + 2 次 release；QuickJS 为 1 次加一、1 次减一 |
+| 一次 dup | 约 115 | `copy_reference_in_state` 28 + `dup_jsvalue` 44 + `retain_raw_root` 43 |
+| 一次非最终 release | 约 88 | `release_jsvalue` 16 + `release_heap_reference` 72 |
+| 一对 dup/release | 约 200 | 预算 ≤30 |
+
+**原因**
+
+1. 对象走完整校验路径：`copy_reference_in_state`（`vm/stack/state.rs`）只对字符串和 BigInt
+   使用已有的可信 retain；对象经过 `dup_jsvalue` → `retain_raw_root` → `retain_object` → `retain_raw`，
+   做代际校验、类型分派和带检查的加法，每层返回 `Result`。
+2. release 不按类型特化：`try_release_nonfinal`（`heap/gc.rs`）每次检查零引用队列、`is_leaf`、
+   VarRef/Shape 分支，再做 `validate_slot_identity`。
+3. 多余的 dup/release 对：`s=o;` 做了两对，疑似丢弃结果的局部赋值生成了“复制、写入、丢弃”序列
+   （与 #95 中字段赋值修复的问题同类）。
+4. `copy_reference_in_state` 为 `#[inline(never)]`，`Result` 穿过三层。
+
+**任务**
+
+| 任务 | 内容 |
+|---|---|
+| 2a 按类型特化的可信路径 | 新增对象、字符串、BigInt、Symbol 的 retain/release 快速入口。句柄来自 frame 槽、heap 边或操作数时持有者已有强引用，不做代际校验（debug 构建保留断言）；饱和与 `IMMORTAL_STRONG` 语义不变。非最终 release 内联且不返回 `Result`；归零时进入现有带检查路径和零引用队列（冷路径）。外部输入和挂起恢复的句柄仍走完整认证。 |
+| 2b 消费者改用新路径 | `copy_reference_in_state`、`transfer_direct_in_state`、`read_local`、帧清理、读缓存结果提升。 |
+| 2c 删除多余的 dup/release 对 | 先导出 `s=o;`、方法调用、参数传递的实际字节码确认来源；丢弃结果的局部赋值改为单条写入；操作数在下一条指令被消费时用移动代替复制。 |
+
+**验收**
+
+- 一对 dup/release ≤30（dup ≤12，非最终 release ≤15）；`s=o` 净值 ≤300。
+- R/D 中引用计数的 self 占比 ≤3%。
+- 正确性：循环后各对象 strong 计数守恒、循环引用 GC、饱和边界、poison 合同；打开完整校验的构建跑全部测试。
+- 增加一个 CI 用的校验 feature，在测试中恢复代际校验，防止所有权错误被快速路径掩盖。
+
+### 第 3 项：属性访问——读缓存与写缓存（原 B2c、B2d，并入读取）
+
+**现状**
+
+| 探针 | 净 Ir/次 | 主要成本 |
+|---|---:|---|
+| `s=o.x`（缓存命中） | 377 | `select_linked_data_into` 126、`PropertyReadCache::read` 117、`promote_field` 24、`live_node_fast` 15；QuickJS 约 48 |
+| `o.x=i`（已有字段，数字） | 677 | 每次重新查找：`select_set_slot` 100 + `locate` 83；`retire_field_write` 81；接收者 dup/release 约 210（第 2 项） |
+| `o.x=p`（已有字段，对象） | 1,381 | 另有值的 dup/release 与 `exchange_public_owner` |
+| `a[i&1023]=i` | 1,084 | `insert_copy` 88 + `rotate_operands` 51、`try_exchange_dense_value` 69；解释循环内多出约 460 |
+| `a[i&15]=p` | 1,644 | 同上，另有值的 dup/release |
+
+**原因**
+
+1. 已有字段写入没有缓存：`select_set_slot`（`object/ordinary_storage.rs`）每次做带检查的 `heap.object()`
+   和 `locate`。第 1 项的追加缓存只覆盖缺失属性，且在选择之后检查。
+2. 读缓存命中太重：每次复制整个 `Cell<State>`（多态时约 200 字节），检查 domain/realm、shape、revision，
+   再单独提升结果。
+3. dense 写入先重排操作数，不按编译器给出的顺序直接消费。
+
+**任务（3a 最先）**
+
+| 任务 | 内容 |
+|---|---|
+| 3a 读缓存命中路径重写 | 每站点一个小的单态条目（shape、slot 下标、持有者深度、revision）；命中只比较 shape、读槽位、复制值（第 2 项快速路径）。多态、原型命中和访问器放冷路径；不复制整个缓存状态，提升并入命中路径。 |
+| 3b 已有字段写缓存 | 每站点记住（shape、slot、可写）；命中时比较 shape，移入源 owner，用快速路径释放旧值；未命中走 `select_set_slot` 并填充。失效规则同读缓存（shape revision、原型 epoch）。 |
+| 3c 统一写站点缓存 | 已有字段条目与第 1 项追加条目共用一个站点缓存，追加检查提前到选择之前（同时完成第 1 项 1a 的剩余部分）。 |
+| 3d dense 写入直接消费操作数 | 调整 `PutArrayEl` 的操作数顺序或按现有顺序直接取用，不做 `insert_copy`/`rotate`；值直接移入元素。 |
+| 3e 未命中路径迁移 Set 语义 | 在 State 下完成；同步拒绝或写入不建 `SetOperands` 运输结构；setter 交接内部调用；删除 `ConvertedWrite`/`ObjectRef` 旧通道。 |
+
+**验收**
+
+- 读取命中 ≤80；写已有数字字段 ≤150；写对象值 ≤200；`a[i]=数字` ≤200；`a[i]=对象` ≤250。
+- R/D 中读缓存的 self 占比 ≤6%。
+- 正确性：后加只读属性与原型 setter、冻结/密封/不可扩展/字典模式、访问器与 Proxy 接收者、
+  数组 length/hole/冻结数组/不可写索引、缓存失效、strict 与 sloppy。
+
+### 第 4 项：调用与返回的剩余成本（包括构造调用）
+
+**现状**
+
+| 探针 | 净 Ir/次 | 主要成本 |
+|---|---:|---|
+| `f(i)` | 2,060 | 循环外约 1,100：`install_current_ordinary` 自身 322、`prepare_ordinary_window` 128、`FramePush` 48、`select_in_state` 87、`validate_ordinary_call_operands` 49、`authenticate_slot` 40；返回时 `recycle` 62、`FrameCold::release_owned` 99、释放 callee 72、`clear_current_frame` 64。读取 `f` 的 dup 约 115；循环内的调用/返回处理与被调函数体约 690。QuickJS 约 270 |
+| `o.m(i)` | 2,643 | 另有读 `o.m` 约 350（第 3 项） |
+| `g(p)` | 2,989 | 另有对象参数 dup/release 约 400（第 2 项） |
+| `new E()` | 4,556 | `enter_constructor` 自身 687、`strong_count` 212、`prepare_ordinary_base` 102、分配 103、`recycle` 521；覆盖局部变量时释放旧对象 919（第 1 项 1d） |
+
+**原因**
+
+1. 每次调用重新选择、认证和校验目标，调用站点没有缓存。
+2. 帧安装逐字段构造 232 字节的 `FrameCold`（`vm/stack/window.rs` 的 `install_current_ordinary`）：
+   `ReturnTarget`、`FrameFunction::shared(runtime, …)`、executable、窗口、输入及捕获标志。
+   `FrameFunction::shared` 仍接收 `Runtime`，属于 B0 残留。
+3. 返回时逐槽清理整个窗口，callee、this 和输入经带检查路径释放。
+4. 构造调用另有每次 `strong_count` 探测和独立的安装器。
+
+**任务**
+
+| 任务 | 内容 |
+|---|---|
+| 4a 调用站点缓存（与第 2 项并行） | 记录 callee 身份到已准备调用事实（executable、帧布局、参数个数是否匹配、局部变量能否简单初始化、是否有捕获）；命中跳过选择、认证和操作数校验；身份失效时走现有路径。 |
+| 4b 精简帧安装 | callee owner 从操作数直接移入帧；冷帧复用池中对象、只写变化字段；局部变量批量初始化，参数直接移动；`FrameFunction` 不再接收 `Runtime`，关闭对应 B0 残留编号。 |
+| 4c 精简返回 | 只清理实际持有 owner 的槽；callee、this 和输入用第 2 项快速路径释放；回收冷帧不重新初始化。 |
+| 4d 构造调用 | 查清并尽量去掉 `strong_count` 探测；基础对象复用 1c 的空对象路径；`enter_constructor` 与普通安装器共用实现。 |
+| 4e 遵守解释函数尺寸规则 | 调用/返回处理在 `execute_frame_in_state` 中只保留分派加一次调用，函数大小与栈槽数不增加；调用和返回仍留在解释循环内。 |
+
+**验收**
+
+- `f(i)` ≤700；`o.m(i)` ≤800；`g(p)` ≤900；`new E()` ≤1,500。
+- 调用的 self 占比：DeltaBlue ≤8%，Richards ≤5%。
+- 正确性：递归与栈限制、尾调用、bound 函数、generator/async（未命中路径）、参数个数不匹配、
+  `arguments` 与捕获变量、抛错时的帧清理与 poison、GC 时栈上 owner、构造函数返回对象、
+  `new.target`、派生类与 `super()`。
+
+### 预期
+
+三项都达到预算时，R/D 中这几类成本合计从约 45–55% 的 self 指令降到约 15%，
+整体指令数约下降三到四成。这是由指令占比推算的，不是耗时预测；解释循环自身由第 5 项处理。
+第 4 项完成后进入正式检查点。
+
+## 6. 检查点与第 5–8 项要点
+
 - **检查点：** 用正式的六对 Score 判断离 Boa 还差多少，再决定第 5、6 项哪个先做。
 - **第 5 项：** 按 E 实验的结论来做：热状态用局部变量，冷路径显式同步状态；先拆小热循环，再单独验证预解码。
 - **第 7 项：**
@@ -96,7 +238,7 @@
   - 每批只迁移自己的消费者。
 - **第 8 项：** 六项硬门槛，加上 B0 残留清单全部清零。
 
-## 6. 执行与测量规则
+## 7. 执行与测量规则
 
 - **热路径 PR 同时交付迁移和删除的工作**；冷路径 PR 只做迁移，要求不回退。
 - **主指标是每操作的指令数**（`ledger.py` 和固定探针，N/2N/4N 斜率）。
@@ -117,7 +259,7 @@
 - **流程：** 每个提交跑相关测试，外加探针和 R/D/NS 的 Ir/Dw；每个 PR 收口时跑 CI fast、架构检查和 focused Test262；完整的回执只在条目收口时出一次。
 - **不变的部分：** 技术合同、poison 合同和 B0 残留清单保持不变，每个条目关闭对应的残留编号。
 
-## 7. 停止条件
+## 8. 停止条件
 
 - 第 1 项收口：所有任务达到预算，BigInt 回退修复或经复盘解释清楚，全八项通过非劣门槛。
 - 检查点时如果八项和 Combined 还没有全部超过 Boa，就报告真实差距，按剩余成本重新排第 5、6 项。
