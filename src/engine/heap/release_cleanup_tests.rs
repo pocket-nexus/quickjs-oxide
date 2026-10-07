@@ -545,3 +545,72 @@ fn final_release_of_a_long_ordinary_chain_drains_iteratively() {
     drop(state);
     assert!(!runtime.0.poisoned.get());
 }
+
+#[test]
+fn final_release_of_overwritten_locals_releases_edges_atoms_and_cascades() {
+    use crate::engine::value::JsValue;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    drop(
+        context
+            .eval("globalThis.shared = {}; globalThis.sym = Symbol('slot');")
+            .unwrap(),
+    );
+    let JsValue::Object(shared) = runtime
+        .into_jsvalue(context.eval("shared").unwrap())
+        .unwrap()
+    else {
+        panic!("object")
+    };
+    let JsValue::Symbol(symbol) = runtime.into_jsvalue(context.eval("sym").unwrap()).unwrap()
+    else {
+        panic!("symbol")
+    };
+    let shared_count = |runtime: &Runtime| {
+        runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(shared)
+            .unwrap()
+    };
+    let held = shared_count(&runtime);
+    let before = runtime.0.state.borrow().heap.counts();
+    // Each overwrite drops the last reference to a wide holder: a shared
+    // object (nonfinal), a string, a BigInt, a symbol atom and a nested chain that
+    // reaches zero and drains through the queue afterwards.
+    assert_eq!(
+        context
+            .eval(
+                r#"(() => {
+                    let s, total = 0;
+                    for (let i = 0; i < 1000; i++) {
+                        s = {shared, sym, str: 'k' + i, big: BigInt(i) << 70n, child: {i, inner: {i}}, a: i};
+                        total += s.child.inner.i;
+                    }
+                    s = null;
+                    return total;
+                })()"#
+            )
+            .unwrap(),
+        Value::Int(499_500)
+    );
+    assert_eq!(shared_count(&runtime), held);
+    {
+        let state = runtime.0.state.borrow();
+        let after = state.heap.counts();
+        assert!(after.object_nodes < before.object_nodes + 16);
+        assert!(after.string_nodes < before.string_nodes + 16);
+        assert!(after.bigint_nodes < before.bigint_nodes + 16);
+        assert!(!state.heap.has_pending_zero_cleanup());
+    }
+    // Only the global binding and this handle still own the symbol.
+    drop(context.eval("sym = null").unwrap());
+    assert!(runtime.0.state.borrow().atoms.is_live_index(symbol));
+    runtime.release_jsvalue(JsValue::Symbol(symbol)).unwrap();
+    assert!(!runtime.0.state.borrow().atoms.is_live_index(symbol));
+    runtime.release_jsvalue(JsValue::Object(shared)).unwrap();
+    assert!(!runtime.0.poisoned.get());
+    assert!(!runtime.0.deferred_references.has_pending());
+}
