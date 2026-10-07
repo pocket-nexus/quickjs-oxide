@@ -49,6 +49,8 @@ enum Located<'a> {
     Unresolved,
 }
 
+/// Whole-cache view used by the miss path and tests. The hit path reads
+/// `Kind` and individual entries instead of copying this value.
 #[derive(Clone, Copy, Debug, Default)]
 enum State {
     #[default]
@@ -65,18 +67,91 @@ struct Locations {
     len: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Kind {
+    #[default]
+    Cold,
+    Monomorphic,
+    Accessor,
+    Polymorphic(u8),
+    Megamorphic(u16),
+}
+
+const ENTRIES: usize = 4;
+
 /// Four guarded locations cover small polymorphic sites. Unsupported/overflow sites
 /// periodically retry specialization, without retaining object or value owners.
+/// `kind` says which entries are live: one for monomorphic and accessor
+/// sites, the first `len` for polymorphic ones.
 #[derive(Debug, Default)]
 pub(crate) struct PropertyReadCache {
-    state: Cell<State>,
+    kind: Cell<Kind>,
+    entries: [Cell<Option<Location>>; ENTRIES],
     backoff: Cell<u16>,
     hits: Cell<u8>,
 }
 
 impl PropertyReadCache {
+    #[cfg(test)]
+    fn with_state(state: State) -> Self {
+        let cache = Self::default();
+        cache.set_state(state);
+        cache
+    }
+
+    fn entry(&self, index: usize) -> Location {
+        self.entries[index]
+            .get()
+            .expect("the cache kind covers only filled entries")
+    }
+
+    fn state(&self) -> State {
+        match self.kind.get() {
+            Kind::Cold => State::Cold,
+            Kind::Monomorphic => State::Monomorphic(self.entry(0)),
+            Kind::Accessor => State::Accessor(self.entry(0)),
+            Kind::Polymorphic(len) => {
+                let first = self.entry(0);
+                let mut entries = [first; ENTRIES];
+                for (index, entry) in entries.iter_mut().enumerate().take(len as usize) {
+                    *entry = self.entry(index);
+                }
+                State::Polymorphic(Locations {
+                    entries,
+                    len: len as usize,
+                })
+            }
+            Kind::Megamorphic(left) => State::Megamorphic(left),
+        }
+    }
+
+    fn set_state(&self, state: State) {
+        let kind = match state {
+            State::Cold => Kind::Cold,
+            State::Monomorphic(location) => {
+                self.entries[0].set(Some(location));
+                Kind::Monomorphic
+            }
+            State::Accessor(location) => {
+                self.entries[0].set(Some(location));
+                Kind::Accessor
+            }
+            State::Polymorphic(locations) => {
+                for (cell, location) in self.entries.iter().zip(&locations.entries[..locations.len]) {
+                    cell.set(Some(*location));
+                }
+                Kind::Polymorphic(locations.len as u8)
+            }
+            State::Megamorphic(left) => Kind::Megamorphic(left),
+        };
+        self.kind.set(kind);
+    }
+
     /// The caller holds the heap borrow until it has retained/copied the value.
     /// No raw borrowed handle escapes that boundary.
+    ///
+    /// The receiver is loaded once; each live entry is compared by shape
+    /// first and only a matching entry checks the remaining guards.
     pub(crate) fn read<'a>(
         &self,
         heap: &'a Heap,
@@ -84,67 +159,80 @@ impl PropertyReadCache {
         realm: ContextId,
         receiver: ObjectId,
     ) -> Option<&'a RawValue> {
-        match self.state.get() {
-            State::Cold => {
-                event("property_ic.cold");
-                None
-            }
-            State::Accessor(_) => {
-                event("property_ic.accessor_site");
-                None
-            }
-            State::Monomorphic(location) => {
-                let value = Self::read_location(location, heap, domain, realm, receiver);
-                if value.is_some() {
-                    self.hit();
+        let len = match self.kind.get() {
+            // Straight-line path: most sites, and nearly all reads in
+            // Richards and EarleyBoyer, are monomorphic.
+            Kind::Monomorphic => {
+                let location = self.entry(0);
+                let object = heap.object_fast(receiver);
+                if location.shape == object.shape
+                    && let Some(value) =
+                        Self::read_matched(location, heap, object, domain, realm, receiver)
+                {
                     event(if location.depth == 0 {
                         "property_ic.hit.monomorphic"
                     } else {
                         "property_ic.hit.monomorphic_prototype"
                     });
-                } else {
-                    event("property_ic.guard_miss.monomorphic");
+                    self.hit();
+                    return Some(value);
                 }
-                value
+                event("property_ic.guard_miss.monomorphic");
+                return None;
             }
-            State::Polymorphic(mut locations) => {
-                for index in 0..locations.len {
-                    if let Some(value) =
-                        Self::read_location(locations.entries[index], heap, domain, realm, receiver)
-                    {
-                        event(match (index, locations.entries[index].depth) {
-                            (0, 0) => "property_ic.hit.polymorphic_first",
-                            (_, 0) => "property_ic.hit.polymorphic_later",
-                            (0, _) => "property_ic.hit.polymorphic_first_prototype",
-                            _ => "property_ic.hit.polymorphic_later_prototype",
-                        });
-                        if index != 0 {
-                            locations.entries[..=index].rotate_right(1);
-                            self.state.set(State::Polymorphic(locations));
-                        }
-                        self.hit();
-                        return Some(value);
-                    }
-                }
-                event("property_ic.guard_miss.polymorphic");
-                None
+            Kind::Polymorphic(len) => len as usize,
+            Kind::Cold => {
+                event("property_ic.cold");
+                return None;
             }
-            State::Megamorphic(left) => {
+            Kind::Accessor => {
+                event("property_ic.accessor_site");
+                return None;
+            }
+            Kind::Megamorphic(left) => {
                 event("property_ic.megamorphic_skip");
                 if left <= 1 {
-                    self.state.set(State::Cold);
+                    self.kind.set(Kind::Cold);
                     event("property_ic.revive");
                 } else {
-                    self.state.set(State::Megamorphic(left - 1));
+                    self.kind.set(Kind::Megamorphic(left - 1));
                 }
-                None
+                return None;
             }
+        };
+        let object = heap.object_fast(receiver);
+        for index in 0..len {
+            let location = self.entry(index);
+            if location.shape != object.shape {
+                continue;
+            }
+            let Some(value) =
+                Self::read_matched(location, heap, object, domain, realm, receiver)
+            else {
+                continue;
+            };
+            event(match (index, location.depth) {
+                (0, 0) => "property_ic.hit.polymorphic_first",
+                (_, 0) => "property_ic.hit.polymorphic_later",
+                (0, _) => "property_ic.hit.polymorphic_first_prototype",
+                _ => "property_ic.hit.polymorphic_later_prototype",
+            });
+            if index != 0 {
+                for later in (1..=index).rev() {
+                    self.entries[later].set(self.entries[later - 1].get());
+                }
+                self.entries[0].set(Some(location));
+            }
+            self.hit();
+            return Some(value);
         }
+        event("property_ic.guard_miss.polymorphic");
+        None
     }
 
     fn cool_down(&self) {
         let delay = self.backoff.get().max(16);
-        self.state.set(State::Megamorphic(delay));
+        self.kind.set(Kind::Megamorphic(delay));
         self.backoff.set((delay * 2).min(256));
         self.hits.set(0);
     }
@@ -161,22 +249,20 @@ impl PropertyReadCache {
         }
     }
 
+    /// Remaining guards of an entry whose shape equals the receiver's.
     #[inline(always)]
-    fn read_location(
+    fn read_matched<'a>(
         location: Location,
-        heap: &Heap,
+        heap: &'a Heap,
+        object: &crate::engine::heap::ObjectData,
         domain: u64,
         realm: ContextId,
         receiver: ObjectId,
-    ) -> Option<&RawValue> {
+    ) -> Option<&'a RawValue> {
         if location.domain != domain || location.realm != realm {
             return None;
         }
-        let object = heap.object_fast(receiver);
         if !ordinary_receiver(object, location.numeric_key) {
-            return None;
-        }
-        if object.shape != location.shape {
             return None;
         }
         let shape = heap.shape_fast(object.shape);
@@ -263,7 +349,7 @@ impl PropertyReadCache {
         receiver: Option<ObjectId>,
         atom: Atom,
     ) -> CacheSelection<'a> {
-        let state = self.state.get();
+        let state = self.state();
         if let (State::Accessor(location), Some(receiver)) = (state, receiver)
             && let Some(getter) =
                 Self::read_accessor_location(location, heap, domain, realm, receiver)
@@ -287,7 +373,7 @@ impl PropertyReadCache {
         let (location, raw) = match receiver.map(|r| locate(heap, atoms, domain, realm, r, atom)) {
             Some(Located::Data(location, raw)) => (location, raw),
             Some(Located::Accessor(location, getter)) => {
-                self.state.set(State::Accessor(location));
+                self.set_state(State::Accessor(location));
                 event("property_ic.miss");
                 return CacheSelection::Accessor(getter);
             }
@@ -337,7 +423,7 @@ impl PropertyReadCache {
             }
             State::Megamorphic(_) => unreachable!("cooldown handled before location selection"),
         };
-        self.state.set(next);
+        self.set_state(next);
         event("property_ic.miss");
         CacheSelection::Data(raw)
     }
@@ -798,10 +884,7 @@ mod tests {
         ] {
             let receiver = object(context.eval(source).unwrap());
             let key = runtime.intern_property_key(name).unwrap();
-            let cache = PropertyReadCache {
-                state: Cell::new(State::Megamorphic(7)),
-                ..Default::default()
-            };
+            let cache = PropertyReadCache::with_state(State::Megamorphic(7));
             let state = runtime.0.state.borrow();
             let selected = cache.miss_selected(
                 &state.heap,
@@ -818,7 +901,7 @@ mod tests {
                 CacheSelection::Unresolved => "unresolved",
             };
             assert_eq!(actual, expected, "{source}[{name}]");
-            assert!(matches!(cache.state.get(), State::Megamorphic(7)));
+            assert!(matches!(cache.state(), State::Megamorphic(7)));
         }
     }
 
@@ -877,7 +960,7 @@ mod tests {
                 None,
                 key.atom(),
             );
-            assert!(matches!(cache.state.get(), State::Megamorphic(left) if left == delay));
+            assert!(matches!(cache.state(), State::Megamorphic(left) if left == delay));
             for _ in 0..delay {
                 assert!(
                     cache
@@ -890,7 +973,7 @@ mod tests {
                         .is_none()
                 );
             }
-            assert!(matches!(cache.state.get(), State::Cold));
+            assert!(matches!(cache.state(), State::Cold));
         }
     }
 
@@ -906,7 +989,7 @@ mod tests {
         let cache = PropertyReadCache::default();
         install(&cache, &runtime, realm, &first, key.atom());
         install(&cache, &runtime, realm, &second, key.atom());
-        assert!(matches!(cache.state.get(), State::Polymorphic(_)));
+        assert!(matches!(cache.state(), State::Polymorphic(_)));
         for _ in 0..8 {
             assert_eq!(number(&cache, &runtime, realm, &first), Some(1.0));
             assert_eq!(number(&cache, &runtime, realm, &second), Some(2.0));
@@ -922,11 +1005,11 @@ mod tests {
             assert_eq!(number(&cache, &runtime, realm, &fourth), Some(4.0));
         }
         install(&cache, &runtime, realm, &fifth, key.atom());
-        assert!(matches!(cache.state.get(), State::Megamorphic(16)));
+        assert!(matches!(cache.state(), State::Megamorphic(16)));
         for _ in 0..16 {
             assert_eq!(number(&cache, &runtime, realm, &first), None);
         }
-        assert!(matches!(cache.state.get(), State::Cold));
+        assert!(matches!(cache.state(), State::Cold));
         install(&cache, &runtime, realm, &third, key.atom());
         assert_eq!(number(&cache, &runtime, realm, &third), Some(3.0));
     }
@@ -954,7 +1037,7 @@ mod tests {
             let key = runtime.intern_property_key(spelling).unwrap();
             let cache = PropertyReadCache::default();
             install(&cache, &runtime, context.realm_id(), &typed, key.atom());
-            assert!(matches!(cache.state.get(), State::Megamorphic(_)));
+            assert!(matches!(cache.state(), State::Megamorphic(_)));
         }
     }
 
@@ -980,7 +1063,7 @@ mod tests {
         install(&cache, &runtime, context.realm_id(), &obj, key.atom());
         drop(context.eval("o.x=11").unwrap());
         install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert!(matches!(cache.state.get(), State::Megamorphic(_)));
+        assert!(matches!(cache.state(), State::Megamorphic(_)));
         assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
     }
     #[test]
