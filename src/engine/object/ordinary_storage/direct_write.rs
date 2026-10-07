@@ -1,6 +1,6 @@
 //! Exchange existing owners under one state access; no pending representation.
 use super::*;
-use crate::engine::object::append_ic::{AppendMiss, PropertyAppendCacheTable};
+use crate::engine::object::append_ic::{AppendKind, AppendMiss, PropertyAppendCacheTable};
 
 /// A store site's append table and execution PC, resolved only on a miss.
 pub(crate) type AppendSite<'a> = (&'a PropertyAppendCacheTable, usize);
@@ -57,6 +57,18 @@ impl RuntimeState {
         input: &mut JsValue,
         appends: Option<AppendSite<'_>>,
     ) -> Result<FieldStore, RuntimeError> {
+        // A learned parent layout proves the key missing on this receiver and
+        // the prototype walk's result, before any own-key selection.
+        if let Some((table, pc)) = appends
+            && table.has_fact(AppendKind::Store, pc)
+            && self.try_site_append(poisoned, domain, object, input, table, pc)?
+        {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_owned_field_append_site_hit",
+            );
+            return Ok(FieldStore::LayoutPublished);
+        }
         let prototype = match select_set_slot(self, object, atom)? {
             BorrowedSet::Missing(prototype) => prototype,
             BorrowedSet::Data(selected) if selected.flags.writable => {
@@ -90,24 +102,6 @@ impl RuntimeState {
         input: &mut JsValue,
         appends: Option<AppendSite<'_>>,
     ) -> Result<FieldStore, RuntimeError> {
-        // Only a missing key reaches the store site's table; existing-slot
-        // writes never address it.
-        let site = appends.and_then(|(table, pc)| table.site(pc));
-        // The selector proved the key missing on this receiver. A recorded
-        // parent layout proves the rest of the walk's result.
-        if let Some(site) = site {
-            let data = self.heap.object_fast(object);
-            if is_ordinary(data)
-                && let Some(successor) = site.successor(&self.heap, domain, data)
-            {
-                self.append_cached_owned_slot(poisoned, object, successor, input)?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "ordinary_owned_field_append_site_hit",
-                );
-                return Ok(FieldStore::LayoutPublished);
-            }
-        }
         // Observe the epoch before the walk whose result the site may keep.
         let prototype_epoch = self.heap.property_layout_epoch();
         if !matches!(
@@ -120,7 +114,7 @@ impl RuntimeState {
         let parent_shape = self.heap.shape(parent)?;
         // Indexed keys can be decided by dense Array prototypes, whose
         // elements change without a layout change; they stay uncached.
-        let learn = site.is_some()
+        let learn = appends.is_some()
             && !parent_shape.is_dictionary()
             && is_ordinary(self.heap.object(object)?)
             && self.atoms.array_index(atom)?.is_none();
@@ -140,8 +134,14 @@ impl RuntimeState {
         )? {
             return Ok(FieldStore::Miss);
         }
-        if learn && let Some(site) = site {
-            site.learn(&self.heap, miss, self.heap.object(object)?.shape);
+        if learn && let Some((table, pc)) = appends {
+            table.learn(
+                AppendKind::Store,
+                pc,
+                &self.heap,
+                miss,
+                self.heap.object(object)?.shape,
+            );
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
@@ -170,6 +170,16 @@ impl RuntimeState {
         let Some(atom) = super::linked_field_atom_in_domain(domain, executable, key) else {
             return Ok(FieldStore::Miss);
         };
+        if let Some((table, pc)) = appends
+            && table.has_fact(AppendKind::Definition, pc)
+            && self.try_site_append(poisoned, domain, object, input, table, pc)?
+        {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_owned_field_define_site_hit",
+            );
+            return Ok(FieldStore::LayoutPublished);
+        }
         let data = self.heap.object(object)?;
         if !is_ordinary(data) {
             return Ok(FieldStore::Miss);
@@ -204,27 +214,13 @@ impl RuntimeState {
         input: &mut JsValue,
         appends: Option<AppendSite<'_>>,
     ) -> Result<FieldStore, RuntimeError> {
-        let site = appends.and_then(|(table, pc)| table.site(pc));
-        // A definition site's fact never depends on prototypes; the parent
-        // layout alone proves the key missing on an ordinary receiver.
-        if let Some(site) = site
-            && let Some(successor) =
-                site.successor(&self.heap, domain, self.heap.object_fast(object))
-        {
-            self.append_cached_owned_slot(poisoned, object, successor, input)?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_owned_field_define_site_hit",
-            );
-            return Ok(FieldStore::LayoutPublished);
-        }
         let data = self.heap.object(object)?;
         if !data.extensible {
             return Ok(FieldStore::Miss);
         }
         let parent = data.shape;
         let parent_shape = self.heap.shape(parent)?;
-        let learn = site.is_some() && !parent_shape.is_dictionary();
+        let learn = appends.is_some() && !parent_shape.is_dictionary();
         let miss = AppendMiss {
             domain,
             parent,
@@ -241,14 +237,48 @@ impl RuntimeState {
         )? {
             return Ok(FieldStore::Miss);
         }
-        if learn && let Some(site) = site {
-            site.learn(&self.heap, miss, self.heap.object(object)?.shape);
+        if learn && let Some((table, pc)) = appends {
+            table.learn(
+                AppendKind::Definition,
+                pc,
+                &self.heap,
+                miss,
+                self.heap.object(object)?.shape,
+            );
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "ordinary_owned_field_define_in_state",
         );
         Ok(FieldStore::LayoutPublished)
+    }
+
+    /// The site's recorded parent layout is the receiver's current shape: the
+    /// key is missing on this plain ordinary receiver and, for stores, the
+    /// prototype chain still selects definition on it. Publish the recorded
+    /// successor. Returns false, consuming nothing, when the fact fails.
+    #[inline(never)]
+    fn try_site_append(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        domain: u64,
+        object: ObjectId,
+        input: &mut JsValue,
+        table: &PropertyAppendCacheTable,
+        pc: usize,
+    ) -> Result<bool, RuntimeError> {
+        let Some(site) = table.site(pc) else {
+            return Ok(false);
+        };
+        let data = self.heap.object_fast(object);
+        if !is_ordinary(data) {
+            return Ok(false);
+        }
+        let Some(successor) = site.successor(&self.heap, domain, data) else {
+            return Ok(false);
+        };
+        self.append_cached_owned_slot(poisoned, object, successor, input)?;
+        Ok(true)
     }
 
     /// Consume a site hit. The input's owner moves into the slot only on

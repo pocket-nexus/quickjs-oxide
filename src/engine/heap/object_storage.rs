@@ -1463,16 +1463,8 @@ impl Heap {
             error,
             published: false,
         };
-        let prototype = {
-            let object = self.object_mut(id).map_err(unpublished)?;
-            object.slots.try_reserve(1).map_err(|_| {
-                unpublished(HeapError::Allocation {
-                    operation: "appending a cached shape property",
-                })
-            })?;
-            object.used_as_prototype
-        };
-        // The site validated the successor's generation under this borrow.
+        // The site validated the successor's generation under this borrow;
+        // retaining it is the only fallible step before the slot is written.
         let strong = &self.shapes.live_fast_mut(successor).strong;
         strong.set(
             strong
@@ -1482,14 +1474,23 @@ impl Heap {
                     operation: "retaining a heap reference",
                 }))?,
         );
+        // The caller's frame owns the receiver; its handle needs no check.
+        let object = self.object_mut_fast(id);
+        if let Err(slot) = object.slots.push_inline(PropertySlot::Data(value)) {
+            if object.slots.try_reserve(1).is_err() {
+                let strong = &self.shapes.live_fast_mut(successor).strong;
+                strong.set(strong.get() - 1);
+                return Err(unpublished(HeapError::Allocation {
+                    operation: "appending a cached shape property",
+                }));
+            }
+            object.slots.push(slot);
+        }
+        let prototype = object.used_as_prototype;
+        let previous_shape = std::mem::replace(&mut object.shape, successor);
         if prototype {
             self.property_layout_epoch = self.property_layout_epoch.saturating_add(1);
         }
-        let previous_shape = {
-            let object = self.object_mut_fast(id);
-            object.slots.push(PropertySlot::Data(value));
-            std::mem::replace(&mut object.shape, successor)
-        };
         // A shape is never a leaf node: release it through its own arena.
         let drained = self
             .shapes

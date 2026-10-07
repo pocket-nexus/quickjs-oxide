@@ -642,6 +642,11 @@ impl<T: Default> SiteCacheTable<T> {
     pub(crate) fn site(&self, pc: usize) -> Option<&T> {
         self.sites.get(self.site_index(pc)?)
     }
+
+    /// Words in the PC bitmap: one per 64 execution PCs.
+    pub(crate) fn pc_words(&self) -> usize {
+        self.site_bits.len()
+    }
 }
 
 impl SiteCacheTable<PropertyReadCache> {

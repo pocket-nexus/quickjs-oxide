@@ -72,18 +72,18 @@ impl PropertyAppendCache {
 
     /// Record the transition just published by a general append. Unique
     /// in-place appends, dictionaries and saturated counters stay uncached.
-    pub(crate) fn learn(&self, heap: &Heap, miss: AppendMiss, successor: ShapeId) {
+    pub(crate) fn learn(&self, heap: &Heap, miss: AppendMiss, successor: ShapeId) -> bool {
         if successor == miss.parent
             || miss.parent_revision == u64::MAX
             || (miss.has_prototype && miss.prototype_epoch == u64::MAX)
         {
-            return;
+            return false;
         }
         let Ok(shape) = heap.shape(successor) else {
-            return;
+            return false;
         };
         if shape.is_dictionary() || shape.layout_revision() == u64::MAX {
-            return;
+            return false;
         }
         self.location.set(Some(AppendLocation {
             domain: miss.domain,
@@ -93,7 +93,82 @@ impl PropertyAppendCache {
             successor_revision: shape.layout_revision(),
             prototype_epoch: miss.has_prototype.then_some(miss.prototype_epoch),
         }));
+        true
     }
 }
 
-pub(crate) type PropertyAppendCacheTable = super::property_ic::SiteCacheTable<PropertyAppendCache>;
+/// Which consumer a site serves. Stores and definitions keep separate learned
+/// bitmaps, so a function whose literal definitions learn facts does not make
+/// its existing-slot stores test a populated bitmap.
+#[derive(Clone, Copy)]
+pub(crate) enum AppendKind {
+    Store,
+    Definition,
+}
+
+/// Append facts for every static-key store and definition site of one
+/// executable. Dispatch tests only the learned bit for its PC; a site's entry
+/// is addressed only once it has learned a fact. Each bitmap is allocated on
+/// its kind's first learned fact, so executables that never append keep no
+/// extra allocation and their stores test one empty cell.
+#[derive(Debug)]
+pub(crate) struct PropertyAppendCacheTable {
+    sites: super::property_ic::SiteCacheTable<PropertyAppendCache>,
+    stores: std::cell::OnceCell<Box<[Cell<u64>]>>,
+    definitions: std::cell::OnceCell<Box<[Cell<u64>]>>,
+}
+
+impl PropertyAppendCacheTable {
+    pub(crate) fn new_exec(code: &crate::engine::code::exec::ExecCode) -> Self {
+        Self {
+            sites: super::property_ic::SiteCacheTable::<PropertyAppendCache>::new_exec(code),
+            stores: std::cell::OnceCell::new(),
+            definitions: std::cell::OnceCell::new(),
+        }
+    }
+
+    #[inline(always)]
+    fn learned(&self, kind: AppendKind) -> &std::cell::OnceCell<Box<[Cell<u64>]>> {
+        match kind {
+            AppendKind::Store => &self.stores,
+            AppendKind::Definition => &self.definitions,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn has_fact(&self, kind: AppendKind, pc: usize) -> bool {
+        self.learned(kind).get().is_some_and(|learned| {
+            learned
+                .get(pc / 64)
+                .is_some_and(|word| word.get() & (1u64 << (pc % 64)) != 0)
+        })
+    }
+
+    pub(crate) fn site(&self, pc: usize) -> Option<&PropertyAppendCache> {
+        self.sites.site(pc)
+    }
+
+    /// Record a general append at `pc`; the bit stays set once learned, and a
+    /// stale fact only costs its site one failed check.
+    pub(crate) fn learn(
+        &self,
+        kind: AppendKind,
+        pc: usize,
+        heap: &Heap,
+        miss: AppendMiss,
+        successor: ShapeId,
+    ) {
+        if !self
+            .site(pc)
+            .is_some_and(|site| site.learn(heap, miss, successor))
+        {
+            return;
+        }
+        let learned = self
+            .learned(kind)
+            .get_or_init(|| (0..self.sites.pc_words()).map(|_| Cell::new(0)).collect());
+        if let Some(word) = learned.get(pc / 64) {
+            word.set(word.get() | 1u64 << (pc % 64));
+        }
+    }
+}
