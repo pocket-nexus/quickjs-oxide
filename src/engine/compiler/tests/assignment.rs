@@ -520,7 +520,7 @@ fn bitwise_compound_assignment_reuses_quickjs_lvalue_shapes() {
     assert!(
         identifier_code
             .windows(2)
-            .any(|window| matches!(window, [Instruction::BitOr, Instruction::SetArg(0)]))
+            .any(|window| matches!(window, [Instruction::BitOr, Instruction::PutArg(0)]))
     );
 
     let local_root = context
@@ -533,7 +533,7 @@ fn bitwise_compound_assignment_reuses_quickjs_lvalue_shapes() {
     assert!(
         local_code
             .windows(2)
-            .any(|window| matches!(window, [Instruction::BitAnd, Instruction::SetLocal(0)]))
+            .any(|window| matches!(window, [Instruction::BitAnd, Instruction::PutLocal(0)]))
     );
 
     let closure_root = context
@@ -549,7 +549,7 @@ fn bitwise_compound_assignment_reuses_quickjs_lvalue_shapes() {
     assert!(
         closure_code
             .windows(2)
-            .any(|window| matches!(window, [Instruction::BitXor, Instruction::SetVarRef(0)]))
+            .any(|window| matches!(window, [Instruction::BitXor, Instruction::PutVarRef(0)]))
     );
 
     let global = context.compile("__qjo_bit_global |= 8").unwrap();
@@ -696,7 +696,7 @@ fn shift_compound_assignment_reuses_quickjs_lvalue_shapes() {
     assert!(
         argument_code
             .windows(2)
-            .any(|window| matches!(window, [Instruction::Shr, Instruction::SetArg(0)]))
+            .any(|window| matches!(window, [Instruction::Shr, Instruction::PutArg(0)]))
     );
 
     let closure_root = context
@@ -712,7 +712,7 @@ fn shift_compound_assignment_reuses_quickjs_lvalue_shapes() {
     assert!(
         closure_code
             .windows(2)
-            .any(|window| matches!(window, [Instruction::Sar, Instruction::SetVarRef(0)]))
+            .any(|window| matches!(window, [Instruction::Sar, Instruction::PutVarRef(0)]))
     );
 
     let global = context.compile("__qjo_shift_global <<= 1").unwrap();
@@ -802,7 +802,7 @@ fn exponent_compound_assignment_reuses_quickjs_lvalue_shapes() {
     assert!(
         argument_code
             .windows(2)
-            .any(|window| matches!(window, [Instruction::Pow, Instruction::SetArg(0)]))
+            .any(|window| matches!(window, [Instruction::Pow, Instruction::PutArg(0)]))
     );
 
     let closure_root = context
@@ -818,7 +818,7 @@ fn exponent_compound_assignment_reuses_quickjs_lvalue_shapes() {
     assert!(
         closure_code
             .windows(2)
-            .any(|window| matches!(window, [Instruction::Pow, Instruction::SetVarRef(0)]))
+            .any(|window| matches!(window, [Instruction::Pow, Instruction::PutVarRef(0)]))
     );
 
     let global = context.compile("__qjo_power_global **= 2").unwrap();
@@ -1079,7 +1079,7 @@ fn identifier_compound_assignment_uses_resolved_get_set_paths() {
     assert!(
         argument_code
             .iter()
-            .any(|instruction| matches!(instruction, Instruction::SetArg(0)))
+            .any(|instruction| matches!(instruction, Instruction::PutArg(0)))
     );
 
     let local_root = context
@@ -1138,7 +1138,7 @@ fn identifier_compound_assignment_uses_resolved_get_set_paths() {
     assert!(
         closure_code
             .iter()
-            .any(|instruction| matches!(instruction, Instruction::SetVarRef(0)))
+            .any(|instruction| matches!(instruction, Instruction::PutVarRef(0)))
     );
 
     let global = context.compile("identifierCompoundGlobal ||= 2").unwrap();
@@ -1387,5 +1387,177 @@ fn discarded_field_assignments_lower_to_a_single_put_field() {
     assert!(
         used.iter()
             .any(|i| matches!(i, Instruction::Goto(t) if *t as usize == put))
+    );
+}
+
+#[test]
+fn discarded_binding_assignments_lower_to_a_single_put() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    let mut code = |source: &str, child: Option<usize>| {
+        let root = context.compile(source).unwrap();
+        let mut function = runtime.test_child_function_bytecode(&root, 0).unwrap();
+        if let Some(child) = child {
+            function = runtime
+                .test_child_function_bytecode(&function, child)
+                .unwrap();
+        }
+        runtime.test_function_code(&function).unwrap()
+    };
+    let contains = |code: &[Instruction], expected: &[Instruction]| {
+        // Instruction has no PartialEq; its Debug form names every operand.
+        let text = format!("{expected:?}");
+        code.windows(expected.len())
+            .any(|window| format!("{window:?}") == text)
+    };
+    let keeps_copy = |code: &[Instruction]| {
+        code.iter().any(|instruction| {
+            matches!(
+                instruction,
+                Instruction::SetLocal(_)
+                    | Instruction::SetLocalCheck(_)
+                    | Instruction::SetArg(_)
+                    | Instruction::SetVarRef(_)
+            )
+        })
+    };
+
+    // QuickJS rewrites `set_loc; drop` to `put_loc`: `s = o;` copies `o` once
+    // and moves that copy into `s`.
+    let local = code("(function () { var o = {}, s; s = o; return s; })", None);
+    assert!(
+        contains(
+            &local,
+            &[
+                Instruction::GetLocal(0),
+                Instruction::PutLocal(1),
+                Instruction::GetLocal(1)
+            ]
+        ),
+        "{local:?}"
+    );
+    assert!(!keeps_copy(&local), "{local:?}");
+    let checked = code(
+        "(function () { let o = {}; let s; s = o; return s; })",
+        None,
+    );
+    assert!(
+        checked
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::PutLocalCheck(_)))
+            && !keeps_copy(&checked),
+        "{checked:?}"
+    );
+    let argument = code("(function (a, o) { a = o; return a; })", None);
+    assert!(
+        contains(&argument, &[Instruction::GetArg(1), Instruction::PutArg(0)]),
+        "{argument:?}"
+    );
+    assert!(!keeps_copy(&argument), "{argument:?}");
+    let closure = code(
+        "(function () { var c; return function (o) { c = o; }; })",
+        Some(0),
+    );
+    assert!(
+        contains(
+            &closure,
+            &[Instruction::GetArg(0), Instruction::PutVarRef(0)]
+        ),
+        "{closure:?}"
+    );
+    assert!(!keeps_copy(&closure), "{closure:?}");
+
+    // A used value keeps its copy; a conditional value's join lands on the put.
+    let used = code(
+        "(function (o, c) { var s, t; var v = (s = o); t = c ? o : v; return v; })",
+        None,
+    );
+    assert!(
+        used.iter()
+            .any(|instruction| matches!(instruction, Instruction::SetLocal(_))),
+        "{used:?}"
+    );
+    let put = used
+        .iter()
+        .rposition(|instruction| matches!(instruction, Instruction::PutLocal(_)))
+        .unwrap();
+    assert!(
+        used.iter()
+            .any(|instruction| matches!(instruction, Instruction::Goto(t) if *t as usize == put)),
+        "{used:?}"
+    );
+
+    // Accumulator and numeric-region shapes keep `set_loc; drop`, which their
+    // superinstructions select.
+    let accumulate = code(
+        "(function (a, i) { var sum = 0; sum += a[i]; return sum; })",
+        None,
+    );
+    assert!(
+        contains(
+            &accumulate,
+            &[
+                Instruction::Add,
+                Instruction::SetLocal(0),
+                Instruction::Drop
+            ]
+        ),
+        "{accumulate:?}"
+    );
+}
+
+#[test]
+fn discarded_binding_assignments_keep_their_semantics() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    let source = r#"
+        (function () {
+            var out = [];
+            var o = {}, s, t;
+            for (var i = 0; i < 3; i++) { s = o; t = s; }
+            out.push(s === o && t === o);
+            // Sloppy mapped arguments observe a discarded argument write.
+            out.push((function (a) { a = 2; return arguments[0]; })(1));
+            out.push((function (a) { 'use strict'; a = 2; return arguments[0]; })(1));
+            out.push((function (a) { arguments[0] = 3; a = 4; return arguments[0] + a; })(1));
+            // Captured locals and closure variables.
+            var c, read = function () { return c; };
+            c = o;
+            out.push(read() === o);
+            var write = function (v) { c = v; };
+            write(5);
+            out.push(c);
+            // TDZ, const and immutable function-name writes still throw.
+            try { (function () { x = 1; let x; })(); out.push('no'); }
+            catch (e) { out.push(e.constructor.name); }
+            try { (function () { const k = 1; k = 2; })(); out.push('no'); }
+            catch (e) { out.push(e.constructor.name); }
+            try { (function f() { 'use strict'; f = 1; })(); out.push('no'); }
+            catch (e) { out.push(e.constructor.name); }
+            out.push((function f() { f = 1; return typeof f; })());
+            // An exception in the right-hand side leaves the old value.
+            var kept = 'old';
+            try { kept = (function () { throw 1; })(); } catch (e) {}
+            out.push(kept);
+            // Conditional right-hand sides join on the store.
+            var r;
+            for (var j = 0; j < 2; j++) { r = j ? 'b' : 'a'; }
+            out.push(r);
+            // with, eval and completion values.
+            var w = 'outer';
+            with ({ w: 'inner' }) { w = 'set'; }
+            out.push(w);
+            out.push(eval('let q; q = 7;'));
+            eval('w = "evaled";');
+            out.push(w);
+            out.push(eval('var e1 = 1; e1 = 8;'));
+            return out.join(',');
+        })()
+    "#;
+    assert_eq!(
+        context.eval(source).unwrap(),
+        Value::String(JsString::from_static(
+            "true,2,1,8,true,5,ReferenceError,TypeError,TypeError,function,old,b,outer,7,evaled,8"
+        ))
     );
 }

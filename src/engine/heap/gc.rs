@@ -1841,6 +1841,86 @@ impl Heap {
         false
     }
 
+    /// Whether a handle may take a trusted fast path. Its holder owns a strong
+    /// edge, so plain release builds admit it without checks. Debug builds and
+    /// the `checked-handles` feature validate identity and liveness instead;
+    /// a failing handle then takes the checked path, which reports the error
+    /// and keeps the poison contract, so an ownership error is not masked.
+    #[inline(always)]
+    pub(crate) fn admits_trusted(&self, id: RawId) -> bool {
+        #[cfg(any(debug_assertions, feature = "checked-handles"))]
+        {
+            if id.is_leaf() {
+                self.live_leaf_slot(id).is_ok()
+            } else {
+                self.live_node(id).is_ok()
+            }
+        }
+        #[cfg(not(any(debug_assertions, feature = "checked-handles")))]
+        {
+            let _ = id;
+            true
+        }
+    }
+
+    /// Trusted nonfinal release of an object handle whose holder owns one
+    /// strong edge, so the handle is live by ownership: only the bounds check
+    /// remains (see [`Heap::admits_trusted`]). Saturation keeps
+    /// `IMMORTAL_STRONG` unchanged. A last reference, pending zero-queue work
+    /// or a traced node declines to [`Heap::release_reference`] unchanged.
+    #[inline(always)]
+    pub(crate) fn release_object_nonfinal_trusted(&self, id: ObjectId) -> bool {
+        if !self.zero_queue.is_empty() {
+            return false;
+        }
+        #[cfg(debug_assertions)]
+        if super::ownership::trace_object_matches(id) {
+            return false;
+        }
+        if !self.admits_trusted(RawId::Object(id)) {
+            return false;
+        }
+        let SlotState::Resident(node) = &self.slots[RawId::Object(id).index() as usize].state
+        else {
+            return false;
+        };
+        let strong = node.strong.get();
+        if strong <= 1 {
+            return false;
+        }
+        if strong != IMMORTAL_STRONG {
+            node.strong.set(strong - 1);
+        }
+        true
+    }
+
+    /// Leaf counterpart of [`Heap::release_object_nonfinal_trusted`] for a
+    /// string or BigInt handle.
+    #[inline(always)]
+    pub(crate) fn release_leaf_nonfinal_trusted(&self, id: RawId) -> bool {
+        if !self.zero_queue.is_empty() {
+            return false;
+        }
+        #[cfg(debug_assertions)]
+        if let RawId::String(string) = id
+            && super::ownership::trace_string_matches(string)
+        {
+            return false;
+        }
+        if !self.admits_trusted(id) {
+            return false;
+        }
+        let strong = &self.leaf_slots[id.index() as usize].strong;
+        let count = strong.get();
+        if count <= 1 {
+            return false;
+        }
+        if count != IMMORTAL_STRONG {
+            strong.set(count - 1);
+        }
+        true
+    }
+
     /// Release one reference, returning cleanup when a node is finalized.
     /// Inspect the whole queue: an earlier no-drain release may have queued a
     /// different node even when this reference remains nonzero.

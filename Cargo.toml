@@ -18,6 +18,8 @@ default = []
 test262-host = []
 test-support = []
 profiling = []
+# Restores identity checks on trusted handle fast paths in release builds.
+checked-handles = []
 [dev-dependencies]
 quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
 

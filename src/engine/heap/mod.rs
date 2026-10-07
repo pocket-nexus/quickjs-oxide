@@ -29,6 +29,17 @@ use crate::engine::code::function::metadata::{
 #[cfg(test)]
 use crate::engine::code::function::metadata::{EvalBinding, EvalScope, ParameterArgumentCell};
 
+/// Identity check for a trusted handle: the holder owns a strong edge, so
+/// plain release builds skip the generation and kind comparison. Debug builds
+/// and the `checked-handles` feature restore it as a hard assertion, so an
+/// ownership error cannot hide behind a fast path in tests.
+macro_rules! assert_trusted_handle {
+    ($check:expr, $message:literal) => {
+        #[cfg(any(debug_assertions, feature = "checked-handles"))]
+        assert!($check, $message);
+    };
+}
+
 mod auxiliary_arena;
 mod buffers;
 use auxiliary_arena::{AuxiliaryArena, AuxiliaryState};

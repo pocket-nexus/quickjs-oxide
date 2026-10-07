@@ -356,6 +356,10 @@ fn owned_binary_buffer_handler_error_keeps_priority_and_retires_input() {
 }
 
 #[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "relies on the debug assertion that stops an invalid root release"
+)]
 fn owned_binary_buffer_release_failure_quarantines_before_later_native_owners() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context().unwrap();

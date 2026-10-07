@@ -212,7 +212,10 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
     }
 
     pub(super) fn live_fast(&self, id: T::Id) -> &AuxiliaryNode<T> {
-        debug_assert!(self.validate_identity(id).is_ok());
+        assert_trusted_handle!(
+            self.validate_identity(id).is_ok(),
+            "trusted auxiliary handle failed its identity check"
+        );
         match &self.slots[T::parts(id).0 as usize].state {
             AuxiliaryState::Live(node) => node,
             _ => unreachable!("trusted auxiliary handle reached a non-live slot"),
@@ -221,7 +224,10 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
 
     #[inline(always)]
     pub(super) fn live_fast_mut(&mut self, id: T::Id) -> &mut AuxiliaryNode<T> {
-        debug_assert!(self.validate_identity(id).is_ok());
+        assert_trusted_handle!(
+            self.validate_identity(id).is_ok(),
+            "trusted auxiliary handle failed its identity check"
+        );
         match &mut self.slots[T::parts(id).0 as usize].state {
             AuxiliaryState::Live(node) => node,
             _ => unreachable!("trusted auxiliary handle reached a non-live slot"),

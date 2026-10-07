@@ -85,12 +85,25 @@ impl PropertyReadCache {
         receiver: ObjectId,
     ) -> Option<&'a RawValue> {
         match self.state.get() {
-            State::Cold => None,
-            State::Accessor(_) => None,
+            State::Cold => {
+                event("property_ic.cold");
+                None
+            }
+            State::Accessor(_) => {
+                event("property_ic.accessor_site");
+                None
+            }
             State::Monomorphic(location) => {
                 let value = Self::read_location(location, heap, domain, realm, receiver);
                 if value.is_some() {
                     self.hit();
+                    event(if location.depth == 0 {
+                        "property_ic.hit.monomorphic"
+                    } else {
+                        "property_ic.hit.monomorphic_prototype"
+                    });
+                } else {
+                    event("property_ic.guard_miss.monomorphic");
                 }
                 value
             }
@@ -99,6 +112,12 @@ impl PropertyReadCache {
                     if let Some(value) =
                         Self::read_location(locations.entries[index], heap, domain, realm, receiver)
                     {
+                        event(match (index, locations.entries[index].depth) {
+                            (0, 0) => "property_ic.hit.polymorphic_first",
+                            (_, 0) => "property_ic.hit.polymorphic_later",
+                            (0, _) => "property_ic.hit.polymorphic_first_prototype",
+                            _ => "property_ic.hit.polymorphic_later_prototype",
+                        });
                         if index != 0 {
                             locations.entries[..=index].rotate_right(1);
                             self.state.set(State::Polymorphic(locations));
@@ -107,9 +126,11 @@ impl PropertyReadCache {
                         return Some(value);
                     }
                 }
+                event("property_ic.guard_miss.polymorphic");
                 None
             }
             State::Megamorphic(left) => {
+                event("property_ic.megamorphic_skip");
                 if left <= 1 {
                     self.state.set(State::Cold);
                     event("property_ic.revive");

@@ -5,7 +5,7 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::runtime::RuntimeState;
-use crate::engine::heap::{ObjectId, ObjectPayload, RawValue};
+use crate::engine::heap::{ObjectId, ObjectPayload, RawId, RawValue};
 use crate::engine::object::property_ic::{CacheSelection, PropertyReadCache};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
@@ -245,11 +245,20 @@ impl RuntimeState {
                 });
                 Some(JsValue::Object(*function))
             }
+            // The holder's live slot owns these edges.
+            RawValue::String(id) if self.heap.admits_trusted(RawId::String(*id)) => {
+                self.heap.retain_string_fast(*id);
+                Some(JsValue::String(*id))
+            }
             RawValue::String(id) => {
                 self.heap.retain_string_shared(*id).ok()?;
                 Some(JsValue::String(*id))
             }
             RawValue::ShortBigInt(value) => Some(JsValue::ShortBigInt(*value)),
+            RawValue::BigInt(id) if self.heap.admits_trusted(RawId::BigInt(*id)) => {
+                self.heap.retain_bigint_fast(*id);
+                Some(JsValue::BigInt(*id))
+            }
             RawValue::BigInt(id) => {
                 self.heap.retain_bigint_shared(*id).ok()?;
                 Some(JsValue::BigInt(*id))
@@ -518,6 +527,61 @@ mod tests {
 
     #[test]
     fn direct_state_failed_promotion_keeps_receiver_and_slot_owner() {
+        // Heap handles promote through the trusted saturating retain; a
+        // symbol keeps the checked atom retain, so its overflow is the
+        // promotion failure that must leave both owners in place.
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let (code, pc, key) = site(&runtime);
+        let base = runtime
+            .into_jsvalue(context.eval("({x:Symbol('promotion ownership')})").unwrap())
+            .unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        let atom = code.property_key_atoms.as_ref().unwrap()[key as usize];
+        let slot = super::super::locate(&state, object(&base), atom)
+            .unwrap()
+            .unwrap();
+        let crate::engine::heap::PropertySlot::Data(RawValue::Symbol(symbol)) = state
+            .heap
+            .object(object(&base))
+            .unwrap()
+            .slots
+            .get(slot.index)
+            .unwrap()
+        else {
+            panic!("symbol slot")
+        };
+        let symbol = *symbol;
+        let count = |state: &RuntimeState| {
+            state
+                .atoms
+                .resolve(state.atoms.brand(symbol).unwrap())
+                .unwrap()
+                .ref_count
+        };
+        let previous = count(&state).unwrap();
+        state.atoms.set_ref_count_for_test(symbol, u32::MAX);
+        let result = state.select_linked_data_into(
+            runtime.domain_id(),
+            &base,
+            &code,
+            pc,
+            key,
+            false,
+            &mut None,
+            &mut NamedSelectionMiss::ContinueLookup,
+        );
+        let overflowed = count(&state);
+        state.atoms.set_ref_count_for_test(symbol, previous);
+        assert!(result.is_none());
+        assert_eq!(overflowed, Some(u32::MAX));
+        assert_eq!(state.heap.object_strong_count(object(&base)), Ok(1));
+        state.release_jsvalue(base).unwrap();
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn direct_state_promotion_saturates_an_immortal_string() {
         use crate::engine::heap::RawId;
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
@@ -555,13 +619,14 @@ mod tests {
             &mut None,
             &mut NamedSelectionMiss::ContinueLookup,
         );
-        let count = state.heap.strong_count(RawId::String(string)).unwrap();
+        assert!(matches!(result, Some(JsValue::String(id)) if id == string));
+        // The saturated count is immortal: the promoted owner's release
+        // leaves it unchanged.
+        state.release_jsvalue(result.unwrap()).unwrap();
+        assert_eq!(state.heap.strong_count(RawId::String(string)), Ok(u32::MAX));
         state
             .heap
             .set_strong_count_for_test(RawId::String(string), previous);
-        assert!(result.is_none());
-        assert_eq!(count, u32::MAX);
-        assert_eq!(state.heap.object_strong_count(object(&base)), Ok(1));
         state.release_jsvalue(base).unwrap();
         assert!(!runtime.0.deferred_references.has_pending());
     }

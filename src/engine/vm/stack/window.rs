@@ -355,8 +355,9 @@ impl<'a> FrameExecution<'a> {
         };
         let execution = &mut *self.execution;
         let (function, executable, closure) = call.into_slot_parts();
+        // The guard owns the receiver edge, so its copy takes the trusted retain.
         let this_value = state
-            .dup_jsvalue(receiver.as_ref().expect("guarded constructor receiver"))
+            .dup_owned_jsvalue(receiver.as_ref().expect("guarded constructor receiver"))
             .map_err(super::runtime_error_to_vm_error)?;
         let mut this_value = OwnedValueGuard::new(state, &runtime.0.poisoned, this_value);
         let (state, this_value) = this_value.parts();
