@@ -155,14 +155,6 @@ impl Heap {
     /// Ordinary releases already produce this cleanup summary. Return credit
     /// once per zero-queue batch, with no scheduler fields or parameters in the
     /// arena's reserve/abort/reclaim methods.
-    /// Credit one finalized node released outside the zero queue.
-    #[inline]
-    pub(super) fn credit_node_reclamation(&self) {
-        if let Some(pressure) = &self.gc_pressure {
-            pressure.reclaimed(1);
-        }
-    }
-
     pub(super) fn credit_cycle_reclamation(&self, cleanup: &HeapCleanup) {
         if let Some(pressure) = &self.gc_pressure {
             let nodes = cleanup

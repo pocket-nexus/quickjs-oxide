@@ -107,16 +107,6 @@ fn shared_raw_id(kind: HeapNodeKind, index: u32, generation: u32) -> RawId {
     }
 }
 
-/// Outcome of [`Heap::release_final_ordinary_trusted`].
-pub(crate) enum FinalRelease {
-    /// Nothing changed; the caller takes the checked release path.
-    Declined,
-    /// The object was finalized and its slot reclaimed. Cleanup is present
-    /// only when atoms or cascaded finalizations need the runtime; it is
-    /// boxed so the common result stays small.
-    Released(Option<Box<HeapCleanup>>),
-}
-
 /// Resources finalized by a release, mutation, or collection operation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HeapCleanup {
@@ -2238,107 +2228,6 @@ impl Heap {
             self.release_raw_no_drain(edge)?;
         }
         Ok(())
-    }
-
-    /// Trusted final release of an ordinary-payload object whose holder owns
-    /// its last strong edge, without the zero queue. The handle is admitted
-    /// like [`Heap::release_object_nonfinal_trusted`], so plain release builds
-    /// do no identity check and a declined handle costs only the state test.
-    /// Finalization matches [`Heap::finish_ordinary_object`]: the slot becomes
-    /// Vacant before any edge is released, edges and the shape then release in
-    /// slot order (nonfinal decrements in place, zero counts through the
-    /// queue), and the slot is reclaimed before the queue drains, as the queue
-    /// would do. Declines, changing nothing, while older work is queued (so
-    /// release order is preserved), for a traced handle, and for every other
-    /// count, state or payload.
-    pub(crate) fn release_final_ordinary_trusted(
-        &mut self,
-        id: ObjectId,
-    ) -> Result<FinalRelease, HeapError> {
-        if !self.zero_queue.is_empty() {
-            return Ok(FinalRelease::Declined);
-        }
-        #[cfg(debug_assertions)]
-        if super::ownership::trace_object_matches(id) {
-            return Ok(FinalRelease::Declined);
-        }
-        if !self.admits_trusted(RawId::Object(id)) {
-            return Ok(FinalRelease::Declined);
-        }
-        let index = id.index as usize;
-        let (slots, shape, brand) = {
-            let SlotState::Resident(Node {
-                strong,
-                data: NodeData::Object(object),
-            }) = &mut self.slots[index].state
-            else {
-                return Ok(FinalRelease::Declined);
-            };
-            if strong.get() != 1 || !matches!(object.payload, ObjectPayload::Ordinary) {
-                return Ok(FinalRelease::Declined);
-            }
-            (
-                std::mem::take(&mut object.slots),
-                object.shape,
-                object.private_brand_home,
-            )
-        };
-        // Self-edges observe Vacant before any decrement.
-        self.slots[index].state = SlotState::Vacant;
-        let mut atoms = Vec::new();
-        for slot in &slots {
-            match slot {
-                PropertySlot::Data(RawValue::Symbol(atom) | RawValue::Private(atom)) => {
-                    atoms.push(*atom);
-                }
-                PropertySlot::Data(RawValue::Object(object)) => {
-                    if !self.release_object_nonfinal_trusted(*object) {
-                        self.release_raw_no_drain(RawId::Object(*object))?;
-                    }
-                }
-                PropertySlot::Data(leaf @ (RawValue::String(_) | RawValue::BigInt(_))) => {
-                    let edge = match *leaf {
-                        RawValue::String(string) => RawId::String(string),
-                        RawValue::BigInt(bigint) => RawId::BigInt(bigint),
-                        _ => unreachable!("matched leaf value"),
-                    };
-                    if !self.release_leaf_nonfinal_trusted(edge) {
-                        self.release_raw_no_drain(edge)?;
-                    }
-                }
-                PropertySlot::Data(value) => debug_assert!(raw_value_edge(value).is_none()),
-                _ => visit_property_slot_edges(slot, &mut |edge| self.release_raw_no_drain(edge))?,
-            }
-        }
-        atoms.extend(brand.map(|atom| AtomIdx::from_raw(atom.raw())));
-        if !self.shapes.release_nonfinal_fast(shape) {
-            self.release_raw_no_drain(RawId::Shape(shape))?;
-        }
-        // An ordinary payload is never linked into the weak-collection list,
-        // so the slot is reclaimed without the general path's link checks.
-        let slot = &mut self.slots[index];
-        debug_assert!(slot.weak_prev.is_none() && slot.weak_next.is_none());
-        if let Some(generation) = slot.generation.checked_add(1) {
-            slot.generation = generation;
-            self.free.push(id.index);
-        } else {
-            slot.state = SlotState::Retired;
-        }
-        #[cfg(debug_assertions)]
-        self.clear_alloc_site(id.index);
-        self.credit_node_reclamation();
-        if self.zero_queue.is_empty() && atoms.is_empty() {
-            return Ok(FinalRelease::Released(None));
-        }
-        let mut cleanup = Box::new(HeapCleanup {
-            finalized_objects: 1,
-            atoms,
-            ..HeapCleanup::default()
-        });
-        if !self.zero_queue.is_empty() {
-            cleanup.merge(self.drain_zero_queue_slow()?);
-        }
-        Ok(FinalRelease::Released(Some(cleanup)))
     }
 
     /// Zero-queue finalization of an ordinary-payload object, in one pass.
