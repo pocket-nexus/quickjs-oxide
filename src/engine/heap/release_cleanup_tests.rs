@@ -518,3 +518,30 @@ fn ordinary_object_finalization_releases_slot_atoms_edges_and_brands() {
     assert!(!runtime.0.poisoned.get());
     assert!(!runtime.0.deferred_references.has_pending());
 }
+
+#[test]
+fn final_release_of_a_long_ordinary_chain_drains_iteratively() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let before = runtime.0.state.borrow().heap.counts().object_nodes;
+    assert_eq!(
+        context
+            .eval(
+                r#"globalThis.head = null;
+                for (let i = 0; i < 50000; i++) head = {next: head, s: Symbol('n'), i};
+                head.i"#
+            )
+            .unwrap(),
+        Value::Int(49999)
+    );
+    let built = runtime.0.state.borrow().heap.counts().object_nodes;
+    assert!(built >= before + 50000);
+    // The last owner goes away in one release; every node finalizes through
+    // the zero queue without recursion and leaves no pending work.
+    drop(context.eval("head = null").unwrap());
+    let state = runtime.0.state.borrow();
+    assert!(state.heap.counts().object_nodes < before + 100);
+    assert!(!state.heap.has_pending_zero_cleanup());
+    drop(state);
+    assert!(!runtime.0.poisoned.get());
+}

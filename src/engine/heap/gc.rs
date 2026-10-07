@@ -107,6 +107,14 @@ fn shared_raw_id(kind: HeapNodeKind, index: u32, generation: u32) -> RawId {
     }
 }
 
+/// Outcome of [`Heap::try_release_final_ordinary`].
+pub(crate) enum FinalRelease {
+    /// Nothing changed; the caller takes the general release path.
+    Declined,
+    /// The object was finalized and reclaimed; apply any returned cleanup.
+    Released(Option<HeapCleanup>),
+}
+
 /// Resources finalized by a release, mutation, or collection operation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HeapCleanup {
@@ -2148,6 +2156,53 @@ impl Heap {
             self.release_raw_no_drain(edge)?;
         }
         Ok(())
+    }
+
+    /// Release the last reference to an ordinary-payload object without the
+    /// zero queue: one identity check, then the same one-pass finalization
+    /// the queue would run, the arena slot's reclamation and a drain of
+    /// whatever its edges queued. It declines, changing nothing, while older
+    /// work is queued (release order is preserved), for traced handles, and
+    /// for every other count, state or payload. A released object reports
+    /// cleanup only when atoms or cascaded nodes need it.
+    pub(crate) fn try_release_final_ordinary(
+        &mut self,
+        id: ObjectId,
+    ) -> Result<FinalRelease, HeapError> {
+        if !self.zero_queue.is_empty() {
+            return Ok(FinalRelease::Declined);
+        }
+        #[cfg(debug_assertions)]
+        if super::ownership::trace_object_matches(id) {
+            return Ok(FinalRelease::Declined);
+        }
+        let Ok(index) = self.validate_slot_identity(RawId::Object(id)) else {
+            return Ok(FinalRelease::Declined);
+        };
+        match &self.slots[index].state {
+            SlotState::Resident(Node {
+                strong,
+                data: NodeData::Object(object),
+            }) if strong.get() == 1 && matches!(object.payload, ObjectPayload::Ordinary) => {
+                strong.set(0);
+            }
+            _ => return Ok(FinalRelease::Declined),
+        }
+        let mut cleanup = HeapCleanup::default();
+        if !self.finish_ordinary_object(index, &mut cleanup)? {
+            return Err(HeapError::Invariant(
+                "ordinary final release lost its selected payload",
+            ));
+        }
+        self.reclaim_vacant_slot(index as u32)?;
+        self.credit_cycle_reclamation(&cleanup);
+        if !self.zero_queue.is_empty() {
+            cleanup.merge(self.drain_zero_queue_slow()?);
+        }
+        Ok(FinalRelease::Released(
+            (!cleanup.atoms.is_empty() || !cleanup.finalized_shape_ids.is_empty())
+                .then_some(cleanup),
+        ))
     }
 
     /// Zero-queue finalization of an ordinary-payload object, in one pass.
