@@ -21,3 +21,10 @@ python3 scripts/benchmark/fixed.py   --manifest docs/performance/probes/fixed/ma
 正式测量使用普通 release 构建，记录两侧的源码、二进制与负载身份。逻辑完成与交接次数由单独的 profiling 构建采集。采样和成本字段见[测量方法](../measurement.md)。
 
 [`allocation/ledger.py`](allocation/ledger.py) 生成对象字面量、`new` 与空循环探针，用 Callgrind 的调用链上下文把每次迭代的指令拆成互斥的阶段与机制，结果见[对象分配成本账本](../runtime-allocation-ledger.md)。
+
+[`runtime/probes.py`](runtime/probes.py) 在上述三个探针之外加入第 2–4 项的探针（`s=o`、`s=o.x`、`o.x=i`、`o.x=p`、`a[i&1023]=i`、`a[i&15]=p`、`f(i)`、`o.m(i)`、`g(p)`、`new E()`），每项校验输出，按 N/2N/4N 斜率报告每次迭代的 Ir、扣除空循环后的净值，以及按函数 self 成本的 2N−N 差值（aarch64 上调用链阶段拆分不可靠，以此为主要拆分），可选地附带固定迭代的 Richards/DeltaBlue/NavierStokes 的 Ir/Dw 与引用计数 self 占比。[`runtime/measure_docker.py`](runtime/measure_docker.py) 在 `oxide-vg:1.88` 容器中构建给定源码或修订并运行整套测量，输出 JSON 供 A/B 比较：
+
+```sh
+python3 docs/performance/probes/runtime/measure_docker.py --source . --rev <commit> \
+  --target-subdir item2-a --json /private/tmp/item2/a.json
+```
