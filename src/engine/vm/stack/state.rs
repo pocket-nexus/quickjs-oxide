@@ -401,18 +401,20 @@ impl FrameSlots<'_> {
 
     /// DefineField keeps the literal or instance target on the stack and
     /// consumes only the value. A declined definition leaves both owners and
-    /// the stack depth unchanged for the definition driver.
-    #[allow(clippy::too_many_arguments)]
+    /// the stack depth unchanged for the definition driver. Kept out of line:
+    /// the dispatch loop holds only the call, not the definition kernel.
+    #[inline(never)]
     pub(in crate::engine::vm) fn try_owned_field_define_in_state(
         &mut self,
         state: &mut RuntimeState,
-        poisoned: &std::cell::Cell<bool>,
-        pressure: &crate::engine::heap::gc_pressure::GcPressure,
-        domain: u64,
+        runtime: &crate::engine::api::runtime::Runtime,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         site: usize,
         key: u32,
     ) -> Result<bool, Error> {
+        let poisoned = &runtime.0.poisoned;
+        let pressure = &runtime.0.gc_pressure;
+        let domain = runtime.domain_id();
         let JsValue::Object(object) = self.peek(1)? else {
             return Ok(false);
         };

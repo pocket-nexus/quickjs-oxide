@@ -11,7 +11,9 @@ pub(crate) struct SlotReplacementError {
 
 /// Common numeric stores exchange their payloads directly. Other public value
 /// pairs keep one cold conversion boundary; neither path changes edge counts.
-#[inline]
+/// Every slot-exchange consumer inlines this fast path; only the cold half
+/// is a call.
+#[inline(always)]
 fn exchange_public_owner(previous: &mut RawValue, input: &mut JsValue) -> bool {
     if let (RawValue::Int(previous), JsValue::Int(input)) = (&mut *previous, &mut *input) {
         std::mem::swap(previous, input);
