@@ -13,6 +13,8 @@
 - [2026-10-01 提交栈测量](current-measurement.md)：旧 main 与 PR #84 的累计原版 Score，保留原来的归因范围。
 - [V8 v7 已采纳优化](v8-v7-boa-parity.md)：当前实现的提交、机制与组合验证。
 - [RegExpSplit 简化验收](v8-v7-structural-simplification.md)：2026-10-02 普通 release 原版成绩、机制与历史 Boa 对照。
+- [B/C 执行计划](runtime-bc-plan.md)：B2a 之后按成本中心推进的顺序、每操作指令预算与执行规则。
+- [对象分配成本账本](runtime-allocation-ledger.md)：对象字面量与 `new` 每次迭代指令的互斥拆分，第 1 项任务的依据。
 - [诊断工具](../profiling.md)与 [benchmark 工具](../../scripts/benchmark/README.md)：可运行的命令和输出契约。
 
 性能结论以受测源码、二进制、负载和原始样本为单位。改动执行路径时，同时核对语义、局部操作成本、完整程序时间、编译成本和内存生命周期。

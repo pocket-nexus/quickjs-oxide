@@ -11,7 +11,9 @@ pub(crate) struct SlotReplacementError {
 
 /// Common numeric stores exchange their payloads directly. Other public value
 /// pairs keep one cold conversion boundary; neither path changes edge counts.
-#[inline]
+/// Every slot-exchange consumer inlines this fast path; only the cold half
+/// is a call.
+#[inline(always)]
 fn exchange_public_owner(previous: &mut RawValue, input: &mut JsValue) -> bool {
     if let (RawValue::Int(previous), JsValue::Int(input)) = (&mut *previous, &mut *input) {
         std::mem::swap(previous, input);
@@ -38,6 +40,9 @@ fn exchange_public_owner_cold(previous: &mut RawValue, input: &mut JsValue) -> b
 impl Heap {
     /// Exchange two existing public owners. This leaf changes no layout,
     /// reference count or Atom count; permissions are selected by ordinary Set.
+    /// Both the field store and field definition consumers inline it; as an
+    /// outlined call it costs the hot existing-slot write a call frame.
+    #[inline(always)]
     pub(crate) fn exchange_owned_data_slot(
         &mut self,
         id: ObjectId,
@@ -1329,6 +1334,7 @@ impl Heap {
 
     /// The enclosing state transaction transfers an existing value owner only
     /// when this result reports publication. Shape ownership remains retained.
+    #[cfg(test)]
     pub(crate) fn append_object_slot_with_shape_input(
         &mut self,
         id: ObjectId,
@@ -1336,18 +1342,62 @@ impl Heap {
         replacement: PropertySlot,
         retain_value: bool,
     ) -> Result<HeapCleanup, SlotReplacementError> {
-        let prepare = (|| {
+        let extends = (|| {
             let object = self.object(id)?;
             let previous = self.shape(object.shape)?;
             let successor = self.shape(shape)?;
             let count = object.slots.len();
-            if previous.is_dictionary()
-                || successor.is_dictionary()
-                || previous.entries().len() != count
-                || successor.entries().len() != count.saturating_add(1)
-                || successor.prototype() != previous.prototype()
-                || successor.entries().get(..count) != Some(previous.entries())
-            {
+            Ok::<_, HeapError>(
+                !previous.is_dictionary()
+                    && previous.entries().len() == count
+                    && successor.prototype() == previous.prototype()
+                    && successor.entries().get(..count) == Some(previous.entries()),
+            )
+        })()
+        .map_err(|error| SlotReplacementError {
+            error,
+            published: false,
+        })?;
+        if !extends {
+            return Err(SlotReplacementError {
+                error: HeapError::Invariant(
+                    "property append shape does not extend the existing layout",
+                ),
+                published: false,
+            });
+        }
+        self.append_successor_slot(id, shape, replacement, retain_value, false)
+            .map(Option::unwrap_or_default)
+    }
+
+    /// Publish one slot under a successor already selected for the object's
+    /// current shared layout: a live transition edge, a verified canonical
+    /// successor, or a site fact guarded by both shape revisions. Selection
+    /// established the prefix and prototype; only O(1) facts are checked here.
+    ///
+    /// With `owned_shape` the caller's successor reference moves into the
+    /// object on publication; otherwise the object acquires its own. The old
+    /// shape reference is released, and cleanup is returned only when that
+    /// release drained nodes.
+    pub(crate) fn append_successor_slot(
+        &mut self,
+        id: ObjectId,
+        shape: ShapeId,
+        replacement: PropertySlot,
+        retain_value: bool,
+        owned_shape: bool,
+    ) -> Result<Option<HeapCleanup>, SlotReplacementError> {
+        let prepare = (|| {
+            let object = self.object(id)?;
+            let count = object.slots.len();
+            let successor = self.shape(shape)?;
+            debug_assert!(self.shape(object.shape).is_ok_and(|previous| {
+                !previous.is_dictionary()
+                    && previous.entries().len() == count
+                    && successor.prototype() == previous.prototype()
+                    && successor.entries().get(..count) == Some(previous.entries())
+            }));
+            if successor.is_dictionary() || successor.entries().len() != count.saturating_add(1) {
                 return Err(HeapError::Invariant(
                     "property append shape does not extend the existing layout",
                 ));
@@ -1368,7 +1418,9 @@ impl Heap {
             } else {
                 super::edges::Edges::new()
             };
-            edges.push(RawId::Shape(shape));
+            if !owned_shape {
+                edges.push(RawId::Shape(shape));
+            }
             self.retain_edges_transactionally(&edges)
         })();
         prepare.map_err(|error| SlotReplacementError {
@@ -1388,11 +1440,81 @@ impl Heap {
         crate::engine::api::profiling::record_owned_execution_event(
             "shape_append_existing_owners_preserved",
         );
-        self.release_and_drain(RawId::Shape(previous_shape))
+        self.release_reference(RawId::Shape(previous_shape))
             .map_err(|error| SlotReplacementError {
                 error,
                 published: true,
             })
+    }
+
+    /// Site-cache hit: move an owned data value into a new slot under the
+    /// recorded successor. The caller proved under this borrow that the
+    /// object's shape is the recorded shared parent and validated the
+    /// successor's generation and revision; the value owner and its atom
+    /// edge move with the input, so only the two shape counts change.
+    #[inline(always)]
+    pub(crate) fn append_cached_owned_slot(
+        &mut self,
+        id: ObjectId,
+        successor: ShapeId,
+        value: RawValue,
+    ) -> Result<Option<HeapCleanup>, SlotReplacementError> {
+        let unpublished = |error| SlotReplacementError {
+            error,
+            published: false,
+        };
+        // The site validated the successor's generation under this borrow;
+        // retaining it is the only fallible step before the slot is written.
+        let strong = &self.shapes.live_fast_mut(successor).strong;
+        strong.set(
+            strong
+                .get()
+                .checked_add(1)
+                .ok_or(unpublished(HeapError::Overflow {
+                    operation: "retaining a heap reference",
+                }))?,
+        );
+        // The caller's frame owns the receiver; its handle needs no check.
+        let object = self.object_mut_fast(id);
+        if let Err(slot) = object.slots.push_inline(PropertySlot::Data(value)) {
+            if object.slots.try_reserve(1).is_err() {
+                let strong = &self.shapes.live_fast_mut(successor).strong;
+                strong.set(strong.get() - 1);
+                return Err(unpublished(HeapError::Allocation {
+                    operation: "appending a cached shape property",
+                }));
+            }
+            object.slots.push(slot);
+        }
+        let prototype = object.used_as_prototype;
+        let previous_shape = std::mem::replace(&mut object.shape, successor);
+        if prototype {
+            self.property_layout_epoch = self.property_layout_epoch.saturating_add(1);
+        }
+        // The object owned its previous shape: a nonfinal decrement needs no
+        // handle check. A shape is never a leaf node; a possibly final release
+        // goes through its own arena's checked path.
+        // Pending zero-queue work is still drained below, as before.
+        if self.zero_queue.is_empty() && self.shapes.release_nonfinal_fast(previous_shape) {
+            return Ok(None);
+        }
+        let drained = self
+            .shapes
+            .release_no_drain(previous_shape)
+            .and_then(|zero| {
+                if zero {
+                    self.zero_queue.push_back(RawId::Shape(previous_shape));
+                }
+                if self.zero_queue.is_empty() {
+                    Ok(None)
+                } else {
+                    self.drain_zero_queue().map(Some)
+                }
+            });
+        drained.map_err(|error| SlotReplacementError {
+            error,
+            published: true,
+        })
     }
 
     /// Transactionally replace an object's complete shape/slot layout.

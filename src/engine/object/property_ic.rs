@@ -591,15 +591,22 @@ fn select_ordinary<'a>(
     }
 }
 
+/// Per-executable site caches addressed by execution PC. A bitmap and block
+/// ranks map a PC to its dense site index without a per-instruction slot.
 #[derive(Debug)]
-pub(crate) struct PropertyReadCacheTable {
+pub(crate) struct SiteCacheTable<T> {
     site_bits: Box<[u64]>,
     block_ranks: Box<[u32]>,
-    sites: Box<[PropertyReadCache]>,
+    sites: Box<[T]>,
 }
-impl PropertyReadCacheTable {
-    pub(crate) fn new_exec(code: &crate::engine::code::exec::ExecCode) -> Self {
-        use crate::engine::code::exec_opcode::Opcode;
+
+pub(crate) type PropertyReadCacheTable = SiteCacheTable<PropertyReadCache>;
+
+impl<T: Default> SiteCacheTable<T> {
+    fn new_exec_sites(
+        code: &crate::engine::code::exec::ExecCode,
+        is_site: impl Fn(crate::engine::code::exec_opcode::Opcode) -> bool,
+    ) -> Self {
         let mut bits = vec![0u64; code.word_len().div_ceil(64)];
         let mut ranks = vec![0u32; bits.len()];
         let mut sites = Vec::new();
@@ -610,25 +617,50 @@ impl PropertyReadCacheTable {
                 ranks[last_block] = sites.len() as u32;
                 last_block += 1;
             }
-            if !matches!(
-                code.opcode_at_source(source_pc),
-                Some(
-                    Opcode::GetField
-                        | Opcode::GetField2
-                        | Opcode::GetFieldCached
-                        | Opcode::GetField2Cached
-                )
-            ) {
+            if !code.opcode_at_source(source_pc).is_some_and(&is_site) {
                 continue;
             }
             bits[pc / 64] |= 1u64 << (pc % 64);
-            sites.push(PropertyReadCache::default());
+            sites.push(T::default());
         }
         Self {
             site_bits: bits.into_boxed_slice(),
             block_ranks: ranks.into_boxed_slice(),
             sites: sites.into_boxed_slice(),
         }
+    }
+
+    fn site_index(&self, pc: usize) -> Option<usize> {
+        let bits = *self.site_bits.get(pc / 64)?;
+        let mask = 1u64 << (pc % 64);
+        if bits & mask == 0 {
+            return None;
+        }
+        Some(self.block_ranks[pc / 64] as usize + (bits & (mask - 1)).count_ones() as usize)
+    }
+
+    pub(crate) fn site(&self, pc: usize) -> Option<&T> {
+        self.sites.get(self.site_index(pc)?)
+    }
+
+    /// Words in the PC bitmap: one per 64 execution PCs.
+    pub(crate) fn pc_words(&self) -> usize {
+        self.site_bits.len()
+    }
+}
+
+impl SiteCacheTable<PropertyReadCache> {
+    pub(crate) fn new_exec(code: &crate::engine::code::exec::ExecCode) -> Self {
+        use crate::engine::code::exec_opcode::Opcode;
+        Self::new_exec_sites(code, |opcode| {
+            matches!(
+                opcode,
+                Opcode::GetField
+                    | Opcode::GetField2
+                    | Opcode::GetFieldCached
+                    | Opcode::GetField2Cached
+            )
+        })
     }
 
     #[cfg(test)]
@@ -664,16 +696,14 @@ impl PropertyReadCacheTable {
             sites: sites.into_boxed_slice(),
         }
     }
-    fn site_index(&self, pc: usize) -> Option<usize> {
-        let bits = *self.site_bits.get(pc / 64)?;
-        let mask = 1u64 << (pc % 64);
-        if bits & mask == 0 {
-            return None;
-        }
-        Some(self.block_ranks[pc / 64] as usize + (bits & (mask - 1)).count_ones() as usize)
-    }
-    pub(crate) fn site(&self, pc: usize) -> Option<&PropertyReadCache> {
-        self.sites.get(self.site_index(pc)?)
+}
+
+impl SiteCacheTable<super::append_ic::PropertyAppendCache> {
+    pub(crate) fn new_exec(code: &crate::engine::code::exec::ExecCode) -> Self {
+        use crate::engine::code::exec_opcode::Opcode;
+        Self::new_exec_sites(code, |opcode| {
+            matches!(opcode, Opcode::PutField | Opcode::DefineField)
+        })
     }
 }
 

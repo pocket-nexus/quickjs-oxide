@@ -219,7 +219,7 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
         }
     }
 
-    #[cfg(test)]
+    #[inline(always)]
     pub(super) fn live_fast_mut(&mut self, id: T::Id) -> &mut AuxiliaryNode<T> {
         debug_assert!(self.validate_identity(id).is_ok());
         match &mut self.slots[T::parts(id).0 as usize].state {
@@ -240,6 +240,21 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
     pub(super) fn is_live(&self, id: T::Id) -> bool {
         self.validate_identity(id)
             .is_ok_and(|index| matches!(self.slots[index].state, AuxiliaryState::Live(_)))
+    }
+
+    /// Trusted nonfinal decrement for a handle a live owner just gave up
+    /// under the same borrow. Returns false, changing nothing, when the count
+    /// would reach zero or is immortal; the caller then takes the checked
+    /// release. Debug builds keep the identity check.
+    #[inline(always)]
+    pub(super) fn release_nonfinal_fast(&mut self, id: T::Id) -> bool {
+        let node = self.live_fast_mut(id);
+        let strong = node.strong.get();
+        if strong > 1 && strong != gc::IMMORTAL_STRONG {
+            node.strong.set(strong - 1);
+            return true;
+        }
+        false
     }
 
     /// Decrement an owned reference. The caller enqueues the handle on `true`.

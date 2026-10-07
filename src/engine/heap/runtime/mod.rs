@@ -4,6 +4,7 @@
 //! each context is a separate realm and execution surface. The heap and
 //! intrinsics extend this boundary; they are not hidden in the compiler or VM.
 
+mod empty_shapes;
 pub(crate) mod execution_turn;
 mod layout;
 pub(crate) mod owned_values;
@@ -140,6 +141,7 @@ pub(crate) struct RuntimeState {
     /// weak and are validated before reuse. Buckets are keyed by
     /// [`shape::compute_fingerprint_hash`] and collisions compare layouts.
     pub(crate) retained_shapes: retained_shapes::RetainedShapes,
+    pub(crate) empty_shapes: empty_shapes::EmptyShapes,
     pub(crate) shape_cache: HashMap<u64, Vec<ShapeId>, FxBuildHasher>,
     pub(crate) shape_hashes: HashMap<ShapeId, u64, FxBuildHasher>,
     pub(crate) shape_transitions:
@@ -397,13 +399,33 @@ impl RuntimeState {
         parent: ShapeId,
         entry: ShapeEntry,
     ) -> Option<ShapeId> {
+        self.successor_lookup(parent, entry)
+            .map(|(target, _)| target)
+    }
+
+    /// Select a live successor for an append and keep its weak edge. Only a
+    /// canonical-cache hit records an edge; an existing edge is not rewritten.
+    pub(crate) fn select_successor(
+        &mut self,
+        parent: ShapeId,
+        entry: ShapeEntry,
+    ) -> Option<ShapeId> {
+        let (target, linked) = self.successor_lookup(parent, entry)?;
+        if !linked {
+            self.record_transition(parent, entry, target);
+        }
+        Some(target)
+    }
+
+    /// The flag reports whether the target came from a live weak edge.
+    fn successor_lookup(&self, parent: ShapeId, entry: ShapeEntry) -> Option<(ShapeId, bool)> {
         if let Some(&target) = self
             .shape_transitions
             .get(&parent)
             .and_then(|edges| edges.get(&entry))
             && self.heap.shape(target).is_ok()
         {
-            return Some(target);
+            return Some((target, true));
         }
         let parent_shape = self.heap.shape(parent).ok()?;
         let prototype = parent_shape.prototype();
@@ -415,6 +437,7 @@ impl RuntimeState {
                 && shape.entries()[..parent_len] == *parent_shape.entries()
                 && shape.entries()[parent_len] == entry
         })
+        .map(|target| (target, false))
     }
 
     fn record_transition(&mut self, parent: ShapeId, entry: ShapeEntry, target: ShapeId) {
@@ -464,6 +487,16 @@ impl RuntimeState {
             self.record_transition(parent, entry, target);
             return Ok(target);
         }
+        self.create_successor(parent, entry)
+    }
+
+    /// Build and link a successor after selection found no live one. The
+    /// caller owns the returned shape reference.
+    pub(crate) fn create_successor(
+        &mut self,
+        parent: ShapeId,
+        entry: ShapeEntry,
+    ) -> Result<ShapeId, RuntimeError> {
         let (prototype, mut entries) = {
             let source = self.heap.shape(parent)?;
             (source.prototype(), source.entries().to_vec())
@@ -632,6 +665,8 @@ impl RuntimeState {
         )
     }
 
+    /// Consume the caller's successor reference: it moves into the object on
+    /// publication and is released when preparation rejects the append.
     pub(crate) fn append_slot_with_owned_shape_input(
         &mut self,
         poisoned: Option<&Cell<bool>>,
@@ -639,78 +674,91 @@ impl RuntimeState {
         shape: ShapeId,
         input: crate::engine::object::SlotAppendInput<'_>,
     ) -> Result<(), RuntimeError> {
+        self.append_successor_slot_inner(poisoned, object, shape, input, true)
+    }
+
+    /// Append under a selected live successor without a temporary shape owner.
+    /// The object acquires its own successor reference; a rejected append
+    /// leaves the input owner, atoms and both shapes unchanged.
+    pub(crate) fn append_successor_slot_input(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
+        object: ObjectId,
+        successor: ShapeId,
+        input: crate::engine::object::SlotAppendInput<'_>,
+    ) -> Result<(), RuntimeError> {
+        self.append_successor_slot_inner(poisoned, object, successor, input, false)
+    }
+
+    fn append_successor_slot_inner(
+        &mut self,
+        poisoned: Option<&Cell<bool>>,
+        object: ObjectId,
+        shape: ShapeId,
+        input: crate::engine::object::SlotAppendInput<'_>,
+        owned_shape: bool,
+    ) -> Result<(), RuntimeError> {
+        let poison = |_: &RuntimeError| {
+            if let Some(poisoned) = poisoned {
+                poisoned.set(true);
+            }
+        };
         let (replacement, owner) = input.into_parts();
         let retain_value = owner.is_none();
-        let retained_atoms = match if retain_value {
-            self.retain_slot_atoms(std::slice::from_ref(&replacement))
-        } else {
-            Ok(Vec::new())
-        } {
-            Ok(atoms) => atoms,
-            Err(error) => {
-                let cleanup = self.heap.release_shape(shape).inspect_err(|_| {
-                    if let Some(poisoned) = poisoned {
-                        poisoned.set(true);
+        // A borrowed data slot carries at most one Symbol atom edge.
+        let retained_atom = match &replacement {
+            PropertySlot::Data(RawValue::Symbol(index) | RawValue::Private(index))
+                if retain_value =>
+            {
+                if let Err(error) = self.atoms.retain_index(*index) {
+                    if owned_shape {
+                        let cleanup = self
+                            .heap
+                            .release_shape(shape)
+                            .map_err(RuntimeError::from)
+                            .inspect_err(poison)?;
+                        self.apply_cleanup(cleanup).inspect_err(poison)?;
                     }
-                })?;
-                self.apply_cleanup(cleanup).inspect_err(|_| {
-                    if let Some(poisoned) = poisoned {
-                        poisoned.set(true);
-                    }
-                })?;
-                return Err(error);
+                    return Err(error.into());
+                }
+                Some(*index)
             }
+            _ => None,
         };
         let result =
             self.heap
-                .append_object_slot_with_shape_input(object, shape, replacement, retain_value);
+                .append_successor_slot(object, shape, replacement, retain_value, owned_shape);
         if (result.is_ok() || result.as_ref().is_err_and(|failure| failure.published))
             && let Some(owner) = owner
         {
             *owner = crate::engine::value::JsValue::Undefined;
         }
-        let result = match result {
-            Err(failure) if failure.published && poisoned.is_some() => {
-                // Publication consumed the source owner above. Quarantine
-                // before attempting cleanup against an inconsistent heap.
-                poisoned.expect("publication poison flag").set(true);
-                return Err(failure.error.into());
-            }
-            result => result,
-        };
-        // The caller's temporary shape owner is consumed even if preparation
-        // failed. On a published error the new slot still owns its Atom edges.
-        let shape_cleanup = self.heap.release_shape(shape).inspect_err(|_| {
-            if let Some(poisoned) = poisoned {
-                poisoned.set(true);
-            }
-        })?;
         match result {
-            Ok(cleanup) => {
-                self.apply_cleanup(cleanup).inspect_err(|_| {
-                    if let Some(poisoned) = poisoned {
-                        poisoned.set(true);
-                    }
-                })?;
-                self.apply_cleanup(shape_cleanup).inspect_err(|_| {
-                    if let Some(poisoned) = poisoned {
-                        poisoned.set(true);
-                    }
-                })
+            Ok(None) => Ok(()),
+            Ok(Some(cleanup)) => self.apply_cleanup(cleanup).inspect_err(poison),
+            // Publication consumed the source owner and the successor
+            // reference. Quarantine before cleanup reaches an inconsistent heap.
+            Err(failure) if failure.published => {
+                if let Some(poisoned) = poisoned {
+                    poisoned.set(true);
+                }
+                Err(failure.error.into())
             }
             Err(failure) => {
-                if !failure.published {
-                    self.release_atoms(retained_atoms).inspect_err(|_| {
-                        if let Some(poisoned) = poisoned {
-                            poisoned.set(true);
-                        }
-                    })?;
+                if let Some(index) = retained_atom {
+                    self.atoms
+                        .release_index(index)
+                        .map_err(RuntimeError::from)
+                        .inspect_err(poison)?;
                 }
-                self.apply_cleanup(shape_cleanup).inspect_err(|_| {
-                    if let Some(poisoned) = poisoned {
-                        poisoned.set(true);
-                    }
-                })?;
+                if owned_shape {
+                    let cleanup = self
+                        .heap
+                        .release_shape(shape)
+                        .map_err(RuntimeError::from)
+                        .inspect_err(poison)?;
+                    self.apply_cleanup(cleanup).inspect_err(poison)?;
+                }
                 Err(failure.error.into())
             }
         }

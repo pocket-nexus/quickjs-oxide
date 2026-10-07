@@ -156,7 +156,7 @@ impl<'a> FrameExecution<'a> {
         arguments: u16,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<bool, Error> {
-        use crate::engine::{heap::ObjectData, heap::runtime::owned_values::OwnedValueGuard};
+        use crate::engine::heap::runtime::owned_values::OwnedValueGuard;
         if !self.execution.frames.can_push_with_continuations(0)
             || runtime.bytecode_call_would_overflow()
         {
@@ -180,13 +180,7 @@ impl<'a> FrameExecution<'a> {
         // Receiver allocation may request GC, but service remains with the
         // execution consumer after this installer publishes every input owner.
         let receiver = state
-            .allocate_object_with_layout(
-                &runtime.0.poisoned,
-                Some(prototype),
-                &[],
-                Vec::new(),
-                ObjectData::ordinary,
-            )
+            .new_empty_ordinary_object(&runtime.0.poisoned, prototype)
             .map_err(super::runtime_error_to_vm_error)?;
         let mut receiver =
             OwnedValueGuard::new(state, &runtime.0.poisoned, JsValue::Object(receiver));

@@ -1,0 +1,376 @@
+{
+ "schema": "oxide-allocation-ledger-v1",
+ "runtime_commit": "f2501839",
+ "source_branch": "perf/runtime-b2a-canonical-read",
+ "build": {
+  "rust": "1.88.0",
+  "profile": "release (fat LTO, CGU=1)",
+  "pgo": false,
+  "features": []
+ },
+ "binary_sha256": "f08ef3b958d98431dd275087eff6ee892ae9ff6a691541c655d6f1ba19b435e4",
+ "reference": {
+  "engine": "QuickJS",
+  "commit": "535a7c250ff4a577ec36c3e103daab6dadeea650",
+  "build": "upstream Makefile, make qjs",
+  "binary_sha256": "a9f7764e562af85e12fd34b661b225054aaa0679c58ddfa70d2eacfa39e6c045",
+  "use": "per-iteration totals only"
+ },
+ "method": "Callgrind --separate-callers=30 at N and 2N. The marginal self cost of each (function, caller chain) context is assigned to exactly one phase (by caller chain) and one mechanism (by self function). Cachegrind totals at N, 2N and 4N check linearity and the probe output is validated.",
+ "tool": "docs/performance/probes/allocation/ledger.py",
+ "n": 100000,
+ "probes": {
+  "empty_loop": {
+   "per_iteration": 647.0,
+   "per_iteration_2n_4n": 647.0,
+   "reference_per_iteration": 135.0,
+   "ledger_total": 647.0,
+   "phases": {
+    "I 解释循环自身": {
+     "total": 647.0,
+     "mechanisms": {
+      "解释循环自身": 615.0,
+      "slot 追加与写入": 32.0
+     },
+     "functions": {
+      "vm::execute::execute_frame_in_state": 615.0,
+      "vm::stack::window::FrameSlots::commit_number_local_discard": 32.0
+     }
+    }
+   }
+  },
+  "object_literal": {
+   "per_iteration": 12215.0,
+   "per_iteration_2n_4n": 12215.0,
+   "reference_per_iteration": 1392.0,
+   "ledger_total": 12199.0,
+   "phases": {
+    "D 字面量字段定义（离开解释循环）": {
+     "total": 6791.0,
+     "mechanisms": {
+      "slot 追加与写入": 1494.0,
+      "查找、准入与校验": 1163.0,
+      "公共包装与协议对象": 1150.0,
+      "引用计数、释放与回收": 1050.0,
+      "边与 atom 引用": 740.0,
+      "shape 转移与查找": 679.0,
+      "帧、栈与驱动": 290.0,
+      "其他": 225.0
+     },
+     "functions": {
+      "heap::runtime::RuntimeState::append_slot_with_owned_shape_input": 798.0,
+      "object::properties::heap::runtime::RuntimeState::define_raw_property_with_poison": 471.0,
+      "vm::construct_driver::define_property": 386.0,
+      "vm::proxy_get_driver::start_public_field": 348.0,
+      "object::storage::heap::runtime::RuntimeState::append_selected_missing_slot": 337.0,
+      "object::properties::state_define::heap::runtime::RuntimeState::try_define_own_property_in_state": 314.0,
+      "heap::runtime::RuntimeState::record_transition": 292.0,
+      "heap::gc::heap::Heap::release_and_drain": 272.0,
+      "heap::runtime::RuntimeState::canonical_successor": 266.0,
+      "heap::gc::heap::Heap::retain_edges_transactionally": 192.0,
+      "object::properties::api::runtime::Runtime::try_define_owned_property": 182.0,
+      "object::storage::heap::runtime::RuntimeState::store_property_slot_inner": 179.0,
+      "heap::gc::heap::Heap::release_raw_no_drain": 168.0,
+      "heap::runtime::RuntimeState::apply_cleanup": 164.0,
+      "heap::ownership::api::runtime::Runtime::retain_atom_handle": 146.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_heap_reference": 144.0,
+      "vm::proxy_get_driver::finish_instruction_call": 134.0,
+      "heap::runtime::RuntimeState::retain_slot_atoms": 128.0,
+      "atom::parse_canonical_u32_js_string": 124.0,
+      "vm::frame::Frame::next_pc": 124.0
+     }
+    },
+    "R 退出与重入解释循环": {
+     "total": 1474.0,
+     "mechanisms": {
+      "帧、栈与驱动": 1436.0,
+      "其他": 38.0
+     },
+     "functions": {
+      "vm::frame::FrameStore::materialize_in_state": 378.0,
+      "vm::driver::run_frames_with_state": 310.0,
+      "vm::driver::ready::run": 272.0,
+      "vm::stack::window::FrameExecution::admit": 176.0,
+      "vm::execute::deferred_action": 130.0,
+      "vm::driver::cold::dispatch": 110.0,
+      "vm::frame::FrameStore::current_mut": 60.0,
+      "vm::stack::SlotStore::check_current": 38.0
+     }
+    },
+    "I 解释循环自身": {
+     "total": 1385.0,
+     "mechanisms": {
+      "解释循环自身": 1310.0,
+      "帧、栈与驱动": 43.0,
+      "slot 追加与写入": 32.0
+     },
+     "functions": {
+      "vm::execute::execute_frame_in_state": 1310.0,
+      "vm::execute::FrameCursor::commit_owned": 43.0,
+      "vm::stack::window::FrameSlots::commit_number_local_discard": 32.0
+     }
+    },
+    "A 对象分配": {
+     "total": 1297.0,
+     "mechanisms": {
+      "查找、准入与校验": 381.0,
+      "引用计数、释放与回收": 287.0,
+      "边与 atom 引用": 210.0,
+      "shape 转移与查找": 140.0,
+      "对象创建主体": 136.0,
+      "分配器与内存拷贝": 90.0,
+      "slot 追加与写入": 53.0
+     },
+     "functions": {
+      "builtins::object::heap::runtime::RuntimeState::new_ordinary_object_in_realm": 136.0,
+      "heap::object_storage::heap::Heap::validate_object_layout": 131.0,
+      "heap::allocation::heap::Heap::allocate_object_inner_with_status": 128.0,
+      "heap::runtime::RuntimeState::get_or_create_shape": 125.0,
+      "heap::runtime::layout::heap::runtime::RuntimeState::allocate_object_with_layout": 122.0,
+      "heap::gc::heap::Heap::retain_edges_transactionally": 96.0,
+      "__memcpy_avx_unaligned_erms": 90.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_heap_reference": 72.0,
+      "heap::gc::heap::Heap::release_and_drain": 68.0,
+      "heap::gc::object_edges": 65.0,
+      "heap::object_records::Slots::from_vec": 53.0,
+      "heap::runtime::RuntimeState::retain_slot_atoms": 49.0,
+      "heap::runtime::owned_values::OwnedValueGuard as core::ops::drop::Drop::drop": 48.0,
+      "heap::gc::heap::Heap::release_raw_no_drain": 42.0,
+      "heap::runtime::RuntimeState::apply_cleanup": 41.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_jsvalue": 16.0,
+      "object::shape::Shape::dictionary_layout_is_valid": 15.0
+     }
+    },
+    "F 覆盖局部变量：释放上一个对象": {
+     "total": 913.0,
+     "mechanisms": {
+      "引用计数、释放与回收": 695.0,
+      "边与 atom 引用": 149.0,
+      "其他": 42.0,
+      "分配器与内存拷贝": 27.0
+     },
+     "functions": {
+      "heap::gc::heap::Heap::finish_resident_node": 280.0,
+      "heap::gc::heap::Heap::drain_zero_queue_slow": 143.0,
+      "heap::gc::heap::Heap::release_raw_no_drain": 118.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_heap_reference": 109.0,
+      "heap::gc::object_edges": 102.0,
+      "heap::runtime::RuntimeState::apply_cleanup": 29.0,
+      "alloc::collections::vec_deque::VecDequeT,A::push_back": 27.0,
+      "core::ptr::drop_in_placeheap::NodeData": 27.0,
+      "heap::runtime::RuntimeState::release_atom_indices": 24.0,
+      "heap::NodeData::edges": 23.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_jsvalue": 16.0,
+      "core::ptr::drop_in_placeheap::object_records::ObjectPayload": 15.0
+     }
+    },
+    "S 局部写入与值复制": {
+     "total": 251.0,
+     "mechanisms": {
+      "slot 追加与写入": 136.0,
+      "引用计数、释放与回收": 115.0
+     },
+     "functions": {
+      "vm::stack::state::vm::stack::window::FrameSlots::transfer_direct_in_state": 118.0,
+      "heap::ownership::heap::runtime::RuntimeState::dup_jsvalue": 44.0,
+      "heap::runtime::RuntimeState::retain_raw_root": 43.0,
+      "vm::stack::state::copy_reference_in_state": 28.0,
+      "vm::stack::transfer::vm::stack::window::FrameSlots::destination_index": 18.0
+     }
+    },
+    "T 其他释放（操作数与临时值）": {
+     "total": 88.0,
+     "mechanisms": {
+      "引用计数、释放与回收": 88.0
+     },
+     "functions": {
+      "heap::ownership::heap::runtime::RuntimeState::release_heap_reference": 72.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_jsvalue": 16.0
+     }
+    }
+   }
+  },
+  "constructor": {
+   "per_iteration": 12833.0,
+   "per_iteration_2n_4n": 12833.0,
+   "reference_per_iteration": 1973.0,
+   "ledger_total": 12823.0,
+   "phases": {
+    "W this.x = … 追加字段": {
+     "total": 4741.0,
+     "mechanisms": {
+      "slot 追加与写入": 1691.0,
+      "查找、准入与校验": 1321.0,
+      "引用计数、释放与回收": 802.0,
+      "shape 转移与查找": 660.0,
+      "边与 atom 引用": 232.0,
+      "其他": 35.0
+     },
+     "functions": {
+      "heap::runtime::RuntimeState::append_slot_with_owned_shape_input": 790.0,
+      "object::ordinary_storage::select_set_slot": 522.0,
+      "object::ordinary_storage::locate": 435.0,
+      "object::storage::heap::runtime::RuntimeState::append_selected_missing_slot": 337.0,
+      "heap::runtime::RuntimeState::record_transition": 292.0,
+      "object::ordinary_storage::select_missing_prototypes": 292.0,
+      "heap::gc::heap::Heap::release_and_drain": 272.0,
+      "heap::runtime::RuntimeState::canonical_successor": 266.0,
+      "heap::gc::heap::Heap::retain_edges_transactionally": 192.0,
+      "heap::gc::heap::Heap::release_raw_no_drain": 168.0,
+      "heap::runtime::RuntimeState::apply_cleanup": 164.0,
+      "vm::stack::state::vm::stack::window::FrameSlots::retire_field_write": 162.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_heap_reference": 144.0,
+      "object::ordinary_storage::set_missing_local": 136.0,
+      "object::ordinary_storage::direct_write::heap::runtime::RuntimeState::append_missing_owned_data": 118.0,
+      "heap::runtime::RuntimeState::append_transition": 102.0,
+      "heap::object_storage::heap::Heap::object": 72.0,
+      "heap::object_records::Slots::push": 66.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_jsvalue": 54.0,
+      "heap::object_records::Slots::try_reserve": 46.0
+     }
+    },
+    "I 解释循环自身": {
+     "total": 2530.0,
+     "mechanisms": {
+      "解释循环自身": 2345.0,
+      "帧、栈与驱动": 153.0,
+      "slot 追加与写入": 32.0
+     },
+     "functions": {
+      "vm::execute::execute_frame_in_state": 2345.0,
+      "vm::execute::FrameCursor::commit_owned": 129.0,
+      "vm::stack::window::FrameSlots::commit_number_local_discard": 32.0,
+      "vm::execute::FrameCursor::move_owned": 24.0
+     }
+    },
+    "C 构造调用与返回": {
+     "total": 1979.0,
+     "mechanisms": {
+      "帧、栈与驱动": 1169.0,
+      "引用计数、释放与回收": 565.0,
+      "查找、准入与校验": 202.0,
+      "shape 转移与查找": 21.0,
+      "其他": 14.0,
+      "slot 追加与写入": 8.0
+     },
+     "functions": {
+      "vm::stack::window::FrameExecution::enter_constructor": 744.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_heap_reference": 216.0,
+      "vm::stack::call::vm::stack::SlotStore::prepare_ordinary_window_in_state": 128.0,
+      "vm::frame::FrameCold::release_owned": 119.0,
+      "vm::frame::storage::CallStorage::recycle": 93.0,
+      "vm::call::ordinary::DirectSelection::select_in_state": 87.0,
+      "vm::stack::call::vm::stack::SlotStore::clear_current_frame_owned_in_state": 64.0,
+      "heap::arena::heap::Heap::strong_count": 53.0,
+      "vm::frame::FramePush::install": 51.0,
+      "heap::runtime::owned_values::OwnedValueGuard as core::ops::drop::Drop::drop": 48.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_jsvalue": 43.0,
+      "heap::runtime::RuntimeState::retain_raw_root": 43.0,
+      "vm::call::ordinary::OrdinarySelection::authenticate_slot_in_state": 40.0,
+      "heap::binding_storage::heap::Heap::function_bytecode": 39.0,
+      "heap::object_storage::heap::Heap::object": 36.0,
+      "vm::frame::FrameCold::release_eval_arguments": 28.0,
+      "vm::frame::FrameStore::prepare_push": 23.0,
+      "vm::stack::window::FrameTransaction::peek": 21.0,
+      "object::shape::Shape::find": 21.0,
+      "core::ptr::drop_in_placevm::closure::Environment": 20.0
+     }
+    },
+    "A 对象分配": {
+     "total": 1303.0,
+     "mechanisms": {
+      "查找、准入与校验": 381.0,
+      "引用计数、释放与回收": 310.0,
+      "边与 atom 引用": 210.0,
+      "shape 转移与查找": 140.0,
+      "公共包装与协议对象": 119.0,
+      "分配器与内存拷贝": 90.0,
+      "slot 追加与写入": 53.0
+     },
+     "functions": {
+      "heap::arena::heap::Heap::strong_count": 159.0,
+      "heap::object_storage::heap::Heap::validate_object_layout": 131.0,
+      "heap::allocation::heap::Heap::allocate_object_inner_with_status": 128.0,
+      "heap::runtime::RuntimeState::get_or_create_shape": 125.0,
+      "heap::runtime::layout::heap::runtime::RuntimeState::allocate_object_with_layout": 122.0,
+      "vm::construct_driver::prepare_ordinary_base_in_state::{{closure}}": 119.0,
+      "heap::gc::heap::Heap::retain_edges_transactionally": 96.0,
+      "__memcpy_avx_unaligned_erms": 90.0,
+      "heap::gc::heap::Heap::release_and_drain": 68.0,
+      "heap::gc::object_edges": 65.0,
+      "heap::object_records::Slots::from_vec": 53.0,
+      "heap::runtime::RuntimeState::retain_slot_atoms": 49.0,
+      "heap::gc::heap::Heap::release_raw_no_drain": 42.0,
+      "heap::runtime::RuntimeState::apply_cleanup": 41.0,
+      "object::shape::Shape::dictionary_layout_is_valid": 15.0
+     }
+    },
+    "S 局部写入与值复制": {
+     "total": 1172.0,
+     "mechanisms": {
+      "slot 追加与写入": 601.0,
+      "引用计数、释放与回收": 503.0,
+      "帧、栈与驱动": 44.0,
+      "分配器与内存拷贝": 24.0
+     },
+     "functions": {
+      "vm::stack::state::vm::stack::window::FrameSlots::insert_copy_in_state": 267.0,
+      "heap::runtime::RuntimeState::retain_raw_root": 215.0,
+      "heap::ownership::heap::runtime::RuntimeState::dup_jsvalue": 176.0,
+      "vm::stack::window::FrameSlots::rotate_operands": 138.0,
+      "vm::stack::state::vm::stack::window::FrameSlots::transfer_direct_in_state": 118.0,
+      "vm::stack::state::copy_reference_in_state": 112.0,
+      "vm::stack::state::vm::stack::window::FrameSlots::top_direct_mut": 60.0,
+      "vm::environment_driver::global_cell_view": 44.0,
+      "__memcpy_avx_unaligned_erms": 24.0,
+      "vm::stack::transfer::vm::stack::window::FrameSlots::destination_index": 18.0
+     }
+    },
+    "F 覆盖局部变量：释放上一个对象": {
+     "total": 913.0,
+     "mechanisms": {
+      "引用计数、释放与回收": 695.0,
+      "边与 atom 引用": 149.0,
+      "其他": 42.0,
+      "分配器与内存拷贝": 27.0
+     },
+     "functions": {
+      "heap::gc::heap::Heap::finish_resident_node": 280.0,
+      "heap::gc::heap::Heap::drain_zero_queue_slow": 143.0,
+      "heap::gc::heap::Heap::release_raw_no_drain": 118.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_heap_reference": 109.0,
+      "heap::gc::object_edges": 102.0,
+      "heap::runtime::RuntimeState::apply_cleanup": 29.0,
+      "alloc::collections::vec_deque::VecDequeT,A::push_back": 27.0,
+      "core::ptr::drop_in_placeheap::NodeData": 27.0,
+      "heap::runtime::RuntimeState::release_atom_indices": 24.0,
+      "heap::NodeData::edges": 23.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_jsvalue": 16.0,
+      "core::ptr::drop_in_placeheap::object_records::ObjectPayload": 15.0
+     }
+    },
+    "T 其他释放（操作数与临时值）": {
+     "total": 99.0,
+     "mechanisms": {
+      "引用计数、释放与回收": 99.0
+     },
+     "functions": {
+      "heap::ownership::heap::runtime::RuntimeState::release_heap_reference": 72.0,
+      "heap::ownership::heap::runtime::RuntimeState::release_jsvalue": 27.0
+     }
+    },
+    "R 退出与重入解释循环": {
+     "total": 86.0,
+     "mechanisms": {
+      "帧、栈与驱动": 75.0,
+      "其他": 11.0
+     },
+     "functions": {
+      "vm::execute::deferred_action": 75.0,
+      "vm::execute::checked_u16": 11.0
+     }
+    }
+   }
+  }
+ }
+}

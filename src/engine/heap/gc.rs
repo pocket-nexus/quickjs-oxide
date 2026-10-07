@@ -2086,6 +2086,9 @@ impl Heap {
         cleanup: &mut HeapCleanup,
     ) -> Result<(), HeapError> {
         let index = self.validate_slot_identity(id)?;
+        if !cycle && self.finish_ordinary_object(index, cleanup)? {
+            return Ok(());
+        }
         let (strong, weak, edges) = {
             let SlotState::Resident(node) = &self.slots[index].state else {
                 return Err(HeapError::Invariant(
@@ -2145,6 +2148,54 @@ impl Heap {
             self.release_raw_no_drain(edge)?;
         }
         Ok(())
+    }
+
+    /// Zero-queue finalization of an ordinary-payload object, in one pass.
+    /// Its slots move out of the record, the slot becomes Vacant (dropping
+    /// the rest in place), and each moved slot then reports its atom and
+    /// releases its edge, followed by the shape: the same atom and edge order
+    /// as the general path, without building separate snapshots. Returns
+    /// false, changing nothing, for every other payload or state.
+    #[inline]
+    fn finish_ordinary_object(
+        &mut self,
+        index: usize,
+        cleanup: &mut HeapCleanup,
+    ) -> Result<bool, HeapError> {
+        let (slots, shape, brand) = {
+            let SlotState::Resident(Node {
+                strong,
+                data: NodeData::Object(object),
+            }) = &mut self.slots[index].state
+            else {
+                return Ok(false);
+            };
+            if !matches!(object.payload, ObjectPayload::Ordinary) {
+                return Ok(false);
+            }
+            if strong.get() != 0 {
+                return Err(HeapError::Invariant(
+                    "finalization count disagrees with its queue/cycle state",
+                ));
+            }
+            (
+                std::mem::take(&mut object.slots),
+                object.shape,
+                object.private_brand_home,
+            )
+        };
+        cleanup.finalized_objects = cleanup.finalized_objects.saturating_add(1);
+        // Self-edges observe Vacant before any decrement.
+        self.slots[index].state = SlotState::Vacant;
+        for slot in &slots {
+            cleanup.atoms.extend(property_slot_atoms(slot));
+            visit_property_slot_edges(slot, &mut |edge| self.release_raw_no_drain(edge))?;
+        }
+        cleanup
+            .atoms
+            .extend(brand.map(|atom| AtomIdx::from_raw(atom.raw())));
+        self.release_raw_no_drain(RawId::Shape(shape))?;
+        Ok(true)
     }
 
     fn finish_var_ref(

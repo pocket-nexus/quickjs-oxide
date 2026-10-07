@@ -1125,11 +1125,57 @@ fn emit_dynamic_identifier_reference(
     Ok(())
 }
 
+/// QuickJS `resolve_labels` rewrites a discarded field assignment,
+/// `insert2; put_field; drop`, to `put_field`: the store consumes the target
+/// and its value, so neither the copied result nor its drop is needed. Mark
+/// the `insert2` and `drop` IR operations to elide. A jump into the old
+/// `insert2` lands on `put_field` with the same `[target value]` stack; the
+/// rewrite is skipped when anything jumps to the `put_field` or the `drop`.
+fn elided_field_statement_ops(operations: &[SpannedIrOp]) -> Vec<bool> {
+    let mut elided = vec![false; operations.len()];
+    let targets = operations
+        .iter()
+        .filter_map(|operation| match &operation.op {
+            IrOp::Bytecode(instruction) => super::relocation::instruction_target(instruction),
+            _ => None,
+        })
+        .collect::<std::collections::HashSet<_>>();
+    let mut index = 0;
+    while index + 2 < operations.len() {
+        if matches!(
+            (
+                &operations[index].op,
+                &operations[index + 1].op,
+                &operations[index + 2].op
+            ),
+            (
+                IrOp::Bytecode(Instruction::Insert2),
+                IrOp::Bytecode(Instruction::PutField(_)),
+                IrOp::Bytecode(Instruction::Drop)
+            )
+        ) && ![index + 1, index + 2]
+            .into_iter()
+            .any(|target| u32::try_from(target).is_ok_and(|target| targets.contains(&target)))
+        {
+            elided[index] = true;
+            elided[index + 2] = true;
+            index += 3;
+        } else {
+            index += 1;
+        }
+    }
+    elided
+}
+
 fn lower_ops(operations: Vec<SpannedIrOp>, scopes: &[ScopeLifecycle]) -> Result<LoweredOps, Error> {
+    let elided = elided_field_statement_ops(&operations);
     let mut offsets = Vec::with_capacity(operations.len() + 1);
     let mut code_len = 0_usize;
-    for operation in &operations {
+    for (operation, elided) in operations.iter().zip(&elided) {
         offsets.push(code_len);
+        if *elided {
+            continue;
+        }
         let emitted = match &operation.op {
             IrOp::EnterScope(scope) => scopes
                 .get(scope.0)
@@ -1199,7 +1245,10 @@ fn lower_ops(operations: Vec<SpannedIrOp>, scopes: &[ScopeLifecycle]) -> Result<
     let mut code = Vec::with_capacity(code_len);
     let mut pc_sites = Vec::with_capacity(code_len);
     let mut parameter_initialization_end = None;
-    for operation in operations {
+    for (operation, elided) in operations.into_iter().zip(elided) {
+        if elided {
+            continue;
+        }
         let SpannedIrOp { op, pc_site } = operation;
         match op {
             IrOp::EnterScope(scope) => {

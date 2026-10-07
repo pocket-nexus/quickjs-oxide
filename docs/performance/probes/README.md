@@ -19,3 +19,5 @@ python3 scripts/benchmark/fixed.py   --manifest docs/performance/probes/fixed/ma
 ```
 
 正式测量使用普通 release 构建，记录两侧的源码、二进制与负载身份。逻辑完成与交接次数由单独的 profiling 构建采集。采样和成本字段见[测量方法](../measurement.md)。
+
+[`allocation/ledger.py`](allocation/ledger.py) 生成对象字面量、`new` 与空循环探针，用 Callgrind 的调用链上下文把每次迭代的指令拆成互斥的阶段与机制，结果见[对象分配成本账本](../runtime-allocation-ledger.md)。

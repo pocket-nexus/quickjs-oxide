@@ -2438,21 +2438,41 @@ pub(super) fn execute_frame_in_state(
                             });
                         }
                     }
-                    Opcode::PutField => {
+                    Opcode::PutField | Opcode::DefineField => {
+                        // One arm for both static-key stores keeps the loop's
+                        // live state unchanged; definitions call out of line.
+                        let define = decoded.opcode == Opcode::DefineField;
+                        let declined = || {
+                            if define {
+                                VmAction::DefineProperty {
+                                    key: Some(operand),
+                                    method: None,
+                                }
+                            } else {
+                                VmAction::SetProperty(Some(operand))
+                            }
+                        };
                         let Some(generation) = property_generation.checked_add(1) else {
-                            break 'dispatch Ok(VmAction::SetProperty(Some(operand)));
+                            break 'dispatch Ok(declined());
                         };
                         if !cursor.with_slots(|slots| {
-                            slots.try_owned_field_write_in_state(
-                                state,
-                                &runtime.0.poisoned,
-                                &runtime.0.gc_pressure,
-                                runtime.domain_id(),
-                                executable,
-                                operand,
-                            )
+                            if define {
+                                slots.try_owned_field_define_in_state(
+                                    state, runtime, executable, pc, operand,
+                                )
+                            } else {
+                                slots.try_owned_field_write_in_state(
+                                    state,
+                                    &runtime.0.poisoned,
+                                    &runtime.0.gc_pressure,
+                                    runtime.domain_id(),
+                                    executable,
+                                    pc,
+                                    operand,
+                                )
+                            }
                         })? {
-                            break 'dispatch Ok(VmAction::SetProperty(Some(operand)));
+                            break 'dispatch Ok(declined());
                         }
                         *property_generation = generation;
                     }
