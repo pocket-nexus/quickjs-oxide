@@ -180,6 +180,10 @@ fn owned_date_constructor_retires_new_target_after_prototype_throw() {
 }
 
 #[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "relies on the debug assertion that stops an invalid root release"
+)]
 fn owned_date_release_failure_quarantines_before_remaining_native_owners() {
     use crate::engine::heap::RawId;
     let runtime = Runtime::new();

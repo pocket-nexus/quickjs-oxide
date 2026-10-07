@@ -99,6 +99,8 @@ jobs:
           cargo test --locked --workspace --all-targets
           cargo test --locked -p quickjs-oxide-cli --features profiling --test profiling --bin qjs
           cargo test --locked -p quickjs-oxide --features profiling --lib profiling_
+          # Release-optimized engine tests with trusted-handle checks restored.
+          cargo test --locked --release -p quickjs-oxide --features checked-handles --lib
           cargo test --locked --workspace --doc
           cargo test --locked --workspace --features test262-host --lib --bins
           cargo test --locked --features test262-host \

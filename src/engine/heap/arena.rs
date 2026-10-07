@@ -374,7 +374,7 @@ impl Heap {
     /// Trusted leaf accessor paired with [`Heap::live_node_fast`].
     #[inline]
     pub(in crate::engine::heap) fn live_leaf_fast(&self, id: RawId) -> &LeafSlot {
-        debug_assert!(
+        assert_trusted_handle!(
             self.validate_leaf_identity(id).is_ok(),
             "trusted leaf handle failed its debug identity check"
         );
@@ -389,7 +389,7 @@ impl Heap {
     /// Trusted mutable leaf accessor paired with [`Heap::live_leaf_fast`].
     #[inline]
     pub(in crate::engine::heap) fn live_leaf_fast_mut(&mut self, id: RawId) -> &mut LeafSlot {
-        debug_assert!(
+        assert_trusted_handle!(
             self.validate_leaf_identity(id).is_ok(),
             "trusted leaf handle failed its debug identity check"
         );
@@ -432,7 +432,7 @@ impl Heap {
     /// [`Heap::live_node`].
     #[inline]
     pub(in crate::engine::heap) fn live_node_fast(&self, id: RawId) -> &Node {
-        debug_assert!(
+        assert_trusted_handle!(
             self.validate_slot_identity(id).is_ok(),
             "trusted handle failed its debug identity check"
         );
@@ -446,7 +446,7 @@ impl Heap {
     /// the same exclusive borrow. Release builds keep only the bounds check.
     #[inline(always)]
     pub(in crate::engine::heap) fn object_mut_fast(&mut self, id: ObjectId) -> &mut ObjectData {
-        debug_assert!(
+        assert_trusted_handle!(
             self.validate_slot_identity(RawId::Object(id)).is_ok(),
             "trusted handle failed its debug identity check"
         );

@@ -4,6 +4,7 @@ use super::{
     Error, FrameBinding, FrameSlots, JsValue, NamedReadOperation, PropertyReadProgress,
     runtime_error_to_vm_error,
 };
+use crate::engine::heap::RawId;
 use crate::engine::heap::runtime::RuntimeState;
 
 #[inline(always)]
@@ -11,6 +12,7 @@ pub(in crate::engine::vm) fn copy_value_in_state(
     state: &mut RuntimeState,
     value: &JsValue,
 ) -> Result<JsValue, Error> {
+    // The source slot owns its edge, so heap handles take the trusted retain.
     let copied = match value {
         JsValue::Undefined => JsValue::Undefined,
         JsValue::Null => JsValue::Null,
@@ -18,29 +20,32 @@ pub(in crate::engine::vm) fn copy_value_in_state(
         JsValue::Int(value) => JsValue::Int(*value),
         JsValue::Float(value) => JsValue::Float(*value),
         JsValue::ShortBigInt(value) => JsValue::ShortBigInt(*value),
-        _ => return copy_reference_in_state(state, value),
+        JsValue::Object(id) if state.heap.admits_trusted(RawId::Object(*id)) => {
+            state.heap.retain_object_fast(*id);
+            JsValue::Object(*id)
+        }
+        JsValue::String(id) if state.heap.admits_trusted(RawId::String(*id)) => {
+            state.heap.retain_string_fast(*id);
+            JsValue::String(*id)
+        }
+        JsValue::BigInt(id) if state.heap.admits_trusted(RawId::BigInt(*id)) => {
+            state.heap.retain_bigint_fast(*id);
+            JsValue::BigInt(*id)
+        }
+        _ => return copy_checked_in_state(state, value),
     };
     #[cfg(feature = "profiling")]
     super::record_copy(value);
     Ok(copied)
 }
 
+/// Symbols, and handles that fail the checks enabled by
+/// [`crate::engine::heap::Heap::admits_trusted`], keep the checked duplicate.
 #[inline(never)]
-fn copy_reference_in_state(state: &mut RuntimeState, value: &JsValue) -> Result<JsValue, Error> {
-    let copied = match value {
-        // Keep the stack's existing trusted leaf-retain/saturation behavior.
-        JsValue::String(id) => {
-            state.heap.retain_string_fast(*id);
-            JsValue::String(*id)
-        }
-        JsValue::BigInt(id) => {
-            state.heap.retain_bigint_fast(*id);
-            JsValue::BigInt(*id)
-        }
-        _ => state
-            .dup_jsvalue(value)
-            .map_err(runtime_error_to_vm_error)?,
-    };
+fn copy_checked_in_state(state: &mut RuntimeState, value: &JsValue) -> Result<JsValue, Error> {
+    let copied = state
+        .dup_jsvalue(value)
+        .map_err(runtime_error_to_vm_error)?;
     #[cfg(feature = "profiling")]
     super::record_copy(value);
     Ok(copied)
@@ -684,15 +689,19 @@ mod tests {
 
     #[test]
     fn dense_read_failure_preserves_inputs_before_any_owner_transfer() {
+        // Heap handles copy through the trusted saturating retain, so the
+        // retain failure is injected on a symbol element's checked atom count.
         for capacity_failure in [false, true] {
             let runtime = Runtime::new();
             let mut context = runtime.new_context().unwrap();
-            let base = runtime.into_jsvalue(context.eval("[{}]").unwrap()).unwrap();
+            let base = runtime
+                .into_jsvalue(context.eval("[Symbol('element')]").unwrap())
+                .unwrap();
             let JsValue::Object(array) = &base else {
                 panic!("array")
             };
             let array = *array;
-            let crate::engine::heap::RawValue::Object(target) = runtime
+            let crate::engine::heap::RawValue::Symbol(symbol) = runtime
                 .0
                 .state
                 .borrow()
@@ -703,8 +712,17 @@ mod tests {
                 .unwrap()
                 .clone()
             else {
-                panic!("object element")
+                panic!("symbol element")
             };
+            let count = |state: &RuntimeState| {
+                state
+                    .atoms
+                    .resolve(state.atoms.brand(symbol).unwrap())
+                    .unwrap()
+                    .ref_count
+                    .unwrap()
+            };
+            let previous = count(&runtime.0.state.borrow());
             let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
             layout.metadata.max_stack = 2;
             let mut store = SlotStore::new(4);
@@ -723,10 +741,7 @@ mod tests {
             {
                 let mut state = runtime.0.state.borrow_mut();
                 if !capacity_failure {
-                    state.heap.set_strong_count_for_test(
-                        crate::engine::heap::RawId::Object(target),
-                        u32::MAX,
-                    );
+                    state.atoms.set_ref_count_for_test(symbol, u32::MAX);
                 }
                 let mut slots = store.borrow_frame_slots(&mut window).unwrap();
                 let result = if capacity_failure {
@@ -739,15 +754,13 @@ mod tests {
                 assert_eq!(slots.peek(0).unwrap(), &JsValue::Int(0));
                 assert_eq!(slots.peek(1).unwrap(), &JsValue::Object(array));
                 assert_eq!(
-                    state.heap.object_strong_count(target),
-                    Ok(if capacity_failure { 1 } else { u32::MAX })
+                    count(&state),
+                    if capacity_failure { previous } else { u32::MAX }
                 );
-                state
-                    .heap
-                    .set_strong_count_for_test(crate::engine::heap::RawId::Object(target), 1);
+                state.atoms.set_ref_count_for_test(symbol, previous);
             }
             store.clear_frame(&runtime, window).unwrap();
-            assert!(runtime.0.state.borrow().heap.object(target).is_err());
+            assert!(runtime.0.state.borrow().heap.object(array).is_err());
             assert!(!runtime.is_poisoned());
         }
     }
@@ -817,11 +830,17 @@ mod tests {
     #[test]
     fn duplicate_failure_leaves_every_committed_prefix_owner_in_slots() {
         let runtime = Runtime::new();
-        let context = runtime.new_context().unwrap();
+        let mut context = runtime.new_context().unwrap();
         let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
         layout.metadata.max_stack = 4;
-        let overflowing = runtime.new_object(None).unwrap();
-        let overflow_id = overflowing.object_id();
+        // Objects copy through the trusted saturating retain; the symbol's
+        // checked atom retain is the failure after the committed prefix.
+        let overflowing = runtime
+            .into_jsvalue(context.eval("Symbol('overflow')").unwrap())
+            .unwrap();
+        let JsValue::Symbol(symbol) = overflowing else {
+            panic!("symbol")
+        };
         let first = runtime.new_object(None).unwrap();
         let first_id = first.object_id();
         let mut store = SlotStore::new(4);
@@ -833,31 +852,66 @@ mod tests {
                     original_arguments: vec![],
                     parameters: vec![],
                     locals: vec![],
-                    operands: vec![
-                        JsValue::Object(first.into_handle()),
-                        JsValue::Object(overflowing.into_handle()),
-                    ],
+                    operands: vec![JsValue::Object(first.into_handle()), overflowing],
                 },
             )
             .unwrap();
         {
             let mut state = runtime.0.state.borrow_mut();
-            state.heap.set_strong_count_for_test(
-                crate::engine::heap::RawId::Object(overflow_id),
-                u32::MAX,
-            );
+            state.atoms.set_ref_count_for_test(symbol, u32::MAX);
             let mut slots = store.borrow_frame_slots(&mut window).unwrap();
             assert!(slots.duplicate_operands_in_state(&mut state, 2).is_err());
             assert_eq!(slots.window.depth, 3);
             assert_eq!(state.heap.object_strong_count(first_id).unwrap(), 2);
             // Restore the injected count so the ordinary teardown checks all edges.
-            state
-                .heap
-                .set_strong_count_for_test(crate::engine::heap::RawId::Object(overflow_id), 1);
+            state.atoms.set_ref_count_for_test(symbol, 1);
         }
         store.clear_frame(&runtime, window).unwrap();
         let state = runtime.0.state.borrow();
         assert!(state.heap.object(first_id).is_err());
-        assert!(state.heap.object(overflow_id).is_err());
+        assert!(state.atoms.brand(symbol).is_err());
+    }
+
+    #[test]
+    fn duplicate_of_an_immortal_object_saturates() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        layout.metadata.max_stack = 2;
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        let mut store = SlotStore::new(4);
+        let mut window = store
+            .push_frame(
+                &runtime,
+                &layout.frame_layout(),
+                FrameStorage {
+                    original_arguments: vec![],
+                    parameters: vec![],
+                    locals: vec![],
+                    operands: vec![JsValue::Object(object.into_handle())],
+                },
+            )
+            .unwrap();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            state
+                .heap
+                .set_strong_count_for_test(crate::engine::heap::RawId::Object(id), u32::MAX);
+            let mut slots = store.borrow_frame_slots(&mut window).unwrap();
+            slots.duplicate_operands_in_state(&mut state, 1).unwrap();
+            assert_eq!(state.heap.object_strong_count(id), Ok(u32::MAX));
+            let copy = slots.pop().unwrap();
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, copy)
+                .unwrap();
+            assert_eq!(state.heap.object_strong_count(id), Ok(u32::MAX));
+            state
+                .heap
+                .set_strong_count_for_test(crate::engine::heap::RawId::Object(id), 1);
+        }
+        store.clear_frame(&runtime, window).unwrap();
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        assert!(!runtime.is_poisoned());
     }
 }

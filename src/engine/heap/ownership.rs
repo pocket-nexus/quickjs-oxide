@@ -654,7 +654,6 @@ impl RuntimeState {
     /// executor. This retains the checked overflow and identity rules of the
     /// boundary operation; it is not the authenticated-owner fast path.
     #[inline]
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn dup_jsvalue(&mut self, value: &JsValue) -> Result<JsValue, RuntimeError> {
         self.retain_raw_root(value.as_raw())?;
         Ok(JsValue::from_raw(value.as_raw())
@@ -664,7 +663,7 @@ impl RuntimeState {
     /// Retire an execution-owned edge. Cleanup errors can follow partial heap
     /// mutation, so abandon this state instead of traversing another owner.
     /// Checked retain failure is handled separately and does not poison state.
-    #[inline]
+    #[inline(always)]
     pub(crate) fn release_owned_jsvalue(
         &mut self,
         poisoned: &std::cell::Cell<bool>,
@@ -678,8 +677,32 @@ impl RuntimeState {
     /// Surrender an internal edge directly. Final release applies heap and
     /// atom cleanup under this same state access instead of queueing work for
     /// a later Runtime borrow. This operation cannot execute JavaScript.
-    #[inline]
+    ///
+    /// The value is owned, so its handle is live: a nonfinal object, string
+    /// or BigInt release decrements in place. A last reference, pending
+    /// zero-queue work and symbols take the checked path out of line.
+    #[inline(always)]
     pub(crate) fn release_jsvalue(&mut self, value: JsValue) -> Result<(), RuntimeError> {
+        let released = match &value {
+            JsValue::Object(id) => self.heap.release_object_nonfinal_trusted(*id),
+            JsValue::String(id) => self.heap.release_leaf_nonfinal_trusted(RawId::String(*id)),
+            JsValue::BigInt(id) => self.heap.release_leaf_nonfinal_trusted(RawId::BigInt(*id)),
+            JsValue::Symbol(_) => false,
+            JsValue::Undefined
+            | JsValue::Null
+            | JsValue::Bool(_)
+            | JsValue::Int(_)
+            | JsValue::Float(_)
+            | JsValue::ShortBigInt(_) => true,
+        };
+        if released {
+            return Ok(());
+        }
+        self.release_jsvalue_checked(value)
+    }
+
+    #[inline(never)]
+    fn release_jsvalue_checked(&mut self, value: JsValue) -> Result<(), RuntimeError> {
         match value {
             JsValue::Object(id) => self.release_heap_reference(RawId::Object(id)),
             JsValue::String(id) => self.release_heap_reference(RawId::String(id)),
@@ -694,9 +717,18 @@ impl RuntimeState {
         }
     }
 
-    #[inline]
+    /// Release an owned object edge; see [`RuntimeState::release_jsvalue`].
+    #[inline(always)]
     pub(crate) fn release_object_handle(&mut self, id: ObjectId) -> Result<(), RuntimeError> {
-        self.release_heap_reference(RawId::Object(id))
+        if self.heap.release_object_nonfinal_trusted(id) {
+            return Ok(());
+        }
+        self.release_heap_reference_checked(RawId::Object(id))
+    }
+
+    #[inline(never)]
+    fn release_heap_reference_checked(&mut self, id: RawId) -> Result<(), RuntimeError> {
+        self.release_heap_reference(id)
     }
 
     #[inline]
