@@ -32,8 +32,10 @@ use crate::engine::vm::frames::ExplicitBacktraceLocation;
 mod array;
 mod array_buffer;
 mod atomics;
-pub(crate) use array_buffer::typed_array::CanonicalNumericIndex;
 pub(crate) use array_buffer::typed_array::write::TypedWriteStep;
+pub(crate) use array_buffer::typed_array::{
+    CanonicalNumericIndex, SharedTypedRead, TypedIndexRead,
+};
 
 pub(crate) use array_buffer::typed_array::{
     element::{ElementResume, ElementStep},

@@ -49,7 +49,7 @@ impl Drop for ConstructorBoundary {
             let _ = self.runtime.release_jsvalue(value);
         }
         if let Some(resume) = self.resume.take() {
-            resume.release_owned();
+            resume.release_owned(&self.runtime);
         }
     }
 }

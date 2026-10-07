@@ -482,6 +482,11 @@ pub(super) enum Step {
         key: Option<PropertyKey>,
         resume: Option<Resume>,
     },
+    StateRead {
+        effect: Option<crate::engine::object::StateReadEffect>,
+        atom: Option<crate::engine::atom::Atom>,
+        resume: Option<Resume>,
+    },
     PreparedRead {
         read: Option<OrdinaryRead>,
         key: Option<PropertyKey>,
@@ -627,7 +632,7 @@ impl Step {
                     value.release(runtime);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ModuleBodyOperation { step, resume } => {
@@ -635,7 +640,7 @@ impl Step {
                     value.release(runtime);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ModuleLink {
@@ -644,7 +649,7 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::PromiseOperation { step, resume } => {
@@ -652,7 +657,7 @@ impl Step {
                     value.release(runtime);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::IntrinsicPromiseResolve {
@@ -664,7 +669,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ResumeFrame {
@@ -687,7 +692,7 @@ impl Step {
                     }
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ForInComplete { value, done: _ } => {
@@ -700,7 +705,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::TypedIteratorMethodComplete(value) => {
@@ -718,7 +723,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::TypedCollectComplete(value) => {
@@ -742,7 +747,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::NumericComplete { value, previous } => {
@@ -762,12 +767,12 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::RegExpSpecies { regexp: _, resume } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::RegExpSpeciesComplete(value) => {
@@ -777,7 +782,7 @@ impl Step {
             }
             Self::IndirectEval { source: _, resume } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Aggregate { iterable, resume } => {
@@ -785,7 +790,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::OrdinaryPrimitive { object: _, hint: _ } => {}
@@ -794,7 +799,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ConstructorSourceComplete(value) => {
@@ -809,7 +814,7 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::TypedSpeciesComplete(value) => {
@@ -826,7 +831,7 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::OrdinaryInstance {
@@ -838,7 +843,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ParseIterator { result, resume } => {
@@ -846,7 +851,7 @@ impl Step {
                     release_completion(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::String { value, resume } => {
@@ -854,7 +859,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ObjectTag { receiver } => {
@@ -874,7 +879,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::IteratorCloseWithResume {
@@ -886,7 +891,7 @@ impl Step {
                     release_completion(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::NativeRawComplete(value) => {
@@ -908,7 +913,7 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ArrayPush {
@@ -920,7 +925,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::IteratorNext {
@@ -932,7 +937,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::IteratorNextComplete(value) => {
@@ -978,7 +983,7 @@ impl Step {
                     }
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Construct {
@@ -996,7 +1001,7 @@ impl Step {
                     }
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ConstructProxy {
@@ -1014,7 +1019,7 @@ impl Step {
                     }
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ConstructorReady {
@@ -1030,7 +1035,7 @@ impl Step {
                     release_completion(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Arguments { value, resume } => {
@@ -1038,7 +1043,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ArgumentsComplete(value) => {
@@ -1059,7 +1064,7 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::OwnFlag {
@@ -1069,12 +1074,12 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Keys { object: _, resume } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::KeysComplete(value) => {
@@ -1091,7 +1096,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::PreparedHas {
@@ -1100,7 +1105,28 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
+                }
+            }
+            Self::StateRead {
+                effect,
+                atom,
+                resume,
+            } => {
+                if !runtime.skip_cleanup() {
+                    let mut state = runtime.0.state.borrow_mut();
+                    if let Some(effect) = effect {
+                        let _ = effect.release_in_state(&mut state, &runtime.0.poisoned);
+                    }
+                    if !runtime.0.poisoned.get()
+                        && let Some(atom) = atom
+                        && state.release_atoms([atom]).is_err()
+                    {
+                        runtime.0.poisoned.set(true);
+                    }
+                }
+                if let Some(resume) = resume {
+                    resume.release_owned(runtime);
                 }
             }
             Self::PreparedRead {
@@ -1112,7 +1138,7 @@ impl Step {
                     value.release(runtime);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Primitive {
@@ -1124,12 +1150,12 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::GetPrototype { object: _, resume } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::SetPrototype {
@@ -1138,7 +1164,7 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Delete {
@@ -1147,12 +1173,12 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::PreventExtensions { object: _, resume } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Element {
@@ -1164,7 +1190,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::ElementComplete(value) => {
@@ -1182,7 +1208,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::NumberComplete(value) => {
@@ -1210,7 +1236,7 @@ impl Step {
                     value.release(runtime);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::SetContinue(value) => {
@@ -1244,7 +1270,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::SetProxy {
@@ -1261,7 +1287,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Define {
@@ -1271,7 +1297,7 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::DefineOrdinary {
@@ -1281,7 +1307,7 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Defined(value) => {
@@ -1315,7 +1341,7 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Read {
@@ -1328,7 +1354,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Call {
@@ -1346,7 +1372,7 @@ impl Step {
                     }
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Descriptor {
@@ -1355,12 +1381,12 @@ impl Step {
                 resume,
             } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Extensible { object: _, resume } => {
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
             Self::Convert { value, resume } => {
@@ -1368,7 +1394,7 @@ impl Step {
                     release(value);
                 }
                 if let Some(value) = resume {
-                    value.release_owned();
+                    value.release_owned(runtime);
                 }
             }
         }
@@ -1377,23 +1403,26 @@ impl Step {
 
 impl Resume {
     /// Real continuation owners can contain a raw constructor request.
-    /// Other domain resumes release their own edge records when dropped.
-    pub(super) fn release_owned(self) {
+    /// Raw domain owners use this context for explicit State cleanup. Legacy
+    /// domain destructors still run outside a held State access during migration.
+    pub(super) fn release_owned(self, runtime: &Runtime) {
+        if runtime.skip_cleanup() {
+            return;
+        }
         match self {
             Self::ConstructorPrototype {
                 mut request,
                 resume,
             } => {
-                let runtime = request.callable.as_object().runtime().clone();
-                let _ = request.release_owned_values(&runtime);
-                resume.release_owned();
+                let _ = request.release_owned_values(runtime);
+                resume.release_owned(runtime);
             }
             Self::StringValue { resume, .. }
             | Self::OwnFlagReply { resume, .. }
             | Self::PrototypeGetReply(resume)
-            | Self::PrototypeSetReply(resume) => resume.release_owned(),
-            Self::DefineTyped { payload } => payload.resume.release_owned(),
-            Self::DefineLength { payload } => payload.resume.release_owned(),
+            | Self::PrototypeSetReply(resume) => resume.release_owned(runtime),
+            Self::DefineTyped { payload } => payload.resume.release_owned(runtime),
+            Self::DefineLength { payload } => payload.resume.release_owned(runtime),
             _ => {}
         }
     }
@@ -1522,7 +1551,7 @@ impl Resume {
             Self::OrdinarySet(resume) => resume.forward(action).and_then(Step::try_from),
             Self::ProxySet(resume) => resume.set(set_result(action)?).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 SetStep::Complete(action).release(runtime);
                 Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "Set result has no matching continuation",
@@ -1586,7 +1615,7 @@ impl Resume {
             Self::OrdinarySet(resume) => resume.defined(runtime, result).and_then(Step::try_from),
             Self::Define(resume) => resume.defined(result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -1639,7 +1668,7 @@ impl Resume {
             Self::Boolean(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
             Self::Conversion(resume) => resume.has(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -1663,7 +1692,7 @@ impl Resume {
             }
             Self::Generator(resume) => resume.resume(outcome).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 match outcome {
                     crate::engine::vm::suspend::VmRunOutcome::Complete(
                         Completion::Return(value) | Completion::Throw(value),
@@ -1686,7 +1715,7 @@ impl Resume {
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
             abandoned @ (Self::RootDescriptor | Self::RootDefine | Self::RootSet) => {
-                abandoned.release_owned();
+                abandoned.release_owned(runtime);
                 let (Completion::Return(value) | Completion::Throw(value)) = completion;
                 let _ = runtime.release_jsvalue(value);
 
@@ -2021,7 +2050,7 @@ impl Resume {
                     Completion::Throw(value) => NativeConversion::Throw(value),
                     Completion::Return(value) => {
                         let _ = runtime.release_jsvalue(value);
-                        resume.release_owned();
+                        resume.release_owned(runtime);
                         return Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                             "invalid GetPrototypeOf reply",
                         ));
@@ -2035,7 +2064,7 @@ impl Resume {
                     Completion::Throw(value) => NativeConversion::Throw(value),
                     Completion::Return(value) => {
                         let _ = runtime.release_jsvalue(value);
-                        resume.release_owned();
+                        resume.release_owned(runtime);
                         return Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                             "invalid SetPrototypeOf reply",
                         ));
@@ -2053,7 +2082,7 @@ impl Resume {
                 Completion::Throw(value) => PropertySetAction::Throw(value),
             }))),
             abandoned @ Self::BooleanResult { .. } => {
-                abandoned.release_owned();
+                abandoned.release_owned(runtime);
                 let (Completion::Return(value) | Completion::Throw(value)) = completion;
                 let _ = runtime.release_jsvalue(value);
 
@@ -2085,7 +2114,7 @@ impl Resume {
             | Self::SetLength(_)
             | Self::DefineLength { .. }
             | Self::OrdinarySet(_)) => {
-                abandoned.release_owned();
+                abandoned.release_owned(runtime);
                 let (Completion::Return(value) | Completion::Throw(value)) = completion;
                 let _ = runtime.release_jsvalue(value);
 
@@ -2130,7 +2159,7 @@ impl Resume {
             Self::ProxySet(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
             Self::Define(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2181,7 +2210,7 @@ impl Resume {
                 resume.defined(runtime, result)
             }
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let ArrayLengthConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2229,7 +2258,7 @@ impl Resume {
                 resume.defined(runtime, result)
             }
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2256,7 +2285,7 @@ impl Resume {
             }
             Self::Prototype(resume) => resume.prototype(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2279,7 +2308,7 @@ impl Resume {
             Self::Own(resume) => resume.converted(runtime, result).and_then(Step::try_from),
             Self::Property(resume) => resume.converted(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2333,7 +2362,7 @@ impl Resume {
             Self::LengthNumber(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::Keys(resume) => resume.number(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2359,7 +2388,7 @@ impl Resume {
             Self::Keys(resume) => resume.keys(runtime, result).and_then(Step::try_from),
             Self::Property(resume) => resume.keys(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2380,7 +2409,7 @@ impl Resume {
         match self {
             Self::Invoke(resume) => resume.arguments(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 match result {
                     NativeConversion::Value(values) => {
                         for value in values {
@@ -2419,7 +2448,7 @@ impl Resume {
             Self::IteratorHelper(resume) => resume.next(runtime, result).and_then(Step::try_from),
             Self::ObjectIteration(resume) => resume.next(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 match result {
                     crate::engine::builtins::ObjectIteratorStep::Yield(value)
                     | crate::engine::builtins::ObjectIteratorStep::Throw(value) => {
@@ -2505,7 +2534,7 @@ impl Resume {
             Self::ArraySort(resume) => resume.string(runtime, result).and_then(Step::try_from),
             Self::ArrayString(resume) => resume.string(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2548,7 +2577,7 @@ impl Resume {
                 resume.prototype(runtime, result).and_then(Step::try_from)
             }
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2575,7 +2604,7 @@ impl Resume {
             }
             Self::TypedElement(resume) => resume.element(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2599,7 +2628,7 @@ impl Resume {
                 resume.species(runtime, result).and_then(Step::try_from)
             }
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2623,7 +2652,7 @@ impl Resume {
             }
             Self::RegExpSplit(resume) => resume.species(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2644,7 +2673,7 @@ impl Resume {
         match self {
             Self::TypedCreate(resume) => resume.method(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 if let NativeConversion::Throw(value) = result {
                     let _ = runtime.release_jsvalue(value);
                 }
@@ -2662,7 +2691,7 @@ impl Resume {
         match self {
             Self::TypedCreate(resume) => resume.collected(runtime, result).and_then(Step::try_from),
             resume => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 match result {
                     NativeConversion::Value(values) => {
                         for value in values {

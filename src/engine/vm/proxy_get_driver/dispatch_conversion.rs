@@ -94,7 +94,7 @@ pub(super) fn primitive(
                         if query.parents.try_reserve(1).is_err() {
                             let mut abandoned: Step = next.try_into()?;
                             abandoned.release_owned(runtime);
-                            resume.release_owned();
+                            resume.release_owned(runtime);
                             return Err(Error::internal(
                                 "primitive continuation allocation failed",
                             ));
@@ -129,7 +129,7 @@ pub(super) fn primitive(
                         if query.parents.try_reserve(1).is_err() {
                             let mut abandoned: Step = next.try_into()?;
                             abandoned.release_owned(runtime);
-                            resume.release_owned();
+                            resume.release_owned(runtime);
                             return Err(Error::internal("property continuation allocation failed"));
                         }
                         query.parents.push(resume);
@@ -183,7 +183,7 @@ pub(super) fn primitive(
                         if query.parents.try_reserve(1).is_err() {
                             let mut abandoned: Step = next.try_into()?;
                             abandoned.release_owned(runtime);
-                            resume.release_owned();
+                            resume.release_owned(runtime);
                             return Err(Error::internal("property continuation allocation failed"));
                         }
                         query.parents.push(resume);

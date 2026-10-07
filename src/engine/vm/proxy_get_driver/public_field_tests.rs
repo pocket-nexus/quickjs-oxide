@@ -50,10 +50,12 @@ fn public_field_local_completion_preserves_alias_owners_pc_and_identity() {
         let caller = runtime.new_context().expect("create context");
         let (mut execution, id) = fixture(&runtime, &mut context, &caller, 1);
         if cached {
-            let query =
-                execution
-                    .query_storage
-                    .acquire(context.realm, Vec::new(), Finish::Discard(0));
+            let query = execution.query_storage.acquire(
+                &runtime,
+                context.realm,
+                Vec::new(),
+                Finish::Discard(0),
+            );
             query.recycle(&mut execution.query_storage);
         }
         let target = runtime.new_object(None).unwrap();

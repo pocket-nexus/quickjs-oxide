@@ -2,6 +2,8 @@
 use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
 use crate::engine::value::number::operations::Number;
 
+mod getter;
+
 /// One checked external entry followed by ordinary frame transitions.
 ///
 /// The exclusive execution borrow prevents a caller, legacy helper, or host

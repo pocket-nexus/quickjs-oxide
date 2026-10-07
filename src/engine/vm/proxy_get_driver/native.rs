@@ -14,7 +14,7 @@ pub(super) fn finish(
 ) -> Result<Step, Error> {
     let mut output = Step::Complete(Some(Completion::Return(JsValue::Undefined)));
     let result = finish_into(runtime, slots, call, &mut resume, result, &mut output);
-    resume.release_owned();
+    resume.release_owned(runtime);
     if let Err(error) = result {
         output.release_owned(runtime);
         return Err(error);
@@ -815,7 +815,7 @@ pub(super) fn start_selected_into(
             for argument in arguments {
                 let _ = runtime.release_jsvalue(argument);
             }
-            resume.release_owned();
+            resume.release_owned(runtime);
             return Err(runtime_error_to_vm_error(error));
         }
     };
@@ -844,7 +844,7 @@ pub(super) fn start_selected_into(
             Ok(result) => apply_into(runtime, &mut resume, result, output),
             Err(error) => Err(error),
         };
-        resume.release_owned();
+        resume.release_owned(runtime);
         return result;
     };
     if !execution
@@ -856,13 +856,13 @@ pub(super) fn start_selected_into(
             let _ = runtime.release_jsvalue(argument);
         }
         if let Err(error) = invocation.release(runtime) {
-            resume.release_owned();
+            resume.release_owned(runtime);
             return Err(runtime_error_to_vm_error(error));
         }
         let result = match overflow(runtime, realm) {
             Ok(result) => result,
             Err(error) => {
-                resume.release_owned();
+                resume.release_owned(runtime);
                 return Err(error);
             }
         };
@@ -887,7 +887,7 @@ pub(super) fn start_selected_into(
         for argument in arguments {
             let _ = runtime.release_jsvalue(argument);
         }
-        resume.release_owned();
+        resume.release_owned(runtime);
         return Err(error);
     }
     let mut waiting_call = None;
@@ -910,13 +910,13 @@ pub(super) fn start_selected_into(
     let immediate = match immediate {
         Ok(immediate) => immediate,
         Err(error) => {
-            resume.release_owned();
+            resume.release_owned(runtime);
             return Err(error);
         }
     };
     if let Some(result) = immediate {
         let result = apply_into(runtime, &mut resume, result, output);
-        resume.release_owned();
+        resume.release_owned(runtime);
         return result;
     }
     install_waiting(

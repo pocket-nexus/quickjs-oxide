@@ -7,6 +7,8 @@ use crate::engine::vm::Completion;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 
+mod shared_read;
+
 pub(super) enum Boundary {
     Exit(VmAction),
     /// An existing property/query helper scheduled work; revisit the outer
@@ -73,6 +75,14 @@ pub(super) fn run(
         }
         let exit = result?;
         match exit {
+            VmAction::ThrowPrepared => {
+                let value = execution
+                    .pending
+                    .take()
+                    .ok_or_else(|| invariant("prepared throw lost its owner"))?;
+                return Ok(Boundary::Complete(Completion::Throw(value)));
+            }
+
             VmAction::Materialize => continue,
             VmAction::Pure(operation) => {
                 // Pure leaves can complete or throw, but cannot install another
@@ -195,6 +205,20 @@ pub(super) fn run(
                 #[cfg(feature = "profiling")]
                 record_event("driver_handoff.named_read");
                 let selected = execution.selected_named_read.take();
+                let selected = match selected {
+                    Some(crate::engine::vm::property_driver::SelectedNamedRead::Shared(read)) => {
+                        shared_read::finish(
+                            runtime,
+                            execution,
+                            id,
+                            read,
+                            keep_receiver,
+                            fallthrough,
+                        )?;
+                        continue;
+                    }
+                    selected => selected,
+                };
                 let progress = crate::engine::vm::property_driver::read_progress_selected(
                     runtime,
                     execution,

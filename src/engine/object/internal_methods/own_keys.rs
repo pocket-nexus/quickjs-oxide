@@ -14,6 +14,7 @@ use crate::engine::{
 use std::collections::HashSet;
 
 pub(crate) enum KeysStep {
+    StateRead { resume: KeysResume },
     Complete(NativeConversion<Vec<PropertyKey>>),
     Read { resume: KeysResume },
     Call { resume: KeysResume },
@@ -110,20 +111,13 @@ impl KeysStep {
 }
 fn method(runtime: &Runtime, realm: ContextId, step: MethodStep) -> Result<KeysStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Read { mut resume } => {
-            let object = resume.take_read_object();
-            let key = resume.take_read_key();
-            runtime.release_jsvalue(resume.take_read_receiver())?;
-            KeysStep::request_read(
-                runtime.into_jsvalue(Value::Object(object))?,
-                key,
-                KeysResume(Box::new(KeysResumeState {
-                    pending_effect: KeysStepPending::new(runtime.clone()),
-                    realm,
-                    phase: Phase::Method(resume),
-                })),
-            )
-        }
+        MethodStep::Read { resume } => KeysStep::StateRead {
+            resume: KeysResume(Box::new(KeysResumeState {
+                pending_effect: KeysStepPending::new(runtime.clone()),
+                realm,
+                phase: Phase::Method(resume),
+            })),
+        },
         MethodStep::Throw(value) => KeysStep::Complete(NativeConversion::Throw(value.take())),
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
@@ -236,6 +230,17 @@ fn check_next(
     Ok(KeysStep::Complete(NativeConversion::Value(state.keys)))
 }
 impl KeysResume {
+    pub(crate) fn take_state_read(
+        &mut self,
+    ) -> (
+        crate::engine::object::StateReadEffect,
+        crate::engine::atom::Atom,
+    ) {
+        let Phase::Method(resume) = &mut self.0.phase else {
+            unreachable!("selected method read phase")
+        };
+        resume.take_state_read()
+    }
     pub(crate) fn resume(
         mut self,
         runtime: &Runtime,
@@ -502,6 +507,13 @@ pub(super) fn finish(
     loop {
         step = match step {
             KeysStep::Complete(result) => return Ok(result),
+            KeysStep::StateRead { mut resume } => {
+                let (effect, atom) = resume.take_state_read();
+                resume.resume(
+                    runtime,
+                    runtime.finish_selected_method_read(realm, effect, atom)?,
+                )?
+            }
             KeysStep::Read { mut resume } => {
                 let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
@@ -730,13 +742,16 @@ mod tests {
             let runtime = Runtime::new();
             let weak = std::rc::Rc::downgrade(&runtime.0);
             let mut context = runtime.new_context().expect("create context");
-            let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
+            let Value::Object(proxy) = context
+                .eval("new Proxy({}, {get ownKeys(){return undefined}})")
+                .unwrap()
+            else {
                 panic!("expected proxy")
             };
             let data = runtime.proxy_snapshot_if_any(&proxy).unwrap().unwrap();
             let ids = [proxy.object_id(), data.target, data.handler];
             let callable = context.eval("(function(){})").unwrap();
-            let KeysStep::Read { resume, .. } =
+            let KeysStep::StateRead { resume, .. } =
                 KeysStep::start(&runtime, context.realm, proxy).unwrap()
             else {
                 panic!("expected handler read")
