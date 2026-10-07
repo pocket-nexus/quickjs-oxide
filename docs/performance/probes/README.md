@@ -28,3 +28,7 @@ python3 scripts/benchmark/fixed.py   --manifest docs/performance/probes/fixed/ma
 python3 docs/performance/probes/runtime/measure_docker.py --source . --rev <commit> \
   --target-subdir item2-a --json /private/tmp/item2/a.json
 ```
+
+`runtime/probes.py` 的 `--v8-case CASE[=ITERATIONS]` 可选择八项中的任意用例，报告保留每个函数的 self 成本；
+[`runtime/classify.py`](runtime/classify.py) 把它们归入读缓存、dense 数组、属性写入、调用与返回、释放/GC/分配、RegExp 与内建、解释循环等类别。
+[`runtime/ic_events.py`](runtime/ic_events.py) 用 profiling 构建统计八项中读缓存命中的种类（单态、多态首项/后项、原型命中、未命中）。
