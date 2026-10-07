@@ -1,6 +1,6 @@
 # 对象分配成本账本
 
-本页是[新顺序第 1 项](runtime-bc-plan.md#第-1-项对象分配任务清单)的准备工作：
+本页是[新顺序第 1 项](runtime-bc-plan.md#4-第-1-项剩余工作)的准备工作：
 把对象字面量和 `new` 每次迭代的指令拆成互斥的成本块，作为任务清单的依据。
 数据见 [runtime-allocation-ledger.json](runtime-allocation-ledger.json)。
 
@@ -91,7 +91,7 @@ QuickJS 在命中已有 shape 转移时，一次追加只需要一次哈希查�
 
 ## 任务清单与预期
 
-任务定义见[计划第 1 项](runtime-bc-plan.md#第-1-项对象分配任务清单)。按本账本估算
+任务定义见[计划第 1 项](runtime-bc-plan.md#4-第-1-项剩余工作)。按本账本估算
 （预算是目标，需逐项实测）：
 
 | 任务 | 处理的成本块 | 字面量 | 构造 |
