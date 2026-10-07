@@ -674,6 +674,40 @@ impl RuntimeState {
         })
     }
 
+    /// Duplicate a value whose holder (frame slot, guard, heap edge or
+    /// operand) owns a strong edge: object, string and BigInt handles take
+    /// the trusted saturating retain. Symbols, and handles failing the checks
+    /// enabled by [`super::Heap::admits_trusted`], take [`Self::dup_jsvalue`].
+    #[inline(always)]
+    pub(crate) fn dup_owned_jsvalue(&mut self, value: &JsValue) -> Result<JsValue, RuntimeError> {
+        Ok(match value {
+            JsValue::Undefined => JsValue::Undefined,
+            JsValue::Null => JsValue::Null,
+            JsValue::Bool(value) => JsValue::Bool(*value),
+            JsValue::Int(value) => JsValue::Int(*value),
+            JsValue::Float(value) => JsValue::Float(*value),
+            JsValue::ShortBigInt(value) => JsValue::ShortBigInt(*value),
+            JsValue::Object(id) if self.heap.admits_trusted(RawId::Object(*id)) => {
+                self.heap.retain_object_fast(*id);
+                JsValue::Object(*id)
+            }
+            JsValue::String(id) if self.heap.admits_trusted(RawId::String(*id)) => {
+                self.heap.retain_string_fast(*id);
+                JsValue::String(*id)
+            }
+            JsValue::BigInt(id) if self.heap.admits_trusted(RawId::BigInt(*id)) => {
+                self.heap.retain_bigint_fast(*id);
+                JsValue::BigInt(*id)
+            }
+            _ => return self.dup_jsvalue_checked(value),
+        })
+    }
+
+    #[inline(never)]
+    fn dup_jsvalue_checked(&mut self, value: &JsValue) -> Result<JsValue, RuntimeError> {
+        self.dup_jsvalue(value)
+    }
+
     /// Surrender an internal edge directly. Final release applies heap and
     /// atom cleanup under this same state access instead of queueing work for
     /// a later Runtime borrow. This operation cannot execute JavaScript.

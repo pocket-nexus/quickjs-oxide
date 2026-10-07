@@ -372,7 +372,7 @@ impl Heap {
     }
 
     /// Trusted leaf accessor paired with [`Heap::live_node_fast`].
-    #[inline]
+    #[inline(always)]
     pub(in crate::engine::heap) fn live_leaf_fast(&self, id: RawId) -> &LeafSlot {
         assert_trusted_handle!(
             self.validate_leaf_identity(id).is_ok(),
@@ -430,7 +430,7 @@ impl Heap {
     /// is a heap invariant violation, so it panics rather than returning an
     /// error. General and untrusted callers must keep using
     /// [`Heap::live_node`].
-    #[inline]
+    #[inline(always)]
     pub(in crate::engine::heap) fn live_node_fast(&self, id: RawId) -> &Node {
         assert_trusted_handle!(
             self.validate_slot_identity(id).is_ok(),
