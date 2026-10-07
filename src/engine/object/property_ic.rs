@@ -217,12 +217,8 @@ impl PropertyReadCache {
                 (0, _) => "property_ic.hit.polymorphic_first_prototype",
                 _ => "property_ic.hit.polymorphic_later_prototype",
             });
-            if index != 0 {
-                for later in (1..=index).rev() {
-                    self.entries[later].set(self.entries[later - 1].get());
-                }
-                self.entries[0].set(Some(location));
-            }
+            // A hit never reorders entries: sites that alternate between
+            // shapes would otherwise rewrite the entries on every read.
             self.hit();
             return Some(value);
         }
