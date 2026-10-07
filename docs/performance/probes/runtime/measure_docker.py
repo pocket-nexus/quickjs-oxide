@@ -44,6 +44,8 @@ def main():
     parser.add_argument("--n", type=int, default=100_000)
     parser.add_argument("--v8-iterations", type=int, default=10)
     parser.add_argument("--probe", action="append", help="forwarded to probes.py")
+    parser.add_argument("--jobs", type=int, default=4,
+                        help="parallel Callgrind runs; each V8 case needs about 1 GiB in the VM")
     parser.add_argument("--skip-build", action="store_true", help="reuse the existing binary in the target subdir")
     args = parser.parse_args()
     if not args.target_subdir.replace("-", "").replace("_", "").isalnum():
@@ -68,7 +70,8 @@ def main():
     mounts = ["-v", "oxide-cargo:/usr/local/cargo/registry", "-v", "oxide-target:/target",
               "-v", f"{source}:/src:ro", "-v", f"{workdir}:/work"]
     probe_args = ["--qjs", f"{target}/release/qjs", "--n", str(args.n), "--output", "/work/run",
-                  "--json", "/work/probes.json", "--v8-iterations", str(args.v8_iterations)]
+                  "--json", "/work/probes.json", "--v8-iterations", str(args.v8_iterations),
+                  "--jobs", str(args.jobs)]
     if str(args.v8) != "none":
         code = args.v8 / "v8-v7" if (args.v8 / "v8-v7").is_dir() else args.v8
         (workdir / "v8").mkdir()
