@@ -27,7 +27,8 @@ from pathlib import Path
 TOOL_ROOT = Path(__file__).resolve().parents[4]
 TOOL_FILES = ("docs/performance/probes/runtime/probes.py", "docs/performance/probes/allocation/ledger.py",
               "scripts/benchmark/profile_v8.py", "scripts/benchmark/run.py")
-V8_FILES = ("base.js", "richards.js", "deltablue.js", "navier-stokes.js")
+V8_FILES = ("base.js", "richards.js", "deltablue.js", "crypto.js", "raytrace.js", "earley-boyer.js",
+            "regexp.js", "splay.js", "navier-stokes.js")
 DEFAULT_V8 = Path("/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark")
 
 
@@ -44,6 +45,7 @@ def main():
     parser.add_argument("--n", type=int, default=100_000)
     parser.add_argument("--v8-iterations", type=int, default=10)
     parser.add_argument("--probe", action="append", help="forwarded to probes.py")
+    parser.add_argument("--v8-case", action="append", help="forwarded to probes.py (CASE[=ITERATIONS])")
     parser.add_argument("--jobs", type=int, default=4,
                         help="parallel Callgrind runs; each V8 case needs about 1 GiB in the VM")
     parser.add_argument("--skip-build", action="store_true", help="reuse the existing binary in the target subdir")
@@ -80,6 +82,8 @@ def main():
         probe_args += ["--v8", "/work/v8"]
     for probe in args.probe or ():
         probe_args += ["--probe", probe]
+    for case in args.v8_case or ():
+        probe_args += ["--v8-case", case]
     build = ("" if args.skip_build else
              f"CARGO_TARGET_DIR={target} cargo build --locked --release -p quickjs-oxide-cli "
              "--no-default-features && ")

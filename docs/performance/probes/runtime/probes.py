@@ -191,7 +191,19 @@ def measure_v8(qjs, v8_root: Path, case, iterations, out: Path, top):
             "refcount_share": sum(refcount.values()) / totals["Ir"],
             "refcount_mechanism_share": mechanism / totals["Ir"],
             "top_self": [[fn, v, round(v / totals["Ir"], 4)] for fn, v in
-                         sorted(ir.items(), key=lambda kv: -kv[1])[:top]]}
+                         sorted(ir.items(), key=lambda kv: -kv[1])[:top]],
+            "self": {fn: v for fn, v in ir.items() if v}}
+
+
+def v8_cases(args):
+    import profile_v8
+    cases = []
+    for spec in args.v8_case or V8_CASES:
+        case, _, iterations = spec.partition("=")
+        if case not in profile_v8.BENCHMARKS:
+            sys.exit(f"unknown V8 case {case!r}")
+        cases.append((case, int(iterations) if iterations else args.v8_iterations))
+    return cases
 
 
 def main():
@@ -200,8 +212,11 @@ def main():
     parser.add_argument("--n", type=int, default=100_000)
     parser.add_argument("--probe", action="append", choices=list(PROBES),
                         help="limit to these probes (empty_loop is always included)")
-    parser.add_argument("--v8", type=Path, help="V8-v7 source root; enables Richards/DeltaBlue/NavierStokes")
+    parser.add_argument("--v8", type=Path, help="V8-v7 source root; enables the V8 cases")
     parser.add_argument("--v8-iterations", type=int, default=10)
+    parser.add_argument("--v8-case", action="append", metavar="CASE[=ITERATIONS]",
+                        help="V8 case to profile, optionally with its own iteration count "
+                             "(default: Richards, DeltaBlue and NavierStokes)")
     parser.add_argument("--top", type=int, default=15)
     parser.add_argument("--jobs", type=int, default=os.cpu_count())
     parser.add_argument("--output", required=True, help="new working directory for scripts and Callgrind files")
@@ -213,8 +228,8 @@ def main():
     report = {"n": args.n, "qjs": args.qjs, "probes": {}, "v8": {}}
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         probe_jobs = {name: pool.submit(measure_probe, args.qjs, name, args.n, out) for name in names}
-        v8_jobs = {case: pool.submit(measure_v8, args.qjs, args.v8, case, args.v8_iterations, out, args.top)
-                   for case in (V8_CASES if args.v8 else ())}
+        v8_jobs = {case: pool.submit(measure_v8, args.qjs, args.v8, case, iterations, out, args.top)
+                   for case, iterations in (v8_cases(args) if args.v8 else ())}
         for name, job in probe_jobs.items():
             report["probes"][name] = job.result()
         for case, job in v8_jobs.items():
