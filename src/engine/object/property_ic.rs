@@ -137,7 +137,8 @@ impl PropertyReadCache {
                 Kind::Accessor
             }
             State::Polymorphic(locations) => {
-                for (cell, location) in self.entries.iter().zip(&locations.entries[..locations.len]) {
+                for (cell, location) in self.entries.iter().zip(&locations.entries[..locations.len])
+                {
                     cell.set(Some(*location));
                 }
                 Kind::Polymorphic(locations.len as u8)
@@ -148,7 +149,9 @@ impl PropertyReadCache {
     }
 
     /// The caller holds the heap borrow until it has retained/copied the value.
-    /// No raw borrowed handle escapes that boundary.
+    /// No raw borrowed handle escapes that boundary. Not forced inline: a copy
+    /// in each caller grew the hot code past the instruction cache (DeltaBlue
+    /// L1i misses +8%, cycles +6% for the same instruction count).
     ///
     /// The receiver is loaded once; each live entry is compared by shape
     /// first and only a matching entry checks the remaining guards.
@@ -206,8 +209,7 @@ impl PropertyReadCache {
             if location.shape != object.shape {
                 continue;
             }
-            let Some(value) =
-                Self::read_matched(location, heap, object, domain, realm, receiver)
+            let Some(value) = Self::read_matched(location, heap, object, domain, realm, receiver)
             else {
                 continue;
             };
@@ -694,61 +696,78 @@ fn select_ordinary<'a>(
     }
 }
 
-/// Per-executable site caches addressed by execution PC. A bitmap and block
-/// ranks map a PC to its dense site index without a per-instruction slot.
+/// Per-executable site caches addressed by execution PC. Each PC has a
+/// one-byte offset within its 64-PC block (or `NO_SITE`), and block ranks
+/// give the first site index of each block, so a lookup is two loads and an
+/// add (x86-64 baseline has no `popcnt` for a bitmap rank).
 #[derive(Debug)]
 pub(crate) struct SiteCacheTable<T> {
-    site_bits: Box<[u64]>,
+    site_offsets: Box<[u8]>,
     block_ranks: Box<[u32]>,
     sites: Box<[T]>,
 }
 
+const NO_SITE: u8 = u8::MAX;
+
 pub(crate) type PropertyReadCacheTable = SiteCacheTable<PropertyReadCache>;
 
 impl<T: Default> SiteCacheTable<T> {
+    fn from_site_pcs(pc_len: usize, site_pcs: impl IntoIterator<Item = usize>) -> Self {
+        let mut offsets = vec![NO_SITE; pc_len];
+        for pc in site_pcs {
+            offsets[pc] = 0;
+        }
+        let mut ranks = Vec::with_capacity(pc_len.div_ceil(64));
+        let mut count = 0u32;
+        for block in offsets.chunks_mut(64) {
+            ranks.push(count);
+            let mut within = 0u8;
+            for offset in block.iter_mut().filter(|offset| **offset != NO_SITE) {
+                *offset = within;
+                within += 1;
+            }
+            count = count
+                .checked_add(u32::from(within))
+                .expect("bytecode site count fits u32");
+        }
+        Self {
+            site_offsets: offsets.into_boxed_slice(),
+            block_ranks: ranks.into_boxed_slice(),
+            sites: (0..count).map(|_| T::default()).collect(),
+        }
+    }
+
     fn new_exec_sites(
         code: &crate::engine::code::exec::ExecCode,
         is_site: impl Fn(crate::engine::code::exec_opcode::Opcode) -> bool,
     ) -> Self {
-        let mut bits = vec![0u64; code.word_len().div_ceil(64)];
-        let mut ranks = vec![0u32; bits.len()];
-        let mut sites = Vec::new();
-        let mut last_block = 0usize;
-        for source_pc in 0..code.instruction_len() {
-            let pc = code.exec_pc(source_pc as u32).expect("verified source PC") as usize;
-            while last_block <= pc / 64 && last_block < ranks.len() {
-                ranks[last_block] = sites.len() as u32;
-                last_block += 1;
-            }
-            if !code.opcode_at_source(source_pc).is_some_and(&is_site) {
-                continue;
-            }
-            bits[pc / 64] |= 1u64 << (pc % 64);
-            sites.push(T::default());
-        }
-        Self {
-            site_bits: bits.into_boxed_slice(),
-            block_ranks: ranks.into_boxed_slice(),
-            sites: sites.into_boxed_slice(),
-        }
+        Self::from_site_pcs(
+            code.word_len(),
+            (0..code.instruction_len())
+                .filter(|&source_pc| code.opcode_at_source(source_pc).is_some_and(&is_site))
+                .map(|source_pc| {
+                    code.exec_pc(source_pc as u32).expect("verified source PC") as usize
+                }),
+        )
     }
 
+    #[inline]
     fn site_index(&self, pc: usize) -> Option<usize> {
-        let bits = *self.site_bits.get(pc / 64)?;
-        let mask = 1u64 << (pc % 64);
-        if bits & mask == 0 {
+        let offset = *self.site_offsets.get(pc)?;
+        if offset == NO_SITE {
             return None;
         }
-        Some(self.block_ranks[pc / 64] as usize + (bits & (mask - 1)).count_ones() as usize)
+        Some(self.block_ranks[pc / 64] as usize + usize::from(offset))
     }
 
+    #[inline]
     pub(crate) fn site(&self, pc: usize) -> Option<&T> {
         self.sites.get(self.site_index(pc)?)
     }
 
-    /// Words in the PC bitmap: one per 64 execution PCs.
+    /// PC blocks: one per 64 execution PCs.
     pub(crate) fn pc_words(&self) -> usize {
-        self.site_bits.len()
+        self.block_ranks.len()
     }
 }
 
@@ -768,36 +787,16 @@ impl SiteCacheTable<PropertyReadCache> {
 
     #[cfg(test)]
     pub(crate) fn new(code: &[Instruction]) -> Self {
-        let count = code
-            .iter()
-            .filter(|instruction| {
+        Self::from_site_pcs(
+            code.len(),
+            code.iter().enumerate().filter_map(|(pc, instruction)| {
                 matches!(
                     instruction,
                     Instruction::GetField(_) | Instruction::GetField2(_)
                 )
-            })
-            .count();
-        let mut sites = Vec::with_capacity(count);
-        let mut bits = vec![0u64; code.len().div_ceil(64)];
-        let mut ranks = vec![0u32; bits.len()];
-        for (pc, instruction) in code.iter().enumerate() {
-            if pc % 64 == 0 {
-                ranks[pc / 64] = u32::try_from(sites.len()).expect("bytecode site count fits u32");
-            }
-            if !matches!(
-                instruction,
-                Instruction::GetField(_) | Instruction::GetField2(_)
-            ) {
-                continue;
-            }
-            bits[pc / 64] |= 1u64 << (pc % 64);
-            sites.push(PropertyReadCache::default());
-        }
-        Self {
-            site_bits: bits.into_boxed_slice(),
-            block_ranks: ranks.into_boxed_slice(),
-            sites: sites.into_boxed_slice(),
-        }
+                .then_some(pc)
+            }),
+        )
     }
 }
 
@@ -934,7 +933,7 @@ mod tests {
         }
         assert!(table.site(0).is_some());
         assert!(table.site(63).is_none());
-        assert_eq!(table.site_bits.len(), 3);
+        assert_eq!(table.site_offsets.len(), 130);
         assert_eq!(table.block_ranks.len(), 3);
         assert!(PropertyReadCacheTable::new(&[]).site(0).is_none());
     }
