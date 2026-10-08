@@ -54,6 +54,24 @@ impl<'a> FrameExecution<'a> {
         Ok(Self { execution })
     }
 
+    /// Internal re-entry of the actual current frame. The frame identity is
+    /// always compared; window and PC checks run in checked builds only.
+    #[inline]
+    pub(in crate::engine::vm) fn admit_trusted(
+        execution: &'a mut crate::engine::vm::execution::RunningExecution,
+        id: crate::engine::vm::frame::FrameId,
+    ) -> Result<Self, Error> {
+        #[cfg(any(debug_assertions, feature = "checked-handles"))]
+        {
+            Self::admit(execution, id)
+        }
+        #[cfg(not(any(debug_assertions, feature = "checked-handles")))]
+        {
+            execution.frames.current_mut(id)?;
+            Ok(Self { execution })
+        }
+    }
+
     #[inline(always)]
     pub(in crate::engine::vm) fn frame(&mut self) -> FrameTurn<'_> {
         let (_id, frame) = self

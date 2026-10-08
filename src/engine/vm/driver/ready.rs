@@ -49,7 +49,7 @@ pub(super) fn run(
                 .drain_deferred_references()
                 .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
             let mut state = runtime.0.state.borrow_mut();
-            crate::engine::vm::execute::execute_frame_in_state(runtime, &mut state, execution, id)
+            crate::engine::vm::execute::resume_current_in_state(runtime, &mut state, execution, id)
         };
         // A segment can install and retire several ordinary frames. Its cold
         // action and fault PC belong to the actual current frame at exit.

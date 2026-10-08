@@ -415,15 +415,40 @@ pub(super) fn execute_frame(
     execute_frame_in_state(runtime, &mut state, execution, id)
 }
 
+/// Checked entry for tests that drive a frame they built themselves.
+#[cfg(test)]
 pub(super) fn execute_frame_in_state(
     runtime: &Runtime,
     state: &mut RuntimeState,
     execution: &mut RunningExecution,
     id: FrameId,
 ) -> Result<VmAction, Error> {
+    execute_admitted_in_state(runtime, state, FrameExecution::admit(execution, id)?)
+}
+
+/// Re-enter the frame the ready loop just took from the execution itself.
+/// Its window and resume PC were published by this module's own exits and
+/// completions, so they are rechecked only in debug and `checked-handles`.
+pub(super) fn resume_current_in_state(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    execution: &mut RunningExecution,
+    id: FrameId,
+) -> Result<VmAction, Error> {
+    execute_admitted_in_state(
+        runtime,
+        state,
+        FrameExecution::admit_trusted(execution, id)?,
+    )
+}
+
+fn execute_admitted_in_state(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    mut segment: FrameExecution<'_>,
+) -> Result<VmAction, Error> {
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("core.frame_executor_entry");
-    let mut segment = FrameExecution::admit(execution, id)?;
     loop {
         let action = {
             let FrameTurn {
