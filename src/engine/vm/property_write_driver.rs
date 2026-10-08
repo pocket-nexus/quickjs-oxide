@@ -9,21 +9,17 @@ use crate::engine::{
     value::{JsValue, conversion::NativeConversion},
 };
 
+/// Owners of a write whose object key finished user conversion. The driver
+/// consumes it at once; `converted` releases every owner it does not pass on.
 pub(super) struct ConvertedWrite {
-    pub base: Option<JsValue>,
-    pub key: Option<JsValue>,
-    pub value: Option<JsValue>,
-    pub runtime: Runtime,
+    pub base: JsValue,
+    pub key: JsValue,
+    pub value: JsValue,
 }
 
-impl Drop for ConvertedWrite {
-    fn drop(&mut self) {
-        for value in [self.base.take(), self.key.take(), self.value.take()]
-            .into_iter()
-            .flatten()
-        {
-            let _ = self.runtime.release_jsvalue(value);
-        }
+fn release_all(runtime: &Runtime, values: impl IntoIterator<Item = JsValue>) {
+    for value in values {
+        let _ = runtime.release_jsvalue(value);
     }
 }
 
@@ -107,29 +103,33 @@ pub(super) fn converted(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
-    mut input: Box<ConvertedWrite>,
+    input: Box<ConvertedWrite>,
 ) -> Result<CallStep, Error> {
-    let parent = execution.frames.current_mut(frame)?;
-    let realm = parent.executable.realm;
-    let depth = execution.slots.depth(&parent.window) + 3;
-    let key = input.key.take().expect("converted write key");
-    if matches!(key, JsValue::Object(_)) {
-        runtime
-            .release_jsvalue(key)
-            .map_err(runtime_error_to_vm_error)?;
-        return Err(Error::internal("write key conversion returned an object"));
-    }
-    let key = match runtime
-        .native_to_property_key_jsvalue(realm, key)
-        .map_err(runtime_error_to_vm_error)?
-    {
-        NativeConversion::Value(key) => key,
-        NativeConversion::Throw(value) => {
-            return Ok(CallStep::Complete(Completion::Throw(value)));
+    let ConvertedWrite { base, key, value } = *input;
+    let parent = match execution.frames.current_mut(frame) {
+        Ok(parent) => parent,
+        Err(error) => {
+            release_all(runtime, [key, value, base]);
+            return Err(error);
         }
     };
-    let base = input.base.take().expect("converted write base");
-    let value = input.value.take().expect("converted write owns its value");
+    let realm = parent.executable.realm;
+    let depth = execution.slots.depth(&parent.window) + 3;
+    if matches!(key, JsValue::Object(_)) {
+        release_all(runtime, [key, value, base]);
+        return Err(Error::internal("write key conversion returned an object"));
+    }
+    let key = match runtime.native_to_property_key_jsvalue(realm, key) {
+        Ok(NativeConversion::Value(key)) => key,
+        Ok(NativeConversion::Throw(thrown)) => {
+            release_all(runtime, [value, base]);
+            return Ok(CallStep::Complete(Completion::Throw(thrown)));
+        }
+        Err(error) => {
+            release_all(runtime, [value, base]);
+            return Err(runtime_error_to_vm_error(error));
+        }
+    };
     dispatch(runtime, execution, frame, base, key, value, depth)
         .map(PropertyProgress::into_call_step)
 }
