@@ -59,7 +59,7 @@ impl BytecodeCallRequest {
         } = self;
         let mut input = crate::engine::vm::protocol::CallInputGuard::new(
             runtime,
-            crate::engine::vm::protocol::CallInput::new(runtime, receiver, new_target, None),
+            crate::engine::vm::protocol::CallInput::new(receiver, new_target, None),
         );
         let mut arguments = crate::engine::vm::stack::FrameStorageGuard::new(
             runtime,

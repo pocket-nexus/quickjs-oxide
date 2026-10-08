@@ -13,7 +13,6 @@ use crate::engine::value::JsValue;
 use crate::engine::vm::bindings::{FrameBinding, release_frame_binding as release_binding};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use std::ops::Range;
-use std::rc::Rc;
 mod call;
 mod construct;
 
@@ -27,7 +26,8 @@ pub(in crate::engine::vm) struct SlotStore {
     // Native readable-argument buffers: internal values recycled across
     // activations; the public boundary converts at the call site.
     native_argument_buffers: Vec<Vec<JsValue>>,
-    owner: Rc<()>,
+    // Process-unique store identity; windows copy it without a refcount.
+    owner: u64,
     next_window: u64,
     windows: Vec<u64>,
     limit: usize,
@@ -42,7 +42,7 @@ pub(in crate::engine::vm) struct SlotStore {
 /// Not Clone: releasing a frame consumes its authority over the window.
 pub(in crate::engine::vm) struct FrameWindow {
     actual_count: usize,
-    owner: Rc<()>,
+    owner: u64,
     id: u64,
     // Consecutive regions share their boundaries. Keep usize widths and
     // derive the same Range values rather than storing each boundary twice.
@@ -322,6 +322,12 @@ pub(in crate::engine::vm) use window::{
     FrameTurn,
 };
 
+fn next_store_identity() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 impl SlotStore {
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
         Self {
@@ -329,7 +335,7 @@ impl SlotStore {
             active_end: 0,
             argument_buffer: Vec::new(),
             native_argument_buffers: Vec::new(),
-            owner: Rc::new(()),
+            owner: next_store_identity(),
             next_window: 1,
             windows: Vec::new(),
             limit,
@@ -783,7 +789,7 @@ impl SlotStore {
         }
         Ok(FrameWindow {
             actual_count,
-            owner: self.owner.clone(),
+            owner: self.owner,
             id,
             base,
             original_end,
@@ -816,7 +822,7 @@ impl SlotStore {
     fn check_current(&self, window: &FrameWindow) -> Result<(), Error> {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("slot_authentication");
-        if !Rc::ptr_eq(&self.owner, &window.owner)
+        if self.owner != window.owner
             || self.windows.last() != Some(&window.id)
             || self.active_end != window.whole().end
         {

@@ -47,6 +47,90 @@ impl std::ops::Deref for PublishedEvalEnvironment {
     }
 }
 
+/// One remembered ordinary callee per call site. Object ids are generational
+/// and never reused, so an equal id is the same function object, whose
+/// bytecode publication and closure cells never change. The executable is
+/// held weakly: a recursive function's own table must not keep it alive.
+#[derive(Default)]
+pub(crate) struct CallSiteCache(std::cell::RefCell<Option<CachedCallee>>);
+
+struct CachedCallee {
+    function: crate::engine::heap::ObjectId,
+    bytecode: FunctionBytecodeId,
+    data: std::rc::Weak<PublishedFunctionData>,
+    closure: Rc<[crate::engine::heap::VarRefId]>,
+}
+
+impl std::fmt::Debug for CallSiteCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CallSiteCache")
+            .field("filled", &self.0.borrow().is_some())
+            .finish()
+    }
+}
+
+impl CallSiteCache {
+    /// The facts last authenticated for `function` at this site, if any.
+    #[inline]
+    pub(crate) fn hit(
+        &self,
+        domain_id: u64,
+        function: crate::engine::heap::ObjectId,
+    ) -> Option<(
+        PublishedFunctionSnapshot,
+        Rc<[crate::engine::heap::VarRefId]>,
+    )> {
+        let cached = self.0.borrow();
+        let cached = cached
+            .as_ref()
+            .filter(|cached| cached.function == function)?;
+        let data = cached.data.upgrade()?;
+        Some((
+            PublishedFunctionSnapshot {
+                root: Default::default(),
+                bytecode: Some(cached.bytecode),
+                runtime_domain: domain_id,
+                data,
+            },
+            Rc::clone(&cached.closure),
+        ))
+    }
+
+    /// Remember facts that were just authenticated against the live callee.
+    pub(crate) fn fill(
+        &self,
+        function: crate::engine::heap::ObjectId,
+        executable: &PublishedFunctionSnapshot,
+        closure: &Rc<[crate::engine::heap::VarRefId]>,
+    ) {
+        let Some(bytecode) = executable.bytecode else {
+            return;
+        };
+        *self.0.borrow_mut() = Some(CachedCallee {
+            function,
+            bytecode,
+            data: Rc::downgrade(&executable.data),
+            closure: Rc::clone(closure),
+        });
+    }
+}
+
+pub(crate) type CallSiteCacheTable =
+    crate::engine::object::property_ic::SiteCacheTable<CallSiteCache>;
+
+impl crate::engine::object::property_ic::SiteCacheTable<CallSiteCache> {
+    pub(crate) fn new_exec(code: &crate::engine::code::exec::ExecCode) -> Self {
+        use crate::engine::code::exec_opcode::Opcode;
+        Self::new_exec_sites(code, |opcode| {
+            matches!(
+                opcode,
+                Opcode::Call | Opcode::TailCall | Opcode::CallMethod | Opcode::TailCallMethod
+            )
+        })
+    }
+}
+
 /// Heap-resident certificate contains only immutable publication facts, never
 /// Runtime or an external root. The function payload owns the bytecode edge.
 #[derive(Debug, Clone)]
@@ -143,6 +227,11 @@ impl PublishedFunctionSnapshot {
         self.runtime_domain == domain
     }
 
+    #[cfg(test)]
+    pub(crate) fn data_for_test(&self) -> Rc<PublishedFunctionData> {
+        Rc::clone(&self.data)
+    }
+
     pub(crate) fn bytecode_id(&self) -> Option<FunctionBytecodeId> {
         self.bytecode
     }
@@ -198,6 +287,7 @@ impl PublishedFunctionSnapshot {
                     crate::engine::object::append_ic::PropertyAppendCacheTable::new_exec(
                         &crate::engine::code::exec::ExecCode::empty(),
                     ),
+                call_ic: CallSiteCacheTable::new_exec(&crate::engine::code::exec::ExecCode::empty()),
                 exec: crate::engine::code::exec::ExecCode::empty(),
                 constants: Rc::from([]),
                 property_key_atoms: None,
@@ -234,6 +324,7 @@ pub(crate) struct PublishedFunctionData {
 
     pub(crate) property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable,
     pub(crate) property_append_ic: crate::engine::object::append_ic::PropertyAppendCacheTable,
+    pub(crate) call_ic: CallSiteCacheTable,
     pub(crate) exec: crate::engine::code::exec::ExecCode,
     pub(crate) constants: Rc<[BytecodeConstant]>,
     pub(crate) property_key_atoms: Option<Rc<[Atom]>>,
@@ -362,6 +453,7 @@ fn published_function_data(bytecode: &FunctionBytecodeData) -> Rc<PublishedFunct
                     crate::engine::object::append_ic::PropertyAppendCacheTable::new_exec(
                         &bytecode.exec,
                     ),
+                call_ic: CallSiteCacheTable::new_exec(&bytecode.exec),
                 exec: bytecode.exec.clone(),
                 constants: bytecode.constants.clone(),
                 property_key_atoms: bytecode.property_key_atoms.clone(),

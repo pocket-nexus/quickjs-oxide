@@ -199,6 +199,18 @@ impl Heap {
         }
     }
 
+    /// Checked object read that also reports its strong count from the same
+    /// slot, for admission checks that must leave saturation to the general path.
+    pub(crate) fn object_with_strong(&self, id: ObjectId) -> Result<(&ObjectData, u32), HeapError> {
+        let node = self.live_node(RawId::Object(id))?;
+        match node.data {
+            NodeData::Object(ref object) => Ok((object, node.strong.get())),
+            NodeData::Context(_) | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+                "typed object lookup reached another node payload",
+            )),
+        }
+    }
+
     /// Trusted shared read for a live `ObjectId` held by an owning root.
     #[inline]
     pub(crate) fn object_fast(&self, id: ObjectId) -> &ObjectData {

@@ -41,7 +41,7 @@ pub(super) fn enter(
         .map_err(runtime_error_to_vm_error)?;
     let mut input = super::protocol::CallInputGuard::new(
         runtime,
-        super::CallInput::new(runtime, JsValue::Undefined, new_target, None),
+        super::CallInput::new(JsValue::Undefined, new_target, None),
     );
     let mut arguments = super::stack::FrameStorageGuard::new(
         runtime,
@@ -126,30 +126,35 @@ pub(super) fn prepare_ordinary_base_in_state(
     let (JsValue::Object(target_id), JsValue::Object(new_target_id)) = (target, new_target) else {
         return Ok(None);
     };
+    let (target, target_strong) = state
+        .heap
+        .object_with_strong(*target_id)
+        .map_err(super::exception::heap_error_to_vm_error)?;
     let prototype = {
-        let target = state
-            .heap
-            .object(*target_id)
-            .map_err(super::exception::heap_error_to_vm_error)?;
         if !target.is_constructor {
             return Ok(None);
         }
         let ObjectPayload::BytecodeFunction { bytecode, .. } = &target.payload else {
             return Ok(None);
         };
-        let data = state
+        let (data, bytecode_strong) = state
             .heap
-            .function_bytecode(*bytecode)
+            .function_bytecode_with_strong(*bytecode)
             .map_err(super::exception::heap_error_to_vm_error)?;
         if data.metadata.function_kind != FunctionKind::Normal
             || data.metadata.constructor_kind != ConstructorKind::Base
         {
             return Ok(None);
         }
-        let new_target = state
-            .heap
-            .object(*new_target_id)
-            .map_err(super::exception::heap_error_to_vm_error)?;
+        // `new C()` passes the target itself as newTarget: one lookup serves both.
+        let (new_target, new_target_strong) = if new_target_id == target_id {
+            (target, target_strong)
+        } else {
+            state
+                .heap
+                .object_with_strong(*new_target_id)
+                .map_err(super::exception::heap_error_to_vm_error)?
+        };
         // Exotic [[Get]], inherited properties, lazy initialization and getters
         // keep the owning query. An own ordinary data slot needs no callback.
         if !new_target.is_constructor
@@ -211,14 +216,10 @@ pub(super) fn prepare_ordinary_base_in_state(
                 .map_err(super::exception::heap_error_to_vm_error)?
                 < u32::MAX - headroom)
         };
-        if !ready(&JsValue::Object(*target_id))?
-            || !ready(&JsValue::Object(*new_target_id))?
+        if target_strong >= u32::MAX - headroom
+            || new_target_strong >= u32::MAX - headroom
             || !ready(&JsValue::Object(*prototype))?
-            || state
-                .heap
-                .strong_count(RawId::FunctionBytecode(*bytecode))
-                .map_err(super::exception::heap_error_to_vm_error)?
-                >= u32::MAX - 4
+            || bytecode_strong >= u32::MAX - 4
         {
             return Ok(None);
         }
@@ -229,14 +230,15 @@ pub(super) fn prepare_ordinary_base_in_state(
         }
         *prototype
     };
-    let call: OrdinaryCall = match DirectSelection::select_in_state(runtime, state, *target_id)
-        .map_err(runtime_error_to_vm_error)?
-    {
-        DirectSelection::Ordinary(selected) => selected
-            .authenticate_slot_in_state(runtime, state)
-            .map_err(runtime_error_to_vm_error)?,
-        _ => return Ok(None),
-    };
+    let call: OrdinaryCall =
+        match DirectSelection::select_object_data(runtime, state, *target_id, target)
+            .map_err(runtime_error_to_vm_error)?
+        {
+            DirectSelection::Ordinary(selected) => selected
+                .authenticate_slot_in_state(runtime, state)
+                .map_err(runtime_error_to_vm_error)?,
+            _ => return Ok(None),
+        };
     Ok(Some((call, prototype)))
 }
 

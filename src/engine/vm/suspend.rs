@@ -604,7 +604,7 @@ pub(crate) fn thaw(
     };
     let mut input = super::protocol::CallInputGuard::new(
         &runtime,
-        super::CallInput::new(&runtime, this_value, new_target, Some(callee_global)),
+        super::CallInput::new(this_value, new_target, Some(callee_global)),
     );
     let function = crate::engine::vm::closure::FrameFunction::new(current_function, closure_slots)?;
     let storage = roots.take();

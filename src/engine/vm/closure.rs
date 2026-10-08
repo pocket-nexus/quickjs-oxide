@@ -144,14 +144,10 @@ impl FrameFunction {
             slots,
         })
     }
-    pub(in crate::engine::vm) fn shared(
-        runtime: &Runtime,
-        owner: ObjectId,
-        ids: Rc<[VarRefId]>,
-    ) -> Self {
+    pub(in crate::engine::vm) fn shared(domain: u64, owner: ObjectId, ids: Rc<[VarRefId]>) -> Self {
         Self {
             owner: Some(owner),
-            domain: runtime.domain_id(),
+            domain,
             slots: ClosureSlots(Environment::ResidentShared {
                 supporting_owner: None,
                 ids,

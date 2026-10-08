@@ -60,7 +60,6 @@ pub(crate) struct CallInput {
 
 impl CallInput {
     pub(in crate::engine::vm) fn new(
-        _runtime: &crate::engine::api::runtime::Runtime,
         this_value: JsValue,
         new_target: JsValue,
         callee_global: Option<ObjectRef>,

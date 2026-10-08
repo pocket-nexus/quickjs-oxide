@@ -51,14 +51,40 @@ mod tests {
             2,
             "one root authentication plus one leaf authentication: {events:?}"
         );
+        // Repeated calls skip selection entirely through the call-site cache.
+        assert_eq!(
+            events.get("call_site_cache.hit").copied().unwrap_or(0),
+            19,
+            "{events:?}"
+        );
         assert_eq!(
             events
                 .get("ordinary_call_auth_cache_hit")
                 .copied()
                 .unwrap_or(0),
-            19,
+            0,
             "{events:?}"
         );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn numeric_error_in_a_lazy_frame_keeps_every_ancestor_in_its_stack() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        // Primitive numeric exits no longer materialize up front; the error
+        // path must still publish the lazy callee and caller before throwing.
+        let value = context
+            .eval(
+                "function lazyMulInner(a,b){var x=a*2;return a*b}\n\
+                 function lazyMulOuter(a,b){return lazyMulInner(a,b)}\n\
+                 var ok=lazyMulOuter(3,4)===12;\n\
+                 try{lazyMulOuter(1n,1);ok=false}catch(e){\n\
+                   ok=ok&&e instanceof TypeError&&e.stack.includes('lazyMulInner')&&e.stack.includes('lazyMulOuter')}\n\
+                 ok",
+            )
+            .unwrap();
+        assert_eq!(value, Value::Bool(true));
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 

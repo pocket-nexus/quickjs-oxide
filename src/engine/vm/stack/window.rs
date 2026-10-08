@@ -54,6 +54,24 @@ impl<'a> FrameExecution<'a> {
         Ok(Self { execution })
     }
 
+    /// Internal re-entry of the actual current frame. The frame identity is
+    /// always compared; window and PC checks run in checked builds only.
+    #[inline]
+    pub(in crate::engine::vm) fn admit_trusted(
+        execution: &'a mut crate::engine::vm::execution::RunningExecution,
+        id: crate::engine::vm::frame::FrameId,
+    ) -> Result<Self, Error> {
+        #[cfg(any(debug_assertions, feature = "checked-handles"))]
+        {
+            Self::admit(execution, id)
+        }
+        #[cfg(not(any(debug_assertions, feature = "checked-handles")))]
+        {
+            execution.frames.current_mut(id)?;
+            Ok(Self { execution })
+        }
+    }
+
     #[inline(always)]
     pub(in crate::engine::vm) fn frame(&mut self) -> FrameTurn<'_> {
         let (_id, frame) = self
@@ -240,7 +258,6 @@ impl<'a> FrameExecution<'a> {
         #[cfg(feature = "profiling")]
         let _timer =
             crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
-        use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
         #[cfg(feature = "profiling")]
         {
             let count = checked.count();
@@ -259,81 +276,13 @@ impl<'a> FrameExecution<'a> {
                 _ => "ordinary_install.args4plus",
             });
         }
-        let execution = &mut *self.execution;
-        let (function, executable, closure) = call.into_slot_parts();
-        let depth = execution.frames.depth() + 1;
-        execution.call_storage.reserve_depth(depth)?;
-        let (parent, frame) = execution
-            .frames
-            .current_frame_mut()
-            .expect("an admitted ordinary call has a caller");
-        let caller_realm = frame.executable.realm;
-        // The private continuation comes from the instruction that produced
-        // this Call. No caller instruction or slot changed during preflight.
-        let resume = fallthrough.index();
-        let (flags, flag_bytes) = if executable.has_captured_locals {
-            execution
-                .call_storage
-                .capture_flags(executable.local_definitions.len())?
-        } else {
-            (Vec::new(), 0)
-        };
-        let prepared = execution.frames.prepare_push()?;
-        let mut prepared = prepared;
-        let (_, frame) = prepared
-            .current_frame_mut()
-            .expect("ordinary publication retains its caller");
-        let installed = {
-            #[cfg(feature = "profiling")]
-            let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
-                "ordinary.install.slots.sampled",
-            );
-            FrameTransaction {
-                store: &mut execution.slots,
-                window: &mut frame.cold.window,
-            }
-            .install_ordinary_window(
-                runtime,
-                state,
-                &executable.frame_layout(),
-                checked,
-                function,
-                executable.observes_arguments,
-            )?
-        };
-        frame.resume_pc = resume;
-        let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(ReturnTarget {
-            value_use: ReturnValue::Push,
-            owner: ReturnOwner::Frame(parent),
-            tail,
-            operation: None,
-        });
-        cold.entry_guard = None;
-        cold.function =
-            crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure)
-                .into();
-        cold.reusable_captured_locals = flags;
-        cold.input = installed.input.into();
-        cold.executable = executable.into();
-        cold.window = installed.window.into();
-        prepared.install(Frame {
-            property_generation: 0,
-            iterator_generation: 0,
-            caller_realm,
-            active_frame: crate::engine::vm::frames::ActiveFrameToken::unmaterialized(),
-
-            fault_pc: 0,
-            resume_pc: 0,
-            cold,
-        });
-        #[cfg(feature = "profiling")]
-        {
-            crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
-        }
-        #[cfg(not(feature = "profiling"))]
-        let _ = (frame_bytes, flag_bytes);
-        Ok(())
+        self.install_current_child(
+            runtime,
+            state,
+            call,
+            ChildEntry::Ordinary { checked, tail },
+            fallthrough,
+        )
     }
 
     /// Sole Base constructor installer under the same exclusive lease that
@@ -349,24 +298,49 @@ impl<'a> FrameExecution<'a> {
         fallthrough: crate::engine::vm::execute::FallthroughPc,
         receiver: &mut Option<JsValue>,
     ) -> Result<(), Error> {
-        use crate::engine::{
-            heap::runtime::owned_values::OwnedValueGuard,
-            vm::frame::{ConstructorReturn, Frame, ReturnOwner, ReturnTarget, ReturnValue},
-        };
-        let execution = &mut *self.execution;
-        let (function, executable, closure) = call.into_slot_parts();
+        use crate::engine::heap::runtime::owned_values::OwnedValueGuard;
         // The guard owns the receiver edge, so its copy takes the trusted retain.
         let this_value = state
             .dup_owned_jsvalue(receiver.as_ref().expect("guarded constructor receiver"))
             .map_err(super::runtime_error_to_vm_error)?;
         let mut this_value = OwnedValueGuard::new(state, &runtime.0.poisoned, this_value);
         let (state, this_value) = this_value.parts();
+        self.install_current_child(
+            runtime,
+            state,
+            call,
+            ChildEntry::Constructor {
+                count,
+                this_value,
+                receiver,
+            },
+            fallthrough,
+        )
+    }
+
+    /// The one frame publication shared by ordinary calls and Base
+    /// constructors. Inlined into both installers, so each keeps a
+    /// specialized body.
+    #[inline(always)]
+    fn install_current_child(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        call: crate::engine::vm::call::ordinary::OrdinaryCall,
+        entry: ChildEntry<'_>,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<(), Error> {
+        use crate::engine::vm::frame::{
+            ConstructorReturn, Frame, ReturnOwner, ReturnTarget, ReturnValue,
+        };
+        let execution = &mut *self.execution;
+        let (function, executable, closure) = call.into_slot_parts();
         let depth = execution.frames.depth() + 1;
         execution.call_storage.reserve_depth(depth)?;
         let (parent, frame) = execution
             .frames
             .current_frame_mut()
-            .expect("an admitted constructor has a caller");
+            .expect("an admitted call has a caller");
         let caller_realm = frame.executable.realm;
         let (flags, flag_bytes) = if executable.has_captured_locals {
             execution
@@ -378,41 +352,77 @@ impl<'a> FrameExecution<'a> {
         let mut prepared = execution.frames.prepare_push()?;
         let (_, frame) = prepared
             .current_frame_mut()
-            .expect("constructor publication retains its caller");
-        let installed = FrameTransaction {
+            .expect("frame publication retains its caller");
+        let transaction = FrameTransaction {
             store: &mut execution.slots,
             window: &mut frame.cold.window,
-        }
-        .install_constructor_window(
-            runtime,
-            state,
-            &executable.frame_layout(),
-            count,
-            function,
-            executable.observes_arguments,
-            this_value,
-        )?;
+        };
+        let layout = executable.frame_layout();
+        // The private continuation comes from the instruction that produced
+        // this call. No caller instruction or slot changed during preflight.
+        let (installed, tail, receiver) = match entry {
+            ChildEntry::Ordinary { checked, tail } => {
+                #[cfg(feature = "profiling")]
+                let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+                    "ordinary.install.slots.sampled",
+                );
+                let installed = transaction.install_ordinary_window(
+                    runtime,
+                    state,
+                    &layout,
+                    checked,
+                    function,
+                    executable.observes_arguments,
+                )?;
+                (installed, tail, None)
+            }
+            ChildEntry::Constructor {
+                count,
+                this_value,
+                receiver,
+            } => {
+                let installed = transaction.install_constructor_window(
+                    runtime,
+                    state,
+                    &layout,
+                    count,
+                    function,
+                    executable.observes_arguments,
+                    this_value,
+                )?;
+                (installed, false, Some(receiver))
+            }
+        };
         frame.resume_pc = fallthrough.index();
-        let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(ReturnTarget {
-            value_use: ReturnValue::Push,
-            owner: ReturnOwner::Frame(parent),
-            tail: false,
-            operation: None,
-        });
-        cold.entry_guard = None;
-        cold.function =
-            crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure)
-                .into();
-        cold.reusable_captured_locals = flags;
-        cold.input = installed.input.into();
-        cold.constructor_return = Some(ConstructorReturn::Base(
-            receiver
-                .take()
-                .expect("guarded constructor return receiver"),
-        ));
-        cold.executable = executable.into();
-        cold.window = installed.window.into();
+        let (mut cold, frame_bytes) = if receiver.is_some() {
+            execution.call_storage.vacant_rare()
+        } else {
+            execution.call_storage.vacant(caller_realm)
+        };
+        cold.occupy(
+            ReturnTarget {
+                value_use: ReturnValue::Push,
+                owner: ReturnOwner::Frame(parent),
+                tail,
+                operation: None,
+            },
+            crate::engine::vm::closure::FrameFunction::shared(
+                runtime.domain_id(),
+                installed.function,
+                closure,
+            ),
+            installed.input,
+            flags,
+            executable,
+            installed.window,
+        );
+        if let Some(receiver) = receiver {
+            cold.constructor_return = Some(ConstructorReturn::Base(
+                receiver
+                    .take()
+                    .expect("guarded constructor return receiver"),
+            ));
+        }
         prepared.install(Frame {
             property_generation: 0,
             iterator_generation: 0,
@@ -533,6 +543,19 @@ impl<'a> FrameExecution<'a> {
             return Ok(ReturnProgress::Returned);
         }
     }
+}
+
+/// What the shared installer moves into the child window.
+enum ChildEntry<'a> {
+    Ordinary {
+        checked: CheckedOrdinaryCallOperands,
+        tail: bool,
+    },
+    Constructor {
+        count: usize,
+        this_value: &'a mut Option<JsValue>,
+        receiver: &'a mut Option<JsValue>,
+    },
 }
 
 /// A frame-owned binding addressed without an operand-stack value.
@@ -669,6 +692,23 @@ impl FrameTransaction<'_> {
             self.peek(offset)?;
         }
         self.peek(count)?;
+        Ok(CheckedOrdinaryCallOperands {
+            window_id: self.window.id,
+            depth: self.window.depth,
+            count,
+            method,
+        })
+    }
+    /// A call-site hit. The caller has already read the deepest operand
+    /// (receiver or callee) as a direct value; operand slots above it always
+    /// hold direct values, so the per-argument reads are skipped.
+    #[inline]
+    pub(in crate::engine::vm) fn check_ordinary_call_depth(
+        &self,
+        count: usize,
+        method: bool,
+    ) -> Result<CheckedOrdinaryCallOperands, Error> {
+        debug_assert!((0..=count + usize::from(method)).all(|offset| self.peek(offset).is_ok()));
         Ok(CheckedOrdinaryCallOperands {
             window_id: self.window.id,
             depth: self.window.depth,
@@ -1177,8 +1217,7 @@ mod primitive_transaction_tests {
                         .unwrap()
                         .into(),
                     reusable_captured_locals: Vec::new(),
-                    input: CallInput::new(runtime, JsValue::Undefined, JsValue::Undefined, None)
-                        .into(),
+                    input: CallInput::new(JsValue::Undefined, JsValue::Undefined, None).into(),
                 }),
                 storage: FrameStorage {
                     original_arguments: Vec::new(),
