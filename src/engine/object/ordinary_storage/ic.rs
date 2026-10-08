@@ -105,7 +105,7 @@ impl RuntimeState {
                 self.uncached_field_in_state(domain_id, base, atom, keep_receiver, native)
             };
         };
-        if let Some(raw) = cache.read(&self.heap, domain_id, executable.realm, receiver) {
+        if let Some(raw) = cache.read(&self.heap, receiver) {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event("property_selection.cache");
             let result = self.promote_field_in_state(domain_id, raw, keep_receiver, native);
@@ -117,15 +117,8 @@ impl RuntimeState {
             });
             return result;
         }
-        let result = self.select_linked_miss(
-            domain_id,
-            cache,
-            atom,
-            executable.realm,
-            receiver,
-            keep_receiver,
-            native,
-        );
+        let result =
+            self.select_linked_miss(domain_id, cache, atom, receiver, keep_receiver, native);
         record_selection(&result);
         match result {
             NamedDataSelection::Data(value) => Some(value),
@@ -152,19 +145,11 @@ impl RuntimeState {
         domain_id: u64,
         cache: &PropertyReadCache,
         atom: crate::engine::atom::Atom,
-        realm: crate::engine::heap::ContextId,
         receiver: crate::engine::heap::ObjectId,
         keep_receiver: bool,
         native: &mut Option<LinkedNativeSelection>,
     ) -> NamedDataSelection {
-        let selected = cache.miss_selected(
-            &self.heap,
-            &self.atoms,
-            domain_id,
-            realm,
-            Some(receiver),
-            atom,
-        );
+        let selected = cache.miss_selected(&self.heap, &self.atoms, Some(receiver), atom);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "property_selection.cache_miss",
@@ -293,7 +278,7 @@ impl RuntimeState {
     ) -> Option<Number> {
         super::linked_field_atom_in_domain(domain_id, executable, key_index)?;
         let cache = executable.property_read_ic.site(pc)?;
-        let raw = cache.read(&self.heap, domain_id, executable.realm, receiver)?;
+        let raw = cache.read(&self.heap, receiver)?;
         match raw {
             RawValue::Int(value) => Some(Number::Int(*value)),
             RawValue::Float(value) => Some(Number::Float(*value)),

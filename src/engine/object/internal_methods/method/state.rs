@@ -325,13 +325,7 @@ impl Scope<'_> {
                 let (realm, trap, atom, handler) =
                     (search.realm, search.trap, search.atom, rooted.handler);
                 let mut boundary = None;
-                let value = match self.state.proxy_trap_read_in_state(
-                    self.runtime.domain_id(),
-                    trap,
-                    realm,
-                    handler,
-                    atom,
-                )? {
+                let value = match self.state.proxy_trap_read_in_state(trap, handler, atom)? {
                     Some(value) => Some(value),
                     None => self.state.select_ordinary_read_in_state(
                         &self.runtime.0.poisoned,

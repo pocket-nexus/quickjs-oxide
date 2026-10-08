@@ -6,11 +6,11 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx, AtomTable};
 #[cfg(test)]
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::heap::{ContextId, Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId};
+use crate::engine::heap::{Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Location {
-    domain: u64,
-    realm: ContextId,
+    // The receiver's shape identifies its realm (prototypes differ) and every
+    // table lives in one runtime, so entries carry no domain or realm.
     shape: ShapeId,
     revision: u64,
     // Only prototype hits depend on other objects' layouts.
@@ -155,13 +155,7 @@ impl PropertyReadCache {
     ///
     /// The receiver is loaded once; each live entry is compared by shape
     /// first and only a matching entry checks the remaining guards.
-    pub(crate) fn read<'a>(
-        &self,
-        heap: &'a Heap,
-        domain: u64,
-        realm: ContextId,
-        receiver: ObjectId,
-    ) -> Option<&'a RawValue> {
+    pub(crate) fn read<'a>(&self, heap: &'a Heap, receiver: ObjectId) -> Option<&'a RawValue> {
         let len = match self.kind.get() {
             // Straight-line path: most sites, and nearly all reads in
             // Richards and EarleyBoyer, are monomorphic.
@@ -169,8 +163,7 @@ impl PropertyReadCache {
                 let location = self.entry(0);
                 let object = heap.object_fast(receiver);
                 if location.shape == object.shape
-                    && let Some(value) =
-                        Self::read_matched(location, heap, object, domain, realm, receiver)
+                    && let Some(value) = Self::read_matched(location, heap, object)
                 {
                     event(if location.depth == 0 {
                         "property_ic.hit.monomorphic"
@@ -209,8 +202,7 @@ impl PropertyReadCache {
             if location.shape != object.shape {
                 continue;
             }
-            let Some(value) = Self::read_matched(location, heap, object, domain, realm, receiver)
-            else {
+            let Some(value) = Self::read_matched(location, heap, object) else {
                 continue;
             };
             event(match (index, location.depth) {
@@ -252,14 +244,8 @@ impl PropertyReadCache {
     fn read_matched<'a>(
         location: Location,
         heap: &'a Heap,
-        object: &crate::engine::heap::ObjectData,
-        domain: u64,
-        realm: ContextId,
-        receiver: ObjectId,
+        object: &'a crate::engine::heap::ObjectData,
     ) -> Option<&'a RawValue> {
-        if location.domain != domain || location.realm != realm {
-            return None;
-        }
         if !ordinary_receiver(object, location.numeric_key) {
             return None;
         }
@@ -267,17 +253,17 @@ impl PropertyReadCache {
         if shape.layout_revision() != location.revision {
             return None;
         }
-        let mut holder = receiver;
+        // An own property reads the receiver already loaded by the caller.
+        let mut holder = object;
         if location.depth != 0 {
             if heap.property_layout_epoch() != location.prototype_epoch {
                 return None;
             }
             for _ in 0..location.depth {
-                let data = heap.object_fast(holder);
-                holder = heap.shape_fast(data.shape).prototype()?;
+                holder = heap.object_fast(heap.shape_fast(holder.shape).prototype()?);
             }
         }
-        match heap.object_fast(holder).slots.get(location.slot as usize)? {
+        match holder.slots.get(location.slot as usize)? {
             PropertySlot::Data(value) => Some(value),
             // VarRef/AutoInit can share data-shaped storage; never treat them
             // as immutable data, even if an internal slot writer changed kind.
@@ -289,13 +275,8 @@ impl PropertyReadCache {
     fn read_accessor_location(
         location: Location,
         heap: &Heap,
-        domain: u64,
-        realm: ContextId,
         receiver: ObjectId,
     ) -> Option<Option<ObjectId>> {
-        if location.domain != domain || location.realm != realm {
-            return None;
-        }
         let object = heap.object_fast(receiver);
         if !ordinary_receiver(object, location.numeric_key) || object.shape != location.shape {
             return None;
@@ -325,12 +306,10 @@ impl PropertyReadCache {
         &self,
         heap: &Heap,
         atoms: &AtomTable,
-        domain: u64,
-        realm: ContextId,
         receiver: Option<ObjectId>,
         atom: Atom,
     ) {
-        let _ = self.miss_selected(heap, atoms, domain, realm, receiver, atom);
+        let _ = self.miss_selected(heap, atoms, receiver, atom);
     }
 
     /// Select data, an accessor, or complete absence during one ordinary
@@ -342,15 +321,12 @@ impl PropertyReadCache {
         &self,
         heap: &'a Heap,
         atoms: &AtomTable,
-        domain: u64,
-        realm: ContextId,
         receiver: Option<ObjectId>,
         atom: Atom,
     ) -> CacheSelection<'a> {
         let state = self.state();
         if let (State::Accessor(location), Some(receiver)) = (state, receiver)
-            && let Some(getter) =
-                Self::read_accessor_location(location, heap, domain, realm, receiver)
+            && let Some(getter) = Self::read_accessor_location(location, heap, receiver)
         {
             return CacheSelection::Accessor(getter);
         }
@@ -368,7 +344,7 @@ impl PropertyReadCache {
                 _ => CacheSelection::Unresolved,
             };
         }
-        let (location, raw) = match receiver.map(|r| locate(heap, atoms, domain, realm, r, atom)) {
+        let (location, raw) = match receiver.map(|r| locate(heap, atoms, r, atom)) {
             Some(Located::Data(location, raw)) => (location, raw),
             Some(Located::Accessor(location, getter)) => {
                 self.set_state(State::Accessor(location));
@@ -387,11 +363,7 @@ impl PropertyReadCache {
         };
         // A revision change of the same shape replaces stale knowledge instead
         // of spending another polymorphic slot on an unreachable old revision.
-        let same_key = |old: Location| {
-            old.domain == location.domain
-                && old.realm == location.realm
-                && old.shape == location.shape
-        };
+        let same_key = |old: Location| old.shape == location.shape;
         let next = match state {
             State::Cold => State::Monomorphic(location),
             State::Accessor(_) => State::Monomorphic(location),
@@ -432,14 +404,12 @@ impl crate::engine::heap::runtime::RuntimeState {
     /// current State access. A cold location still trains the same cache.
     pub(crate) fn proxy_trap_read_in_state(
         &mut self,
-        domain_id: u64,
         trap: usize,
-        realm: ContextId,
         handler: ObjectId,
         atom: Atom,
     ) -> Result<Option<crate::engine::value::JsValue>, RuntimeError> {
         let cache = &self.proxy_trap_reads[trap];
-        let raw = match cache.read(&self.heap, domain_id, realm, handler) {
+        let raw = match cache.read(&self.heap, handler) {
             Some(raw) => {
                 if matches!(
                     raw,
@@ -450,14 +420,7 @@ impl crate::engine::heap::runtime::RuntimeState {
                 raw.clone()
             }
             None => {
-                cache.miss(
-                    &self.heap,
-                    &self.atoms,
-                    domain_id,
-                    realm,
-                    Some(handler),
-                    atom,
-                );
+                cache.miss(&self.heap, &self.atoms, Some(handler), atom);
                 return Ok(None);
             }
         };
@@ -514,14 +477,7 @@ fn ordinary_receiver(data: &crate::engine::heap::ObjectData, numeric: bool) -> b
     }
 }
 
-fn locate<'a>(
-    heap: &'a Heap,
-    atoms: &AtomTable,
-    domain: u64,
-    realm: ContextId,
-    receiver: ObjectId,
-    atom: Atom,
-) -> Located<'a> {
+fn locate<'a>(heap: &'a Heap, atoms: &AtomTable, receiver: ObjectId, atom: Atom) -> Located<'a> {
     let Some(initial) = heap.object(receiver).ok() else {
         return Located::Unresolved;
     };
@@ -537,8 +493,6 @@ fn locate<'a>(
         return Located::Unresolved;
     };
     let location = |depth, slot| Location {
-        domain,
-        realm,
         shape: initial.shape,
         revision,
         prototype_epoch: epoch,
@@ -833,29 +787,20 @@ mod tests {
     fn install(
         cache: &PropertyReadCache,
         runtime: &Runtime,
-        realm: ContextId,
         object: &crate::engine::object::ObjectRef,
         atom: Atom,
     ) {
         let state = runtime.0.state.borrow();
-        cache.miss(
-            &state.heap,
-            &state.atoms,
-            runtime.domain_id(),
-            realm,
-            Some(object.object_id()),
-            atom,
-        );
+        cache.miss(&state.heap, &state.atoms, Some(object.object_id()), atom);
     }
     fn number(
         cache: &PropertyReadCache,
         runtime: &Runtime,
-        realm: ContextId,
         object: &crate::engine::object::ObjectRef,
     ) -> Option<f64> {
         let state = runtime.0.state.borrow();
         cache
-            .read(&state.heap, runtime.domain_id(), realm, object.object_id())
+            .read(&state.heap, object.object_id())
             .and_then(|value| match value {
                 RawValue::Int(n) => Some(f64::from(*n)),
                 RawValue::Float(n) => Some(*n),
@@ -884,8 +829,6 @@ mod tests {
             let selected = cache.miss_selected(
                 &state.heap,
                 &state.atoms,
-                runtime.domain_id(),
-                context.realm_id(),
                 Some(receiver.object_id()),
                 key.atom(),
             );
@@ -941,32 +884,16 @@ mod tests {
     #[test]
     fn unstable_sites_back_off_with_a_bounded_retry_delay() {
         let runtime = Runtime::new();
-        let context = runtime.new_context().expect("create context");
+        let _context = runtime.new_context().expect("create context");
         let key = runtime.intern_property_key("x").unwrap();
         let receiver = runtime.new_object(None).unwrap();
         let cache = PropertyReadCache::default();
         let state = runtime.0.state.borrow();
         for delay in [16, 32, 64, 128, 256, 256] {
-            cache.miss(
-                &state.heap,
-                &state.atoms,
-                runtime.domain_id(),
-                context.realm_id(),
-                None,
-                key.atom(),
-            );
+            cache.miss(&state.heap, &state.atoms, None, key.atom());
             assert!(matches!(cache.state(), State::Megamorphic(left) if left == delay));
             for _ in 0..delay {
-                assert!(
-                    cache
-                        .read(
-                            &state.heap,
-                            runtime.domain_id(),
-                            context.realm_id(),
-                            receiver.object_id()
-                        )
-                        .is_none()
-                );
+                assert!(cache.read(&state.heap, receiver.object_id()).is_none());
             }
             assert!(matches!(cache.state(), State::Cold));
         }
@@ -980,33 +907,32 @@ mod tests {
         let second = object(context.eval("({y:0,x:2})").unwrap());
         let third = object(context.eval("({z:0,y:0,x:3})").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
-        let realm = context.realm_id();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, realm, &first, key.atom());
-        install(&cache, &runtime, realm, &second, key.atom());
+        install(&cache, &runtime, &first, key.atom());
+        install(&cache, &runtime, &second, key.atom());
         assert!(matches!(cache.state(), State::Polymorphic(_)));
         for _ in 0..8 {
-            assert_eq!(number(&cache, &runtime, realm, &first), Some(1.0));
-            assert_eq!(number(&cache, &runtime, realm, &second), Some(2.0));
+            assert_eq!(number(&cache, &runtime, &first), Some(1.0));
+            assert_eq!(number(&cache, &runtime, &second), Some(2.0));
         }
         let fourth = object(context.eval("({w:0,z:0,y:0,x:4})").unwrap());
         let fifth = object(context.eval("({v:0,w:0,z:0,y:0,x:5})").unwrap());
-        install(&cache, &runtime, realm, &third, key.atom());
-        install(&cache, &runtime, realm, &fourth, key.atom());
+        install(&cache, &runtime, &third, key.atom());
+        install(&cache, &runtime, &fourth, key.atom());
         for _ in 0..8 {
-            assert_eq!(number(&cache, &runtime, realm, &first), Some(1.0));
-            assert_eq!(number(&cache, &runtime, realm, &second), Some(2.0));
-            assert_eq!(number(&cache, &runtime, realm, &third), Some(3.0));
-            assert_eq!(number(&cache, &runtime, realm, &fourth), Some(4.0));
+            assert_eq!(number(&cache, &runtime, &first), Some(1.0));
+            assert_eq!(number(&cache, &runtime, &second), Some(2.0));
+            assert_eq!(number(&cache, &runtime, &third), Some(3.0));
+            assert_eq!(number(&cache, &runtime, &fourth), Some(4.0));
         }
-        install(&cache, &runtime, realm, &fifth, key.atom());
+        install(&cache, &runtime, &fifth, key.atom());
         assert!(matches!(cache.state(), State::Megamorphic(16)));
         for _ in 0..16 {
-            assert_eq!(number(&cache, &runtime, realm, &first), None);
+            assert_eq!(number(&cache, &runtime, &first), None);
         }
         assert!(matches!(cache.state(), State::Cold));
-        install(&cache, &runtime, realm, &third, key.atom());
-        assert_eq!(number(&cache, &runtime, realm, &third), Some(3.0));
+        install(&cache, &runtime, &third, key.atom());
+        assert_eq!(number(&cache, &runtime, &third), Some(3.0));
     }
 
     #[test]
@@ -1021,17 +947,14 @@ mod tests {
                     .unwrap(),
             );
             let cache = PropertyReadCache::default();
-            install(&cache, &runtime, context.realm_id(), &receiver, key.atom());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &receiver),
-                Some(7.0)
-            );
+            install(&cache, &runtime, &receiver, key.atom());
+            assert_eq!(number(&cache, &runtime, &receiver), Some(7.0));
         }
         let typed = object(context.eval("new Uint8Array(2)").unwrap());
         for spelling in ["0", "-0", "NaN", "Infinity", "1.5"] {
             let key = runtime.intern_property_key(spelling).unwrap();
             let cache = PropertyReadCache::default();
-            install(&cache, &runtime, context.realm_id(), &typed, key.atom());
+            install(&cache, &runtime, &typed, key.atom());
             assert!(matches!(cache.state(), State::Megamorphic(_)));
         }
     }
@@ -1043,23 +966,17 @@ mod tests {
         let obj = object(context.eval("var o = {x:1}; o").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(1.0)
-        );
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(1.0));
         drop(context.eval("o.x=9").unwrap());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(9.0)
-        );
+        assert_eq!(number(&cache, &runtime, &obj), Some(9.0));
         drop(context.eval("delete o.x").unwrap());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), None);
+        install(&cache, &runtime, &obj, key.atom());
         drop(context.eval("o.x=11").unwrap());
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
+        install(&cache, &runtime, &obj, key.atom());
         assert!(matches!(cache.state(), State::Megamorphic(_)));
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        assert_eq!(number(&cache, &runtime, &obj), None);
     }
     #[test]
     fn attributes_and_prototype_replacement_invalidate_before_accessor_execution() {
@@ -1073,13 +990,9 @@ mod tests {
         ] {
             let obj = object(context.eval("var p={x:3}; var o={x:1}; o").unwrap());
             let cache = PropertyReadCache::default();
-            install(&cache, &runtime, context.realm_id(), &obj, key.atom());
+            install(&cache, &runtime, &obj, key.atom());
             drop(context.eval(mutation).unwrap());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &obj),
-                None,
-                "{mutation}"
-            );
+            assert_eq!(number(&cache, &runtime, &obj), None, "{mutation}");
         }
     }
     #[test]
@@ -1099,22 +1012,12 @@ mod tests {
                     .unwrap(),
             );
             let cache = PropertyReadCache::default();
-            install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &obj),
-                Some(3.0)
-            );
+            install(&cache, &runtime, &obj, key.atom());
+            assert_eq!(number(&cache, &runtime, &obj), Some(3.0));
             drop(context.eval("p.x=8").unwrap());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &obj),
-                Some(8.0)
-            );
+            assert_eq!(number(&cache, &runtime, &obj), Some(8.0));
             drop(context.eval(mutation).unwrap());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &obj),
-                None,
-                "{mutation}"
-            );
+            assert_eq!(number(&cache, &runtime, &obj), None, "{mutation}");
         }
     }
     #[test]
@@ -1147,44 +1050,40 @@ mod tests {
         );
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(1.0)
-        );
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(1.0));
         drop(context.eval("delete o.p1").unwrap());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        assert_eq!(number(&cache, &runtime, &obj), None);
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
+        install(&cache, &runtime, &obj, key.atom());
         drop(context.eval("o.more=6").unwrap());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        assert_eq!(number(&cache, &runtime, &obj), None);
     }
     #[test]
-    fn realm_and_runtime_identity_never_alias_and_proxy_is_not_admitted() {
+    fn realms_never_alias_through_shapes_and_proxy_is_not_admitted() {
+        // Entries carry no realm: the receiver's shape names its prototype,
+        // which differs per realm, so a location learned in one realm never
+        // matches the same literal created in another.
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
-        let other = context.runtime().new_context().expect("create context");
+        let mut other = context.runtime().new_context().expect("create context");
         let obj = object(context.eval("({x:1})").unwrap());
+        let foreign = object(other.eval("({x:2})").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(number(&cache, &runtime, other.realm_id(), &obj), None);
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(1.0));
+        assert_eq!(number(&cache, &runtime, &foreign), None);
         let state = runtime.0.state.borrow();
-        assert!(
-            cache
-                .read(
-                    &state.heap,
-                    runtime.domain_id() + 1,
-                    context.realm_id(),
-                    obj.object_id()
-                )
-                .is_none()
+        assert_ne!(
+            state.heap.object(obj.object_id()).unwrap().shape,
+            state.heap.object(foreign.object_id()).unwrap().shape
         );
         drop(state);
         let proxy = object(context.eval("new Proxy({x:2},{get(){throw 9}})").unwrap());
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &proxy, key.atom());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &proxy), None);
+        install(&cache, &runtime, &proxy, key.atom());
+        assert_eq!(number(&cache, &runtime, &proxy), None);
     }
     #[test]
     fn named_array_cache_survives_value_write_and_invalidates_holey_materialization() {
@@ -1193,18 +1092,12 @@ mod tests {
         let obj = object(context.eval("var o=[1,2,3]; o.x=4; o").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(4.0)
-        );
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(4.0));
         drop(context.eval("o.x=5; o[0]=8").unwrap());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(5.0)
-        );
+        assert_eq!(number(&cache, &runtime, &obj), Some(5.0));
         drop(context.eval("delete o[1]").unwrap());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        assert_eq!(number(&cache, &runtime, &obj), None);
     }
     #[test]
     fn entering_dictionary_storage_invalidates_an_existing_own_fact() {
@@ -1213,17 +1106,14 @@ mod tests {
         let obj = object(context.eval("var o={x:1}; o").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(1.0)
-        );
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(1.0));
         drop(
             context
                 .eval("for(var i=0;i<100;i++) o['p'+i]=i; delete o.p0")
                 .unwrap(),
         );
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        assert_eq!(number(&cache, &runtime, &obj), None);
     }
     #[test]
     fn prototype_attribute_changes_invalidate_epoch_with_unchanged_receiver_layout() {
@@ -1248,11 +1138,8 @@ mod tests {
                         .unwrap();
                 }
                 let cache = PropertyReadCache::default();
-                install(&cache, &runtime, context.realm_id(), &receiver, key.atom());
-                assert_eq!(
-                    number(&cache, &runtime, context.realm_id(), &receiver),
-                    Some(3.0)
-                );
+                install(&cache, &runtime, &receiver, key.atom());
+                assert_eq!(number(&cache, &runtime, &receiver), Some(3.0));
                 let (shape, revision, epoch) = {
                     let state = runtime.0.state.borrow();
                     let shape = state.heap.object(receiver.object_id()).unwrap().shape;
@@ -1274,10 +1161,7 @@ mod tests {
                     "dictionary={dictionary}: {mutation}"
                 );
                 drop(state);
-                assert_eq!(
-                    number(&cache, &runtime, context.realm_id(), &receiver),
-                    None
-                );
+                assert_eq!(number(&cache, &runtime, &receiver), None);
                 assert_eq!(context.eval("calls").unwrap(), Value::Int(0));
             }
         }
