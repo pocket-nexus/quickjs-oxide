@@ -77,6 +77,8 @@ pub(super) fn run(
                 && !matches!(
                     exit,
                     VmAction::Numeric { .. }
+                        | VmAction::Arguments(_)
+                        | VmAction::Rest(_)
                         | VmAction::Predicate(crate::engine::vm::predicate_driver::Kind::Instance)
                 )
         }) {
@@ -300,6 +302,16 @@ pub(super) fn run(
                 )?;
                 if let Some(boundary) = property_boundary(progress) {
                     return Ok(boundary);
+                }
+            }
+            VmAction::Arguments(_) | VmAction::Rest(_) => {
+                // Building the object runs no code; only a thrown allocation
+                // error observes the frames.
+                if let Some(completion) =
+                    crate::engine::vm::arguments_driver::step(runtime, execution, id, exit)?
+                {
+                    execution.frames.materialize(runtime)?;
+                    return Ok(Boundary::Complete(completion));
                 }
             }
             VmAction::Predicate(crate::engine::vm::predicate_driver::Kind::Instance) => {
