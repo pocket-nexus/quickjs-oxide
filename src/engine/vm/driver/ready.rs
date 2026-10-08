@@ -70,7 +70,11 @@ pub(super) fn run(
         record_exit(&result);
         // Ordinary Call/Return need no observable activation. Cold operations
         // may allocate an error, release an observable owner or invoke code.
-        if result.as_ref().map_or(true, VmAction::observes_activation) {
+        // A primitive numeric completes here unobserved; its error and
+        // decline paths materialize before anything can observe the frames.
+        if result.as_ref().map_or(true, |exit| {
+            exit.observes_activation() && !matches!(exit, VmAction::Numeric { .. })
+        }) {
             execution.frames.materialize(runtime)?;
         }
         let exit = result?;
@@ -157,6 +161,7 @@ pub(super) fn run(
                 else {
                     #[cfg(feature = "profiling")]
                     record_event("numeric_primitive_declined");
+                    execution.frames.materialize(runtime)?;
                     return Ok(Boundary::Exit(exit));
                 };
                 match progress {

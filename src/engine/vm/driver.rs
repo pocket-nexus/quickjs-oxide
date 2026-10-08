@@ -695,12 +695,15 @@ fn run_frames_with_state(
             .current_id()
             .ok_or_else(|| Error::internal("driver lost its current frame"))?;
         if forwarded.is_none() {
+            // Read through the lazy cell: going through `DerefMut` would give
+            // every frame that reaches this driver a `FrameRare` allocation.
             forwarded = execution
                 .frames
                 .current_mut(id)?
                 .cold
-                .resume_throw
-                .take()
+                .rare
+                .get_mut()
+                .and_then(|rare| rare.resume_throw.take())
                 .map(Completion::Throw);
         }
         let mut conversion_prepared = false;

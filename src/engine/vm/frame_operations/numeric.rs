@@ -94,6 +94,8 @@ pub(in crate::engine::vm) fn try_complete_primitive(
         }
     };
     if !kind.primitive_arithmetic() {
+        // The query may run user code or throw: publish the lazy frames first.
+        execution.frames.materialize(runtime)?;
         return match NumericStep::start(runtime, kind, left, right) {
             Ok(step) => crate::engine::vm::proxy_get_driver::start_numeric(
                 runtime, execution, id, step, depth,
@@ -107,6 +109,8 @@ pub(in crate::engine::vm) fn try_complete_primitive(
         match crate::engine::vm::numeric::operation::primitive_output(runtime, kind, left, right) {
             Ok(output) => output,
             Err(error) => {
+                // The thrown error captures the stack of every active frame.
+                execution.frames.materialize(runtime)?;
                 return crate::engine::vm::property_driver::throw_error(runtime, realm, error)
                     .map(|step| Some(NumericProgress::Deferred(step)));
             }

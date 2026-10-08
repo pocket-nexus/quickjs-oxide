@@ -69,6 +69,26 @@ mod tests {
     }
 
     #[test]
+    fn numeric_error_in_a_lazy_frame_keeps_every_ancestor_in_its_stack() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        // Primitive numeric exits no longer materialize up front; the error
+        // path must still publish the lazy callee and caller before throwing.
+        let value = context
+            .eval(
+                "function lazyMulInner(a,b){var x=a*2;return a*b}\n\
+                 function lazyMulOuter(a,b){return lazyMulInner(a,b)}\n\
+                 var ok=lazyMulOuter(3,4)===12;\n\
+                 try{lazyMulOuter(1n,1);ok=false}catch(e){\n\
+                   ok=ok&&e instanceof TypeError&&e.stack.includes('lazyMulInner')&&e.stack.includes('lazyMulOuter')}\n\
+                 ok",
+            )
+            .unwrap();
+        assert_eq!(value, Value::Bool(true));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
     fn native_error_observes_lazy_ancestors_and_unwind_cleans_registry() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
