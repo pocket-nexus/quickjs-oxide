@@ -695,6 +695,11 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
 
   - 建议顺序：5a 拆小热循环（含重入入口）→ 5b 高频退出留在循环内（按上表，先 `instanceof`、字符串拼接、捕获变量）→ 5c 预解码。
     5b 的每个退出按第 3 项规则验收（目标用例 Ir −1% 且无回退）。
+  - **执行顺序（2026-10-08 决定，第 5、6 项同一个 stacked PR，叠在 #103 上）：** 目标是在任何机器上都超过 Boa，不再以单台机器的
+    Score 为准。另一台机器（Rust 1.94.1、fat LTO、Boa 0.22.0）上 `9a123aff` 落后 Richards 32%、DeltaBlue 26%、EarleyBoyer 39%、RayTrace 49%。
+    按份量与改动成本排序：① 5b 的 `instanceof`（EarleyBoyer 约 20%，改动小）→ ② 第 6 项的释放、GC 与分配（RayTrace 28%）
+    → ③ 5a 拆小热循环（R/D）→ ④ 5b 其余退出（字符串拼接、捕获变量，收益在已领先的 Splay、NavierStokes）→ ⑤ 5c 预解码。
+    检查点不再单独等参考测量机，每步按 Ir 与 `perf stat` 验收，条目收口时再跑原生对比。
   - 与 Boa 的差距（第 3 项后的正式 Score）中 RayTrace（−44%）的最大块是释放、GC 与分配（28.1%），属第 6 项；
     EarleyBoyer（−32%）的最大块是上表的 `instanceof` 与退出重入，属第 5 项。检查点排序时以此为依据。
   - 跨条目的发现：带校验的堆访问 `validate_slot_identity` 在八项中占 2.7%–6.4%，来自非受信路径上的 `heap.object` 等查找，检查点时一并排序。
