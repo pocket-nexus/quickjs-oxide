@@ -1374,6 +1374,33 @@ impl Heap {
             }
             return Ok(());
         }
+        // Object allocations carry a handful of edges; count them on the stack.
+        const INLINE_EDGES: usize = 16;
+        if edges.len() <= INLINE_EDGES {
+            let mut counts = [None::<(RawId, u32)>; INLINE_EDGES];
+            let mut unique = 0;
+            for &edge in edges {
+                match counts[..unique]
+                    .iter_mut()
+                    .flatten()
+                    .find(|(seen, _)| *seen == edge)
+                {
+                    Some((_, count)) => *count += 1,
+                    None => {
+                        counts[unique] = Some((edge, 1));
+                        unique += 1;
+                    }
+                }
+            }
+            for &(edge, additional) in counts[..unique].iter().flatten() {
+                self.preflight_edge_retain(edge, additional)?;
+            }
+            for &(edge, additional) in counts[..unique].iter().flatten() {
+                self.retain_raw(edge, additional)
+                    .expect("preflighted heap edge retain failed before publication");
+            }
+            return Ok(());
+        }
         let mut counts = HashMap::<RawId, u32, FxBuildHasher>::default();
         for &edge in edges {
             let count = counts.entry(edge).or_default();
