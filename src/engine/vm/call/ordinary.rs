@@ -303,6 +303,27 @@ impl OrdinaryCall {
         execution.install_ordinary(runtime, &mut state, self, checked, tail, fallthrough)
     }
 
+    /// Facts a call site cached after authenticating this same callee.
+    pub(in crate::engine::vm) fn from_site(
+        function: ObjectId,
+        executable: PublishedFunctionSnapshot,
+        closure: std::rc::Rc<[VarRefId]>,
+    ) -> Self {
+        Self {
+            function,
+            owner: None,
+            executable,
+            closure,
+        }
+    }
+
+    pub(in crate::engine::vm) fn fill_site(
+        &self,
+        site: &crate::engine::code::runtime::CallSiteCache,
+    ) {
+        site.fill(self.function, &self.executable, &self.closure);
+    }
+
     /// Consume facts whose callee edge remains in the admitted caller slot.
     pub(in crate::engine::vm) fn into_slot_parts(
         self,
@@ -391,6 +412,80 @@ impl OrdinarySelection {
 #[cfg(test)]
 mod direct_selection_tests {
     use super::*;
+
+    #[test]
+    fn call_site_cache_follows_the_actual_callee() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        // One site sees alternating callees, closures over different cells,
+        // a non-function and a native function.
+        let source = "function make(k){return function(x){return x+k}}\n\
+            var fs=[make(1),make(10),function(x){return x*2},Math.abs,make(100)];\n\
+            function site(f,x){return f(x)}\n\
+            var out=[];for(var i=0;i<20;i++){out.push(site(fs[i%5],-i))}\n\
+            try{site(17,1);out.push('no')}catch(e){out.push(e instanceof TypeError)}\n\
+            out.join(',')";
+        let expected = (0..20)
+            .map(|i: i32| match i % 5 {
+                0 => (-i + 1).to_string(),
+                1 => (-i + 10).to_string(),
+                2 => (-i * 2).to_string(),
+                3 => i.to_string(),
+                _ => (-i + 100).to_string(),
+            })
+            .chain(["true".to_string()])
+            .collect::<Vec<_>>()
+            .join(",");
+        assert_eq!(
+            context.eval(source).unwrap(),
+            context.eval(&format!("{expected:?}")).unwrap()
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn call_site_cache_misses_a_collected_callee_and_its_reused_slot() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        context
+            .eval("function site(f){return f()} function make(v){return function(){return v}}")
+            .unwrap();
+        for value in 0..8 {
+            // Each callee becomes garbage after its two calls; a later one may
+            // reuse its slot under a new generation.
+            let result = context
+                .eval(&format!(
+                    "(function(){{var f=make({value});site(f);return site(f)}})()"
+                ))
+                .unwrap();
+            assert_eq!(result, Value::Int(value));
+            runtime.run_gc().unwrap();
+        }
+    }
+
+    #[test]
+    fn call_site_cache_does_not_keep_a_recursive_function_alive() {
+        let weak = {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context().expect("create context");
+            assert_eq!(
+                context
+                    .eval("function r(n){return n?r(n-1)+1:0} r(5)+r(5)")
+                    .unwrap(),
+                Value::Int(10)
+            );
+            let Value::Object(function) = context.eval("r").unwrap() else {
+                unreachable!()
+            };
+            let call = OrdinaryCall::select_callback(&runtime, &function)
+                .unwrap()
+                .unwrap();
+            let weak = std::rc::Rc::downgrade(&call.executable.data_for_test());
+            drop(call);
+            weak
+        };
+        assert!(weak.upgrade().is_none());
+    }
 
     #[test]
     fn method_receiver_survives_nested_return_and_caught_throw() {

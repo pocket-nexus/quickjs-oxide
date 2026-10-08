@@ -118,13 +118,24 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
     let callable = transaction.peek(count)?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_callsite_callee(runtime, executable, fault_pc, callable);
-    #[cfg(not(feature = "profiling"))]
-    let _ = (executable, fault_pc);
     let crate::engine::value::JsValue::Object(function) = callable else {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("core.call_decline.general");
         return Ok(None);
     };
+    // A site hit is an ordinary callee authenticated here before; the
+    // native hint can only name a native function, so it cannot match.
+    let site = executable.call_ic.site(fault_pc);
+    if let Some((callee, closure)) = site.and_then(|site| site.hit(runtime.domain_id(), *function))
+    {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("call_site_cache.hit");
+        let checked = transaction.check_ordinary_call_depth(count, method)?;
+        return Ok(Some((
+            crate::engine::vm::call::ordinary::OrdinaryCall::from_site(*function, callee, closure),
+            checked,
+        )));
+    }
     if native_hint
         .as_ref()
         .is_some_and(|hint| hint.matches_in_domain(runtime.domain_id(), *function))
@@ -170,6 +181,11 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
             );
             runtime_error_to_vm_error(error)
         })?;
+    if let Some(site) = site {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("call_site_cache.fill");
+        call.fill_site(site);
+    }
     Ok(Some((call, checked)))
 }
 

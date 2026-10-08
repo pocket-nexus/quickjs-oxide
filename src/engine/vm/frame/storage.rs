@@ -365,7 +365,8 @@ mod tests {
         assert!(snapshot.call_buffers["cold.frame_box"].capacity_growths <= 3);
         let metadata = &snapshot.call_buffers["executable.published_data_rc"];
         assert!(metadata.capacity_growths <= 3);
-        assert!(snapshot.owned_execution_events["ordinary_call_auth_cache_hit"] >= 1998);
+        // The first call at each site authenticates; the rest hit its cache.
+        assert!(snapshot.owned_execution_events["call_site_cache.hit"] >= 1998);
 
         assert!(snapshot.owned_execution_events["call_bindings_initialized_in_window"] >= 2000);
         assert!(

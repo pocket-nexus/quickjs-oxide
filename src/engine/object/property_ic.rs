@@ -712,7 +712,7 @@ impl<T: Default> SiteCacheTable<T> {
         }
     }
 
-    fn new_exec_sites(
+    pub(crate) fn new_exec_sites(
         code: &crate::engine::code::exec::ExecCode,
         is_site: impl Fn(crate::engine::code::exec_opcode::Opcode) -> bool,
     ) -> Self {

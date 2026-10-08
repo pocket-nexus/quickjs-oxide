@@ -51,12 +51,18 @@ mod tests {
             2,
             "one root authentication plus one leaf authentication: {events:?}"
         );
+        // Repeated calls skip selection entirely through the call-site cache.
+        assert_eq!(
+            events.get("call_site_cache.hit").copied().unwrap_or(0),
+            19,
+            "{events:?}"
+        );
         assert_eq!(
             events
                 .get("ordinary_call_auth_cache_hit")
                 .copied()
                 .unwrap_or(0),
-            19,
+            0,
             "{events:?}"
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());

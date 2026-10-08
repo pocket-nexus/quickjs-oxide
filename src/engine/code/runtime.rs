@@ -1,5 +1,5 @@
 pub(crate) use super::executable::{
-    OrdinaryAuthentication, PublishedEvalEnvironment, PublishedFunctionData,
+    CallSiteCache, OrdinaryAuthentication, PublishedEvalEnvironment, PublishedFunctionData,
     PublishedFunctionSnapshot,
 };
 #[cfg(feature = "test262-host")]

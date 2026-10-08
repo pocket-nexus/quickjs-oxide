@@ -674,6 +674,23 @@ impl FrameTransaction<'_> {
             method,
         })
     }
+    /// A call-site hit. The caller has already read the deepest operand
+    /// (receiver or callee) as a direct value; operand slots above it always
+    /// hold direct values, so the per-argument reads are skipped.
+    #[inline]
+    pub(in crate::engine::vm) fn check_ordinary_call_depth(
+        &self,
+        count: usize,
+        method: bool,
+    ) -> Result<CheckedOrdinaryCallOperands, Error> {
+        debug_assert!((0..=count + usize::from(method)).all(|offset| self.peek(offset).is_ok()));
+        Ok(CheckedOrdinaryCallOperands {
+            window_id: self.window.id,
+            depth: self.window.depth,
+            count,
+            method,
+        })
+    }
     /// Consume native operands already checked within this transaction: the
     /// callee by native selection, and receiver/arguments by domain validation.
     /// No mutable slot access may intervene. Classification executes no JS and
