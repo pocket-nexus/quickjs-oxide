@@ -21,7 +21,7 @@
 | 第 1 项（#95，叠在 #93 上） | 收口步骤完成（head `e8d5ba12`），原生验收通过；1a、1d 的剩余预算划给第 2 项，`new` 的剩余划给第 2、4、5 项 |
 | 第 2 项（#101，叠在 #95 上） | 已收口（2026-10-08）：2a–2c 采纳；2d 实现后因八项均无明显增益撤回；dup/release 核对取消；解释函数尺寸作为例外记录。见第 5 节“第 2 项收口” |
 | 第 3 项（#102，叠在 #101 上） | 3a–3f 已实现（代码 head `215f1cc5`），八项 Ir 与 `perf stat` 周期全部低于基线；读缓存 R/D 14.8%/14.2%（目标 ≤14%，≤8% 已移入第 5 项）。见第 5 节“第 3 项结果” |
-| 第 4 项 | 已按 x86 八项 profile 重定基线与任务（第 5 节），待开始 |
+| 第 4 项 | 2026-10-08 按 `215f1cc5` 重定基线并按代码核对调整任务（第 5 节），待开始 |
 
 第 1 项收口后的结果（相对 B2a `f2501839`，参考测量机，固定工作量，8 对 A/A 加 8 对 A/B，
 `paired.py` 非劣门槛 −1%）：
@@ -464,32 +464,57 @@ RayTrace −2.0%、RegExp −2.0%、EarleyBoyer −0.8%；八项全部低于基�
 
 ### 第 4 项：调用与返回的剩余成本（包括构造调用）
 
-**原因**（同原计划）：每次调用重新选择、认证和校验目标；帧安装逐字段构造 232 字节的 `FrameCold`，
-`FrameFunction::shared` 仍接收 `Runtime`（B0 残留）；返回时逐槽清理窗口，callee、this 与输入经带检查路径释放；
-构造调用另有 `strong_count` 探测（每次 `new` 约 148 条）和独立的安装器。
+**重定基线（2026-10-08，x86，`215f1cc5`，与 3f 最终 profile 同一份 `all8-fi`）。** 第 3 项让总量变小，调用成本本身未变，占比因此上升：
 
-**任务**
+| 用例 | 调用与返回（`46e6c82b` → `215f1cc5`） | 主要函数（self 占比） |
+|---|---:|---|
+| DeltaBlue | 26.2% → **29.2%** | `install_current_ordinary` 8.1、`prepare_ordinary_window_in_state` 3.3、`release_owned` 3.1、`recycle` 2.4、`select_in_state` 2.3、`validate_ordinary_call_operands` 1.4、`clear_current_frame_owned_in_state` 1.2、`authenticate_slot_in_state` 1.0 |
+| Richards | 16.4% → 18.4% | 同上（install 5.6、window 2.3、`release_owned` 2.1、select 1.5、`recycle` 1.5） |
+| EarleyBoyer | 23.2% → 23.8% | `enter_constructor` 2.4、`start_instance` 2.2、`borrowed_ordinary_data` 1.8、`materialize_in_state` 1.7、`run_frames_with_state` 1.4、`run` 1.3；普通 install 只有 2.0 |
+| RayTrace | 14.1% → 14.8% | `run` 1.7、`enter_constructor` 1.6、`run_frames_with_state` 1.1、`materialize_in_state` 1.1 |
+| Splay | 12.6% → 14.5% | install 2.7、`run` 1.9、`materialize_in_state` 1.9 |
+
+R/D 的成本在普通调用快速路径上（安装 > 返回拆帧 > 选择/校验/认证）；EarleyBoyer、RayTrace、Splay 的成本主要在构造调用和退回 `driver::run` 再重入的冷路径上。
+
+**代码核对（`1d4d41c5`）。** 原计划的“原因”中有几条已经不成立：
+
+- callee、this 与输入的释放已走第 2 项的可信路径（`release_object_handle` / `admits_trusted`），不是带检查路径；
+- 冷帧已有池（`CallStorage.empty_frames`），参数已直接移动，普通局部变量已批量初始化；
+- “232 字节的 `FrameCold`”没有依据（无尺寸断言，估算约 210–230 字节；232 是解释函数的栈槽数），删去；
+- 普通 JS→JS 调用与返回已不退出解释循环（`execute.rs` 外层 loop `continue`）。仍退出的是原生、bound、generator/async、Proxy、
+  一般构造，以及返回到根帧、操作目标、派生构造或有等待的帧（`Declined`），由 `driver::ready::run` 处理后重新进入。
+
+仍然成立的：没有调用站点缓存，每次调用都重新选择（`heap.object`、`RefCell` 借用、比较 `publish_generation`、克隆两个 `Rc`）、
+逐个参数重新 peek 校验（成本随参数个数增长）、认证；安装逐字段写池中的帧（`entry_guard` 重复写 None），回收时每个字段重置一遍；
+清理窗口逐槽进行，包括 `Undefined` 槽；`FrameFunction::shared` 接收 `Runtime` 只为取 `domain_id()`，`CallInput::new` 的 `runtime` 参数未使用；
+构造调用的 `strong_count` 探测是 4 次加每个对象类参数 1 次，`heap.object` 与 bytecode 各重复查一次，`install_current_constructor` 与普通安装器几乎重复；
+构造调用后懒分配的 `FrameRare` 留在池化帧上，之后复用该帧的普通调用要多做 `rare` 检查。
+
+**任务**（按顺序）
 
 | 任务 | 内容 | 目标用例 |
 |---|---|---|
-| 4a 调用站点缓存 | 记录 callee 身份到已准备的调用事实（executable、帧布局、参数个数是否匹配、局部变量能否简单初始化、是否有捕获）；命中跳过选择、认证和操作数校验。 | DeltaBlue、Richards、EarleyBoyer |
-| 4b 精简帧安装 | callee owner 直接移入帧；冷帧复用池中对象、只写变化字段；局部变量批量初始化，参数直接移动；`FrameFunction` 不再接收 `Runtime`，关闭对应 B0 残留。 | DeltaBlue、Richards、EarleyBoyer、RayTrace |
-| 4c 精简返回 | 只清理实际持有 owner 的槽；callee、this 与输入走第 2 项快速路径；回收冷帧不重新初始化。 | 同上 |
-| 4d 构造调用 | 查清并去掉 `strong_count` 探测；基础对象复用 1c 的空对象路径；`enter_constructor` 与普通安装器共用实现。 | RayTrace、EarleyBoyer、Splay |
-| 4e 解释函数尺寸 | 调用/返回处理在 `execute_frame_in_state` 中只保留分派加一次调用；函数大小与栈槽数相对 `b44c0dc` 不增加超过 2%，超过时按第 7 节检查生成代码，不再另设例外。 | — |
+| 4b 精简帧安装 | 安装只写变化字段（去掉重复的 `entry_guard = None` 等）；`select_in_state` 不再每次克隆 closure 与 facts 的 `Rc`，改为借用；构造调用留下的 `FrameRare` 不污染之后的普通调用。 | DeltaBlue、Richards |
+| 4c 精简返回 | 只清理实际持有 owner 的槽（跳过立即数与 `Undefined`）；回收冷帧不逐字段重置，只复位必须复位的状态。 | DeltaBlue、Richards |
+| 4a 调用站点缓存 | 在 4b 之后做：站点记住 callee 身份与已准备的调用事实（executable、帧布局、参数个数是否匹配、局部变量能否简单初始化、是否有捕获）；命中跳过选择、认证和逐参数校验，并让安装直接使用这些事实。单独能省的部分约为 D 4.7%、R 3.5%，新增的热代码须先用 `perf stat` 看 L1i。 | DeltaBlue、Richards |
+| 4d 构造调用 | 去掉 `strong_count` 探测（含每个对象类参数的一次）；`heap.object` 与 bytecode 只查一次；基础对象复用 1c 的空对象路径；`install_current_constructor` 与普通安装器共用实现。 | EarleyBoyer、RayTrace、Splay |
+| 4f 冷路径重入 | 先查清 EarleyBoyer、RayTrace、Splay 中是哪类调用退回 `driver::run`（原生内建、一般构造、`Declined` 返回等）及各自次数，再决定留在循环内处理还是让重入更便宜（`run_frames_with_state`、`materialize_in_state`、`start_instance`）。 | EarleyBoyer、RayTrace、Splay |
+| 4g B0 残留 | `FrameFunction::shared` 与 `CallInput::new` 不再接收 `Runtime`（结构提交，不要求 V8 增益，八项 Ir 增长 ≤0.5%）。 | — |
+| 4e 解释函数尺寸 | 贯穿全项：调用/返回处理在 `execute_frame_in_state` 中只保留分派加一次调用；函数大小与栈槽数相对 `b44c0dc` 不增加超过 2%，超过时按第 7 节检查生成代码，不再另设例外。 | — |
 
 **验收**
 
-- 每个任务同第 3 项的规则。
-- 第 4 项整体：调用与返回 self 占比 DeltaBlue ≤12%（现 26.2%）、EarleyBoyer ≤12%（现 23.2%）、Richards ≤8%（现 16.4%）。
+- 每个任务同第 3 项的规则；原生 A/B 前先用 `perf stat`（周期、指令、L1i 未命中，绑核）对比。
+- 第 4 项整体：调用与返回 self 占比 DeltaBlue ≤12%（现 29.2%）、EarleyBoyer ≤12%（现 23.8%）、Richards ≤8%（现 18.4%）。
+  未做逐行成本拆分（2026-10-08 决定按上面的函数级分解直接开始）；若实施中证明部分成本属于解释循环本身，在本项收口时按实测记录并划给第 5 项，不在中途修改目标。
 - 探针记录但不作门槛：`f(i)`、`o.m(i)`、`g(p)`、`new E()`。
 - 正确性：递归与栈限制、尾调用、bound 函数、generator/async（未命中路径）、参数个数不匹配、
   `arguments` 与捕获变量、抛错时的帧清理与 poison、GC 时栈上 owner、构造函数返回对象、
-  `new.target`、派生类与 `super()`。
+  `new.target`、派生类与 `super()`；构造调用后复用同一池化帧的普通调用。
 
 ### 顺序与时间上限
 
-- 先做第 3 项（3a → 3b → 3c → 3e → 3d），再做第 4 项（4a → 4b/4c → 4d），4e 贯穿第 4 项。4a 不再与其他项并行。
+- 先做第 3 项（3a → 3b → 3c → 3e → 3d），再做第 4 项（4b → 4c → 4a → 4d → 4f，4g 可随时插入），4e 贯穿第 4 项。4a 不再与其他项并行。
 - 每个性能任务（3e 除外）最多两轮“实现—测量”：两轮后目标用例仍无 ≥1% 的 Ir 下降，就撤回并记录原因，进入下一个任务。
 - 第 4 项完成后进入正式检查点。
 
