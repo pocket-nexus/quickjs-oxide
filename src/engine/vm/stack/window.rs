@@ -303,20 +303,19 @@ impl<'a> FrameExecution<'a> {
         };
         frame.resume_pc = resume;
         let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(ReturnTarget {
-            value_use: ReturnValue::Push,
-            owner: ReturnOwner::Frame(parent),
-            tail,
-            operation: None,
-        });
-        cold.entry_guard = None;
-        cold.function =
-            crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure)
-                .into();
-        cold.reusable_captured_locals = flags;
-        cold.input = installed.input.into();
-        cold.executable = executable.into();
-        cold.window = installed.window.into();
+        cold.occupy(
+            ReturnTarget {
+                value_use: ReturnValue::Push,
+                owner: ReturnOwner::Frame(parent),
+                tail,
+                operation: None,
+            },
+            crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure),
+            installed.input,
+            flags,
+            executable,
+            installed.window,
+        );
         prepared.install(Frame {
             property_generation: 0,
             iterator_generation: 0,
@@ -393,26 +392,25 @@ impl<'a> FrameExecution<'a> {
             this_value,
         )?;
         frame.resume_pc = fallthrough.index();
-        let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(ReturnTarget {
-            value_use: ReturnValue::Push,
-            owner: ReturnOwner::Frame(parent),
-            tail: false,
-            operation: None,
-        });
-        cold.entry_guard = None;
-        cold.function =
-            crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure)
-                .into();
-        cold.reusable_captured_locals = flags;
-        cold.input = installed.input.into();
+        let (mut cold, frame_bytes) = execution.call_storage.vacant_rare();
+        cold.occupy(
+            ReturnTarget {
+                value_use: ReturnValue::Push,
+                owner: ReturnOwner::Frame(parent),
+                tail: false,
+                operation: None,
+            },
+            crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure),
+            installed.input,
+            flags,
+            executable,
+            installed.window,
+        );
         cold.constructor_return = Some(ConstructorReturn::Base(
             receiver
                 .take()
                 .expect("guarded constructor return receiver"),
         ));
-        cold.executable = executable.into();
-        cold.window = installed.window.into();
         prepared.install(Frame {
             property_generation: 0,
             iterator_generation: 0,

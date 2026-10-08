@@ -92,20 +92,19 @@ impl FrameExecution<'_> {
         );
         frame.resume_pc = fallthrough.index();
         let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(ReturnTarget {
-            value_use: ReturnValue::Push,
-            owner: ReturnOwner::Frame(parent),
-            tail: false,
-            operation: None,
-        });
-        cold.entry_guard = None;
-        cold.function =
-            crate::engine::vm::closure::FrameFunction::shared(runtime, function, closure).into();
-        cold.input =
-            crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None).into();
-        cold.reusable_captured_locals = flags;
-        cold.executable = executable.into();
-        cold.window = window.into();
+        cold.occupy(
+            ReturnTarget {
+                value_use: ReturnValue::Push,
+                owner: ReturnOwner::Frame(parent),
+                tail: false,
+                operation: None,
+            },
+            crate::engine::vm::closure::FrameFunction::shared(runtime, function, closure),
+            crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None),
+            flags,
+            executable,
+            window,
+        );
         publication.install(Frame {
             property_generation: 0,
             iterator_generation: 0,

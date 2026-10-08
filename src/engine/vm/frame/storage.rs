@@ -22,6 +22,31 @@ impl DerefMut for FrameBody {
         &mut self.owners
     }
 }
+impl FrameBody {
+    /// Publish a vacant pooled body. The pool keeps every owner below empty,
+    /// so the writes need no drop of a previous owner.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    pub(in crate::engine::vm) fn occupy(
+        &mut self,
+        return_to: super::ReturnTarget,
+        function: crate::engine::vm::closure::FrameFunction,
+        input: crate::engine::vm::CallInput,
+        captured_locals: Vec<bool>,
+        executable: crate::engine::code::runtime::PublishedFunctionSnapshot,
+        window: crate::engine::vm::stack::FrameWindow,
+    ) {
+        debug_assert!(self.owners.return_to.is_none() && self.owners.entry_guard.is_none());
+        self.owners.return_to = Some(return_to);
+        self.owners.function.occupy(function);
+        self.owners.input.occupy(input);
+        let vacated = std::mem::replace(&mut self.owners.reusable_captured_locals, captured_locals);
+        debug_assert_eq!(vacated.capacity(), 0, "vacant frame kept capture flags");
+        std::mem::forget(vacated);
+        self.executable.occupy(executable);
+        self.window.occupy(window);
+    }
+}
 pub(in crate::engine::vm) struct ColdFrame(Box<FrameBody>);
 impl ColdFrame {
     pub(in crate::engine::vm) fn new(frame: FrameCold) -> Self {
@@ -60,8 +85,12 @@ impl DerefMut for ColdFrame {
 pub(in crate::engine::vm) struct CallStorage {
     prepared_depth: usize,
     // Cache the Box allocations themselves, not newly allocated frame values.
+    // Bodies that kept a `FrameRare` (constructors, unwind regions) pool
+    // apart, so ordinary calls do not pay its checks on install and return.
     #[allow(clippy::vec_box)]
     empty_frames: Vec<Box<FrameBody>>,
+    #[allow(clippy::vec_box)]
+    rare_frames: Vec<Box<FrameBody>>,
     capture_flags: Vec<Vec<bool>>,
     regions: Vec<Vec<crate::engine::vm::VmUnwindRegion>>,
 }
@@ -106,6 +135,9 @@ impl CallStorage {
             self.empty_frames.capacity(),
             size_of::<Box<FrameBody>>(),
         );
+        self.rare_frames
+            .try_reserve(depth.saturating_sub(self.rare_frames.len()))
+            .map_err(|_| Error::internal("cold frame recycler allocation failed"))?;
         #[cfg(feature = "profiling")]
         let before = self.capture_flags.capacity();
         self.capture_flags
@@ -175,7 +207,7 @@ impl CallStorage {
                 "call_region_buffer_reused",
             );
         }
-        if let Some(mut empty) = self.empty_frames.pop() {
+        if let Some(mut empty) = self.empty_frames.pop().or_else(|| self.rare_frames.pop()) {
             if frame.rare.get().is_none() {
                 frame.rare = std::mem::take(&mut empty.rare);
             }
@@ -222,8 +254,13 @@ impl CallStorage {
             self.capture_flags.push(flags);
         }
 
-        if self.empty_frames.len() < self.empty_frames.capacity() {
-            self.empty_frames.push(cold.0);
+        let pool = if cold.rare.get().is_some() {
+            &mut self.rare_frames
+        } else {
+            &mut self.empty_frames
+        };
+        if pool.len() < pool.capacity() {
+            pool.push(cold.0);
         }
         Ok(())
     }
@@ -397,6 +434,12 @@ impl<T> Resident<T> {
     pub(in crate::engine::vm) fn take(&mut self) -> T {
         self.0.take().expect("resident owner already taken")
     }
+    #[inline(always)]
+    fn occupy(&mut self, value: T) {
+        let vacated = self.0.replace(value);
+        debug_assert!(vacated.is_none(), "vacant frame retained an owner");
+        std::mem::forget(vacated);
+    }
 }
 impl<T> Deref for Resident<T> {
     type Target = T;
@@ -414,11 +457,21 @@ impl<T> DerefMut for Resident<T> {
     }
 }
 impl CallStorage {
+    /// A body without `FrameRare` when one is pooled.
     pub(in crate::engine::vm) fn vacant(
         &mut self,
         _realm: crate::engine::heap::ContextId,
     ) -> (ColdFrame, usize) {
-        if let Some(frame) = self.empty_frames.pop() {
+        let frame = self.empty_frames.pop().or_else(|| self.rare_frames.pop());
+        self.vacant_from(frame)
+    }
+    /// Constructors always need `FrameRare`; prefer a body that kept one.
+    pub(in crate::engine::vm) fn vacant_rare(&mut self) -> (ColdFrame, usize) {
+        let frame = self.rare_frames.pop().or_else(|| self.empty_frames.pop());
+        self.vacant_from(frame)
+    }
+    fn vacant_from(&mut self, frame: Option<Box<FrameBody>>) -> (ColdFrame, usize) {
+        if let Some(frame) = frame {
             #[cfg(feature = "profiling")]
             if frame
                 .rare
