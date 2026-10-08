@@ -244,11 +244,14 @@ impl CallStorage {
             rare.conversion = None;
         }
 
-        cold.window.0 = None;
+        // Retirement already took the window, and release_owned the guard,
+        // function and input. Only the publication and return target remain.
+        if cold.window.0.is_some() {
+            cold.window.0 = None;
+        }
+        debug_assert!(cold.entry_guard.is_none());
+        debug_assert!(cold.function.0.is_none() && cold.input.0.is_none());
         cold.return_to = None;
-        cold.entry_guard = None;
-        cold.function.0 = None;
-        cold.input.0 = None;
         cold.executable.0 = None;
         if flags.capacity() != 0 && self.capture_flags.len() < self.capture_flags.capacity() {
             self.capture_flags.push(flags);

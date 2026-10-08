@@ -375,6 +375,8 @@ impl SlotStore {
 
     /// The exclusive execution producer supplies the actual retiring window.
     /// No detached window/currentness proof is accepted outside this module.
+    /// Kept out of the interpreter loop: a return there is dispatch plus a call.
+    #[inline(never)]
     pub(super) fn clear_current_frame_owned_in_state(
         &mut self,
         state: &mut crate::engine::heap::runtime::RuntimeState,
@@ -391,11 +393,28 @@ impl SlotStore {
             record_owned_storage(Cost::Clear(cleared));
         }
         self.active_end = window.whole().start;
-        self.clear_unpublished_owned_in_state(
-            state,
-            poisoned,
-            window.whole().start..window.operands().start + window.depth,
-        )?;
+        for index in window.whole().start..window.operands().start + window.depth {
+            // Immediates and empty slots own nothing; only edges are released.
+            let binding = match self.slots[index].take() {
+                None
+                | Some(FrameBinding::Uninitialized)
+                | Some(FrameBinding::Direct(
+                    JsValue::Undefined
+                    | JsValue::Null
+                    | JsValue::Bool(_)
+                    | JsValue::Int(_)
+                    | JsValue::Float(_)
+                    | JsValue::ShortBigInt(_),
+                )) => continue,
+                Some(binding) => binding,
+            };
+            if let Err(error) =
+                crate::engine::vm::bindings::release_frame_binding_in_state(state, binding)
+            {
+                poisoned.set(true);
+                return Err(runtime_error_to_vm_error(error));
+            }
+        }
         debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
         self.windows.pop();
         Ok(())

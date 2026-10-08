@@ -643,10 +643,12 @@ impl FrameCold {
     }
 
     pub(super) fn release_owned(&mut self, state: &mut RuntimeState) -> Result<(), RuntimeError> {
-        self.release_normalized_this(state)?;
-        self.release_eval_arguments(state)?;
-        self.release_resume_throw(state)?;
-        self.release_constructor_return(state)?;
+        if self.rare.get().is_some() {
+            self.release_normalized_this(state)?;
+            self.release_eval_arguments(state)?;
+            self.release_resume_throw(state)?;
+            self.release_constructor_return(state)?;
+        }
         if let Some(guard) = self.entry_guard.take() {
             guard.finish(state)?;
         }
