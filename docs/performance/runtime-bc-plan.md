@@ -720,6 +720,17 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
   `Class.create` 式构造（`this.initialize.apply(this, arguments)`）每次 38,058 → 18,050 条；建一个 arguments 对象约 15,400 → 6,000 条，
   `apply`（数组）约 14,000 → 2,700 条。教训同 E 实验：在拆小热循环之前，新的快速路径放在 ready 循环，不进解释函数。
 
+  | `24ae69c9` | 定点 | 全局变量读取：受信单元访问与受信复制（对象在 MAX-1 边界及其他堆值仍走带校验的 retain，保持溢出行为） | EarleyBoyer −2.14%、Richards −1.14%、DeltaBlue −1.02%、Splay −0.98% |
+  | `9ccdd3f8` | 5b | 无检查的捕获变量读写在 ready 循环内一次 state 访问完成，不物化 | NavierStokes −4.72%、RegExp −1.79% |
+  | `a2d3a1b6` | 5b | String + String 在一次 state 访问内完成原地追加或新分配并释放操作数 | Splay −1.69% |
+
+  累计（`a2d3a1b6` 相对 `59eadddb`）：RayTrace −42.52%、EarleyBoyer −8.68%、NavierStokes −4.67%、Splay −2.92%、RegExp −1.79%、
+  DeltaBlue −1.20%、Richards −1.05%、Crypto −0.09%。相对第 3 项末（`0e10e294`）：RayTrace −44.16%、EarleyBoyer −13.75%、Splay −7.13%、
+  DeltaBlue −6.59%、NavierStokes −6.58%、Richards −5.63%、RegExp −2.49%、Crypto −1.60%。
+
+  **5a 依据（空循环与 Richards/DeltaBlue 的指令级测量）：** 每次分派的公共路径约 30–34 条（QuickJS 约 5 条），在 Richards、DeltaBlue 中占
+  10.7%/8.3%；原因是热状态被溢出到栈上，每次分派重新加载并回写。设计见 [`interpreter-core-design.md`](interpreter-core-design.md)。
+
   RayTrace 剩余：解释循环 32.8%、释放/GC/分配 17.3%、调用 16.2%、读缓存 10.4%。对象槽位只内联 2 个（第 3 个属性起溢出到堆），
   但 `ArenaSlot` 已在 280 字节的预算上限，加大内联会使每个堆对象 +17%，不做；溢出缓冲按容量复用可省约 150 条/对象，收益中等，排在 5a 之后。
 - **第 7 项：**
