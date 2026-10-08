@@ -21,7 +21,7 @@
 | 第 1 项（#95，叠在 #93 上） | 收口步骤完成（head `e8d5ba12`），原生验收通过；1a、1d 的剩余预算划给第 2 项，`new` 的剩余划给第 2、4、5 项 |
 | 第 2 项（#101，叠在 #95 上） | 已收口（2026-10-08）：2a–2c 采纳；2d 实现后因八项均无明显增益撤回；dup/release 核对取消；解释函数尺寸作为例外记录。见第 5 节“第 2 项收口” |
 | 第 3 项（#102，叠在 #101 上） | 已收口（2026-10-08，按第 8 节“任务全部完成”）：3a–3f 采纳，八项 Ir 与 `perf stat` 周期全部低于基线；读缓存 R/D 14.8%/14.2%，未达 ≤14%（≤8% 已移入第 5 项）；最终原生 A/B Combined +6.18%，RegExp 未过非劣门槛但在 A/A 噪声内，按未分辨放行；原版 Score 为 Boa 的 95.7%。见第 5 节“第 3 项收口” |
-| 第 4 项（叠在 #102 上） | 进行中：4b、4c、4a、4d、4g 已提交，4f 调查完成、实现进行中；4e 的尺寸增长按决定作为例外记录。见第 5 节“第 4 项进度” |
+| 第 4 项（#103，叠在 #102 上） | 进行中：4a–4d、4g 与 4f 的通用部分已提交，八项 Ir 全部下降；调用占比离目标仍远（D 27.3%）；4e 的尺寸增长按决定作为例外记录。见第 5 节“第 4 项进度” |
 
 第 1 项收口后的结果（相对 B2a `f2501839`，参考测量机，固定工作量，8 对 A/A 加 8 对 A/B，
 `paired.py` 非劣门槛 −1%）：
@@ -592,12 +592,23 @@ aarch64 的数字只与同平台比较，收口时在 x86 上复测并按函数�
 | `7ba3b59c` | 4d | 构造预检的引用计数从同一次槽位查找中读出；`new C()` 的 target/newTarget 只查一次；bytecode 只查一次；选择复用已借出的对象记录。饱和时仍退回通用路径 | EarleyBoyer −1.64%、RayTrace −1.00%；`new E()` −515 |
 | `7c5c0141` | 4d | 普通调用与 Base 构造共用一个帧安装实现（内联进两个入口） | 结构提交 |
 | `6d13d27c` | 4g | `CallInput::new` 去掉未用的 `Runtime`；`FrameFunction::shared` 只接收 domain id | 结构提交 |
+| `507623a1` | 4f | 原始数值退出在 ready 循环内完成、不预先物化（出错、查询与拒绝路径才物化）；冷驱动经懒单元读取 `resume_throw`，不再给每个帧分配 `FrameRare` | Splay −1.36%、EarleyBoyer −0.75% |
+| `76c1685e` | 4f | ready 循环重入当前帧时只比较帧 id；窗口与 PC 边界（二分查找）检查只在 debug 与 `checked-handles` 构建中做 | EarleyBoyer −1.49%、Splay −1.23%、NavierStokes −0.96%、RayTrace −0.91%，八项全部下降 |
+| `59eadddb` | 4f | ready 循环已为观察型退出物化，冷驱动不再重复物化（replay bridge 除外） | EarleyBoyer −0.61% |
 
-**累计（`7ba3b59c` 相对 `0e10e294`）：** DeltaBlue −4.92%、Richards −4.14%、EarleyBoyer −2.76%、RayTrace −1.78%、Splay −1.70%、
-Crypto −0.63%、NavierStokes −0.31%、RegExp +0.15%（在 0.5% 门槛内）。探针：`f(i)` 2,517 → 2,235、`o.m(i)` 2,714 → 2,416、
-`g(p)` 2,855 → 2,606、`new E()` 4,651 → 4,114。
+`7c5c0141` 实测为持平（八项在 ±0.5% 内）。
 
-**4e 解释函数尺寸（作为例外记录）。** aarch64 `execute_frame_in_state` 53,944 → 55,296 字节（+2.5%），增长来自 4a 命中路径内联进循环。
+**累计（`59eadddb` 相对 `0e10e294`）：** EarleyBoyer −5.56%、DeltaBlue −5.45%、Richards −4.62%、Splay −4.33%、RayTrace −2.85%、
+NavierStokes −2.00%、Crypto −1.51%、RegExp −0.72%，八项全部下降。探针：`f(i)` 2,517 → 2,227、`o.m(i)` 2,714 → 2,407、
+`g(p)` 2,855 → 2,596、`new E()` 4,651 → 4,084、空循环 524 → 511。
+
+**调用占比（`classify.py`，aarch64，`0e10e294` → `59eadddb`）：** DeltaBlue 30.5% → 27.3%、EarleyBoyer 20.7% → 18.2%、Richards 19.1% → 16.1%、
+RayTrace 13.2% → 11.6%、Splay 14.1% → 10.3%。占比降得比 Ir 慢：4a 的命中路径内联进解释函数后按函数名计入“解释循环”（DeltaBlue 该类 35.3% → 40.1%）。
+按绝对量，DeltaBlue 的调用类从 13.05 亿条降到 11.05 亿条（−15%）。离目标（D/EB ≤12%、R ≤8%）仍远：DeltaBlue 还需再省约 6 亿条，
+相当于每次调用加返回（`f(i)` 中约 1,300 条）再减一半以上，超出 4a–4g 的局部改动范围。
+
+**4e 解释函数尺寸（作为例外记录）。** aarch64 `execute_frame_in_state` 53,944 → 55,296 字节（+2.5%），增长来自 4a 命中路径内联进循环；
+4f 后函数改名为 `execute_admitted_in_state`，55,420 字节（+2.7%）。
 把 `enter_ordinary` 移出循环的变体为 53,576 字节（−0.7%），但每次调用 +35 条、八项 Ir 回升 0.04%–0.77%、空循环 +5 条（循环的寄存器分配随之改变）。
 2026-10-08 决定保留内联版本，接受尺寸增长；收口的原生 A/B 前用 `perf stat`（周期、L1i 未命中）复核。
 
@@ -617,6 +628,17 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
 重定基线中归入“调用与返回”的 `run_frames_with_state`、`materialize_in_state`、`run` 主要是这些操作的重入成本。
 决定（2026-10-08）：4f 先让重入本身变便宜，对所有退出原因有效；`instanceof`、全局变量、数值比较与 `apply`+`arguments`
 留在循环内处理的方案记录在此，交给检查点排序。
+
+**4f 每次退出的成本**（探针：被调函数内写一次全局变量，减去 `f(i)`）：2,610 → 2,299 条。剩余部分：
+
+- 重入固定开销约 930 条：解释函数退出与再分派约 311、入口序言约 180（LLVM 把几十个栈上地址的计算提到入口再溢出，属第 5 项拆小热循环）、
+  `ready::run` 152、`run_frames_with_state` 74、冷分派与 `deferred_action` 约 117、`current_mut`/`next_pc` 约 98；
+- 新帧的物化与注销约 340 条（`materialize_in_state`、`ActiveFrames::push`/`pop`、`ActiveFrameRestore::finish`）；
+- 全局写本身约 1,000 条，仍走公共 root 的旧接口（第 7 项）。
+
+`instanceof` 单次约 3,800 条在通用查询（`proxy_get_driver::start_instance`）中，不属于重入成本。
+错误分支不依赖预先物化：抛出处理会先物化再补错误栈（新测试覆盖数值错误的错误栈）。其余退出种类（environment、predicate、binding）
+能否推迟物化，需要逐个确认处理器不读活动帧注册表（原生访问器、跨 realm），未做。
 
 ### 顺序与时间上限
 
