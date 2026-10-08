@@ -20,7 +20,8 @@
 | B2b–f（原顺序） | 已停止，由下面的成本中心顺序替代 |
 | 第 1 项（#95，叠在 #93 上） | 收口步骤完成（head `e8d5ba12`），原生验收通过；1a、1d 的剩余预算划给第 2 项，`new` 的剩余划给第 2、4、5 项 |
 | 第 2 项（#101，叠在 #95 上） | 已收口（2026-10-08）：2a–2c 采纳；2d 实现后因八项均无明显增益撤回；dup/release 核对取消；解释函数尺寸作为例外记录。见第 5 节“第 2 项收口” |
-| 第 3、4 项 | 已按 x86 八项 profile 重定基线与任务（第 5 节），待开始 3a |
+| 第 3 项（stacked PR，叠在 #101 上） | 3a–3e 已实现（head `1caa9a5c`），八项 Ir 全部下降，原生 Combined +2.78%；读缓存 ≤8% 未达到，剩余成本与方案见 [`read-hit-design.md`](read-hit-design.md)，待决定 3f 与目标修正。见第 5 节“第 3 项结果” |
+| 第 4 项 | 已按 x86 八项 profile 重定基线与任务（第 5 节），待开始 |
 
 第 1 项收口后的结果（相对 B2a `f2501839`，参考测量机，固定工作量，8 对 A/A 加 8 对 A/B，
 `paired.py` 非劣门槛 −1%）：
@@ -395,6 +396,48 @@ profiling 构建按状态统计读缓存命中。
 - 探针记录但不作门槛：`s=o.x`、`o.x=i`、`o.x=p`、`a[i&1023]=i`、`a[i&15]=p`。
 - 正确性：后加只读属性与原型 setter、冻结/密封/不可扩展/字典模式、访问器与 Proxy 接收者、
   数组 length/hole/冻结数组/不可写索引、缓存失效、strict 与 sloppy；focused Test262。
+
+#### 第 3 项结果（2026-10-08，head `1caa9a5c`）
+
+| 提交 | 任务 | 内容 | 主要效果（Ir，相对前一提交） |
+|---|---|---|---|
+| `5413a060` | 3a | 状态拆成种类 + 4 个条目 `Cell`，接收者只取一次，按 shape 先比；单态走直线路径 | DeltaBlue −2.1%、Richards −1.7%、RayTrace −1.0%、Splay −1.1% |
+| `3fbfdf7f` | 3b | 多态命中不再轮换条目 | Splay −0.7%、DeltaBlue −0.5%（单独未达 1%，与 3a 合并验收） |
+| `000a4a75` | 3a 第三轮 | 站点查找改为每 PC 一字节偏移（x86-64 基线无 `popcnt`）；`Slots::get` 内联；缓存读取**不**强制内联 | Richards −2.3%、DeltaBlue −2.4%（内联版本测得） |
+| `b8429049` | 3c | 写入站点记住已有可写数据槽；命中与学习不内联，已学习位图让只追加的站点跳过调用；16 次未命中后才重新学习 | Richards −1.4%，其余 ±0.5% 内 |
+| `cc0b9102` | 3d | 快速路径接受长度以内的第一个空洞（`new Array(n)` 按序填充） | NavierStokes −12.75% |
+| `921af360` | 3e | 无需用户转换的计算键（整数/整数值浮点、String、Symbol）在 State 上解析为 atom，走 dense 与普通对象的带所有权写入；其余交给 `SetStep` | Crypto −10.1% |
+| `35ea1ca8` | 3e | `ConvertedWrite` 不再持有 `Runtime`，与 `ConvertedRead` 一致 | — |
+| `1caa9a5c` | 3d | 数组字面量的元素一次校验、一次预留、一次更新长度 | Splay −9.9% |
+
+**八项 Ir（相对 `b105a22f`）：** NavierStokes −13.10%、Splay −12.07%、Crypto −11.13%、Richards −5.28%、DeltaBlue −5.06%、
+RayTrace −2.36%、EarleyBoyer −1.16%、RegExp −0.16%。探针：`s=o.x` 367 → 315、`o.x=i` 599 → 540、`o.x=p` 766 → 709。
+
+**原生（x86，8 对 abba-baab，`b105a22f` 对 `1caa9a5c` 同树构建，正数为候选更快）：** Crypto +13.85%、NavierStokes +9.80%、
+Splay +7.95%、Richards +5.10%、RayTrace +1.87%、RegExp −0.26%（跨 0）、DeltaBlue −2.56%、EarleyBoyer −2.18%，Combined +2.78%（+2.41..+3.33）。
+
+DeltaBlue、EarleyBoyer 的回退来自布局：只去掉强制内联、尚无 3e 与字面量提交的构建，与最终构建在这两项上执行的指令相同
+（DeltaBlue 8.338G 对 8.347G，L1i 未命中相同），周期却分别低 6.2% 和 3.6%，且比基线快 4.8% 和 1.8%（`perf stat`，绑核，7 次）。
+按第 7 节规则以 Combined 与对照判定，第 3 项改动原生通过。此对照是“指令相同、布局不同”的两个构建，而不是“运行时关闭新路径”的变体；
+3a–3e 的多处改动无法用单一开关关闭。
+
+**正确性：** 每个提交的库测试全部通过（最终 2351 项）；focused Test262 6844/6844（3a、3b、3c、3d 空洞、最终 head）；新增测试覆盖写缓存失效
+（只读、冻结、访问器、删除后重加、数组命名属性）、空洞填充语义（乱序、只读 length、不可扩展、原型 setter 与只读元素）、
+计算键写入语义（Symbol、负数与小数键、原型 setter、strict 拒绝、Proxy、`__proto__`、数组 `length`、全局对象）与 String atom 释放。
+
+**3e 的实际范围。** 计划中的 `SetOperands` 在代码中并不存在（只是早先文档的概念名）。VM 的未命中写入实际经由 `SetStep`
+（约 2000 行，建立在 `Runtime`/`ObjectRef`/`PropertyKey` 上，另有 11 个文件、20 处内建调用方）。本项按 VM 范围完成：
+无需转换的计算键在 State 上完成，`ConvertedWrite` 去掉 `Runtime`；setter、Proxy、拒绝与 exotic 接收者仍交给 `SetStep`。
+“setter 交接内部调用”与 `SetStep` 本身迁移到 State 未做，归第 7 项。
+
+**读缓存目标未达到。** R/D 读缓存 self 占比 23.1%/22.6% → 19.6%/18.6%（目标 ≤8%）。一次单态命中约 250 条（QuickJS 约 48）。
+行级分解、句柄检查结论（release 已不核对代数；剩余约 10 条在 `unsafe_code = "forbid"` 下无法去除，另约 10 条是重复查找）
+与方案 A–D 见 [`read-hit-design.md`](read-hit-design.md)，待决定：3f 是否在本项内做、≤8% 是否改为第 5 项后的联合目标。
+
+**过程记录。**
+- 本机解释器受 L1i 限制（DeltaBlue 每千条指令约 14 次 L1i 未命中）：Ir 下降不代表原生变快。强制内联让 Ir 不变而周期 +6%。
+  以后原生 A/B 前先用 `perf stat`（周期、指令、L1i 未命中，绑核）对比，再跑完整 A/B。
+- `perf stat` 不能在停 Docker 后立即运行，虚拟机关闭期间测得的周期偏差可达 17%。
 
 ### 第 4 项：调用与返回的剩余成本（包括构造调用）
 
