@@ -1261,15 +1261,32 @@ impl RuntimeState {
     ) -> Result<ObjectId, RuntimeError> {
         let mut array_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(array));
         let (state, array_owner) = array_owner.parts();
+        // Publish the storable prefix in one transaction. On its failure no
+        // owner moved; the first one is the rejected element and is released
+        // before the Array, exactly as an element-by-element append does. A
+        // non-storable element after the prefix takes the single append.
+        let storable = values
+            .iter()
+            .position(|value| !value_is_storable(value))
+            .unwrap_or(values.len());
         let appended = (|| {
-            for value in values.iter_mut() {
-                state.append_fresh_array_value_jsvalue(
+            if storable > 0
+                && let Err(error) = state
+                    .heap
+                    .append_fresh_array_dense_values_owned(array, &mut values[..storable])
+            {
+                let rejected = std::mem::replace(&mut values[0], JsValue::Undefined);
+                state.release_owned_jsvalue(poisoned, rejected)?;
+                return Err(error.into());
+            }
+            match values.get_mut(storable) {
+                None => Ok(()),
+                Some(value) => state.append_fresh_array_value_jsvalue(
                     poisoned,
                     array,
                     std::mem::replace(value, JsValue::Undefined),
-                )?;
+                ),
             }
-            Ok(())
         })();
         if let Err(error) = appended {
             // Retire the Array and its published prefix before the suffix.
@@ -1287,6 +1304,10 @@ impl RuntimeState {
         };
         Ok(array)
     }
+}
+
+fn value_is_storable(value: &JsValue) -> bool {
+    crate::engine::heap::is_map_storable_value(&value.as_raw())
 }
 
 #[cfg(test)]

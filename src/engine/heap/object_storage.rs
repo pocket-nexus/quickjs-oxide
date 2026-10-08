@@ -586,6 +586,11 @@ impl Heap {
     }
 
     fn fresh_array_next_length(&self, id: ObjectId) -> Result<u32, HeapError> {
+        self.fresh_array_length_after(id, 1)
+    }
+
+    /// The length of a fresh dense Array after appending `added` elements.
+    fn fresh_array_length_after(&self, id: ObjectId, added: u32) -> Result<u32, HeapError> {
         Ok({
             let object = self.object(id)?;
             let ObjectPayload::Array { dense: Some(dense) } = &object.payload else {
@@ -620,10 +625,44 @@ impl Heap {
                     "fresh Array length diverged from its dense count",
                 ));
             }
-            dense_len.checked_add(1).ok_or(HeapError::Overflow {
+            dense_len.checked_add(added).ok_or(HeapError::Overflow {
                 operation: "growing fresh Array length",
             })?
         })
+    }
+
+    /// Adopt every owned element of a literal at once: one validation, one
+    /// reservation and one length update. The caller passes only storable
+    /// values. On error nothing is published and every input owner stays in
+    /// `values` for the caller's cleanup.
+    pub(crate) fn append_fresh_array_dense_values_owned(
+        &mut self,
+        id: ObjectId,
+        values: &mut [crate::engine::value::JsValue],
+    ) -> Result<(), HeapError> {
+        let added = u32::try_from(values.len()).map_err(|_| HeapError::Overflow {
+            operation: "growing fresh Array length",
+        })?;
+        let next_len = self.fresh_array_length_after(id, added)?;
+        let object = self.object_mut(id)?;
+        let ObjectPayload::Array { dense: Some(dense) } = &mut object.payload else {
+            unreachable!("validated dense Array changed before reservation")
+        };
+        dense
+            .try_reserve(values.len())
+            .map_err(|_| HeapError::Allocation {
+                operation: "growing fast Array storage",
+            })?;
+        dense.extend(values.iter_mut().map(|value| {
+            std::mem::replace(value, crate::engine::value::JsValue::Undefined).into_raw()
+        }));
+        let Some(PropertySlot::Data(length)) = object.slots.first_mut() else {
+            unreachable!("validated fresh Array length slot")
+        };
+        *length = i32::try_from(next_len)
+            .map(RawValue::Int)
+            .unwrap_or_else(|_| RawValue::Float(f64::from(next_len)));
+        Ok(())
     }
 
     /// Adopt an owned element, including its atom edge, with no retain/release

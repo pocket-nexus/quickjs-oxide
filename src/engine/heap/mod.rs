@@ -396,7 +396,7 @@ where
     }
     Ok(difference)
 }
-const fn is_map_storable_value(value: &RawValue) -> bool {
+pub(crate) const fn is_map_storable_value(value: &RawValue) -> bool {
     !matches!(
         value,
         RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception
