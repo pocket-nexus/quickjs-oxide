@@ -252,7 +252,7 @@ impl SlotStore {
             start,
             next_window,
             window: FrameWindow {
-                owner: self.owner.clone(),
+                owner: self.owner,
                 id: self.next_window,
                 base,
                 original_end,
