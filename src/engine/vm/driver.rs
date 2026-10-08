@@ -707,6 +707,9 @@ fn run_frames_with_state(
                 .map(Completion::Throw);
         }
         let mut conversion_prepared = false;
+        // The ready loop publishes the frames before returning any exit that
+        // observes them; only the remaining exits need it here.
+        let mut published = false;
         let mut exit = if let Some(task) = conversion.take() {
             use crate::engine::vm::conversion_driver::Progress;
             #[cfg(feature = "profiling")]
@@ -815,7 +818,11 @@ fn run_frames_with_state(
                 .current_id()
                 .ok_or_else(|| Error::internal("ordinary loop lost current frame"))?;
             match boundary {
-                ready::Boundary::Exit(exit) => exit,
+                ready::Boundary::Exit(exit) => {
+                    // A replay bridge may come from a property step; publish again.
+                    published = exit.observes_activation() && exit != VmAction::Bridge;
+                    exit
+                }
                 ready::Boundary::Entered => continue,
                 ready::Boundary::Conversion(exit) => {
                     conversion_prepared = true;
@@ -827,7 +834,9 @@ fn run_frames_with_state(
                 }
             }
         };
-        execution.frames.materialize(runtime)?;
+        if !published {
+            execution.frames.materialize(runtime)?;
+        }
         match cold::dispatch(
             runtime,
             &mut execution,
