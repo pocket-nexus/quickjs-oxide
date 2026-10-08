@@ -7,6 +7,13 @@ impl Heap {
         Ok(&self.var_refs.live(id)?.data)
     }
 
+    /// Trusted read of a cell that a live closure or frame edge keeps alive.
+    /// Identity is checked only in debug and `checked-handles` builds.
+    #[inline]
+    pub(crate) fn var_ref_fast(&self, id: VarRefId) -> &VarRefData {
+        &self.var_refs.live_fast(id).data
+    }
+
     /// Read immutable executable data without promoting any raw cpool edges.
     pub fn function_bytecode(
         &self,

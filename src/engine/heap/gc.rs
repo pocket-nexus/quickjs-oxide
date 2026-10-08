@@ -261,6 +261,12 @@ impl Heap {
         self.retain_raw(RawId::Object(id), 1)
     }
 
+    /// Trusted strong-count read for a live object handle.
+    #[inline]
+    pub(crate) fn object_strong_fast(&self, id: ObjectId) -> u32 {
+        self.live_node_fast(RawId::Object(id)).strong.get()
+    }
+
     /// Trusted hot-path retain for a live object handle.
     #[inline]
     pub(crate) fn retain_object_fast(&self, id: ObjectId) {

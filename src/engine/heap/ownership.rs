@@ -660,6 +660,30 @@ impl RuntimeState {
             .expect("JsValue has no private or uninitialized payload"))
     }
 
+    /// Duplicate a value held by another live heap edge, such as a cell. The
+    /// object lookup is trusted, but a count at the MAX-1 -> immortal boundary
+    /// and every other heap kind take [`Self::dup_jsvalue`], so saturation
+    /// and overflow behave exactly as the checked retain.
+    #[inline]
+    pub(crate) fn dup_held_jsvalue(&mut self, value: &JsValue) -> Result<JsValue, RuntimeError> {
+        match value {
+            JsValue::Undefined => Ok(JsValue::Undefined),
+            JsValue::Null => Ok(JsValue::Null),
+            JsValue::Bool(value) => Ok(JsValue::Bool(*value)),
+            JsValue::Int(value) => Ok(JsValue::Int(*value)),
+            JsValue::Float(value) => Ok(JsValue::Float(*value)),
+            JsValue::ShortBigInt(value) => Ok(JsValue::ShortBigInt(*value)),
+            JsValue::Object(id)
+                if self.heap.admits_trusted(RawId::Object(*id))
+                    && self.heap.object_strong_fast(*id) < u32::MAX - 1 =>
+            {
+                self.heap.retain_object_fast(*id);
+                Ok(JsValue::Object(*id))
+            }
+            _ => self.dup_jsvalue(value),
+        }
+    }
+
     /// Retire an execution-owned edge. Cleanup errors can follow partial heap
     /// mutation, so abandon this state instead of traversing another owner.
     /// Checked retain failure is handled separately and does not poison state.
