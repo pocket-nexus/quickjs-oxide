@@ -174,6 +174,45 @@ impl Heap {
         Ok(())
     }
 
+    /// The realm's cached arguments shape for this kind and count, if any.
+    pub(crate) fn arguments_shape(
+        &self,
+        realm: ContextId,
+        mapped: bool,
+        count: usize,
+    ) -> Result<Option<ShapeId>, HeapError> {
+        Ok(self.context(realm)?.arguments_shapes[usize::from(mapped)]
+            .get(count)
+            .copied()
+            .flatten())
+    }
+
+    /// Transfer one owned shape reference into the realm's arguments cache.
+    pub(crate) fn cache_arguments_shape(
+        &mut self,
+        realm: ContextId,
+        mapped: bool,
+        count: usize,
+        shape: ShapeId,
+    ) -> Result<(), HeapError> {
+        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
+        else {
+            return Err(HeapError::Invariant(
+                "arguments shape cache needs a context",
+            ));
+        };
+        let entry = context.arguments_shapes[usize::from(mapped)]
+            .get_mut(count)
+            .ok_or(HeapError::Invariant(
+                "arguments shape cache index out of range",
+            ))?;
+        if entry.is_some() {
+            return Err(HeapError::Invariant("arguments shape is already cached"));
+        }
+        *entry = Some(shape);
+        Ok(())
+    }
+
     /// Cache the original realm-local `Array.prototype.values` callable.
     /// This is a distinct Context root because the public prototype property
     /// is writable and configurable while arguments creation must keep using

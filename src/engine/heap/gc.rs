@@ -3025,7 +3025,8 @@ pub(super) fn context_edges(context: &ContextData) -> Vec<RawId> {
             .saturating_add(context.iterator.map_or(0, |_| 4))
             .saturating_add(context.global_objects.len())
             .saturating_add(context.intrinsics.len())
-            .saturating_add(context.initial_shapes.len()),
+            .saturating_add(context.initial_shapes.len())
+            .saturating_add(2 * super::realm_records::ARGUMENTS_SHAPE_COUNTS),
     );
     visit_context_edges(context, &mut |edge| {
         edges.push(edge);
@@ -3159,6 +3160,16 @@ pub(super) fn visit_context_edges<E>(
         if let Some(edge) = raw_value_edge(value) {
             visit(edge)?;
         }
+    }
+    for edge in context
+        .arguments_shapes
+        .iter()
+        .flatten()
+        .flatten()
+        .copied()
+        .map(RawId::Shape)
+    {
+        visit(edge)?;
     }
     for edge in context.initial_shapes.iter().copied().map(RawId::Shape) {
         visit(edge)?;

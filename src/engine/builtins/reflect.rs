@@ -114,7 +114,9 @@ impl Runtime {
                         PropertySlot::VarRef(var_ref) if mapped => {
                             state.heap.var_ref(*var_ref)?.value.clone()
                         }
-                        PropertySlot::Data(value) if !mapped => value.clone(),
+                        // Extra actual arguments of a mapped object alias no
+                        // formal parameter and are plain data.
+                        PropertySlot::Data(value) => value.clone(),
                         _ => {
                             return Err(RuntimeError::Invariant(
                                 "fast argument index has the wrong storage kind",

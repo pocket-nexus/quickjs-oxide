@@ -52,6 +52,144 @@ impl ArgumentsLayout {
     }
 }
 
+impl crate::engine::heap::runtime::RuntimeState {
+    /// Build an arguments object under one state access. `slots` holds one
+    /// entry per actual argument (a data value, or a mapped parameter cell);
+    /// the object takes its own edges, so the caller keeps its owners.
+    /// `callee` is the mapped function, or `None` for an unmapped object.
+    pub(crate) fn new_arguments_object_in_state(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        realm: ContextId,
+        callee: Option<crate::engine::heap::ObjectId>,
+        mut slots: Vec<PropertySlot>,
+    ) -> Result<crate::engine::heap::ObjectId, RuntimeError> {
+        let count = slots.len();
+        let length = u32::try_from(count).map_err(|_| {
+            RuntimeError::Invariant("actual argument count exceeded QuickJS Uint32 storage")
+        })?;
+        let mapped = callee.is_some();
+        let (prototype, array_values, thrower) = {
+            let context = self.heap.context(realm)?;
+            (
+                context.object_prototype,
+                context
+                    .array_prototype_values
+                    .ok_or(RuntimeError::Invariant(
+                        "realm has no cached Array.prototype.values root",
+                    ))?,
+                context.throw_type_error.ok_or(RuntimeError::Invariant(
+                    "realm has no shared %ThrowTypeError% root",
+                ))?,
+            )
+        };
+        slots.push(PropertySlot::Data(match i32::try_from(length) {
+            Ok(length) => RawValue::Int(length),
+            Err(_) => RawValue::Float(f64::from(length)),
+        }));
+        slots.push(match callee {
+            Some(function) => PropertySlot::Data(RawValue::Object(function)),
+            None => PropertySlot::accessor(Some(thrower), Some(thrower)),
+        });
+        slots.push(PropertySlot::Data(RawValue::Object(array_values)));
+        let shape = match self.heap.arguments_shape(realm, mapped, count)? {
+            Some(shape) => shape,
+            None => {
+                let entries = self.arguments_shape_entries(mapped, count)?;
+                let shape = self.get_or_create_shape(Some(prototype), &entries)?;
+                if count < crate::engine::heap::ARGUMENTS_SHAPE_COUNTS {
+                    // The cache keeps this reference; the object takes its own.
+                    self.heap
+                        .cache_arguments_shape(realm, mapped, count, shape)?;
+                } else {
+                    let object =
+                        self.allocate_arguments_object(poisoned, shape, slots, mapped, length);
+                    let cleanup = self
+                        .heap
+                        .release_shape(shape)
+                        .inspect_err(|_| poisoned.set(true))?;
+                    self.apply_cleanup(cleanup)
+                        .inspect_err(|_| poisoned.set(true))?;
+                    return object;
+                }
+                shape
+            }
+        };
+        self.allocate_arguments_object(poisoned, shape, slots, mapped, length)
+    }
+
+    fn allocate_arguments_object(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        shape: crate::engine::heap::ShapeId,
+        slots: Vec<PropertySlot>,
+        mapped: bool,
+        length: u32,
+    ) -> Result<crate::engine::heap::ObjectId, RuntimeError> {
+        let atoms = self.retain_slot_atoms(&slots)?;
+        match self
+            .heap
+            .allocate_object_with_status(ObjectData::arguments(shape, slots, mapped, length))
+        {
+            Ok(object) => Ok(object),
+            Err(failure) if failure.published => {
+                poisoned.set(true);
+                Err(failure.error.into())
+            }
+            Err(failure) => {
+                self.release_atoms(atoms)
+                    .inspect_err(|_| poisoned.set(true))?;
+                Err(failure.error.into())
+            }
+        }
+    }
+
+    /// Indexed entries, then `length`, `callee` and `@@iterator`, in the
+    /// order and with the flags of [`Runtime::new_unmapped_arguments_object`].
+    fn arguments_shape_entries(
+        &self,
+        mapped: bool,
+        count: usize,
+    ) -> Result<Vec<ShapeEntry>, RuntimeError> {
+        let mut entries = Vec::with_capacity(count + 3);
+        for index in 0..count {
+            let atom = u32::try_from(index)
+                .ok()
+                .and_then(crate::engine::atom::Atom::from_immediate_integer)
+                .ok_or(RuntimeError::Invariant(
+                    "arguments index has no immediate atom",
+                ))?;
+            entries.push(ShapeEntry {
+                atom: AtomIdx::from_raw(atom.raw()),
+                flags: PropertyFlags::data(true, true, true),
+            });
+        }
+        let pinned = |atom| AtomIdx::from_raw(self.pinned_atoms.get(atom).raw());
+        use crate::engine::atom::pinned::PinnedAtom;
+        entries.push(ShapeEntry {
+            atom: pinned(PinnedAtom::Length),
+            flags: PropertyFlags::data(true, false, true),
+        });
+        entries.push(ShapeEntry {
+            atom: pinned(PinnedAtom::Callee),
+            flags: if mapped {
+                PropertyFlags::data(true, false, true)
+            } else {
+                PropertyFlags::accessor(false, false)
+            },
+        });
+        let iterator = self
+            .well_known_symbols
+            .get(&WellKnownSymbol::Iterator)
+            .ok_or(RuntimeError::Invariant("Symbol.iterator is not registered"))?;
+        entries.push(ShapeEntry {
+            atom: AtomIdx::from_raw(iterator.raw()),
+            flags: PropertyFlags::data(true, false, true),
+        });
+        Ok(entries)
+    }
+}
+
 impl Runtime {
     /// Build QuickJS `JS_CLASS_ARGUMENTS` from the exact actual arguments.
     /// Formal-parameter padding must never be included in `values`.
@@ -474,6 +612,45 @@ mod tests {
     use crate::engine::value::Value;
 
     use super::*;
+
+    #[test]
+    fn frame_built_arguments_keep_mapping_semantics_and_share_shapes() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        // Formals alias their index both ways; extra actual arguments are
+        // plain data, and every count shares one cached shape per kind.
+        let source = r#"
+            function sloppy(a){ arguments[0]=10; var x=a; a=20;
+              arguments[1]=30; return [x, arguments[0], arguments[1], arguments.length,
+                arguments.callee===sloppy, Object.keys(arguments).join()].join(); }
+            function strict(a){ 'use strict'; arguments[0]=10; var x=a; a=20;
+              return [x, arguments[0], arguments.length].join(); }
+            function none(){ return Array.prototype.slice.call(arguments).join(); }
+            function many(){ return arguments.length + ':' + arguments[9]; }
+            var out=[];
+            for (var i=0;i<3;i++){ out.push(sloppy(1,2), strict(1,2), none(i,'b',null), many(0,1,2,3,4,5,6,7,8,9)); }
+            var desc=Object.getOwnPropertyDescriptor(sloppy.apply(null,[1]) && (function(){return arguments})(5),'0');
+            out.push(desc.value, desc.writable, desc.enumerable, desc.configurable);
+            out.join('|')"#;
+        let expected = ["10,20,30,2,true,0,1", "1,10,2"];
+        let row = format!("{}|{}|{{}}|10:9", expected[0], expected[1]);
+        let mut want = Vec::new();
+        for i in 0..3 {
+            want.push(row.replace("{}", &format!("{i},b,")));
+        }
+        want.push("5|true|true|true".to_string());
+        assert_eq!(
+            context.eval(source).unwrap(),
+            context.eval(&format!("{:?}", want.join("|"))).unwrap()
+        );
+        let (unmapped, mapped) = {
+            let state = runtime.0.state.borrow();
+            let realm = state.heap.context(context.realm).unwrap();
+            (realm.arguments_shapes[0], realm.arguments_shapes[1])
+        };
+        assert!(unmapped[2].is_some() && mapped[2].is_some() && mapped[3].is_some());
+        assert!(mapped.iter().chain(&unmapped).flatten().count() >= 4);
+    }
 
     fn data_descriptor(
         descriptor: Option<CompleteOrdinaryPropertyDescriptor>,

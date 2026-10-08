@@ -19,6 +19,9 @@ pub(super) fn arguments(
     id: FrameId,
     kind: ArgumentsKind,
 ) -> Result<JsValue, Error> {
+    if let Some(object) = arguments_in_state(runtime, execution, id, kind)? {
+        return Ok(object);
+    }
     let frame = execution.frames.current_mut(id)?;
     let count = execution.slots.actual_argument_count(&frame.window)?;
     let object = match kind {
@@ -69,6 +72,71 @@ pub(super) fn arguments(
     }
     .map_err(runtime_error_to_vm_error)?;
     Ok(JsValue::Object(object.into_handle()))
+}
+
+/// Build the arguments object from the frame under one state access. Mapped
+/// parameters are captured first, so their cells alias the formals; extra
+/// actual arguments map to nothing and become plain data, as in the
+/// specification. `None` leaves an unusual binding to the general path.
+fn arguments_in_state(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    kind: ArgumentsKind,
+) -> Result<Option<JsValue>, Error> {
+    use crate::engine::heap::PropertySlot;
+    let frame = execution.frames.current_mut(id)?;
+    let count = execution.slots.actual_argument_count(&frame.window)?;
+    let realm = frame.executable.realm;
+    let (mapped, callee) = match kind {
+        ArgumentsKind::Unmapped => (0, None),
+        ArgumentsKind::Mapped => (
+            count.min(frame.executable.argument_definitions.len()),
+            Some(frame.cold.function.object_id()),
+        ),
+    };
+    let mut slots = Vec::new();
+    slots
+        .try_reserve_exact(count + 3)
+        .map_err(|_| Error::internal("arguments slots allocation failed"))?;
+    let mut cells = Vec::new();
+    cells
+        .try_reserve_exact(mapped)
+        .map_err(|_| Error::internal("arguments cells allocation failed"))?;
+    for index in 0..mapped {
+        let index =
+            u16::try_from(index).map_err(|_| Error::internal("argument index exceeds u16::MAX"))?;
+        let cell = capture_frame_binding(
+            runtime,
+            execution.slots.parameter_mut(&frame.window, index)?,
+            ClosureVariable {
+                source: ClosureSource::ParentArgument(index),
+                name: ClosureVariableName::None,
+                is_lexical: false,
+                is_const: false,
+                kind: ClosureVariableKind::Normal,
+            },
+        )?;
+        slots.push(PropertySlot::VarRef(cell.id()));
+        cells.push(cell);
+    }
+    let object = {
+        let mut state = runtime.0.state.borrow_mut();
+        if !execution.slots.argument_data_slots_in_state(
+            &frame.window,
+            &state,
+            mapped,
+            &mut slots,
+        )? {
+            return Ok(None);
+        }
+        state
+            .new_arguments_object_in_state(&runtime.0.poisoned, realm, callee, slots)
+            .map_err(runtime_error_to_vm_error)?
+    };
+    // The object retained each mapped cell; the capture roots end here.
+    drop(cells);
+    Ok(Some(JsValue::Object(object)))
 }
 
 pub(super) fn rest(

@@ -175,6 +175,9 @@ pub struct TypedArrayRealmData {
 /// The bootstrap roots needed by ordinary script evaluation are explicit;
 /// additional intrinsic and module roots can extend the vectors without
 /// changing `ContextId` ownership.
+/// Arguments objects with up to this many actual arguments share a cached shape.
+pub(crate) const ARGUMENTS_SHAPE_COUNTS: usize = 8;
+
 #[derive(Debug)]
 pub struct ContextData {
     /// Stable public handle identity assigned by `Runtime::new_context`.
@@ -283,6 +286,9 @@ pub struct ContextData {
     pub global_objects: Vec<ObjectId>,
     pub intrinsics: Vec<RawValue>,
     pub initial_shapes: Vec<ShapeId>,
+    /// Shapes of arguments objects created in this realm, by mapped kind and
+    /// actual argument count, so creating one does not build a shape anew.
+    pub(crate) arguments_shapes: [[Option<ShapeId>; ARGUMENTS_SHAPE_COUNTS]; 2],
     pub(crate) regexp_group_shapes: std::collections::HashMap<Vec<Atom>, ShapeId>,
     /// Context-local `JSModuleDef` ownership, matching QuickJS's
     /// `JSContext.loaded_modules` rather than a Rust-side parallel graph.
@@ -346,6 +352,7 @@ impl ContextData {
             global_objects: Vec::new(),
             intrinsics: Vec::new(),
             initial_shapes: Vec::new(),
+            arguments_shapes: [[None; ARGUMENTS_SHAPE_COUNTS]; 2],
             regexp_group_shapes: std::collections::HashMap::new(),
             loaded_modules: LoadedModuleCache::new(),
         }

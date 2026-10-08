@@ -1356,6 +1356,46 @@ impl SlotStore {
         self.snapshot_argument_tail(window, runtime, 0)
     }
 
+    /// Append data slots for actual arguments `start..` read from the current
+    /// parameter bindings. The slots borrow the frame's edges; their new
+    /// owner retains them. Returns `false`, appending nothing further, when a
+    /// binding is neither a plain value nor an ordinary captured cell.
+    pub(in crate::engine::vm) fn argument_data_slots_in_state(
+        &self,
+        window: &FrameWindow,
+        state: &crate::engine::heap::runtime::RuntimeState,
+        start: usize,
+        slots: &mut Vec<crate::engine::heap::PropertySlot>,
+    ) -> Result<bool, Error> {
+        use crate::engine::heap::PropertySlot;
+        self.check_current(window)?;
+        let count = window.actual_count;
+        if count > window.parameters().len() {
+            return Err(Error::internal(
+                "actual argument count exceeds parameter window",
+            ));
+        }
+        for index in window.parameters().start + start.min(count)..window.parameters().start + count
+        {
+            let raw = match self.slots[index].as_ref() {
+                Some(FrameBinding::Direct(value)) => value.as_raw(),
+                Some(FrameBinding::Captured(cell)) => {
+                    let cell = state
+                        .heap
+                        .var_ref(*cell)
+                        .map_err(|error| Error::internal(error.to_string()))?;
+                    if cell.kind.is_private() {
+                        return Ok(false);
+                    }
+                    cell.value.clone()
+                }
+                _ => return Ok(false),
+            };
+            slots.push(PropertySlot::Data(raw));
+        }
+        Ok(true)
+    }
+
     pub(in crate::engine::vm) fn actual_argument_count(
         &self,
         window: &FrameWindow,
