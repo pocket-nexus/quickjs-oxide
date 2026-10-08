@@ -555,10 +555,9 @@ impl ConversionTask {
                                 let assigned = std::mem::replace(assigned, JsValue::Undefined);
                                 return Ok(Progress::PropertyWrite(Box::new(
                                     super::property_write_driver::ConvertedWrite {
-                                        base: Some(base),
-                                        key: Some(value),
-                                        value: Some(assigned),
-                                        runtime: runtime.clone(),
+                                        base,
+                                        key: value,
+                                        value: assigned,
                                     },
                                 )));
                             }

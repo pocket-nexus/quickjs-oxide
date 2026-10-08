@@ -3,9 +3,29 @@
 //! borrow that the receiver still has the recorded parent layout and that no
 //! prototype layout changed since the miss selected "define on the receiver";
 //! the caller then publishes the recorded successor without another selection.
+//! The same site also records an existing writable own data slot, so a store
+//! to that slot skips the own-key selection.
 use std::cell::Cell;
 
-use crate::engine::heap::{Heap, ObjectData, ShapeId};
+use crate::engine::heap::{Heap, ObjectData, ObjectKind, ObjectPayload, ShapeId};
+
+/// An existing writable own data property of a plain ordinary receiver.
+/// Writability and the slot index are part of the layout: reconfiguring a
+/// property gives the object a new shape or advances its shape's revision.
+#[derive(Clone, Copy, Debug)]
+struct ExistingLocation {
+    domain: u64,
+    shape: ShapeId,
+    revision: u64,
+    slot: u32,
+}
+
+fn plain_ordinary(receiver: &ObjectData) -> bool {
+    matches!(
+        (receiver.kind, &receiver.payload),
+        (ObjectKind::Ordinary, ObjectPayload::Ordinary)
+    )
+}
 
 #[derive(Clone, Copy, Debug)]
 struct AppendLocation {
@@ -34,9 +54,76 @@ pub(crate) struct AppendMiss {
 #[derive(Debug, Default)]
 pub(crate) struct PropertyAppendCache {
     location: Cell<Option<AppendLocation>>,
+    existing: Cell<Option<ExistingLocation>>,
+    /// Misses of a learned existing-slot fact since it was learned. A site
+    /// that alternates layouts replaces its fact only after this many misses
+    /// instead of relearning on every store.
+    existing_misses: Cell<u8>,
 }
 
+const EXISTING_RELEARN_MISSES: u8 = 16;
+
 impl PropertyAppendCache {
+    /// The slot of the key when `receiver` still has the layout this site
+    /// learned it as a writable own data property. The prototype chain is not
+    /// consulted: an own writable data property decides [[Set]] on itself.
+    #[inline]
+    pub(crate) fn existing_slot(
+        &self,
+        heap: &Heap,
+        domain: u64,
+        receiver: &ObjectData,
+    ) -> Option<usize> {
+        let location = self.existing.get()?;
+        if location.domain != domain
+            || receiver.shape != location.shape
+            || !plain_ordinary(receiver)
+        {
+            return None;
+        }
+        (heap.shape_fast(location.shape).layout_revision() == location.revision)
+            .then_some(location.slot as usize)
+    }
+
+    /// Count a miss of the learned existing-slot fact.
+    pub(crate) fn existing_missed(&self) {
+        if self.existing.get().is_some() {
+            self.existing_misses
+                .set(self.existing_misses.get().saturating_add(1));
+        }
+    }
+
+    /// An empty site learns at once; a learned one only after enough misses.
+    pub(crate) fn should_learn_existing(&self) -> bool {
+        self.existing.get().is_none() || self.existing_misses.get() >= EXISTING_RELEARN_MISSES
+    }
+
+    /// Record the writable own data slot an ordinary selection just stored
+    /// into. Dictionary layouts and saturated revisions stay uncached.
+    pub(crate) fn learn_existing(
+        &self,
+        heap: &Heap,
+        domain: u64,
+        receiver: &ObjectData,
+        slot: usize,
+    ) -> bool {
+        let (Ok(shape), Ok(slot)) = (heap.shape(receiver.shape), u32::try_from(slot)) else {
+            return false;
+        };
+        if !plain_ordinary(receiver) || shape.is_dictionary() || shape.layout_revision() == u64::MAX
+        {
+            return false;
+        }
+        self.existing_misses.set(0);
+        self.existing.set(Some(ExistingLocation {
+            domain,
+            shape: receiver.shape,
+            revision: shape.layout_revision(),
+            slot,
+        }));
+        true
+    }
+
     /// The successor for `receiver`'s current layout when this site's fact
     /// still holds. The caller already selected the key as a missing own
     /// property of an ordinary-set receiver under the same borrow.
@@ -99,11 +186,14 @@ impl PropertyAppendCache {
 
 /// Which consumer a site serves. Stores and definitions keep separate learned
 /// bitmaps, so a function whose literal definitions learn facts does not make
-/// its existing-slot stores test a populated bitmap.
+/// its existing-slot stores test a populated bitmap. `Existing` marks store
+/// sites that learned an existing writable slot, so append-only sites never
+/// call into the existing-slot check.
 #[derive(Clone, Copy)]
 pub(crate) enum AppendKind {
     Store,
     Definition,
+    Existing,
 }
 
 /// Append facts for every static-key store and definition site of one
@@ -116,6 +206,7 @@ pub(crate) struct PropertyAppendCacheTable {
     sites: super::property_ic::SiteCacheTable<PropertyAppendCache>,
     stores: std::cell::OnceCell<Box<[Cell<u64>]>>,
     definitions: std::cell::OnceCell<Box<[Cell<u64>]>>,
+    existing: std::cell::OnceCell<Box<[Cell<u64>]>>,
 }
 
 impl PropertyAppendCacheTable {
@@ -124,6 +215,7 @@ impl PropertyAppendCacheTable {
             sites: super::property_ic::SiteCacheTable::<PropertyAppendCache>::new_exec(code),
             stores: std::cell::OnceCell::new(),
             definitions: std::cell::OnceCell::new(),
+            existing: std::cell::OnceCell::new(),
         }
     }
 
@@ -132,6 +224,7 @@ impl PropertyAppendCacheTable {
         match kind {
             AppendKind::Store => &self.stores,
             AppendKind::Definition => &self.definitions,
+            AppendKind::Existing => &self.existing,
         }
     }
 
@@ -164,6 +257,11 @@ impl PropertyAppendCacheTable {
         {
             return;
         }
+        self.mark(kind, pc);
+    }
+
+    /// Set the learned bit of `pc` for `kind`; it stays set once learned.
+    pub(crate) fn mark(&self, kind: AppendKind, pc: usize) {
         let learned = self
             .learned(kind)
             .get_or_init(|| (0..self.sites.pc_words()).map(|_| Cell::new(0)).collect());

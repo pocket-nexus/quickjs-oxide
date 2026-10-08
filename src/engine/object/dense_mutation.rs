@@ -37,6 +37,16 @@ pub(super) fn writable_dense_length(
     Ok((length as usize == dense.len()).then_some(length))
 }
 
+/// Whether `index` lies below the Array's exact Uint32 length. With `index`
+/// equal to the dense prefix, it is the first hole below the length.
+pub(super) fn dense_hole_below_length(data: &ObjectData, index: u32) -> bool {
+    match data.slots.first() {
+        Some(PropertySlot::Data(RawValue::Int(length))) => i64::from(index) < i64::from(*length),
+        Some(PropertySlot::Data(RawValue::Float(length))) => f64::from(index) < *length,
+        _ => false,
+    }
+}
+
 impl Runtime {
     pub(crate) fn try_dense_push(
         &self,

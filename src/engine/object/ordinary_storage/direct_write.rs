@@ -57,6 +57,13 @@ impl RuntimeState {
         input: &mut JsValue,
         appends: Option<AppendSite<'_>>,
     ) -> Result<FieldStore, RuntimeError> {
+        // A learned writable own data slot needs no own-key selection.
+        if let Some((table, pc)) = appends
+            && table.has_fact(AppendKind::Existing, pc)
+            && self.try_existing_site_store(domain, object, input, table, pc)?
+        {
+            return Ok(FieldStore::Existing);
+        }
         // A learned parent layout proves the key missing on this receiver and
         // the prototype walk's result, before any own-key selection.
         if let Some((table, pc)) = appends
@@ -72,22 +79,62 @@ impl RuntimeState {
         let prototype = match select_set_slot(self, object, atom)? {
             BorrowedSet::Missing(prototype) => prototype,
             BorrowedSet::Data(selected) if selected.flags.writable => {
-                return Ok(
-                    if self
-                        .heap
-                        .exchange_owned_data_slot(object, selected.index, input)?
-                    {
-                        FieldStore::Existing
-                    } else {
-                        FieldStore::Miss
-                    },
-                );
+                if !self
+                    .heap
+                    .exchange_owned_data_slot(object, selected.index, input)?
+                {
+                    return Ok(FieldStore::Miss);
+                }
+                if let Some((table, pc)) = appends {
+                    self.learn_existing_site(domain, object, table, pc, selected.index);
+                }
+                return Ok(FieldStore::Existing);
             }
             BorrowedSet::Data(_) | BorrowedSet::Setter(_) | BorrowedSet::Special(_) => {
                 return Ok(FieldStore::Miss);
             }
         };
         self.append_missing_owned_data(poisoned, domain, object, atom, prototype, input, appends)
+    }
+
+    /// Out of line so the interpreter loop that inlines the store entry does
+    /// not grow; a hit costs one call instead of the own-key selection.
+    #[inline(never)]
+    fn try_existing_site_store(
+        &mut self,
+        domain: u64,
+        object: ObjectId,
+        input: &mut JsValue,
+        table: &PropertyAppendCacheTable,
+        pc: usize,
+    ) -> Result<bool, RuntimeError> {
+        let Some(site) = table.site(pc) else {
+            return Ok(false);
+        };
+        let Some(slot) = site.existing_slot(&self.heap, domain, self.heap.object(object)?) else {
+            site.existing_missed();
+            return Ok(false);
+        };
+        Ok(self.heap.exchange_owned_data_slot(object, slot, input)?)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn learn_existing_site(
+        &self,
+        domain: u64,
+        object: ObjectId,
+        table: &PropertyAppendCacheTable,
+        pc: usize,
+        slot: usize,
+    ) {
+        if let Some(site) = table.site(pc)
+            && site.should_learn_existing()
+            && let Ok(receiver) = self.heap.object(object)
+            && site.learn_existing(&self.heap, domain, receiver, slot)
+        {
+            table.mark(AppendKind::Existing, pc);
+        }
     }
 
     #[inline(never)]
@@ -148,6 +195,55 @@ impl RuntimeState {
             "ordinary_owned_field_append_in_state",
         );
         Ok(FieldStore::LayoutPublished)
+    }
+
+    /// The atom of a computed key that needs no user conversion: a canonical
+    /// array index (an Int or integral Float), a String or a Symbol. The flag
+    /// says the caller owns an interned String atom and must release it.
+    /// Other primitives (negative or fractional numbers, booleans, null,
+    /// undefined, BigInt) keep the general key conversion.
+    pub(crate) fn primitive_key_atom(
+        &mut self,
+        key: &JsValue,
+    ) -> Result<Option<(Atom, bool)>, RuntimeError> {
+        let index = match key {
+            JsValue::Int(value) => u32::try_from(*value).ok(),
+            JsValue::Float(value)
+                if *value >= 0.0 && *value <= f64::from(u32::MAX) && value.fract() == 0.0 =>
+            {
+                Some(*value as u32)
+            }
+            JsValue::Symbol(index) => return Ok(Some((self.atoms.brand(*index)?, false))),
+            JsValue::String(id) => {
+                return Ok(Some((self.intern_property_key_string_id(*id)?, true)));
+            }
+            _ => None,
+        };
+        Ok(index
+            .and_then(Atom::from_immediate_integer)
+            .map(|atom| (atom, false)))
+    }
+
+    /// Store an owned value under a resolved computed key without building a
+    /// Set state: dense Array elements first, then the ordinary own-data and
+    /// append kernel shared with static stores. Every other case (setters,
+    /// read-only or non-extensible rejection, exotic receivers) declines with
+    /// the input untouched for the general Set.
+    pub(crate) fn try_store_owned_atom_key(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        domain: u64,
+        object: ObjectId,
+        atom: Atom,
+        input: &mut JsValue,
+    ) -> Result<FieldStore, RuntimeError> {
+        if let Some(index) = atom.immediate_integer()
+            && (self.try_exchange_dense_value(object, index, input)?
+                || self.try_append_dense_value(object, index, input)?)
+        {
+            return Ok(FieldStore::Existing);
+        }
+        self.try_store_owned_own_data(poisoned, domain, object, atom, input, None)
     }
 
     /// CreateDataPropertyOrThrow for a static literal or class-field key.
@@ -337,12 +433,19 @@ impl RuntimeState {
         if !data.extensible || !matches!(data.kind, ObjectKind::Array) {
             return Ok(false);
         }
-        let Some(length) =
-            crate::engine::object::dense_mutation::writable_dense_length(self, data)?
-        else {
-            return Ok(false);
+        // The next element after the dense prefix either grows the length
+        // (writable length equal to the prefix) or fills a hole below an
+        // existing length, as in `new Array(n)` filled in order.
+        let fills_hole = match &data.payload {
+            ObjectPayload::Array { dense: Some(dense) } if index as usize == dense.len() => {
+                crate::engine::object::dense_mutation::dense_hole_below_length(data, index)
+            }
+            _ => return Ok(false),
         };
-        if index != length {
+        if !fills_hole
+            && crate::engine::object::dense_mutation::writable_dense_length(self, data)?
+                != Some(index)
+        {
             return Ok(false);
         }
         let Some(atom) = Atom::from_immediate_integer(index) else {
@@ -353,10 +456,14 @@ impl RuntimeState {
             return Ok(false);
         }
         let value = std::mem::replace(input, JsValue::Undefined);
-        match self
-            .heap
-            .append_fresh_array_dense_value_owned(object, value.into_raw())
-        {
+        let appended = if fills_hole {
+            self.heap
+                .fill_array_dense_hole_owned(object, value.into_raw())
+        } else {
+            self.heap
+                .append_fresh_array_dense_value_owned(object, value.into_raw())
+        };
+        match appended {
             Ok(()) => Ok(true),
             Err((error, value)) => {
                 *input = JsValue::from_raw(value).expect("rejected public array input");
@@ -376,6 +483,192 @@ mod tests {
             panic!("object")
         };
         *id
+    }
+
+    #[test]
+    fn computed_key_stores_match_ordinary_set_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+            (() => {
+                const out = [];
+                const sym = Symbol('s');
+                const o = {};
+                const keys = ['a', 'b', '3', sym, 7, 2.0];
+                for (let round = 0; round < 3; round++)
+                    for (const k of keys) o[k] = round;
+                out.push(o.a === 2 && o.b === 2 && o[3] === 2 && o[sym] === 2 && o[7] === 2
+                    && o[2] === 2 && Object.keys(o).join() === '2,3,7,a,b');
+                // Negative and fractional numbers become string keys.
+                const n = {};
+                n[-1] = 'm'; n[1.5] = 'f'; n[-0] = 'z';
+                out.push(n['-1'] === 'm' && n['1.5'] === 'f' && n['0'] === 'z');
+                // Integral Float keys reach dense elements.
+                const a = [0, 0, 0];
+                a[1.0] = 'x'; a[3.0] = 'y'; a['2'] = 'w';
+                out.push(a.join() === '0,x,w,y' && a.length === 4);
+                // Prototype setters and read-only properties still decide.
+                let seen = '';
+                const proto = {set k(v) { seen += v; }};
+                Object.defineProperty(proto, 'r', {value: 1, writable: false});
+                const child = Object.create(proto);
+                const kk = 'k', rr = 'r';
+                child[kk] = 's'; child[rr] = 2;
+                out.push(seen === 's' && !child.hasOwnProperty('k') && child.r === 1);
+                let threw = false;
+                try { (function() { 'use strict'; child[rr] = 3; })(); }
+                catch (e) { threw = e instanceof TypeError; }
+                out.push(threw);
+                const frozen = Object.freeze({x: 1}), xk = 'x';
+                threw = false;
+                try { (function() { 'use strict'; frozen[xk] = 2; })(); }
+                catch (e) { threw = e instanceof TypeError; }
+                out.push(threw && frozen.x === 1);
+                // Proxy traps, __proto__, Array length and the global object.
+                let trapped = '';
+                const p = new Proxy({}, {set(t, k, v) { trapped += k; t[k] = v; return true; }});
+                p['q'] = 1;
+                const pk = '__proto__', target = {};
+                const withProto = {};
+                withProto[pk] = target;
+                const arr = [1, 2, 3], lk = 'length';
+                arr[lk] = 1;
+                globalThis['computedGlobal'] = 5;
+                out.push(trapped === 'q' && Object.getPrototypeOf(withProto) === target
+                    && arr.length === 1 && computedGlobal === 5);
+                const result = out.join();
+                return result === 'true,true,true,true,true,true,true' || result;
+            })()
+        "#
+                )
+                .unwrap(),
+            crate::engine::value::Value::Bool(true)
+        );
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn computed_string_key_stores_release_their_interned_atoms() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let count = |runtime: &Runtime| runtime.0.state.borrow().atoms.len();
+        drop(
+            context
+                .eval("globalThis.o = {}; globalThis.store = (k) => { o[k] = 1; delete o[k]; };")
+                .unwrap(),
+        );
+        drop(context.eval("store('warm' + 1)").unwrap());
+        runtime.run_gc().unwrap();
+        let before = count(&runtime);
+        drop(
+            context
+                .eval("for (let i = 0; i < 1000; i++) store('fresh-key-' + i);")
+                .unwrap(),
+        );
+        runtime.run_gc().unwrap();
+        assert!(
+            count(&runtime) <= before + 2,
+            "{} -> {}",
+            before,
+            count(&runtime)
+        );
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn dense_hole_fill_moves_owner_and_keeps_length() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let array = runtime
+            .into_jsvalue(context.eval("new Array(3)").unwrap())
+            .unwrap();
+        let marker = runtime
+            .into_jsvalue(context.eval("({marker:1})").unwrap())
+            .unwrap();
+        let count = |runtime: &Runtime| {
+            let state = runtime.0.state.borrow();
+            state.heap.object_strong_count(object(&marker)).unwrap()
+        };
+        let before = count(&runtime);
+        let mut input = runtime.dup_jsvalue(&marker).unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        // Only the first hole after the dense prefix is filled in place.
+        assert!(
+            !state
+                .try_append_dense_value(object(&array), 1, &mut JsValue::Int(9))
+                .unwrap()
+        );
+        assert!(
+            state
+                .try_append_dense_value(object(&array), 0, &mut input)
+                .unwrap()
+        );
+        assert!(matches!(input, JsValue::Undefined));
+        drop(state);
+        // The owner moved in: the dup above is now the element's reference.
+        assert_eq!(count(&runtime), before + 1);
+        runtime.release_jsvalue(array).unwrap();
+        assert_eq!(count(&runtime), before);
+        runtime.release_jsvalue(marker).unwrap();
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn dense_hole_fill_matches_ordinary_set_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+            (() => {
+                const out = [];
+                // In-order fill keeps the length and reads back every value.
+                const a = new Array(4);
+                for (let i = 0; i < 4; i++) a[i] = i * 0.5;
+                out.push(a.length === 4 && a.join() === '0,0.5,1,1.5');
+                // Out-of-order and past-the-length writes stay correct.
+                const b = new Array(4);
+                b[2] = 'c'; b[0] = 'a'; b[1] = 'b'; b[5] = 'f';
+                out.push(b.length === 6 && b.join() === 'a,b,c,,,f' && !(3 in b));
+                // A read-only length still admits holes below it.
+                const c = new Array(2);
+                Object.defineProperty(c, 'length', {writable: false});
+                c[0] = 1; c[1] = 2; c[2] = 3;
+                out.push(c.length === 2 && c[0] === 1 && c[1] === 2 && !(2 in c));
+                // Non-extensible arrays reject the fill.
+                const d = Object.preventExtensions(new Array(2));
+                d[0] = 1;
+                out.push(!(0 in d));
+                // Prototype setters and read-only elements decide the hole.
+                let seen = '';
+                Object.defineProperty(Array.prototype, 0, {
+                    set(v) { seen += v; }, configurable: true,
+                });
+                const e = new Array(2);
+                e[0] = 'x';
+                out.push(seen === 'x' && !Object.prototype.hasOwnProperty.call(e, 0));
+                delete Array.prototype[0];
+                Object.defineProperty(Object.prototype, 0, {value: 'p', writable: false, configurable: true});
+                const f = new Array(2);
+                f[0] = 'y';
+                out.push(f[0] === 'p' && !Object.prototype.hasOwnProperty.call(f, 0));
+                delete Object.prototype[0];
+                const g = new Array(2);
+                g[0] = 'z';
+                out.push(g[0] === 'z' && Object.prototype.hasOwnProperty.call(g, 0));
+                const result = out.join();
+                return result === 'true,true,true,true,true,true,true' || result;
+            })()
+        "#
+                )
+                .unwrap(),
+            crate::engine::value::Value::Bool(true)
+        );
+        assert!(!runtime.is_poisoned());
     }
 
     #[test]

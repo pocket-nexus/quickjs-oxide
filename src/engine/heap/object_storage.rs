@@ -202,10 +202,7 @@ impl Heap {
     /// Trusted shared read for a live `ObjectId` held by an owning root.
     #[inline]
     pub(crate) fn object_fast(&self, id: ObjectId) -> &ObjectData {
-        match &self.live_node_fast(RawId::Object(id)).data {
-            NodeData::Object(object) => object,
-            _ => unreachable!("trusted object handle reached another node payload"),
-        }
+        self.object_node_fast(id)
     }
 
     /// Set QuickJS's identity-local Annex B `is_HTMLDDA` bit.
@@ -586,6 +583,11 @@ impl Heap {
     }
 
     fn fresh_array_next_length(&self, id: ObjectId) -> Result<u32, HeapError> {
+        self.fresh_array_length_after(id, 1)
+    }
+
+    /// The length of a fresh dense Array after appending `added` elements.
+    fn fresh_array_length_after(&self, id: ObjectId, added: u32) -> Result<u32, HeapError> {
         Ok({
             let object = self.object(id)?;
             let ObjectPayload::Array { dense: Some(dense) } = &object.payload else {
@@ -620,10 +622,44 @@ impl Heap {
                     "fresh Array length diverged from its dense count",
                 ));
             }
-            dense_len.checked_add(1).ok_or(HeapError::Overflow {
+            dense_len.checked_add(added).ok_or(HeapError::Overflow {
                 operation: "growing fresh Array length",
             })?
         })
+    }
+
+    /// Adopt every owned element of a literal at once: one validation, one
+    /// reservation and one length update. The caller passes only storable
+    /// values. On error nothing is published and every input owner stays in
+    /// `values` for the caller's cleanup.
+    pub(crate) fn append_fresh_array_dense_values_owned(
+        &mut self,
+        id: ObjectId,
+        values: &mut [crate::engine::value::JsValue],
+    ) -> Result<(), HeapError> {
+        let added = u32::try_from(values.len()).map_err(|_| HeapError::Overflow {
+            operation: "growing fresh Array length",
+        })?;
+        let next_len = self.fresh_array_length_after(id, added)?;
+        let object = self.object_mut(id)?;
+        let ObjectPayload::Array { dense: Some(dense) } = &mut object.payload else {
+            unreachable!("validated dense Array changed before reservation")
+        };
+        dense
+            .try_reserve(values.len())
+            .map_err(|_| HeapError::Allocation {
+                operation: "growing fast Array storage",
+            })?;
+        dense.extend(values.iter_mut().map(|value| {
+            std::mem::replace(value, crate::engine::value::JsValue::Undefined).into_raw()
+        }));
+        let Some(PropertySlot::Data(length)) = object.slots.first_mut() else {
+            unreachable!("validated fresh Array length slot")
+        };
+        *length = i32::try_from(next_len)
+            .map(RawValue::Int)
+            .unwrap_or_else(|_| RawValue::Float(f64::from(next_len)));
+        Ok(())
     }
 
     /// Adopt an owned element, including its atom edge, with no retain/release
@@ -664,6 +700,63 @@ impl Heap {
         *length = i32::try_from(next_len)
             .map(RawValue::Int)
             .unwrap_or_else(|_| RawValue::Float(f64::from(next_len)));
+        Ok(())
+    }
+
+    /// Move an owned value into the first hole of a fast Array whose length
+    /// already covers it (`new Array(n)` filled in order). The length is
+    /// unchanged; the caller proved the hole is not shadowed by a prototype.
+    pub(crate) fn fill_array_dense_hole_owned(
+        &mut self,
+        id: ObjectId,
+        value: RawValue,
+    ) -> Result<(), (HeapError, RawValue)> {
+        let prepared = (|| {
+            if !is_map_storable_value(&value) {
+                return Err(HeapError::Invariant(
+                    "fast Array contains an internal value sentinel",
+                ));
+            }
+            let object = self.object_mut(id)?;
+            let stored_len = match object.slots.first() {
+                Some(PropertySlot::Data(RawValue::Int(length))) if *length >= 0 => *length as u32,
+                Some(PropertySlot::Data(RawValue::Float(length)))
+                    if length.is_finite()
+                        && *length >= 0.0
+                        && *length <= f64::from(u32::MAX)
+                        && length.fract() == 0.0 =>
+                {
+                    *length as u32
+                }
+                _ => {
+                    return Err(HeapError::Invariant(
+                        "fast Array length is not an exact Uint32 data value",
+                    ));
+                }
+            };
+            let ObjectPayload::Array { dense: Some(dense) } = &mut object.payload else {
+                return Err(HeapError::Invariant(
+                    "dense hole fill reached a slow Array or wrong object class",
+                ));
+            };
+            if dense.len() >= stored_len as usize {
+                return Err(HeapError::Invariant(
+                    "dense hole fill reached an element at or past the length",
+                ));
+            }
+            dense.try_reserve(1).map_err(|_| HeapError::Allocation {
+                operation: "growing fast Array storage",
+            })
+        })();
+        if let Err(error) = prepared {
+            return Err((error, value));
+        }
+        let ObjectPayload::Array { dense: Some(dense) } =
+            &mut self.object_mut(id).expect("validated fast Array").payload
+        else {
+            unreachable!("validated dense Array changed before publication")
+        };
+        dense.push(value);
         Ok(())
     }
 

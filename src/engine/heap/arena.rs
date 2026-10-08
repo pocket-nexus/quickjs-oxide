@@ -425,21 +425,49 @@ impl Heap {
 
     /// Trusted accessor for a handle that a live owning edge keeps valid.
     ///
-    /// The generation check runs only in debug builds; release builds keep the
-    /// `Vec` bounds check. A non-live slot or wrong kind at a trusted call site
-    /// is a heap invariant violation, so it panics rather than returning an
-    /// error. General and untrusted callers must keep using
-    /// [`Heap::live_node`].
+    /// The generation and nonzero-count checks run only in debug and
+    /// `checked-handles` builds; release builds keep the `Vec` bounds check
+    /// and the resident-slot check. A zero-count resident node is still valid
+    /// memory, so skipping that check cannot read outside safe storage; it only
+    /// moves detection of a counting bug to the checked builds. A non-live
+    /// slot or wrong kind at a trusted call site is a heap invariant violation,
+    /// so it panics rather than returning an error. General and untrusted
+    /// callers must keep using [`Heap::live_node`].
     #[inline(always)]
     pub(in crate::engine::heap) fn live_node_fast(&self, id: RawId) -> &Node {
         assert_trusted_handle!(
             self.validate_slot_identity(id).is_ok(),
             "trusted handle failed its debug identity check"
         );
-        match &self.slots[id.index() as usize].state {
-            SlotState::Resident(node) if node.strong.get() != 0 => node,
-            _ => unreachable!("trusted handle reached a non-live slot"),
-        }
+        let SlotState::Resident(node) = &self.slots[id.index() as usize].state else {
+            unreachable!("trusted handle reached a non-live slot")
+        };
+        assert_trusted_handle!(
+            node.strong.get() != 0,
+            "trusted handle reached a zero-count node"
+        );
+        node
+    }
+
+    /// Trusted object access with one combined slot-state and payload test.
+    #[inline(always)]
+    pub(in crate::engine::heap) fn object_node_fast(&self, id: ObjectId) -> &ObjectData {
+        assert_trusted_handle!(
+            self.validate_slot_identity(RawId::Object(id)).is_ok(),
+            "trusted handle failed its debug identity check"
+        );
+        let SlotState::Resident(Node {
+            strong,
+            data: NodeData::Object(object),
+        }) = &self.slots[RawId::Object(id).index() as usize].state
+        else {
+            unreachable!("trusted object handle reached a non-object slot")
+        };
+        assert_trusted_handle!(
+            strong.get() != 0,
+            "trusted handle reached a zero-count node"
+        );
+        object
     }
 
     /// Trusted mutable access for an object handle validated earlier under

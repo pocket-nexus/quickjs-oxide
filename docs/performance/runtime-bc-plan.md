@@ -20,7 +20,8 @@
 | B2b–f（原顺序） | 已停止，由下面的成本中心顺序替代 |
 | 第 1 项（#95，叠在 #93 上） | 收口步骤完成（head `e8d5ba12`），原生验收通过；1a、1d 的剩余预算划给第 2 项，`new` 的剩余划给第 2、4、5 项 |
 | 第 2 项（#101，叠在 #95 上） | 已收口（2026-10-08）：2a–2c 采纳；2d 实现后因八项均无明显增益撤回；dup/release 核对取消；解释函数尺寸作为例外记录。见第 5 节“第 2 项收口” |
-| 第 3、4 项 | 已按 x86 八项 profile 重定基线与任务（第 5 节），待开始 3a |
+| 第 3 项（#102，叠在 #101 上） | 已收口（2026-10-08，按第 8 节“任务全部完成”）：3a–3f 采纳，八项 Ir 与 `perf stat` 周期全部低于基线；读缓存 R/D 14.8%/14.2%，未达 ≤14%（≤8% 已移入第 5 项）；最终原生 A/B Combined +6.18%，RegExp 未过非劣门槛但在 A/A 噪声内，按未分辨放行；原版 Score 为 Boa 的 95.7%。见第 5 节“第 3 项收口” |
+| 第 4 项 | 2026-10-08 按 `215f1cc5` 重定基线并按代码核对调整任务（第 5 节），待开始 |
 
 第 1 项收口后的结果（相对 B2a `f2501839`，参考测量机，固定工作量，8 对 A/A 加 8 对 A/B，
 `paired.py` 非劣门槛 −1%）：
@@ -38,10 +39,10 @@
 |---|---|---|
 | **1** | 对象分配：字面量、`new`、define | 字面量 ≤3,000；`new` 只验收第 1 项自身阶段（剩余约 1,700 划给第 2、4、5 项） |
 | 2 | 引用计数与已认证句柄的快速路径 | 一对 dup/release ≤30 |
-| 3 | 属性访问：读缓存、写缓存、dense 元素与未命中路径迁移 | R/D 读缓存 self 占比各 ≤8%；每个任务至少一项 V8 Ir −1% 且无回退 |
+| 3 | 属性访问：读缓存、写缓存、dense 元素与未命中路径迁移 | R/D 读缓存 self 占比各 ≤14%（2026-10-08 修订，原 ≤8% 移入第 5 项）；每个任务至少一项 V8 Ir −1% 且无回退 |
 | 4 | 调用与返回的剩余成本（包括构造调用） | 调用 self 占比 D ≤12%、EB ≤12%、R ≤8%；每个任务同上 |
 | 检查点 | 全八项加 Combined，六对正式 Score，对照 A、B2a 和历史 Boa | 决定第 5、6 项的先后 |
-| 5 | 解释循环结构：先拆小热循环，再验证预解码（一轮，有时间上限） | ≤40 条/分派，Dw 2–3/分派 |
+| 5 | 解释循环结构：先拆小热循环，再验证预解码（一轮，有时间上限）；预解码带读站点下标与 atom | ≤40 条/分派，Dw 2–3/分派；完成后 R/D 读缓存与解释衔接合计核对 ≤8% |
 | 6 | GC 扫描与对象记录体积 | 由检查点的 profile 决定 |
 | 7 | 其余迁移：computed 读取、Reflect/Proxy、B3、B4 | Ir/Dw 不回退 |
 | 8 | 删除旧协议，零残留验收 | 六项硬门槛归零 |
@@ -391,39 +392,195 @@ profiling 构建按状态统计读缓存命中。
 
 - 3a–3d：目标用例中至少一项 Ir 下降 ≥1% 且原生不回退；其余用例 Ir 增长 ≤0.5%、原生不回退（第 7 节规则）。
 - 3e 是结构迁移，不要求 V8 增益，也不受“两轮”上限约束：未命中路径不再构造 `SetOperands`，`ConvertedWrite`/`ObjectRef` 及其调用者全部删除；行为不变（focused Test262 与 setter/Proxy/冻结对象等正确性用例全部通过）；八项 Ir 增长 ≤0.5%、原生不回退。
-- 第 3 项整体：读缓存 self 占比 Richards、DeltaBlue 各 ≤8%（现约 23%）；Splay 读缓存占比减半。
+- 第 3 项整体：读缓存 self 占比 Richards、DeltaBlue 各 ≤14%（重定基线时约 23%）；Splay 读缓存占比减半。
+  原定 ≤8% 于 2026-10-08 修订：一次命中中约 60 条属于解释循环衔接与压栈，归第 5 项；≤8% 改为第 5 项完成后的联合目标。
 - 探针记录但不作门槛：`s=o.x`、`o.x=i`、`o.x=p`、`a[i&1023]=i`、`a[i&15]=p`。
 - 正确性：后加只读属性与原型 setter、冻结/密封/不可扩展/字典模式、访问器与 Proxy 接收者、
   数组 length/hole/冻结数组/不可写索引、缓存失效、strict 与 sloppy；focused Test262。
 
+#### 第 3 项结果（2026-10-08，head `1caa9a5c`）
+
+| 提交 | 任务 | 内容 | 主要效果（Ir，相对前一提交） |
+|---|---|---|---|
+| `5413a060` | 3a | 状态拆成种类 + 4 个条目 `Cell`，接收者只取一次，按 shape 先比；单态走直线路径 | DeltaBlue −2.1%、Richards −1.7%、RayTrace −1.0%、Splay −1.1% |
+| `3fbfdf7f` | 3b | 多态命中不再轮换条目 | Splay −0.7%、DeltaBlue −0.5%（单独未达 1%，与 3a 合并验收） |
+| `000a4a75` | 3a 第三轮 | 站点查找改为每 PC 一字节偏移（x86-64 基线无 `popcnt`）；`Slots::get` 内联；缓存读取**不**强制内联 | Richards −2.3%、DeltaBlue −2.4%（内联版本测得） |
+| `b8429049` | 3c | 写入站点记住已有可写数据槽；命中与学习不内联，已学习位图让只追加的站点跳过调用；16 次未命中后才重新学习 | Richards −1.4%，其余 ±0.5% 内 |
+| `cc0b9102` | 3d | 快速路径接受长度以内的第一个空洞（`new Array(n)` 按序填充） | NavierStokes −12.75% |
+| `921af360` | 3e | 无需用户转换的计算键（整数/整数值浮点、String、Symbol）在 State 上解析为 atom，走 dense 与普通对象的带所有权写入；其余交给 `SetStep` | Crypto −10.1% |
+| `35ea1ca8` | 3e | `ConvertedWrite` 不再持有 `Runtime`，与 `ConvertedRead` 一致 | — |
+| `1caa9a5c` | 3d | 数组字面量的元素一次校验、一次预留、一次更新长度 | Splay −9.9% |
+
+**八项 Ir（相对 `b105a22f`）：** NavierStokes −13.10%、Splay −12.07%、Crypto −11.13%、Richards −5.28%、DeltaBlue −5.06%、
+RayTrace −2.36%、EarleyBoyer −1.16%、RegExp −0.16%。探针：`s=o.x` 367 → 315、`o.x=i` 599 → 540、`o.x=p` 766 → 709。
+
+**原生（x86，8 对 abba-baab，`b105a22f` 对 `1caa9a5c` 同树构建，rustc 1.94.1，`iterate_v8.py`，正数为候选更快）：** Crypto +13.85%、NavierStokes +9.80%、
+Splay +7.95%、Richards +5.10%、RayTrace +1.87%、RegExp −0.26%（跨 0）、DeltaBlue −2.56%、EarleyBoyer −2.18%，Combined +2.78%（+2.41..+3.33）。
+
+DeltaBlue、EarleyBoyer 的回退来自布局：只去掉强制内联、尚无 3e 与字面量提交的构建，与最终构建在这两项上执行的指令相同
+（DeltaBlue 8.338G 对 8.347G，L1i 未命中相同），周期却分别低 6.2% 和 3.6%，且比基线快 4.8% 和 1.8%（`perf stat`，绑核，7 次）。
+按第 7 节规则以 Combined 与对照判定，第 3 项改动原生通过。此对照是“指令相同、布局不同”的两个构建，而不是“运行时关闭新路径”的变体；
+3a–3e 的多处改动无法用单一开关关闭。
+
+**正确性：** 每个提交的库测试全部通过（最终 2351 项）；focused Test262 6844/6844（3a、3b、3c、3d 空洞、最终 head）；新增测试覆盖写缓存失效
+（只读、冻结、访问器、删除后重加、数组命名属性）、空洞填充语义（乱序、只读 length、不可扩展、原型 setter 与只读元素）、
+计算键写入语义（Symbol、负数与小数键、原型 setter、strict 拒绝、Proxy、`__proto__`、数组 `length`、全局对象）与 String atom 释放。
+
+**3e 的实际范围。** 计划中的 `SetOperands` 在代码中并不存在（只是早先文档的概念名）。VM 的未命中写入实际经由 `SetStep`
+（约 2000 行，建立在 `Runtime`/`ObjectRef`/`PropertyKey` 上，另有 11 个文件、20 处内建调用方）。本项按 VM 范围完成：
+无需转换的计算键在 State 上完成，`ConvertedWrite` 去掉 `Runtime`；setter、Proxy、拒绝与 exotic 接收者仍交给 `SetStep`。
+“setter 交接内部调用”与 `SetStep` 本身迁移到 State 未做，归第 7 项。
+
+**读缓存（3a–3e 之后）。** R/D 读缓存 self 占比 23.1%/22.6% → 19.6%/18.6%，一次单态命中约 250 条（QuickJS 约 48）。
+行级分解与方案见 [`read-hit-design.md`](read-hit-design.md)。决定：只用 safe Rust；3f 在本项内做；本项目标改为 ≤14%，≤8% 与预解码移入第 5 项。
+
+#### 3f：读缓存命中路径（2026-10-08）
+
+| 提交 | 内容 | Ir（相对前一提交，R / D） |
+|---|---|---|
+| `35ed5663` | 命中时复用已取的接收者；条目去掉 domain 与 realm（表只属于一个 runtime，shape 已区分 realm） | −1.8% / −1.7% |
+| `af371c94` | 受信快速访问的强引用计数检查只在 debug 与 `checked-handles` 构建中做；对象访问一次匹配槽位状态与类型 | −0.2% / −0.2% |
+| `11500b7e` | 对象接收者的命中拆成小的不内联函数：不查 key atom，立即数直接返回；其余进入冷选择（已探测时不再读缓存，冷却计数每次读取只减一，新增测试） | −2.5% / −2.1% |
+| `215f1cc5` | 缓存探测只内联进这一个命中函数；其他调用者保留不内联的 `read` | −2.1% / −1.7% |
+
+`s=o.x` 315 → 222 条。读缓存 self 占比 R/D **14.8% / 14.2%**（目标 ≤14%，差不到 1 个百分点；未继续压，原因见下）。
+尝试过但撤回：命中路径直接保留对象值（不经通用提升）使 Ir 略增、周期有升有降，未采纳。
+
+**第 3 项最终 Ir（`215f1cc5` 相对 `b105a22f`）：** NavierStokes −13.17%、Splay −13.37%、Crypto −11.87%、Richards −11.30%、
+DeltaBlue −10.42%、RayTrace −4.54%、EarleyBoyer −2.73%、RegExp −0.21%。
+
+**`perf stat`（绑核，7 次，周期相对基线）：** Crypto −14.8%、Richards −10.1%、Splay −8.3%、NavierStokes −6.9%、DeltaBlue −3.8%、
+RayTrace −2.0%、RegExp −2.0%、EarleyBoyer −0.8%；八项全部低于基线。
+
+**原生 A/B（`b105a22f` 对 `215f1cc5`）：** 见下面“第 3 项收口”（3a–3e 的 A/B 见上）。
+
+**未压到 ≤14% 的原因。** 剩余可做的（命中计数、`ShapeId` 打包）每次只有 2–3 条，本机布局噪声（同指令数下周期 ±3–7%）足以盖过；
+一次命中中最大的剩余部分是解释循环衔接与压栈（约 60 条），归第 5 项。
+
+**过程记录。**
+- 本机解释器受 L1i 限制（DeltaBlue 每千条指令约 14 次 L1i 未命中）：Ir 下降不代表原生变快。强制内联让 Ir 不变而周期 +6%。
+  以后原生 A/B 前先用 `perf stat`（周期、指令、L1i 未命中，绑核）对比，再跑完整 A/B。
+- `perf stat` 不能在停 Docker 后立即运行，虚拟机关闭期间测得的周期偏差可达 17%。
+
+#### 第 3 项收口（2026-10-08）
+
+按第 8 节的第二个条件收口：3a–3f 全部完成并采纳，没有按“两轮”上限撤回的任务。
+
+| 项 | 预算 | 结果 | 状态 |
+|---|---|---|---|
+| 读缓存 self 占比 Richards / DeltaBlue | 各 ≤14%（原 ≤8% 移入第 5 项） | 14.8% / 14.2% | **未达到**，如实记录，不再修改目标；剩余主要是解释循环衔接与压栈（约 60 条/次），由第 5 项的 ≤8% 联合目标覆盖 |
+| Splay 读缓存占比减半 | 6.4% → ≤3.2% | 3.4% | 未完全达到（差 0.2 个百分点） |
+| 每个任务：目标用例 Ir −1% 且无回退 | — | 见上面各表；3b 单独未达 1%，与 3a 合并验收 | 达到 |
+| 八项 Ir（相对 `b105a22f`） | 非目标增长 ≤0.5% | 八项全部下降（−0.21% 至 −13.37%） | 达到 |
+| `perf stat` 周期 | 不回退 | 八项全部低于基线 | 达到 |
+| 原生 A/B（`b105a22f` 对 `215f1cc5`，8 对 abba-baab） | 八项非劣 | Combined +6.18%；八项中七项通过非劣门槛，RegExp −0.50%（−1.12..+1.29）未过，在 A/A 噪声 1.85% 内 | 达到（RegExp 未分辨，放行） |
+| 正确性 | — | CI（`1d4d41c5`）`fast` 与 `test262-focused` 通过 | 达到 |
+
+M1 本机上的同一对比因机器负载高（A/A 噪声 1.7%–13.7%）不作为验收依据：Combined +5.97%（+4.91..+7.46），
+DeltaBlue、EarleyBoyer、RegExp 区间过宽未过非劣门槛。
+
+**原生 A/B（参考测量机，2026-10-08）。** 两边用 Rust 1.88.0 从干净 worktree 重新构建（`build.py --plain-only`）；工作量沿用 `v8-ab1` 的冻结计划
+（与上面 3a–3e 记录所用的 `v8-ab2` 只差 DeltaBlue 每次 19 对 18 个 `run`），9 个生成 JS 按哈希核对，写成 `fixed.py` manifest 后分别跑 8 对 A/A（基线对基线副本）和 8 对 A/B（abba-baab，
+不绑核），`paired.py --metric fixed-time --gate noninferior --aa-results`。governor performance、boost 关闭、接电源、Docker 未运行。
+正数为候选更快：
+
+| 用例 | 增益 | 95% 区间 | A/A 噪声 | 非劣门槛 | 3a–3e（`1caa9a5c`） |
+|---|---:|---|---:|---|---:|
+| Richards | +10.24% | +9.38..+11.98 | 1.48% | 通过 | +5.10% |
+| DeltaBlue | +3.64% | +2.88..+10.09 | 1.97% | 通过 | −2.56% |
+| Crypto | +13.08% | +10.90..+13.45 | 8.09% | 通过 | +13.85% |
+| RayTrace | +2.09% | +1.49..+2.93 | 1.48% | 通过 | +1.87% |
+| EarleyBoyer | +1.42% | +0.79..+1.63 | 2.29% | 通过（未分辨） | −2.18% |
+| RegExp | −0.50% | −1.12..+1.29 | 1.85% | **未通过**（未分辨） | −0.26% |
+| Splay | +6.54% | +5.71..+6.95 | 2.32% | 通过 | +7.95% |
+| NavierStokes | +5.77% | +5.30..+6.21 | 5.11% | 通过 | +9.80% |
+| **Combined** | **+6.18%** | **+5.39..+6.68** | 0.98% | 通过 | +2.78% |
+
+- 3a–3e 中 DeltaBlue、EarleyBoyer 的布局回退在本轮消失，与 3f 的 `perf stat` 结论一致。NavierStokes 从 +9.80% 降到 +5.77%，
+  3f 未触及数组路径、Ir 不变（−13.10% → −13.17%），按布局与编译器差异记录。
+- RegExp 下界 −1.12% 未过 −1% 的非劣门槛，但回退在 A/A 噪声内。`perf stat`（绑 CPU 2，7 次）周期 +0.32%、指令 −0.22%、
+  L1i 未命中 −5.9%；RegExp 几乎不走属性缓存（Ir −0.21%），按第 7 节记为未分辨，未调布局、未追加样本；2026-10-08 决定放行。
+- A/A 中同一二进制的副本在 Crypto 上稳定快 6.3%–8.1%、NavierStokes 快 2.9%–5.1%（两份文件物理页不同），抬高了这两项的噪声；
+  两项增益仍在噪声外。
+- 3a–3e 的 A/B（上表最后一列）实际由 rustc 1.94.1 构建、经 `iterate_v8.py` 测得，与本轮编译器和工具不同，只作方向对照。
+- 原始数据在仓库外 `~/.cache/oxide-item3/native/`：`v8-3f-input/manifest.json`、`v8-3f-aa/`、`v8-3f-ab/`、`v8-3f-paired.{json,md}`。
+
+**与 Boa 的原版 Score（2026-10-08，参考测量机）。** `215f1cc5`（上面 A/B 的同一个 Rust 1.88 构建）对 Boa 0.22.0，
+`run.py --suite v8-v7`，八个单项加 `all`，abba 6 对，绑 CPU 2，`paired.py --metric original-score --require-v8-matrix`
+（两个不同引擎，没有 A/A，不评门槛）。正数为我们更高：
+
+| 用例 | Boa | 我们 | 我们 / Boa − 1 | 95% 区间 |
+|---|---:|---:|---:|---|
+| Richards | 183.5 | 158.5 | −13.5% | −16.0..−2.1 |
+| DeltaBlue | 169 | 149.5 | −11.5% | −13.3..−10.4 |
+| Crypto | 192 | 215 | **+11.7%** | +10.6..+12.2 |
+| RayTrace | 335 | 186 | −44.3% | −45.2..−42.3 |
+| EarleyBoyer | 410.5 | 279 | −32.1% | −33.1..−31.4 |
+| RegExp | 55.25 | 72.9 | **+31.7%** | +31.2..+33.4 |
+| Splay | 631 | 884.5 | **+39.4%** | +30.0..+42.1 |
+| NavierStokes | 424 | 562 | **+32.7%** | +31.8..+33.5 |
+| **Combined（`all` Score）** | **245** | **234.5** | **−4.3%** | **−4.7..−3.5** |
+
+- 四项超过 Boa，四项落后；Combined 为 Boa 的 95.7%。要追平：Richards 约 +16%、DeltaBlue 约 +13%、EarleyBoyer 约 +47%、RayTrace 约 +80%。
+  落后最多的 RayTrace、EarleyBoyer 偏重调用与构造（见第 4 项重定基线），R/D 的剩余主要是普通调用快速路径与解释循环衔接。
+- Richards 区间宽来自 Boa 的第一次运行（145，其余 182–187）；Boa 的 Splay 第一次 738、其余约 630，`all` 中为 755。
+- 同一提交的 rustc 1.94.1 构建此前单次 `all` 为 241（Crypto 228、RegExp 79、NavierStokes 588），高于本次 1.88 构建的 234.5；
+  只有一个样本，不作结论，但说明编译器版本可能影响约 3%。
+- 这不是第 6 节的完整检查点（未包含 A 与 B2a 的对照）。原始数据：`~/.cache/oxide-item3/boa-formal-3f/`、`boa-formal-3f-paired.{json,md}`。
+
 ### 第 4 项：调用与返回的剩余成本（包括构造调用）
 
-**原因**（同原计划）：每次调用重新选择、认证和校验目标；帧安装逐字段构造 232 字节的 `FrameCold`，
-`FrameFunction::shared` 仍接收 `Runtime`（B0 残留）；返回时逐槽清理窗口，callee、this 与输入经带检查路径释放；
-构造调用另有 `strong_count` 探测（每次 `new` 约 148 条）和独立的安装器。
+**重定基线（2026-10-08，x86，`215f1cc5`，与 3f 最终 profile 同一份 `all8-fi`）。** 第 3 项让总量变小，调用成本本身未变，占比因此上升：
 
-**任务**
+| 用例 | 调用与返回（`46e6c82b` → `215f1cc5`） | 主要函数（self 占比） |
+|---|---:|---|
+| DeltaBlue | 26.2% → **29.2%** | `install_current_ordinary` 8.1、`prepare_ordinary_window_in_state` 3.3、`release_owned` 3.1、`recycle` 2.4、`select_in_state` 2.3、`validate_ordinary_call_operands` 1.4、`clear_current_frame_owned_in_state` 1.2、`authenticate_slot_in_state` 1.0 |
+| Richards | 16.4% → 18.4% | 同上（install 5.6、window 2.3、`release_owned` 2.1、select 1.5、`recycle` 1.5） |
+| EarleyBoyer | 23.2% → 23.8% | `enter_constructor` 2.4、`start_instance` 2.2、`borrowed_ordinary_data` 1.8、`materialize_in_state` 1.7、`run_frames_with_state` 1.4、`run` 1.3；普通 install 只有 2.0 |
+| RayTrace | 14.1% → 14.8% | `run` 1.7、`enter_constructor` 1.6、`run_frames_with_state` 1.1、`materialize_in_state` 1.1 |
+| Splay | 12.6% → 14.5% | install 2.7、`run` 1.9、`materialize_in_state` 1.9 |
+
+R/D 的成本在普通调用快速路径上（安装 > 返回拆帧 > 选择/校验/认证）；EarleyBoyer、RayTrace、Splay 的成本主要在构造调用和退回 `driver::run` 再重入的冷路径上。
+
+**代码核对（`1d4d41c5`）。** 原计划的“原因”中有几条已经不成立：
+
+- callee、this 与输入的释放已走第 2 项的可信路径（`release_object_handle` / `admits_trusted`），不是带检查路径；
+- 冷帧已有池（`CallStorage.empty_frames`），参数已直接移动，普通局部变量已批量初始化；
+- “232 字节的 `FrameCold`”没有依据（无尺寸断言，估算约 210–230 字节；232 是解释函数的栈槽数），删去；
+- 普通 JS→JS 调用与返回已不退出解释循环（`execute.rs` 外层 loop `continue`）。仍退出的是原生、bound、generator/async、Proxy、
+  一般构造，以及返回到根帧、操作目标、派生构造或有等待的帧（`Declined`），由 `driver::ready::run` 处理后重新进入。
+
+仍然成立的：没有调用站点缓存，每次调用都重新选择（`heap.object`、`RefCell` 借用、比较 `publish_generation`、克隆两个 `Rc`）、
+逐个参数重新 peek 校验（成本随参数个数增长）、认证；安装逐字段写池中的帧（`entry_guard` 重复写 None），回收时每个字段重置一遍；
+清理窗口逐槽进行，包括 `Undefined` 槽；`FrameFunction::shared` 接收 `Runtime` 只为取 `domain_id()`，`CallInput::new` 的 `runtime` 参数未使用；
+构造调用的 `strong_count` 探测是 4 次加每个对象类参数 1 次，`heap.object` 与 bytecode 各重复查一次，`install_current_constructor` 与普通安装器几乎重复；
+构造调用后懒分配的 `FrameRare` 留在池化帧上，之后复用该帧的普通调用要多做 `rare` 检查。
+
+**任务**（按顺序）
 
 | 任务 | 内容 | 目标用例 |
 |---|---|---|
-| 4a 调用站点缓存 | 记录 callee 身份到已准备的调用事实（executable、帧布局、参数个数是否匹配、局部变量能否简单初始化、是否有捕获）；命中跳过选择、认证和操作数校验。 | DeltaBlue、Richards、EarleyBoyer |
-| 4b 精简帧安装 | callee owner 直接移入帧；冷帧复用池中对象、只写变化字段；局部变量批量初始化，参数直接移动；`FrameFunction` 不再接收 `Runtime`，关闭对应 B0 残留。 | DeltaBlue、Richards、EarleyBoyer、RayTrace |
-| 4c 精简返回 | 只清理实际持有 owner 的槽；callee、this 与输入走第 2 项快速路径；回收冷帧不重新初始化。 | 同上 |
-| 4d 构造调用 | 查清并去掉 `strong_count` 探测；基础对象复用 1c 的空对象路径；`enter_constructor` 与普通安装器共用实现。 | RayTrace、EarleyBoyer、Splay |
-| 4e 解释函数尺寸 | 调用/返回处理在 `execute_frame_in_state` 中只保留分派加一次调用；函数大小与栈槽数相对 `b44c0dc` 不增加超过 2%，超过时按第 7 节检查生成代码，不再另设例外。 | — |
+| 4b 精简帧安装 | 安装只写变化字段（去掉重复的 `entry_guard = None` 等）；`select_in_state` 不再每次克隆 closure 与 facts 的 `Rc`，改为借用；构造调用留下的 `FrameRare` 不污染之后的普通调用。 | DeltaBlue、Richards |
+| 4c 精简返回 | 只清理实际持有 owner 的槽（跳过立即数与 `Undefined`）；回收冷帧不逐字段重置，只复位必须复位的状态。 | DeltaBlue、Richards |
+| 4a 调用站点缓存 | 在 4b 之后做：站点记住 callee 身份与已准备的调用事实（executable、帧布局、参数个数是否匹配、局部变量能否简单初始化、是否有捕获）；命中跳过选择、认证和逐参数校验，并让安装直接使用这些事实。单独能省的部分约为 D 4.7%、R 3.5%，新增的热代码须先用 `perf stat` 看 L1i。 | DeltaBlue、Richards |
+| 4d 构造调用 | 去掉 `strong_count` 探测（含每个对象类参数的一次）；`heap.object` 与 bytecode 只查一次；基础对象复用 1c 的空对象路径；`install_current_constructor` 与普通安装器共用实现。 | EarleyBoyer、RayTrace、Splay |
+| 4f 冷路径重入 | 先查清 EarleyBoyer、RayTrace、Splay 中是哪类调用退回 `driver::run`（原生内建、一般构造、`Declined` 返回等）及各自次数，再决定留在循环内处理还是让重入更便宜（`run_frames_with_state`、`materialize_in_state`、`start_instance`）。 | EarleyBoyer、RayTrace、Splay |
+| 4g B0 残留 | `FrameFunction::shared` 与 `CallInput::new` 不再接收 `Runtime`（结构提交，不要求 V8 增益，八项 Ir 增长 ≤0.5%）。 | — |
+| 4e 解释函数尺寸 | 贯穿全项：调用/返回处理在 `execute_frame_in_state` 中只保留分派加一次调用；函数大小与栈槽数相对 `b44c0dc` 不增加超过 2%，超过时按第 7 节检查生成代码，不再另设例外。 | — |
 
 **验收**
 
-- 每个任务同第 3 项的规则。
-- 第 4 项整体：调用与返回 self 占比 DeltaBlue ≤12%（现 26.2%）、EarleyBoyer ≤12%（现 23.2%）、Richards ≤8%（现 16.4%）。
+- 每个任务同第 3 项的规则；原生 A/B 前先用 `perf stat`（周期、指令、L1i 未命中，绑核）对比。
+- 第 4 项整体：调用与返回 self 占比 DeltaBlue ≤12%（现 29.2%）、EarleyBoyer ≤12%（现 23.8%）、Richards ≤8%（现 18.4%）。
+  未做逐行成本拆分（2026-10-08 决定按上面的函数级分解直接开始）；若实施中证明部分成本属于解释循环本身，在本项收口时按实测记录并划给第 5 项，不在中途修改目标。
 - 探针记录但不作门槛：`f(i)`、`o.m(i)`、`g(p)`、`new E()`。
 - 正确性：递归与栈限制、尾调用、bound 函数、generator/async（未命中路径）、参数个数不匹配、
   `arguments` 与捕获变量、抛错时的帧清理与 poison、GC 时栈上 owner、构造函数返回对象、
-  `new.target`、派生类与 `super()`。
+  `new.target`、派生类与 `super()`；构造调用后复用同一池化帧的普通调用。
 
 ### 顺序与时间上限
 
-- 先做第 3 项（3a → 3b → 3c → 3e → 3d），再做第 4 项（4a → 4b/4c → 4d），4e 贯穿第 4 项。4a 不再与其他项并行。
+- 先做第 3 项（3a → 3b → 3c → 3e → 3d），再做第 4 项（4b → 4c → 4a → 4d → 4f，4g 可随时插入），4e 贯穿第 4 项。4a 不再与其他项并行。
 - 每个性能任务（3e 除外）最多两轮“实现—测量”：两轮后目标用例仍无 ≥1% 的 Ir 下降，就撤回并记录原因，进入下一个任务。
 - 第 4 项完成后进入正式检查点。
 
@@ -431,7 +588,9 @@ profiling 构建按状态统计读缓存命中。
 
 - **检查点：** 用正式的六对 Score 判断离 Boa 还差多少，再决定第 5、6 项哪个先做。
   排序时一并考虑重定基线中第 3、4 项以外的大块：释放、GC 与分配（RayTrace 28%、RegExp 27%、Splay 19%、EarleyBoyer 14%），RegExp 内建（29%）。
-- **第 5 项：** 按 E 实验的结论来做：热状态用局部变量，冷路径显式同步状态；先拆小热循环，再单独验证预解码。承接第 1 项划来的 `new P(i)` 分派成本（约 560 条）。第 5 项完成后，`new P(i)` 净总量重新对照 ≤5,500。
+- **第 5 项：** 按 E 实验的结论来做：热状态用局部变量，冷路径显式同步状态；先拆小热循环，再单独验证预解码。
+  预解码时把 `GetField*` 的读站点下标与 key atom 写进附加操作数，命中不再查偏移表与 atom 表（[`read-hit-design.md`](read-hit-design.md) 方案 D，约 16–25 条/次）；
+  完成后核对 R/D 读缓存与解释衔接合计 ≤8%。承接第 1 项划来的 `new P(i)` 分派成本（约 560 条）。第 5 项完成后，`new P(i)` 净总量重新对照 ≤5,500。
 - **第 7 项：**
   - 等待状态先统一成一个枚举；
   - 对象 key 复用现有的转换等待；

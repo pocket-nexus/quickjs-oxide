@@ -6,11 +6,11 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx, AtomTable};
 #[cfg(test)]
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::heap::{ContextId, Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId};
+use crate::engine::heap::{Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Location {
-    domain: u64,
-    realm: ContextId,
+    // The receiver's shape identifies its realm (prototypes differ) and every
+    // table lives in one runtime, so entries carry no domain or realm.
     shape: ShapeId,
     revision: u64,
     // Only prototype hits depend on other objects' layouts.
@@ -49,6 +49,8 @@ enum Located<'a> {
     Unresolved,
 }
 
+/// Whole-cache view used by the miss path and tests. The hit path reads
+/// `Kind` and individual entries instead of copying this value.
 #[derive(Clone, Copy, Debug, Default)]
 enum State {
     #[default]
@@ -65,86 +67,183 @@ struct Locations {
     len: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Kind {
+    #[default]
+    Cold,
+    Monomorphic,
+    Accessor,
+    Polymorphic(u8),
+    Megamorphic(u16),
+}
+
+const ENTRIES: usize = 4;
+
 /// Four guarded locations cover small polymorphic sites. Unsupported/overflow sites
 /// periodically retry specialization, without retaining object or value owners.
+/// `kind` says which entries are live: one for monomorphic and accessor
+/// sites, the first `len` for polymorphic ones.
 #[derive(Debug, Default)]
 pub(crate) struct PropertyReadCache {
-    state: Cell<State>,
+    kind: Cell<Kind>,
+    entries: [Cell<Option<Location>>; ENTRIES],
     backoff: Cell<u16>,
     hits: Cell<u8>,
 }
 
 impl PropertyReadCache {
+    /// Remaining cooldown reads, for tests that drive the cache through its
+    /// consumers.
+    #[cfg(test)]
+    pub(crate) fn cooldown_left(&self) -> Option<u16> {
+        match self.kind.get() {
+            Kind::Megamorphic(left) => Some(left),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_state(state: State) -> Self {
+        let cache = Self::default();
+        cache.set_state(state);
+        cache
+    }
+
+    fn entry(&self, index: usize) -> Location {
+        self.entries[index]
+            .get()
+            .expect("the cache kind covers only filled entries")
+    }
+
+    fn state(&self) -> State {
+        match self.kind.get() {
+            Kind::Cold => State::Cold,
+            Kind::Monomorphic => State::Monomorphic(self.entry(0)),
+            Kind::Accessor => State::Accessor(self.entry(0)),
+            Kind::Polymorphic(len) => {
+                let first = self.entry(0);
+                let mut entries = [first; ENTRIES];
+                for (index, entry) in entries.iter_mut().enumerate().take(len as usize) {
+                    *entry = self.entry(index);
+                }
+                State::Polymorphic(Locations {
+                    entries,
+                    len: len as usize,
+                })
+            }
+            Kind::Megamorphic(left) => State::Megamorphic(left),
+        }
+    }
+
+    fn set_state(&self, state: State) {
+        let kind = match state {
+            State::Cold => Kind::Cold,
+            State::Monomorphic(location) => {
+                self.entries[0].set(Some(location));
+                Kind::Monomorphic
+            }
+            State::Accessor(location) => {
+                self.entries[0].set(Some(location));
+                Kind::Accessor
+            }
+            State::Polymorphic(locations) => {
+                for (cell, location) in self.entries.iter().zip(&locations.entries[..locations.len])
+                {
+                    cell.set(Some(*location));
+                }
+                Kind::Polymorphic(locations.len as u8)
+            }
+            State::Megamorphic(left) => Kind::Megamorphic(left),
+        };
+        self.kind.set(kind);
+    }
+
     /// The caller holds the heap borrow until it has retained/copied the value.
-    /// No raw borrowed handle escapes that boundary.
-    pub(crate) fn read<'a>(
+    /// No raw borrowed handle escapes that boundary. Not inlined into its
+    /// callers: a copy in each grew the hot code past the instruction cache
+    /// (DeltaBlue L1i misses +8%, cycles +6% for the same instruction count).
+    #[inline(never)]
+    pub(crate) fn read<'a>(&self, heap: &'a Heap, receiver: ObjectId) -> Option<&'a RawValue> {
+        self.read_inline(heap, receiver)
+    }
+
+    /// The same probe for the one field-read hit path, which inlines it as
+    /// its only hot copy. The receiver is loaded once; each live entry is
+    /// compared by shape first and only a matching entry checks the
+    /// remaining guards.
+    #[inline(always)]
+    pub(crate) fn read_inline<'a>(
         &self,
         heap: &'a Heap,
-        domain: u64,
-        realm: ContextId,
         receiver: ObjectId,
     ) -> Option<&'a RawValue> {
-        match self.state.get() {
-            State::Cold => {
-                event("property_ic.cold");
-                None
-            }
-            State::Accessor(_) => {
-                event("property_ic.accessor_site");
-                None
-            }
-            State::Monomorphic(location) => {
-                let value = Self::read_location(location, heap, domain, realm, receiver);
-                if value.is_some() {
-                    self.hit();
+        let len = match self.kind.get() {
+            // Straight-line path: most sites, and nearly all reads in
+            // Richards and EarleyBoyer, are monomorphic.
+            Kind::Monomorphic => {
+                let location = self.entry(0);
+                let object = heap.object_fast(receiver);
+                if location.shape == object.shape
+                    && let Some(value) = Self::read_matched(location, heap, object)
+                {
                     event(if location.depth == 0 {
                         "property_ic.hit.monomorphic"
                     } else {
                         "property_ic.hit.monomorphic_prototype"
                     });
-                } else {
-                    event("property_ic.guard_miss.monomorphic");
+                    self.hit();
+                    return Some(value);
                 }
-                value
+                event("property_ic.guard_miss.monomorphic");
+                return None;
             }
-            State::Polymorphic(mut locations) => {
-                for index in 0..locations.len {
-                    if let Some(value) =
-                        Self::read_location(locations.entries[index], heap, domain, realm, receiver)
-                    {
-                        event(match (index, locations.entries[index].depth) {
-                            (0, 0) => "property_ic.hit.polymorphic_first",
-                            (_, 0) => "property_ic.hit.polymorphic_later",
-                            (0, _) => "property_ic.hit.polymorphic_first_prototype",
-                            _ => "property_ic.hit.polymorphic_later_prototype",
-                        });
-                        if index != 0 {
-                            locations.entries[..=index].rotate_right(1);
-                            self.state.set(State::Polymorphic(locations));
-                        }
-                        self.hit();
-                        return Some(value);
-                    }
-                }
-                event("property_ic.guard_miss.polymorphic");
-                None
+            Kind::Polymorphic(len) => len as usize,
+            Kind::Cold => {
+                event("property_ic.cold");
+                return None;
             }
-            State::Megamorphic(left) => {
+            Kind::Accessor => {
+                event("property_ic.accessor_site");
+                return None;
+            }
+            Kind::Megamorphic(left) => {
                 event("property_ic.megamorphic_skip");
                 if left <= 1 {
-                    self.state.set(State::Cold);
+                    self.kind.set(Kind::Cold);
                     event("property_ic.revive");
                 } else {
-                    self.state.set(State::Megamorphic(left - 1));
+                    self.kind.set(Kind::Megamorphic(left - 1));
                 }
-                None
+                return None;
             }
+        };
+        let object = heap.object_fast(receiver);
+        for index in 0..len {
+            let location = self.entry(index);
+            if location.shape != object.shape {
+                continue;
+            }
+            let Some(value) = Self::read_matched(location, heap, object) else {
+                continue;
+            };
+            event(match (index, location.depth) {
+                (0, 0) => "property_ic.hit.polymorphic_first",
+                (_, 0) => "property_ic.hit.polymorphic_later",
+                (0, _) => "property_ic.hit.polymorphic_first_prototype",
+                _ => "property_ic.hit.polymorphic_later_prototype",
+            });
+            // A hit never reorders entries: sites that alternate between
+            // shapes would otherwise rewrite the entries on every read.
+            self.hit();
+            return Some(value);
         }
+        event("property_ic.guard_miss.polymorphic");
+        None
     }
 
     fn cool_down(&self) {
         let delay = self.backoff.get().max(16);
-        self.state.set(State::Megamorphic(delay));
+        self.kind.set(Kind::Megamorphic(delay));
         self.backoff.set((delay * 2).min(256));
         self.hits.set(0);
     }
@@ -161,39 +260,31 @@ impl PropertyReadCache {
         }
     }
 
+    /// Remaining guards of an entry whose shape equals the receiver's.
     #[inline(always)]
-    fn read_location(
+    fn read_matched<'a>(
         location: Location,
-        heap: &Heap,
-        domain: u64,
-        realm: ContextId,
-        receiver: ObjectId,
-    ) -> Option<&RawValue> {
-        if location.domain != domain || location.realm != realm {
-            return None;
-        }
-        let object = heap.object_fast(receiver);
+        heap: &'a Heap,
+        object: &'a crate::engine::heap::ObjectData,
+    ) -> Option<&'a RawValue> {
         if !ordinary_receiver(object, location.numeric_key) {
-            return None;
-        }
-        if object.shape != location.shape {
             return None;
         }
         let shape = heap.shape_fast(object.shape);
         if shape.layout_revision() != location.revision {
             return None;
         }
-        let mut holder = receiver;
+        // An own property reads the receiver already loaded by the caller.
+        let mut holder = object;
         if location.depth != 0 {
             if heap.property_layout_epoch() != location.prototype_epoch {
                 return None;
             }
             for _ in 0..location.depth {
-                let data = heap.object_fast(holder);
-                holder = heap.shape_fast(data.shape).prototype()?;
+                holder = heap.object_fast(heap.shape_fast(holder.shape).prototype()?);
             }
         }
-        match heap.object_fast(holder).slots.get(location.slot as usize)? {
+        match holder.slots.get(location.slot as usize)? {
             PropertySlot::Data(value) => Some(value),
             // VarRef/AutoInit can share data-shaped storage; never treat them
             // as immutable data, even if an internal slot writer changed kind.
@@ -205,13 +296,8 @@ impl PropertyReadCache {
     fn read_accessor_location(
         location: Location,
         heap: &Heap,
-        domain: u64,
-        realm: ContextId,
         receiver: ObjectId,
     ) -> Option<Option<ObjectId>> {
-        if location.domain != domain || location.realm != realm {
-            return None;
-        }
         let object = heap.object_fast(receiver);
         if !ordinary_receiver(object, location.numeric_key) || object.shape != location.shape {
             return None;
@@ -241,12 +327,10 @@ impl PropertyReadCache {
         &self,
         heap: &Heap,
         atoms: &AtomTable,
-        domain: u64,
-        realm: ContextId,
         receiver: Option<ObjectId>,
         atom: Atom,
     ) {
-        let _ = self.miss_selected(heap, atoms, domain, realm, receiver, atom);
+        let _ = self.miss_selected(heap, atoms, receiver, atom);
     }
 
     /// Select data, an accessor, or complete absence during one ordinary
@@ -258,15 +342,12 @@ impl PropertyReadCache {
         &self,
         heap: &'a Heap,
         atoms: &AtomTable,
-        domain: u64,
-        realm: ContextId,
         receiver: Option<ObjectId>,
         atom: Atom,
     ) -> CacheSelection<'a> {
-        let state = self.state.get();
+        let state = self.state();
         if let (State::Accessor(location), Some(receiver)) = (state, receiver)
-            && let Some(getter) =
-                Self::read_accessor_location(location, heap, domain, realm, receiver)
+            && let Some(getter) = Self::read_accessor_location(location, heap, receiver)
         {
             return CacheSelection::Accessor(getter);
         }
@@ -284,10 +365,10 @@ impl PropertyReadCache {
                 _ => CacheSelection::Unresolved,
             };
         }
-        let (location, raw) = match receiver.map(|r| locate(heap, atoms, domain, realm, r, atom)) {
+        let (location, raw) = match receiver.map(|r| locate(heap, atoms, r, atom)) {
             Some(Located::Data(location, raw)) => (location, raw),
             Some(Located::Accessor(location, getter)) => {
-                self.state.set(State::Accessor(location));
+                self.set_state(State::Accessor(location));
                 event("property_ic.miss");
                 return CacheSelection::Accessor(getter);
             }
@@ -303,11 +384,7 @@ impl PropertyReadCache {
         };
         // A revision change of the same shape replaces stale knowledge instead
         // of spending another polymorphic slot on an unreachable old revision.
-        let same_key = |old: Location| {
-            old.domain == location.domain
-                && old.realm == location.realm
-                && old.shape == location.shape
-        };
+        let same_key = |old: Location| old.shape == location.shape;
         let next = match state {
             State::Cold => State::Monomorphic(location),
             State::Accessor(_) => State::Monomorphic(location),
@@ -337,7 +414,7 @@ impl PropertyReadCache {
             }
             State::Megamorphic(_) => unreachable!("cooldown handled before location selection"),
         };
-        self.state.set(next);
+        self.set_state(next);
         event("property_ic.miss");
         CacheSelection::Data(raw)
     }
@@ -348,14 +425,12 @@ impl crate::engine::heap::runtime::RuntimeState {
     /// current State access. A cold location still trains the same cache.
     pub(crate) fn proxy_trap_read_in_state(
         &mut self,
-        domain_id: u64,
         trap: usize,
-        realm: ContextId,
         handler: ObjectId,
         atom: Atom,
     ) -> Result<Option<crate::engine::value::JsValue>, RuntimeError> {
         let cache = &self.proxy_trap_reads[trap];
-        let raw = match cache.read(&self.heap, domain_id, realm, handler) {
+        let raw = match cache.read(&self.heap, handler) {
             Some(raw) => {
                 if matches!(
                     raw,
@@ -366,14 +441,7 @@ impl crate::engine::heap::runtime::RuntimeState {
                 raw.clone()
             }
             None => {
-                cache.miss(
-                    &self.heap,
-                    &self.atoms,
-                    domain_id,
-                    realm,
-                    Some(handler),
-                    atom,
-                );
+                cache.miss(&self.heap, &self.atoms, Some(handler), atom);
                 return Ok(None);
             }
         };
@@ -430,14 +498,7 @@ fn ordinary_receiver(data: &crate::engine::heap::ObjectData, numeric: bool) -> b
     }
 }
 
-fn locate<'a>(
-    heap: &'a Heap,
-    atoms: &AtomTable,
-    domain: u64,
-    realm: ContextId,
-    receiver: ObjectId,
-    atom: Atom,
-) -> Located<'a> {
+fn locate<'a>(heap: &'a Heap, atoms: &AtomTable, receiver: ObjectId, atom: Atom) -> Located<'a> {
     let Some(initial) = heap.object(receiver).ok() else {
         return Located::Unresolved;
     };
@@ -453,8 +514,6 @@ fn locate<'a>(
         return Located::Unresolved;
     };
     let location = |depth, slot| Location {
-        domain,
-        realm,
         shape: initial.shape,
         revision,
         prototype_epoch: epoch,
@@ -612,61 +671,78 @@ fn select_ordinary<'a>(
     }
 }
 
-/// Per-executable site caches addressed by execution PC. A bitmap and block
-/// ranks map a PC to its dense site index without a per-instruction slot.
+/// Per-executable site caches addressed by execution PC. Each PC has a
+/// one-byte offset within its 64-PC block (or `NO_SITE`), and block ranks
+/// give the first site index of each block, so a lookup is two loads and an
+/// add (x86-64 baseline has no `popcnt` for a bitmap rank).
 #[derive(Debug)]
 pub(crate) struct SiteCacheTable<T> {
-    site_bits: Box<[u64]>,
+    site_offsets: Box<[u8]>,
     block_ranks: Box<[u32]>,
     sites: Box<[T]>,
 }
 
+const NO_SITE: u8 = u8::MAX;
+
 pub(crate) type PropertyReadCacheTable = SiteCacheTable<PropertyReadCache>;
 
 impl<T: Default> SiteCacheTable<T> {
+    fn from_site_pcs(pc_len: usize, site_pcs: impl IntoIterator<Item = usize>) -> Self {
+        let mut offsets = vec![NO_SITE; pc_len];
+        for pc in site_pcs {
+            offsets[pc] = 0;
+        }
+        let mut ranks = Vec::with_capacity(pc_len.div_ceil(64));
+        let mut count = 0u32;
+        for block in offsets.chunks_mut(64) {
+            ranks.push(count);
+            let mut within = 0u8;
+            for offset in block.iter_mut().filter(|offset| **offset != NO_SITE) {
+                *offset = within;
+                within += 1;
+            }
+            count = count
+                .checked_add(u32::from(within))
+                .expect("bytecode site count fits u32");
+        }
+        Self {
+            site_offsets: offsets.into_boxed_slice(),
+            block_ranks: ranks.into_boxed_slice(),
+            sites: (0..count).map(|_| T::default()).collect(),
+        }
+    }
+
     fn new_exec_sites(
         code: &crate::engine::code::exec::ExecCode,
         is_site: impl Fn(crate::engine::code::exec_opcode::Opcode) -> bool,
     ) -> Self {
-        let mut bits = vec![0u64; code.word_len().div_ceil(64)];
-        let mut ranks = vec![0u32; bits.len()];
-        let mut sites = Vec::new();
-        let mut last_block = 0usize;
-        for source_pc in 0..code.instruction_len() {
-            let pc = code.exec_pc(source_pc as u32).expect("verified source PC") as usize;
-            while last_block <= pc / 64 && last_block < ranks.len() {
-                ranks[last_block] = sites.len() as u32;
-                last_block += 1;
-            }
-            if !code.opcode_at_source(source_pc).is_some_and(&is_site) {
-                continue;
-            }
-            bits[pc / 64] |= 1u64 << (pc % 64);
-            sites.push(T::default());
-        }
-        Self {
-            site_bits: bits.into_boxed_slice(),
-            block_ranks: ranks.into_boxed_slice(),
-            sites: sites.into_boxed_slice(),
-        }
+        Self::from_site_pcs(
+            code.word_len(),
+            (0..code.instruction_len())
+                .filter(|&source_pc| code.opcode_at_source(source_pc).is_some_and(&is_site))
+                .map(|source_pc| {
+                    code.exec_pc(source_pc as u32).expect("verified source PC") as usize
+                }),
+        )
     }
 
+    #[inline]
     fn site_index(&self, pc: usize) -> Option<usize> {
-        let bits = *self.site_bits.get(pc / 64)?;
-        let mask = 1u64 << (pc % 64);
-        if bits & mask == 0 {
+        let offset = *self.site_offsets.get(pc)?;
+        if offset == NO_SITE {
             return None;
         }
-        Some(self.block_ranks[pc / 64] as usize + (bits & (mask - 1)).count_ones() as usize)
+        Some(self.block_ranks[pc / 64] as usize + usize::from(offset))
     }
 
+    #[inline]
     pub(crate) fn site(&self, pc: usize) -> Option<&T> {
         self.sites.get(self.site_index(pc)?)
     }
 
-    /// Words in the PC bitmap: one per 64 execution PCs.
+    /// PC blocks: one per 64 execution PCs.
     pub(crate) fn pc_words(&self) -> usize {
-        self.site_bits.len()
+        self.block_ranks.len()
     }
 }
 
@@ -686,36 +762,16 @@ impl SiteCacheTable<PropertyReadCache> {
 
     #[cfg(test)]
     pub(crate) fn new(code: &[Instruction]) -> Self {
-        let count = code
-            .iter()
-            .filter(|instruction| {
+        Self::from_site_pcs(
+            code.len(),
+            code.iter().enumerate().filter_map(|(pc, instruction)| {
                 matches!(
                     instruction,
                     Instruction::GetField(_) | Instruction::GetField2(_)
                 )
-            })
-            .count();
-        let mut sites = Vec::with_capacity(count);
-        let mut bits = vec![0u64; code.len().div_ceil(64)];
-        let mut ranks = vec![0u32; bits.len()];
-        for (pc, instruction) in code.iter().enumerate() {
-            if pc % 64 == 0 {
-                ranks[pc / 64] = u32::try_from(sites.len()).expect("bytecode site count fits u32");
-            }
-            if !matches!(
-                instruction,
-                Instruction::GetField(_) | Instruction::GetField2(_)
-            ) {
-                continue;
-            }
-            bits[pc / 64] |= 1u64 << (pc % 64);
-            sites.push(PropertyReadCache::default());
-        }
-        Self {
-            site_bits: bits.into_boxed_slice(),
-            block_ranks: ranks.into_boxed_slice(),
-            sites: sites.into_boxed_slice(),
-        }
+                .then_some(pc)
+            }),
+        )
     }
 }
 
@@ -752,29 +808,20 @@ mod tests {
     fn install(
         cache: &PropertyReadCache,
         runtime: &Runtime,
-        realm: ContextId,
         object: &crate::engine::object::ObjectRef,
         atom: Atom,
     ) {
         let state = runtime.0.state.borrow();
-        cache.miss(
-            &state.heap,
-            &state.atoms,
-            runtime.domain_id(),
-            realm,
-            Some(object.object_id()),
-            atom,
-        );
+        cache.miss(&state.heap, &state.atoms, Some(object.object_id()), atom);
     }
     fn number(
         cache: &PropertyReadCache,
         runtime: &Runtime,
-        realm: ContextId,
         object: &crate::engine::object::ObjectRef,
     ) -> Option<f64> {
         let state = runtime.0.state.borrow();
         cache
-            .read(&state.heap, runtime.domain_id(), realm, object.object_id())
+            .read(&state.heap, object.object_id())
             .and_then(|value| match value {
                 RawValue::Int(n) => Some(f64::from(*n)),
                 RawValue::Float(n) => Some(*n),
@@ -798,16 +845,11 @@ mod tests {
         ] {
             let receiver = object(context.eval(source).unwrap());
             let key = runtime.intern_property_key(name).unwrap();
-            let cache = PropertyReadCache {
-                state: Cell::new(State::Megamorphic(7)),
-                ..Default::default()
-            };
+            let cache = PropertyReadCache::with_state(State::Megamorphic(7));
             let state = runtime.0.state.borrow();
             let selected = cache.miss_selected(
                 &state.heap,
                 &state.atoms,
-                runtime.domain_id(),
-                context.realm_id(),
                 Some(receiver.object_id()),
                 key.atom(),
             );
@@ -818,7 +860,7 @@ mod tests {
                 CacheSelection::Unresolved => "unresolved",
             };
             assert_eq!(actual, expected, "{source}[{name}]");
-            assert!(matches!(cache.state.get(), State::Megamorphic(7)));
+            assert!(matches!(cache.state(), State::Megamorphic(7)));
         }
     }
 
@@ -855,7 +897,7 @@ mod tests {
         }
         assert!(table.site(0).is_some());
         assert!(table.site(63).is_none());
-        assert_eq!(table.site_bits.len(), 3);
+        assert_eq!(table.site_offsets.len(), 130);
         assert_eq!(table.block_ranks.len(), 3);
         assert!(PropertyReadCacheTable::new(&[]).site(0).is_none());
     }
@@ -863,34 +905,18 @@ mod tests {
     #[test]
     fn unstable_sites_back_off_with_a_bounded_retry_delay() {
         let runtime = Runtime::new();
-        let context = runtime.new_context().expect("create context");
+        let _context = runtime.new_context().expect("create context");
         let key = runtime.intern_property_key("x").unwrap();
         let receiver = runtime.new_object(None).unwrap();
         let cache = PropertyReadCache::default();
         let state = runtime.0.state.borrow();
         for delay in [16, 32, 64, 128, 256, 256] {
-            cache.miss(
-                &state.heap,
-                &state.atoms,
-                runtime.domain_id(),
-                context.realm_id(),
-                None,
-                key.atom(),
-            );
-            assert!(matches!(cache.state.get(), State::Megamorphic(left) if left == delay));
+            cache.miss(&state.heap, &state.atoms, None, key.atom());
+            assert!(matches!(cache.state(), State::Megamorphic(left) if left == delay));
             for _ in 0..delay {
-                assert!(
-                    cache
-                        .read(
-                            &state.heap,
-                            runtime.domain_id(),
-                            context.realm_id(),
-                            receiver.object_id()
-                        )
-                        .is_none()
-                );
+                assert!(cache.read(&state.heap, receiver.object_id()).is_none());
             }
-            assert!(matches!(cache.state.get(), State::Cold));
+            assert!(matches!(cache.state(), State::Cold));
         }
     }
 
@@ -902,33 +928,32 @@ mod tests {
         let second = object(context.eval("({y:0,x:2})").unwrap());
         let third = object(context.eval("({z:0,y:0,x:3})").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
-        let realm = context.realm_id();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, realm, &first, key.atom());
-        install(&cache, &runtime, realm, &second, key.atom());
-        assert!(matches!(cache.state.get(), State::Polymorphic(_)));
+        install(&cache, &runtime, &first, key.atom());
+        install(&cache, &runtime, &second, key.atom());
+        assert!(matches!(cache.state(), State::Polymorphic(_)));
         for _ in 0..8 {
-            assert_eq!(number(&cache, &runtime, realm, &first), Some(1.0));
-            assert_eq!(number(&cache, &runtime, realm, &second), Some(2.0));
+            assert_eq!(number(&cache, &runtime, &first), Some(1.0));
+            assert_eq!(number(&cache, &runtime, &second), Some(2.0));
         }
         let fourth = object(context.eval("({w:0,z:0,y:0,x:4})").unwrap());
         let fifth = object(context.eval("({v:0,w:0,z:0,y:0,x:5})").unwrap());
-        install(&cache, &runtime, realm, &third, key.atom());
-        install(&cache, &runtime, realm, &fourth, key.atom());
+        install(&cache, &runtime, &third, key.atom());
+        install(&cache, &runtime, &fourth, key.atom());
         for _ in 0..8 {
-            assert_eq!(number(&cache, &runtime, realm, &first), Some(1.0));
-            assert_eq!(number(&cache, &runtime, realm, &second), Some(2.0));
-            assert_eq!(number(&cache, &runtime, realm, &third), Some(3.0));
-            assert_eq!(number(&cache, &runtime, realm, &fourth), Some(4.0));
+            assert_eq!(number(&cache, &runtime, &first), Some(1.0));
+            assert_eq!(number(&cache, &runtime, &second), Some(2.0));
+            assert_eq!(number(&cache, &runtime, &third), Some(3.0));
+            assert_eq!(number(&cache, &runtime, &fourth), Some(4.0));
         }
-        install(&cache, &runtime, realm, &fifth, key.atom());
-        assert!(matches!(cache.state.get(), State::Megamorphic(16)));
+        install(&cache, &runtime, &fifth, key.atom());
+        assert!(matches!(cache.state(), State::Megamorphic(16)));
         for _ in 0..16 {
-            assert_eq!(number(&cache, &runtime, realm, &first), None);
+            assert_eq!(number(&cache, &runtime, &first), None);
         }
-        assert!(matches!(cache.state.get(), State::Cold));
-        install(&cache, &runtime, realm, &third, key.atom());
-        assert_eq!(number(&cache, &runtime, realm, &third), Some(3.0));
+        assert!(matches!(cache.state(), State::Cold));
+        install(&cache, &runtime, &third, key.atom());
+        assert_eq!(number(&cache, &runtime, &third), Some(3.0));
     }
 
     #[test]
@@ -943,18 +968,15 @@ mod tests {
                     .unwrap(),
             );
             let cache = PropertyReadCache::default();
-            install(&cache, &runtime, context.realm_id(), &receiver, key.atom());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &receiver),
-                Some(7.0)
-            );
+            install(&cache, &runtime, &receiver, key.atom());
+            assert_eq!(number(&cache, &runtime, &receiver), Some(7.0));
         }
         let typed = object(context.eval("new Uint8Array(2)").unwrap());
         for spelling in ["0", "-0", "NaN", "Infinity", "1.5"] {
             let key = runtime.intern_property_key(spelling).unwrap();
             let cache = PropertyReadCache::default();
-            install(&cache, &runtime, context.realm_id(), &typed, key.atom());
-            assert!(matches!(cache.state.get(), State::Megamorphic(_)));
+            install(&cache, &runtime, &typed, key.atom());
+            assert!(matches!(cache.state(), State::Megamorphic(_)));
         }
     }
 
@@ -965,23 +987,17 @@ mod tests {
         let obj = object(context.eval("var o = {x:1}; o").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(1.0)
-        );
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(1.0));
         drop(context.eval("o.x=9").unwrap());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(9.0)
-        );
+        assert_eq!(number(&cache, &runtime, &obj), Some(9.0));
         drop(context.eval("delete o.x").unwrap());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), None);
+        install(&cache, &runtime, &obj, key.atom());
         drop(context.eval("o.x=11").unwrap());
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert!(matches!(cache.state.get(), State::Megamorphic(_)));
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        install(&cache, &runtime, &obj, key.atom());
+        assert!(matches!(cache.state(), State::Megamorphic(_)));
+        assert_eq!(number(&cache, &runtime, &obj), None);
     }
     #[test]
     fn attributes_and_prototype_replacement_invalidate_before_accessor_execution() {
@@ -995,13 +1011,9 @@ mod tests {
         ] {
             let obj = object(context.eval("var p={x:3}; var o={x:1}; o").unwrap());
             let cache = PropertyReadCache::default();
-            install(&cache, &runtime, context.realm_id(), &obj, key.atom());
+            install(&cache, &runtime, &obj, key.atom());
             drop(context.eval(mutation).unwrap());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &obj),
-                None,
-                "{mutation}"
-            );
+            assert_eq!(number(&cache, &runtime, &obj), None, "{mutation}");
         }
     }
     #[test]
@@ -1021,22 +1033,12 @@ mod tests {
                     .unwrap(),
             );
             let cache = PropertyReadCache::default();
-            install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &obj),
-                Some(3.0)
-            );
+            install(&cache, &runtime, &obj, key.atom());
+            assert_eq!(number(&cache, &runtime, &obj), Some(3.0));
             drop(context.eval("p.x=8").unwrap());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &obj),
-                Some(8.0)
-            );
+            assert_eq!(number(&cache, &runtime, &obj), Some(8.0));
             drop(context.eval(mutation).unwrap());
-            assert_eq!(
-                number(&cache, &runtime, context.realm_id(), &obj),
-                None,
-                "{mutation}"
-            );
+            assert_eq!(number(&cache, &runtime, &obj), None, "{mutation}");
         }
     }
     #[test]
@@ -1069,44 +1071,40 @@ mod tests {
         );
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(1.0)
-        );
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(1.0));
         drop(context.eval("delete o.p1").unwrap());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        assert_eq!(number(&cache, &runtime, &obj), None);
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
+        install(&cache, &runtime, &obj, key.atom());
         drop(context.eval("o.more=6").unwrap());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        assert_eq!(number(&cache, &runtime, &obj), None);
     }
     #[test]
-    fn realm_and_runtime_identity_never_alias_and_proxy_is_not_admitted() {
+    fn realms_never_alias_through_shapes_and_proxy_is_not_admitted() {
+        // Entries carry no realm: the receiver's shape names its prototype,
+        // which differs per realm, so a location learned in one realm never
+        // matches the same literal created in another.
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
-        let other = context.runtime().new_context().expect("create context");
+        let mut other = context.runtime().new_context().expect("create context");
         let obj = object(context.eval("({x:1})").unwrap());
+        let foreign = object(other.eval("({x:2})").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(number(&cache, &runtime, other.realm_id(), &obj), None);
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(1.0));
+        assert_eq!(number(&cache, &runtime, &foreign), None);
         let state = runtime.0.state.borrow();
-        assert!(
-            cache
-                .read(
-                    &state.heap,
-                    runtime.domain_id() + 1,
-                    context.realm_id(),
-                    obj.object_id()
-                )
-                .is_none()
+        assert_ne!(
+            state.heap.object(obj.object_id()).unwrap().shape,
+            state.heap.object(foreign.object_id()).unwrap().shape
         );
         drop(state);
         let proxy = object(context.eval("new Proxy({x:2},{get(){throw 9}})").unwrap());
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &proxy, key.atom());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &proxy), None);
+        install(&cache, &runtime, &proxy, key.atom());
+        assert_eq!(number(&cache, &runtime, &proxy), None);
     }
     #[test]
     fn named_array_cache_survives_value_write_and_invalidates_holey_materialization() {
@@ -1115,18 +1113,12 @@ mod tests {
         let obj = object(context.eval("var o=[1,2,3]; o.x=4; o").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(4.0)
-        );
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(4.0));
         drop(context.eval("o.x=5; o[0]=8").unwrap());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(5.0)
-        );
+        assert_eq!(number(&cache, &runtime, &obj), Some(5.0));
         drop(context.eval("delete o[1]").unwrap());
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        assert_eq!(number(&cache, &runtime, &obj), None);
     }
     #[test]
     fn entering_dictionary_storage_invalidates_an_existing_own_fact() {
@@ -1135,17 +1127,14 @@ mod tests {
         let obj = object(context.eval("var o={x:1}; o").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
-        install(&cache, &runtime, context.realm_id(), &obj, key.atom());
-        assert_eq!(
-            number(&cache, &runtime, context.realm_id(), &obj),
-            Some(1.0)
-        );
+        install(&cache, &runtime, &obj, key.atom());
+        assert_eq!(number(&cache, &runtime, &obj), Some(1.0));
         drop(
             context
                 .eval("for(var i=0;i<100;i++) o['p'+i]=i; delete o.p0")
                 .unwrap(),
         );
-        assert_eq!(number(&cache, &runtime, context.realm_id(), &obj), None);
+        assert_eq!(number(&cache, &runtime, &obj), None);
     }
     #[test]
     fn prototype_attribute_changes_invalidate_epoch_with_unchanged_receiver_layout() {
@@ -1170,11 +1159,8 @@ mod tests {
                         .unwrap();
                 }
                 let cache = PropertyReadCache::default();
-                install(&cache, &runtime, context.realm_id(), &receiver, key.atom());
-                assert_eq!(
-                    number(&cache, &runtime, context.realm_id(), &receiver),
-                    Some(3.0)
-                );
+                install(&cache, &runtime, &receiver, key.atom());
+                assert_eq!(number(&cache, &runtime, &receiver), Some(3.0));
                 let (shape, revision, epoch) = {
                     let state = runtime.0.state.borrow();
                     let shape = state.heap.object(receiver.object_id()).unwrap().shape;
@@ -1196,10 +1182,7 @@ mod tests {
                     "dictionary={dictionary}: {mutation}"
                 );
                 drop(state);
-                assert_eq!(
-                    number(&cache, &runtime, context.realm_id(), &receiver),
-                    None
-                );
+                assert_eq!(number(&cache, &runtime, &receiver), None);
                 assert_eq!(context.eval("calls").unwrap(), Value::Int(0));
             }
         }
