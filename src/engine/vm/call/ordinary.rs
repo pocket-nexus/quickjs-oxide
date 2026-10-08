@@ -424,6 +424,34 @@ mod direct_selection_tests {
     use super::*;
 
     #[test]
+    fn captured_reads_and_writes_keep_binding_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let source = r#"
+            function outer(param){
+              var box = {n:1}, total = 0;
+              let late; const fixed = {v:2};
+              function bump(){ box.n++; total = (param = param + 1) + box.n; return box; }
+              function swap(){ var old = box; box = {n:10}; return old; }
+              function tdz(){ try { return early; } catch (e) { return e instanceof ReferenceError; } let early = 1; }
+              function seal(){ try { fixed = 3; return 'no'; } catch (e) { return e instanceof TypeError; } }
+              var out = [];
+              for (var i = 0; i < 3; i++) { out.push(bump() === box, total); }
+              var old = swap(); out.push(old.n, box.n, bump().n, param, tdz(), seal(), fixed.v, late === undefined);
+              return out.join();
+            }
+            outer(5) + '|' + outer(5)"#;
+        let one = "true,8,true,10,true,12,4,10,11,9,true,true,2,true";
+        assert_eq!(
+            context.eval(source).unwrap(),
+            context
+                .eval(&format!("{:?}", format!("{one}|{one}")))
+                .unwrap()
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
     fn apply_on_an_ordinary_target_keeps_call_semantics() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
