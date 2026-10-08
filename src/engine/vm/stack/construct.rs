@@ -76,6 +76,7 @@ impl SlotStore {
             count,
             function,
             observes_arguments,
+            None,
         )?;
         let start = prepared.start;
         let base = prepared.window.base;

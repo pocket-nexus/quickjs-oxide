@@ -27,6 +27,95 @@ mod tests;
 
 const MAX_APPLY_ARGUMENTS: u64 = 65_534;
 
+impl RuntimeState {
+    /// `CreateListFromArrayLike` for `apply` when it can run no code: a
+    /// genuine Array whose dense storage covers its length, or an Arguments
+    /// object whose fast prefix and `length` are untouched. The values borrow
+    /// the array's edges. `false` means another representation, with `out`
+    /// left empty.
+    pub(crate) fn apply_list_in_state(
+        &self,
+        object: ObjectId,
+        out: &mut Vec<JsValue>,
+    ) -> Result<bool, RuntimeError> {
+        let length_atom = self
+            .pinned_atoms
+            .get(crate::engine::atom::pinned::PinnedAtom::Length);
+        let data = self.heap.object(object)?;
+        let raw: Vec<_> = match &data.payload {
+            ObjectPayload::Array { dense: Some(dense) } => {
+                let Some((length, _)) =
+                    Runtime::array_length_state_in_heap(&self.heap, object, length_atom)?
+                else {
+                    return Ok(false);
+                };
+                if dense.len() != length as usize {
+                    return Ok(false);
+                }
+                dense.iter().cloned().map(Some).collect()
+            }
+            ObjectPayload::Arguments {
+                mapped,
+                fast_len: Some(length),
+            } => {
+                let shape = self.heap.shape(data.shape)?;
+                let Some(slot) =
+                    shape.find(crate::engine::atom::AtomIdx::from_raw(length_atom.raw()))
+                else {
+                    return Ok(false);
+                };
+                let intact = shape.entries()[slot as usize].flags.storage
+                    == crate::engine::object::shape::PropertyStorageKind::Data
+                    && matches!(
+                        data.slots.get(slot as usize),
+                        Some(PropertySlot::Data(RawValue::Int(value)))
+                            if u32::try_from(*value).ok() == Some(*length)
+                    );
+                if !intact {
+                    return Ok(false);
+                }
+                let mut ordered = vec![None; *length as usize];
+                for (entry, slot) in shape.entries().iter().zip(&data.slots) {
+                    let Some(index) = self.atoms.array_index(self.atoms.brand(entry.atom)?)? else {
+                        continue;
+                    };
+                    let Some(destination) = ordered.get_mut(index as usize) else {
+                        continue;
+                    };
+                    if !entry.flags.writable || !entry.flags.enumerable || !entry.flags.configurable
+                    {
+                        return Ok(false);
+                    }
+                    let value = match slot {
+                        PropertySlot::VarRef(cell) if *mapped => {
+                            self.heap.var_ref(*cell)?.value.clone()
+                        }
+                        PropertySlot::Data(value) => value.clone(),
+                        _ => return Ok(false),
+                    };
+                    if destination.replace(value).is_some() {
+                        return Ok(false);
+                    }
+                }
+                ordered
+            }
+            _ => return Ok(false),
+        };
+        if raw.len() as u64 > MAX_APPLY_ARGUMENTS {
+            return Ok(false);
+        }
+        out.reserve(raw.len());
+        for value in raw {
+            let Some(value) = value.and_then(JsValue::from_raw) else {
+                out.clear();
+                return Ok(false);
+            };
+            out.push(value);
+        }
+        Ok(true)
+    }
+}
+
 impl Runtime {
     /// Snapshot QuickJS's fast Array/Arguments storage in numeric-index order.
     ///

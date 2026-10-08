@@ -77,6 +77,13 @@ impl LinkedNativeSelection {
         domain_id == self.domain_id && function == self.function
     }
 
+    /// The selected native is the intrinsic `Function.prototype.apply`.
+    pub(crate) fn is_function_apply(&self) -> bool {
+        self.data.target
+            == crate::engine::builtins::native::NativeFunctionId::FunctionPrototypeApply
+            && self.data.realm.is_some()
+    }
+
     pub(crate) fn into_parts_jsvalue(
         self,
         runtime: &Runtime,

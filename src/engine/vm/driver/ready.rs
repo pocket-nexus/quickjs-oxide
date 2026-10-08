@@ -388,6 +388,21 @@ fn enter_call(
     selected_native: Option<crate::engine::object::LinkedNativeSelection>,
     fallthrough: crate::engine::vm::execute::FallthroughPc,
 ) -> Result<Option<Boundary>, Error> {
+    if method
+        && let Some(selected) = &selected_native
+        && super::ordinary::enter_apply(
+            runtime,
+            execution,
+            *id,
+            arguments,
+            selected,
+            tail,
+            fallthrough,
+        )?
+    {
+        *id = execution.frames.current_id().unwrap();
+        return Ok(None);
+    }
     Ok(
         match super::ordinary::enter_selected(
             runtime,

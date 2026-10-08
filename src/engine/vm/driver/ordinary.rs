@@ -216,6 +216,78 @@ pub(in crate::engine::vm) fn enter_selected_in_state(
     )
 }
 
+/// `f.apply(thisArg, array)` with the intrinsic `apply` on an ordinary `f`
+/// whose array reads run no code: install `f` directly instead of entering
+/// the native continuation. `false` leaves every operand untouched.
+pub(super) fn enter_apply(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    count: u16,
+    selected: &crate::engine::object::LinkedNativeSelection,
+    tail: bool,
+    fallthrough: crate::engine::vm::execute::FallthroughPc,
+) -> Result<bool, Error> {
+    use crate::engine::value::JsValue;
+    let count = usize::from(count);
+    if count > 2
+        || !selected.is_function_apply()
+        || !execution.frames.can_push()
+        || runtime.bytecode_call_would_overflow()
+    {
+        return Ok(false);
+    }
+    let mut state = runtime.0.state.borrow_mut();
+    let mut values = Vec::new();
+    let call = {
+        let frame = execution.frames.current_mut(id)?;
+        let window = &frame.window;
+        let JsValue::Object(apply) = execution.slots.peek(window, count)? else {
+            return Ok(false);
+        };
+        if !selected.matches_in_domain(runtime.domain_id(), *apply) {
+            return Ok(false);
+        }
+        let JsValue::Object(target) = execution.slots.peek(window, count + 1)? else {
+            return Ok(false);
+        };
+        if count == 2 {
+            match execution.slots.peek(window, 0)? {
+                JsValue::Undefined | JsValue::Null => {}
+                JsValue::Object(array) => {
+                    if !state
+                        .apply_list_in_state(*array, &mut values)
+                        .map_err(runtime_error_to_vm_error)?
+                    {
+                        return Ok(false);
+                    }
+                }
+                _ => return Ok(false),
+            }
+        }
+        let Ok(DirectSelection::Ordinary(selected)) =
+            DirectSelection::select_in_state(runtime, &state, *target)
+        else {
+            return Ok(false);
+        };
+        selected
+            .authenticate_slot_in_state(runtime, &state)
+            .map_err(runtime_error_to_vm_error)?
+    };
+    crate::engine::vm::stack::FrameExecution::admit(execution, id)?.install_apply(
+        runtime,
+        &mut state,
+        call,
+        count + 2,
+        &values,
+        tail,
+        fallthrough,
+    )?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("apply.entered_ordinary");
+    Ok(true)
+}
+
 // These explicit drops end the authenticated slot lease before installing a
 // child or entering native code; keep the boundary visible to reviewers.
 #[allow(clippy::drop_non_drop, clippy::too_many_arguments)]

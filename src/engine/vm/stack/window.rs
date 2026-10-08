@@ -243,6 +243,31 @@ impl<'a> FrameExecution<'a> {
         self.install_current_ordinary(runtime, state, call, checked, tail, fallthrough)
     }
 
+    /// Install `f.apply(thisArg, array)` as an ordinary call of `f`. The
+    /// caller selected `f` and read `values` from the array in this lease.
+    pub(in crate::engine::vm) fn install_apply(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        call: crate::engine::vm::call::ordinary::OrdinaryCall,
+        operands: usize,
+        values: &[JsValue],
+        tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<(), Error> {
+        self.install_current_child(
+            runtime,
+            state,
+            call,
+            ChildEntry::Apply {
+                operands,
+                values,
+                tail,
+            },
+            fallthrough,
+        )
+    }
+
     /// Sole ordinary slot installer. This method cannot be called through a
     /// raw RunningExecution or a caller-supplied current-frame identity.
     #[allow(clippy::too_many_arguments)]
@@ -360,6 +385,7 @@ impl<'a> FrameExecution<'a> {
         let layout = executable.frame_layout();
         // The private continuation comes from the instruction that produced
         // this call. No caller instruction or slot changed during preflight.
+        let mut released = None;
         let (installed, tail, receiver) = match entry {
             ChildEntry::Ordinary { checked, tail } => {
                 #[cfg(feature = "profiling")]
@@ -391,6 +417,23 @@ impl<'a> FrameExecution<'a> {
                     this_value,
                 )?;
                 (installed, false, Some(receiver))
+            }
+            ChildEntry::Apply {
+                operands,
+                values,
+                tail,
+            } => {
+                let (installed, retired) = transaction.install_apply_window(
+                    runtime,
+                    state,
+                    &layout,
+                    operands,
+                    values,
+                    function,
+                    executable.observes_arguments,
+                )?;
+                released = Some(retired);
+                (installed, tail, None)
             }
         };
         frame.resume_pc = fallthrough.index();
@@ -436,6 +479,12 @@ impl<'a> FrameExecution<'a> {
         crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
+        // The child owns its copies; the caller's apply function and array go.
+        for value in released.into_iter().flatten() {
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, value)
+                .map_err(super::runtime_error_to_vm_error)?;
+        }
         Ok(())
     }
 
@@ -556,6 +605,13 @@ enum ChildEntry<'a> {
         this_value: &'a mut Option<JsValue>,
         receiver: &'a mut Option<JsValue>,
     },
+    /// `f.apply(thisArg, array)`: `operands` caller slots, arguments copied
+    /// from `values`; the apply function and the array are released after.
+    Apply {
+        operands: usize,
+        values: &'a [JsValue],
+        tail: bool,
+    },
 }
 
 /// A frame-owned binding addressed without an operand-stack value.
@@ -630,6 +686,28 @@ impl FrameTransaction<'_> {
             function,
             observes_arguments,
             receiver,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn install_apply_window(
+        self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &crate::engine::code::function::layout::FrameLayout<'_>,
+        operands: usize,
+        values: &[JsValue],
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<(super::call::InstalledOrdinaryFrame, [JsValue; 2]), Error> {
+        self.store.push_current_apply_frame_in_state(
+            runtime,
+            state,
+            layout,
+            self.window,
+            operands,
+            values,
+            function,
+            observes_arguments,
         )
     }
     /// Consume the actual caller window before publishing its child. Only the
