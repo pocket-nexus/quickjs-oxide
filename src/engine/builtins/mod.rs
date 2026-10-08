@@ -259,7 +259,9 @@ pub(crate) use object::string::ObjectStringKind;
 
 pub(crate) use array::build::{BuildResume as ArrayBuildResume, BuildStep as ArrayBuildStep};
 
-pub(crate) use function::instance::{InstanceResume, InstanceStep};
+pub(crate) use function::instance::{
+    InstanceResume, InstanceStep, try_ordinary_instanceof_in_state,
+};
 
 pub(crate) use iterator::concat::{
     ConcatResume as IteratorConcatResume, ConcatStep as IteratorConcatStep,

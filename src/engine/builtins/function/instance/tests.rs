@@ -248,11 +248,12 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
                 context.eval("pair instanceof C").unwrap(),
                 Value::Bool(expected)
             );
+            // The interpreter completes the ordinary kernel without an exit.
             assert_eq!(
                 profile
                     .snapshot()
                     .owned_execution_events
-                    .get("instanceof.completed_without_continuation"),
+                    .get("instanceof.completed_in_loop"),
                 Some(&1)
             );
         }
@@ -404,14 +405,13 @@ fn ordinary_instanceof_real_opcode_finishes_without_native_activation() {
     assert_eq!(
         snapshot
             .owned_execution_events
-            .get("instanceof.completed_without_continuation"),
+            .get("instanceof.completed_in_loop"),
         Some(&20)
     );
-    assert_eq!(
-        snapshot
+    assert!(
+        !snapshot
             .owned_execution_events
-            .get("execute.action.predicate"),
-        Some(&20)
+            .contains_key("execute.action.predicate")
     );
     assert!(
         !snapshot

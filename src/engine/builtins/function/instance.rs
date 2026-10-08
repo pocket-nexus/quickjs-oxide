@@ -195,10 +195,22 @@ fn try_ordinary_instanceof(
     target: ObjectId,
     intrinsic_budget: bool,
 ) -> Option<bool> {
+    let state = runtime.0.state.try_borrow().ok()?;
+    try_ordinary_instanceof_in_state(runtime, &state, candidate, target, intrinsic_budget)
+}
+
+/// The same kernel under the interpreter's own state access, so a hit
+/// completes `instanceof` without leaving the instruction loop.
+pub(crate) fn try_ordinary_instanceof_in_state(
+    runtime: &Runtime,
+    state: &crate::engine::heap::runtime::RuntimeState,
+    candidate: &JsValue,
+    target: ObjectId,
+    intrinsic_budget: bool,
+) -> Option<bool> {
     if runtime.0.deferred_references.has_pending() {
         return None;
     }
-    let state = runtime.0.state.try_borrow().ok()?;
     if state.heap.has_pending_zero_cleanup() {
         return None;
     }

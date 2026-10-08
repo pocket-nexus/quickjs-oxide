@@ -168,6 +168,42 @@ impl<'a> FrameCursor<'a> {
         Ok(equal)
     }
 
+    /// `instanceof` whose answer needs no callback: an ordinary target with
+    /// the intrinsic or no @@hasInstance and an ordinary data `prototype`.
+    /// A miss leaves both operands in place for the predicate driver.
+    #[inline(never)]
+    fn ordinary_instance_of(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut RuntimeState,
+        intrinsic_budget: bool,
+    ) -> Result<Option<bool>, Error> {
+        let found = self.with_slots(|slots| {
+            let JsValue::Object(target) = slots.peek(0)? else {
+                return Ok(None);
+            };
+            Ok(crate::engine::builtins::try_ordinary_instanceof_in_state(
+                runtime,
+                state,
+                slots.peek(1)?,
+                *target,
+                intrinsic_budget,
+            ))
+        })?;
+        let Some(found) = found else {
+            return Ok(None);
+        };
+        let target = self.move_owned()?;
+        let candidate = self.move_owned()?;
+        state
+            .release_owned_jsvalue(self.poisoned, candidate)
+            .map_err(runtime_error_to_vm_error)?;
+        state
+            .release_owned_jsvalue(self.poisoned, target)
+            .map_err(runtime_error_to_vm_error)?;
+        Ok(Some(found))
+    }
+
     fn publish_fault(
         &mut self,
         state: &mut RuntimeState,
@@ -450,6 +486,8 @@ fn execute_admitted_in_state(
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("core.frame_executor_entry");
     loop {
+        // Frame depth changes only through actions handled by this outer loop.
+        let intrinsic_budget = segment.can_push_with_continuations();
         let action = {
             let FrameTurn {
                 property_generation,
@@ -2621,6 +2659,22 @@ fn execute_admitted_in_state(
                         break 'dispatch Ok(VmAction::Complete);
                     }
                     Opcode::Throw => break 'dispatch Ok(VmAction::Throw),
+                    Opcode::InstanceOf => {
+                        if let Some(found) =
+                            cursor.ordinary_instance_of(runtime, state, intrinsic_budget)?
+                        {
+                            cursor.commit_push(JsValue::Bool(found))?;
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_owned_execution_event(
+                                "instanceof.completed_in_loop",
+                            );
+                            cursor.advance(next);
+                            continue;
+                        }
+                        break 'dispatch Ok(VmAction::Predicate(
+                            super::predicate_driver::Kind::Instance,
+                        ));
+                    }
                     _ => {
                         // Materialize only the fallback operands here. Passing the whole
                         // decoder makes its aggregate spill on every dispatch iteration.
