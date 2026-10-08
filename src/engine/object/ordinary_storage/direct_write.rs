@@ -384,12 +384,19 @@ impl RuntimeState {
         if !data.extensible || !matches!(data.kind, ObjectKind::Array) {
             return Ok(false);
         }
-        let Some(length) =
-            crate::engine::object::dense_mutation::writable_dense_length(self, data)?
-        else {
-            return Ok(false);
+        // The next element after the dense prefix either grows the length
+        // (writable length equal to the prefix) or fills a hole below an
+        // existing length, as in `new Array(n)` filled in order.
+        let fills_hole = match &data.payload {
+            ObjectPayload::Array { dense: Some(dense) } if index as usize == dense.len() => {
+                crate::engine::object::dense_mutation::dense_hole_below_length(data, index)
+            }
+            _ => return Ok(false),
         };
-        if index != length {
+        if !fills_hole
+            && crate::engine::object::dense_mutation::writable_dense_length(self, data)?
+                != Some(index)
+        {
             return Ok(false);
         }
         let Some(atom) = Atom::from_immediate_integer(index) else {
@@ -400,10 +407,14 @@ impl RuntimeState {
             return Ok(false);
         }
         let value = std::mem::replace(input, JsValue::Undefined);
-        match self
-            .heap
-            .append_fresh_array_dense_value_owned(object, value.into_raw())
-        {
+        let appended = if fills_hole {
+            self.heap
+                .fill_array_dense_hole_owned(object, value.into_raw())
+        } else {
+            self.heap
+                .append_fresh_array_dense_value_owned(object, value.into_raw())
+        };
+        match appended {
             Ok(()) => Ok(true),
             Err((error, value)) => {
                 *input = JsValue::from_raw(value).expect("rejected public array input");
@@ -423,6 +434,99 @@ mod tests {
             panic!("object")
         };
         *id
+    }
+
+    #[test]
+    fn dense_hole_fill_moves_owner_and_keeps_length() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let array = runtime
+            .into_jsvalue(context.eval("new Array(3)").unwrap())
+            .unwrap();
+        let marker = runtime
+            .into_jsvalue(context.eval("({marker:1})").unwrap())
+            .unwrap();
+        let count = |runtime: &Runtime| {
+            let state = runtime.0.state.borrow();
+            state.heap.object_strong_count(object(&marker)).unwrap()
+        };
+        let before = count(&runtime);
+        let mut input = runtime.dup_jsvalue(&marker).unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        // Only the first hole after the dense prefix is filled in place.
+        assert!(
+            !state
+                .try_append_dense_value(object(&array), 1, &mut JsValue::Int(9))
+                .unwrap()
+        );
+        assert!(
+            state
+                .try_append_dense_value(object(&array), 0, &mut input)
+                .unwrap()
+        );
+        assert!(matches!(input, JsValue::Undefined));
+        drop(state);
+        // The owner moved in: the dup above is now the element's reference.
+        assert_eq!(count(&runtime), before + 1);
+        runtime.release_jsvalue(array).unwrap();
+        assert_eq!(count(&runtime), before);
+        runtime.release_jsvalue(marker).unwrap();
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn dense_hole_fill_matches_ordinary_set_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+            (() => {
+                const out = [];
+                // In-order fill keeps the length and reads back every value.
+                const a = new Array(4);
+                for (let i = 0; i < 4; i++) a[i] = i * 0.5;
+                out.push(a.length === 4 && a.join() === '0,0.5,1,1.5');
+                // Out-of-order and past-the-length writes stay correct.
+                const b = new Array(4);
+                b[2] = 'c'; b[0] = 'a'; b[1] = 'b'; b[5] = 'f';
+                out.push(b.length === 6 && b.join() === 'a,b,c,,,f' && !(3 in b));
+                // A read-only length still admits holes below it.
+                const c = new Array(2);
+                Object.defineProperty(c, 'length', {writable: false});
+                c[0] = 1; c[1] = 2; c[2] = 3;
+                out.push(c.length === 2 && c[0] === 1 && c[1] === 2 && !(2 in c));
+                // Non-extensible arrays reject the fill.
+                const d = Object.preventExtensions(new Array(2));
+                d[0] = 1;
+                out.push(!(0 in d));
+                // Prototype setters and read-only elements decide the hole.
+                let seen = '';
+                Object.defineProperty(Array.prototype, 0, {
+                    set(v) { seen += v; }, configurable: true,
+                });
+                const e = new Array(2);
+                e[0] = 'x';
+                out.push(seen === 'x' && !Object.prototype.hasOwnProperty.call(e, 0));
+                delete Array.prototype[0];
+                Object.defineProperty(Object.prototype, 0, {value: 'p', writable: false, configurable: true});
+                const f = new Array(2);
+                f[0] = 'y';
+                out.push(f[0] === 'p' && !Object.prototype.hasOwnProperty.call(f, 0));
+                delete Object.prototype[0];
+                const g = new Array(2);
+                g[0] = 'z';
+                out.push(g[0] === 'z' && Object.prototype.hasOwnProperty.call(g, 0));
+                const result = out.join();
+                return result === 'true,true,true,true,true,true,true' || result;
+            })()
+        "#
+                )
+                .unwrap(),
+            crate::engine::value::Value::Bool(true)
+        );
+        assert!(!runtime.is_poisoned());
     }
 
     #[test]

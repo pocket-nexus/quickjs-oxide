@@ -667,6 +667,63 @@ impl Heap {
         Ok(())
     }
 
+    /// Move an owned value into the first hole of a fast Array whose length
+    /// already covers it (`new Array(n)` filled in order). The length is
+    /// unchanged; the caller proved the hole is not shadowed by a prototype.
+    pub(crate) fn fill_array_dense_hole_owned(
+        &mut self,
+        id: ObjectId,
+        value: RawValue,
+    ) -> Result<(), (HeapError, RawValue)> {
+        let prepared = (|| {
+            if !is_map_storable_value(&value) {
+                return Err(HeapError::Invariant(
+                    "fast Array contains an internal value sentinel",
+                ));
+            }
+            let object = self.object_mut(id)?;
+            let stored_len = match object.slots.first() {
+                Some(PropertySlot::Data(RawValue::Int(length))) if *length >= 0 => *length as u32,
+                Some(PropertySlot::Data(RawValue::Float(length)))
+                    if length.is_finite()
+                        && *length >= 0.0
+                        && *length <= f64::from(u32::MAX)
+                        && length.fract() == 0.0 =>
+                {
+                    *length as u32
+                }
+                _ => {
+                    return Err(HeapError::Invariant(
+                        "fast Array length is not an exact Uint32 data value",
+                    ));
+                }
+            };
+            let ObjectPayload::Array { dense: Some(dense) } = &mut object.payload else {
+                return Err(HeapError::Invariant(
+                    "dense hole fill reached a slow Array or wrong object class",
+                ));
+            };
+            if dense.len() >= stored_len as usize {
+                return Err(HeapError::Invariant(
+                    "dense hole fill reached an element at or past the length",
+                ));
+            }
+            dense.try_reserve(1).map_err(|_| HeapError::Allocation {
+                operation: "growing fast Array storage",
+            })
+        })();
+        if let Err(error) = prepared {
+            return Err((error, value));
+        }
+        let ObjectPayload::Array { dense: Some(dense) } =
+            &mut self.object_mut(id).expect("validated fast Array").payload
+        else {
+            unreachable!("validated dense Array changed before publication")
+        };
+        dense.push(value);
+        Ok(())
+    }
+
     /// Replace one existing fast element transactionally. New edges are
     /// retained before the previous value and its Symbol atom are detached.
     pub fn replace_array_dense_value(
