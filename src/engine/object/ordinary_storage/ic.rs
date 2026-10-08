@@ -1574,6 +1574,93 @@ mod tests {
         assert!(!runtime.is_poisoned());
     }
 
+    fn existing_hits(
+        runtime: &Runtime,
+        site: &crate::engine::object::append_ic::PropertyAppendCache,
+        receiver: &JsValue,
+    ) -> bool {
+        let state = runtime.0.state.borrow();
+        site.existing_slot(
+            &state.heap,
+            runtime.domain_id(),
+            state.heap.object(object(receiver)).unwrap(),
+        )
+        .is_some()
+    }
+
+    #[test]
+    fn existing_slot_site_learns_and_declines_reconfigured_layouts() {
+        use crate::engine::object::FieldStore;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let (code, pc, key) = store_site_for(&runtime);
+        let site = code.property_append_ic.site(pc).unwrap();
+        let mut make = |source: &str| runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
+        let first = make("globalThis.Make = function(){ this.x = 0; this.y = 0 }; new Make()");
+        let second = make("new Make()");
+        assert!(!existing_hits(&runtime, site, &first));
+        assert!(
+            store(&runtime, &code, key, &first, &mut JsValue::Int(1), pc).unwrap()
+                == FieldStore::Existing
+        );
+        // A sibling with the same layout hits and stores through the fact.
+        assert!(existing_hits(&runtime, site, &second));
+        assert!(
+            store(&runtime, &code, key, &second, &mut JsValue::Int(2), pc).unwrap()
+                == FieldStore::Existing
+        );
+
+        let read_only =
+            make("var r = new Make(); Object.defineProperty(r, 'x', {writable: false}); r");
+        let frozen = make("Object.freeze(new Make())");
+        let accessor =
+            make("var a = new Make(); Object.defineProperty(a, 'x', {set(v){ this.seen = v }}); a");
+        let readded = make("var d = new Make(); delete d.x; d.x = 0; d");
+        let array = make("var arr = []; arr.x = 0; arr");
+        for declined in [&read_only, &frozen, &accessor, &readded, &array] {
+            assert!(!existing_hits(&runtime, site, declined));
+        }
+        assert!(
+            store(&runtime, &code, key, &read_only, &mut JsValue::Int(3), pc).unwrap()
+                == FieldStore::Miss
+        );
+        assert!(
+            store(&runtime, &code, key, &frozen, &mut JsValue::Int(4), pc).unwrap()
+                == FieldStore::Miss
+        );
+        assert!(
+            store(&runtime, &code, key, &accessor, &mut JsValue::Int(5), pc).unwrap()
+                == FieldStore::Miss
+        );
+        // Reconfiguring other objects leaves the learned layout valid.
+        assert!(existing_hits(&runtime, site, &first));
+        // An Array's named property stores through the selector and is not learned.
+        assert!(
+            store(&runtime, &code, key, &array, &mut JsValue::Int(6), pc).unwrap()
+                == FieldStore::Existing
+        );
+        assert!(!existing_hits(&runtime, site, &array));
+        assert!(existing_hits(&runtime, site, &first));
+        // Making a sibling's other property read-only changes only its layout.
+        let reconfigured =
+            make("var q = new Make(); Object.defineProperty(q, 'y', {writable: false}); q");
+        assert!(!existing_hits(&runtime, site, &reconfigured));
+        assert!(existing_hits(&runtime, site, &second));
+        for owner in [
+            first,
+            second,
+            read_only,
+            frozen,
+            accessor,
+            readded,
+            array,
+            reconfigured,
+        ] {
+            runtime.release_jsvalue(owner).unwrap();
+        }
+        assert!(!runtime.is_poisoned());
+    }
+
     #[test]
     fn append_site_declines_changed_prototypes_and_receiver_capabilities() {
         use crate::engine::object::FieldStore;

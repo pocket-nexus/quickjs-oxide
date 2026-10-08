@@ -57,6 +57,13 @@ impl RuntimeState {
         input: &mut JsValue,
         appends: Option<AppendSite<'_>>,
     ) -> Result<FieldStore, RuntimeError> {
+        // A learned writable own data slot needs no own-key selection.
+        if let Some((table, pc)) = appends
+            && table.has_fact(AppendKind::Existing, pc)
+            && self.try_existing_site_store(domain, object, input, table, pc)?
+        {
+            return Ok(FieldStore::Existing);
+        }
         // A learned parent layout proves the key missing on this receiver and
         // the prototype walk's result, before any own-key selection.
         if let Some((table, pc)) = appends
@@ -72,22 +79,62 @@ impl RuntimeState {
         let prototype = match select_set_slot(self, object, atom)? {
             BorrowedSet::Missing(prototype) => prototype,
             BorrowedSet::Data(selected) if selected.flags.writable => {
-                return Ok(
-                    if self
-                        .heap
-                        .exchange_owned_data_slot(object, selected.index, input)?
-                    {
-                        FieldStore::Existing
-                    } else {
-                        FieldStore::Miss
-                    },
-                );
+                if !self
+                    .heap
+                    .exchange_owned_data_slot(object, selected.index, input)?
+                {
+                    return Ok(FieldStore::Miss);
+                }
+                if let Some((table, pc)) = appends {
+                    self.learn_existing_site(domain, object, table, pc, selected.index);
+                }
+                return Ok(FieldStore::Existing);
             }
             BorrowedSet::Data(_) | BorrowedSet::Setter(_) | BorrowedSet::Special(_) => {
                 return Ok(FieldStore::Miss);
             }
         };
         self.append_missing_owned_data(poisoned, domain, object, atom, prototype, input, appends)
+    }
+
+    /// Out of line so the interpreter loop that inlines the store entry does
+    /// not grow; a hit costs one call instead of the own-key selection.
+    #[inline(never)]
+    fn try_existing_site_store(
+        &mut self,
+        domain: u64,
+        object: ObjectId,
+        input: &mut JsValue,
+        table: &PropertyAppendCacheTable,
+        pc: usize,
+    ) -> Result<bool, RuntimeError> {
+        let Some(site) = table.site(pc) else {
+            return Ok(false);
+        };
+        let Some(slot) = site.existing_slot(&self.heap, domain, self.heap.object(object)?) else {
+            site.existing_missed();
+            return Ok(false);
+        };
+        Ok(self.heap.exchange_owned_data_slot(object, slot, input)?)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn learn_existing_site(
+        &self,
+        domain: u64,
+        object: ObjectId,
+        table: &PropertyAppendCacheTable,
+        pc: usize,
+        slot: usize,
+    ) {
+        if let Some(site) = table.site(pc)
+            && site.should_learn_existing()
+            && let Ok(receiver) = self.heap.object(object)
+            && site.learn_existing(&self.heap, domain, receiver, slot)
+        {
+            table.mark(AppendKind::Existing, pc);
+        }
     }
 
     #[inline(never)]
