@@ -499,6 +499,53 @@ impl FrameSlots<'_> {
         }
     }
 
+    /// A computed-key store that the dense/typed element path declined. A key
+    /// that needs no user conversion is resolved and stored under this state
+    /// borrow; a declined store leaves all three owners for the general Set.
+    /// Kept out of line: the dispatch loop holds only the call.
+    #[inline(never)]
+    pub(in crate::engine::vm) fn try_owned_computed_write_in_state(
+        &mut self,
+        state: &mut RuntimeState,
+        runtime: &crate::engine::api::runtime::Runtime,
+    ) -> Result<bool, Error> {
+        let poisoned = &runtime.0.poisoned;
+        let JsValue::Object(object) = self.peek(2)? else {
+            return Ok(false);
+        };
+        let object = *object;
+        let Some((atom, interned)) = state
+            .primitive_key_atom(self.peek(1)?)
+            .map_err(runtime_error_to_vm_error)?
+        else {
+            return Ok(false);
+        };
+        let input = self.top_direct_mut()?;
+        let stored =
+            state.try_store_owned_atom_key(poisoned, runtime.domain_id(), object, atom, input);
+        if interned {
+            state
+                .release_atom_index(crate::engine::atom::AtomIdx::from_raw(atom.raw()))
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        let stored = stored.map_err(runtime_error_to_vm_error)?;
+        if stored == crate::engine::object::FieldStore::Miss {
+            return Ok(false);
+        }
+        // The input now owns the replaced value or nothing.
+        for _ in 0..3 {
+            state
+                .release_owned_jsvalue(poisoned, self.pop()?)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        if stored == crate::engine::object::FieldStore::LayoutPublished {
+            state
+                .collect_if_requested(&runtime.0.gc_pressure, poisoned)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        Ok(true)
+    }
+
     pub(in crate::engine::vm) fn try_owned_element_write_in_state(
         &mut self,
         state: &mut RuntimeState,

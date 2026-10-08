@@ -197,6 +197,55 @@ impl RuntimeState {
         Ok(FieldStore::LayoutPublished)
     }
 
+    /// The atom of a computed key that needs no user conversion: a canonical
+    /// array index (an Int or integral Float), a String or a Symbol. The flag
+    /// says the caller owns an interned String atom and must release it.
+    /// Other primitives (negative or fractional numbers, booleans, null,
+    /// undefined, BigInt) keep the general key conversion.
+    pub(crate) fn primitive_key_atom(
+        &mut self,
+        key: &JsValue,
+    ) -> Result<Option<(Atom, bool)>, RuntimeError> {
+        let index = match key {
+            JsValue::Int(value) => u32::try_from(*value).ok(),
+            JsValue::Float(value)
+                if *value >= 0.0 && *value <= f64::from(u32::MAX) && value.fract() == 0.0 =>
+            {
+                Some(*value as u32)
+            }
+            JsValue::Symbol(index) => return Ok(Some((self.atoms.brand(*index)?, false))),
+            JsValue::String(id) => {
+                return Ok(Some((self.intern_property_key_string_id(*id)?, true)));
+            }
+            _ => None,
+        };
+        Ok(index
+            .and_then(Atom::from_immediate_integer)
+            .map(|atom| (atom, false)))
+    }
+
+    /// Store an owned value under a resolved computed key without building a
+    /// Set state: dense Array elements first, then the ordinary own-data and
+    /// append kernel shared with static stores. Every other case (setters,
+    /// read-only or non-extensible rejection, exotic receivers) declines with
+    /// the input untouched for the general Set.
+    pub(crate) fn try_store_owned_atom_key(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        domain: u64,
+        object: ObjectId,
+        atom: Atom,
+        input: &mut JsValue,
+    ) -> Result<FieldStore, RuntimeError> {
+        if let Some(index) = atom.immediate_integer()
+            && (self.try_exchange_dense_value(object, index, input)?
+                || self.try_append_dense_value(object, index, input)?)
+        {
+            return Ok(FieldStore::Existing);
+        }
+        self.try_store_owned_own_data(poisoned, domain, object, atom, input, None)
+    }
+
     /// CreateDataPropertyOrThrow for a static literal or class-field key.
     /// Definition never consults the prototype chain: a missing key on an
     /// extensible plain ordinary receiver appends, and an existing all-true
@@ -434,6 +483,99 @@ mod tests {
             panic!("object")
         };
         *id
+    }
+
+    #[test]
+    fn computed_key_stores_match_ordinary_set_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+            (() => {
+                const out = [];
+                const sym = Symbol('s');
+                const o = {};
+                const keys = ['a', 'b', '3', sym, 7, 2.0];
+                for (let round = 0; round < 3; round++)
+                    for (const k of keys) o[k] = round;
+                out.push(o.a === 2 && o.b === 2 && o[3] === 2 && o[sym] === 2 && o[7] === 2
+                    && o[2] === 2 && Object.keys(o).join() === '2,3,7,a,b');
+                // Negative and fractional numbers become string keys.
+                const n = {};
+                n[-1] = 'm'; n[1.5] = 'f'; n[-0] = 'z';
+                out.push(n['-1'] === 'm' && n['1.5'] === 'f' && n['0'] === 'z');
+                // Integral Float keys reach dense elements.
+                const a = [0, 0, 0];
+                a[1.0] = 'x'; a[3.0] = 'y'; a['2'] = 'w';
+                out.push(a.join() === '0,x,w,y' && a.length === 4);
+                // Prototype setters and read-only properties still decide.
+                let seen = '';
+                const proto = {set k(v) { seen += v; }};
+                Object.defineProperty(proto, 'r', {value: 1, writable: false});
+                const child = Object.create(proto);
+                const kk = 'k', rr = 'r';
+                child[kk] = 's'; child[rr] = 2;
+                out.push(seen === 's' && !child.hasOwnProperty('k') && child.r === 1);
+                let threw = false;
+                try { (function() { 'use strict'; child[rr] = 3; })(); }
+                catch (e) { threw = e instanceof TypeError; }
+                out.push(threw);
+                const frozen = Object.freeze({x: 1}), xk = 'x';
+                threw = false;
+                try { (function() { 'use strict'; frozen[xk] = 2; })(); }
+                catch (e) { threw = e instanceof TypeError; }
+                out.push(threw && frozen.x === 1);
+                // Proxy traps, __proto__, Array length and the global object.
+                let trapped = '';
+                const p = new Proxy({}, {set(t, k, v) { trapped += k; t[k] = v; return true; }});
+                p['q'] = 1;
+                const pk = '__proto__', target = {};
+                const withProto = {};
+                withProto[pk] = target;
+                const arr = [1, 2, 3], lk = 'length';
+                arr[lk] = 1;
+                globalThis['computedGlobal'] = 5;
+                out.push(trapped === 'q' && Object.getPrototypeOf(withProto) === target
+                    && arr.length === 1 && computedGlobal === 5);
+                const result = out.join();
+                return result === 'true,true,true,true,true,true,true' || result;
+            })()
+        "#
+                )
+                .unwrap(),
+            crate::engine::value::Value::Bool(true)
+        );
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn computed_string_key_stores_release_their_interned_atoms() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let count = |runtime: &Runtime| runtime.0.state.borrow().atoms.len();
+        drop(
+            context
+                .eval("globalThis.o = {}; globalThis.store = (k) => { o[k] = 1; delete o[k]; };")
+                .unwrap(),
+        );
+        drop(context.eval("store('warm' + 1)").unwrap());
+        runtime.run_gc().unwrap();
+        let before = count(&runtime);
+        drop(
+            context
+                .eval("for (let i = 0; i < 1000; i++) store('fresh-key-' + i);")
+                .unwrap(),
+        );
+        runtime.run_gc().unwrap();
+        assert!(
+            count(&runtime) <= before + 2,
+            "{} -> {}",
+            before,
+            count(&runtime)
+        );
+        assert!(!runtime.is_poisoned());
     }
 
     #[test]
