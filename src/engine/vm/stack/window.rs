@@ -72,12 +72,6 @@ impl<'a> FrameExecution<'a> {
         }
     }
 
-    /// Whether one more native continuation fits the logical frame limit.
-    #[inline]
-    pub(in crate::engine::vm) fn can_push_with_continuations(&self) -> bool {
-        self.execution.frames.can_push_with_continuations(0)
-    }
-
     #[inline(always)]
     pub(in crate::engine::vm) fn frame(&mut self) -> FrameTurn<'_> {
         let (_id, frame) = self

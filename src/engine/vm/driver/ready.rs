@@ -73,7 +73,12 @@ pub(super) fn run(
         // A primitive numeric completes here unobserved; its error and
         // decline paths materialize before anything can observe the frames.
         if result.as_ref().map_or(true, |exit| {
-            exit.observes_activation() && !matches!(exit, VmAction::Numeric { .. })
+            exit.observes_activation()
+                && !matches!(
+                    exit,
+                    VmAction::Numeric { .. }
+                        | VmAction::Predicate(crate::engine::vm::predicate_driver::Kind::Instance)
+                )
         }) {
             execution.frames.materialize(runtime)?;
         }
@@ -297,9 +302,64 @@ pub(super) fn run(
                     return Ok(boundary);
                 }
             }
+            VmAction::Predicate(crate::engine::vm::predicate_driver::Kind::Instance) => {
+                // The callback-free kernel completes here unobserved; anything
+                // else publishes the frames and takes the predicate driver.
+                if !ordinary_instance_of(runtime, execution, id)? {
+                    execution.frames.materialize(runtime)?;
+                    return Ok(Boundary::Exit(exit));
+                }
+                #[cfg(feature = "profiling")]
+                record_event("instanceof.completed_in_ready_loop");
+            }
             _ => return Ok(Boundary::Exit(exit)),
         }
     }
+}
+
+/// `instanceof` whose answer needs no callback: an ordinary target with the
+/// intrinsic or no @@hasInstance and an own data `prototype`. A miss leaves
+/// both operands and the PC untouched.
+#[inline(never)]
+fn ordinary_instance_of(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+) -> Result<bool, Error> {
+    use crate::engine::value::JsValue;
+    let intrinsic_budget = execution.frames.can_push_with_continuations(0);
+    let frame = execution.frames.current_mut(id)?;
+    let mut state = runtime.0.state.borrow_mut();
+    let found = {
+        let JsValue::Object(target) = execution.slots.peek(&frame.window, 0)? else {
+            return Ok(false);
+        };
+        crate::engine::builtins::try_ordinary_instanceof_in_state(
+            runtime,
+            &state,
+            execution.slots.peek(&frame.window, 1)?,
+            *target,
+            intrinsic_budget,
+        )
+    };
+    let Some(found) = found else {
+        return Ok(false);
+    };
+    let resume = frame.next_pc()?;
+    let target = execution.slots.pop(&mut frame.window)?;
+    let candidate = execution.slots.pop(&mut frame.window)?;
+    execution
+        .slots
+        .push(&mut frame.window, JsValue::Bool(found))?;
+    frame.resume_pc = resume;
+    let poisoned = &runtime.0.poisoned;
+    state
+        .release_owned_jsvalue(poisoned, candidate)
+        .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+    state
+        .release_owned_jsvalue(poisoned, target)
+        .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+    Ok(true)
 }
 
 fn property_boundary(
