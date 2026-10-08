@@ -127,7 +127,7 @@ impl Runtime {
     ) -> Result<PreparedBytecodeHeader<'_>, RuntimeError> {
         let mut input = super::super::protocol::CallInputGuard::new(
             self,
-            CallInput::new(self, this_value, new_target, None),
+            CallInput::new(this_value, new_target, None),
         );
         let executable = self.snapshot_function_bytecode(&bytecode)?;
         let PublishedFunctionData {

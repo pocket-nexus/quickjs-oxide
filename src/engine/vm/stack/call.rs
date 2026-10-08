@@ -124,7 +124,7 @@ impl SlotStore {
             JsValue::Undefined
         };
         let function = callee;
-        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
+        let input = crate::engine::vm::CallInput::new(receiver, JsValue::Undefined, None);
         let window = self.publish_ordinary_window(parent, consumed, prepared);
         Ok(InstalledOrdinaryFrame {
             function,
@@ -731,7 +731,7 @@ mod tests {
         let receiver = copy_value(&runtime, slots.peek(&parent, 1).unwrap()).unwrap();
         let input = crate::engine::vm::protocol::CallInputGuard::new(
             &runtime,
-            crate::engine::vm::CallInput::new(&runtime, receiver, JsValue::Undefined, None),
+            crate::engine::vm::CallInput::new(receiver, JsValue::Undefined, None),
         );
         assert_eq!(
             runtime
@@ -811,7 +811,7 @@ mod tests {
         let receiver_copy = copy_value(&runtime, slots.peek(&parent, 3).unwrap()).unwrap();
         let input = crate::engine::vm::protocol::CallInputGuard::new(
             &runtime,
-            crate::engine::vm::CallInput::new(&runtime, receiver_copy, JsValue::Undefined, None),
+            crate::engine::vm::CallInput::new(receiver_copy, JsValue::Undefined, None),
         );
         assert_eq!(
             runtime

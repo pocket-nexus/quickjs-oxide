@@ -41,7 +41,7 @@ pub(super) fn enter(
         .map_err(runtime_error_to_vm_error)?;
     let mut input = super::protocol::CallInputGuard::new(
         runtime,
-        super::CallInput::new(runtime, JsValue::Undefined, new_target, None),
+        super::CallInput::new(JsValue::Undefined, new_target, None),
     );
     let mut arguments = super::stack::FrameStorageGuard::new(
         runtime,

@@ -311,7 +311,7 @@ mod tests {
             crate::engine::vm::closure::FrameFunction::new(function, Default::default())
                 .unwrap()
                 .into();
-        cold.input = CallInput::new(&runtime, JsValue::Undefined, JsValue::Undefined, None).into();
+        cold.input = CallInput::new(JsValue::Undefined, JsValue::Undefined, None).into();
         cold.executable = executable.into();
         cold.window = window.into();
         slots.clear_frame(&runtime, cold.window.take()).unwrap();
@@ -555,7 +555,7 @@ mod lazy_tests {
         let mut storage = CallStorage::default();
         storage.reserve().unwrap();
         let (mut cold, _) = storage.vacant(context.realm);
-        cold.input = CallInput::new(&runtime, JsValue::Undefined, JsValue::Undefined, None).into();
+        cold.input = CallInput::new(JsValue::Undefined, JsValue::Undefined, None).into();
         assert!(cold.rare.get().is_none());
         assert!(cold.input.callee_global.is_none());
         let expected = runtime.global_object_for_realm(context.realm).unwrap();

@@ -999,7 +999,6 @@ mod tests {
             return_to: None,
             entry_guard: None,
             input: (CallInput::new(
-                runtime,
                 JsValue::Undefined,
                 JsValue::Undefined,
                 Some(function.try_clone().expect("duplicate root")),

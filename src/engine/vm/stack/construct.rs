@@ -92,7 +92,7 @@ impl SlotStore {
         let receiver = receiver
             .take()
             .expect("constructor receiver guard owns its edge");
-        let input = crate::engine::vm::CallInput::new(runtime, receiver, new_target, None);
+        let input = crate::engine::vm::CallInput::new(receiver, new_target, None);
         let window = self.publish_ordinary_window(parent, consumed, prepared);
         Ok(InstalledOrdinaryFrame {
             window,

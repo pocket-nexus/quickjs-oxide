@@ -388,7 +388,11 @@ impl<'a> FrameExecution<'a> {
                 tail,
                 operation: None,
             },
-            crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure),
+            crate::engine::vm::closure::FrameFunction::shared(
+                runtime.domain_id(),
+                installed.function,
+                closure,
+            ),
             installed.input,
             flags,
             executable,
@@ -1195,8 +1199,7 @@ mod primitive_transaction_tests {
                         .unwrap()
                         .into(),
                     reusable_captured_locals: Vec::new(),
-                    input: CallInput::new(runtime, JsValue::Undefined, JsValue::Undefined, None)
-                        .into(),
+                    input: CallInput::new(JsValue::Undefined, JsValue::Undefined, None).into(),
                 }),
                 storage: FrameStorage {
                     original_arguments: Vec::new(),

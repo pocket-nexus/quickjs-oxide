@@ -694,8 +694,7 @@ mod cleanup_poison_tests {
                         .unwrap()
                         .into(),
                     reusable_captured_locals: Vec::new(),
-                    input: CallInput::new(&runtime, JsValue::Undefined, JsValue::Undefined, None)
-                        .into(),
+                    input: CallInput::new(JsValue::Undefined, JsValue::Undefined, None).into(),
                 }),
                 storage: FrameStorage {
                     original_arguments: Vec::new(),

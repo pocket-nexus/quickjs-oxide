@@ -225,7 +225,7 @@ impl OrdinaryCall {
         caller_realm: crate::engine::heap::ContextId,
         return_to: crate::engine::vm::frame::ReturnTarget,
     ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
-        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
+        let input = crate::engine::vm::CallInput::new(receiver, JsValue::Undefined, None);
         let entry =
             self.prepare_input(runtime, storage, input, arguments, caller_realm, return_to)?;
         #[cfg(feature = "profiling")]
@@ -270,7 +270,7 @@ impl OrdinaryCall {
             return_to: Some(return_to),
             entry_guard: None,
             function: FrameFunction::shared(
-                runtime,
+                runtime.domain_id(),
                 function.into_execution_handle(),
                 self.closure,
             )
@@ -457,9 +457,11 @@ mod direct_selection_tests {
     fn call_site_cache_misses_a_collected_callee_and_its_reused_slot() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
-        context
-            .eval("function site(f){return f()} function make(v){return function(){return v}}")
-            .unwrap();
+        drop(
+            context
+                .eval("function site(f){return f()} function make(v){return function(){return v}}")
+                .unwrap(),
+        );
         for value in 0..8 {
             // Each callee becomes garbage after its two calls; a later one may
             // reuse its slot under a new generation.
