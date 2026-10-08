@@ -35,7 +35,12 @@ impl RuntimeState {
     /// pins the executable's bytecode through the frame's callee owner. This
     /// operation does not consume the base; its owner must remain live until
     /// selection completes, and the returned value owns its retained edge.
-    #[inline]
+    ///
+    /// The hit of an object receiver is a small out-of-line function: it needs
+    /// no key atom (a hit means this site already learned the key in this
+    /// domain) and immediates leave without the general promotion. Every other
+    /// case continues in the cold selection, which does not probe again.
+    #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn select_linked_data_into(
         &self,
@@ -47,6 +52,59 @@ impl RuntimeState {
         keep_receiver: bool,
         native: &mut Option<LinkedNativeSelection>,
         miss: &mut NamedSelectionMiss,
+    ) -> Option<JsValue> {
+        let probed = if let JsValue::Object(receiver) = base
+            && executable.belongs_to_domain(domain_id)
+            && let Some(cache) = executable.property_read_ic.site(pc)
+        {
+            if let Some(raw) = cache.read(&self.heap, *receiver) {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "property_selection.cache",
+                );
+                return match raw {
+                    RawValue::Int(value) => Some(JsValue::Int(*value)),
+                    RawValue::Float(value) => Some(JsValue::Float(*value)),
+                    RawValue::Bool(value) => Some(JsValue::Bool(*value)),
+                    RawValue::Undefined => Some(JsValue::Undefined),
+                    RawValue::Null => Some(JsValue::Null),
+                    raw => self.promote_field_in_state(domain_id, raw, keep_receiver, native),
+                };
+            }
+            true
+        } else {
+            false
+        };
+        self.select_linked_data_cold(
+            domain_id,
+            base,
+            executable,
+            pc,
+            key_index,
+            keep_receiver,
+            native,
+            miss,
+            probed,
+        )
+    }
+
+    /// Everything but an object receiver's cache hit. `probed` says the hit
+    /// path already read this object receiver's site; reading again would
+    /// count a cooldown step twice.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn select_linked_data_cold(
+        &self,
+        domain_id: u64,
+        base: &JsValue,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+        miss: &mut NamedSelectionMiss,
+        probed: bool,
     ) -> Option<JsValue> {
         // Only object storage and the primitive string length projection can
         // complete under this borrow. Other primitive reads use the existing
@@ -105,7 +163,7 @@ impl RuntimeState {
                 self.uncached_field_in_state(domain_id, base, atom, keep_receiver, native)
             };
         };
-        if let Some(raw) = cache.read(&self.heap, receiver) {
+        if !probed && let Some(raw) = cache.read(&self.heap, receiver) {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event("property_selection.cache");
             let result = self.promote_field_in_state(domain_id, raw, keep_receiver, native);
@@ -403,6 +461,53 @@ mod tests {
 
     fn site(runtime: &Runtime) -> (PublishedFunctionSnapshot, usize, u32) {
         site_for(runtime, "(function(o){return o.x})")
+    }
+
+    #[test]
+    fn field_read_counts_one_cooldown_step_per_read() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let (code, pc, key) = site(&runtime);
+        let cache = code.property_read_ic.site(pc).unwrap();
+        let receivers = (0..6)
+            .map(|index| {
+                let source = format!("({{p{index}:0, x:{index}}})");
+                runtime
+                    .into_jsvalue(context.eval(&source).unwrap())
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let read_once = |receiver: &JsValue| {
+            let state = runtime.0.state.borrow();
+            let mut native = None;
+            let selected = select(
+                &state,
+                runtime.domain_id(),
+                receiver,
+                &code,
+                pc,
+                key,
+                false,
+                &mut native,
+            );
+            if let NamedDataSelection::Data(value) = selected {
+                drop(state);
+                runtime.release_jsvalue(value).unwrap();
+            }
+        };
+        // Five layouts overflow the four entries and start a cooldown.
+        for receiver in &receivers[..5] {
+            read_once(receiver);
+        }
+        let start = cache.cooldown_left().expect("site cooled down");
+        for step in 1..start {
+            read_once(&receivers[5]);
+            assert_eq!(cache.cooldown_left(), Some(start - step));
+        }
+        for receiver in receivers {
+            runtime.release_jsvalue(receiver).unwrap();
+        }
+        assert!(!runtime.is_poisoned());
     }
 
     #[test]

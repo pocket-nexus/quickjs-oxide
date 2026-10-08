@@ -92,6 +92,16 @@ pub(crate) struct PropertyReadCache {
 }
 
 impl PropertyReadCache {
+    /// Remaining cooldown reads, for tests that drive the cache through its
+    /// consumers.
+    #[cfg(test)]
+    pub(crate) fn cooldown_left(&self) -> Option<u16> {
+        match self.kind.get() {
+            Kind::Megamorphic(left) => Some(left),
+            _ => None,
+        }
+    }
+
     #[cfg(test)]
     fn with_state(state: State) -> Self {
         let cache = Self::default();
