@@ -20,6 +20,20 @@ impl Heap {
         }
     }
 
+    /// Checked bytecode read plus its strong count from the same slot.
+    pub(crate) fn function_bytecode_with_strong(
+        &self,
+        id: FunctionBytecodeId,
+    ) -> Result<(&FunctionBytecodeData, u32), HeapError> {
+        let node = self.live_node(RawId::FunctionBytecode(id))?;
+        match node.data {
+            NodeData::FunctionBytecode(ref bytecode) => Ok((bytecode, node.strong.get())),
+            NodeData::Object(_) | NodeData::Context(_) => Err(HeapError::Invariant(
+                "typed bytecode lookup reached another node payload",
+            )),
+        }
+    }
+
     /// Replace the value stored in a captured-variable cell transactionally.
     ///
     /// The new value's GC edge is retained before the old edge is detached.

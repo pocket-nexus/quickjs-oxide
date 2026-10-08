@@ -123,6 +123,16 @@ impl<'a> DirectSelection<'a> {
             "direct_callee_payload_selection",
         );
         let object = state.heap.object(function)?;
+        Self::select_object_data(runtime, state, function, object)
+    }
+
+    /// Select from an object record the caller has already read.
+    pub(in crate::engine::vm) fn select_object_data(
+        runtime: &'a Runtime,
+        state: &crate::engine::heap::runtime::RuntimeState,
+        function: ObjectId,
+        object: &crate::engine::heap::ObjectData,
+    ) -> Result<Self, RuntimeError> {
         if let ObjectPayload::NativeFunction { data, .. } = &object.payload {
             // Unregistered native kinds retain the checked general entry.
             let Some(_) = data.operation() else {
