@@ -159,13 +159,24 @@ impl PropertyReadCache {
     }
 
     /// The caller holds the heap borrow until it has retained/copied the value.
-    /// No raw borrowed handle escapes that boundary. Not forced inline: a copy
-    /// in each caller grew the hot code past the instruction cache (DeltaBlue
-    /// L1i misses +8%, cycles +6% for the same instruction count).
-    ///
-    /// The receiver is loaded once; each live entry is compared by shape
-    /// first and only a matching entry checks the remaining guards.
+    /// No raw borrowed handle escapes that boundary. Not inlined into its
+    /// callers: a copy in each grew the hot code past the instruction cache
+    /// (DeltaBlue L1i misses +8%, cycles +6% for the same instruction count).
+    #[inline(never)]
     pub(crate) fn read<'a>(&self, heap: &'a Heap, receiver: ObjectId) -> Option<&'a RawValue> {
+        self.read_inline(heap, receiver)
+    }
+
+    /// The same probe for the one field-read hit path, which inlines it as
+    /// its only hot copy. The receiver is loaded once; each live entry is
+    /// compared by shape first and only a matching entry checks the
+    /// remaining guards.
+    #[inline(always)]
+    pub(crate) fn read_inline<'a>(
+        &self,
+        heap: &'a Heap,
+        receiver: ObjectId,
+    ) -> Option<&'a RawValue> {
         let len = match self.kind.get() {
             // Straight-line path: most sites, and nearly all reads in
             // Richards and EarleyBoyer, are monomorphic.

@@ -57,7 +57,7 @@ impl RuntimeState {
             && executable.belongs_to_domain(domain_id)
             && let Some(cache) = executable.property_read_ic.site(pc)
         {
-            if let Some(raw) = cache.read(&self.heap, *receiver) {
+            if let Some(raw) = cache.read_inline(&self.heap, *receiver) {
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "property_selection.cache",
