@@ -294,7 +294,7 @@ impl Runtime {
     }
 }
 
-fn raw_regexp_data_property_matches(
+pub(super) fn raw_regexp_data_property_matches(
     heap: &Heap,
     object: ObjectId,
     atom: Atom,
@@ -309,7 +309,7 @@ fn raw_regexp_data_property_matches(
     raw_native_function_matches(heap, *function, expected)
 }
 
-fn raw_regexp_getter_matches(
+pub(super) fn raw_regexp_getter_matches(
     heap: &Heap,
     object: ObjectId,
     atom: Atom,
@@ -327,7 +327,7 @@ fn raw_regexp_getter_matches(
     raw_native_function_matches(heap, function, expected)
 }
 
-fn raw_regexp_property_slot(
+pub(super) fn raw_regexp_property_slot(
     heap: &Heap,
     object: ObjectId,
     atom: Atom,
@@ -366,7 +366,7 @@ fn regexp_chain_object_is_exotic(object: &ObjectData) -> bool {
     )
 }
 
-fn raw_native_function_matches(
+pub(super) fn raw_native_function_matches(
     heap: &Heap,
     object: ObjectId,
     expected: NativeFunctionId,

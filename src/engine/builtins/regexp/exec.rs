@@ -25,21 +25,6 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         self.dispatch_borrowed_invocation(invocation, |invocation| {
-            if kind == RegExpNativeKind::Exec
-                && let NativeInvocation::Call {
-                    this_value: JsValue::Object(object),
-                } = invocation
-                && let Some(input_value @ JsValue::String(_)) = arguments.readable.first()
-                && let Some((input, last_index)) = self.plain_exec_inputs(*object, input_value)?
-            {
-                return self.finish_builtin_regexp_exec(
-                    realm,
-                    *object,
-                    input,
-                    input_value,
-                    last_index,
-                );
-            }
             finish(
                 self,
                 realm,
@@ -48,14 +33,19 @@ impl Runtime {
         })
     }
 
-    /// RegExp.prototype.exec on a genuine RegExp with a primitive String input
-    /// and an immediate `lastIndex`: ToString and ToLength observe nothing,
-    /// so the builtin match starts without the step machine. `None` keeps
-    /// the general steps.
+    /// Shared predicate for the plain builtin match on a genuine RegExp with
+    /// a primitive String input and an immediate `lastIndex`: ToString and
+    /// ToLength observe nothing, so the builtin match can start without the
+    /// step machine. With `require_builtin_exec` the chain must also resolve
+    /// `exec` to the standard builtin, which the abstract operation needs
+    /// because it performs the property read itself; the method entry
+    /// resolves the property during dispatch, so it passes `false`. `None`
+    /// keeps the general steps.
     fn plain_exec_inputs(
         &self,
         object: crate::engine::heap::ObjectId,
         input: &JsValue,
+        require_builtin_exec: bool,
     ) -> Result<Option<(JsString, u64)>, RuntimeError> {
         let JsValue::String(id) = input else {
             return Ok(None);
@@ -68,6 +58,22 @@ impl Runtime {
             )
         ) {
             return Ok(None);
+        }
+        if require_builtin_exec {
+            use crate::engine::atom::pinned::PinnedAtom;
+            let exec = state.pinned_atoms.get(PinnedAtom::Exec);
+            // The abstract operation resolves `exec` through a property read;
+            // only a chain that yields the standard builtin observes nothing.
+            if !super::replace::raw_regexp_data_property_matches(
+                &state.heap,
+                object,
+                exec,
+                crate::engine::builtins::native::NativeFunctionId::RegExp(
+                    RegExpNativeKind::Exec,
+                ),
+            )? {
+                return Ok(None);
+            }
         }
         let number = match state.regexp_last_index_immediate(object)? {
             Some(JsValue::Int(value)) => f64::from(value),
@@ -325,6 +331,32 @@ impl RegExpExecStep {
                 "RegExp exec/test did not receive a generic invocation",
             ));
         };
+        // RegExp.prototype.exec on a genuine RegExp with a primitive String
+        // input and an immediate `lastIndex` observes nothing in ToString or
+        // ToLength, so the builtin match starts directly instead of
+        // duplicating both operands into a boxed resume state and releasing
+        // them through the Runtime. Both the public native entry and the
+        // interpreter's in-loop continuation reach this start, so the plain
+        // predicate lives here rather than in either caller.
+        if kind == RegExpNativeKind::Exec
+            && let JsValue::Object(object) = this_value
+            && let Some(input_value @ JsValue::String(_)) = arguments.readable.first()
+            && let Some((input, last_index)) =
+                runtime.plain_exec_inputs(*object, input_value, false)?
+        {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_runtime_event(
+                "regexp_exec.plain",
+                "core.regexp_exec.plain",
+            );
+            return Ok(Self::Complete(runtime.finish_builtin_regexp_exec(
+                realm,
+                *object,
+                input,
+                input_value,
+                last_index,
+            )?));
+        }
         let mut resume = RegExpExecResume(Box::new(RegExpExecResumeState {
             step_pending: RegExpExecStepPending::new(runtime),
             realm,
@@ -353,6 +385,24 @@ impl RegExpExecStep {
         regexp: JsValue,
         input: JsValue,
     ) -> Result<Self, RuntimeError> {
+        // The split/match/search protocols reach the abstract operation with
+        // a genuine RegExp and a primitive String millions of times per V8
+        // RegExp run; when the chain resolves `exec` to the standard builtin
+        // and lastIndex is immediate, the builtin match runs directly instead
+        // of boxing both operands and publishing a resume state.
+        if let JsValue::Object(object) = regexp
+            && let Some((string, last_index)) =
+                runtime.plain_exec_inputs(object, &input, true)?
+        {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_runtime_event(
+                "regexp_exec.plain_abstract",
+                "core.regexp_exec.plain_abstract",
+            );
+            return Ok(Self::Complete(runtime.finish_builtin_regexp_exec(
+                realm, object, string, &input, last_index,
+            )?));
+        }
         Self::abstract_start(runtime, realm, regexp, input, false)
     }
     fn abstract_start(
