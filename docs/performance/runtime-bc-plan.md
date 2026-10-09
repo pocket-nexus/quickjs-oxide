@@ -908,6 +908,18 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
   6. **剩余构成（归 7b/7c）**：`core.runtime_clone` 余 2.0M 主要为原生调用激活的一对克隆（`native.rs:419`、
      `frames.rs:387` 各约 46 万/轮）与栈窗（`window.rs:800` 35 万）；match/matchAll/search 的协议壳仍走通用
      路径，但经 plain abstract exec，V8 触及量小（match 2650 次分发），按"每批只迁移自己的消费者"留作残留编号。
+
+  **7b 第一批执行与验收（2026-10-10，`23d9c75f`+`5a65a5e1`）。** 行级归因（callgrind debuginfo 构建）发现
+  frame 池让空 `FrameRare` 壳子永久流窜：recycle 不清、`install`/`vacant` 回灌 rare_frames，deltablue 每轮
+  113 万次调用的 frame 全部携带 rare，`release_owned` 的四个子释放每次全跑（约 1.9% Ir）。修复分两步：
+  release_owned 改为一次 cell 借用单趟取走四个 payload；壳子保留在 rare_frames 池供 constructor 复用
+  （`vacant_rare ↔ recycle`），但 `vacant`/`install` 不再回灌、不再把壳子转给没选它的 frame——普通 frame
+  全程无壳。首版"recycle 丢壳"曾使 RayTrace Ir +0.58%（constructor 复用被破坏），修正版恢复。容器 Ir
+  （`oxide-vg:1.88`，对 `post2`）：**DeltaBlue −4.02%、Dw −3.80%**；RayTrace −0.25%、RegExp −0.02%，
+  全部通过。7b 的"R/R/D 至少一项 ≥1%"验收由本批达成。lib 全量 2361 过、2 个失败为基线已有；行为抽查覆盖
+  普通调用、捕获局部闭包、try/catch、Base/Derived 构造器。安装链（`prepare_ordinary_window_in_state` 等）
+  经排查无结构性浪费，7b-2 撤销；激活持有（`NativeActivation`/`NativeWaitRecord` 的 Drop 路径释放依赖
+  Runtime owner，需等待路径带 State 才能迁移）与其余调用变体归 7b 后续或第 8 项。
 - **第 8 项：** 六项硬门槛，加上 B0 残留清单全部清零。
 
 ## 7. 执行与测量规则
