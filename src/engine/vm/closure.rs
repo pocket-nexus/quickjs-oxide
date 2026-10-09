@@ -60,6 +60,17 @@ impl ClosureSlots {
             Environment::ResidentOwned(ids) => ids.get(index).map(|id| (runtime, *id)),
         }
     }
+    /// The cell id of a resident (frame-owned) environment, which belongs to
+    /// the frame's own runtime. Other environments return `None`.
+    #[inline]
+    pub(crate) fn resident_cell(&self, index: usize) -> Option<VarRefId> {
+        match &self.0 {
+            Environment::ResidentShared { ids, .. } => ids.get(index).copied(),
+            Environment::ResidentOwned(ids) => ids.get(index).copied(),
+            Environment::Shared { .. } | Environment::Rooted(_) => None,
+        }
+    }
+
     pub(crate) fn get<'a>(&'a self, runtime: &'a Runtime, index: usize) -> Option<VarRefView<'a>> {
         VarRefView::from_closure(self, runtime, index)
     }
