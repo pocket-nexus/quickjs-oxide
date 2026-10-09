@@ -129,8 +129,9 @@ impl crate::engine::heap::runtime::RuntimeState {
         let atoms = self.retain_slot_atoms(&slots)?;
         match self
             .heap
-            .allocate_object_with_status(ObjectData::arguments(shape, slots, mapped, length))
-        {
+            .allocate_arguments_object_with_status(ObjectData::arguments(
+                shape, slots, mapped, length,
+            )) {
             Ok(object) => Ok(object),
             Err(failure) if failure.published => {
                 poisoned.set(true);
