@@ -215,10 +215,13 @@ pub(crate) fn try_ordinary_instanceof_in_state(
         return None;
     }
     let heap = &state.heap;
-    if heap.object_strong_count(target).ok()? < 2 {
+    // Every object below is kept alive by an operand, a slot or a shape edge
+    // for the whole borrow, so lookups are trusted; the count thresholds that
+    // keep the generic protocol's saturation behavior are unchanged.
+    let (target_data, target_strong) = heap.object_and_strong_fast(target);
+    if target_strong < 2 {
         return None;
     }
-    let target_data = heap.object(target).ok()?;
     if !matches!(
         target_data.payload,
         ObjectPayload::BytecodeFunction { .. } | ObjectPayload::NativeFunction { .. }
@@ -236,7 +239,7 @@ pub(crate) fn try_ordinary_instanceof_in_state(
             if !temporary_roots_fit(heap, *method) {
                 return None;
             }
-            let ObjectPayload::NativeFunction { data, .. } = &heap.object(*method).ok()?.payload
+            let ObjectPayload::NativeFunction { data, .. } = &heap.object_fast(*method).payload
             else {
                 return None;
             };
@@ -274,7 +277,7 @@ pub(crate) fn try_ordinary_instanceof_in_state(
     }
     // Completion consumes both input owners after this borrow. They must
     // remain nonfinal even when candidate and target are the same object.
-    if heap.object_strong_count(*candidate).ok()? < if *candidate == target { 3 } else { 2 } {
+    if heap.object_strong_fast(*candidate) < if *candidate == target { 3 } else { 2 } {
         return None;
     }
     let key = state
@@ -318,8 +321,7 @@ pub(crate) fn try_ordinary_instanceof_in_state(
 const INSTANCE_PROTOCOL_ROOT_HEADROOM: u32 = 2 + 2 + 2 + 2 + 1 + 2 + 2 + 1 + 2;
 
 fn temporary_roots_fit(heap: &Heap, object: ObjectId) -> bool {
-    heap.object_strong_count(object)
-        .is_ok_and(|count| count < u32::MAX - INSTANCE_PROTOCOL_ROOT_HEADROOM)
+    heap.object_strong_fast(object) < u32::MAX - INSTANCE_PROTOCOL_ROOT_HEADROOM
 }
 
 /// Restrict Get to storage whose named reads are ordinary parallel slots.
@@ -330,10 +332,10 @@ fn borrowed_ordinary_data(
     key: crate::engine::atom::Atom,
 ) -> Option<Option<&RawValue>> {
     for _ in 0..32 {
-        if !temporary_roots_fit(heap, object) {
+        let (data, strong) = heap.object_and_strong_fast(object);
+        if strong >= u32::MAX - INSTANCE_PROTOCOL_ROOT_HEADROOM {
             return None;
         }
-        let data = heap.object(object).ok()?;
         if !matches!(
             (data.kind, &data.payload),
             (ObjectKind::Ordinary, ObjectPayload::Ordinary)
@@ -348,7 +350,7 @@ fn borrowed_ordinary_data(
         ) {
             return None;
         }
-        let shape = heap.shape(data.shape).ok()?;
+        let shape = heap.shape_fast(data.shape);
         if let Some(index) = shape.find(crate::engine::atom::AtomIdx::from_raw(key.raw())) {
             return match data.slots.get(index as usize)? {
                 PropertySlot::Data(value) => Some(Some(value)),
@@ -544,24 +546,24 @@ fn walk_ordinary_chain(
 ) -> Result<ChainWalk, HeapError> {
     // The old entry first retained the candidate. Preserve both checked
     // overflow and the MAX-1 -> immortal transition before omitting that root.
-    if heap.object_strong_count(current)? >= u32::MAX - 1 {
+    if heap.object_strong_fast(current) >= u32::MAX - 1 {
         return Ok(ChainWalk::Protocol(current));
     }
     // Only the initial candidate's rooted ancestry is batched. Protocol replies
     // keep their existing owner-transfer path. Bound even internally cyclic
     // chains; no callbacks, mutation or owner release occurs in this borrow.
     for _ in 0..32 {
-        let object = heap.object(current)?;
+        let object = heap.object_fast(current);
         if matches!(object.payload, ObjectPayload::Proxy(_)) {
             return Ok(ChainWalk::Protocol(current));
         }
-        let Some(prototype) = heap.shape(object.shape)?.prototype() else {
+        let Some(prototype) = heap.shape_fast(object.shape).prototype() else {
             return Ok(ChainWalk::Complete(false));
         };
         // get_prototype_of retained its result before comparing identity.
         // Its current receiver also had a temporary root, so a self-edge has
         // two concurrent temporary retains and needs one extra count of room.
-        let strong = heap.object_strong_count(prototype)?;
+        let strong = heap.object_strong_fast(prototype);
         if strong >= u32::MAX - 1 || (prototype == current && strong == u32::MAX - 2) {
             return Ok(ChainWalk::Protocol(current));
         }

@@ -211,6 +211,19 @@ impl Heap {
         }
     }
 
+    /// Trusted read of a live object and its strong count from one slot, for
+    /// callers holding an edge that keeps the object alive.
+    #[inline]
+    pub(crate) fn object_and_strong_fast(&self, id: ObjectId) -> (&ObjectData, u32) {
+        let node = self.live_node_fast(RawId::Object(id));
+        match node.data {
+            NodeData::Object(ref object) => (object, node.strong.get()),
+            NodeData::Context(_) | NodeData::FunctionBytecode(_) => {
+                unreachable!("trusted object handle reached another node payload")
+            }
+        }
+    }
+
     /// Trusted shared read for a live `ObjectId` held by an owning root.
     #[inline]
     pub(crate) fn object_fast(&self, id: ObjectId) -> &ObjectData {
