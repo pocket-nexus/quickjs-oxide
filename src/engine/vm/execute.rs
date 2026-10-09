@@ -503,7 +503,15 @@ fn execute_admitted_in_state(
             // End the actual current frame projection before installing or
             // retiring a frame; all opcodes share this one dispatch loop.
             'dispatch: loop {
-                let pc = cursor.begin();
+                let mut pc = cursor.begin();
+                // Specialized loop for the closed conditional-branch shape:
+                // one cheap header check, then hot state stays in locals
+                // until an instruction needs the generic loop below. A
+                // Fallback exit has synchronized fault == resume == pc.
+                if specialized::is_fast_word(executable, pc) {
+                    specialized::conditional_shape_loop(&mut cursor, runtime, executable)?;
+                    pc = cursor.begin();
+                }
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_numeric_rejection_visit(
                     runtime, executable, pc,
@@ -3446,10 +3454,14 @@ fn borrowed_this_read_ready_in_state(state: &RuntimeState, base: &JsValue) -> bo
     count != 0 && count < u32::MAX - 2
 }
 
+mod specialized;
+
 // Removing the temporary this owner must not remove a checked-retain failure,
 // immortal transition, or cleanup checkpoint. Leave room for an aliasing result.
 #[cfg(test)]
 mod captured_read_tests;
+#[cfg(test)]
+mod specialized_tests;
 #[cfg(test)]
 mod continuous_call_tests;
 #[cfg(test)]

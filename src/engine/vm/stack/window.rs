@@ -608,8 +608,10 @@ pub(in crate::engine::vm) enum DirectSlot {
 /// `slots()` borrows; admitted non-observable releases may finish within one.
 /// No slot reference may escape into a callback or observable release.
 pub(in crate::engine::vm) struct FrameTransaction<'a> {
-    store: &'a mut SlotStore,
-    window: &'a mut FrameWindow,
+    // The specialized execution loop re-borrows both halves directly so its
+    // hot locals derive from the same exclusive lease.
+    pub(in crate::engine::vm) store: &'a mut SlotStore,
+    pub(in crate::engine::vm) window: &'a mut FrameWindow,
 }
 
 /// A single-use proof for the outgoing operands of one direct ordinary call.
