@@ -905,6 +905,36 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
   （参考机会话原生 ABBA 与布局对照、CI fast、架构检查、完整回执），第 8 项以六项门槛全零（或签认例外）验收，
   阶段 B 完成，随后开第 5 项。
 
+  **门槛状态审计（2026-10-10，HEAD `50f3ef55`，门槛迁移批开工前）。**
+
+  - **门槛 1（内部强引用，138 字段 = external-root 6 + 内部 132）。** external-root 是合同保留的公共
+    边界（`Context.runtime` 等），验收时按设计排除。内部 132 个全部是步骤机 resume/pending 状态的
+    `runtime` 字段（B3 78、B5 21、B4 10、B2 系 14、无编号 6、B1 3），持有理由统一：resume 状态可能在任意
+    等待点被放弃，Rust 析构不能带 State，释放经 Runtime。分三类：
+    类 A 清理点可带 State（query driver 等待记录的拆除点）——可迁，工作量中；
+    类 B 可换 Runtime-free guard（`ActiveFrameRestore` 范式推广）——少量；
+    类 C 等待/放弃机制结构问题（大部分 B3/B5）——需 query-driver 级"等待机制 State 化"改造（B4 深层），
+    预计数日。**签认点：类 C 是否记为已接受例外**（冷路径：每轮计数 <8.2k、V8 Ir 占比 <0.5%），
+    预算转第 5 项；或单独立"B4 等待机制 State 化"专项后再验收。
+  - **门槛 2（State 重借用）。** 热路径已迁（execute 内 `callee_global_in_state`）；点名七处中六处是
+    legacy 命名下的现代路径或随门槛 6 删除（`OrdinaryCall::install`、`authenticate_impl`、
+    `RetiredFrame::drop`、`FrameEntry::release`、`recycle_legacy`、`clear_frame`）。**随 6 关闭，无需独立工单。**
+  - **门槛 3（内部 deferred）。** `NativeActivation::Drop` 逐参数 `runtime.release_jsvalue`（每次一次
+    RefCell borrow）与 `NativeWaitRecord` 同模式；与门槛 1 类 C 同根因（放弃路径不持 State），随类 C 一并
+    处理或签认。
+  - **门槛 4（调用返回外退）。** DeltaBlue 24.6k numeric declines 是对象操作数的语义性 valueOf 强转
+    （机制已现代，decline 本身是语义）；43.8k native_hint declines 走现代 native corridor（35.7k 同步
+    完成无外退；8.1k 等待 crossing 为设计内）；ordinary_return 8.1k 与原生等待配对。**剩余工作 = 等待
+    机制（同类 C）+ 旧计数器更名，无独立热路径工单。**
+  - **门槛 5（公共 root 中间转换）。** 热路径已随 7a/7c-1 消除（RegExp root clone 463 万 → 7.8 万/轮）；
+    剩余为冷路径装箱，随 fast path 覆盖或并入例外清单。
+  - **门槛 6（适配器删除）。** 依赖 1–5；真 legacy 调用路径（`OrdinaryCall::install` 链）在门槛 4 确认
+    无消费者后删除。
+
+  **审计结论。** 六项门槛中，2/4/5 已实质达标（剩余为删除与更名工单）；1 类 C 与 3 是同一根因
+  （等待/放弃机制不持 State），是第 8 项验收的唯一实质 blocker，选项：(a) 记为签认例外收口阶段 B，
+  (b) 立"B4 等待机制 State 化"专项（数日）后全零验收。
+
   **7a 执行与验收（2026-10-10，`3fdd0592`→`4889ebf5`）。** 两个修正使 RegExp 族计数归零，八项 Ir 验收通过。
 
   1. **fast path 的落点修正（`2a28117d`）。** 诊断发现 plain exec 的 fast path 放在
