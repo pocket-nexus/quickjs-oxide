@@ -184,6 +184,8 @@ fn resident_array_from_uses_executable_realm_instead_of_caller_realm() {
     let entry = array_entry(&runtime, second.realm, first.realm, 0);
     let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
     let id = crate::engine::vm::driver::push_frame(&runtime, &mut execution, entry).unwrap();
+    // Publish the frame so its realm record is observable below.
+    runtime.0.gc_pressure.remaining.set(1);
     {
         let mut state = runtime.0.state.borrow_mut();
         assert!(matches!(
@@ -324,6 +326,8 @@ fn resident_array_from_materialization_failure_leaves_inputs_and_fault_in_frame(
         context.realm,
         vec![JsValue::Object(first), JsValue::Object(last)],
     );
+    // Near a collection the frames are published before allocating.
+    runtime.0.gc_pressure.remaining.set(1);
     {
         let mut state = runtime.0.state.borrow_mut();
         state.next_active_frame_token = u64::MAX;

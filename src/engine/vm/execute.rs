@@ -2661,8 +2661,16 @@ fn execute_admitted_in_state(
             }
             VmAction::Object { fallthrough } => {
                 // FrameCursor has published the allocation's fault PC. Use
-                // the one suffix protocol before allocation can be observed.
-                segment.materialize_in_state(state)?;
+                // the one suffix protocol before a pressure collection can
+                // observe the frames; an allocation error materializes on
+                // the throw path instead.
+                if runtime
+                    .0
+                    .gc_pressure
+                    .may_request_within(LITERAL_ALLOCATION_NODES)
+                {
+                    segment.materialize_in_state(state)?;
+                }
                 {
                     let FrameTurn {
                         executable,
@@ -2829,6 +2837,9 @@ fn array_index(value: Number) -> Option<u32> {
     let value = value.float();
     (value >= 0.0 && value < f64::from(u32::MAX) && value.trunc() == value).then_some(value as u32)
 }
+
+/// An upper bound on the heap nodes one object or array literal allocates.
+pub(super) const LITERAL_ALLOCATION_NODES: usize = 8;
 
 #[inline(always)]
 fn read_local<const CHECKED: bool>(

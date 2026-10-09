@@ -50,6 +50,14 @@ impl GcPressure {
         self.remaining.set(live.max(MIN_GC_HEADROOM));
     }
 
+    /// Whether `nodes` further allocations could latch an automatic request.
+    /// A literal allocation publishes its frames for the following safepoint
+    /// only when this holds; errors publish them on the throw path.
+    #[inline]
+    pub(crate) fn may_request_within(&self, nodes: usize) -> bool {
+        self.remaining.get() <= nodes && self.policy.get() == GcPolicy::Automatic
+    }
+
     #[inline]
     pub(crate) fn requested(&self) -> bool {
         self.remaining.get() == 0 && self.policy.get() == GcPolicy::Automatic
