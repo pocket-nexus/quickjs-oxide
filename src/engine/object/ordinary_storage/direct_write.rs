@@ -284,7 +284,7 @@ impl RuntimeState {
         if !is_ordinary(data) {
             return Ok(FieldStore::Miss);
         }
-        if let Some(selected) = locate(self, object, atom)? {
+        if let Some(selected) = locate_in(self, data, atom)? {
             if selected.flags != crate::engine::object::shape::PropertyFlags::data(true, true, true)
                 || !matches!(data.slots[selected.index], PropertySlot::Data(_))
             {

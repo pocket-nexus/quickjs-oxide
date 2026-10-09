@@ -145,7 +145,15 @@ fn locate(
     object: ObjectId,
     atom: Atom,
 ) -> Result<Option<OwnSlot>, RuntimeError> {
-    let data = state.heap.object(object)?;
+    locate_in(state, state.heap.object(object)?, atom)
+}
+
+// [`locate`] for a caller that already read the object's data.
+fn locate_in(
+    state: &RuntimeState,
+    data: &crate::engine::heap::ObjectData,
+    atom: Atom,
+) -> Result<Option<OwnSlot>, RuntimeError> {
     let shape = state.heap.shape(data.shape)?;
     let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
         return Ok(None);
@@ -217,7 +225,7 @@ fn select_set_slot(
                     // are identical to an ordinary slot, including a distinct
                     // Reflect.set receiver. Missing indices still require the
                     // Array definition algorithm and its length checks.
-                    return Ok(match locate(state, id, atom)? {
+                    return Ok(match locate_in(state, data, atom)? {
                         Some(slot) => select_found_set_slot(data, slot),
                         None => BorrowedSet::Special(SpecialKind::Other),
                     });
@@ -233,7 +241,7 @@ fn select_set_slot(
     if !ordinary {
         return Ok(BorrowedSet::Special(special_kind(data)));
     }
-    Ok(match locate(state, id, atom)? {
+    Ok(match locate_in(state, data, atom)? {
         None => BorrowedSet::Missing(state.heap.shape(data.shape)?.prototype()),
         Some(slot) => select_found_set_slot(data, slot),
     })
@@ -273,7 +281,7 @@ fn select_missing_prototypes(
             {
                 break;
             }
-            if let Some(slot) = locate(state, id, atom)? {
+            if let Some(slot) = locate_in(state, data, atom)? {
                 match &data.slots[slot.index] {
                     PropertySlot::Data(_) if slot.flags.writable => break,
                     PropertySlot::Data(_) => {
@@ -1308,7 +1316,7 @@ fn field_in_state(
     if !is_ordinary(data) && !reads_are_slot_faithful(data) {
         return None;
     }
-    let slot = locate(state, id, atom).ok()??;
+    let slot = locate_in(state, data, atom).ok()??;
     let PropertySlot::Data(value) = &data.slots[slot.index] else {
         return None;
     };
@@ -1360,7 +1368,7 @@ impl Runtime {
         if !is_ordinary(data) {
             return false;
         }
-        let Ok(Some(slot)) = locate(&state, id, atom) else {
+        let Ok(Some(slot)) = locate_in(&state, data, atom) else {
             return false;
         };
         if !slot.flags.writable {
@@ -2754,7 +2762,7 @@ impl RuntimeState {
         }
         if matches!(data.payload, ObjectPayload::Arguments { .. }) {
             let atom = Atom::from_immediate_integer(index)?;
-            let slot = locate(self, *object, atom).ok()??;
+            let slot = locate_in(self, data, atom).ok()??;
             return match &data.slots[slot.index] {
                 PropertySlot::Data(value) => immediate_value_jsvalue(value),
                 PropertySlot::VarRef(cell) => {
