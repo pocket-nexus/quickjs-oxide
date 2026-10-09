@@ -60,15 +60,37 @@ impl Heap {
         Ok(exchange_public_owner(previous, input))
     }
 
+    /// [`Self::exchange_owned_data_slot`] for a receiver its caller keeps
+    /// alive; identity is checked only in debug and `checked-handles` builds.
+    #[inline]
+    pub(crate) fn exchange_owned_data_slot_fast(
+        &mut self,
+        id: ObjectId,
+        index: usize,
+        input: &mut JsValue,
+    ) -> Result<bool, HeapError> {
+        let slot = self
+            .object_mut_fast(id)
+            .slots
+            .get_mut(index)
+            .ok_or(HeapError::Invariant("selected data slot disappeared"))?;
+        let PropertySlot::Data(previous) = slot else {
+            return Ok(false);
+        };
+        Ok(exchange_public_owner(previous, input))
+    }
+
     /// Dense entries have default writable data attributes. Descriptor changes
     /// materialize them before this leaf can exchange their existing owners.
+    /// The caller keeps the receiver alive; identity is checked only in debug
+    /// and `checked-handles` builds.
     pub(crate) fn exchange_owned_dense_value(
         &mut self,
         id: ObjectId,
         index: u32,
         input: &mut JsValue,
     ) -> Result<bool, HeapError> {
-        let data = self.object_mut(id)?;
+        let data = self.object_mut_fast(id);
         if !matches!(data.kind, ObjectKind::Array) {
             return Ok(false);
         }
@@ -96,8 +118,9 @@ impl Heap {
         self.try_update_array_own_number(id, index, atom, value, |_, new| new)
     }
 
-    /// The receiver has a frame owner. An existing Number-to-Number update
-    /// changes neither graph edges nor the Array layout.
+    /// The receiver has a frame owner, so the object is read through trusted
+    /// access. An existing Number-to-Number update changes neither graph edges
+    /// nor the Array layout.
     pub(crate) fn try_add_array_own_number(
         &mut self,
         id: ObjectId,
@@ -135,7 +158,7 @@ impl Heap {
         // The dense branch authenticates the object once. Materialized data
         // needs a separate shape read before the final mutable slot access.
         let shape_id = {
-            let data = self.object_mut(id).map_err(|_| Miss::ReceiverUnavailable)?;
+            let data = self.object_mut_fast(id);
             if !matches!(data.kind, ObjectKind::Array) {
                 return Err(Miss::ReceiverNotArray);
             }
@@ -165,7 +188,7 @@ impl Heap {
         {
             return Err(Miss::OwnElementNotWritable);
         }
-        let data = self.object_mut(id).map_err(|_| Miss::ReceiverUnavailable)?;
+        let data = self.object_mut_fast(id);
         let cell = match data.slots.get_mut(slot) {
             Some(PropertySlot::Data(raw)) => raw,
             _ => return Err(Miss::UnsupportedOwnElement),
@@ -209,6 +232,25 @@ impl Heap {
                 "typed object lookup reached another node payload",
             )),
         }
+    }
+
+    /// Trusted read of a live object and its strong count from one slot, for
+    /// callers holding an edge that keeps the object alive.
+    #[inline]
+    pub(crate) fn object_and_strong_fast(&self, id: ObjectId) -> (&ObjectData, u32) {
+        let node = self.live_node_fast(RawId::Object(id));
+        match node.data {
+            NodeData::Object(ref object) => (object, node.strong.get()),
+            NodeData::Context(_) | NodeData::FunctionBytecode(_) => {
+                unreachable!("trusted object handle reached another node payload")
+            }
+        }
+    }
+
+    /// Trusted strong-count read for a live string or BigInt leaf.
+    #[inline]
+    pub(crate) fn leaf_strong_fast(&self, id: RawId) -> u32 {
+        self.live_leaf_fast(id).strong.get()
     }
 
     /// Trusted shared read for a live `ObjectId` held by an owning root.
@@ -688,7 +730,7 @@ impl Heap {
                 ));
             }
             let next_len = self.fresh_array_next_length(id)?;
-            let ObjectPayload::Array { dense: Some(dense) } = &mut self.object_mut(id)?.payload
+            let ObjectPayload::Array { dense: Some(dense) } = &mut self.object_mut_fast(id).payload
             else {
                 unreachable!("validated dense Array changed before reservation")
             };
@@ -701,7 +743,7 @@ impl Heap {
             Ok(length) => length,
             Err(error) => return Err((error, value)),
         };
-        let object = self.object_mut(id).expect("validated fresh Array");
+        let object = self.object_mut_fast(id);
         let ObjectPayload::Array { dense: Some(dense) } = &mut object.payload else {
             unreachable!("validated dense Array changed before publication")
         };
@@ -717,7 +759,8 @@ impl Heap {
 
     /// Move an owned value into the first hole of a fast Array whose length
     /// already covers it (`new Array(n)` filled in order). The length is
-    /// unchanged; the caller proved the hole is not shadowed by a prototype.
+    /// unchanged; the caller proved the hole is not shadowed by a prototype
+    /// and keeps the receiver alive.
     pub(crate) fn fill_array_dense_hole_owned(
         &mut self,
         id: ObjectId,
@@ -729,7 +772,7 @@ impl Heap {
                     "fast Array contains an internal value sentinel",
                 ));
             }
-            let object = self.object_mut(id)?;
+            let object = self.object_mut_fast(id);
             let stored_len = match object.slots.first() {
                 Some(PropertySlot::Data(RawValue::Int(length))) if *length >= 0 => *length as u32,
                 Some(PropertySlot::Data(RawValue::Float(length)))

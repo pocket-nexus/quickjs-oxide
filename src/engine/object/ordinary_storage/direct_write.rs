@@ -111,11 +111,15 @@ impl RuntimeState {
         let Some(site) = table.site(pc) else {
             return Ok(false);
         };
-        let Some(slot) = site.existing_slot(&self.heap, domain, self.heap.object(object)?) else {
+        // The receiver operand owns `object` throughout the store.
+        let Some(slot) = site.existing_slot(&self.heap, domain, self.heap.object_fast(object))
+        else {
             site.existing_missed();
             return Ok(false);
         };
-        Ok(self.heap.exchange_owned_data_slot(object, slot, input)?)
+        Ok(self
+            .heap
+            .exchange_owned_data_slot_fast(object, slot, input)?)
     }
 
     #[cold]
@@ -280,7 +284,7 @@ impl RuntimeState {
         if !is_ordinary(data) {
             return Ok(FieldStore::Miss);
         }
-        if let Some(selected) = locate(self, object, atom)? {
+        if let Some(selected) = locate_in(self, data, atom)? {
             if selected.flags != crate::engine::object::shape::PropertyFlags::data(true, true, true)
                 || !matches!(data.slots[selected.index], PropertySlot::Data(_))
             {
@@ -429,7 +433,7 @@ impl RuntimeState {
         index: u32,
         input: &mut JsValue,
     ) -> Result<bool, RuntimeError> {
-        let data = self.heap.object(object)?;
+        let data = self.heap.object_fast(object);
         if !data.extensible || !matches!(data.kind, ObjectKind::Array) {
             return Ok(false);
         }

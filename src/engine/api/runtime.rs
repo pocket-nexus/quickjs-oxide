@@ -102,7 +102,7 @@ impl Runtime {
             .expect("fixed typeof atom set fits the atom table");
         let pinned_atoms = crate::engine::atom::pinned::PinnedAtoms::new(&mut atoms)
             .expect("static property atoms fit");
-        let mut well_known_symbols = HashMap::new();
+        let mut well_known_symbols = HashMap::default();
         for symbol in WellKnownSymbol::ALL {
             let atom = atoms
                 .new_static_symbol(Some(symbol.description()))

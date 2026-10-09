@@ -57,6 +57,106 @@ impl FrameSlots<'_> {
         state: &mut RuntimeState,
         poisoned: &std::cell::Cell<bool>,
     ) -> Result<Option<bool>, Error> {
+        if let Some(equal) = self.nullish_equality_fast(state) {
+            return Ok(Some(equal));
+        }
+        self.nullish_equality_general(state, poisoned)
+    }
+
+    /// `===` between immediates or objects whose operand edges are not their
+    /// last: identity and number comparison read no heap payload and the
+    /// releases cannot clean up, so both owners are settled in place. A
+    /// string, BigInt or Symbol operand, or a possibly final edge, declines
+    /// with both operands untouched.
+    #[inline(always)]
+    pub(in crate::engine::vm) fn strict_equality_fast(
+        &mut self,
+        state: &mut RuntimeState,
+    ) -> Option<bool> {
+        fn edge(value: &JsValue) -> Option<Option<crate::engine::heap::ObjectId>> {
+            match value {
+                JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::ShortBigInt(_) => Some(None),
+                JsValue::Object(id) => Some(Some(*id)),
+                _ => None,
+            }
+        }
+        let (left, right) = self.store.top_pair_current(self.window)?;
+        let equal = match (edge(left)?, edge(right)?) {
+            (None, None) => crate::engine::object::storage::strict_equal_immediate(left, right),
+            // An object never equals an immediate.
+            (Some(id), None) | (None, Some(id)) => {
+                if !state.heap.release_object_nonfinal_trusted(id) {
+                    return None;
+                }
+                false
+            }
+            (Some(left), Some(right)) => {
+                // Check both counts before either decrement; one object on
+                // both sides gives up two edges.
+                let needed = if left == right { 3 } else { 2 };
+                if state.heap.object_strong_fast(right) < needed
+                    || !state.heap.release_object_nonfinal_trusted(left)
+                {
+                    return None;
+                }
+                if !state.heap.release_object_nonfinal_trusted(right) {
+                    // Only a traced debug handle declines here; undo the left.
+                    state.heap.retain_object_fast(left);
+                    return None;
+                }
+                left == right
+            }
+        };
+        self.store.discard_top_pair_current(self.window);
+        Some(equal)
+    }
+
+    /// `x == null` against a nullish value or an object whose operand edge is
+    /// not the last one: no error, cleanup or call is possible, so the owners
+    /// are settled in place. Everything else, unchanged, takes the general path.
+    #[inline(always)]
+    fn nullish_equality_fast(&mut self, state: &mut RuntimeState) -> Option<bool> {
+        let (left, right) = self.store.top_pair_current(self.window)?;
+        let other = if matches!(left, JsValue::Null | JsValue::Undefined) {
+            right
+        } else if matches!(right, JsValue::Null | JsValue::Undefined) {
+            left
+        } else {
+            return None;
+        };
+        let equal = match other {
+            JsValue::Null | JsValue::Undefined => true,
+            JsValue::Object(id) => {
+                // The operand slot owns an edge to the object.
+                let (object, count) = state.heap.object_and_strong_fast(*id);
+                if count >= u32::MAX - 1 {
+                    return None;
+                }
+                let html_dda = object.is_html_dda;
+                if !state.heap.release_object_nonfinal_trusted(*id) {
+                    return None;
+                }
+                html_dda
+            }
+            _ => return None,
+        };
+        self.store.discard_top_pair_current(self.window);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("nullish_comparison.local");
+        Some(equal)
+    }
+
+    #[inline(never)]
+    fn nullish_equality_general(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+    ) -> Result<Option<bool>, Error> {
         let (Ok(left), Ok(right)) = (self.peek(1), self.peek(0)) else {
             return Ok(None);
         };
@@ -70,18 +170,13 @@ impl FrameSlots<'_> {
         let equal = match other {
             JsValue::Null | JsValue::Undefined => true,
             JsValue::Object(id) => {
-                let count = state
-                    .heap
-                    .object_strong_count(*id)
-                    .map_err(|error| Error::internal(error.to_string()))?;
+                // The operand slot owns an edge to the object, so trusted
+                // access is sound; checked builds still verify the handle.
+                let (object, count) = state.heap.object_and_strong_fast(*id);
                 if count == 0 || count >= u32::MAX - 1 {
                     return Ok(None);
                 }
-                state
-                    .heap
-                    .object(*id)
-                    .map_err(|error| Error::internal(error.to_string()))?
-                    .is_html_dda
+                object.is_html_dda
             }
             _ => return Ok(None),
         };
@@ -469,6 +564,71 @@ impl FrameSlots<'_> {
 
     #[inline]
     fn retire_field_write(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+    ) -> Result<(), Error> {
+        if self.discard_top_pair_nonfinal(state) {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_owned_field_write_in_execute",
+            );
+            return Ok(());
+        }
+        self.retire_field_write_general(state, poisoned)
+    }
+
+    /// Drop the top two direct operands when each is an immediate or an
+    /// object whose edge is not its last: the releases can neither fail nor
+    /// clean up. Both counts are checked before either decrement; otherwise
+    /// nothing changes and the caller takes its general release.
+    #[inline(always)]
+    fn discard_top_pair_nonfinal(&mut self, state: &mut RuntimeState) -> bool {
+        fn edge(value: &JsValue) -> Option<Option<crate::engine::heap::ObjectId>> {
+            match value {
+                JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::ShortBigInt(_) => Some(None),
+                JsValue::Object(id) => Some(Some(*id)),
+                _ => None,
+            }
+        }
+        let Some((below, top)) = self.store.top_pair_current(self.window) else {
+            return false;
+        };
+        let (Some(below), Some(top)) = (edge(below), edge(top)) else {
+            return false;
+        };
+        match (below, top) {
+            (None, None) => {}
+            (Some(id), None) | (None, Some(id)) => {
+                if !state.heap.release_object_nonfinal_trusted(id) {
+                    return false;
+                }
+            }
+            (Some(below), Some(top)) => {
+                let needed = if below == top { 3 } else { 2 };
+                if state.heap.object_strong_fast(top) < needed
+                    || !state.heap.release_object_nonfinal_trusted(below)
+                {
+                    return false;
+                }
+                if !state.heap.release_object_nonfinal_trusted(top) {
+                    // Only a traced debug handle declines here; undo below.
+                    state.heap.retain_object_fast(below);
+                    return false;
+                }
+            }
+        }
+        self.store.discard_top_pair_current(self.window);
+        true
+    }
+
+    #[inline(never)]
+    fn retire_field_write_general(
         &mut self,
         state: &mut RuntimeState,
         poisoned: &std::cell::Cell<bool>,

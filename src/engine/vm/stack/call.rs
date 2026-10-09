@@ -496,6 +496,12 @@ impl SlotStore {
                     | JsValue::Float(_)
                     | JsValue::ShortBigInt(_),
                 )) => continue,
+                // A non-final object edge needs only the trusted decrement.
+                Some(FrameBinding::Direct(JsValue::Object(id)))
+                    if state.heap.release_object_nonfinal_trusted(id) =>
+                {
+                    continue;
+                }
                 Some(binding) => binding,
             };
             if let Err(error) =

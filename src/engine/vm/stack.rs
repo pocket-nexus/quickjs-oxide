@@ -1070,6 +1070,25 @@ impl SlotStore {
         Ok(())
     }
 
+    /// Push without building an error: a full stack or an occupied slot hands
+    /// the owner back, and the caller reports it through `push_pending`.
+    #[inline(always)]
+    fn try_push_current(
+        &mut self,
+        window: &mut FrameWindow,
+        value: JsValue,
+    ) -> Result<(), JsValue> {
+        if window.depth >= window.operands().len() {
+            return Err(value);
+        }
+        let index = window.operands().start + window.depth;
+        if self.slots[index].is_some() {
+            return Err(value);
+        }
+        self.install_operand(window, index, value);
+        Ok(())
+    }
+
     #[inline]
     fn push_pending_current(
         &mut self,
@@ -1203,6 +1222,35 @@ impl SlotStore {
     ) -> Result<JsValue, Error> {
         self.check_current(window)?;
         self.pop_current(window)
+    }
+
+    /// The top two operands, deeper first, when both are direct values.
+    #[inline(always)]
+    fn top_pair_current(&self, window: &FrameWindow) -> Option<(&JsValue, &JsValue)> {
+        let top = window.depth.checked_sub(1)?;
+        let below = top.checked_sub(1)?;
+        let start = window.operands().start;
+        match (&self.slots[start + below], &self.slots[start + top]) {
+            (Some(FrameBinding::Direct(below)), Some(FrameBinding::Direct(top))) => {
+                Some((below, top))
+            }
+            _ => None,
+        }
+    }
+
+    /// Drop the two direct operands [`Self::top_pair_current`] returned. The
+    /// caller has already released or never owned their edges.
+    #[inline(always)]
+    fn discard_top_pair_current(&mut self, window: &mut FrameWindow) {
+        let start = window.operands().start;
+        window.depth -= 2;
+        self.slots[start + window.depth] = None;
+        self.slots[start + window.depth + 1] = None;
+        #[cfg(feature = "profiling")]
+        {
+            self.live_slots -= 2;
+            record_owned_storage(Cost::Move(2));
+        }
     }
 
     #[inline]

@@ -2263,7 +2263,8 @@ impl Heap {
         Ok(())
     }
 
-    /// Zero-queue finalization of an ordinary-payload object, in one pass.
+    /// Zero-queue finalization of an ordinary- or Arguments-payload object,
+    /// in one pass.
     /// Its slots move out of the record, the slot becomes Vacant (dropping
     /// the rest in place), and each moved slot then reports its atom and
     /// releases its edge, followed by the shape: the same atom and edge order
@@ -2283,7 +2284,11 @@ impl Heap {
             else {
                 return Ok(false);
             };
-            if !matches!(object.payload, ObjectPayload::Ordinary) {
+            // Arguments objects own no payload edges or atoms either.
+            if !matches!(
+                object.payload,
+                ObjectPayload::Ordinary | ObjectPayload::Arguments { .. }
+            ) {
                 return Ok(false);
             }
             if strong.get() != 0 {

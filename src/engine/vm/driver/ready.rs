@@ -4,6 +4,7 @@ use super::{CallStep, VmAction};
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::vm::Completion;
+use crate::engine::vm::environment_driver::{Operation as EnvironmentOperation, WriteTarget};
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 
@@ -80,6 +81,10 @@ pub(super) fn run(
                         | VmAction::Arguments(_)
                         | VmAction::Rest(_)
                         | VmAction::Binding { checked: false, .. }
+                        | VmAction::Environment(EnvironmentOperation::Put {
+                            source: WriteTarget::Global { .. },
+                            ..
+                        })
                         | VmAction::Predicate(crate::engine::vm::predicate_driver::Kind::Instance)
                 )
         }) {
@@ -319,6 +324,17 @@ pub(super) fn run(
                     return Ok(Boundary::Exit(exit));
                 }
             }
+            VmAction::Environment(EnvironmentOperation::Put {
+                source: WriteTarget::Global { index, initialize },
+                ..
+            }) => {
+                // A writable initialized cell runs no code; a declared-only,
+                // `const` or uninitialized binding takes the environment driver.
+                if !global_cell_write(runtime, execution, id, index, initialize)? {
+                    execution.frames.materialize(runtime)?;
+                    return Ok(Boundary::Exit(exit));
+                }
+            }
             VmAction::Arguments(_) | VmAction::Rest(_) => {
                 // Building the object runs no code; only a thrown allocation
                 // error observes the frames.
@@ -408,6 +424,46 @@ fn captured_binding(
     frame.resume_pc = resume;
     #[cfg(feature = "profiling")]
     record_event("captured_binding.completed_in_ready_loop");
+    Ok(true)
+}
+
+/// Store into the global cell selected by `PutVar`/`PutVarInit` exactly when
+/// the environment driver would write the cell itself: an initialization, or
+/// an initialized binding that is not `const`. `false` leaves the operand and
+/// PC untouched.
+#[inline(never)]
+fn global_cell_write(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    index: u16,
+    initialize: bool,
+) -> Result<bool, Error> {
+    use crate::engine::heap::RawValue;
+    let frame = execution.frames.current_mut(id)?;
+    let cell = crate::engine::vm::environment_driver::global_cell_id(
+        runtime,
+        &frame.executable,
+        frame.cold.function.closures(),
+        index,
+    )?;
+    let mut state = runtime.0.state.borrow_mut();
+    {
+        let data = state.heap.var_ref_fast(cell);
+        if data.kind.is_private()
+            || (!initialize && (data.is_const || matches!(data.value, RawValue::Uninitialized)))
+        {
+            return Ok(false);
+        }
+    }
+    let resume = frame.next_pc()?;
+    let value = execution.slots.pop(&mut frame.window)?;
+    state
+        .write_var_ref(&runtime.0.poisoned, cell, value)
+        .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+    frame.resume_pc = resume;
+    #[cfg(feature = "profiling")]
+    record_event("global_cell.write_in_ready_loop");
     Ok(true)
 }
 
@@ -639,6 +695,99 @@ mod tests {
                     >= 32
             );
         }
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn global_cell_writes_keep_binding_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+                var v = 0; let l = 0; const c = 1;
+                var held = { n: 0 };
+                function writes(i) { v = i; l = i + 1; held = { n: i }; }
+                for (let i = 0; i < 16; i++) writes(i);
+                let out = [v === 15, l === 16, held.n === 15];
+                function writeConst() { c = 2; }
+                try { writeConst(); out.push(false); }
+                catch (e) { out.push(e instanceof TypeError && c === 1); }
+                function writeLate() { late = 1; }
+                try { writeLate(); out.push(false); }
+                catch (e) { out.push(e instanceof ReferenceError); }
+                let late = 0;
+                writeLate();
+                out.push(late === 1);
+                function sloppyFresh() { fresh = 3; }
+                sloppyFresh();
+                out.push(globalThis.fresh === 3);
+                function strictMissing() { 'use strict'; missing = 1; }
+                try { strictMissing(); out.push(false); }
+                catch (e) { out.push(e instanceof ReferenceError); }
+                Object.defineProperty(globalThis, 'ro', { value: 1, writable: false });
+                function writeRo() { ro = 2; }
+                writeRo();
+                out.push(ro === 1);
+                out.every(x => x);
+            "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        #[cfg(feature = "profiling")]
+        assert!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("global_cell.write_in_ready_loop")
+                .copied()
+                .unwrap_or(0)
+                >= 48
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn strict_equality_settles_operand_owners_on_every_path() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(held) = context.eval("var held = {}; held").expect("held object") else {
+            panic!("object");
+        };
+        let id = held.object_id();
+        let before = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(id)
+            .unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+                function same(a, b) { return a === b; }
+                let out = [];
+                for (let i = 0; i < 64; i++) {
+                    const other = {};
+                    out.push(same(held, held), !same(held, other), !same(held, 1), !same(null, held),
+                        same(1, 1.0), !same(NaN, NaN), same(0, -0), same(2n, 2n),
+                        same('a' + i, 'a' + i), !same({}, {}), same(undefined, undefined));
+                }
+                out.every(x => x)
+            "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(id),
+            Ok(before)
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }

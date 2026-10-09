@@ -14,7 +14,15 @@ pub(super) fn execute(
     count: u16,
     fallthrough: FallthroughPc,
 ) -> Result<(), Error> {
-    segment.materialize_in_state(state)?;
+    // As for OP_object: publish the frames only when the safepoint below can
+    // collect; allocation errors materialize on the throw path.
+    if runtime
+        .0
+        .gc_pressure
+        .may_request_within(super::LITERAL_ALLOCATION_NODES)
+    {
+        segment.materialize_in_state(state)?;
+    }
     {
         let FrameTurn {
             executable,

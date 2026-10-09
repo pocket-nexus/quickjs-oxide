@@ -176,7 +176,32 @@ impl Heap {
             .map_err(|failure| failure.error)
     }
 
+    /// Allocate an Arguments object whose builder laid out `slots` against a
+    /// shape it owns through the realm's arguments-shape cache. The layout is
+    /// validated only in debug and `checked-handles` builds; every edge is
+    /// still retained with its overflow check.
+    pub(crate) fn allocate_arguments_object_with_status(
+        &mut self,
+        object: ObjectData,
+    ) -> Result<ObjectId, ObjectAllocationError> {
+        if !matches!(object.payload, ObjectPayload::Arguments { .. }) {
+            return Err(ObjectAllocationError {
+                error: HeapError::Invariant("arguments allocation received another payload"),
+                published: false,
+            });
+        }
+        self.allocate_object_inner_validated::<{ cfg!(any(debug_assertions, feature = "checked-handles")) }>(object)
+    }
+
     fn allocate_object_inner_with_status(
+        &mut self,
+        object: ObjectData,
+    ) -> Result<ObjectId, ObjectAllocationError> {
+        self.allocate_object_inner_validated::<true>(object)
+    }
+
+    #[inline(always)]
+    fn allocate_object_inner_validated<const VALIDATE: bool>(
         &mut self,
         object: ObjectData,
     ) -> Result<ObjectId, ObjectAllocationError> {
@@ -188,7 +213,9 @@ impl Heap {
                 | ObjectPayload::FinalizationRegistry(_)
         );
         let prepared = (|| {
-            self.validate_object_layout(&object)?;
+            if VALIDATE {
+                self.validate_object_layout(&object)?;
+            }
             let (index, generation) = self.reserve(HeapNodeKind::Object)?;
             let edges = object_edges(&object);
             if let Err(error) = self.retain_edges_transactionally(&edges) {

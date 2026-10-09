@@ -153,6 +153,8 @@ fn resident_object_uses_the_executable_realm_when_the_caller_realm_differs() {
     let entry = object_entry(&runtime, second.realm, first.realm);
     let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
     let id = crate::engine::vm::driver::push_frame(&runtime, &mut execution, entry).unwrap();
+    // Publish the frame so its realm record is observable below.
+    runtime.0.gc_pressure.remaining.set(1);
     {
         let mut state = runtime.0.state.borrow_mut();
         assert!(matches!(
@@ -242,6 +244,8 @@ fn resident_object_materialization_failure_does_not_allocate_or_advance() {
     let runtime = Runtime::new();
     let context = runtime.new_context().unwrap();
     let (mut execution, id) = object_execution(&runtime, context.realm);
+    // Near a collection the frames are published before allocating.
+    runtime.0.gc_pressure.remaining.set(1);
     {
         let mut state = runtime.0.state.borrow_mut();
         state.next_active_frame_token = u64::MAX;
@@ -313,6 +317,37 @@ fn direct_materialization_preserves_partial_suffix_and_retries_without_duplicate
         assert_eq!(state.active_frames.get(0).unwrap().token, registered_parent);
         assert!(matches!(state.active_frames.last().unwrap().kind,
             ActiveFrameKind::Bytecode { pc: Some(pc), .. } if pc == BytecodePc::new(1)));
+    }
+    drop(execution);
+    clean(&runtime);
+}
+
+#[test]
+fn resident_object_with_headroom_completes_without_publishing_frames() {
+    let runtime = Runtime::new();
+    let context = runtime.new_context().unwrap();
+    let (mut execution, id) = object_execution(&runtime, context.realm);
+    runtime
+        .0
+        .gc_pressure
+        .remaining
+        .set(super::LITERAL_ALLOCATION_NODES + 1);
+    {
+        let mut state = runtime.0.state.borrow_mut();
+        assert!(matches!(
+            super::execute_frame_in_state(&runtime, &mut state, &mut execution, id).unwrap(),
+            super::VmAction::Complete
+        ));
+        assert!(state.active_frames.is_empty());
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert!(!frame.active_frame.is_materialized());
+        let Some(JsValue::Object(object)) = execution.pending.take() else {
+            panic!("OP_object must complete in the resident executor");
+        };
+        assert_eq!(state.heap.object_strong_count(object), Ok(1));
+        state
+            .release_owned_jsvalue(&runtime.0.poisoned, JsValue::Object(object))
+            .unwrap();
     }
     drop(execution);
     clean(&runtime);

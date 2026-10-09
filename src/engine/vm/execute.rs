@@ -130,7 +130,24 @@ impl<'a> FrameCursor<'a> {
         self.with_slots(|slots| slots.push(value))
     }
 
+    // A shared out-of-line call: inlining it grows the dispatch function.
+    #[inline(never)]
     fn commit_owned(&mut self, state: &mut RuntimeState, value: JsValue) -> Result<(), Error> {
+        match self.transaction.slots().try_push(value) {
+            Ok(()) => Ok(()),
+            Err(value) => self.commit_owned_rejected(state, value),
+        }
+    }
+
+    /// A rejected push reports its error and releases the owner it handed
+    /// back. Out of line so the accepted push makes no call.
+    #[cold]
+    #[inline(never)]
+    fn commit_owned_rejected(
+        &mut self,
+        state: &mut RuntimeState,
+        value: JsValue,
+    ) -> Result<(), Error> {
         let mut pending = Some(value);
         let result = self.with_slots(|slots| slots.push_pending(&mut pending));
         if let Some(value) = pending {
@@ -145,6 +162,19 @@ impl<'a> FrameCursor<'a> {
     /// an already materialized frame; an error materializes the virtual frame
     /// only after this segment returns.
     fn strict_comparison(
+        &mut self,
+        state: &mut RuntimeState,
+        token: ActiveFrameToken,
+    ) -> Result<bool, Error> {
+        // Nothing on the fast path can fail or observe the fault PC.
+        if let Some(equal) = self.transaction.slots().strict_equality_fast(state) {
+            return Ok(equal);
+        }
+        self.strict_comparison_general(state, token)
+    }
+
+    #[inline(never)]
+    fn strict_comparison_general(
         &mut self,
         state: &mut RuntimeState,
         token: ActiveFrameToken,
@@ -1868,20 +1898,19 @@ fn execute_admitted_in_state(
                     }
                     Opcode::GetVarRef | Opcode::GetVarRefCheck => {
                         let index = published_u16(operand);
-                        let value = if cursor
-                            .with_slots(|slots| Ok(slots.has_operand_capacity(1)))?
-                        {
-                            let root = owners
-                                .function
-                                .closures()
-                                .get(runtime, usize::from(index))
-                                .ok_or_else(|| {
-                                    Error::internal("closure variable index is out of bounds")
-                                })?;
-                            super::bindings::try_read_captured_immediate_in_state(state, root.id())
-                        } else {
-                            None
-                        };
+                        let value =
+                            if cursor.with_slots(|slots| Ok(slots.has_operand_capacity(1)))? {
+                                let root = owners
+                                    .function
+                                    .closures()
+                                    .get(runtime, usize::from(index))
+                                    .ok_or_else(|| {
+                                        Error::internal("closure variable index is out of bounds")
+                                    })?;
+                                super::bindings::try_read_captured_in_state(state, root.id())
+                            } else {
+                                None
+                            };
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_outcome(
                             runtime,
@@ -1891,7 +1920,7 @@ fn execute_admitted_in_state(
                             if value.is_some() { None } else { Some("guard") },
                         );
                         if let Some(value) = value {
-                            cursor.commit_push(value)?;
+                            cursor.commit_owned(state, value)?;
                         } else {
                             break 'dispatch Ok(VmAction::Binding {
                                 source: BindingSource::Closure,
@@ -2661,8 +2690,16 @@ fn execute_admitted_in_state(
             }
             VmAction::Object { fallthrough } => {
                 // FrameCursor has published the allocation's fault PC. Use
-                // the one suffix protocol before allocation can be observed.
-                segment.materialize_in_state(state)?;
+                // the one suffix protocol before a pressure collection can
+                // observe the frames; an allocation error materializes on
+                // the throw path instead.
+                if runtime
+                    .0
+                    .gc_pressure
+                    .may_request_within(LITERAL_ALLOCATION_NODES)
+                {
+                    segment.materialize_in_state(state)?;
+                }
                 {
                     let FrameTurn {
                         executable,
@@ -2830,6 +2867,9 @@ fn array_index(value: Number) -> Option<u32> {
     (value >= 0.0 && value < f64::from(u32::MAX) && value.trunc() == value).then_some(value as u32)
 }
 
+/// An upper bound on the heap nodes one object or array literal allocates.
+pub(super) const LITERAL_ALLOCATION_NODES: usize = 8;
+
 #[inline(always)]
 fn read_local<const CHECKED: bool>(
     cursor: &mut FrameCursor<'_>,
@@ -2844,7 +2884,7 @@ fn read_local<const CHECKED: bool>(
             copy_value_in_state(state, value).map(|value| (Some(value), false))
         }
         FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok((
-            super::bindings::try_read_captured_immediate_in_state(state, *id),
+            super::bindings::try_read_captured_in_state(state, *id),
             false,
         )),
         FrameBinding::Uninitialized => Ok((None, true)),
@@ -2877,9 +2917,9 @@ fn read_arg(
     }
     let copied = cursor.with_slots(|slots| match slots.parameter(index)? {
         FrameBinding::Direct(value) => copy_value_in_state(state, value).map(Some),
-        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok(
-            super::bindings::try_read_captured_immediate_in_state(state, *id),
-        ),
+        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => {
+            Ok(super::bindings::try_read_captured_in_state(state, *id))
+        }
         _ => Ok(None),
     })?;
     if let Some(value) = copied {
@@ -3401,10 +3441,9 @@ fn borrowed_this_read_ready_in_state(state: &RuntimeState, base: &JsValue) -> bo
     let JsValue::Object(id) = base else {
         return false;
     };
-    state
-        .heap
-        .object_strong_count(*id)
-        .is_ok_and(|count| count != 0 && count < u32::MAX - 2)
+    // The frame's call input owns `this` for the whole read.
+    let count = state.heap.object_strong_fast(*id);
+    count != 0 && count < u32::MAX - 2
 }
 
 // Removing the temporary this owner must not remove a checked-retain failure,

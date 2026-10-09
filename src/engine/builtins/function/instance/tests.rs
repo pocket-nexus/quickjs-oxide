@@ -146,23 +146,31 @@ fn ordinary_instanceof_declines_cleanup_saturation_and_stale_inputs() {
         try_ordinary_instanceof(&runtime, &value, target.object_id(), true),
         Some(true)
     );
+    // Callers own both inputs; a stale handle is a caller bug that the
+    // trusted lookups reject in checked builds
+    // (`ordinary_instanceof_rejects_stale_inputs_in_checked_builds`).
+}
+
+#[test]
+#[cfg(any(debug_assertions, feature = "checked-handles"))]
+#[should_panic(expected = "trusted handle")]
+fn ordinary_instanceof_rejects_stale_inputs_in_checked_builds() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    let Value::Object(target) = context.eval("globalThis.C=function C(){};C").unwrap() else {
+        panic!("constructor");
+    };
+    drop(context.eval("C[Symbol.hasInstance]").unwrap());
     let stale = runtime.new_object(None).unwrap();
     let stale_id = stale.object_id();
     drop(stale);
-    let replacement = runtime.new_object(None).unwrap();
-    assert_ne!(stale_id, replacement.object_id());
-    assert_eq!(
-        try_ordinary_instanceof(&runtime, &value, stale_id, true),
-        None
-    );
-    assert_eq!(
-        try_ordinary_instanceof(
-            &runtime,
-            &JsValue::Object(stale_id),
-            target.object_id(),
-            true
-        ),
-        None
+    drop(runtime.new_object(None).unwrap());
+    runtime.drain_deferred_references().unwrap();
+    let _ = try_ordinary_instanceof(
+        &runtime,
+        &JsValue::Object(stale_id),
+        target.object_id(),
+        true,
     );
 }
 
@@ -452,10 +460,6 @@ fn instanceof_chain_keeps_full_generational_identity() {
         walk_ordinary_chain(&state.heap, candidate.object_id(), replacement.object_id()).unwrap(),
         ChainWalk::Complete(true)
     );
-    assert!(matches!(
-        walk_ordinary_chain(&state.heap, stale_id, replacement.object_id()),
-        Err(HeapError::Stale { .. })
-    ));
 }
 
 #[test]
@@ -735,4 +739,55 @@ fn instanceof_chain_saturated_replies_transfer_without_a_new_retain() {
             .heap
             .set_strong_count_for_test(RawId::Object(id), ordinary_count);
     }
+}
+
+#[test]
+fn ordinary_instanceof_answers_heap_primitive_candidates_and_keeps_saturation() {
+    use crate::engine::heap::RawId;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    let result = context
+        .eval(
+            "function C(){} var s='a'+'b'; var custom={[Symbol.hasInstance](v){return typeof v==='string'}};\
+             [s instanceof C, s instanceof String, new String(s) instanceof String, 10n instanceof C,\
+              s instanceof custom, (s+s) instanceof Object].join()",
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        context.eval("'false,false,true,false,true,false'").unwrap()
+    );
+    let Value::Object(target) = context.eval("C").unwrap() else {
+        panic!("constructor");
+    };
+    let JsValue::String(string) = runtime.into_jsvalue(context.eval("s").unwrap()).unwrap() else {
+        panic!("string");
+    };
+    let candidate = JsValue::String(string);
+    assert_eq!(
+        try_ordinary_instanceof(&runtime, &candidate, target.object_id(), true),
+        Some(false)
+    );
+    let original = runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .strong_count(RawId::String(string))
+        .unwrap();
+    runtime.0.state.borrow_mut().heap.set_strong_count_for_test(
+        RawId::String(string),
+        u32::MAX - INSTANCE_PROTOCOL_ROOT_HEADROOM,
+    );
+    assert_eq!(
+        try_ordinary_instanceof(&runtime, &candidate, target.object_id(), true),
+        None
+    );
+    runtime
+        .0
+        .state
+        .borrow_mut()
+        .heap
+        .set_strong_count_for_test(RawId::String(string), original);
+    runtime.release_jsvalue(candidate).unwrap();
 }
