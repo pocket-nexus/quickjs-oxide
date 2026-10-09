@@ -872,13 +872,38 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
      |---|---|---|
      | 7a | B3 的 RegExp/String 族：exec、replace、split、match/matchAll、search 及结果数组构造改为持有 State 的内部实现 | RegExp Ir 有收益，计数下降；其余不回退 |
      | 7b | B1-N01 的载体改写为调用路径整体：激活/安装/拆除（`install_current_ordinary`、window 准备、`FrameCold::release_owned`、`CallStorage::recycle`、激活对）消费权迁到 held State 并压瘦热循环 | RayTrace、RegExp、DeltaBlue 至少一项 Ir 有收益 |
-     | 7c | 其余 B3 族，按 V8 触及量排序（Array、Object、JSON、Promise、Iterator 等） | 不回退 |
-     | 7d | computed 读取（B2b）、Reflect/Proxy（B2f）、B4 | 不回退；遵守 B2b 的三条教训 |
+     | ~~7c~~ | ~~其余 B3 族，按 V8 触及量排序~~ **合并入门槛迁移批（2026-10-10 决定，见下）** | — |
+     | ~~7d~~ | ~~computed 读取（B2b）、Reflect/Proxy（B2f）、B4~~ **合并入门槛迁移批** | — |
 
   3. **验收分两类。** 涉及 RegExp 或原生调用的批次要求 Ir 收益（≥1%，第 7 节）；纯结构批次只要求八项 Ir/Dw 不回退
      （≤0.5%），加上清单与计数的下降。
   4. **测量按批。** 容器测量必须串行（约 25 分钟一次），纯结构迁移每批测一次八项 Ir 与诊断计数；改变内联或拆分函数的
      提交单独测，只以 Rust 1.88 容器 Ir 为准，不以本机反汇编判断。
+
+  **7c/7d 合并决定与门槛迁移批（2026-10-10）。** 7a/7b/7c-1 完成后对八项重测 `query_dispatch.owner.*`：
+  七个基准全部只剩 `unclassified_step`/`other`（DeltaBlue 8.2k、Crypto 362、EarleyBoyer 147，其余 <100），
+  **具名 B3 协议族在 V8 套件上全部冷透**。按"按 V8 触及量排序"原则，7c 主体已无可排序的热族；剩余工作全部是
+  第 8 项六项硬门槛的合同改造。故 7c/7d/第 8 项合并为**门槛迁移批**，按门槛清单（而非性能族）组织：
+
+  1. **门槛 2 State 重借用 = 0**：内部 helper 不再经 `runtime.0.state.borrow()` 自借（已定位
+     `OrdinaryCall::install`、`authenticate_impl`、`RetiredFrame::drop`、`FrameEntry::release`、
+     `recycle_legacy`、`clear_frame`、`CallInput::callee_global` 七处）。热/存续路径迁 `_in_state`；
+     冷/遗留路径随门槛 6 删除。
+  2. **门槛 4 普通调用返回外退 = 0**：`core.legacy_boundary.ordinary_call` 归零（DeltaBlue 每轮数万次），
+     查清 decline 原因后修掉或迁移。
+  3. **门槛 3 内部 deferred = 0**：内部边不再经 `runtime.release_jsvalue` 的 deferred 队列
+     （`NativeActivation::Drop` 逐参数释放等），持 State 的 guard 直接清理。
+  4. **门槛 1 内部 Runtime 强引用 = 0**：约 130 个内部字段（external-root 六个公共边界按合同保留）
+     按三类归位：清理点可带 State 的删 owner；已有 Runtime-free guard 模式的换型
+     （`ActiveFrameRestore` 范式）；unwind 兜底确实够不到 State 的逐个记录为例外，收口时逐条签认。
+  5. **门槛 5 公共 root 中间转换 = 0**：内部层之间为传参临时 box/unbox 的 root 改 raw id。
+  6. **门槛 6 迁移适配器和旧实现删除**：前五条清零后删除旧非-in-state 变体、遗留路径、转换适配器，
+     以编译通过 + 计数归零验收。
+
+  批验收：八项 Ir/Dw 不回退（≤0.5%）+ 残留清单再生成（内部字段全零或例外清单签认）+ focused Test262；
+  门槛基线清单见 `runtime-gate-baseline.json`（2026-10-10，HEAD `ee2b421c`）。批后随第 7 项收口
+  （参考机会话原生 ABBA 与布局对照、CI fast、架构检查、完整回执），第 8 项以六项门槛全零（或签认例外）验收，
+  阶段 B 完成，随后开第 5 项。
 
   **7a 执行与验收（2026-10-10，`3fdd0592`→`4889ebf5`）。** 两个修正使 RegExp 族计数归零，八项 Ir 验收通过。
 
