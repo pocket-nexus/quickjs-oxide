@@ -4,7 +4,9 @@ use crate::engine::builtins::native::{RegExpFlagKind, RegExpNativeKind};
 use crate::engine::heap::RegExpObjectData;
 use crate::engine::value::ReplacementStringBuffer;
 
-use crate::regexp::{CompiledRegExp, ExecError, RegExpFlags, execute_with_interrupt};
+use crate::regexp::{
+    CompiledRegExp, ExecError, RegExpFlags, execute_latin1_with_interrupt, execute_with_interrupt,
+};
 use std::rc::Rc;
 
 use super::super::replacement::{
@@ -154,19 +156,27 @@ impl Runtime {
         } else {
             0
         };
-        let input_units = input.utf16_units().collect::<Vec<_>>();
+        // Match on the flat string as exec does, without copying its units.
+        let flat = input.linearize();
         let mut next_source_position = 0_usize;
 
         loop {
-            let matched = if last_index > input_units.len() as u64 {
+            let matched = if last_index > flat.len() as u64 {
                 None
             } else {
-                match execute_with_interrupt(
-                    program.as_ref(),
-                    &input_units,
-                    usize::try_from(last_index).expect("RegExp start was bounded by String length"),
-                    || false,
-                ) {
+                let start =
+                    usize::try_from(last_index).expect("RegExp start was bounded by String length");
+                let execution = if let Some(units) = flat.flat_latin1() {
+                    execute_latin1_with_interrupt(program.as_ref(), units, start, || false)
+                } else {
+                    execute_with_interrupt(
+                        program.as_ref(),
+                        flat.flat_utf16().expect("linearized input"),
+                        start,
+                        || false,
+                    )
+                };
+                match execution {
                     Ok(value) => value,
                     Err(ExecError::OutOfMemory) => {
                         return Ok(Completion::Throw(self.new_native_error_jsvalue(
