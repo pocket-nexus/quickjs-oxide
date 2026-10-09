@@ -143,6 +143,14 @@ impl Runtime {
     }
 
     fn regexp_last_index_value(&self, object: &ObjectRef) -> Result<JsValue, RuntimeError> {
+        if let Some(value) = self
+            .0
+            .state
+            .borrow()
+            .regexp_last_index_immediate(object.object_id())?
+        {
+            return Ok(value);
+        }
         let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let descriptor =
             self.get_own_property_owned(object, &key)?
@@ -169,6 +177,15 @@ impl Runtime {
         object: &ObjectRef,
         value: i32,
     ) -> Result<Option<JsValue>, RuntimeError> {
+        if object.belongs_to(self)
+            && self
+                .0
+                .state
+                .borrow_mut()
+                .try_write_regexp_last_index(object.object_id(), value)?
+        {
+            return Ok(None);
+        }
         let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         self.set_property_or_throw(realm, object, &key, Value::Int(value))
     }

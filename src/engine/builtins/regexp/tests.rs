@@ -92,3 +92,43 @@ fn direct_replace_uses_a_second_buffer_while_generic_replace_keeps_the_outer_err
     };
     assert_eq!(message.to_utf8_lossy(), "out of memory");
 }
+
+#[test]
+fn regexp_last_index_fast_paths_keep_set_semantics() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    assert_eq!(
+        context
+            .eval(
+                r#"
+            (function () {
+                var out = [];
+                var g = /a/g;
+                out.push(g.exec("bab").index === 1 && g.lastIndex === 2);
+                out.push(g.exec("bab") === null && g.lastIndex === 0);
+                var y = /a/y;
+                y.lastIndex = 1;
+                out.push(y.exec("ba") !== null && y.lastIndex === 2);
+                out.push("aXa".replace(/a/g, "b") === "bXb" && /a/g.lastIndex === 0);
+                var frozen = Object.freeze(/a/g);
+                try { frozen.exec("a"); out.push(false); }
+                catch (e) { out.push(e instanceof TypeError && frozen.lastIndex === 0); }
+                var fixed = /a/g;
+                Object.defineProperty(fixed, "lastIndex", { value: 0, writable: false });
+                try { "a".replace(fixed, "b"); out.push(false); }
+                catch (e) { out.push(e instanceof TypeError); }
+                var seen = 0;
+                var sticky = /a/y;
+                sticky.lastIndex = { valueOf: function () { seen++; return 1; } };
+                out.push(sticky.exec("ba") !== null && seen === 1 && sticky.lastIndex === 2);
+                var held = /a/g;
+                held.lastIndex = "x";
+                out.push(held.exec("a") !== null && held.lastIndex === 1);
+                return out.every(function (x) { return x; });
+            })()
+        "#
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+}
