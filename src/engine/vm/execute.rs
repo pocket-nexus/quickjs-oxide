@@ -1878,7 +1878,7 @@ fn execute_admitted_in_state(
                                 .ok_or_else(|| {
                                     Error::internal("closure variable index is out of bounds")
                                 })?;
-                            super::bindings::try_read_captured_immediate_in_state(state, root.id())
+                            super::bindings::try_read_captured_in_state(state, root.id())
                         } else {
                             None
                         };
@@ -1891,7 +1891,7 @@ fn execute_admitted_in_state(
                             if value.is_some() { None } else { Some("guard") },
                         );
                         if let Some(value) = value {
-                            cursor.commit_push(value)?;
+                            cursor.commit_owned(state, value)?;
                         } else {
                             break 'dispatch Ok(VmAction::Binding {
                                 source: BindingSource::Closure,
@@ -2844,7 +2844,7 @@ fn read_local<const CHECKED: bool>(
             copy_value_in_state(state, value).map(|value| (Some(value), false))
         }
         FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok((
-            super::bindings::try_read_captured_immediate_in_state(state, *id),
+            super::bindings::try_read_captured_in_state(state, *id),
             false,
         )),
         FrameBinding::Uninitialized => Ok((None, true)),
@@ -2878,7 +2878,7 @@ fn read_arg(
     let copied = cursor.with_slots(|slots| match slots.parameter(index)? {
         FrameBinding::Direct(value) => copy_value_in_state(state, value).map(Some),
         FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok(
-            super::bindings::try_read_captured_immediate_in_state(state, *id),
+            super::bindings::try_read_captured_in_state(state, *id),
         ),
         _ => Ok(None),
     })?;

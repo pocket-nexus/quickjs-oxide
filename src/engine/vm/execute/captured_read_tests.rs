@@ -1,9 +1,9 @@
-//! Captured scalar reads keep the frame's cell owner and ordinary miss boundary.
+//! Captured scalar and object reads keep the frame's cell owner and ordinary miss boundary.
 use crate::engine::{
     api::{Runtime, Value},
     heap::{RawId, VarRefId, roots::VarRefView},
     value::JsValue,
-    vm::{bindings::try_read_captured_immediate_in_state, execution::ExecutionLimits},
+    vm::{bindings::try_read_captured_in_state, execution::ExecutionLimits},
 };
 
 fn captured_frame(
@@ -106,18 +106,30 @@ fn captured_scalar_reads_complete_without_an_activation_or_cell_owner_copy() {
 }
 
 #[test]
-fn captured_heap_reads_keep_the_original_driver_and_result_owner() {
+fn captured_string_reads_keep_the_original_driver_and_result_owner() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context().expect("create context");
+    let JsValue::String(string) = runtime
+        .into_jsvalue(context.eval("'captured' + 'string'").unwrap())
+        .unwrap()
+    else {
+        panic!("string");
+    };
     let (mut execution, id, pc, cell) = captured_frame(&runtime, &mut context, true);
-    let object = runtime.new_object(None).unwrap();
-    let object_id = object.object_id();
     runtime
         .write_var_ref(
             &VarRefView::from_frame(&runtime, cell),
-            JsValue::Object(object.into_handle()),
+            JsValue::String(string),
         )
         .unwrap();
+    let strong = |runtime: &Runtime| {
+        runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .leaf_strong_fast(RawId::String(string))
+    };
     let action = super::execute_frame(&runtime, &mut execution, id).unwrap();
     let super::VmAction::Binding {
         source,
@@ -127,15 +139,12 @@ fn captured_heap_reads_keep_the_original_driver_and_result_owner() {
         keep,
     } = action
     else {
-        panic!("heap result must keep its owning driver");
+        panic!("string result must keep its owning driver");
     };
     let frame = execution.frames.current_mut(id).unwrap();
     assert_eq!((frame.fault_pc, frame.resume_pc), (pc, pc));
     assert_eq!(execution.slots.depth(&frame.window), 0);
-    assert_eq!(
-        runtime.0.state.borrow().heap.object_strong_count(object_id),
-        Ok(1)
-    );
+    assert_eq!(strong(&runtime), 1);
     execution.frames.materialize(&runtime).unwrap();
     crate::engine::vm::frame_operations::binding(
         &runtime,
@@ -148,21 +157,15 @@ fn captured_heap_reads_keep_the_original_driver_and_result_owner() {
         keep,
     )
     .unwrap();
-    assert_eq!(
-        runtime.0.state.borrow().heap.object_strong_count(object_id),
-        Ok(2)
-    );
+    assert_eq!(strong(&runtime), 2);
     assert!(matches!(
         super::execute_frame(&runtime, &mut execution, id).unwrap(),
         super::VmAction::Complete
     ));
     let result = execution.pending.take().unwrap();
-    assert_eq!(result, JsValue::Object(object_id));
+    assert_eq!(result, JsValue::String(string));
     runtime.release_jsvalue(result).unwrap();
-    assert_eq!(
-        runtime.0.state.borrow().heap.object_strong_count(object_id),
-        Ok(1)
-    );
+    assert_eq!(strong(&runtime), 1);
 }
 
 #[test]
@@ -206,7 +209,7 @@ fn captured_scalar_admission_preserves_storage_permission_saturation_and_sentine
         .new_var_ref(JsValue::Int(1), false, false, ClosureVariableKind::Normal)
         .unwrap();
     assert_eq!(
-        try_read_captured_immediate_in_state(&runtime.0.state.borrow(), root.id()),
+        try_read_captured_in_state(&mut runtime.0.state.borrow_mut(), root.id()),
         Some(JsValue::Int(1))
     );
     for value in [
@@ -220,7 +223,7 @@ fn captured_scalar_admission_preserves_storage_permission_saturation_and_sentine
         let raw = value.as_raw();
         runtime.write_var_ref(&root, value).unwrap();
         let value =
-            try_read_captured_immediate_in_state(&runtime.0.state.borrow(), root.id()).unwrap();
+            try_read_captured_in_state(&mut runtime.0.state.borrow_mut(), root.id()).unwrap();
         match (&raw, &value) {
             (crate::engine::heap::RawValue::Float(expected), JsValue::Float(actual)) => {
                 assert_eq!(expected.to_bits(), actual.to_bits());
@@ -236,7 +239,7 @@ fn captured_scalar_admission_preserves_storage_permission_saturation_and_sentine
             .heap
             .set_strong_count_for_test(RawId::VarRef(root.id()), count);
         assert_eq!(
-            try_read_captured_immediate_in_state(&runtime.0.state.borrow(), root.id()),
+            try_read_captured_in_state(&mut runtime.0.state.borrow_mut(), root.id()),
             None
         );
         assert_eq!(
@@ -257,14 +260,71 @@ fn captured_scalar_admission_preserves_storage_permission_saturation_and_sentine
         .set_strong_count_for_test(RawId::VarRef(root.id()), 1);
     runtime.reset_var_ref_uninitialized(&root).unwrap();
     assert_eq!(
-        try_read_captured_immediate_in_state(&runtime.0.state.borrow(), root.id()),
+        try_read_captured_in_state(&mut runtime.0.state.borrow_mut(), root.id()),
         None
     );
     let private = runtime
         .new_uninitialized_captured_var_ref(true, true, ClosureVariableKind::PrivateField)
         .unwrap();
     assert_eq!(
-        try_read_captured_immediate_in_state(&runtime.0.state.borrow(), private.id()),
+        try_read_captured_in_state(&mut runtime.0.state.borrow_mut(), private.id()),
         None
+    );
+}
+
+#[test]
+fn captured_object_read_takes_one_edge_and_declines_saturation() {
+    use crate::engine::code::function::metadata::ClosureVariableKind;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let Value::Object(object) = context.eval("({})").unwrap() else {
+        panic!("object");
+    };
+    let id = object.object_id();
+    runtime.retain_object_handle(id).unwrap();
+    let root = runtime
+        .new_var_ref(JsValue::Object(id), false, false, ClosureVariableKind::Normal)
+        .unwrap();
+    let count = |runtime: &Runtime| runtime.0.state.borrow().heap.object_strong_count(id);
+    let before = count(&runtime).unwrap();
+    let read = try_read_captured_in_state(&mut runtime.0.state.borrow_mut(), root.id());
+    assert_eq!(read, Some(JsValue::Object(id)));
+    assert_eq!(count(&runtime), Ok(before + 1));
+    runtime.release_jsvalue(read.unwrap()).unwrap();
+    assert_eq!(count(&runtime), Ok(before));
+    for saturated in [u32::MAX - 1, u32::MAX] {
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(id), saturated);
+        assert_eq!(
+            try_read_captured_in_state(&mut runtime.0.state.borrow_mut(), root.id()),
+            None
+        );
+        assert_eq!(count(&runtime), Ok(saturated));
+    }
+    runtime
+        .0
+        .state
+        .borrow_mut()
+        .heap
+        .set_strong_count_for_test(RawId::Object(id), before);
+    assert_eq!(
+        context
+            .eval(
+                r#"
+            (() => {
+                const shared = [1, 2, 3];
+                const read = () => shared;
+                let total = 0;
+                for (let i = 0; i < 32; i++) total += read()[i % 3];
+                return total === 63 && read() === shared;
+            })()
+        "#
+            )
+            .unwrap(),
+        Value::Bool(true)
     );
 }

@@ -11,7 +11,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::AtomIdx;
 use crate::engine::code::function::metadata::{ClosureVariable, ClosureVariableKind};
 use crate::engine::heap::roots::{VarRefRoot, VarRefView};
-use crate::engine::heap::{ObjectId, RawValue, VarRefId};
+use crate::engine::heap::{ObjectId, RawId, RawValue, VarRefId};
 use crate::engine::value::JsValue;
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 
@@ -207,33 +207,46 @@ pub(in crate::engine::vm) fn read_frame_binding(
 }
 
 /// The caller's frame or closure owns this cell throughout the short read.
+/// Immediates are copied; an object takes a trusted edge below saturation.
+/// Other heap values, a saturated cell or object, and sentinels decline.
 #[inline]
-pub(in crate::engine::vm) fn try_read_captured_immediate_in_state(
-    state: &crate::engine::heap::runtime::RuntimeState,
+pub(in crate::engine::vm) fn try_read_captured_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
     id: VarRefId,
 ) -> Option<JsValue> {
     let cell = state.heap.var_ref(id).ok()?;
     if cell.kind.is_private() {
         return None;
     }
-    if !matches!(
-        cell.value,
+    let object = match cell.value {
         RawValue::Undefined
-            | RawValue::Null
-            | RawValue::Bool(_)
-            | RawValue::Int(_)
-            | RawValue::Float(_)
-            | RawValue::ShortBigInt(_)
-    ) {
-        return None;
-    }
+        | RawValue::Null
+        | RawValue::Bool(_)
+        | RawValue::Int(_)
+        | RawValue::Float(_)
+        | RawValue::ShortBigInt(_) => None,
+        RawValue::Object(object) => Some(object),
+        _ => return None,
+    };
+    let value = JsValue::from_raw(cell.value.clone())?;
     let count = state.heap.var_ref_strong_count(id).ok()?;
     if count == 0 || count >= u32::MAX - 1 {
         return None;
     }
-    let value = JsValue::from_raw(cell.value.clone())?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("captured_scalar.read");
+    if let Some(object) = object {
+        // The cell's edge keeps the object alive while it gains another.
+        if !state.heap.admits_trusted(RawId::Object(object))
+            || state.heap.object_strong_fast(object) >= u32::MAX - 1
+        {
+            return None;
+        }
+        state.heap.retain_object_fast(object);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("captured_object.read");
+    } else {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("captured_scalar.read");
+    }
     Some(value)
 }
 
