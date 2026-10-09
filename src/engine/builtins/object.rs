@@ -1325,8 +1325,9 @@ impl RuntimeState {
         realm: ContextId,
     ) -> Result<ObjectId, RuntimeError> {
         let prototype = self.heap.context(realm)?.object_prototype;
+        // The realm record owns its Object.prototype edge.
         self.heap
-            .object_strong_count(prototype)?
+            .object_strong_fast(prototype)
             .checked_add(1)
             .ok_or(crate::engine::heap::HeapError::Overflow {
                 operation: "retaining a heap reference",
