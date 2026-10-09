@@ -57,6 +57,53 @@ impl FrameSlots<'_> {
         state: &mut RuntimeState,
         poisoned: &std::cell::Cell<bool>,
     ) -> Result<Option<bool>, Error> {
+        if let Some(equal) = self.nullish_equality_fast(state) {
+            return Ok(Some(equal));
+        }
+        self.nullish_equality_general(state, poisoned)
+    }
+
+    /// `x == null` against a nullish value or an object whose operand edge is
+    /// not the last one: no error, cleanup or call is possible, so the owners
+    /// are settled in place. Everything else, unchanged, takes the general path.
+    #[inline(always)]
+    fn nullish_equality_fast(&mut self, state: &mut RuntimeState) -> Option<bool> {
+        let (left, right) = self.store.top_pair_current(self.window)?;
+        let other = if matches!(left, JsValue::Null | JsValue::Undefined) {
+            right
+        } else if matches!(right, JsValue::Null | JsValue::Undefined) {
+            left
+        } else {
+            return None;
+        };
+        let equal = match other {
+            JsValue::Null | JsValue::Undefined => true,
+            JsValue::Object(id) => {
+                // The operand slot owns an edge to the object.
+                let (object, count) = state.heap.object_and_strong_fast(*id);
+                if count >= u32::MAX - 1 {
+                    return None;
+                }
+                let html_dda = object.is_html_dda;
+                if !state.heap.release_object_nonfinal_trusted(*id) {
+                    return None;
+                }
+                html_dda
+            }
+            _ => return None,
+        };
+        self.store.discard_top_pair_current(self.window);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("nullish_comparison.local");
+        Some(equal)
+    }
+
+    #[inline(never)]
+    fn nullish_equality_general(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+    ) -> Result<Option<bool>, Error> {
         let (Ok(left), Ok(right)) = (self.peek(1), self.peek(0)) else {
             return Ok(None);
         };
