@@ -993,7 +993,8 @@ mod selected_append_tests {
     }
 }
 
-fn strict_equal_immediate(left: &JsValue, right: &JsValue) -> bool {
+#[inline]
+pub(crate) fn strict_equal_immediate(left: &JsValue, right: &JsValue) -> bool {
     match (left, right) {
         (JsValue::Undefined, JsValue::Undefined) | (JsValue::Null, JsValue::Null) => true,
         (JsValue::Bool(left), JsValue::Bool(right)) => left == right,

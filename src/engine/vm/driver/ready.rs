@@ -750,4 +750,44 @@ mod tests {
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
+
+    #[test]
+    fn strict_equality_settles_operand_owners_on_every_path() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(held) = context.eval("var held = {}; held").expect("held object") else {
+            panic!("object");
+        };
+        let id = held.object_id();
+        let before = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(id)
+            .unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+                function same(a, b) { return a === b; }
+                let out = [];
+                for (let i = 0; i < 64; i++) {
+                    const other = {};
+                    out.push(same(held, held), !same(held, other), !same(held, 1), !same(null, held),
+                        same(1, 1.0), !same(NaN, NaN), same(0, -0), same(2n, 2n),
+                        same('a' + i, 'a' + i), !same({}, {}), same(undefined, undefined));
+                }
+                out.every(x => x)
+            "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(id),
+            Ok(before)
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
 }

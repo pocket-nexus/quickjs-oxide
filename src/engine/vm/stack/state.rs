@@ -63,6 +63,59 @@ impl FrameSlots<'_> {
         self.nullish_equality_general(state, poisoned)
     }
 
+    /// `===` between immediates or objects whose operand edges are not their
+    /// last: identity and number comparison read no heap payload and the
+    /// releases cannot clean up, so both owners are settled in place. A
+    /// string, BigInt or Symbol operand, or a possibly final edge, declines
+    /// with both operands untouched.
+    #[inline(always)]
+    pub(in crate::engine::vm) fn strict_equality_fast(
+        &mut self,
+        state: &mut RuntimeState,
+    ) -> Option<bool> {
+        fn edge(value: &JsValue) -> Option<Option<crate::engine::heap::ObjectId>> {
+            match value {
+                JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::ShortBigInt(_) => Some(None),
+                JsValue::Object(id) => Some(Some(*id)),
+                _ => None,
+            }
+        }
+        let (left, right) = self.store.top_pair_current(self.window)?;
+        let equal = match (edge(left)?, edge(right)?) {
+            (None, None) => crate::engine::object::storage::strict_equal_immediate(left, right),
+            // An object never equals an immediate.
+            (Some(id), None) | (None, Some(id)) => {
+                if !state.heap.release_object_nonfinal_trusted(id) {
+                    return None;
+                }
+                false
+            }
+            (Some(left), Some(right)) => {
+                // Check both counts before either decrement; one object on
+                // both sides gives up two edges.
+                let needed = if left == right { 3 } else { 2 };
+                if state.heap.object_strong_fast(right) < needed
+                    || !state.heap.release_object_nonfinal_trusted(left)
+                {
+                    return None;
+                }
+                if !state.heap.release_object_nonfinal_trusted(right) {
+                    // Only a traced debug handle declines here; undo the left.
+                    state.heap.retain_object_fast(left);
+                    return None;
+                }
+                left == right
+            }
+        };
+        self.store.discard_top_pair_current(self.window);
+        Some(equal)
+    }
+
     /// `x == null` against a nullish value or an object whose operand edge is
     /// not the last one: no error, cleanup or call is possible, so the owners
     /// are settled in place. Everything else, unchanged, takes the general path.

@@ -166,6 +166,19 @@ impl<'a> FrameCursor<'a> {
         state: &mut RuntimeState,
         token: ActiveFrameToken,
     ) -> Result<bool, Error> {
+        // Nothing on the fast path can fail or observe the fault PC.
+        if let Some(equal) = self.transaction.slots().strict_equality_fast(state) {
+            return Ok(equal);
+        }
+        self.strict_comparison_general(state, token)
+    }
+
+    #[inline(never)]
+    fn strict_comparison_general(
+        &mut self,
+        state: &mut RuntimeState,
+        token: ActiveFrameToken,
+    ) -> Result<bool, Error> {
         self.publish_fault(state, token)?;
         let equal = self.with_slots(|slots| {
             state
