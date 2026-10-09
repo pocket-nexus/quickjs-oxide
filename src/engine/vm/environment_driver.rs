@@ -659,6 +659,17 @@ fn global_cell_view<'a>(
     Ok((descriptor, root))
 }
 
+/// The authenticated cell behind a published global closure slot. The slot
+/// owns the cell for as long as the frame's function is live.
+pub(super) fn global_cell_id(
+    runtime: &Runtime,
+    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+    roots: &super::closure::ClosureSlots,
+    index: u16,
+) -> Result<crate::engine::heap::VarRefId, Error> {
+    Ok(global_cell_view(runtime, executable, roots, index)?.1.id())
+}
+
 /// Consume the initialized cell directly through the current execution access.
 /// The closure owns its raw value until the output edge is installed.
 pub(super) fn try_read_global_cell_in_state(
