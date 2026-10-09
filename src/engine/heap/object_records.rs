@@ -606,7 +606,7 @@ impl Slots {
     }
 
     #[must_use]
-    #[inline]
+    #[inline(always)]
     pub fn get(&self, index: usize) -> Option<&PropertySlot> {
         match self {
             Self::Inline { len, slots } => (index < usize::from(*len)).then(|| &slots[index]),
