@@ -668,18 +668,6 @@ impl Slots {
         Ok(())
     }
 
-    /// The empty vector of a spilled layout small enough to pool. Its slots
-    /// must already have released their edges.
-    pub(crate) fn into_poolable(self) -> Option<Vec<PropertySlot>> {
-        match self {
-            Self::Spilled(mut slots) if slots.capacity() <= SPILL_POOL_CAPACITY => {
-                slots.clear();
-                Some(slots)
-            }
-            _ => None,
-        }
-    }
-
     /// Append one slot, spilling the inline pair on the third push.
     pub fn push(&mut self, slot: PropertySlot) {
         match self {

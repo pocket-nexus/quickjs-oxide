@@ -2309,9 +2309,12 @@ impl Heap {
             cleanup.atoms.extend(property_slot_atoms(slot));
             visit_property_slot_edges(slot, &mut |edge| self.release_raw_no_drain(edge))?;
         }
-        if self.spill_pool.len() < super::object_records::SPILL_POOL_LIMIT
-            && let Some(spare) = slots.into_poolable()
+        if let super::object_records::Slots::Spilled(mut spare) = slots
+            && spare.capacity() <= super::object_records::SPILL_POOL_CAPACITY
+            && self.spill_pool.len() < super::object_records::SPILL_POOL_LIMIT
         {
+            // Every slot has released its edges; the payloads own nothing.
+            spare.clear();
             self.spill_pool.push(spare);
         }
         cleanup
