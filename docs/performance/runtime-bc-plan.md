@@ -920,6 +920,15 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
   普通调用、捕获局部闭包、try/catch、Base/Derived 构造器。安装链（`prepare_ordinary_window_in_state` 等）
   经排查无结构性浪费，7b-2 撤销；激活持有（`NativeActivation`/`NativeWaitRecord` 的 Drop 路径释放依赖
   Runtime owner，需等待路径带 State 才能迁移）与其余调用变体归 7b 后续或第 8 项。
+
+  **7c 顺手项执行（2026-10-10，`db072ce1`）。** String.prototype.replace 的标准委托：primitive String
+  接收者 + genuine RegExp 搜索值 + primitive String 替换值时，String 方法只做 Get(search, @@replace) +
+  Call；链解析到标准内建且标准 predicate 选中接收者时，String 原生内直接完成，不再 box resume 状态、
+  不再走 @@replace 属性查询和 RegExp @@replace 步骤机。被覆盖的 @@replace/exec、命名捕获、非 immediate
+  lastIndex、函数替换、String 对象接收者保持通用路径。容器 Ir（对 `post2`）：**RegExp −5.03%、
+  Dw −6.77%**，DeltaBlue −4.02% 不变。16 个语义用例对齐 Node。match/matchAll/search 协议壳经 plain
+  abstract exec 已服务热路径（V8 触及 match 2650 次/轮），不单独建 predicate。至此 item 7 累计：
+  RegExp Ir 202.9B → 83.8B（−58.7%）。
 - **第 8 项：** 六项硬门槛，加上 B0 残留清单全部清零。
 
 ## 7. 执行与测量规则
