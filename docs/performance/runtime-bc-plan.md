@@ -871,7 +871,7 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
      | 批次 | 内容 | 验收 |
      |---|---|---|
      | 7a | B3 的 RegExp/String 族：exec、replace、split、match/matchAll、search 及结果数组构造改为持有 State 的内部实现 | RegExp Ir 有收益，计数下降；其余不回退 |
-     | 7b | 原生调用的激活与退出（B1-N01）：选定的原生函数在当前 State 下完成 | RayTrace、RegExp、DeltaBlue 至少一项 Ir 有收益 |
+     | 7b | B1-N01 的载体改写为调用路径整体：激活/安装/拆除（`install_current_ordinary`、window 准备、`FrameCold::release_owned`、`CallStorage::recycle`、激活对）消费权迁到 held State 并压瘦热循环 | RayTrace、RegExp、DeltaBlue 至少一项 Ir 有收益 |
      | 7c | 其余 B3 族，按 V8 触及量排序（Array、Object、JSON、Promise、Iterator 等） | 不回退 |
      | 7d | computed 读取（B2b）、Reflect/Proxy（B2f）、B4 | 不回退；遵守 B2b 的三条教训 |
 
