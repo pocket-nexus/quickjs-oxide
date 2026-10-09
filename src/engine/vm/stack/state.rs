@@ -568,6 +568,71 @@ impl FrameSlots<'_> {
         state: &mut RuntimeState,
         poisoned: &std::cell::Cell<bool>,
     ) -> Result<(), Error> {
+        if self.discard_top_pair_nonfinal(state) {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_owned_field_write_in_execute",
+            );
+            return Ok(());
+        }
+        self.retire_field_write_general(state, poisoned)
+    }
+
+    /// Drop the top two direct operands when each is an immediate or an
+    /// object whose edge is not its last: the releases can neither fail nor
+    /// clean up. Both counts are checked before either decrement; otherwise
+    /// nothing changes and the caller takes its general release.
+    #[inline(always)]
+    fn discard_top_pair_nonfinal(&mut self, state: &mut RuntimeState) -> bool {
+        fn edge(value: &JsValue) -> Option<Option<crate::engine::heap::ObjectId>> {
+            match value {
+                JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::ShortBigInt(_) => Some(None),
+                JsValue::Object(id) => Some(Some(*id)),
+                _ => None,
+            }
+        }
+        let Some((below, top)) = self.store.top_pair_current(self.window) else {
+            return false;
+        };
+        let (Some(below), Some(top)) = (edge(below), edge(top)) else {
+            return false;
+        };
+        match (below, top) {
+            (None, None) => {}
+            (Some(id), None) | (None, Some(id)) => {
+                if !state.heap.release_object_nonfinal_trusted(id) {
+                    return false;
+                }
+            }
+            (Some(below), Some(top)) => {
+                let needed = if below == top { 3 } else { 2 };
+                if state.heap.object_strong_fast(top) < needed
+                    || !state.heap.release_object_nonfinal_trusted(below)
+                {
+                    return false;
+                }
+                if !state.heap.release_object_nonfinal_trusted(top) {
+                    // Only a traced debug handle declines here; undo below.
+                    state.heap.retain_object_fast(below);
+                    return false;
+                }
+            }
+        }
+        self.store.discard_top_pair_current(self.window);
+        true
+    }
+
+    #[inline(never)]
+    fn retire_field_write_general(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+    ) -> Result<(), Error> {
         // Selection never moved the receiver. The input now owns the old slot
         // value, and it is retired before the receiver's final owner can die.
         state
