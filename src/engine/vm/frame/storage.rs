@@ -243,6 +243,11 @@ impl CallStorage {
             rare.constructor_return = None;
             rare.conversion = None;
         }
+        // The nil-ing pass leaves the rare fully empty. Drop the shell so a
+        // pooled body never re-attaches it to an ordinary frame: otherwise
+        // release_owned would run the rare pass for every call, and the
+        // shell would shuttle between recycled frames forever.
+        let _empty_rare = cold.rare.take();
 
         // Retirement already took the window, and release_owned the guard,
         // function and input. Only the publication and return target remain.
