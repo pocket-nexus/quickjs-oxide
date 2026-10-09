@@ -59,6 +59,45 @@ impl Runtime {
         })
     }
 
+    /// The String.prototype.replace delegation gate: the String method only
+    /// does Get(search, @@replace) + Call, so the chain must resolve
+    /// @@replace to the standard builtin for the delegation to observe
+    /// nothing beyond the standard predicate.
+    pub(crate) fn regexp_replace_method_is_standard(
+        &self,
+        regexp: ObjectId,
+    ) -> Result<bool, RuntimeError> {
+        let state = self.0.state.borrow();
+        let replace = state.well_known_symbols[&crate::engine::object::WellKnownSymbol::Replace];
+        raw_regexp_data_property_matches(
+            &state.heap,
+            regexp,
+            replace,
+            NativeFunctionId::RegExp(RegExpNativeKind::Replace),
+        )
+    }
+
+    /// Run the standard RegExp replace for the String.prototype.replace
+    /// delegation; `None` keeps the caller's general steps.
+    pub(crate) fn try_standard_regexp_replace_completion(
+        &self,
+        realm: ContextId,
+        regexp: ObjectId,
+        input: &JsString,
+        replacement: &JsString,
+    ) -> Result<Option<Completion>, RuntimeError> {
+        let Some(standard) = self.standard_regexp_replace(regexp)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.call_standard_regexp_replace(
+            realm,
+            regexp,
+            input,
+            replacement,
+            standard,
+        )?))
+    }
+
     fn standard_regexp_replace(
         &self,
         regexp: ObjectId,
