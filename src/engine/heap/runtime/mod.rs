@@ -148,7 +148,8 @@ pub(crate) struct RuntimeState {
         HashMap<ShapeId, HashMap<ShapeEntry, ShapeId, FxBuildHasher>, FxBuildHasher>,
     pub(crate) shape_transition_parents:
         HashMap<ShapeId, Vec<(ShapeId, ShapeEntry)>, FxBuildHasher>,
-    pub(crate) well_known_symbols: HashMap<WellKnownSymbol, Atom>,
+    pub(crate) well_known_symbols:
+        HashMap<WellKnownSymbol, Atom, crate::engine::hash::FxBuildHasher>,
     /// One guarded handler-trap location cache per Proxy internal method.
     /// Indexed by the closed trap selector in `PinnedAtom::proxy_method`.
     pub(crate) proxy_trap_reads: [crate::engine::object::property_ic::PropertyReadCache;

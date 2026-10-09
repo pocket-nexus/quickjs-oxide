@@ -259,18 +259,22 @@ pub(crate) fn try_ordinary_instanceof_in_state(
         _ => return None,
     }
     let JsValue::Object(candidate) = candidate else {
-        // Heap primitives acquire additional argument owners in the generic
-        // intrinsic call. Leave their saturation and release rules there.
-        return matches!(
-            candidate,
+        // OrdinaryHasInstance answers false for every non-object. Heap
+        // primitives acquire temporary argument owners in the generic
+        // intrinsic call, so near saturation they keep that path's rules.
+        let leaf = match candidate {
+            JsValue::String(id) => crate::engine::heap::RawId::String(*id),
+            JsValue::BigInt(id) => crate::engine::heap::RawId::BigInt(*id),
             JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_)
-        )
-        .then_some(false);
+            | JsValue::Null
+            | JsValue::Bool(_)
+            | JsValue::Int(_)
+            | JsValue::Float(_)
+            | JsValue::ShortBigInt(_) => return Some(false),
+            JsValue::Symbol(_) | JsValue::Object(_) => return None,
+        };
+        return (heap.leaf_strong_fast(leaf) < u32::MAX - INSTANCE_PROTOCOL_ROOT_HEADROOM)
+            .then_some(false);
     };
     if !temporary_roots_fit(heap, *candidate) {
         return None;

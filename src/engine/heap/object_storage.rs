@@ -244,6 +244,12 @@ impl Heap {
         }
     }
 
+    /// Trusted strong-count read for a live string or BigInt leaf.
+    #[inline]
+    pub(crate) fn leaf_strong_fast(&self, id: RawId) -> u32 {
+        self.live_leaf_fast(id).strong.get()
+    }
+
     /// Trusted shared read for a live `ObjectId` held by an owning root.
     #[inline]
     pub(crate) fn object_fast(&self, id: ObjectId) -> &ObjectData {
