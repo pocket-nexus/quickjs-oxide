@@ -1,6 +1,9 @@
-//! Four inline graph edges cover ordinary objects, properties and wrappers.
+//! Eight inline graph edges cover ordinary objects, arguments objects,
+//! properties and wrappers.
 //! Larger payloads spill once without an allocation for the common case.
 use super::{ObjectId, RawId};
+
+const INLINE: usize = 8;
 
 const EMPTY: RawId = RawId::Object(ObjectId {
     index: 0,
@@ -9,24 +12,24 @@ const EMPTY: RawId = RawId::Object(ObjectId {
 
 #[derive(Debug)]
 pub(super) enum Edges {
-    Inline { values: [RawId; 4], len: usize },
+    Inline { values: [RawId; INLINE], len: usize },
     Heap(Vec<RawId>),
 }
 impl Edges {
     pub(super) const fn new() -> Self {
         Self::Inline {
-            values: [EMPTY; 4],
+            values: [EMPTY; INLINE],
             len: 0,
         }
     }
     pub(super) fn push(&mut self, value: RawId) {
         match self {
-            Self::Inline { values, len } if *len < 4 => {
+            Self::Inline { values, len } if *len < INLINE => {
                 values[*len] = value;
                 *len += 1;
             }
             Self::Inline { values, .. } => {
-                let mut heap = Vec::with_capacity(8);
+                let mut heap = Vec::with_capacity(2 * INLINE);
                 heap.extend_from_slice(values);
                 heap.push(value);
                 *self = Self::Heap(heap);
@@ -81,7 +84,7 @@ impl FromIterator<RawId> for Edges {
 }
 impl From<Vec<RawId>> for Edges {
     fn from(values: Vec<RawId>) -> Self {
-        if values.len() > 4 {
+        if values.len() > INLINE {
             Self::Heap(values)
         } else {
             values.into_iter().collect()
@@ -91,13 +94,13 @@ impl From<Vec<RawId>> for Edges {
 impl IntoIterator for Edges {
     type Item = RawId;
     type IntoIter = std::iter::Chain<
-        std::iter::Take<std::array::IntoIter<RawId, 4>>,
+        std::iter::Take<std::array::IntoIter<RawId, INLINE>>,
         std::vec::IntoIter<RawId>,
     >;
     fn into_iter(self) -> Self::IntoIter {
         match self {
             Self::Inline { values, len } => values.into_iter().take(len).chain(Vec::new()),
-            Self::Heap(values) => [EMPTY; 4].into_iter().take(0).chain(values),
+            Self::Heap(values) => [EMPTY; INLINE].into_iter().take(0).chain(values),
         }
     }
 }
@@ -120,7 +123,7 @@ mod tests {
     use super::*;
     #[test]
     fn inline_and_spilled_edges_preserve_order() {
-        for len in 0..10 {
+        for len in 0..2 * INLINE as u32 + 2 {
             let expected = (0..len)
                 .map(|index| {
                     RawId::Object(ObjectId {
@@ -131,13 +134,19 @@ mod tests {
                 .collect::<Vec<_>>();
             let edges: Edges = expected.iter().copied().collect();
             assert_eq!(&*edges, &expected);
-            assert_eq!(matches!(edges, Edges::Inline { .. }), len <= 4);
+            assert_eq!(
+                matches!(edges, Edges::Inline { .. }),
+                len as usize <= INLINE
+            );
             assert_eq!(edges.into_iter().collect::<Vec<_>>(), expected);
             for split in 0..=expected.len() {
                 let mut extended: Edges = expected[..split].iter().copied().collect();
                 extended.extend(expected[split..].iter().copied().filter(|_| true));
                 assert_eq!(&*extended, &expected);
-                assert_eq!(matches!(extended, Edges::Inline { .. }), len <= 4);
+                assert_eq!(
+                    matches!(extended, Edges::Inline { .. }),
+                    len as usize <= INLINE
+                );
             }
         }
     }

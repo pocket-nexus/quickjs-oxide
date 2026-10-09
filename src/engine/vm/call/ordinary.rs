@@ -424,6 +424,78 @@ mod direct_selection_tests {
     use super::*;
 
     #[test]
+    fn captured_reads_and_writes_keep_binding_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let source = r#"
+            function outer(param){
+              var box = {n:1}, total = 0;
+              let late; const fixed = {v:2};
+              function bump(){ box.n++; total = (param = param + 1) + box.n; return box; }
+              function swap(){ var old = box; box = {n:10}; return old; }
+              function tdz(){ try { return early; } catch (e) { return e instanceof ReferenceError; } let early = 1; }
+              function seal(){ try { fixed = 3; return 'no'; } catch (e) { return e instanceof TypeError; } }
+              var out = [];
+              for (var i = 0; i < 3; i++) { out.push(bump() === box, total); }
+              var old = swap(); out.push(old.n, box.n, bump().n, param, tdz(), seal(), fixed.v, late === undefined);
+              return out.join();
+            }
+            outer(5) + '|' + outer(5)"#;
+        let one = "true,8,true,10,true,12,4,10,11,9,true,true,2,true";
+        assert_eq!(
+            context.eval(source).unwrap(),
+            context
+                .eval(&format!("{:?}", format!("{one}|{one}")))
+                .unwrap()
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn apply_on_an_ordinary_target_keeps_call_semantics() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let source = r#"
+            function sum(a,b,c){ 'use strict'; return [typeof this, this===undefined ? 'u' : String(this), a, b, c, arguments.length].join(); }
+            function loose(){ return this === globalThis; }
+            function ctor(){ this.initialize.apply(this, arguments); }
+            ctor.prototype.initialize = function(x,y){ this.x=x; this.y=y; };
+            function forward(){ return sum.apply(7, arguments); }
+            var out = [];
+            for (var i=0;i<3;i++) {
+              out.push(sum.apply(null, [1,2,3]));
+              out.push(sum.apply(undefined));
+              out.push(sum.apply('s', null));
+              out.push(forward(4,5));
+              out.push(loose.apply(null, []));
+              var o = new ctor(8,9); out.push(o.x+o.y);
+              out.push(sum.apply(1, [1,,3]));
+              var getter = {length:2, get 0(){ return 'g'; }, 1:'h'};
+              out.push(sum.apply(2, getter));
+              out.push(Math.max.apply(null, [1,5,2]));
+              out.push(sum.bind(null, 'b').apply(null, [1]));
+              class K { constructor(){} }
+              try { K.apply(null, []); out.push('no'); } catch (e) { out.push(e instanceof TypeError); }
+              try { sum.apply(null, 1); out.push('no'); } catch (e) { out.push(e instanceof TypeError); }
+            }
+            var saved = Function.prototype.apply;
+            Function.prototype.apply = function(){ return 'replaced'; };
+            out.push(sum.apply(null, [1]));
+            Function.prototype.apply = saved;
+            function thrower(){ throw new Error('x'); }
+            function outer(){ return thrower.apply(null, arguments); }
+            try { outer(1); } catch (e) { out.push(e.stack.includes('thrower') && e.stack.includes('outer')); }
+            out.join('|')"#;
+        let row = "object,null,1,2,3,3|undefined,u,,,,0|string,s,,,,0|number,7,4,5,,2|true|17|number,1,1,,3,3|number,2,g,h,,2|5|object,null,b,1,,2|true|true";
+        let expected = [row, row, row, "replaced", "true"].join("|");
+        assert_eq!(
+            context.eval(source).unwrap(),
+            context.eval(&format!("{expected:?}")).unwrap()
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
     fn call_site_cache_follows_the_actual_callee() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");

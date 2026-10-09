@@ -68,6 +68,7 @@ impl FrameExecution<'_> {
             0,
             function,
             executable.observes_arguments,
+            None,
         )?;
         // The shared initializer has finished all allocations and retains.
         // Every subsequent producer operation is infallible until the child

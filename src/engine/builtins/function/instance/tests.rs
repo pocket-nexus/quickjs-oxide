@@ -248,11 +248,12 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
                 context.eval("pair instanceof C").unwrap(),
                 Value::Bool(expected)
             );
+            // The ready loop completes the ordinary kernel without a query.
             assert_eq!(
                 profile
                     .snapshot()
                     .owned_execution_events
-                    .get("instanceof.completed_without_continuation"),
+                    .get("instanceof.completed_in_ready_loop"),
                 Some(&1)
             );
         }
@@ -404,9 +405,10 @@ fn ordinary_instanceof_real_opcode_finishes_without_native_activation() {
     assert_eq!(
         snapshot
             .owned_execution_events
-            .get("instanceof.completed_without_continuation"),
+            .get("instanceof.completed_in_ready_loop"),
         Some(&20)
     );
+    // Each still leaves the interpreter, but no predicate query runs.
     assert_eq!(
         snapshot
             .owned_execution_events

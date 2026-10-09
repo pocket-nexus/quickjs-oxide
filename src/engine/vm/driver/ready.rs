@@ -73,7 +73,15 @@ pub(super) fn run(
         // A primitive numeric completes here unobserved; its error and
         // decline paths materialize before anything can observe the frames.
         if result.as_ref().map_or(true, |exit| {
-            exit.observes_activation() && !matches!(exit, VmAction::Numeric { .. })
+            exit.observes_activation()
+                && !matches!(
+                    exit,
+                    VmAction::Numeric { .. }
+                        | VmAction::Arguments(_)
+                        | VmAction::Rest(_)
+                        | VmAction::Binding { checked: false, .. }
+                        | VmAction::Predicate(crate::engine::vm::predicate_driver::Kind::Instance)
+                )
         }) {
             execution.frames.materialize(runtime)?;
         }
@@ -297,9 +305,155 @@ pub(super) fn run(
                     return Ok(boundary);
                 }
             }
+            VmAction::Binding {
+                source,
+                index,
+                write,
+                checked: false,
+                keep,
+            } => {
+                // A plain captured read or write runs no code; anything else
+                // publishes the frames and takes the binding driver.
+                if !captured_binding(runtime, execution, id, source, index, write, keep)? {
+                    execution.frames.materialize(runtime)?;
+                    return Ok(Boundary::Exit(exit));
+                }
+            }
+            VmAction::Arguments(_) | VmAction::Rest(_) => {
+                // Building the object runs no code; only a thrown allocation
+                // error observes the frames.
+                if let Some(completion) =
+                    crate::engine::vm::arguments_driver::step(runtime, execution, id, exit)?
+                {
+                    execution.frames.materialize(runtime)?;
+                    return Ok(Boundary::Complete(completion));
+                }
+            }
+            VmAction::Predicate(crate::engine::vm::predicate_driver::Kind::Instance) => {
+                // The callback-free kernel completes here unobserved; anything
+                // else publishes the frames and takes the predicate driver.
+                if !ordinary_instance_of(runtime, execution, id)? {
+                    execution.frames.materialize(runtime)?;
+                    return Ok(Boundary::Exit(exit));
+                }
+                #[cfg(feature = "profiling")]
+                record_event("instanceof.completed_in_ready_loop");
+            }
             _ => return Ok(Boundary::Exit(exit)),
         }
     }
+}
+
+/// Read or write an initialized, non-private captured cell of the current
+/// frame under one state access. The frame's closure slot or captured binding
+/// owns the cell throughout. `false` leaves the operands and PC untouched.
+#[inline(never)]
+fn captured_binding(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    source: crate::engine::vm::execute::BindingSource,
+    index: u16,
+    write: bool,
+    keep: bool,
+) -> Result<bool, Error> {
+    use crate::engine::vm::{bindings::FrameBinding, execute::BindingSource};
+    use crate::engine::{heap::RawValue, value::JsValue};
+    let to_vm = crate::engine::vm::exception::runtime_error_to_vm_error;
+    let frame = execution.frames.current_mut(id)?;
+    let cell = match source {
+        BindingSource::Closure => match frame
+            .cold
+            .function
+            .closures()
+            .get(runtime, usize::from(index))
+        {
+            Some(view) => view.id(),
+            None => return Ok(false),
+        },
+        BindingSource::Local => match execution.slots.local(&frame.window, index)? {
+            FrameBinding::Captured(cell) => *cell,
+            _ => return Ok(false),
+        },
+        BindingSource::Argument => match execution.slots.parameter(&frame.window, index)? {
+            FrameBinding::Captured(cell) => *cell,
+            _ => return Ok(false),
+        },
+    };
+    let mut state = runtime.0.state.borrow_mut();
+    {
+        let data = state.heap.var_ref_fast(cell);
+        if data.kind.is_private() || (!write && matches!(data.value, RawValue::Uninitialized)) {
+            return Ok(false);
+        }
+    }
+    let resume = frame.next_pc()?;
+    if write {
+        let value = if keep {
+            state
+                .dup_owned_jsvalue(execution.slots.peek(&frame.window, 0)?)
+                .map_err(to_vm)?
+        } else {
+            execution.slots.pop(&mut frame.window)?
+        };
+        state
+            .write_var_ref(&runtime.0.poisoned, cell, value)
+            .map_err(to_vm)?;
+    } else {
+        let value = JsValue::from_raw(state.heap.var_ref_fast(cell).value.clone())
+            .ok_or_else(|| invariant("captured cell held an internal value sentinel"))?;
+        let value = state.dup_held_jsvalue(&value).map_err(to_vm)?;
+        execution.slots.push(&mut frame.window, value)?;
+    }
+    frame.resume_pc = resume;
+    #[cfg(feature = "profiling")]
+    record_event("captured_binding.completed_in_ready_loop");
+    Ok(true)
+}
+
+/// `instanceof` whose answer needs no callback: an ordinary target with the
+/// intrinsic or no @@hasInstance and an own data `prototype`. A miss leaves
+/// both operands and the PC untouched.
+#[inline(never)]
+fn ordinary_instance_of(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+) -> Result<bool, Error> {
+    use crate::engine::value::JsValue;
+    let intrinsic_budget = execution.frames.can_push_with_continuations(0);
+    let frame = execution.frames.current_mut(id)?;
+    let mut state = runtime.0.state.borrow_mut();
+    let found = {
+        let JsValue::Object(target) = execution.slots.peek(&frame.window, 0)? else {
+            return Ok(false);
+        };
+        crate::engine::builtins::try_ordinary_instanceof_in_state(
+            runtime,
+            &state,
+            execution.slots.peek(&frame.window, 1)?,
+            *target,
+            intrinsic_budget,
+        )
+    };
+    let Some(found) = found else {
+        return Ok(false);
+    };
+    let resume = frame.next_pc()?;
+    let target = execution.slots.pop(&mut frame.window)?;
+    let candidate = execution.slots.pop(&mut frame.window)?;
+    execution
+        .slots
+        .push(&mut frame.window, JsValue::Bool(found))?;
+    frame.resume_pc = resume;
+    let poisoned = &runtime.0.poisoned;
+    state
+        .release_owned_jsvalue(poisoned, candidate)
+        .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+    state
+        .release_owned_jsvalue(poisoned, target)
+        .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+    Ok(true)
 }
 
 fn property_boundary(
@@ -328,6 +482,21 @@ fn enter_call(
     selected_native: Option<crate::engine::object::LinkedNativeSelection>,
     fallthrough: crate::engine::vm::execute::FallthroughPc,
 ) -> Result<Option<Boundary>, Error> {
+    if method
+        && let Some(selected) = &selected_native
+        && super::ordinary::enter_apply(
+            runtime,
+            execution,
+            *id,
+            arguments,
+            selected,
+            tail,
+            fallthrough,
+        )?
+    {
+        *id = execution.frames.current_id().unwrap();
+        return Ok(None);
+    }
     Ok(
         match super::ordinary::enter_selected(
             runtime,

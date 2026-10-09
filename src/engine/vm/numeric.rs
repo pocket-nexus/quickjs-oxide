@@ -398,6 +398,11 @@ pub(in crate::engine::vm) fn add_primitives(
         });
         return finish_bigint_operands(runtime, left, right, result);
     }
+    if let (JsValue::String(prefix), JsValue::String(suffix)) = (&left, &right)
+        && !runtime.0.deferred_references.has_pending()
+    {
+        return add_strings_in_state(runtime, *prefix, *suffix);
+    }
     let mut reused_left = false;
     let result = if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
         (|| {
@@ -451,6 +456,47 @@ pub(in crate::engine::vm) fn add_primitives(
     }
     release_primitive_operand(runtime, right)?;
     result
+}
+
+/// String + String, consuming both operand edges, under one state access: the
+/// same in-place append and empty-string rules as the general path, without
+/// cloning the left payload or releasing through `Runtime`.
+fn add_strings_in_state(
+    runtime: &Runtime,
+    prefix: crate::engine::heap::StringId,
+    suffix: crate::engine::heap::StringId,
+) -> Result<JsValue, Error> {
+    let internal = |error: crate::engine::heap::HeapError| Error::internal(error.to_string());
+    let poisoned = &runtime.0.poisoned;
+    let mut state = runtime.0.state.borrow_mut();
+    let result = (|| {
+        let tail = state.heap.string(suffix).map_err(internal)?.clone();
+        if let Some(string) = state.heap.unique_string_mut(prefix).map_err(internal)?
+            && !string.is_empty()
+            && !tail.is_empty()
+            && string.try_concat_in_place(&tail)?
+        {
+            return Ok((JsValue::String(prefix), true));
+        }
+        let joined = state
+            .heap
+            .string(prefix)
+            .map_err(internal)?
+            .clone()
+            .concat_owned(&tail)?;
+        let id = state.heap.allocate_string(joined).map_err(internal)?;
+        Ok((JsValue::String(id), false))
+    })();
+    let reused_prefix = matches!(result, Ok((_, true)));
+    if !reused_prefix {
+        state
+            .release_owned_jsvalue(poisoned, JsValue::String(prefix))
+            .map_err(|error| Error::internal(error.to_string()))?;
+    }
+    state
+        .release_owned_jsvalue(poisoned, JsValue::String(suffix))
+        .map_err(|error| Error::internal(error.to_string()))?;
+    result.map(|(value, _)| value)
 }
 
 fn release_primitive_operand(runtime: &Runtime, value: JsValue) -> Result<(), Error> {

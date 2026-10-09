@@ -669,19 +669,15 @@ pub(super) fn try_read_global_cell_in_state(
     index: u16,
 ) -> Result<Option<JsValue>, Error> {
     let (_, root) = global_cell_view(runtime, executable, roots, index)?;
-    let raw = state
-        .heap
-        .var_ref(root.id())
-        .map_err(heap_error_to_vm_error)?
-        .value
-        .clone();
+    // The closure slot owns the cell, and the cell owns its value's edge.
+    let raw = state.heap.var_ref_fast(root.id()).value.clone();
     if matches!(raw, crate::engine::heap::RawValue::Uninitialized) {
         return Ok(None);
     }
     let value = JsValue::from_raw(raw)
         .ok_or_else(|| Error::internal("global cell held an internal value sentinel"))?;
     state
-        .dup_jsvalue(&value)
+        .dup_held_jsvalue(&value)
         .map(Some)
         .map_err(runtime_error_to_vm_error)
 }

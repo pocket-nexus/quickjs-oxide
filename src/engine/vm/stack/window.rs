@@ -243,6 +243,45 @@ impl<'a> FrameExecution<'a> {
         self.install_current_ordinary(runtime, state, call, checked, tail, fallthrough)
     }
 
+    /// Install `f.apply(thisArg, array)` as an ordinary call of `f`. The
+    /// caller selected `f` and read `values` from the array in this lease.
+    pub(in crate::engine::vm) fn install_apply(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        call: crate::engine::vm::call::ordinary::OrdinaryCall,
+        operands: usize,
+        values: &[JsValue],
+        tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<(), Error> {
+        let [apply, array] = self.install_current_child(
+            runtime,
+            state,
+            call,
+            fallthrough,
+            |transaction, state, layout, function, observes_arguments| {
+                let (installed, retired) = transaction.install_apply_window(
+                    runtime,
+                    state,
+                    layout,
+                    operands,
+                    values,
+                    function,
+                    observes_arguments,
+                )?;
+                Ok((installed, tail, None, retired))
+            },
+        )?;
+        // The child owns its copies; the caller's apply function and array go.
+        for value in [apply, array] {
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, value)
+                .map_err(super::runtime_error_to_vm_error)?;
+        }
+        Ok(())
+    }
+
     /// Sole ordinary slot installer. This method cannot be called through a
     /// raw RunningExecution or a caller-supplied current-frame identity.
     #[allow(clippy::too_many_arguments)]
@@ -280,8 +319,22 @@ impl<'a> FrameExecution<'a> {
             runtime,
             state,
             call,
-            ChildEntry::Ordinary { checked, tail },
             fallthrough,
+            |transaction, state, layout, function, observes_arguments| {
+                #[cfg(feature = "profiling")]
+                let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+                    "ordinary.install.slots.sampled",
+                );
+                let installed = transaction.install_ordinary_window(
+                    runtime,
+                    state,
+                    layout,
+                    checked,
+                    function,
+                    observes_arguments,
+                )?;
+                Ok((installed, tail, None, ()))
+            },
         )
     }
 
@@ -309,27 +362,53 @@ impl<'a> FrameExecution<'a> {
             runtime,
             state,
             call,
-            ChildEntry::Constructor {
-                count,
-                this_value,
-                receiver,
-            },
             fallthrough,
+            |transaction, state, layout, function, observes_arguments| {
+                let installed = transaction.install_constructor_window(
+                    runtime,
+                    state,
+                    layout,
+                    count,
+                    function,
+                    observes_arguments,
+                    this_value,
+                )?;
+                // Every step after the window is infallible: the frame takes
+                // the guarded receiver as its Base constructor result.
+                let receiver = receiver
+                    .take()
+                    .expect("guarded constructor return receiver");
+                Ok((installed, false, Some(receiver), ()))
+            },
         )
     }
 
-    /// The one frame publication shared by ordinary calls and Base
-    /// constructors. Inlined into both installers, so each keeps a
-    /// specialized body.
+    /// The one frame publication shared by ordinary calls, Base constructors
+    /// and `apply`. `install_window` fills the child window; each installer
+    /// passes its own, so every caller gets a specialized body.
     #[inline(always)]
-    fn install_current_child(
+    fn install_current_child<R>(
         &mut self,
         runtime: &Runtime,
         state: &mut crate::engine::heap::runtime::RuntimeState,
         call: crate::engine::vm::call::ordinary::OrdinaryCall,
-        entry: ChildEntry<'_>,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
-    ) -> Result<(), Error> {
+        install_window: impl FnOnce(
+            FrameTransaction<'_>,
+            &mut crate::engine::heap::runtime::RuntimeState,
+            &crate::engine::code::function::layout::FrameLayout<'_>,
+            crate::engine::heap::ObjectId,
+            bool,
+        ) -> Result<
+            (
+                super::call::InstalledOrdinaryFrame,
+                bool,
+                Option<JsValue>,
+                R,
+            ),
+            Error,
+        >,
+    ) -> Result<R, Error> {
         use crate::engine::vm::frame::{
             ConstructorReturn, Frame, ReturnOwner, ReturnTarget, ReturnValue,
         };
@@ -360,41 +439,15 @@ impl<'a> FrameExecution<'a> {
         let layout = executable.frame_layout();
         // The private continuation comes from the instruction that produced
         // this call. No caller instruction or slot changed during preflight.
-        let (installed, tail, receiver) = match entry {
-            ChildEntry::Ordinary { checked, tail } => {
-                #[cfg(feature = "profiling")]
-                let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
-                    "ordinary.install.slots.sampled",
-                );
-                let installed = transaction.install_ordinary_window(
-                    runtime,
-                    state,
-                    &layout,
-                    checked,
-                    function,
-                    executable.observes_arguments,
-                )?;
-                (installed, tail, None)
-            }
-            ChildEntry::Constructor {
-                count,
-                this_value,
-                receiver,
-            } => {
-                let installed = transaction.install_constructor_window(
-                    runtime,
-                    state,
-                    &layout,
-                    count,
-                    function,
-                    executable.observes_arguments,
-                    this_value,
-                )?;
-                (installed, false, Some(receiver))
-            }
-        };
+        let (installed, tail, base_receiver, result) = install_window(
+            transaction,
+            state,
+            &layout,
+            function,
+            executable.observes_arguments,
+        )?;
         frame.resume_pc = fallthrough.index();
-        let (mut cold, frame_bytes) = if receiver.is_some() {
+        let (mut cold, frame_bytes) = if base_receiver.is_some() {
             execution.call_storage.vacant_rare()
         } else {
             execution.call_storage.vacant(caller_realm)
@@ -416,12 +469,8 @@ impl<'a> FrameExecution<'a> {
             executable,
             installed.window,
         );
-        if let Some(receiver) = receiver {
-            cold.constructor_return = Some(ConstructorReturn::Base(
-                receiver
-                    .take()
-                    .expect("guarded constructor return receiver"),
-            ));
+        if let Some(receiver) = base_receiver {
+            cold.constructor_return = Some(ConstructorReturn::Base(receiver));
         }
         prepared.install(Frame {
             property_generation: 0,
@@ -436,7 +485,7 @@ impl<'a> FrameExecution<'a> {
         crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
-        Ok(())
+        Ok(result)
     }
 
     /// Retire actual current frames, preserving a registered result through
@@ -545,19 +594,6 @@ impl<'a> FrameExecution<'a> {
     }
 }
 
-/// What the shared installer moves into the child window.
-enum ChildEntry<'a> {
-    Ordinary {
-        checked: CheckedOrdinaryCallOperands,
-        tail: bool,
-    },
-    Constructor {
-        count: usize,
-        this_value: &'a mut Option<JsValue>,
-        receiver: &'a mut Option<JsValue>,
-    },
-}
-
 /// A frame-owned binding addressed without an operand-stack value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::engine::vm) enum DirectSlot {
@@ -630,6 +666,28 @@ impl FrameTransaction<'_> {
             function,
             observes_arguments,
             receiver,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn install_apply_window(
+        self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &crate::engine::code::function::layout::FrameLayout<'_>,
+        operands: usize,
+        values: &[JsValue],
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<(super::call::InstalledOrdinaryFrame, [JsValue; 2]), Error> {
+        self.store.push_current_apply_frame_in_state(
+            runtime,
+            state,
+            layout,
+            self.window,
+            operands,
+            values,
+            function,
+            observes_arguments,
         )
     }
     /// Consume the actual caller window before publishing its child. Only the
