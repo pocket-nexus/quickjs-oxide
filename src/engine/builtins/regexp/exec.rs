@@ -25,12 +25,62 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         self.dispatch_borrowed_invocation(invocation, |invocation| {
+            if kind == RegExpNativeKind::Exec
+                && let NativeInvocation::Call {
+                    this_value: JsValue::Object(object),
+                } = invocation
+                && let Some(input_value @ JsValue::String(_)) = arguments.readable.first()
+                && let Some((input, last_index)) = self.plain_exec_inputs(*object, input_value)?
+            {
+                return self.finish_builtin_regexp_exec(
+                    realm,
+                    *object,
+                    input,
+                    input_value,
+                    last_index,
+                );
+            }
             finish(
                 self,
                 realm,
                 RegExpExecStep::start(self, realm, kind, invocation, arguments)?,
             )
         })
+    }
+
+    /// RegExp.prototype.exec on a genuine RegExp with a primitive String input
+    /// and an immediate `lastIndex`: ToString and ToLength observe nothing,
+    /// so the builtin match starts without the step machine. `None` keeps
+    /// the general steps.
+    fn plain_exec_inputs(
+        &self,
+        object: crate::engine::heap::ObjectId,
+        input: &JsValue,
+    ) -> Result<Option<(JsString, u64)>, RuntimeError> {
+        let JsValue::String(id) = input else {
+            return Ok(None);
+        };
+        let state = self.0.state.borrow();
+        if !matches!(
+            state.heap.object(object)?.payload,
+            crate::engine::heap::ObjectPayload::RegExp(
+                crate::engine::heap::RegExpObjectData::Compiled { .. }
+            )
+        ) {
+            return Ok(None);
+        }
+        let number = match state.regexp_last_index_immediate(object)? {
+            Some(JsValue::Int(value)) => f64::from(value),
+            Some(JsValue::Float(value)) => value,
+            Some(JsValue::Bool(value)) => f64::from(u8::from(value)),
+            Some(JsValue::Null) => 0.0,
+            Some(JsValue::Undefined) => f64::NAN,
+            _ => return Ok(None),
+        };
+        Ok(Some((
+            state.heap.string(*id)?.clone(),
+            Runtime::length_from_number(number),
+        )))
     }
     pub(crate) fn regexp_exec_abstract(
         &self,
@@ -47,12 +97,12 @@ impl Runtime {
     fn finish_builtin_regexp_exec(
         &self,
         realm: ContextId,
-        object: &ObjectRef,
+        object: crate::engine::heap::ObjectId,
         input: JsString,
         input_value: &JsValue,
         last_index: u64,
     ) -> Result<Completion, RuntimeError> {
-        let this_value = &JsValue::Object(object.object_id());
+        let this_value = &JsValue::Object(object);
         // QuickJS keeps the branded RegExp identity across both coercions, but
         // reads `re->bytecode` only afterwards. Either conversion may call the
         // legacy `compile()` method, so snapshot the current program and flags
@@ -113,7 +163,7 @@ impl Runtime {
 
         let Some(matched) = matched else {
             if updates_last_index
-                && let Some(exception) = self.set_regexp_last_index(realm, object, 0)?
+                && let Some(exception) = self.set_regexp_last_index_id(realm, object, 0)?
             {
                 return Ok(Completion::Throw(exception));
             }
@@ -128,7 +178,7 @@ impl Runtime {
                 RuntimeError::Invariant("RegExp match end exceeded signed String range")
             })?;
             // This write happens before any result/indices allocation.
-            if let Some(exception) = self.set_regexp_last_index(realm, object, end)? {
+            if let Some(exception) = self.set_regexp_last_index_id(realm, object, end)? {
                 return Ok(Completion::Throw(exception));
             }
         }
@@ -169,6 +219,26 @@ impl Runtime {
                 "RegExp lastIndex has an internal sentinel",
             ))?,
         )
+    }
+
+    /// [`Self::set_regexp_last_index`] for a receiver this execution owns;
+    /// a public root is built only for the general Set.
+    fn set_regexp_last_index_id(
+        &self,
+        realm: ContextId,
+        object: crate::engine::heap::ObjectId,
+        value: i32,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        if self
+            .0
+            .state
+            .borrow_mut()
+            .try_write_regexp_last_index(object, value)?
+        {
+            return Ok(None);
+        }
+        let object = ObjectRef::from_borrowed_handle(self.clone(), object)?;
+        self.set_regexp_last_index(realm, &object, value)
     }
 
     pub(crate) fn set_regexp_last_index(
@@ -497,10 +567,9 @@ impl RegExpExecResume {
                         "RegExp lastIndex conversion lost its branded receiver",
                     ));
                 };
-                let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object)?;
                 let result = runtime.finish_builtin_regexp_exec(
                     self.0.realm,
-                    &object,
+                    *object,
                     input,
                     &self.string_input,
                     last_index,

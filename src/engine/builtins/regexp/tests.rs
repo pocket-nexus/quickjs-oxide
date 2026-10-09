@@ -132,3 +132,38 @@ fn regexp_last_index_fast_paths_keep_set_semantics() {
         Value::Bool(true)
     );
 }
+
+#[test]
+fn regexp_plain_exec_converts_immediate_last_index_like_to_length() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    assert_eq!(
+        context
+            .eval(
+                r#"
+            (function () {
+                var out = [];
+                function at(lastIndex) {
+                    var re = /a/g;
+                    re.lastIndex = lastIndex;
+                    var m = re.exec("aaa");
+                    return m === null ? -1 : m.index;
+                }
+                out.push(at(1) === 1, at(1.9) === 1, at(true) === 1, at(null) === 0);
+                out.push(at(undefined) === 0, at(-5) === 0, at(NaN) === 0, at(9) === -1);
+                var re = /(b)(c)?/;
+                var m = re.exec("abc");
+                out.push(m.index === 1 && m.input === "abc" && m[1] === "b" && m[2] === "c"
+                    && m.length === 3 && m.groups === undefined && re.lastIndex === 0);
+                try { RegExp.prototype.exec.call({}, "a"); out.push(false); }
+                catch (e) { out.push(e instanceof TypeError); }
+                var boxed = /a/g.exec(new String("xa"));
+                out.push(boxed.index === 1 && boxed.input === "xa");
+                return out.every(function (x) { return x; });
+            })()
+        "#
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+}
