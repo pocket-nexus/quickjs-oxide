@@ -283,7 +283,12 @@ fn captured_object_read_takes_one_edge_and_declines_saturation() {
     let id = object.object_id();
     runtime.retain_object_handle(id).unwrap();
     let root = runtime
-        .new_var_ref(JsValue::Object(id), false, false, ClosureVariableKind::Normal)
+        .new_var_ref(
+            JsValue::Object(id),
+            false,
+            false,
+            ClosureVariableKind::Normal,
+        )
         .unwrap();
     let count = |runtime: &Runtime| runtime.0.state.borrow().heap.object_strong_count(id);
     let before = count(&runtime).unwrap();

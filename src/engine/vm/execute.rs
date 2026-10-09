@@ -1868,20 +1868,19 @@ fn execute_admitted_in_state(
                     }
                     Opcode::GetVarRef | Opcode::GetVarRefCheck => {
                         let index = published_u16(operand);
-                        let value = if cursor
-                            .with_slots(|slots| Ok(slots.has_operand_capacity(1)))?
-                        {
-                            let root = owners
-                                .function
-                                .closures()
-                                .get(runtime, usize::from(index))
-                                .ok_or_else(|| {
-                                    Error::internal("closure variable index is out of bounds")
-                                })?;
-                            super::bindings::try_read_captured_in_state(state, root.id())
-                        } else {
-                            None
-                        };
+                        let value =
+                            if cursor.with_slots(|slots| Ok(slots.has_operand_capacity(1)))? {
+                                let root = owners
+                                    .function
+                                    .closures()
+                                    .get(runtime, usize::from(index))
+                                    .ok_or_else(|| {
+                                        Error::internal("closure variable index is out of bounds")
+                                    })?;
+                                super::bindings::try_read_captured_in_state(state, root.id())
+                            } else {
+                                None
+                            };
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_outcome(
                             runtime,
@@ -2888,9 +2887,9 @@ fn read_arg(
     }
     let copied = cursor.with_slots(|slots| match slots.parameter(index)? {
         FrameBinding::Direct(value) => copy_value_in_state(state, value).map(Some),
-        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok(
-            super::bindings::try_read_captured_in_state(state, *id),
-        ),
+        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => {
+            Ok(super::bindings::try_read_captured_in_state(state, *id))
+        }
         _ => Ok(None),
     })?;
     if let Some(value) = copied {
