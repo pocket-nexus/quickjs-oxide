@@ -55,6 +55,29 @@ pub(in crate::engine::vm) struct FrameWindow {
 }
 
 impl FrameWindow {
+    /// Region geometry for the specialized execution loop: parameter start,
+    /// local start, operand start, and the verified operand room. The caller
+    /// mirrors `depth` locally and publishes it back before leaving.
+    #[inline(always)]
+    pub(in crate::engine::vm) fn hot_geometry(&self) -> (usize, usize, usize, usize) {
+        (
+            self.original_end,
+            self.parameters_end,
+            self.locals_end,
+            self.end - self.locals_end,
+        )
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn hot_depth(&self) -> usize {
+        self.depth
+    }
+
+    #[inline(always)]
+    pub(in crate::engine::vm) fn set_hot_depth(&mut self, depth: usize) {
+        self.depth = depth;
+    }
+
     #[inline]
     fn whole(&self) -> Range<usize> {
         self.base..self.end
@@ -329,6 +352,32 @@ fn next_store_identity() -> u64 {
 }
 
 impl SlotStore {
+    /// Raw slot slice for the specialized execution loop. The caller keeps
+    /// the frame-window invariants established by this store's arena checks;
+    /// no mutable slot API escapes through this borrow.
+    #[inline(always)]
+    pub(in crate::engine::vm) fn hot_slots(&mut self) -> &mut [Option<FrameBinding>] {
+        &mut self.slots
+    }
+
+    /// One installed operand in the specialized loop: keep the occupancy
+    /// model identical to `install_operand`.
+    #[cfg(feature = "profiling")]
+    #[inline(always)]
+    pub(in crate::engine::vm) fn record_hot_install(&mut self) {
+        self.live_slots += 1;
+        record_owned_storage(Cost::Move(1));
+        self.record_occupancy();
+    }
+
+    /// Live-slot bookkeeping for the specialized loop. Storage events stay
+    /// with the call sites so they mirror the generic paths exactly.
+    #[cfg(feature = "profiling")]
+    #[inline(always)]
+    pub(in crate::engine::vm) fn adjust_hot_live(&mut self, delta: isize) {
+        self.live_slots = self.live_slots.wrapping_add(delta as usize);
+    }
+
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
         Self {
             slots: Vec::new(),
