@@ -2660,10 +2660,8 @@ impl RuntimeState {
         let JsValue::Object(id) = base else {
             return Err(Miss::ReceiverNotObject);
         };
-        let data = self
-            .heap
-            .object(*id)
-            .map_err(|_| Miss::ReceiverUnavailable)?;
+        // Every caller reads the base from a frame slot or a held root.
+        let data = self.heap.object_fast(*id);
         if !matches!(data.kind, ObjectKind::Array) {
             return Err(Miss::ReceiverNotArray);
         }

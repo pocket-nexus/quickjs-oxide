@@ -433,7 +433,7 @@ impl RuntimeState {
         index: u32,
         input: &mut JsValue,
     ) -> Result<bool, RuntimeError> {
-        let data = self.heap.object(object)?;
+        let data = self.heap.object_fast(object);
         if !data.extensible || !matches!(data.kind, ObjectKind::Array) {
             return Ok(false);
         }

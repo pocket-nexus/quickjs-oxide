@@ -70,18 +70,13 @@ impl FrameSlots<'_> {
         let equal = match other {
             JsValue::Null | JsValue::Undefined => true,
             JsValue::Object(id) => {
-                let count = state
-                    .heap
-                    .object_strong_count(*id)
-                    .map_err(|error| Error::internal(error.to_string()))?;
+                // The operand slot owns an edge to the object, so trusted
+                // access is sound; checked builds still verify the handle.
+                let (object, count) = state.heap.object_and_strong_fast(*id);
                 if count == 0 || count >= u32::MAX - 1 {
                     return Ok(None);
                 }
-                state
-                    .heap
-                    .object(*id)
-                    .map_err(|error| Error::internal(error.to_string()))?
-                    .is_html_dda
+                object.is_html_dda
             }
             _ => return Ok(None),
         };
