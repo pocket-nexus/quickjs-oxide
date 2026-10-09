@@ -3401,10 +3401,9 @@ fn borrowed_this_read_ready_in_state(state: &RuntimeState, base: &JsValue) -> bo
     let JsValue::Object(id) = base else {
         return false;
     };
-    state
-        .heap
-        .object_strong_count(*id)
-        .is_ok_and(|count| count != 0 && count < u32::MAX - 2)
+    // The frame's call input owns `this` for the whole read.
+    let count = state.heap.object_strong_fast(*id);
+    count != 0 && count < u32::MAX - 2
 }
 
 // Removing the temporary this owner must not remove a checked-retain failure,

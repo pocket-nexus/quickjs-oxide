@@ -60,6 +60,26 @@ impl Heap {
         Ok(exchange_public_owner(previous, input))
     }
 
+    /// [`Self::exchange_owned_data_slot`] for a receiver its caller keeps
+    /// alive; identity is checked only in debug and `checked-handles` builds.
+    #[inline]
+    pub(crate) fn exchange_owned_data_slot_fast(
+        &mut self,
+        id: ObjectId,
+        index: usize,
+        input: &mut JsValue,
+    ) -> Result<bool, HeapError> {
+        let slot = self
+            .object_mut_fast(id)
+            .slots
+            .get_mut(index)
+            .ok_or(HeapError::Invariant("selected data slot disappeared"))?;
+        let PropertySlot::Data(previous) = slot else {
+            return Ok(false);
+        };
+        Ok(exchange_public_owner(previous, input))
+    }
+
     /// Dense entries have default writable data attributes. Descriptor changes
     /// materialize them before this leaf can exchange their existing owners.
     pub(crate) fn exchange_owned_dense_value(

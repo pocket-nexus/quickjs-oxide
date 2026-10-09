@@ -111,11 +111,15 @@ impl RuntimeState {
         let Some(site) = table.site(pc) else {
             return Ok(false);
         };
-        let Some(slot) = site.existing_slot(&self.heap, domain, self.heap.object(object)?) else {
+        // The receiver operand owns `object` throughout the store.
+        let Some(slot) = site.existing_slot(&self.heap, domain, self.heap.object_fast(object))
+        else {
             site.existing_missed();
             return Ok(false);
         };
-        Ok(self.heap.exchange_owned_data_slot(object, slot, input)?)
+        Ok(self
+            .heap
+            .exchange_owned_data_slot_fast(object, slot, input)?)
     }
 
     #[cold]
