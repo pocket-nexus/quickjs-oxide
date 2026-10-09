@@ -167,7 +167,34 @@ impl PropertyReadCache {
         self.read_inline(heap, receiver)
     }
 
-    /// The same probe for the one field-read hit path, which inlines it as
+    /// The monomorphic hit alone, for a caller's straight-line fast path. A
+    /// miss, or any other site kind, changes nothing and records no event,
+    /// so the caller may follow it with [`Self::read_inline`].
+    #[inline(always)]
+    pub(crate) fn read_monomorphic<'a>(
+        &self,
+        heap: &'a Heap,
+        receiver: ObjectId,
+    ) -> Option<&'a RawValue> {
+        if self.kind.get() != Kind::Monomorphic {
+            return None;
+        }
+        let location = self.entry(0);
+        let object = heap.object_fast(receiver);
+        if location.shape != object.shape {
+            return None;
+        }
+        let value = Self::read_matched(location, heap, object)?;
+        event(if location.depth == 0 {
+            "property_ic.hit.monomorphic"
+        } else {
+            "property_ic.hit.monomorphic_prototype"
+        });
+        self.hit();
+        Some(value)
+    }
+
+    /// The same probe for the general field-read probe, which inlines it as
     /// its only hot copy. The receiver is loaded once; each live entry is
     /// compared by shape first and only a matching entry checks the
     /// remaining guards.

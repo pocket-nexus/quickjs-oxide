@@ -211,6 +211,7 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
         }
     }
 
+    #[inline(always)]
     pub(super) fn live_fast(&self, id: T::Id) -> &AuxiliaryNode<T> {
         assert_trusted_handle!(
             self.validate_identity(id).is_ok(),

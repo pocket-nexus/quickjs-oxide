@@ -36,13 +36,60 @@ impl RuntimeState {
     /// operation does not consume the base; its owner must remain live until
     /// selection completes, and the returned value owns its retained edge.
     ///
-    /// The hit of an object receiver is a small out-of-line function: it needs
-    /// no key atom (a hit means this site already learned the key in this
-    /// domain) and immediates leave without the general promotion. Every other
+    /// The monomorphic hit of an object receiver is a small out-of-line
+    /// function: it needs no key atom (a hit means this site already learned
+    /// the key in this domain) and immediates leave without the general
+    /// promotion. Polymorphic hits use the general probe, and every other
     /// case continues in the cold selection, which does not probe again.
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn select_linked_data_into(
+        &self,
+        domain_id: u64,
+        base: &JsValue,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+        miss: &mut NamedSelectionMiss,
+    ) -> Option<JsValue> {
+        // Only the monomorphic hit stays in this function, so it needs few
+        // registers; everything else, including the polymorphic probe, is
+        // out of line. A monomorphic miss changes nothing, so the probe there
+        // starts from the same site state.
+        if let JsValue::Object(receiver) = base
+            && executable.belongs_to_domain(domain_id)
+            && let Some(cache) = executable.property_read_ic.site(pc)
+            && let Some(raw) = cache.read_monomorphic(&self.heap, *receiver)
+        {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event("property_selection.cache");
+            return match raw {
+                RawValue::Int(value) => Some(JsValue::Int(*value)),
+                RawValue::Float(value) => Some(JsValue::Float(*value)),
+                RawValue::Bool(value) => Some(JsValue::Bool(*value)),
+                RawValue::Undefined => Some(JsValue::Undefined),
+                RawValue::Null => Some(JsValue::Null),
+                raw => self.promote_field_in_state(domain_id, raw, keep_receiver, native),
+            };
+        }
+        self.select_linked_data_probe(
+            domain_id,
+            base,
+            executable,
+            pc,
+            key_index,
+            keep_receiver,
+            native,
+            miss,
+        )
+    }
+
+    /// The general cache probe after the monomorphic hit declined.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn select_linked_data_probe(
         &self,
         domain_id: u64,
         base: &JsValue,
