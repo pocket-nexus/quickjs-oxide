@@ -879,6 +879,27 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
      （≤0.5%），加上清单与计数的下降。
   4. **测量按批。** 容器测量必须串行（约 25 分钟一次），纯结构迁移每批测一次八项 Ir 与诊断计数；改变内联或拆分函数的
      提交单独测，只以 Rust 1.88 容器 Ir 为准，不以本机反汇编判断。
+
+  **7a 执行与验收（2026-10-10，`3fdd0592`→`4889ebf5`）。** 两个修正使 RegExp 族计数归零，八项 Ir 验收通过。
+
+  1. **fast path 的落点修正（`2a28117d`）。** 诊断发现 plain exec 的 fast path 放在
+     `call_regexp_exec_native`，解释器的热调用走 in-loop continuation 直达 `RegExpExecStep::start`，
+     fast path 一次未命中；split/match/search 协议的内部 exec 全部经 abstract 操作进入同一台 step machine
+     （`query_dispatch.owner.regexp_exec` 84 万/轮）。predicate 移入 `RegExpExecStep::start`（公共入口与
+     continuation 共用），abstract 变体另要求链上 `exec` 解析到标准内建（abstract 操作自己做这次属性读）。
+  2. **标准 split 直跑（`4889ebf5`）。** genuine 接收者 + primitive String 输入 + immediate limit +
+     标准 `flags` getter + 默认 species（`constructor` 缺省或为本 realm `%RegExp%` 且其 `@@species`
+     为默认 getter）时，整个协议循环直接跑：虚拟 splitter 按构造器同款 `flags+"y"` 现场重编译、不建对象，
+     每片字符串以 owner 身份一次 State 访问落入稠密元素；子类构造器、被覆盖的 flags getter、对象输入回通用路径。
+  3. **计数（V8 RegExp，profiling 构建）**：`core.runtime_clone` 20.2M（基线 `36e7993e`）→ 2.01M；
+     exec/split 的 resume owner 发布 84 万 / 172 万 → 0；`core.object_root.clone` 2.70M → 78k；
+     `core.state.borrow` 16.1M → 2.26M。split 语义 24 个用例与 Node 逐项一致；focused Test262 两轮均 6844/6844。
+  4. **八项 Ir/Dw（`oxide-vg:1.88` 容器，`measure_docker.py`，`pre2`/`post2` 报告）**：RegExp Ir −56.5%、
+     Dw −63.5%；其余七项 Ir 在 ±0.06%、Splay Dw +0.26% 以内，全部低于 0.5% 不回退门槛。RegExp Ir 变化超过 5%，
+     第 7 项收口时须由参考机会话跑原生 ABBA（第 7 节规则）。
+  5. **剩余构成（归 7b/7c）**：`core.runtime_clone` 余 2.0M 主要为原生调用激活的一对克隆（`native.rs:419`、
+     `frames.rs:387` 各约 46 万/轮）与栈窗（`window.rs:800` 35 万）；match/matchAll/search 的协议壳仍走通用
+     路径，但经 plain abstract exec，V8 触及量小（match 2650 次分发），按"每批只迁移自己的消费者"留作残留编号。
 - **第 8 项：** 六项硬门槛，加上 B0 残留清单全部清零。
 
 ## 7. 执行与测量规则
