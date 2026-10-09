@@ -23,7 +23,7 @@
 | 第 3 项（#102，叠在 #101 上） | 已收口（2026-10-08，按第 8 节“任务全部完成”）：3a–3f 采纳，八项 Ir 与 `perf stat` 周期全部低于基线；读缓存 R/D 14.8%/14.2%，未达 ≤14%（≤8% 已移入第 5 项）；最终原生 A/B Combined +6.18%，RegExp 未过非劣门槛但在 A/A 噪声内，按未分辨放行；原版 Score 为 Boa 的 95.7%。见第 5 节“第 3 项收口” |
 | 第 4 项（#103，叠在 #102 上） | 已收口（2026-10-08，按第 8 节“任务全部完成”）：4a–4g 完成，八项 Ir 全部下降（−0.72% 至 −5.56%，aarch64）；调用占比 D/EB/R 27.3%/18.2%/16.1%，未达 ≤12%/≤12%/≤8%；重入固定成本与内联的命中路径划给第 5 项；x86 复测、`perf stat` 与原生 A/B 待参考测量机补记。见第 5 节“第 4 项收口” |
 | 第 5、6 项（#104，叠在 #103 上） | 到此为止（2026-10-09，head `8a12b51e`）：已完成 5b 的 `instanceof`（ready 循环版）、字符串拼接、捕获变量，全局变量读取，以及第 6 项的出边计数、arguments 与 `apply`；5a（拆小热循环）侧分支实测使八项变慢，搁置，5c 随之搁置。原版 Score 为 Boa 的 106.7%（262 对 245.5），五项超过、DeltaBlue 持平，Richards、EarleyBoyer 仍落后；Crypto、NavierStokes 相对 3f 回退，原因未分析。见第 6 节“与 Boa 的原版 Score” |
-| 第 6–8 项（叠在 #104 上） | 2026-10-09 按 `8a12b51e` 的 profile 调整计划（第 6 节“第 6–8 项计划调整”）：先做第 6 项的受信访问清理、剩余退出、对象分配与释放，再做读缓存与调用在解释函数之外的剩余成本，然后第 7、8 项；Crypto、NavierStokes 的 x86 回退按决定不追查 |
+| 第 6–8 项（#105，叠在 #104 上） | 第 6 项已收口（`24b602aa`）：相对 #104 aarch64 Ir EarleyBoyer −27.6%、Richards −12.0%、NavierStokes −11.3%，其余 −1.8%～−5.5%（第 6 节“第 6–8 项计划调整”）；参考测量机原生 ABBA 与 Boa 对比待跑；下一步第 7 项 |
 
 第 1 项收口后的结果（相对 B2a `f2501839`，参考测量机，固定工作量，8 对 A/A 加 8 对 A/B，
 `paired.py` 非劣门槛 −1%）：
@@ -791,6 +791,60 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
   | 6d | 读缓存命中与调用的剩余成本，只在解释函数之外 | Richards、DeltaBlue |
   | 7 | 原计划第 7 项 | Ir 不回退 |
   | 8 | 原计划第 8 项：六项硬门槛归零 | 阶段 B 完成条件 |
+
+  **6a、6b 进度（#105，aarch64 Callgrind，每步相对上一步）：**
+
+  | 提交 | 内容 | 结果 |
+  |---|---|---|
+  | `3a413301` | `instanceof` 内核的对象读取改为受信访问 | EarleyBoyer −6.31% |
+  | `64c67fab` | 写缓存命中与 `this` 读取检查改为受信访问 | Richards −5.86%，DeltaBlue −2.39%，RayTrace −0.96% |
+  | `20b22fcc` | `instanceof` 的字符串、BigInt 候选值在内核中直接得出 false；知名 Symbol 表改用 FxHash | EarleyBoyer −15.60% |
+  | `f1e42370`、`fea42f06`、`fb719efd` | 帧持有的 dense 数组读写、空洞填充、类型化数组写入与 `nullish_equality` 改为受信访问；`locate` 复用已读取的对象数据 | NavierStokes −8.44%，Crypto −4.90%，Richards −1.55%，RegExp −0.82% |
+  | `2e3ca4ff` | 全局变量写入（已初始化、非 `const` 的单元，或初始化写入）在 ready 循环内完成 | EarleyBoyer −3.64% |
+  | `30bd0175` | 捕获变量中的对象值在解释函数内读取（低于饱和时受信加引用），不再退出 | NavierStokes −2.44%，RegExp −0.86% |
+
+  其余用例每步均在 +0.1% 以内。截至 `30bd0175`，相对 #104（`a2d3a1b6`）累计：EarleyBoyer −24.1%，NavierStokes −10.6%，Richards −7.3%，
+  Crypto −5.2%，DeltaBlue −2.5%，RegExp −1.7%，RayTrace −0.95%，Splay −0.76%。
+
+  退出计数（profiling 构建）：EarleyBoyer 的全局写入 42 万次与 NavierStokes 的捕获变量读取 229 万次已不再退出；全局读取在此之前
+  已在解释函数内完成。EarleyBoyer 仍有 `instanceof` 约 100 万次在 ready 循环内完成。多项 Ir 变化超过 5%，按第 7 节在第 6 项收口时
+  于参考测量机跑原生 ABBA。
+
+  **6c、6d 进度（#105，同上口径）：**
+
+  | 提交 | 内容 | 结果 |
+  |---|---|---|
+  | `6dce12e6` | 对象、数组字面量只在 GC 余量不足一个字面量时才在分配前物化帧（错误仍在抛出路径物化） | Splay −2.86% |
+  | `811e5271` | 新普通对象的原型饱和检查改为受信读取 | Splay −0.42% |
+  | `50d29e10` | arguments 对象：分配跳过通用布局校验（debug 与 `checked-handles` 保留），释放走单趟普通路径 | RayTrace −1.77% |
+  | `7c44a2b2` | `commit_owned` 的推入不再保存寄存器（拒绝与报错移到冷函数） | 八项全降：Richards −1.38%，EarleyBoyer −1.09% |
+  | `c2b86dad` | `x == null` 对非最终引用的操作数原地结算 | Richards −1.48% |
+  | `a301da38` | 帧退出时非最终的对象槽位内联释放 | 八项全降：EarleyBoyer −0.71%，Richards −0.30%（未达 1%，无回退，保留） |
+  | `0524efed` | `===` 在立即数与对象之间、引用均非最终时原地结算 | EarleyBoyer −1.41% |
+  | `686568df` → `5ffccbb6` | 读缓存命中函数拆成单态命中与通用探测：Rust 1.88 下 `promote_field_in_state`、`Slots::get` 不再内联，DeltaBlue +2.38%、RayTrace +1.76%、Richards +1.53%；恢复单一函数并保留受信辅助查找与 `Slots::get` 的强制内联 | 恢复一步：DeltaBlue −2.52%，Richards −2.22%，RayTrace −1.82%；两步合计略有净收益 |
+  | `74182a68` | 字段写入后的两个操作数在引用均非最终时原地释放 | Richards −0.54%（保留，无回退） |
+  | `06bb0c39`、`56ab297d` → `85c3a1e7` | 溢出槽位向量池：RayTrace −0.5%，EarleyBoyer +0.23%，Splay +0.14%，未达 1% 采纳门槛，已撤回 | — |
+  | `66ee7da5` | 帧持有环境的全局单元读写不再重建带校验的视图（私有或未初始化交给环境驱动报告） | EarleyBoyer −1.04%，Richards −0.75% |
+  | `52c603b1` → `24b602aa` | 局部变量与参数写入的原地快速路径：Ir 无收益（最大 +0.09%），已撤回 | — |
+
+  本机（较新 rustc）的反汇编不能代表 Rust 1.88 的内联结果；代码生成类改动只以容器 Ir 为准。
+
+  **第 6 项收口（`24b602aa`，源码与 `66ee7da5` 相同）。** 相对 #104（`a2d3a1b6`）累计 aarch64 Ir：
+
+  | 用例 | Ir 变化 |
+  |---|---:|
+  | EarleyBoyer | −27.6% |
+  | Richards | −12.0% |
+  | NavierStokes | −11.3% |
+  | Crypto | −5.5% |
+  | Splay | −5.4% |
+  | RayTrace | −4.1% |
+  | DeltaBlue | −4.0% |
+  | RegExp | −1.8% |
+
+  解释函数尺寸全程未变（本机 47,656 字节）。按第 7 节，参考测量机原生 ABBA（`a2d3a1b6` 对 `24b602aa`）与 Boa 对比待跑。
+  未做的部分：调用路径（`install_current_ordinary`、`prepare_ordinary_window_in_state`、`FrameCold::release_owned`）
+  仍各保存六对寄存器，每次调用约 50–75 条；拆分需要按 Rust 1.88 的容器 Ir 逐步验证，留作后续。
 
   5a、5c 的重启条件：热循环必须完全专门化（槽位切片、深度与各区起点为局部变量，不经通用辅助函数），并覆盖读写字段命中与调用，
   在侧分支上整体达到净收益后再合入。
