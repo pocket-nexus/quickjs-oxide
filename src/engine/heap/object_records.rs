@@ -555,11 +555,6 @@ pub enum Slots {
     Spilled(Vec<PropertySlot>),
 }
 
-/// At most this many spilled vectors wait in a heap's reuse pool.
-pub(crate) const SPILL_POOL_LIMIT: usize = 64;
-/// Only spilled vectors up to this capacity are pooled.
-pub(crate) const SPILL_POOL_CAPACITY: usize = 8;
-
 impl Slots {
     /// Number of slots kept inline before a spill.
     pub const INLINE_CAPACITY: usize = 2;
@@ -634,38 +629,6 @@ impl Slots {
             }
             _ => Err(slot),
         }
-    }
-
-    /// Append one slot after [`Self::push_inline`] declined. A full inline
-    /// pair moves into `spare` (an empty pooled vector) or a new vector. On
-    /// allocation failure nothing changes and the slot is handed back.
-    pub(crate) fn try_push_spilling(
-        &mut self,
-        slot: PropertySlot,
-        spare: Option<Vec<PropertySlot>>,
-    ) -> Result<(), PropertySlot> {
-        match self {
-            Self::Spilled(slots) => {
-                if slots.try_reserve(1).is_err() {
-                    return Err(slot);
-                }
-                slots.push(slot);
-            }
-            Self::Inline { len, slots } => {
-                let live = usize::from(*len);
-                let mut spilled = spare.unwrap_or_default();
-                debug_assert!(spilled.is_empty());
-                if spilled.try_reserve(live + 1).is_err() {
-                    return Err(slot);
-                }
-                for existing in &mut slots[..live] {
-                    spilled.push(std::mem::replace(existing, Self::EMPTY));
-                }
-                spilled.push(slot);
-                *self = Self::Spilled(spilled);
-            }
-        }
-        Ok(())
     }
 
     /// Append one slot, spilling the inline pair on the third push.

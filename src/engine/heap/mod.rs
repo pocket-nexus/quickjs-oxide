@@ -343,10 +343,6 @@ pub struct Heap {
     leaf_slots: profiling::ArenaStorage<LeafSlot>,
     leaf_free: Vec<u32>,
     zero_queue: VecDeque<RawId>,
-    /// Small spilled slot vectors returned by finalized ordinary objects and
-    /// reused by cached appends that spill an inline pair. Bounded in count
-    /// and per-vector capacity; see [`object_records::SPILL_POOL_LIMIT`].
-    spill_pool: Vec<Vec<PropertySlot>>,
     weak_head: Option<ObjectId>,
     weak_tail: Option<ObjectId>,
     /// Debug-only edge ledger: creation-site provenance for live slots.  See
