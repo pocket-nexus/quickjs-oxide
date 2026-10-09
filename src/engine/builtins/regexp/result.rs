@@ -3,7 +3,7 @@
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx};
-use crate::engine::heap::{ContextId, ObjectData, PropertySlot};
+use crate::engine::heap::{ContextId, ObjectData, PropertySlot, RawValue};
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
 use std::collections::HashMap;
 
@@ -57,6 +57,71 @@ impl Drop for RegExpResultOwner {
     }
 }
 
+impl crate::engine::heap::runtime::RuntimeState {
+    /// The common exec result (no named groups, no indices) under one State
+    /// access. `index` and `input` are the array's named slots, retained by the
+    /// allocation; each capture string is allocated as an owner and moves into
+    /// its dense element, so no capture takes a retain/release pair. A failure
+    /// releases the partial array, which owns every appended capture.
+    fn new_plain_regexp_result_in_state(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        realm: ContextId,
+        input: &JsString,
+        input_value: &JsValue,
+        matched: &RegExpMatch,
+    ) -> Result<crate::engine::heap::ObjectId, RuntimeError> {
+        let shape = self
+            .heap
+            .context(realm)?
+            .regexp
+            .as_ref()
+            .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))?
+            .result_shapes
+            .ok_or(RuntimeError::Invariant("RegExp result layouts missing"))?[0];
+        let complete = matched.capture(0).ok_or(RuntimeError::Invariant(
+            "successful RegExp result omitted capture zero",
+        ))?;
+        let index = i32::try_from(complete.start).map_err(|_| {
+            RuntimeError::Invariant("RegExp match start exceeded signed String range")
+        })?;
+        let slots = vec![
+            PropertySlot::Data(RawValue::Int(0)),
+            PropertySlot::Data(RawValue::Int(index)),
+            PropertySlot::Data(input_value.as_raw()),
+            PropertySlot::Data(RawValue::Undefined),
+        ];
+        let atoms = self.retain_slot_atoms(&slots)?;
+        let array = match self.heap.allocate_object(ObjectData::array(shape, slots)) {
+            Ok(id) => id,
+            Err(error) => {
+                self.release_atoms(atoms)?;
+                return Err(error.into());
+            }
+        };
+        for range in matched.captures() {
+            let capture = match range {
+                Some(range) => match self
+                    .heap
+                    .allocate_string(input.sub_string(range.start, range.end))
+                {
+                    Ok(id) => JsValue::String(id),
+                    Err(error) => {
+                        self.release_owned_jsvalue(poisoned, JsValue::Object(array))?;
+                        return Err(error.into());
+                    }
+                },
+                None => JsValue::Undefined,
+            };
+            if let Err(error) = self.append_fresh_array_value_jsvalue(poisoned, array, capture) {
+                self.release_owned_jsvalue(poisoned, JsValue::Object(array))?;
+                return Err(error);
+            }
+        }
+        Ok(array)
+    }
+}
+
 impl Runtime {
     pub(crate) fn build_regexp_result(
         &self,
@@ -84,6 +149,16 @@ impl Runtime {
         }
 
         let has_indices = program.flags().contains(RegExpFlags::HAS_INDICES);
+        if !has_indices && group_names.is_none() {
+            let array = self.0.state.borrow_mut().new_plain_regexp_result_in_state(
+                &self.0.poisoned,
+                realm,
+                &input,
+                input_value,
+                &matched,
+            )?;
+            return Ok(JsValue::Object(array));
+        }
         let mut named = NamedCaptures::default();
         let mut owner = RegExpResultOwner {
             runtime: self.clone(),
