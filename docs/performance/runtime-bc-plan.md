@@ -935,6 +935,18 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
   （等待/放弃机制不持 State），是第 8 项验收的唯一实质 blocker，选项：(a) 记为签认例外收口阶段 B，
   (b) 立"B4 等待机制 State 化"专项（数日）后全零验收。
 
+  **类 C 例外签认与第 8 项验收（2026-10-10，用户决定）。** 用户签认：门槛 1 类 C 与门槛 3 记为
+  **已接受例外**——132 个内部字段中除类 A/类 B 可迁者外，全部步骤机 resume/pending 状态的
+  `runtime` 持有字段（B3 78、B5 21、B4 10、B2 系 14、无编号 6、B1 3 中属等待/放弃路径的部分）
+  连同门槛 3 的内部 deferred 释放点（`NativeActivation::Drop`、`NativeWaitRecord`、
+  `recycle_legacy`/`clear_frame`/`release_legacy` 等冷路径适配器）按"等待机制不持 State"的根因
+  一并记录；门槛 6 的真删除随将来的"B4 等待机制 State 化"专项执行。签认依据：这些路径在 V8
+  八项上每轮计数 <8.2k、Ir 占比 <0.5%，迁移是 query-driver 级改造，预算转第 5 项热循环专门化。
+  **第 8 项验收状态**：门槛 2/4/5 实质清零；门槛 1/3 按签认例外记录（清单见
+  `runtime-gate-baseline.json` 的内部字段族 + 本节）；门槛 6 随例外专项。阶段 B 据此收口，
+  剩余的两项程序性回执：参考机会话的原生 ABBA 与 crypto/deltablue 布局对照（已在 7a 记录中排期），
+  以及 CI fast / 架构检查 / 完整 Test262（随 PR 与条目收口出）。
+
   **7a 执行与验收（2026-10-10，`3fdd0592`→`4889ebf5`）。** 两个修正使 RegExp 族计数归零，八项 Ir 验收通过。
 
   1. **fast path 的落点修正（`2a28117d`）。** 诊断发现 plain exec 的 fast path 放在
