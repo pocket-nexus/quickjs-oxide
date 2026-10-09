@@ -223,7 +223,7 @@ impl Runtime {
 
     /// [`Self::set_regexp_last_index`] for a receiver this execution owns;
     /// a public root is built only for the general Set.
-    fn set_regexp_last_index_id(
+    pub(super) fn set_regexp_last_index_id(
         &self,
         realm: ContextId,
         object: crate::engine::heap::ObjectId,

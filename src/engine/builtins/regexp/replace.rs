@@ -61,16 +61,20 @@ impl Runtime {
 
     fn standard_regexp_replace(
         &self,
-        regexp: &ObjectRef,
+        regexp: ObjectId,
     ) -> Result<Option<StandardRegExpReplace>, RuntimeError> {
-        let last_index =
-            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
-        let exec = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Exec)?;
-        let flags = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?;
-        let global = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Global)?;
-        let unicode = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Unicode)?;
+        use crate::engine::atom::pinned::PinnedAtom;
+        // Pinned atoms live as long as the runtime; no owning key is needed.
         let state = self.0.state.borrow();
-        let object = state.heap.object(regexp.object_id())?;
+        let pinned = |atom| state.pinned_atoms.get(atom);
+        let (last_index, exec, flags, global, unicode) = (
+            pinned(PinnedAtom::LastIndex),
+            pinned(PinnedAtom::Exec),
+            pinned(PinnedAtom::Flags),
+            pinned(PinnedAtom::Global),
+            pinned(PinnedAtom::Unicode),
+        );
+        let object = state.heap.object(regexp)?;
         let ObjectPayload::RegExp(RegExpObjectData::Compiled { program, .. }) = &object.payload
         else {
             return Ok(None);
@@ -82,7 +86,7 @@ impl Runtime {
             return Ok(None);
         }
         let shape = state.heap.shape(object.shape)?;
-        let Some(last_index_slot) = shape.find(AtomIdx::from_raw(last_index.atom().raw())) else {
+        let Some(last_index_slot) = shape.find(AtomIdx::from_raw(last_index.raw())) else {
             return Ok(None);
         };
         let last_index_slot = usize::try_from(last_index_slot)
@@ -101,23 +105,23 @@ impl Runtime {
 
         if !raw_regexp_data_property_matches(
             &state.heap,
-            regexp.object_id(),
-            exec.atom(),
+            regexp,
+            exec,
             NativeFunctionId::RegExp(RegExpNativeKind::Exec),
         )? || !raw_regexp_getter_matches(
             &state.heap,
-            regexp.object_id(),
-            flags.atom(),
+            regexp,
+            flags,
             NativeFunctionId::RegExp(RegExpNativeKind::Flags),
         )? || !raw_regexp_getter_matches(
             &state.heap,
-            regexp.object_id(),
-            global.atom(),
+            regexp,
+            global,
             NativeFunctionId::RegExp(RegExpNativeKind::Flag(RegExpFlagKind::Global)),
         )? || !raw_regexp_getter_matches(
             &state.heap,
-            regexp.object_id(),
-            unicode.atom(),
+            regexp,
+            unicode,
             NativeFunctionId::RegExp(RegExpNativeKind::Flag(RegExpFlagKind::Unicode)),
         )? {
             return Ok(None);
@@ -133,7 +137,7 @@ impl Runtime {
     fn call_standard_regexp_replace(
         &self,
         realm: ContextId,
-        regexp: &ObjectRef,
+        regexp: ObjectId,
         input: &JsString,
         replacement: &JsString,
         standard: StandardRegExpReplace,
@@ -147,7 +151,7 @@ impl Runtime {
         let global = flags.contains(RegExpFlags::GLOBAL);
         let sticky = flags.contains(RegExpFlags::STICKY);
         let mut last_index = if global {
-            if let Some(value) = self.set_regexp_last_index(realm, regexp, 0)? {
+            if let Some(value) = self.set_regexp_last_index_id(realm, regexp, 0)? {
                 return Ok(Completion::Throw(value));
             }
             0
@@ -207,7 +211,7 @@ impl Runtime {
 
             let Some(matched) = matched else {
                 if (global || sticky)
-                    && let Some(value) = self.set_regexp_last_index(realm, regexp, 0)?
+                    && let Some(value) = self.set_regexp_last_index_id(realm, regexp, 0)?
                 {
                     return Ok(Completion::Throw(value));
                 }
@@ -257,7 +261,7 @@ impl Runtime {
                     let end = i32::try_from(complete.end).map_err(|_| {
                         RuntimeError::Invariant("RegExp match end exceeded signed String range")
                     })?;
-                    if let Some(value) = self.set_regexp_last_index(realm, regexp, end)? {
+                    if let Some(value) = self.set_regexp_last_index_id(realm, regexp, end)? {
                         return Ok(Completion::Throw(value));
                     }
                 }
@@ -549,7 +553,6 @@ impl RegExpReplaceStep {
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
-        let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
         let input = arguments.readable.first().ok_or(RuntimeError::Invariant(
             "RegExp @@replace input argv was not padded",
         ))?;
@@ -579,12 +582,13 @@ impl RegExpReplaceStep {
             }
         }
         if let (Some(source), Some(text)) = (&source, &text)
-            && let Some(standard) = runtime.standard_regexp_replace(&regexp)?
+            && let Some(standard) = runtime.standard_regexp_replace(*id)?
         {
             return Ok(Self::Complete(runtime.call_standard_regexp_replace(
-                realm, &regexp, source, text, standard,
+                realm, *id, source, text, standard,
             )?));
         }
+        let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "regexpreplace_resident_allocated",
@@ -861,13 +865,14 @@ impl RegExpReplaceResume {
     }
     fn prepared(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
         if self.0.state.functional.is_none()
-            && let Some(standard) = runtime.standard_regexp_replace(&self.0.state.regexp)?
+            && let Some(standard) =
+                runtime.standard_regexp_replace(self.0.state.regexp.object_id())?
         {
             // Preserve the existing raw predicate and matcher unchanged.
             return Ok(ReplaceAction::Complete(
                 runtime.call_standard_regexp_replace(
                     self.0.realm,
-                    &self.0.state.regexp,
+                    self.0.state.regexp.object_id(),
                     self.source(),
                     self.0
                         .state
@@ -1665,7 +1670,12 @@ mod tests {
             panic!("RegExp object");
         };
         // The original direct-matcher guard intentionally rejects lazy exec.
-        assert!(runtime.standard_regexp_replace(&regexp).unwrap().is_none());
+        assert!(
+            runtime
+                .standard_regexp_replace(regexp.object_id())
+                .unwrap()
+                .is_none()
+        );
         let invocation = NativeInvocation::Call {
             this_value: runtime.into_jsvalue(Value::Object(regexp)).unwrap(),
         };
