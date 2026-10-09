@@ -2304,6 +2304,11 @@ impl Heap {
             cleanup.atoms.extend(property_slot_atoms(slot));
             visit_property_slot_edges(slot, &mut |edge| self.release_raw_no_drain(edge))?;
         }
+        if self.spill_pool.len() < super::object_records::SPILL_POOL_LIMIT
+            && let Some(spare) = slots.into_poolable()
+        {
+            self.spill_pool.push(spare);
+        }
         cleanup
             .atoms
             .extend(brand.map(|atom| AtomIdx::from_raw(atom.raw())));
@@ -4063,5 +4068,46 @@ mod canonical_edge_tests {
             assert_eq!(error, Err("stop"));
             assert_eq!(prefix, expected[..stop]);
         }
+    }
+}
+
+#[cfg(test)]
+mod spill_pool_tests {
+    use crate::engine::api::{Runtime, Value};
+    use crate::engine::heap::object_records::SPILL_POOL_LIMIT;
+
+    #[test]
+    fn finalized_spilled_slots_are_reused_by_cached_appends_within_bounds() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+                function Node(k) { this.k = k; this.v = k * 2; this.l = null; this.r = null; }
+                let ok = true;
+                for (let round = 0; round < 4; round++) {
+                    let keep = [];
+                    for (let i = 0; i < 200; i++) {
+                        const n = new Node(i);
+                        n.extra = i + 1;
+                        if (n.k !== i || n.v !== 2 * i || n.l !== null || n.r !== null
+                            || n.extra !== i + 1 || Object.keys(n).join() !== 'k,v,l,r,extra') ok = false;
+                        if (i % 3 === 0) keep.push(n);
+                    }
+                    for (const n of keep) if (n.extra !== n.k + 1) ok = false;
+                }
+                ok
+            "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        let state = runtime.0.state.borrow();
+        let pool = &state.heap.spill_pool;
+        assert!(!pool.is_empty());
+        assert!(pool.len() <= SPILL_POOL_LIMIT);
+        assert!(pool.iter().all(|spare| spare.is_empty()
+            && spare.capacity() <= crate::engine::heap::object_records::SPILL_POOL_CAPACITY));
     }
 }

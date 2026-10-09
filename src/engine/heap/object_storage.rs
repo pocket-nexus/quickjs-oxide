@@ -1625,15 +1625,24 @@ impl Heap {
         // The caller's frame owns the receiver; its handle needs no check.
         let object = self.object_mut_fast(id);
         if let Err(slot) = object.slots.push_inline(PropertySlot::Data(value)) {
-            if object.slots.try_reserve(1).is_err() {
+            let spare = match object.slots {
+                super::object_records::Slots::Inline { .. } => self.spill_pool.pop(),
+                super::object_records::Slots::Spilled(_) => None,
+            };
+            if self
+                .object_mut_fast(id)
+                .slots
+                .try_push_spilling(slot, spare)
+                .is_err()
+            {
                 let strong = &self.shapes.live_fast_mut(successor).strong;
                 strong.set(strong.get() - 1);
                 return Err(unpublished(HeapError::Allocation {
                     operation: "appending a cached shape property",
                 }));
             }
-            object.slots.push(slot);
         }
+        let object = self.object_mut_fast(id);
         let prototype = object.used_as_prototype;
         let previous_shape = std::mem::replace(&mut object.shape, successor);
         if prototype {

@@ -20,6 +20,7 @@ impl Heap {
             leaf_slots: profiling::ArenaStorage::new(2),
             leaf_free: Vec::new(),
             zero_queue: VecDeque::new(),
+            spill_pool: Vec::new(),
             weak_head: None,
             weak_tail: None,
             #[cfg(debug_assertions)]
