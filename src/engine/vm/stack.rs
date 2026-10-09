@@ -1238,6 +1238,26 @@ impl SlotStore {
         }
     }
 
+    /// Pop the top operand when it is a direct value, without an error path.
+    #[inline(always)]
+    fn take_top_current(&mut self, window: &mut FrameWindow) -> Option<JsValue> {
+        let top = window.depth.checked_sub(1)?;
+        let index = window.operands().start + top;
+        if !matches!(self.slots[index], Some(FrameBinding::Direct(_))) {
+            return None;
+        }
+        window.depth = top;
+        #[cfg(feature = "profiling")]
+        {
+            self.live_slots -= 1;
+            record_owned_storage(Cost::Move(1));
+        }
+        match self.slots[index].take() {
+            Some(FrameBinding::Direct(value)) => Some(value),
+            _ => unreachable!("checked direct operand"),
+        }
+    }
+
     /// Drop the two direct operands [`Self::top_pair_current`] returned. The
     /// caller has already released or never owned their edges.
     #[inline(always)]

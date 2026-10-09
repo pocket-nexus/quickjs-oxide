@@ -258,6 +258,99 @@ impl FrameSlots<'_> {
         keep: bool,
     ) -> Result<super::StoreProgress, Error> {
         let index = self.destination_index(destination)?;
+        if self.transfer_direct_fast(state, index, keep) {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event("local_completion.store");
+            return Ok(super::StoreProgress::Committed);
+        }
+        self.transfer_direct_general(state, poisoned, index, keep)
+    }
+
+    /// Store the top operand into a direct or uninitialized destination when
+    /// no step can fail or clean up: a copied source is an immediate or an
+    /// object below saturation, and the old value is an immediate or an
+    /// object whose edge is not its last. The old edge goes first; the
+    /// source keeps an aliased object live. Otherwise nothing changes.
+    #[inline(always)]
+    fn transfer_direct_fast(&mut self, state: &mut RuntimeState, index: usize, keep: bool) -> bool {
+        let Some(top) = self.window.depth.checked_sub(1) else {
+            return false;
+        };
+        let Some(FrameBinding::Direct(source)) =
+            &self.store.slots[self.window.operands().start + top]
+        else {
+            return false;
+        };
+        let copied = match source {
+            JsValue::Undefined
+            | JsValue::Null
+            | JsValue::Bool(_)
+            | JsValue::Int(_)
+            | JsValue::Float(_)
+            | JsValue::ShortBigInt(_) => None,
+            JsValue::Object(id) if keep => {
+                if !state.heap.admits_trusted(RawId::Object(*id))
+                    || state.heap.object_strong_fast(*id) >= u32::MAX - 1
+                {
+                    return false;
+                }
+                Some(*id)
+            }
+            _ if keep => return false,
+            _ => None,
+        };
+        match &self.store.slots[index] {
+            Some(FrameBinding::Uninitialized) => {}
+            Some(FrameBinding::Direct(
+                JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::ShortBigInt(_),
+            )) => {}
+            Some(FrameBinding::Direct(JsValue::Object(old))) => {
+                if !state.heap.release_object_nonfinal_trusted(*old) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+        let value = if keep {
+            match copied {
+                Some(id) => {
+                    state.heap.retain_object_fast(id);
+                    JsValue::Object(id)
+                }
+                None => match &self.store.slots[self.window.operands().start + top] {
+                    Some(FrameBinding::Direct(JsValue::Undefined)) => JsValue::Undefined,
+                    Some(FrameBinding::Direct(JsValue::Null)) => JsValue::Null,
+                    Some(FrameBinding::Direct(JsValue::Bool(value))) => JsValue::Bool(*value),
+                    Some(FrameBinding::Direct(JsValue::Int(value))) => JsValue::Int(*value),
+                    Some(FrameBinding::Direct(JsValue::Float(value))) => JsValue::Float(*value),
+                    Some(FrameBinding::Direct(JsValue::ShortBigInt(value))) => {
+                        JsValue::ShortBigInt(*value)
+                    }
+                    _ => unreachable!("checked immediate source"),
+                },
+            }
+        } else {
+            self.store
+                .take_top_current(self.window)
+                .expect("checked direct source")
+        };
+        self.store.slots[index] = Some(FrameBinding::Direct(value));
+        true
+    }
+
+    #[inline(never)]
+    fn transfer_direct_general(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        index: usize,
+        keep: bool,
+    ) -> Result<super::StoreProgress, Error> {
         let old = self.store.slots[index]
             .as_ref()
             .ok_or_else(|| Error::internal("owned destination is vacant"))?;
