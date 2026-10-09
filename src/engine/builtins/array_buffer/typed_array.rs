@@ -1835,9 +1835,8 @@ impl crate::engine::heap::runtime::RuntimeState {
         let JsValue::Object(object) = base else {
             return false;
         };
-        let Ok(data) = self.heap.object(*object) else {
-            return false;
-        };
+        // The base is an interpreter operand that owns its object.
+        let data = self.heap.object_fast(*object);
         let Some(snapshot) = typed_array_snapshot_from_payload(&data.payload) else {
             return false;
         };
