@@ -23,7 +23,7 @@
 | 第 3 项（#102，叠在 #101 上） | 已收口（2026-10-08，按第 8 节“任务全部完成”）：3a–3f 采纳，八项 Ir 与 `perf stat` 周期全部低于基线；读缓存 R/D 14.8%/14.2%，未达 ≤14%（≤8% 已移入第 5 项）；最终原生 A/B Combined +6.18%，RegExp 未过非劣门槛但在 A/A 噪声内，按未分辨放行；原版 Score 为 Boa 的 95.7%。见第 5 节“第 3 项收口” |
 | 第 4 项（#103，叠在 #102 上） | 已收口（2026-10-08，按第 8 节“任务全部完成”）：4a–4g 完成，八项 Ir 全部下降（−0.72% 至 −5.56%，aarch64）；调用占比 D/EB/R 27.3%/18.2%/16.1%，未达 ≤12%/≤12%/≤8%；重入固定成本与内联的命中路径划给第 5 项；x86 复测、`perf stat` 与原生 A/B 待参考测量机补记。见第 5 节“第 4 项收口” |
 | 第 5、6 项（#104，叠在 #103 上） | 到此为止（2026-10-09，head `8a12b51e`）：已完成 5b 的 `instanceof`（ready 循环版）、字符串拼接、捕获变量，全局变量读取，以及第 6 项的出边计数、arguments 与 `apply`；5a（拆小热循环）侧分支实测使八项变慢，搁置，5c 随之搁置。原版 Score 为 Boa 的 106.7%（262 对 245.5），五项超过、DeltaBlue 持平，Richards、EarleyBoyer 仍落后；Crypto、NavierStokes 相对 3f 回退，原因未分析。见第 6 节“与 Boa 的原版 Score” |
-| 第 6–8 项（#105，叠在 #104 上） | 第 6 项已收口（`24b602aa`）：相对 #104 aarch64 Ir EarleyBoyer −27.6%、Richards −12.0%、NavierStokes −11.3%，其余 −1.8%～−5.5%（第 6 节“第 6–8 项计划调整”）；参考测量机原生 ABBA 与 Boa 对比待跑；下一步第 7 项 |
+| 第 6–8 项（#105，叠在 #104 上） | 第 6 项已收口（`24b602aa`）：相对 #104 aarch64 Ir EarleyBoyer −27.6%、Richards −12.0%、NavierStokes −11.3%，其余 −1.8%～−5.5%（第 6 节“第 6–8 项计划调整”）；参考测量机原生测量由参考机会话进行；第 7 项按第 6 节“第 7 项计划调整”在新的叠加 PR 中进行 |
 
 第 1 项收口后的结果（相对 B2a `f2501839`，参考测量机，固定工作量，8 对 A/A 加 8 对 A/B，
 `paired.py` 非劣门槛 −1%）：
@@ -789,7 +789,7 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
   | 6b | 剩余退出：EarleyBoyer 的全局读写冷路径；NavierStokes 的捕获变量读取尝试不退出（只改外置函数，严格核对其余用例） | EarleyBoyer、NavierStokes |
   | 6c | 对象分配与释放的固定开销（释放约 600 条/对象；溢出槽位按容量复用） | RayTrace、Splay、EarleyBoyer、RegExp |
   | 6d | 读缓存命中与调用的剩余成本，只在解释函数之外 | Richards、DeltaBlue |
-  | 7 | 原计划第 7 项 | Ir 不回退 |
+  | 7 | 原计划第 7 项，按下文“第 7 项计划调整”分 7a–7d | 见该节 |
   | 8 | 原计划第 8 项：六项硬门槛归零 | 阶段 B 完成条件 |
 
   **6a、6b 进度（#105，aarch64 Callgrind，每步相对上一步）：**
@@ -842,7 +842,7 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
   | DeltaBlue | −4.0% |
   | RegExp | −1.8% |
 
-  解释函数尺寸全程未变（本机 47,656 字节）。按第 7 节，参考测量机原生 ABBA（`a2d3a1b6` 对 `24b602aa`）与 Boa 对比待跑。
+  解释函数尺寸全程未变（本机 47,656 字节）。按第 7 节，参考测量机原生 ABBA（`a2d3a1b6` 对 `24b602aa`）由参考机会话进行；Boa 已被超过，不再作为本计划的对照。
   未做的部分：调用路径（`install_current_ordinary`、`prepare_ordinary_window_in_state`、`FrameCold::release_owned`）
   仍各保存六对寄存器，每次调用约 50–75 条；拆分需要按 Rust 1.88 的容器 Ir 逐步验证，留作后续。
 
@@ -853,6 +853,32 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
   - 等待状态先统一成一个枚举；
   - 对象 key 复用现有的转换等待；
   - 每批只迁移自己的消费者。
+- **第 7 项计划调整（2026-10-09，依据 `24b602aa` 的 profiling 计数）。** 剩余的迁移成本集中在 RegExp：
+  八项诊断计数（profiling 构建，与第 6 项 profile 相同的迭代数）中，`core.runtime_clone` RegExp 2,024 万，其余各项均不超过 23 万；
+  State 借用（borrow、borrow_mut、try_* 合计）RegExp 约 6,700 万，EarleyBoyer 410 万，Splay 280 万；公共 object root 的
+  clone/promote RegExp 463 万/328 万。RegExp 的 profile 中经 Runtime 公共接口的引用计数与延迟释放（`retain_object_handle`、
+  `release_jsvalue`、`dup_jsvalue`、`apply_deferred_operation` 等）合计超过 Ir 的 10%。原生调用退出解释循环
+  （`call_decline.native_hint`）RegExp 28 万、RayTrace 22 万、DeltaBlue 4.4 万。computed 读取退出只有 Crypto 6.6 万、
+  EarleyBoyer 1.6 万；Reflect/Proxy 与 B4 在 V8 中几乎不出现。
+
+  调整如下：
+
+  1. **残留清单重做。** `runtime-b0-residuals.json` 冻结在 B0（`b787dce4`），状态全部为 open，已与代码不符。开工时把清单
+     脚本放进仓库（结构体中持有 `Runtime` 的字段、消费者族、诊断计数），记录 `24b602aa` 的基线；每批关闭对应编号，
+     第 8 项的“零残留”以这份可复现的清单验收。
+  2. **按实测残留排序。**
+
+     | 批次 | 内容 | 验收 |
+     |---|---|---|
+     | 7a | B3 的 RegExp/String 族：exec、replace、split、match/matchAll、search 及结果数组构造改为持有 State 的内部实现 | RegExp Ir 有收益，计数下降；其余不回退 |
+     | 7b | 原生调用的激活与退出（B1-N01）：选定的原生函数在当前 State 下完成 | RayTrace、RegExp、DeltaBlue 至少一项 Ir 有收益 |
+     | 7c | 其余 B3 族，按 V8 触及量排序（Array、Object、JSON、Promise、Iterator 等） | 不回退 |
+     | 7d | computed 读取（B2b）、Reflect/Proxy（B2f）、B4 | 不回退；遵守 B2b 的三条教训 |
+
+  3. **验收分两类。** 涉及 RegExp 或原生调用的批次要求 Ir 收益（≥1%，第 7 节）；纯结构批次只要求八项 Ir/Dw 不回退
+     （≤0.5%），加上清单与计数的下降。
+  4. **测量按批。** 容器测量必须串行（约 25 分钟一次），纯结构迁移每批测一次八项 Ir 与诊断计数；改变内联或拆分函数的
+     提交单独测，只以 Rust 1.88 容器 Ir 为准，不以本机反汇编判断。
 - **第 8 项：** 六项硬门槛，加上 B0 残留清单全部清零。
 
 ## 7. 执行与测量规则
