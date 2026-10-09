@@ -130,7 +130,24 @@ impl<'a> FrameCursor<'a> {
         self.with_slots(|slots| slots.push(value))
     }
 
+    // A shared out-of-line call: inlining it grows the dispatch function.
+    #[inline(never)]
     fn commit_owned(&mut self, state: &mut RuntimeState, value: JsValue) -> Result<(), Error> {
+        match self.transaction.slots().try_push(value) {
+            Ok(()) => Ok(()),
+            Err(value) => self.commit_owned_rejected(state, value),
+        }
+    }
+
+    /// A rejected push reports its error and releases the owner it handed
+    /// back. Out of line so the accepted push makes no call.
+    #[cold]
+    #[inline(never)]
+    fn commit_owned_rejected(
+        &mut self,
+        state: &mut RuntimeState,
+        value: JsValue,
+    ) -> Result<(), Error> {
         let mut pending = Some(value);
         let result = self.with_slots(|slots| slots.push_pending(&mut pending));
         if let Some(value) = pending {

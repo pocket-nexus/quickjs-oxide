@@ -1091,6 +1091,13 @@ impl FrameSlots<'_> {
         self.store.push_current(self.window, value)
     }
 
+    /// A push that hands the owner back on any rejection, for callers that
+    /// report it out of line through [`Self::push_pending`].
+    #[inline(always)]
+    pub(in crate::engine::vm) fn try_push(&mut self, value: JsValue) -> Result<(), JsValue> {
+        self.store.try_push_current(self.window, value)
+    }
+
     /// On failure the caller keeps its owner until this borrow has ended.
     pub(in crate::engine::vm) fn push_pending(
         &mut self,

@@ -1070,6 +1070,25 @@ impl SlotStore {
         Ok(())
     }
 
+    /// Push without building an error: a full stack or an occupied slot hands
+    /// the owner back, and the caller reports it through `push_pending`.
+    #[inline(always)]
+    fn try_push_current(
+        &mut self,
+        window: &mut FrameWindow,
+        value: JsValue,
+    ) -> Result<(), JsValue> {
+        if window.depth >= window.operands().len() {
+            return Err(value);
+        }
+        let index = window.operands().start + window.depth;
+        if self.slots[index].is_some() {
+            return Err(value);
+        }
+        self.install_operand(window, index, value);
+        Ok(())
+    }
+
     #[inline]
     fn push_pending_current(
         &mut self,
