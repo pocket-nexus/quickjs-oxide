@@ -104,21 +104,20 @@ rustc 1.95.0 构建，release）。
 zoo 官方列为异机数据仅作量级参照（其 boa 与本机同场 boa 差 ~10–15%）。
 两项 oxide 编译崩溃使上表偏向保守。
 
-### 编译期崩溃根因（PdfJS/Gameboy）
+### 编译期崩溃根因（PdfJS/Gameboy）——已更正
 
-现象：`ExecCode::encode_with_locals` 返回 `InvalidTarget`（发布 218–303 条指令
-的小函数、1–2 个数值区域时），整函数发布失败 → InternalError。定位链：
+现象：`ExecCode::encode_with_locals` 返回 `InvalidTarget`，整函数发布失败 →
+InternalError（gbemu 218 条指令/273 字，pdfjs 303 条/380 字）。
 
-1. 失败发生在 `ExecCode::verify()`（encode 末尾的发布产物自检），
-   非编码循环、非区域计划校验（后两处插桩均静默通过）。
-2. verify 对跳转目标拒绝 `target == words.len()`（函数末尾哨兵）；
-   而 `validate_region_plans` 允许 `region.end == code.len()`。
-3. 数值区域选在函数尾时（末尾 Drop 之后无显式终结指令的形态），
-   区域 opcode 的 fallthrough/exit 目标编码为 words.len()，verify 拒绝——
-   **validate 与 verify 对"区域结束于函数末尾"的口径不一致**，编译器
-   `plan_numeric_regions`（flow.rs）未排除该形态。
+逐点插桩确认（初版"数值区域落在函数末尾"的推断**有误**，已撤回）：
+拒绝发生在 encode 末尾的 `ExecCode::verify()`，两个负载命中**同一条规则**——
+`CompareBranchLocal/Arg` 融合 span 的形状校验（span 的局部/实参读、比较
+opcode、IfTrue/IfFalse 方向、分支目标 `branch.operand(0) == first.operand(2)`、
+`branch.next_pc == first.next_pc + 4`）。即 opcode 选择器发布了一个 verify
+不接受的比较分支融合 span：选择器与 verify 对该 span 形状的口径不一致。
+具体是哪一个子条件仍待定位（下一步：最小复现 + 逐条件拆分）。
 
-修复方向（未实施）：flow.rs 各 region 选择器加 `end < code.len()` 守卫
-（放弃该区域退回通用指令展开）；补 gbemu/pdfjs 最小复现的回归测试。
-影响面：真实大代码（Octane PdfJS/Gameboy、任意尾置数值循环的函数）；
-focused Test262 未覆盖此形态。诊断插桩已撤，工作树干净。
+历史背景：#40（P4，09-25，已合入，在本栈历史中）删除的是旧前端 BC5
+独立 verify pass；当前崩溃的 `ExecCode::verify` 是 #52（912f5abd，09-27
+"verified ExecCode interpreter"）在新发布层重新引入的发布自检，与 #40 删除的
+不是同一个。focused Test262 未覆盖该 span 形态。诊断插桩已撤，工作树干净。
