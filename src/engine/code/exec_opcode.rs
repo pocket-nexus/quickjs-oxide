@@ -713,14 +713,6 @@ impl Opcode {
             | Self::NumericArrayCompareBranch => 3,
         }
     }
-
-    pub(crate) const fn target_operand(self) -> Option<u8> {
-        match self {
-            Self::IfFalse | Self::IfTrue | Self::Goto | Self::Catch | Self::Gosub => Some(0),
-            Self::CompareBranchStack => Some(1),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

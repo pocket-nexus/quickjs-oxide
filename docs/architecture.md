@@ -10,7 +10,7 @@ src/
   regexp/          pattern compilation and matching
   engine/
     compiler/      parsing, resolution, lowering and local operation selection
-    code/          instruction encoding, verification and publication
+    code/          instruction encoding and publication
     value/         JavaScript values, Number and conversion algorithms
     object/        properties, shapes and object internal methods
     atom/          names, symbols and property keys

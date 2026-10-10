@@ -65,6 +65,7 @@ pub(crate) struct Decoded {
     pub next_pc: u32,
 }
 
+#[cfg(test)]
 impl Decoded {
     #[inline(always)]
     pub fn operand(self, index: usize) -> u32 {
@@ -290,7 +291,6 @@ impl ExecCode {
             #[cfg(test)]
             test_ir: code.to_vec().into(),
         };
-        result.verify()?;
         Ok(result)
     }
 
@@ -347,9 +347,10 @@ impl ExecCode {
         })
     }
 
-    /// Published words and all static control-flow targets were verified once.
-    /// The execution loop needs only bounds-safe loads and the encoded layout;
-    /// it does not recheck the immutable header contract on every visit.
+    /// The encoder establishes the word layout and every static control-flow
+    /// target by construction from the compiler's verified instruction stream
+    /// (`verify_parts` bounds every jump). The execution loop needs only
+    /// bounds-safe loads and does not recheck the header contract per visit.
     #[inline(always)]
     pub(crate) fn decode_published(&self, pc: u32) -> Result<PublishedDecoded<'_>, ExecCodeError> {
         let word = self
@@ -373,510 +374,6 @@ impl ExecCode {
         })
     }
 
-    pub(crate) fn verify(&self) -> Result<(), ExecCodeError> {
-        if self.boundaries.first() != Some(&0)
-            || self.boundaries.last() != Some(&(self.words.len() as u32))
-        {
-            return Err(ExecCodeError::InvalidBoundary);
-        }
-        let mut pc = 0u32;
-        let mut entries = HashSet::new();
-        let mut seen_regions =
-            vec![false; self.regions.as_ref().map_or(0, |regions| regions.len())];
-        for &expected in self.boundaries.iter().take(self.boundaries.len() - 1) {
-            if pc != expected {
-                return Err(ExecCodeError::InvalidBoundary);
-            }
-            let decoded = self.decode(pc)?;
-            if let Some(index) = decoded.opcode.target_operand() {
-                let target = decoded.operand(usize::from(index));
-                if target == self.words.len() as u32
-                    || self.boundaries.binary_search(&target).is_err()
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-                entries.insert(target);
-            }
-            if is_region_opcode(decoded.opcode) {
-                let Some(seen) = seen_regions.get_mut(decoded.operand(0) as usize) else {
-                    return Err(ExecCodeError::InvalidTarget);
-                };
-                if *seen {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-                *seen = true;
-                for index in [1, 2] {
-                    let target = decoded.operand(index);
-                    if target == self.words.len() as u32
-                        || self.boundaries.binary_search(&target).is_err()
-                    {
-                        return Err(ExecCodeError::InvalidTarget);
-                    }
-                    if index == 1 {
-                        entries.insert(target);
-                    }
-                }
-            }
-            if decoded.opcode == Opcode::Gosub {
-                entries.insert(decoded.next_pc);
-            }
-            pc = decoded.next_pc;
-        }
-        if pc != self.words.len() as u32 {
-            return Err(ExecCodeError::InvalidBoundary);
-        }
-        if seen_regions.iter().any(|seen| !seen) {
-            return Err(ExecCodeError::InvalidTarget);
-        }
-        for source in 0..self.instruction_len() {
-            if self.opcode_at_source(source).is_some_and(is_region_opcode) {
-                self.verify_numeric_region(source, &entries)?;
-            }
-            if self.opcode_at_source(source) == Some(Opcode::FieldAccSetDrop) {
-                let first = self.decode(self.boundaries[source])?;
-                let packed = first.operand(1);
-                let end = *self
-                    .boundaries
-                    .get(source + 6)
-                    .ok_or(ExecCodeError::InvalidBoundary)?;
-                let expected = [
-                    Opcode::GetLocal,
-                    Opcode::GetFieldCached,
-                    Opcode::Add,
-                    Opcode::SetLocal,
-                    Opcode::Drop,
-                ];
-                if first.operand(0) > u32::from(u16::MAX)
-                    || first.next_pc + 5 != end
-                    || (1..6).any(|offset| entries.contains(&self.boundaries[source + offset]))
-                    || expected.iter().enumerate().any(|(offset, expected)| {
-                        self.opcode_at_source(source + offset + 1) != Some(*expected)
-                            || self.boundaries[source + offset + 2]
-                                != self.boundaries[source + offset + 1] + 1
-                    })
-                    || self.decode(self.boundaries[source + 1])?.operand(0) != packed & 0xffff
-                    || self.decode(self.boundaries[source + 2])?.operand(0) != packed >> 16
-                    || self.decode(self.boundaries[source + 4])?.operand(0) != first.operand(0)
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if self.opcode_at_source(source) == Some(Opcode::DenseAccIndexSetDrop) {
-                let first = self.decode(self.boundaries[source])?;
-                let packed = first.operand(1);
-                let mask = first.operand(2);
-                let acc = first.operand(0);
-                let end = *self
-                    .boundaries
-                    .get(source + 9)
-                    .ok_or(ExecCodeError::InvalidBoundary)?;
-                let expected = [
-                    Opcode::GetLocal,
-                    Opcode::GetLocal,
-                    Opcode::PushI32,
-                    Opcode::BitAnd,
-                    Opcode::GetArrayEl,
-                    Opcode::Add,
-                    Opcode::SetLocal,
-                    Opcode::Drop,
-                ];
-                if mask & !0xffff != 0
-                    || acc > u32::from(u16::MAX)
-                    || first.next_pc + 8 != end
-                    || (1..9).any(|offset| entries.contains(&self.boundaries[source + offset]))
-                    || expected.iter().enumerate().any(|(offset, expected)| {
-                        self.opcode_at_source(source + offset + 1) != Some(*expected)
-                            || self.boundaries[source + offset + 2]
-                                != self.boundaries[source + offset + 1] + 1
-                    })
-                    || self.decode(self.boundaries[source + 1])?.operand(0) != packed & 0xffff
-                    || self.decode(self.boundaries[source + 2])?.operand(0) != packed >> 16
-                    || self.decode(self.boundaries[source + 3])?.signed_operand(0)
-                        != i32::from(mask as u16 as i16)
-                    || self.decode(self.boundaries[source + 7])?.operand(0) != acc
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if matches!(
-                self.opcode_at_source(source),
-                Some(
-                    Opcode::DensePostUpdateLocal
-                        | Opcode::DensePostUpdateLocalCheck
-                        | Opcode::DensePostUpdateArg
-                )
-            ) {
-                let first = self.decode(self.boundaries[source])?;
-                let descriptor = first.operand(1);
-                let index_arg = descriptor & 0x1_0000 != 0;
-                let index = self.decode(
-                    *self
-                        .boundaries
-                        .get(source + 1)
-                        .ok_or(ExecCodeError::InvalidBoundary)?,
-                )?;
-                let store = self.decode(
-                    *self
-                        .boundaries
-                        .get(source + 3)
-                        .ok_or(ExecCodeError::InvalidBoundary)?,
-                )?;
-                let end = *self
-                    .boundaries
-                    .get(source + 5)
-                    .ok_or(ExecCodeError::InvalidBoundary)?;
-                if first.operand(0) > u32::from(u16::MAX)
-                    || descriptor & !0x3_ffff != 0
-                    || !matches!(
-                        index.opcode,
-                        Opcode::GetArg if index_arg
-                    ) && !matches!(
-                        index.opcode,
-                        Opcode::GetLocal | Opcode::GetLocalCheck if !index_arg
-                    )
-                    || index.operand(0) != descriptor & 0xffff
-                    || self.opcode_at_source(source + 2)
-                        != Some(if descriptor & 0x2_0000 != 0 {
-                            Opcode::PostDec
-                        } else {
-                            Opcode::PostInc
-                        })
-                    || (!index_arg
-                        && !matches!(store.opcode, Opcode::PutLocal | Opcode::PutLocalCheck))
-                    || (index_arg && store.opcode != Opcode::PutArg)
-                    || store.operand(0) != descriptor & 0xffff
-                    || self.opcode_at_source(source + 4) != Some(Opcode::GetArrayElDense)
-                    || first.operand(2) != end
-                    || (1..5).any(|offset| entries.contains(&self.boundaries[source + offset]))
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if matches!(
-                self.opcode_at_source(source),
-                Some(Opcode::UpdateLocalDiscard | Opcode::UpdateLocalDiscardCheck)
-            ) {
-                let first = self.decode(self.boundaries[source])?;
-                let packed = first.operand(0);
-                let index = packed & 0x1fff;
-                let descriptor = packed >> 13;
-                let operation = self
-                    .opcode_at_source(source + 1)
-                    .ok_or(ExecCodeError::InvalidBoundary)?;
-                let expected_operation = match (descriptor & 1 != 0, descriptor & 2 != 0) {
-                    (true, false) => Opcode::Inc,
-                    (false, false) => Opcode::Dec,
-                    (true, true) => Opcode::PostInc,
-                    (false, true) => Opcode::PostDec,
-                };
-                let store = self.decode(
-                    *self
-                        .boundaries
-                        .get(source + 2)
-                        .ok_or(ExecCodeError::InvalidBoundary)?,
-                )?;
-                let put = matches!(store.opcode, Opcode::PutLocal | Opcode::PutLocalCheck);
-                let set = matches!(store.opcode, Opcode::SetLocal | Opcode::SetLocalCheck);
-                let length = if descriptor & 4 != 0 { 4 } else { 3 };
-                let expected_length = if descriptor & 2 != 0 || set { 4 } else { 3 };
-                let end = *self
-                    .boundaries
-                    .get(source + length)
-                    .ok_or(ExecCodeError::InvalidBoundary)?;
-                if descriptor & !7 != 0
-                    || packed > u32::from(u16::MAX)
-                    || first.next_pc != self.boundaries[source] + 1
-                    || operation != expected_operation
-                    || (!put && !set)
-                    || (descriptor & 2 != 0 && !put)
-                    || length != expected_length
-                    || store.operand(0) != index
-                    || first.next_pc + (length as u32 - 1) != end
-                    || (length == 4 && self.opcode_at_source(source + 3) != Some(Opcode::Drop))
-                    || (1..length).any(|offset| entries.contains(&self.boundaries[source + offset]))
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if self.opcode_at_source(source) == Some(Opcode::CompareBranchStack) {
-                let first = self.decode(self.boundaries[source])?;
-                let descriptor = first.operand(0);
-                let comparison = Opcode::from_raw((descriptor & 0x3ff) as u16)
-                    .ok_or(ExecCodeError::BadOpcode)?;
-                let branch = self.decode(
-                    *self
-                        .boundaries
-                        .get(source + 1)
-                        .ok_or(ExecCodeError::InvalidBoundary)?,
-                )?;
-                if descriptor & !0x7ff != 0
-                    || !matches!(
-                        comparison,
-                        Opcode::Lt
-                            | Opcode::Lte
-                            | Opcode::Gt
-                            | Opcode::Gte
-                            | Opcode::Eq
-                            | Opcode::Neq
-                            | Opcode::StrictEq
-                            | Opcode::StrictNeq
-                    )
-                    || entries.contains(&self.boundaries[source + 1])
-                    || branch.opcode
-                        != if descriptor & 0x400 != 0 {
-                            Opcode::IfTrue
-                        } else {
-                            Opcode::IfFalse
-                        }
-                    || branch.operand(0) != first.operand(1)
-                    || branch.next_pc != first.next_pc + 2
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if matches!(
-                self.opcode_at_source(source),
-                Some(
-                    Opcode::CompareBranchLocal
-                        | Opcode::CompareBranchArg
-                        | Opcode::CompareBranchLocalLt
-                        | Opcode::CompareBranchArgLt
-                )
-            ) {
-                let first = self.decode(self.boundaries[source])?;
-                let descriptor = first.operand(1);
-                let is_arg = descriptor & 0x1_0000 != 0;
-                let comparison = Opcode::from_raw(((descriptor >> 17) & 0x3ff) as u16)
-                    .ok_or(ExecCodeError::BadOpcode)?;
-                let when_true = descriptor & 0x800_0000 != 0;
-                let branch = self.decode(
-                    *self
-                        .boundaries
-                        .get(source + 3)
-                        .ok_or(ExecCodeError::InvalidBoundary)?,
-                )?;
-                // Bits 0..=26 carry the right operand, its source and the comparison;
-                // bit 27 is `when_true`. Only the bits above it are reserved.
-                if descriptor & 0xF000_0000 != 0
-                    || !matches!(
-                        comparison,
-                        Opcode::Lt
-                            | Opcode::Lte
-                            | Opcode::Gt
-                            | Opcode::Gte
-                            | Opcode::Eq
-                            | Opcode::Neq
-                            | Opcode::StrictEq
-                            | Opcode::StrictNeq
-                    )
-                    || (matches!(
-                        first.opcode,
-                        Opcode::CompareBranchLocalLt | Opcode::CompareBranchArgLt
-                    ) && comparison != Opcode::Lt)
-                    || (1..4).any(|offset| entries.contains(&self.boundaries[source + offset]))
-                    || self.opcode_at_source(source + 1)
-                        != Some(if is_arg {
-                            Opcode::GetArg
-                        } else {
-                            Opcode::GetLocal
-                        })
-                    || self.decode(self.boundaries[source + 1])?.operand(0) != descriptor & 0xffff
-                    || self.opcode_at_source(source + 2) != Some(comparison)
-                    || branch.opcode
-                        != if when_true {
-                            Opcode::IfTrue
-                        } else {
-                            Opcode::IfFalse
-                        }
-                    || branch.operand(0) != first.operand(2)
-                    || branch.next_pc != first.next_pc + 4
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if matches!(
-                self.opcode_at_source(source),
-                Some(Opcode::DenseReadLocal | Opcode::DenseReadArg)
-            ) {
-                let first = self.decode(self.boundaries[source])?;
-                let end = *self
-                    .boundaries
-                    .get(source + 3)
-                    .ok_or(ExecCodeError::InvalidBoundary)?;
-                let key = first.operand(1);
-                let is_arg = key & 0x1_0000 != 0;
-                if first.operand(2) != end
-                    || key & !0x1_ffff != 0
-                    || (1..3).any(|offset| entries.contains(&self.boundaries[source + offset]))
-                    || self.opcode_at_source(source + 1)
-                        != Some(if is_arg {
-                            Opcode::GetArg
-                        } else {
-                            Opcode::GetLocal
-                        })
-                    || self.decode(self.boundaries[source + 1])?.operand(0) != key & 0xffff
-                    || self.opcode_at_source(source + 2) != Some(Opcode::GetArrayElDense)
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if matches!(
-                self.opcode_at_source(source),
-                Some(
-                    Opcode::DenseReadBinaryLocal
-                        | Opcode::DenseReadBinaryArg
-                        | Opcode::DenseIndexBinaryLocal
-                        | Opcode::DenseIndexBinaryArg
-                )
-            ) {
-                let index_binary = matches!(
-                    self.opcode_at_source(source),
-                    Some(Opcode::DenseIndexBinaryLocal | Opcode::DenseIndexBinaryArg)
-                );
-                let first = self.decode(self.boundaries[source])?;
-                let slots = first.operand(1);
-                let descriptor = first.operand(2);
-                let operation = Opcode::from_raw((descriptor & 0x3ff) as u16)
-                    .ok_or(ExecCodeError::BadOpcode)?;
-                let key = self.decode(
-                    *self
-                        .boundaries
-                        .get(source + 1)
-                        .ok_or(ExecCodeError::InvalidBoundary)?,
-                )?;
-                let rhs = self.decode(
-                    *self
-                        .boundaries
-                        .get(source + if index_binary { 2 } else { 3 })
-                        .ok_or(ExecCodeError::InvalidBoundary)?,
-                )?;
-                let end = *self
-                    .boundaries
-                    .get(source + 5)
-                    .ok_or(ExecCodeError::InvalidBoundary)?;
-                let rhs_mode = (descriptor >> 11) & 3;
-                let rhs_expected = match rhs_mode {
-                    0 => Opcode::GetLocal,
-                    1 => Opcode::GetArg,
-                    2 => Opcode::PushI32,
-                    _ => return Err(ExecCodeError::InvalidTarget),
-                };
-                let rhs_value = if rhs_mode == 2 {
-                    u32::from_ne_bytes(i32::from((slots >> 16) as i16).to_ne_bytes())
-                } else {
-                    slots >> 16
-                };
-                if descriptor & !0x1fff != 0
-                    || !(if index_binary {
-                        is_dense_index_binary(operation)
-                    } else {
-                        is_dense_number_binary(operation)
-                    })
-                    || first.operand(0) > u32::from(u16::MAX)
-                    || (1..5).any(|offset| entries.contains(&self.boundaries[source + offset]))
-                    || key.opcode
-                        != if descriptor & 0x400 != 0 {
-                            Opcode::GetArg
-                        } else {
-                            Opcode::GetLocal
-                        }
-                    || key.operand(0) != slots & 0xffff
-                    || self.opcode_at_source(source + if index_binary { 4 } else { 2 })
-                        != Some(Opcode::GetArrayElDense)
-                    || rhs.opcode != rhs_expected
-                    || rhs.operand(0) != rhs_value
-                    || self.opcode_at_source(source + if index_binary { 3 } else { 4 })
-                        != Some(operation)
-                    || end != first.next_pc + 4
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if matches!(
-                self.opcode_at_source(source),
-                Some(
-                    Opcode::BorrowedFieldLocal
-                        | Opcode::BorrowedFieldArg
-                        | Opcode::BorrowedFieldThis
-                )
-            ) {
-                let first = self.decode(self.boundaries[source])?;
-                let end = *self
-                    .boundaries
-                    .get(source + 2)
-                    .ok_or(ExecCodeError::InvalidBoundary)?;
-                if first.operand(2) != end
-                    || (first.opcode == Opcode::BorrowedFieldThis && first.operand(0) != 0)
-                    || entries.contains(&self.boundaries[source + 1])
-                    || self.opcode_at_source(source + 1) != Some(Opcode::GetFieldCached)
-                    || self.decode(self.boundaries[source + 1])?.operand(0) != first.operand(1)
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if matches!(
-                self.opcode_at_source(source),
-                Some(Opcode::DensePreUpdateLocal | Opcode::DensePreUpdateArg)
-            ) {
-                let first = self.decode(self.boundaries[source])?;
-                let end = *self
-                    .boundaries
-                    .get(source + 5)
-                    .ok_or(ExecCodeError::InvalidBoundary)?;
-                if first.operand(2) != end
-                    || (1..5).any(|offset| entries.contains(&self.boundaries[source + offset]))
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-                let update = first.operand(1);
-                let update_is_arg = update & 0x1_0000 != 0;
-                let decrement = update & 0x2_0000 != 0;
-                if update & !0x3_ffff != 0
-                    || self.opcode_at_source(source + 1)
-                        != Some(if update_is_arg {
-                            Opcode::GetArg
-                        } else {
-                            Opcode::GetLocal
-                        })
-                    || self.decode(self.boundaries[source + 1])?.operand(0) != update & 0xffff
-                    || self.opcode_at_source(source + 2)
-                        != Some(if decrement { Opcode::Dec } else { Opcode::Inc })
-                    || self.opcode_at_source(source + 3)
-                        != Some(if update_is_arg {
-                            Opcode::SetArg
-                        } else {
-                            Opcode::SetLocal
-                        })
-                    || self.decode(self.boundaries[source + 3])?.operand(0) != update & 0xffff
-                    || self.opcode_at_source(source + 4) != Some(Opcode::GetArrayElDense)
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            if !matches!(
-                self.opcode_at_source(source),
-                Some(Opcode::NumberLocalInc | Opcode::NumberArgInc)
-            ) {
-                continue;
-            }
-            let Some(&middle) = self.boundaries.get(source + 1) else {
-                return Err(ExecCodeError::InvalidBoundary);
-            };
-            let Some(&last) = self.boundaries.get(source + 2) else {
-                return Err(ExecCodeError::InvalidBoundary);
-            };
-            if entries.contains(&middle)
-                || entries.contains(&last)
-                || self.opcode_at_source(source + 1) != Some(Opcode::PushI32)
-                || self.decode(middle)?.signed_operand(0) != 1
-                || self.opcode_at_source(source + 2) != Some(Opcode::Add)
-            {
-                return Err(ExecCodeError::InvalidTarget);
-            }
-        }
-        Ok(())
-    }
-
     pub(crate) fn numeric_region(&self, index: u32) -> Option<&PublishedNumericRegion> {
         self.regions.as_deref()?.get(index as usize)
     }
@@ -895,374 +392,6 @@ impl ExecCode {
     #[cfg(feature = "profiling")]
     pub(crate) fn rejected_numeric_sites(&self) -> &[RejectedNumericSite] {
         &self.rejected_numeric_sites
-    }
-
-    fn verify_numeric_region(
-        &self,
-        source: usize,
-        entries: &HashSet<u32>,
-    ) -> Result<(), ExecCodeError> {
-        let first = self.decode(self.boundaries[source])?;
-        let published = self
-            .numeric_region(first.operand(0))
-            .ok_or(ExecCodeError::InvalidTarget)?;
-        let product = if first.opcode == Opcode::NumericArrayUpdateElement {
-            published
-                .producer_index
-                .map(|index| {
-                    self.product_source(index)
-                        .ok_or(ExecCodeError::InvalidTarget)
-                })
-                .transpose()?
-        } else {
-            None
-        };
-        let copy = if first.opcode == Opcode::NumericArrayCopyElement {
-            Some(
-                self.copy_source(
-                    published
-                        .producer_index
-                        .ok_or(ExecCodeError::InvalidTarget)?,
-                )
-                .ok_or(ExecCodeError::InvalidTarget)?,
-            )
-        } else {
-            None
-        };
-        if published.producer_index.is_some() && product.is_none() && copy.is_none()
-            || product.is_some() && !matches!(published.value, NumberSource::Immediate(0))
-        {
-            return Err(ExecCodeError::InvalidTarget);
-        }
-        if published.shared_update_index
-            != product.is_some_and(|product| {
-                matches!(
-                    (published.index, product.index),
-                    (NumberSource::Direct(left), NumberSource::Direct(right)) if left == right
-                )
-            })
-        {
-            return Err(ExecCodeError::InvalidTarget);
-        }
-        let start = source;
-        let end = start
-            + match first.opcode {
-                Opcode::NumericArrayAccumulate => 9,
-                Opcode::NumericArrayStoreProduct => 7,
-                Opcode::NumericArrayCopyElement => 8,
-                Opcode::NumericArrayAddPreInc => 6,
-                Opcode::NumericArrayStoreAndLocal => 4,
-                Opcode::NumericArrayUpdateElement => {
-                    if product.is_some() {
-                        12
-                    } else {
-                        8
-                    }
-                }
-                Opcode::NumericArrayCompareBranch => 6,
-                _ => return Err(ExecCodeError::InvalidTarget),
-            };
-        let operation = match first.opcode {
-            Opcode::NumericArrayAccumulate => NumericOperation::Accumulate {
-                destination: published.destination,
-                scale: published.value,
-                checked: published.checked,
-            },
-            Opcode::NumericArrayStoreProduct => NumericOperation::StoreProduct {
-                destination: published.destination,
-                scale: published.value,
-                checked: published.checked,
-            },
-            Opcode::NumericArrayCopyElement => NumericOperation::CopyElement {
-                source: copy.ok_or(ExecCodeError::InvalidTarget)?,
-            },
-            Opcode::NumericArrayAddPreInc => NumericOperation::AddPreInc,
-            Opcode::NumericArrayStoreAndLocal => NumericOperation::StoreElementAndLocal {
-                destination: published.destination,
-                checked: published.checked,
-            },
-            Opcode::NumericArrayUpdateElement => NumericOperation::UpdateElement {
-                delta: match product {
-                    Some(product) => UpdateDelta::ArrayProduct(product),
-                    None => UpdateDelta::Number(published.value),
-                },
-            },
-            Opcode::NumericArrayCompareBranch => NumericOperation::CompareBranch {
-                rhs: published.value,
-                comparison: published.comparison,
-                when_true: published.when_true,
-                target: self
-                    .source_pc(first.operand(1))
-                    .ok_or(ExecCodeError::InvalidTarget)?,
-            },
-            _ => unreachable!(),
-        };
-        let region = NumericRegion {
-            start: source as u32,
-            end: end as u32,
-            array: published.array,
-            index: published.index,
-            operation,
-            peak: published.peak,
-        };
-        let success = match region.operation {
-            NumericOperation::CompareBranch { target, .. } => self.exec_pc(target),
-            _ => self.boundaries.get(end).copied(),
-        };
-        if start != source
-            || end >= self.instruction_len()
-            || published.fallthrough_pc != self.boundaries[end]
-            || first.opcode != region_opcode(region.operation)
-            || Some(first.operand(1)) != success
-            || first.operand(2) != self.boundaries[start + 1]
-            || (start + 1..end).any(|index| entries.contains(&self.boundaries[index]))
-        {
-            return Err(ExecCodeError::InvalidTarget);
-        }
-        let mut expected = [Opcode::Nop; 12];
-        let expected_len = match region.operation {
-            NumericOperation::Accumulate {
-                destination: _,
-                scale,
-                checked,
-            } => {
-                expected[..9].copy_from_slice(&[
-                    if checked {
-                        Opcode::GetLocalCheck
-                    } else {
-                        Opcode::GetLocal
-                    },
-                    direct_opcode(region.array),
-                    number_opcode(region.index),
-                    Opcode::GetArrayEl,
-                    number_opcode(scale),
-                    Opcode::Mul,
-                    Opcode::Add,
-                    if checked {
-                        Opcode::SetLocalCheck
-                    } else {
-                        Opcode::SetLocal
-                    },
-                    Opcode::Drop,
-                ]);
-                9
-            }
-            NumericOperation::StoreProduct {
-                destination: _,
-                scale,
-                checked,
-            } => {
-                expected[..7].copy_from_slice(&[
-                    direct_opcode(region.array),
-                    number_opcode(region.index),
-                    Opcode::GetArrayEl,
-                    number_opcode(scale),
-                    Opcode::Mul,
-                    if checked {
-                        Opcode::SetLocalCheck
-                    } else {
-                        Opcode::SetLocal
-                    },
-                    Opcode::Drop,
-                ]);
-                7
-            }
-            NumericOperation::CopyElement { source } => {
-                expected[..8].copy_from_slice(&[
-                    direct_opcode(region.array),
-                    number_opcode(region.index),
-                    direct_opcode(source.array),
-                    number_opcode(source.index),
-                    Opcode::GetArrayEl,
-                    Opcode::Insert3,
-                    Opcode::PutArrayEl,
-                    Opcode::Drop,
-                ]);
-                8
-            }
-            NumericOperation::AddPreInc => {
-                let NumberSource::Direct(index) = region.index else {
-                    return Err(ExecCodeError::InvalidTarget);
-                };
-                expected[..6].copy_from_slice(&[
-                    direct_opcode(region.array),
-                    direct_opcode(index),
-                    Opcode::Inc,
-                    if matches!(index, DirectSource::CheckedLocal(_)) {
-                        Opcode::SetLocalCheck
-                    } else {
-                        Opcode::SetLocal
-                    },
-                    Opcode::GetArrayEl,
-                    Opcode::Add,
-                ]);
-                6
-            }
-            NumericOperation::StoreElementAndLocal { checked, .. } => {
-                expected[..4].copy_from_slice(&[
-                    Opcode::Insert3,
-                    Opcode::PutArrayEl,
-                    if checked {
-                        Opcode::SetLocalCheck
-                    } else {
-                        Opcode::SetLocal
-                    },
-                    Opcode::Drop,
-                ]);
-                4
-            }
-            NumericOperation::UpdateElement { delta } => match delta {
-                UpdateDelta::Number(source) => {
-                    expected[..8].copy_from_slice(&[
-                        direct_opcode(region.array),
-                        number_opcode(region.index),
-                        Opcode::GetArrayEl3,
-                        number_opcode(source),
-                        Opcode::Add,
-                        Opcode::Insert3,
-                        Opcode::PutArrayEl,
-                        Opcode::Drop,
-                    ]);
-                    8
-                }
-                UpdateDelta::ArrayProduct(product) => {
-                    expected.copy_from_slice(&[
-                        direct_opcode(region.array),
-                        number_opcode(region.index),
-                        Opcode::GetArrayEl3,
-                        number_opcode(product.scale),
-                        direct_opcode(product.array),
-                        number_opcode(product.index),
-                        Opcode::GetArrayEl,
-                        Opcode::Mul,
-                        Opcode::Add,
-                        Opcode::Insert3,
-                        Opcode::PutArrayEl,
-                        Opcode::Drop,
-                    ]);
-                    12
-                }
-            },
-            NumericOperation::CompareBranch {
-                rhs,
-                comparison,
-                when_true,
-                ..
-            } => {
-                expected[..6].copy_from_slice(&[
-                    direct_opcode(region.array),
-                    number_opcode(region.index),
-                    Opcode::GetArrayEl,
-                    number_opcode(rhs),
-                    comparison,
-                    if when_true {
-                        Opcode::IfTrue
-                    } else {
-                        Opcode::IfFalse
-                    },
-                ]);
-                6
-            }
-        };
-        if end != start + expected_len {
-            return Err(ExecCodeError::InvalidTarget);
-        }
-        for (offset, &opcode) in expected[..expected_len].iter().enumerate().skip(1) {
-            let decoded = self.decode(self.boundaries[start + offset])?;
-            if decoded.opcode != opcode {
-                return Err(ExecCodeError::InvalidTarget);
-            }
-        }
-        let (array_offset, index_offset) = match region.operation {
-            NumericOperation::Accumulate { .. } => (1, 2),
-            _ => (0, 1),
-        };
-        if !matches!(
-            region.operation,
-            NumericOperation::StoreElementAndLocal { .. }
-        ) && (array_offset != 0
-            && !verify_direct_operand(self, start + array_offset, region.array)?
-            || !verify_number_operand(self, start + index_offset, region.index)?)
-        {
-            return Err(ExecCodeError::InvalidTarget);
-        }
-        match region.operation {
-            NumericOperation::Accumulate {
-                destination, scale, ..
-            } => {
-                if self.decode(self.boundaries[start + 7])?.operand(0) != u32::from(destination)
-                    || !verify_number_operand(self, start + 4, scale)?
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            NumericOperation::StoreProduct {
-                destination, scale, ..
-            } => {
-                if self.decode(self.boundaries[start + 5])?.operand(0) != u32::from(destination)
-                    || !verify_number_operand(self, start + 3, scale)?
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            NumericOperation::CopyElement { source } => {
-                if !verify_direct_operand(self, start + 2, source.array)?
-                    || !verify_number_operand(self, start + 3, source.index)?
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            NumericOperation::AddPreInc => {
-                let NumberSource::Direct(index) = region.index else {
-                    return Err(ExecCodeError::InvalidTarget);
-                };
-                let slot = match index {
-                    DirectSource::Local(slot) | DirectSource::CheckedLocal(slot) => slot,
-                    DirectSource::Argument(_) => return Err(ExecCodeError::InvalidTarget),
-                };
-                if self.decode(self.boundaries[start + 3])?.operand(0) != u32::from(slot)
-                    || published.peak != 2
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            NumericOperation::StoreElementAndLocal {
-                destination,
-                checked: _,
-            } => {
-                if self.decode(self.boundaries[start + 2])?.operand(0) != u32::from(destination)
-                    || published.peak != 1
-                    || !matches!(published.array, DirectSource::Local(0))
-                    || !matches!(published.index, NumberSource::Immediate(0))
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-            NumericOperation::UpdateElement { delta } => match delta {
-                UpdateDelta::Number(source) => {
-                    if !verify_number_operand(self, start + 3, source)? {
-                        return Err(ExecCodeError::InvalidTarget);
-                    }
-                }
-                UpdateDelta::ArrayProduct(product) => {
-                    if !verify_number_operand(self, start + 3, product.scale)?
-                        || !verify_direct_operand(self, start + 4, product.array)?
-                        || !verify_number_operand(self, start + 5, product.index)?
-                    {
-                        return Err(ExecCodeError::InvalidTarget);
-                    }
-                }
-            },
-            NumericOperation::CompareBranch { rhs, target, .. } => {
-                if !verify_number_operand(self, start + 3, rhs)?
-                    || self.decode(self.boundaries[start + 5])?.operand(0)
-                        != self.boundaries[target as usize]
-                {
-                    return Err(ExecCodeError::InvalidTarget);
-                }
-            }
-        }
-        Ok(())
     }
 
     #[inline]
@@ -1367,61 +496,6 @@ impl ExecCode {
         u32::try_from(exec_pc)
             .ok()
             .is_some_and(|pc| self.boundaries.binary_search(&pc).is_ok())
-    }
-
-    /// Only the opcode bits change. Operand count, extension width, and all
-    /// target/resume offsets remain fixed. Callers must establish any dynamic
-    /// guard and the exact paired generic opcode before using this method.
-    #[cfg(test)]
-    pub(crate) fn quicken_same_width(
-        &self,
-        pc: u32,
-        expected: Opcode,
-        replacement: Opcode,
-    ) -> Result<bool, ExecCodeError> {
-        let legal = matches!(
-            (expected, replacement),
-            (Opcode::GetLocal, Opcode::NumberLocalInc)
-                | (Opcode::NumberLocalInc, Opcode::GetLocal)
-                | (Opcode::GetArg, Opcode::NumberArgInc)
-                | (Opcode::NumberArgInc, Opcode::GetArg)
-                | (Opcode::GetField, Opcode::GetFieldCached)
-                | (Opcode::GetFieldCached, Opcode::GetField)
-                | (Opcode::GetField2, Opcode::GetField2Cached)
-                | (Opcode::GetField2Cached, Opcode::GetField2)
-                | (Opcode::GetArrayEl, Opcode::GetArrayElDense)
-                | (Opcode::GetArrayElDense, Opcode::GetArrayEl)
-                | (Opcode::GetArrayEl2, Opcode::GetArrayEl2Dense)
-                | (Opcode::GetArrayEl2Dense, Opcode::GetArrayEl2)
-                | (Opcode::GetArrayEl3, Opcode::GetArrayEl3Dense)
-                | (Opcode::GetArrayEl3Dense, Opcode::GetArrayEl3)
-        );
-        if !legal {
-            return Err(ExecCodeError::BadOpcode);
-        }
-        if expected.operand_count() != replacement.operand_count()
-            || expected.target_operand() != replacement.target_operand()
-        {
-            return Err(ExecCodeError::BadOperandCount);
-        }
-        if self.boundaries.binary_search(&pc).is_err() {
-            return Err(ExecCodeError::InvalidBoundary);
-        }
-        let cell = self
-            .words
-            .get(pc as usize)
-            .ok_or(ExecCodeError::Truncated)?;
-        let word = cell.get();
-        if ((word >> 16) as u16 & OPCODE_MASK) != expected as u16 {
-            return Ok(false);
-        }
-        let header = ((word >> 16) as u16 & !OPCODE_MASK) | replacement as u16;
-        cell.set((u32::from(header) << 16) | (word & 0xffff));
-        if let Err(error) = self.verify() {
-            cell.set(word);
-            return Err(error);
-        }
-        Ok(true)
     }
 
     #[cfg(test)]
@@ -1647,30 +721,6 @@ fn field_acc_shape(
         }
     }
     Some((*acc, *base, field))
-}
-
-fn direct_opcode(source: DirectSource) -> Opcode {
-    match source {
-        DirectSource::Local(_) => Opcode::GetLocal,
-        DirectSource::CheckedLocal(_) => Opcode::GetLocalCheck,
-        DirectSource::Argument(_) => Opcode::GetArg,
-    }
-}
-
-fn direct_index(source: DirectSource) -> u32 {
-    match source {
-        DirectSource::Local(index)
-        | DirectSource::CheckedLocal(index)
-        | DirectSource::Argument(index) => u32::from(index),
-    }
-}
-
-fn number_opcode(source: NumberSource) -> Opcode {
-    match source {
-        NumberSource::Direct(source) => direct_opcode(source),
-        NumberSource::Immediate(_) => Opcode::PushI32,
-        NumberSource::Constant { .. } => Opcode::PushConst,
-    }
 }
 
 fn number_matches_raw(source: NumberSource, raw: &BytecodeConstant) -> bool {
@@ -2414,36 +1464,6 @@ fn region_stack_contract(
     depth == output_depth && peak - input_depth == usize::from(expected_peak)
 }
 
-fn verify_number_operand(
-    code: &ExecCode,
-    source: usize,
-    value: NumberSource,
-) -> Result<bool, ExecCodeError> {
-    let decoded = code.decode(code.boundaries[source])?;
-    Ok(match value {
-        NumberSource::Direct(direct) => {
-            decoded.opcode == direct_opcode(direct) && decoded.operand(0) == direct_index(direct)
-        }
-        NumberSource::Immediate(value) => {
-            decoded.opcode == Opcode::PushI32 && decoded.signed_operand(0) == value
-        }
-        NumberSource::Constant { index, .. } => {
-            decoded.opcode == Opcode::PushConst && decoded.operand(0) == index
-            // The linked constant and its range were checked before
-            // encoding; the word verifier checks immutable identity.
-        }
-    })
-}
-
-fn verify_direct_operand(
-    code: &ExecCode,
-    source: usize,
-    value: DirectSource,
-) -> Result<bool, ExecCodeError> {
-    let decoded = code.decode(code.boundaries[source])?;
-    Ok(decoded.opcode == direct_opcode(value) && decoded.operand(0) == direct_index(value))
-}
-
 fn select_opcodes(
     code: &[Instruction],
     locals: Option<&[VariableDefinition]>,
@@ -3118,30 +2138,20 @@ mod tests {
         assert_eq!(code.decode(2).unwrap().operand(0), 5);
         assert_eq!(code.decode(4).unwrap().signed_operand(0), -1);
         assert_eq!(code.source_pc(3), None);
-        code.verify().unwrap();
         assert!(
             code.disassemble()
                 .unwrap()
                 .lines()
                 .any(|line| { line.split_whitespace().any(|word| word == "PushConst") })
         );
-        let header = code.words[0].get();
-        code.words[0].set(header ^ (1 << (16 + WIDTH_SHIFT)));
-        assert_eq!(code.verify(), Err(ExecCodeError::InvalidHeader));
     }
 
     #[test]
-    fn invalid_targets_and_extension_entry_are_rejected() {
-        assert_eq!(
-            ExecCode::encode(&[Instruction::Goto(1)]).unwrap_err(),
-            ExecCodeError::InvalidTarget
-        );
+    fn extension_words_are_not_instruction_entries() {
         let code =
             ExecCode::encode(&[Instruction::PushConst(0x1_0000), Instruction::Goto(0)]).unwrap();
         assert_eq!(code.opcode_at_exec(1), None);
         assert_eq!(code.opcode_before(2), Some(Opcode::PushConst));
-        code.words[3].set(1);
-        assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
     }
 
     #[test]
@@ -3157,8 +2167,6 @@ mod tests {
         assert_eq!(code.decode(0).unwrap().operand(0), handler);
         assert_eq!(code.decode(2).unwrap().signed_operand(0), i32::MIN);
         assert_eq!(code.source_pc(handler), Some(3));
-        code.words[1].set(3);
-        assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
     }
 
     #[test]
@@ -3183,11 +2191,6 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(entered.opcode_at_source(1), Some(Opcode::GetLocal));
-        assert_eq!(
-            entered.quicken_same_width(2, Opcode::GetLocal, Opcode::NumberLocalInc),
-            Err(ExecCodeError::InvalidTarget)
-        );
-        assert_eq!(entered.opcode_at_source(1), Some(Opcode::GetLocal));
     }
 
     #[test]
@@ -3204,7 +2207,6 @@ mod tests {
         assert_eq!(code.opcode_at_source(0), Some(Opcode::DensePreUpdateLocal));
         assert_eq!(code.decode(0).unwrap().operand(1), 1);
         assert_eq!(code.decode(0).unwrap().operand(2), code.exec_pc(5).unwrap());
-        code.verify().unwrap();
 
         let entered = ExecCode::encode(&[
             Instruction::Goto(3),
@@ -3238,15 +2240,11 @@ mod tests {
         assert_eq!(code.opcode_at_source(5), Some(Opcode::GetArrayEl));
         assert_eq!(code.decode(0).unwrap().operand(1), 1 | (2 << 16));
         assert_eq!(code.exec_pc(9), Some(11));
-        code.verify().unwrap();
 
         let mut entered = vec![Instruction::Goto(5)];
         entered.extend_from_slice(&body);
         let entered = ExecCode::encode(&entered).unwrap();
         assert_eq!(entered.opcode_at_source(1), Some(Opcode::GetLocal));
-
-        code.words[2].set(0x1_0003);
-        assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
     }
 
     #[test]
@@ -3265,15 +2263,11 @@ mod tests {
         assert_eq!(code.opcode_at_source(2), Some(Opcode::GetFieldCached));
         assert_eq!(code.decode(0).unwrap().operand(1), 1 | (2 << 16));
         assert_eq!(code.exec_pc(6), Some(7));
-        code.verify().unwrap();
 
         let mut entered = vec![Instruction::Goto(3)];
         entered.extend_from_slice(&body);
         let entered = ExecCode::encode(&entered).unwrap();
         assert_eq!(entered.opcode_at_source(1), Some(Opcode::GetLocal));
-
-        code.words[1].set(1 | (3 << 16));
-        assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
     }
 
     #[test]
@@ -3289,7 +2283,6 @@ mod tests {
         assert_eq!(first.operand(0), 0);
         assert_eq!(first.operand(1), 0x1_0000);
         assert_eq!(first.operand(2), code.exec_pc(2).unwrap());
-        code.verify().unwrap();
         let entered = ExecCode::encode(&[
             Instruction::Goto(2),
             Instruction::PushThis,
@@ -3325,7 +2318,6 @@ mod tests {
             code.decode(code.exec_pc(3).unwrap()).unwrap().operand(2),
             code.exec_pc(5).unwrap()
         );
-        code.verify().unwrap();
 
         let entered = ExecCode::encode(&[
             Instruction::Goto(2),
@@ -3348,7 +2340,6 @@ mod tests {
             code.decode(0).unwrap().next_pc + 4,
             code.exec_pc(5).unwrap()
         );
-        code.verify().unwrap();
 
         let immediate = ExecCode::encode(&[
             GetLocal(0),
@@ -3363,7 +2354,6 @@ mod tests {
             immediate.opcode_at_source(0),
             Some(Opcode::DenseReadBinaryLocal)
         );
-        immediate.verify().unwrap();
 
         let entered = ExecCode::encode(&[
             Goto(4),
@@ -3388,7 +2378,6 @@ mod tests {
             code.decode(0).unwrap().next_pc + 4,
             code.exec_pc(5).unwrap()
         );
-        code.verify().unwrap();
 
         let entered = ExecCode::encode(&[
             Goto(3),
@@ -3416,7 +2405,6 @@ mod tests {
         .unwrap();
         assert_eq!(code.opcode_at_source(0), Some(Opcode::CompareBranchLocalLt));
         assert_eq!(code.decode(0).unwrap().operand(2), code.exec_pc(5).unwrap());
-        code.verify().unwrap();
 
         let entered = ExecCode::encode(&[
             Instruction::Goto(2),
@@ -3433,7 +2421,7 @@ mod tests {
     #[test]
     fn specialized_local_comparison_publishes_when_true_branches() {
         // A loop-bottom test (`do { } while (i < n)`) fuses into a span whose
-        // descriptor sets the `when_true` bit; verification must accept it.
+        // descriptor sets the `when_true` bit; publication must accept it.
         for (head, branch) in [
             (Instruction::GetLocal(0), Instruction::IfTrue(0)),
             (Instruction::GetArg(0), Instruction::IfTrue(0)),
@@ -3451,28 +2439,7 @@ mod tests {
                 Some(Opcode::CompareBranchLocalLt | Opcode::CompareBranchArgLt)
             ));
             assert_ne!(code.words[1].get() & 0x0800_0000, 0);
-            code.verify().unwrap();
         }
-    }
-
-    #[test]
-    fn specialized_local_comparison_rejects_corrupt_descriptor() {
-        let code = ExecCode::encode(&[
-            Instruction::GetArg(0),
-            Instruction::GetLocal(1),
-            Instruction::Lt,
-            Instruction::IfFalse(4),
-            Instruction::ReturnUndefined,
-        ])
-        .unwrap();
-        assert_eq!(code.opcode_at_source(0), Some(Opcode::CompareBranchArgLt));
-        let descriptor = code.words[1].get();
-        code.words[1].set(descriptor | 0x0800_0000);
-        assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
-        code.words[1].set(descriptor | 0x1000_0000);
-        assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
-        code.words[1].set((descriptor & !(0x3ff << 17)) | (u32::from(Opcode::Gt as u16) << 17));
-        assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
     }
 
     #[test]
@@ -3491,7 +2458,6 @@ mod tests {
         let span = code.decode(start).unwrap();
         assert_eq!(span.operand(1), code.exec_pc(5).unwrap());
         assert_eq!(span.next_pc + 2, code.exec_pc(4).unwrap());
-        code.verify().unwrap();
 
         let entered = ExecCode::encode(&[
             Instruction::Goto(4),
@@ -3641,8 +2607,6 @@ mod tests {
             let pc = published.exec_pc(source).unwrap();
             assert_eq!(published.source_pc(pc), Some(source));
         }
-        published.words[2].set(published.exec_pc(3).unwrap());
-        assert_eq!(published.verify(), Err(ExecCodeError::InvalidTarget));
         let mut malformed = region;
         malformed.peak = 2;
         assert_eq!(
@@ -3774,22 +2738,6 @@ mod tests {
             let published =
                 ExecCode::encode_with_locals(&code, &[local], &[local], &[region], &[]).unwrap();
             assert_eq!(published.opcode_at_source(0), Some(opcode));
-            published.verify().unwrap();
-            if matches!(
-                operation,
-                NumericOperation::UpdateElement {
-                    delta: UpdateDelta::ArrayProduct(_)
-                }
-            ) {
-                let mut malformed_payload = published.clone();
-                let mut descriptors = malformed_payload.regions.as_ref().unwrap().to_vec();
-                descriptors[0].value = NumberSource::Immediate(1);
-                malformed_payload.regions = Some(Rc::from(descriptors));
-                assert_eq!(
-                    malformed_payload.verify(),
-                    Err(ExecCodeError::InvalidTarget)
-                );
-            }
             let mut malformed = region;
             malformed.peak -= 1;
             assert_eq!(
@@ -3838,7 +2786,6 @@ mod tests {
             code.decode(0).unwrap().next_pc + 3,
             code.exec_pc(4).unwrap()
         );
-        code.verify().unwrap();
 
         let wide_index = ExecCode::encode(&[
             Instruction::GetLocal(8192),
@@ -3889,7 +2836,6 @@ mod tests {
         assert_eq!(code.opcode_at_source(0), Some(Opcode::DensePostUpdateArg));
         assert_eq!(code.decode(0).unwrap().operand(1), 1);
         assert_eq!(code.decode(0).unwrap().operand(2), code.exec_pc(5).unwrap());
-        code.verify().unwrap();
 
         let entered = ExecCode::encode(&[
             Instruction::Goto(3),
