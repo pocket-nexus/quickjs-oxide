@@ -29,7 +29,9 @@ fn eval_number(source: &str) -> f64 {
 #[test]
 fn empty_loop_shape_counts_up_and_returns_the_last_value() {
     assert_eq!(
-        eval_number("function work(n){ var s; for (var i=0;i<n;i++){ s=i; } return s; }\nwork(100)"),
+        eval_number(
+            "function work(n){ var s; for (var i=0;i<n;i++){ s=i; } return s; }\nwork(100)"
+        ),
         99.0
     );
 }
@@ -69,7 +71,8 @@ fn strict_and_loose_numeric_comparisons_match_stack_and_local_forms() {
              if (a === 1) hits++;
              a = a + 1; b = b - 1;
            }
-           hits===7 && a===5 && b===-2"#    ));
+           hits===7 && a===5 && b===-2"#
+    ));
 }
 
 #[test]
@@ -77,7 +80,9 @@ fn captured_loop_binding_falls_back_and_still_advances() {
     // `i` is captured, so the specialized store guard misses on every
     // iteration and the generic binding path must keep the loop correct.
     assert_eq!(
-        eval_number("function f(){ var i=0; var g=()=>i; for (i=0; i<10; i++){} return g(); }\nf()"),
+        eval_number(
+            "function f(){ var i=0; var g=()=>i; for (i=0; i<10; i++){} return g(); }\nf()"
+        ),
         10.0
     );
 }
