@@ -3451,6 +3451,8 @@ fn borrowed_this_read_ready_in_state(state: &RuntimeState, base: &JsValue) -> bo
 #[cfg(test)]
 mod captured_read_tests;
 #[cfg(test)]
+mod specialized_tests;
+#[cfg(test)]
 mod continuous_call_tests;
 #[cfg(test)]
 mod dynamic_ret_tests;
