@@ -77,3 +77,48 @@ rustc 1.95.0 构建，release）。
 5. 旁证：[HN yt-dlp 实测](https://news.ycombinator.com/item?id=45898407)
    quickjs 2.3s / brimstone 6.3s / boa 88s ——真实世界代码上 quickjs 级
    最快，与本文 V8-v7 排序不冲突。
+
+## 追加：zoo Octane 同场对比 + 编译期崩溃根因（2026-10-11）
+
+### Octane（ivankra/javascript-zoo bench，本机 3 轮中位数）
+
+| 基准 | oxide | boa（同场） | oxide/boa | boa (zoo官方) | brimstone (zoo) | quickjs (zoo) |
+|---|---:|---:|---:|---:|---:|---:|
+| Richards | 166 | 192 | 0.86× | 170 | 122 | 787 |
+| DeltaBlue | 157 | 169 | 0.93× | 146 | 184 | 722 |
+| Crypto | 248 | 189 | 1.31× | 164 | 194 | 871 |
+| RayTrace | 351 | 336 | 1.04× | 297 | 399 | 1316 |
+| EarleyBoyer | 386 | 411 | 0.94× | 331 | 630 | 1688 |
+| RegExp | 240 | 53.5 | **4.49×** | 45.2 | 131 | 326 |
+| Splay | 909 | 795 | 1.14× | 652 | 961 | 2608 |
+| SplayLatency | 4016 | 1836 | **2.19×** | 2039 | 2559 | 7933 |
+| NavierStokes | 668 | 425 | 1.57× | 410 | 239 | 1539 |
+| PdfJS | **编译崩溃** | 793 | — | 691 | 925 | 3594 |
+| Mandreel | 123 | 141 | 0.87× | 127 | 105 | 789 |
+| MandreelLatency | 917 | 970 | 0.95× | 973 | 681 | 6351 |
+| Gameboy | **编译崩溃** | 1038 | — | — | — | — |
+| CodeLoad | 4721 | 4350 | 1.09× | 3889 | 14340 | 13094 |
+| Box2D | 660 | 1023 | **0.65×** | 931 | 553 | 3002 |
+
+13 个共同项几何平均：**oxide +19.9% vs boa**（与 V8-v7 合并 +39% 同向）。
+zoo 官方列为异机数据仅作量级参照（其 boa 与本机同场 boa 差 ~10–15%）。
+两项 oxide 编译崩溃使上表偏向保守。
+
+### 编译期崩溃根因（PdfJS/Gameboy）
+
+现象：`ExecCode::encode_with_locals` 返回 `InvalidTarget`（发布 218–303 条指令
+的小函数、1–2 个数值区域时），整函数发布失败 → InternalError。定位链：
+
+1. 失败发生在 `ExecCode::verify()`（encode 末尾的发布产物自检），
+   非编码循环、非区域计划校验（后两处插桩均静默通过）。
+2. verify 对跳转目标拒绝 `target == words.len()`（函数末尾哨兵）；
+   而 `validate_region_plans` 允许 `region.end == code.len()`。
+3. 数值区域选在函数尾时（末尾 Drop 之后无显式终结指令的形态），
+   区域 opcode 的 fallthrough/exit 目标编码为 words.len()，verify 拒绝——
+   **validate 与 verify 对"区域结束于函数末尾"的口径不一致**，编译器
+   `plan_numeric_regions`（flow.rs）未排除该形态。
+
+修复方向（未实施）：flow.rs 各 region 选择器加 `end < code.len()` 守卫
+（放弃该区域退回通用指令展开）；补 gbemu/pdfjs 最小复现的回归测试。
+影响面：真实大代码（Octane PdfJS/Gameboy、任意尾置数值循环的函数）；
+focused Test262 未覆盖此形态。诊断插桩已撤，工作树干净。
