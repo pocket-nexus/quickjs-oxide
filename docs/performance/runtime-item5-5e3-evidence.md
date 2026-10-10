@@ -40,5 +40,21 @@ RayTrace −1~2% Ir。达不到第 5 项原预算，但满足第 7 节验收（�
 
 - e466529b：上述 1+2。execute_admitted_in_state 61864→64371 B（+4.0%），
   栈帧 1784→1832 B，生成代码已检查。lib 全量无新增失败。
-- 容器 A/B：`~/.cache/oxide-measure/item5/5e3-base.json`（826cde3c）对
-  `5e3.json`（e466529b），用例 richards/deltablue/navier-stokes + raytrace。
+- e465529b 之后的 site 扁平化：IC 站点表从 offsets(u8)+block_ranks(u32/64)
+  改为每字一个 u32 直索引（u32::MAX=无站点），热点探测从两次依赖 load 降为
+  一次；append_ic 的 pc_words 语义保留。
+- 容器 A/B（`~/.cache/oxide-measure/item5/5e3-base-db.json`/`5e3-base.json`
+  为基线 826cde3c，`5e3-flat.json` 为合并提交）：
+
+| 用例 | Ir | Dw |
+|---|---:|---:|
+| deltablue | **−1.42%** | −1.84% |
+| raytrace | **−1.01%** | −1.22% |
+
+13 个固定探针无一回退（s=o.x −1.9%、o.m(i) −0.8%、o.x=i −0.6% 为改善）。
+中间态（仅前两刀）deltablue −0.78%/raytrace −0.56%，归因确认机制：
+commit_owned 总量 78.7M→39.5M（内联生效），promote −20.4M（死存储消除）。
+
+**判定：采纳**（第 7 节：目标用例 Ir 下降 ≥1% ×2，其余无回退）。
+非目标 V8 用例（richards/navier 等）未在本子任务复测，依赖收口测量；
+原生 ABBA 由参考机会话在收口时复核（i-cache 规则不变）。
