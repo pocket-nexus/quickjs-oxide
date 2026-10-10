@@ -33,19 +33,17 @@ impl Runtime {
         })
     }
 
-    /// Shared predicate for the plain builtin match on a genuine RegExp with
-    /// a primitive String input and an immediate `lastIndex`: ToString and
-    /// ToLength observe nothing, so the builtin match can start without the
-    /// step machine. With `require_builtin_exec` the chain must also resolve
-    /// `exec` to the standard builtin, which the abstract operation needs
-    /// because it performs the property read itself; the method entry
-    /// resolves the property during dispatch, so it passes `false`. `None`
-    /// keeps the general steps.
+    /// Predicate for the plain builtin match on a genuine RegExp with a
+    /// primitive String input and an immediate `lastIndex`, used by the
+    /// direct method entry: dispatch already resolved `exec` to this builtin,
+    /// so ToString and ToLength observe nothing and the builtin match can
+    /// start without the step machine. `None` keeps the general steps; the
+    /// abstract operation always takes the step machine (see
+    /// `RegExpExecStep::abstract_exec`).
     fn plain_exec_inputs(
         &self,
         object: crate::engine::heap::ObjectId,
         input: &JsValue,
-        require_builtin_exec: bool,
     ) -> Result<Option<(JsString, u64)>, RuntimeError> {
         let JsValue::String(id) = input else {
             return Ok(None);
@@ -58,22 +56,6 @@ impl Runtime {
             )
         ) {
             return Ok(None);
-        }
-        if require_builtin_exec {
-            use crate::engine::atom::pinned::PinnedAtom;
-            let exec = state.pinned_atoms.get(PinnedAtom::Exec);
-            // The abstract operation resolves `exec` through a property read;
-            // only a chain that yields the standard builtin observes nothing.
-            if !super::replace::raw_regexp_data_property_matches(
-                &state.heap,
-                object,
-                exec,
-                crate::engine::builtins::native::NativeFunctionId::RegExp(
-                    RegExpNativeKind::Exec,
-                ),
-            )? {
-                return Ok(None);
-            }
         }
         let number = match state.regexp_last_index_immediate(object)? {
             Some(JsValue::Int(value)) => f64::from(value),
@@ -342,7 +324,7 @@ impl RegExpExecStep {
             && let JsValue::Object(object) = this_value
             && let Some(input_value @ JsValue::String(_)) = arguments.readable.first()
             && let Some((input, last_index)) =
-                runtime.plain_exec_inputs(*object, input_value, false)?
+                runtime.plain_exec_inputs(*object, input_value)?
         {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_runtime_event(
@@ -385,24 +367,13 @@ impl RegExpExecStep {
         regexp: JsValue,
         input: JsValue,
     ) -> Result<Self, RuntimeError> {
-        // The split/match/search protocols reach the abstract operation with
-        // a genuine RegExp and a primitive String millions of times per V8
-        // RegExp run; when the chain resolves `exec` to the standard builtin
-        // and lastIndex is immediate, the builtin match runs directly instead
-        // of boxing both operands and publishing a resume state.
-        if let JsValue::Object(object) = regexp
-            && let Some((string, last_index)) =
-                runtime.plain_exec_inputs(object, &input, true)?
-        {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_runtime_event(
-                "regexp_exec.plain_abstract",
-                "core.regexp_exec.plain_abstract",
-            );
-            return Ok(Self::Complete(runtime.finish_builtin_regexp_exec(
-                realm, object, string, &input, last_index,
-            )?));
-        }
+        // The abstract operation must keep the step machine: completing the
+        // builtin match synchronously here (2a28117d) left two owner
+        // containers unreleased — the resident replace/split resume state's
+        // regexp field and a caller frame's operand slot — keeping the whole
+        // realm alive at teardown in getter/custom-exec tests. The direct
+        // method entry below keeps the plain predicate; the protocols take
+        // the verified machine path.
         Self::abstract_start(runtime, realm, regexp, input, false)
     }
     fn abstract_start(
