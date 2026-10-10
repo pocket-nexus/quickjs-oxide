@@ -169,8 +169,8 @@ impl SlotStore {
         // originals region at `base` takes a second copy. Otherwise the
         // parameters start at `base` and take the only copy.
         let base = prepared.window.base;
-        for index in 0..count {
-            match state.dup_jsvalue(&values[index]) {
+        for (index, value) in values.iter().enumerate() {
+            match state.dup_jsvalue(value) {
                 Ok(copied) => self.slots[base + index] = Some(FrameBinding::Direct(copied)),
                 Err(error) => {
                     self.clear_unpublished_owned_in_state(

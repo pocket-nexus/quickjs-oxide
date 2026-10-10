@@ -7,7 +7,9 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::{
     ContextId, ObjectId, ObjectPayload, PropertySlot, RawValue, RegExpObjectData,
 };
-use crate::engine::object::{ObjectRef, PropertyKey, WellKnownSymbol, operations::InternalSetResult};
+use crate::engine::object::{
+    ObjectRef, PropertyKey, WellKnownSymbol, operations::InternalSetResult,
+};
 use crate::engine::value::conversion::NativeConversion;
 
 use crate::engine::value::{JsString, JsValue, Value};
@@ -85,7 +87,8 @@ impl Runtime {
         };
         let state = self.0.state.borrow();
         let object = state.heap.object(regexp)?;
-        let ObjectPayload::RegExp(RegExpObjectData::Compiled { pattern, program }) = &object.payload
+        let ObjectPayload::RegExp(RegExpObjectData::Compiled { pattern, program }) =
+            &object.payload
         else {
             return Ok(None);
         };
@@ -163,7 +166,11 @@ impl Runtime {
         let size = flat.len();
         let unicode = standard.flags.is_unicode();
         let limit = standard.limit;
-        let array = self.0.state.borrow_mut().new_array(&self.0.poisoned, realm)?;
+        let array = self
+            .0
+            .state
+            .borrow_mut()
+            .new_array(&self.0.poisoned, realm)?;
         let mut length = 0_u32;
         match self.standard_regexp_split_loop(
             &program,
@@ -178,9 +185,11 @@ impl Runtime {
             Ok(StandardSplitOutcome::Complete) => Ok(Completion::Return(JsValue::Object(array))),
             Ok(StandardSplitOutcome::Throw(message)) => {
                 let _ = self.release_jsvalue(JsValue::Object(array));
-                Ok(Completion::Throw(
-                    self.new_native_error_jsvalue(realm, NativeErrorKind::Internal, message)?,
-                ))
+                Ok(Completion::Throw(self.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Internal,
+                    message,
+                )?))
             }
             Err(error) => {
                 let _ = self.release_jsvalue(JsValue::Object(array));
@@ -192,6 +201,7 @@ impl Runtime {
     /// The split loop itself, so `call_standard_regexp_split` stays a thin
     /// shell around allocation and error cleanup. A `Throw` outcome leaves
     /// `array` released by the caller.
+    #[allow(clippy::too_many_arguments)]
     fn standard_regexp_split_loop(
         &self,
         program: &Rc<CompiledRegExp>,
@@ -227,8 +237,9 @@ impl Runtime {
                 }
             };
             let Some(matched) = matched else {
-                q = usize::try_from(advance_string_index(input, q as u64, unicode))
-                    .map_err(|_| RuntimeError::Invariant("advanced split index did not fit usize"))?;
+                q = usize::try_from(advance_string_index(input, q as u64, unicode)).map_err(
+                    |_| RuntimeError::Invariant("advanced split index did not fit usize"),
+                )?;
                 continue;
             };
             let complete = matched.capture(0).ok_or(RuntimeError::Invariant(
@@ -236,8 +247,9 @@ impl Runtime {
             ))?;
             let e = complete.end.min(size);
             if e == p {
-                q = usize::try_from(advance_string_index(input, q as u64, unicode))
-                    .map_err(|_| RuntimeError::Invariant("advanced split index did not fit usize"))?;
+                q = usize::try_from(advance_string_index(input, q as u64, unicode)).map_err(
+                    |_| RuntimeError::Invariant("advanced split index did not fit usize"),
+                )?;
                 continue;
             }
             self.push_standard_split_piece(array, input, Some((p, q)), length)?;
@@ -320,9 +332,9 @@ impl Runtime {
             array,
             value,
         )?;
-        *length = length
-            .checked_add(1)
-            .ok_or(RuntimeError::Invariant("RegExp split output index exceeded Uint32"))?;
+        *length = length.checked_add(1).ok_or(RuntimeError::Invariant(
+            "RegExp split output index exceeded Uint32",
+        ))?;
         Ok(())
     }
 }
