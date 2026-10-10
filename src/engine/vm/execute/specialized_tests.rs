@@ -125,3 +125,13 @@ fn unary_number_forms_cover_neg_plus_bitnot_inc_and_dec() {
            log.length===21 && i===6"#
     ));
 }
+
+#[test]
+fn do_while_local_comparison_branches_back_on_true() {
+    // Loop-bottom tests fuse into a comparison branch taken when true.
+    assert!(eval_bool(
+        r#"function f(n) { var i = 0, s = 0; do { s += i; i++; } while (i < n); return s; }
+           function g(a, b) { var c = 0; do { c++; a++; } while (a <= b); return c; }
+           f(10) === 45 && g(3, 7) === 5 && f(1) === 0"#
+    ));
+}

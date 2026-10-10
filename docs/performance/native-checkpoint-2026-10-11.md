@@ -104,20 +104,24 @@ rustc 1.95.0 构建，release）。
 zoo 官方列为异机数据仅作量级参照（其 boa 与本机同场 boa 差 ~10–15%）。
 两项 oxide 编译崩溃使上表偏向保守。
 
-### 编译期崩溃根因（PdfJS/Gameboy）——已更正
+### 编译期崩溃根因（PdfJS/Gameboy）——已修复
 
 现象：`ExecCode::encode_with_locals` 返回 `InvalidTarget`，整函数发布失败 →
-InternalError（gbemu 218 条指令/273 字，pdfjs 303 条/380 字）。
+InternalError（gbemu 218 条指令，pdfjs 303 条）。初版"数值区域落在函数末尾"
+的推断有误，逐点插桩后的结论：
 
-逐点插桩确认（初版"数值区域落在函数末尾"的推断**有误**，已撤回）：
-拒绝发生在 encode 末尾的 `ExecCode::verify()`，两个负载命中**同一条规则**——
-`CompareBranchLocal/Arg` 融合 span 的形状校验（span 的局部/实参读、比较
-opcode、IfTrue/IfFalse 方向、分支目标 `branch.operand(0) == first.operand(2)`、
-`branch.next_pc == first.next_pc + 4`）。即 opcode 选择器发布了一个 verify
-不接受的比较分支融合 span：选择器与 verify 对该 span 形状的口径不一致。
-具体是哪一个子条件仍待定位（下一步：最小复现 + 逐条件拆分）。
+- 拒绝来自 encode 末尾的 `ExecCode::verify()`，两负载命中同一条规则：
+  `CompareBranchLocal/Arg` 融合 span 的保留位检查。
+- 描述符布局：右操作数下标 bit 0–15、is_arg bit 16、比较 opcode bit 17–26、
+  **when_true bit 27**。verify 的保留位掩码 `0x7800_0000` 覆盖 bit 27–30，
+  把 when_true 也当成保留位——差一位。编码器与执行器都按 bit 27 读写，
+  只有 verify 错。二者同出 #52（`310684b9`）。
+- 触发形态：比较两侧都是直接局部/实参、比较后接 `IfTrue` 的循环底部测试，
+  典型是 `do { … } while (i < n)`；Test262 的 do-while 多与常量比较，未覆盖。
+- 修复：保留位改为 bit 28–31（`0xF000_0000`），#106 `c1f22d7c`；单测覆盖
+  局部/实参两种 when_true span 与保留位拒绝，#107 补 do-while 行为测试。
+  lib 全量、focused Test262 6844/6844 通过；gbemu/pdfjs 可完整运行
+  （单次：Gameboy 779、PdfJS 369，对 boa 同场 1038/793 为 0.75×/0.47×）。
 
-历史背景：#40（P4，09-25，已合入，在本栈历史中）删除的是旧前端 BC5
-独立 verify pass；当前崩溃的 `ExecCode::verify` 是 #52（912f5abd，09-27
-"verified ExecCode interpreter"）在新发布层重新引入的发布自检，与 #40 删除的
-不是同一个。focused Test262 未覆盖该 span 形态。诊断插桩已撤，工作树干净。
+历史背景：#40（09-25，已合入）删除的是旧前端 BC5 独立 verify pass；崩溃的
+`ExecCode::verify` 是 #52 在新发布层重新引入的发布自检，非同一个。
