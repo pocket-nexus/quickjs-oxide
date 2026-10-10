@@ -276,6 +276,7 @@ impl PublishedFunctionSnapshot {
             runtime_domain: 0,
             data: Rc::new(PublishedFunctionData {
                 has_captured_locals: true,
+                uses_unwind_regions: false,
                 observes_arguments: true,
                 plain_local_initializers: true,
 
@@ -319,6 +320,9 @@ impl std::ops::DerefMut for PublishedFunctionSnapshot {
 #[derive(Debug)]
 pub(crate) struct PublishedFunctionData {
     pub(crate) has_captured_locals: bool,
+    /// The body can push an unwind region (try/catch, for-of iteration), so
+    /// its frame acquires a rare shell; installation prefers a pooled one.
+    pub(crate) uses_unwind_regions: bool,
     pub(crate) observes_arguments: bool,
     pub(crate) plain_local_initializers: bool,
 
@@ -428,6 +432,16 @@ fn published_function_data(bytecode: &FunctionBytecodeData) -> Rc<PublishedFunct
                             )
                         )
                     }),
+                uses_unwind_regions: (0..bytecode.exec.instruction_len()).any(|pc| {
+                    matches!(
+                        bytecode.exec.opcode_at_source(pc),
+                        Some(
+                            crate::engine::code::exec_opcode::Opcode::Catch
+                                | crate::engine::code::exec_opcode::Opcode::ForOfStart
+                                | crate::engine::code::exec_opcode::Opcode::ForAwaitOfStart
+                        )
+                    )
+                }),
                 observes_arguments: (0..bytecode.exec.instruction_len()).any(|pc| {
                     matches!(
                         bytecode.exec.opcode_at_source(pc),

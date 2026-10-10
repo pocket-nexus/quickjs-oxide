@@ -448,7 +448,10 @@ impl<'a> FrameExecution<'a> {
             executable.observes_arguments,
         )?;
         frame.resume_pc = fallthrough.index();
-        let (mut cold, frame_bytes) = if base_receiver.is_some() {
+        // Constructors always carry a rare shell; so does a body that pushes
+        // unwind regions. Both prefer a pooled shell (and its region buffer),
+        // while every other ordinary frame stays rare-free.
+        let (mut cold, frame_bytes) = if base_receiver.is_some() || executable.uses_unwind_regions {
             execution.call_storage.vacant_rare()
         } else {
             execution.call_storage.vacant(caller_realm)
