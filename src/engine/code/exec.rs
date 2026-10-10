@@ -655,7 +655,9 @@ impl ExecCode {
                         .get(source + 3)
                         .ok_or(ExecCodeError::InvalidBoundary)?,
                 )?;
-                if descriptor & 0x7800_0000 != 0
+                // Bits 0..=26 carry the right operand, its source and the comparison;
+                // bit 27 is `when_true`. Only the bits above it are reserved.
+                if descriptor & 0xF000_0000 != 0
                     || !matches!(
                         comparison,
                         Opcode::Lt
@@ -3429,6 +3431,31 @@ mod tests {
     }
 
     #[test]
+    fn specialized_local_comparison_publishes_when_true_branches() {
+        // A loop-bottom test (`do { } while (i < n)`) fuses into a span whose
+        // descriptor sets the `when_true` bit; verification must accept it.
+        for (head, branch) in [
+            (Instruction::GetLocal(0), Instruction::IfTrue(0)),
+            (Instruction::GetArg(0), Instruction::IfTrue(0)),
+        ] {
+            let code = ExecCode::encode(&[
+                head,
+                Instruction::GetLocal(1),
+                Instruction::Lt,
+                branch,
+                Instruction::ReturnUndefined,
+            ])
+            .unwrap();
+            assert!(matches!(
+                code.opcode_at_source(0),
+                Some(Opcode::CompareBranchLocalLt | Opcode::CompareBranchArgLt)
+            ));
+            assert_ne!(code.words[1].get() & 0x0800_0000, 0);
+            code.verify().unwrap();
+        }
+    }
+
+    #[test]
     fn specialized_local_comparison_rejects_corrupt_descriptor() {
         let code = ExecCode::encode(&[
             Instruction::GetArg(0),
@@ -3441,6 +3468,8 @@ mod tests {
         assert_eq!(code.opcode_at_source(0), Some(Opcode::CompareBranchArgLt));
         let descriptor = code.words[1].get();
         code.words[1].set(descriptor | 0x0800_0000);
+        assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
+        code.words[1].set(descriptor | 0x1000_0000);
         assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
         code.words[1].set((descriptor & !(0x3ff << 17)) | (u32::from(Opcode::Gt as u16) << 17));
         assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
