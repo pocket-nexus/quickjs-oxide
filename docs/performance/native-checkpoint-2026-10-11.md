@@ -46,3 +46,34 @@ rustc 1.95.0 构建，release）。
   超出第 5 项范围。
 - 本对比不构成任何验收门槛（noninferior 门是同引擎回归用的）；它是
   阶段 B + 第 5 项收口后的外部坐标。
+
+## 公平性核查附录（2026-10-11，应质疑补做）
+
+质疑：zoo.js.org（[JavaScript Engines Zoo](https://zoo.js.org/)，
+[ivankra/javascript-zoo](https://github.com/ivankra/javascript-zoo)）的 Octane
+数据显示 brimstone ≈ boa，与本检查点的 7.5× 矛盾。核查结论：**测量公平，
+矛盾来自套件差异与参照系误读**。
+
+1. **同字节同机器**：两侧执行同一 `dist/quickjs-oxide` 产物
+   （workload_sha256 一致），CPU 2 钉核，同一进程内 ≥1 秒 / ≥32 迭代的真实
+   计时（base.js `RunSingleBenchmark` 读码确认；Score = 固定 reference /
+   每迭代微秒，跨引擎比分即时间比）。两侧 wall time 相近（~2s/用例）是
+   ≥1s 计时底噪的设计产物，不代表吞吐相等。
+2. **独立交叉验证（决定性）**：2026-10-01 同机同套件测过 C QuickJS 与 Boa
+   （~/.cache/oxide-history-three-engines-2026-10-01）。brimstone 与
+   quickjs 逐项比：richards 1.09×、deltablue 1.49×、crypto 1.02×、
+   raytrace 1.01×、earley-boyer 1.23×、regexp 4.36×（brimstone 自带 regexp
+   引擎占优）、splay 1.40×、navier 0.76×。**brimstone ≈ quickjs 级**
+   （0.76–1.49× 逐案散布，两个独立引擎的典型形态）——测量无作弊迹象。
+3. **真实头条被参照系掩盖**：本套件上 quickjs 本身就是 1216–4907 分、
+   Boa 只有 206–833（quickjs ≈ 5–6× Boa）；oxide 165–963，**比
+   quickjs 级慢 ~8×**（10-01 时为 ~14×，阶段 B + 第 5 项已收窄）、在
+   richards/deltablue 独立用例上约为 Boa 的 0.75×。oxide 的差距与全部
+   Ir 取证一致（解释器 arm 工作主导），不是测量假象。
+4. **zoo 印象的来源**：zoo 跑 Octane（Box2D/CodeLoad/Mandreel/PdfJS 等大
+   程序 + 启动/GC 主导），其 brimstone 构建为 2025-12 修订（旧 10 个月）；
+   Octane 上 brimstone ≈ boa 与 V8-v7 上 brimstone ≈ quickjs ≫ boa 可以
+   同时成立——两个套件测的是不同东西（解释器热循环 vs 大程序综合）。
+5. 旁证：[HN yt-dlp 实测](https://news.ycombinator.com/item?id=45898407)
+   quickjs 2.3s / brimstone 6.3s / boa 88s ——真实世界代码上 quickjs 级
+   最快，与本文 V8-v7 排序不冲突。
