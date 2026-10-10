@@ -35,6 +35,8 @@ impl RuntimeState {
     /// pins the executable's bytecode through the frame's callee owner. This
     /// operation does not consume the base; its owner must remain live until
     /// selection completes, and the returned value owns its retained edge.
+    /// `native` is published only when a native selection is made; every
+    /// caller passes a fresh `None`.
     ///
     /// The hit of an object receiver is a small out-of-line function: it needs
     /// no key atom (a hit means this site already learned the key in this
@@ -281,11 +283,16 @@ impl RuntimeState {
                     None
                 };
                 self.heap.retain_object_fast(*function);
-                *native = selected.map(|(function, data)| LinkedNativeSelection {
-                    domain_id,
-                    function,
-                    data,
-                });
+                // Publish the native selection only when one was made. Every
+                // caller passes a fresh `None`, so skipping the dead store on
+                // the dominant ordinary-object hit is unobservable.
+                if let Some((function, data)) = selected {
+                    *native = Some(LinkedNativeSelection {
+                        domain_id,
+                        function,
+                        data,
+                    });
+                }
                 Some(JsValue::Object(*function))
             }
             // The holder's live slot owns these edges.

@@ -139,6 +139,18 @@ impl<'a> FrameCursor<'a> {
         }
     }
 
+    /// The borrowed-field hit path pays this commit on every iteration; the
+    /// measurement after item 5e-2 shows the dispatch function's size is
+    /// neutral, so the accepted push completes inline at those two sites
+    /// while every other consumer keeps the shared out-of-line call.
+    #[inline(always)]
+    fn commit_owned_hot(&mut self, state: &mut RuntimeState, value: JsValue) -> Result<(), Error> {
+        match self.transaction.slots().try_push(value) {
+            Ok(()) => Ok(()),
+            Err(value) => self.commit_owned_rejected(state, value),
+        }
+    }
+
     /// A rejected push reports its error and releases the owner it handed
     /// back. Out of line so the accepted push makes no call.
     #[cold]
@@ -610,7 +622,7 @@ fn execute_admitted_in_state(
                                 },
                             );
                             if let Some(value) = selected {
-                                cursor.commit_owned(state, value)?;
+                                cursor.commit_owned_hot(state, value)?;
                                 #[cfg(feature = "profiling")]
                                 crate::engine::api::profiling::record_owned_execution_event(
                                     "local_completion.borrowed_this_read",
@@ -1632,7 +1644,7 @@ fn execute_admitted_in_state(
                             },
                         );
                         if let Some(value) = selection {
-                            cursor.commit_owned(state, value)?;
+                            cursor.commit_owned_hot(state, value)?;
                             #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_owned_execution_event(
                                 "local_completion.borrowed_named_read",
