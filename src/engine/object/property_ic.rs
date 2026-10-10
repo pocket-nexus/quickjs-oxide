@@ -671,43 +671,31 @@ fn select_ordinary<'a>(
     }
 }
 
-/// Per-executable site caches addressed by execution PC. Each PC has a
-/// one-byte offset within its 64-PC block (or `NO_SITE`), and block ranks
-/// give the first site index of each block, so a lookup is two loads and an
-/// add (x86-64 baseline has no `popcnt` for a bitmap rank).
+/// Per-executable site caches addressed by execution PC. The hot lookup is
+/// one bounds-checked load: a flat per-word table maps an execution PC
+/// directly to its site index (u32::MAX when the word holds no site). The
+/// extra bytes over the old offset-plus-rank encoding keep every hit path
+/// site probe to a single dependent load.
 #[derive(Debug)]
 pub(crate) struct SiteCacheTable<T> {
-    site_offsets: Box<[u8]>,
-    block_ranks: Box<[u32]>,
+    direct: Box<[u32]>,
     sites: Box<[T]>,
 }
 
-const NO_SITE: u8 = u8::MAX;
+const NO_SITE: u32 = u32::MAX;
 
 pub(crate) type PropertyReadCacheTable = SiteCacheTable<PropertyReadCache>;
 
 impl<T: Default> SiteCacheTable<T> {
     fn from_site_pcs(pc_len: usize, site_pcs: impl IntoIterator<Item = usize>) -> Self {
-        let mut offsets = vec![NO_SITE; pc_len];
-        for pc in site_pcs {
-            offsets[pc] = 0;
-        }
-        let mut ranks = Vec::with_capacity(pc_len.div_ceil(64));
+        let mut direct = vec![NO_SITE; pc_len];
         let mut count = 0u32;
-        for block in offsets.chunks_mut(64) {
-            ranks.push(count);
-            let mut within = 0u8;
-            for offset in block.iter_mut().filter(|offset| **offset != NO_SITE) {
-                *offset = within;
-                within += 1;
-            }
-            count = count
-                .checked_add(u32::from(within))
-                .expect("bytecode site count fits u32");
+        for pc in site_pcs {
+            direct[pc] = count;
+            count = count.checked_add(1).expect("bytecode site count fits u32");
         }
         Self {
-            site_offsets: offsets.into_boxed_slice(),
-            block_ranks: ranks.into_boxed_slice(),
+            direct: direct.into_boxed_slice(),
             sites: (0..count).map(|_| T::default()).collect(),
         }
     }
@@ -726,23 +714,18 @@ impl<T: Default> SiteCacheTable<T> {
         )
     }
 
-    #[inline]
-    fn site_index(&self, pc: usize) -> Option<usize> {
-        let offset = *self.site_offsets.get(pc)?;
-        if offset == NO_SITE {
+    #[inline(always)]
+    pub(crate) fn site(&self, pc: usize) -> Option<&T> {
+        let index = *self.direct.get(pc)?;
+        if index == NO_SITE {
             return None;
         }
-        Some(self.block_ranks[pc / 64] as usize + usize::from(offset))
+        self.sites.get(index as usize)
     }
 
-    #[inline]
-    pub(crate) fn site(&self, pc: usize) -> Option<&T> {
-        self.sites.get(self.site_index(pc)?)
-    }
-
-    /// PC blocks: one per 64 execution PCs.
+    /// Execution words covered by this table.
     pub(crate) fn pc_words(&self) -> usize {
-        self.block_ranks.len()
+        self.direct.len()
     }
 }
 
@@ -890,15 +873,14 @@ mod tests {
         code[129] = Instruction::GetField(4);
         let table = PropertyReadCacheTable::new(&code);
         for (rank, pc) in [0, 64, 129].into_iter().enumerate() {
-            assert_eq!(table.site_index(pc), Some(rank));
+            assert_eq!(table.site(pc).map(|_| rank), Some(rank));
         }
         for pc in [1, 62, 63, 65, 66, 128, 130, usize::MAX] {
-            assert_eq!(table.site_index(pc), None);
+            assert!(table.site(pc).is_none());
         }
         assert!(table.site(0).is_some());
         assert!(table.site(63).is_none());
-        assert_eq!(table.site_offsets.len(), 130);
-        assert_eq!(table.block_ranks.len(), 3);
+        assert_eq!(table.pc_words(), 130);
         assert!(PropertyReadCacheTable::new(&[]).site(0).is_none());
     }
 
