@@ -4,13 +4,23 @@ use super::match_protocol::advance_string_index;
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::heap::ContextId;
-use crate::engine::object::{ObjectRef, PropertyKey, operations::InternalSetResult};
+use crate::engine::heap::{
+    ContextId, ObjectId, ObjectPayload, PropertySlot, RawValue, RegExpObjectData,
+};
+use crate::engine::object::{
+    ObjectRef, PropertyKey, WellKnownSymbol, operations::InternalSetResult,
+};
 use crate::engine::value::conversion::NativeConversion;
 
 use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::call::{ConstructorRef, NativeArguments, NativeInvocation};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
+
+use crate::engine::builtins::native::{NativeFunctionId, RegExpNativeKind};
+use crate::regexp::{
+    CompiledRegExp, ExecError, RegExpFlags, execute_latin1_with_interrupt, execute_with_interrupt,
+};
+use std::rc::Rc;
 
 impl Runtime {
     /// Rust port of pinned QuickJS `js_regexp_Symbol_split`.
@@ -52,6 +62,298 @@ impl Runtime {
         *length = next;
         Ok(())
     }
+
+    /// Raw standard-RegExp predicate for `@@split`, in the shape of the
+    /// `@@replace` predicate: a genuine compiled receiver, a primitive String
+    /// input (ToString observes nothing), an immediate limit (ToUint32 of a
+    /// primitive observes nothing), the standard `flags` getter, and the
+    /// default species (`constructor` missing or the realm `%RegExp%` whose
+    /// `@@species` getter is the builtin). `None` keeps the general steps.
+    fn standard_regexp_split(
+        &self,
+        realm: ContextId,
+        regexp: ObjectId,
+        input: &JsValue,
+        limit: &JsValue,
+    ) -> Result<Option<StandardRegExpSplit>, RuntimeError> {
+        use crate::engine::atom::pinned::PinnedAtom;
+        let JsValue::String(input_id) = input else {
+            return Ok(None);
+        };
+        let limit = match limit {
+            JsValue::Undefined => u32::MAX,
+            JsValue::Int(value) => (*value as i64).rem_euclid(1 << 32) as u32,
+            _ => return Ok(None),
+        };
+        let state = self.0.state.borrow();
+        let object = state.heap.object(regexp)?;
+        let ObjectPayload::RegExp(RegExpObjectData::Compiled { pattern, program }) =
+            &object.payload
+        else {
+            return Ok(None);
+        };
+        let pinned = |atom| state.pinned_atoms.get(atom);
+        if !super::replace::raw_regexp_getter_matches(
+            &state.heap,
+            regexp,
+            pinned(PinnedAtom::Flags),
+            NativeFunctionId::RegExp(RegExpNativeKind::Flags),
+        )? {
+            return Ok(None);
+        }
+        let constructor = state
+            .heap
+            .context(realm)?
+            .regexp
+            .as_ref()
+            .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))?
+            .constructor;
+        match super::replace::raw_regexp_property_slot(
+            &state.heap,
+            regexp,
+            pinned(PinnedAtom::Constructor),
+        )? {
+            // A missing `constructor` selects the default `%RegExp%`.
+            None => {}
+            Some(PropertySlot::Data(RawValue::Object(id))) if *id == constructor => {}
+            Some(_) => return Ok(None),
+        }
+        let species = state.well_known_symbols[&WellKnownSymbol::Species];
+        if !super::replace::raw_regexp_getter_matches(
+            &state.heap,
+            constructor,
+            species,
+            NativeFunctionId::RegExp(RegExpNativeKind::Species),
+        )? {
+            return Ok(None);
+        }
+        Ok(Some(StandardRegExpSplit {
+            input: state.heap.string(*input_id)?.clone(),
+            pattern: pattern.clone(),
+            flags: program.flags(),
+            limit,
+        }))
+    }
+
+    /// Rust port of the pinned QuickJS `js_regexp_Symbol_split` matching
+    /// loop for the standard predicate. The virtual splitter is the
+    /// receiver's program recompiled with `y`, exactly what the constructor
+    /// would compile for `new C(rx, flags + "y")`; it never escapes, so its
+    /// `lastIndex` traffic stays inside this loop. Each piece string is
+    /// allocated as an owner that moves into a dense element under one State
+    /// access per append.
+    #[inline(never)]
+    fn call_standard_regexp_split(
+        &self,
+        realm: ContextId,
+        standard: StandardRegExpSplit,
+    ) -> Result<Completion, RuntimeError> {
+        let mut flags = standard.flags.canonical_string();
+        if !standard.flags.contains(RegExpFlags::STICKY) {
+            flags.push('y');
+        }
+        let program = Runtime::compile_regexp_program(
+            &standard.pattern,
+            &JsString::from_owned_latin1(flags.into_bytes()),
+        )?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_runtime_event(
+            "regexp_split.standard",
+            "core.regexp_split.standard",
+        );
+        let input = standard.input;
+        let flat = input.linearize();
+        let size = flat.len();
+        let unicode = standard.flags.is_unicode();
+        let limit = standard.limit;
+        let array = self
+            .0
+            .state
+            .borrow_mut()
+            .new_array(&self.0.poisoned, realm)?;
+        let mut length = 0_u32;
+        match self.standard_regexp_split_loop(
+            &program,
+            &input,
+            &flat,
+            size,
+            unicode,
+            limit,
+            array,
+            &mut length,
+        ) {
+            Ok(StandardSplitOutcome::Complete) => Ok(Completion::Return(JsValue::Object(array))),
+            Ok(StandardSplitOutcome::Throw(message)) => {
+                let _ = self.release_jsvalue(JsValue::Object(array));
+                Ok(Completion::Throw(self.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Internal,
+                    message,
+                )?))
+            }
+            Err(error) => {
+                let _ = self.release_jsvalue(JsValue::Object(array));
+                Err(error)
+            }
+        }
+    }
+
+    /// The split loop itself, so `call_standard_regexp_split` stays a thin
+    /// shell around allocation and error cleanup. A `Throw` outcome leaves
+    /// `array` released by the caller.
+    #[allow(clippy::too_many_arguments)]
+    fn standard_regexp_split_loop(
+        &self,
+        program: &Rc<CompiledRegExp>,
+        input: &JsString,
+        flat: &JsString,
+        size: usize,
+        unicode: bool,
+        limit: u32,
+        array: ObjectId,
+        length: &mut u32,
+    ) -> Result<StandardSplitOutcome, RuntimeError> {
+        let mut p = 0_usize;
+        let mut q = 0_usize;
+        if limit == 0 {
+            return Ok(StandardSplitOutcome::Complete);
+        }
+        if size == 0 {
+            return match self.standard_regexp_exec_at(program, flat, 0)? {
+                // No match: append the whole (empty) input, as `add_tail`.
+                StandardSplitExec::Matched(None) => {
+                    self.push_standard_split_piece(array, input, Some((0, 0)), length)?;
+                    Ok(StandardSplitOutcome::Complete)
+                }
+                StandardSplitExec::Matched(Some(_)) => Ok(StandardSplitOutcome::Complete),
+                StandardSplitExec::Throw(message) => Ok(StandardSplitOutcome::Throw(message)),
+            };
+        }
+        while q < size {
+            let matched = match self.standard_regexp_exec_at(program, flat, q)? {
+                StandardSplitExec::Matched(matched) => matched,
+                StandardSplitExec::Throw(message) => {
+                    return Ok(StandardSplitOutcome::Throw(message));
+                }
+            };
+            let Some(matched) = matched else {
+                q = usize::try_from(advance_string_index(input, q as u64, unicode)).map_err(
+                    |_| RuntimeError::Invariant("advanced split index did not fit usize"),
+                )?;
+                continue;
+            };
+            let complete = matched.capture(0).ok_or(RuntimeError::Invariant(
+                "successful RegExp execution omitted capture zero",
+            ))?;
+            let e = complete.end.min(size);
+            if e == p {
+                q = usize::try_from(advance_string_index(input, q as u64, unicode)).map_err(
+                    |_| RuntimeError::Invariant("advanced split index did not fit usize"),
+                )?;
+                continue;
+            }
+            self.push_standard_split_piece(array, input, Some((p, q)), length)?;
+            if *length == limit {
+                return Ok(StandardSplitOutcome::Complete);
+            }
+            p = e;
+            for range in matched.captures()[1..].iter() {
+                self.push_standard_split_piece(
+                    array,
+                    input,
+                    range.as_ref().map(|r| (r.start, r.end)),
+                    length,
+                )?;
+                if *length == limit {
+                    return Ok(StandardSplitOutcome::Complete);
+                }
+            }
+            q = p;
+        }
+        self.push_standard_split_piece(array, input, Some((p.min(size), size)), length)?;
+        Ok(StandardSplitOutcome::Complete)
+    }
+
+    /// One anchored match of the sticky splitter program at `start`,
+    /// mapping executor failures the way the plain exec fast path does.
+    fn standard_regexp_exec_at(
+        &self,
+        program: &Rc<CompiledRegExp>,
+        flat: &JsString,
+        start: usize,
+    ) -> Result<StandardSplitExec, RuntimeError> {
+        let execution = if let Some(units) = flat.flat_latin1() {
+            execute_latin1_with_interrupt(program.as_ref(), units, start, || false)
+        } else {
+            execute_with_interrupt(
+                program.as_ref(),
+                flat.flat_utf16().expect("linearized input"),
+                start,
+                || false,
+            )
+        };
+        match execution {
+            Ok(value) => Ok(StandardSplitExec::Matched(value)),
+            Err(ExecError::OutOfMemory) => Ok(StandardSplitExec::Throw(
+                "out of memory in regexp execution",
+            )),
+            Err(ExecError::Interrupted) => Ok(StandardSplitExec::Throw("interrupted")),
+            Err(ExecError::InvalidProgram(_)) => Err(RuntimeError::Invariant(
+                "compiled RegExp program failed executor validation",
+            )),
+            Err(ExecError::StartOutOfBounds { .. }) => Err(RuntimeError::Invariant(
+                "bounded RegExp start was rejected by executor",
+            )),
+        }
+    }
+
+    /// Allocate one piece string and move it into the result array as a
+    /// dense element; no piece takes a retain/release pair or a property
+    /// query. `None` appends the spec's `undefined` for a missing capture.
+    fn push_standard_split_piece(
+        &self,
+        array: ObjectId,
+        input: &JsString,
+        range: Option<(usize, usize)>,
+        length: &mut u32,
+    ) -> Result<(), RuntimeError> {
+        let value = match range {
+            Some((start, end)) => JsValue::String(
+                self.0
+                    .state
+                    .borrow_mut()
+                    .heap
+                    .allocate_string(input.sub_string(start, end))?,
+            ),
+            None => JsValue::Undefined,
+        };
+        self.0.state.borrow_mut().append_fresh_array_value_jsvalue(
+            &self.0.poisoned,
+            array,
+            value,
+        )?;
+        *length = length.checked_add(1).ok_or(RuntimeError::Invariant(
+            "RegExp split output index exceeded Uint32",
+        ))?;
+        Ok(())
+    }
+}
+
+struct StandardRegExpSplit {
+    input: JsString,
+    pattern: JsString,
+    flags: RegExpFlags,
+    limit: u32,
+}
+
+enum StandardSplitExec {
+    Matched(Option<crate::regexp::RegExpMatch>),
+    Throw(&'static str),
+}
+
+enum StandardSplitOutcome {
+    Complete,
+    Throw(&'static str),
 }
 
 pub(crate) enum RegExpSplitStep {
@@ -275,6 +577,19 @@ impl RegExpSplitStep {
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
+        // Standard split: a genuine compiled receiver, primitive String
+        // input, immediate limit, standard `flags` getter and default
+        // species run the matching loop directly; every per-piece protocol
+        // step (lastIndex write/read, abstract exec, capture reads, dense
+        // defines) collapses into one in-State append per piece.
+        if let (Some(input @ JsValue::String(_)), Some(limit)) =
+            (arguments.readable.first(), arguments.readable.get(1))
+            && let Some(standard) = runtime.standard_regexp_split(realm, *id, input, limit)?
+        {
+            return Ok(Self::Complete(
+                runtime.call_standard_regexp_split(realm, standard)?,
+            ));
+        }
         let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
         let mut resume = RegExpSplitResume::new(runtime, realm, Phase::Input { regexp });
         resume.0.limit_value = runtime.dup_jsvalue(arguments.readable.get(1).ok_or(

@@ -143,6 +143,39 @@ impl StringReplaceStep {
                 )?,
             )));
         }
+        // Standard delegation: with a primitive String receiver, a genuine
+        // RegExp searcher, and a primitive String replacement, the String
+        // method only performs Get(search, @@replace) + Call. When the chain
+        // resolves @@replace to the standard builtin and the standard
+        // predicate selects the receiver, the whole protocol completes here
+        // instead of boxing a resume state and walking property reads.
+        if matches!(selector, StringReplaceKind::Replace)
+            && let JsValue::String(input_id) = this_value
+            && let Some(JsValue::Object(search_id)) = arguments.readable.first()
+            && let Some(JsValue::String(replace_id)) = arguments.readable.get(1)
+            && runtime.regexp_replace_method_is_standard(*search_id)?
+        {
+            let (input, replacement) = {
+                let state = runtime.0.state.borrow();
+                (
+                    state.heap.string(*input_id)?.clone(),
+                    state.heap.string(*replace_id)?.clone(),
+                )
+            };
+            if let Some(completion) = runtime.try_standard_regexp_replace_completion(
+                realm,
+                *search_id,
+                &input,
+                &replacement,
+            )? {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_runtime_event(
+                    "stringreplace_standard_delegated",
+                    "core.stringreplace_standard_delegated",
+                );
+                return Ok(Self::Complete(completion));
+            }
+        }
         let mut resume = StringReplaceResumeState {
             runtime: runtime.clone(),
             step_pending: StringReplaceStepPending::default(),

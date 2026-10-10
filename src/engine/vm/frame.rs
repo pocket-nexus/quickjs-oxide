@@ -643,11 +643,25 @@ impl FrameCold {
     }
 
     pub(super) fn release_owned(&mut self, state: &mut RuntimeState) -> Result<(), RuntimeError> {
-        if self.rare.get().is_some() {
-            self.release_normalized_this(state)?;
-            self.release_eval_arguments(state)?;
-            self.release_resume_throw(state)?;
-            self.release_constructor_return(state)?;
+        // One borrow of the rare cell takes every payload in a single pass.
+        // Recycle drops the empty shell, so ordinary frames skip this whole
+        // block; keeping it inline avoids four helper calls and four repeated
+        // cell dereferences per rare-carrying frame.
+        if let Some(rare) = self.rare.get_mut() {
+            if let Some(value) = rare.normalized_this.take() {
+                state.release_jsvalue(value)?;
+            }
+            if let Some(values) = rare.eval_arguments.take() {
+                for value in values {
+                    state.release_jsvalue(value)?;
+                }
+            }
+            if let Some(value) = rare.resume_throw.take() {
+                state.release_jsvalue(value)?;
+            }
+            if let Some(ConstructorReturn::Base(value)) = rare.constructor_return.take() {
+                state.release_jsvalue(value)?;
+            }
         }
         if let Some(guard) = self.entry_guard.take() {
             guard.finish(state)?;

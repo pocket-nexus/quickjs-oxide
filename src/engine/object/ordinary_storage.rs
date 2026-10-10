@@ -2655,7 +2655,71 @@ mod ordinary_field_leaf_tests {
     }
 }
 
+/// A RegExp's `lastIndex` slot when it is a writable own data property holding
+/// an immediate: reading or overwriting it is the whole ordinary [[Get]] or
+/// [[Set]], with no owner to retain or release.
+fn regexp_last_index_slot(
+    state: &RuntimeState,
+    object: ObjectId,
+) -> Result<Option<usize>, RuntimeError> {
+    let data = state.heap.object(object)?;
+    if !matches!(data.payload, ObjectPayload::RegExp(_)) {
+        return Ok(None);
+    }
+    let atom = state
+        .pinned_atoms
+        .get(crate::engine::atom::pinned::PinnedAtom::LastIndex);
+    let Some(slot) = locate_in(state, data, atom)? else {
+        return Ok(None);
+    };
+    Ok(match data.slots.get(slot.index) {
+        Some(PropertySlot::Data(
+            RawValue::Undefined
+            | RawValue::Null
+            | RawValue::Bool(_)
+            | RawValue::Int(_)
+            | RawValue::Float(_),
+        )) if slot.flags.writable => Some(slot.index),
+        _ => None,
+    })
+}
+
 impl RuntimeState {
+    /// Store an integer `lastIndex` on a RegExp in place; `false` changes
+    /// nothing and the caller performs the general Set.
+    pub(crate) fn try_write_regexp_last_index(
+        &mut self,
+        object: ObjectId,
+        value: i32,
+    ) -> Result<bool, RuntimeError> {
+        let Some(index) = regexp_last_index_slot(self, object)? else {
+            return Ok(false);
+        };
+        // The previous value is an immediate: the exchange hands back no owner.
+        let mut input = JsValue::Int(value);
+        if !self
+            .heap
+            .exchange_owned_data_slot(object, index, &mut input)?
+        {
+            return Err(RuntimeError::Invariant("RegExp lastIndex slot disappeared"));
+        }
+        Ok(true)
+    }
+
+    /// An immediate `lastIndex` of a RegExp; `None` leaves the general read.
+    pub(crate) fn regexp_last_index_immediate(
+        &self,
+        object: ObjectId,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        let Some(index) = regexp_last_index_slot(self, object)? else {
+            return Ok(None);
+        };
+        let PropertySlot::Data(raw) = &self.heap.object(object)?.slots[index] else {
+            unreachable!("selected data slot")
+        };
+        Ok(JsValue::from_raw(raw.clone()))
+    }
+
     pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
         self.peek_dense_number_result(base, index).ok()
     }

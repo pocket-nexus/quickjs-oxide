@@ -92,3 +92,78 @@ fn direct_replace_uses_a_second_buffer_while_generic_replace_keeps_the_outer_err
     };
     assert_eq!(message.to_utf8_lossy(), "out of memory");
 }
+
+#[test]
+fn regexp_last_index_fast_paths_keep_set_semantics() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    assert_eq!(
+        context
+            .eval(
+                r#"
+            (function () {
+                var out = [];
+                var g = /a/g;
+                out.push(g.exec("bab").index === 1 && g.lastIndex === 2);
+                out.push(g.exec("bab") === null && g.lastIndex === 0);
+                var y = /a/y;
+                y.lastIndex = 1;
+                out.push(y.exec("ba") !== null && y.lastIndex === 2);
+                out.push("aXa".replace(/a/g, "b") === "bXb" && /a/g.lastIndex === 0);
+                var frozen = Object.freeze(/a/g);
+                try { frozen.exec("a"); out.push(false); }
+                catch (e) { out.push(e instanceof TypeError && frozen.lastIndex === 0); }
+                var fixed = /a/g;
+                Object.defineProperty(fixed, "lastIndex", { value: 0, writable: false });
+                try { "a".replace(fixed, "b"); out.push(false); }
+                catch (e) { out.push(e instanceof TypeError); }
+                var seen = 0;
+                var sticky = /a/y;
+                sticky.lastIndex = { valueOf: function () { seen++; return 1; } };
+                out.push(sticky.exec("ba") !== null && seen === 1 && sticky.lastIndex === 2);
+                var held = /a/g;
+                held.lastIndex = "x";
+                out.push(held.exec("a") !== null && held.lastIndex === 1);
+                return out.every(function (x) { return x; });
+            })()
+        "#
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn regexp_plain_exec_converts_immediate_last_index_like_to_length() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    assert_eq!(
+        context
+            .eval(
+                r#"
+            (function () {
+                var out = [];
+                function at(lastIndex) {
+                    var re = /a/g;
+                    re.lastIndex = lastIndex;
+                    var m = re.exec("aaa");
+                    return m === null ? -1 : m.index;
+                }
+                out.push(at(1) === 1, at(1.9) === 1, at(true) === 1, at(null) === 0);
+                out.push(at(undefined) === 0, at(-5) === 0, at(NaN) === 0, at(9) === -1);
+                var re = /(b)(c)?/;
+                var m = re.exec("abc");
+                out.push(m.index === 1 && m.input === "abc" && m[1] === "b" && m[2] === "c"
+                    && m.length === 3 && m.groups === undefined && re.lastIndex === 0);
+                try { RegExp.prototype.exec.call({}, "a"); out.push(false); }
+                catch (e) { out.push(e instanceof TypeError); }
+                var boxed = /a/g.exec(new String("xa"));
+                out.push(boxed.index === 1 && boxed.input === "xa");
+                return out.every(function (x) { return x; });
+            })()
+        "#
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+}

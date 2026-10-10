@@ -207,10 +207,11 @@ impl CallStorage {
                 "call_region_buffer_reused",
             );
         }
-        if let Some(mut empty) = self.empty_frames.pop().or_else(|| self.rare_frames.pop()) {
-            if frame.rare.get().is_none() {
-                frame.rare = std::mem::take(&mut empty.rare);
-            }
+        // Only empty bodies wrap the installed owners; a rare shell never
+        // attaches itself to a frame whose installer (vacant/vacant_rare)
+        // did not select one. Constructors keep their reuse cycle through
+        // rare_frames, ordinary frames stay rare-free for release_owned.
+        if let Some(mut empty) = self.empty_frames.pop() {
             empty.owners = frame;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event("call_cold_frame_reused");
@@ -233,7 +234,10 @@ impl CallStorage {
         flags.clear();
 
         // Drop owners in their resident allocation; never take the whole frame
-        // onto the native stack just to destroy it.
+        // onto the native stack just to destroy it. The emptied rare shell is
+        // kept: rare-carrying frames return to rare_frames below, where
+        // constructors and unwind-region frames reuse them. Ordinary frames
+        // never see a shell because vacant/install no longer fall back here.
         if let Some(rare) = cold.rare.get_mut() {
             rare.property_wait = None;
             rare.iterator_wait = None;
@@ -461,12 +465,14 @@ impl<T> DerefMut for Resident<T> {
     }
 }
 impl CallStorage {
-    /// A body without `FrameRare` when one is pooled.
+    /// A body without `FrameRare`; ordinary frames never inherit a shell, so
+    /// the rare-frame pool is not a fallback here. Keeping the pools separate
+    /// is what lets release_owned skip the rare pass for every ordinary call.
     pub(in crate::engine::vm) fn vacant(
         &mut self,
         _realm: crate::engine::heap::ContextId,
     ) -> (ColdFrame, usize) {
-        let frame = self.empty_frames.pop().or_else(|| self.rare_frames.pop());
+        let frame = self.empty_frames.pop();
         self.vacant_from(frame)
     }
     /// Constructors always need `FrameRare`; prefer a body that kept one.

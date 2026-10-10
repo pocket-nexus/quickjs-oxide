@@ -1,0 +1,1375 @@
+{
+ "commit": "1ed93347",
+ "runtime_struct_fields": [
+  {
+   "file": "src/engine/api/context/mod.rs",
+   "line": 38,
+   "container": "Context",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "external-root:external-root:006",
+   "batch": "external-root"
+  },
+  {
+   "file": "src/engine/builtins/array/build.rs",
+   "line": 66,
+   "container": "BuildResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/build.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/callback.rs",
+   "line": 68,
+   "container": "CallbackResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/callback.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/concat.rs",
+   "line": 48,
+   "container": "ConcatResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/concat.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/constructor.rs",
+   "line": 34,
+   "container": "ConstructorResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/constructor.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/copy.rs",
+   "line": 35,
+   "container": "CopyResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/copy.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/flatten.rs",
+   "line": 54,
+   "container": "FlattenResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/flatten.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/indexed.rs",
+   "line": 68,
+   "container": "IndexedResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/indexed.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/mutation.rs",
+   "line": 64,
+   "container": "MutationResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B1:array-mutation:001",
+   "batch": "B1"
+  },
+  {
+   "file": "src/engine/builtins/array/reverse.rs",
+   "line": 41,
+   "container": "ReverseResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/reverse.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/slice.rs",
+   "line": 95,
+   "container": "SliceResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/slice.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/sort.rs",
+   "line": 52,
+   "container": "SortResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/sort.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array/string.rs",
+   "line": 64,
+   "container": "ArrayStringResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array/string.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/constructor.rs",
+   "line": 46,
+   "container": "BufferConstructorResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/constructor.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/collect.rs",
+   "line": 20,
+   "container": "TypedIteratorMethodResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/typed_array:008",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/collect.rs",
+   "line": 146,
+   "container": "TypedCollectResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/typed_array:009",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/create.rs",
+   "line": 60,
+   "container": "Factory",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/typed_array:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/create.rs",
+   "line": 67,
+   "container": "Population",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/typed_array:002",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/create.rs",
+   "line": 126,
+   "container": "BufferArguments",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/typed_array:003",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/create.rs",
+   "line": 943,
+   "container": "TypedCreateStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/typed_array:004",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/iteration.rs",
+   "line": 506,
+   "container": "TypedIterationStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": null,
+   "batch": null
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/set.rs",
+   "line": 44,
+   "container": "TypedSetResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/typed_array:006",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/slice.rs",
+   "line": 443,
+   "container": "TypedSliceStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": null,
+   "batch": null
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/species.rs",
+   "line": 255,
+   "container": "TypedSpeciesResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/typed_array:005",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/stringification.rs",
+   "line": 337,
+   "container": "TypedStringStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": null,
+   "batch": null
+  },
+  {
+   "file": "src/engine/builtins/array_buffer/typed_array/traversal.rs",
+   "line": 352,
+   "container": "TypedTraversalStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:array_buffer/typed_array:007",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/atomics/operation.rs",
+   "line": 46,
+   "container": "AtomicsResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:atomics/operation.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/date/constructor/operation.rs",
+   "line": 48,
+   "container": "DateConstructorResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:date/constructor:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/error/aggregate.rs",
+   "line": 55,
+   "container": "AggregateResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:error/aggregate.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/error/operation.rs",
+   "line": 61,
+   "container": "ErrorResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:error/operation.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/function/dynamic.rs",
+   "line": 40,
+   "container": "DynamicFunctionResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:function/dynamic.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/function/invoke.rs",
+   "line": 54,
+   "container": "InvokeResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:function/invoke.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/function/text.rs",
+   "line": 29,
+   "container": "FunctionTextResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:function/text.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/iterator/collection.rs",
+   "line": 99,
+   "container": "CollectionResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:iterator/collection.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/iterator/concat.rs",
+   "line": 235,
+   "container": "ConcatGuard",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:iterator/concat.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/iterator/concat.rs",
+   "line": 277,
+   "container": "ConcatResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:iterator/concat.rs:002",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/iterator/concat.rs",
+   "line": 295,
+   "container": "ConcatInputs",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:iterator/concat.rs:003",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/iterator/entry.rs",
+   "line": 78,
+   "container": "TagSetterResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:iterator/entry.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/iterator/from.rs",
+   "line": 32,
+   "container": "FromResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:iterator/from.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/iterator/helper.rs",
+   "line": 23,
+   "container": "RunningHelper",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:iterator/helper.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/iterator/helper.rs",
+   "line": 69,
+   "container": "HelperResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:iterator/helper.rs:002",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/iterator/wrap.rs",
+   "line": 34,
+   "container": "WrapResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:iterator/wrap.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/json/parse.rs",
+   "line": 40,
+   "container": "JsonParseRecord",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:json/parse.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/json/reviver.rs",
+   "line": 77,
+   "container": "ParseResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:json/reviver.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/json/stringify/operation.rs",
+   "line": 39,
+   "container": "StringifyResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:json/stringify:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/map/callback.rs",
+   "line": 36,
+   "container": "CallbackResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:map/callback.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/math/operation.rs",
+   "line": 63,
+   "container": "MathResumeState",
+   "field": "owner",
+   "type": "Option<Runtime>",
+   "id": "B3:math/operation.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/math/sum.rs",
+   "line": 51,
+   "container": "SumResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:math/sum.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/object/iteration.rs",
+   "line": 78,
+   "container": "IterationResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:object/iteration.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/object/predicate.rs",
+   "line": 61,
+   "container": "PredicateResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:object/predicate.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/object/property.rs",
+   "line": 153,
+   "container": "AssignmentSources",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:object/property.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/object/property.rs",
+   "line": 1172,
+   "container": "PropertyStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:object/property.rs:002",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/object/string.rs",
+   "line": 47,
+   "container": "ObjectStringResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:object/string.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/primitive/constructor.rs",
+   "line": 38,
+   "container": "PrimitiveConstructorResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:primitive/constructor.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/primitive/globals.rs",
+   "line": 59,
+   "container": "GlobalResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:primitive/globals.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/primitive/numeric.rs",
+   "line": 61,
+   "container": "NumericResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:primitive/numeric.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/primitive/text.rs",
+   "line": 70,
+   "container": "ScalarTextResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:primitive/text.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/promise/operation/aggregate.rs",
+   "line": 40,
+   "container": "Inputs",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:promise/operation:003",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/promise/operation/finally.rs",
+   "line": 22,
+   "container": "FinallyInputs",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:promise/operation:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/promise/operation/finally.rs",
+   "line": 35,
+   "container": "FinallyCapture",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:promise/operation:002",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/promise/operation/resolve.rs",
+   "line": 9,
+   "container": "ResolveState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:promise/operation:005",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/promise/operation/then.rs",
+   "line": 152,
+   "container": "HandlerInputs",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:promise/operation:004",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/promise/operation.rs",
+   "line": 31,
+   "container": "PromiseResume",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:promise/operation.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/promise/operation.rs",
+   "line": 95,
+   "container": "InvocationState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:promise/operation.rs:002",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/constructor.rs",
+   "line": 283,
+   "container": "RegExpConstructorResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/constructor.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/exec.rs",
+   "line": 690,
+   "container": "RegExpExecStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/exec.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/iterator_next.rs",
+   "line": 384,
+   "container": "RegExpIteratorStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/iterator_next.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/match_all_protocol.rs",
+   "line": 372,
+   "container": "RegExpMatchAllStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/match_all_protocol.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/match_protocol.rs",
+   "line": 456,
+   "container": "RegExpMatchStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/match_protocol.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/replace.rs",
+   "line": 442,
+   "container": "RegExpReplaceResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/replace.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/replace.rs",
+   "line": 513,
+   "container": "MatchCursor",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/replace.rs:002",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/result.rs",
+   "line": 37,
+   "container": "RegExpResultOwner",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/result.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/search.rs",
+   "line": 293,
+   "container": "RegExpSearchStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/search.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/regexp/split.rs",
+   "line": 1031,
+   "container": "RegExpSplitStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:regexp/split.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/set/callback.rs",
+   "line": 31,
+   "container": "EachResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:set/callback.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/set/operations.rs",
+   "line": 65,
+   "container": "SetResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:set/operations.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/string/factory.rs",
+   "line": 69,
+   "container": "StringFactoryResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:string/factory.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/string/regexp.rs",
+   "line": 540,
+   "container": "StringProtocolStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:string/regexp.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/string/replace.rs",
+   "line": 40,
+   "container": "StringReplaceResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:string/replace.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/string/search.rs",
+   "line": 58,
+   "container": "StringSearchResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:string/search.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/string/split.rs",
+   "line": 33,
+   "container": "StringSplitResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:string/split.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/string/text.rs",
+   "line": 64,
+   "container": "StringTextResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:string/text.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/builtins/weak_ref/constructor.rs",
+   "line": 37,
+   "container": "WeakConstructorResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B3:weak_ref/constructor.rs:001",
+   "batch": "B3"
+  },
+  {
+   "file": "src/engine/code/rooted.rs",
+   "line": 28,
+   "container": "FunctionBytecodeRef",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "external-root:external-root:005",
+   "batch": "external-root"
+  },
+  {
+   "file": "src/engine/heap/roots.rs",
+   "line": 401,
+   "container": "VarRefRoot",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "external-root:external-root:004",
+   "batch": "external-root"
+  },
+  {
+   "file": "src/engine/modules/callback.rs",
+   "line": 56,
+   "container": "CallbackResume",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:004",
+   "batch": "B4"
+  },
+  {
+   "file": "src/engine/modules/evaluation.rs",
+   "line": 31,
+   "container": "EvaluationResume",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:006",
+   "batch": "B4"
+  },
+  {
+   "file": "src/engine/modules/import.rs",
+   "line": 48,
+   "container": "ImportResume",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:003",
+   "batch": "B4"
+  },
+  {
+   "file": "src/engine/modules/link.rs",
+   "line": 18,
+   "container": "LinkResume",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:005",
+   "batch": "B4"
+  },
+  {
+   "file": "src/engine/modules/mod.rs",
+   "line": 475,
+   "container": "ModuleBytecodeRef",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "external-root:external-root:001",
+   "batch": "external-root"
+  },
+  {
+   "file": "src/engine/object/array_length.rs",
+   "line": 30,
+   "container": "ArrayLengthResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2e:define:001",
+   "batch": "B2e"
+  },
+  {
+   "file": "src/engine/object/internal_methods/boolean.rs",
+   "line": 445,
+   "container": "ProxyBooleanStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:010",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/internal_methods/call.rs",
+   "line": 57,
+   "container": "CallInputs",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:014",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/internal_methods/call.rs",
+   "line": 232,
+   "container": "ProxyCallStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:015",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/internal_methods/construct.rs",
+   "line": 67,
+   "container": "NewTargetOwner",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:017",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/internal_methods/construct.rs",
+   "line": 322,
+   "container": "ProxyConstructStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:018",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/internal_methods/define.rs",
+   "line": 254,
+   "container": "ProxyDefineStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2e:define:004",
+   "batch": "B2e"
+  },
+  {
+   "file": "src/engine/object/internal_methods/method.rs",
+   "line": 23,
+   "container": "MethodThrow",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:011",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/internal_methods/method.rs",
+   "line": 64,
+   "container": "MethodResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": null,
+   "batch": null
+  },
+  {
+   "file": "src/engine/object/internal_methods/own_keys.rs",
+   "line": 566,
+   "container": "KeysStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:016",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/internal_methods/own_property.rs",
+   "line": 404,
+   "container": "ProxyOwnStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2a-b:read:001",
+   "batch": "B2a-b"
+  },
+  {
+   "file": "src/engine/object/internal_methods/prototype.rs",
+   "line": 392,
+   "container": "ProxyPrototypeStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:013",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/internal_methods/set.rs",
+   "line": 40,
+   "container": "SetInputs",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2f:proxy-set:001",
+   "batch": "B2f"
+  },
+  {
+   "file": "src/engine/object/internal_methods/set.rs",
+   "line": 291,
+   "container": "ProxySetStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2f:proxy-set:002",
+   "batch": "B2f"
+  },
+  {
+   "file": "src/engine/object/internal_methods.rs",
+   "line": 89,
+   "container": "ProxyMethodStackGuard",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:008",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/mod.rs",
+   "line": 30,
+   "container": "ObjectRef",
+   "field": "runtime",
+   "type": "Option<Runtime>",
+   "id": "external-root:external-root:002",
+   "batch": "external-root"
+  },
+  {
+   "file": "src/engine/object/mod.rs",
+   "line": 198,
+   "container": "AtomOwner",
+   "field": "runtime",
+   "type": "Option<Runtime>",
+   "id": "external-root:external-root:003",
+   "batch": "external-root"
+  },
+  {
+   "file": "src/engine/object/object_literal/element.rs",
+   "line": 17,
+   "container": "LiteralDefinitionState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:009",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/object/operations.rs",
+   "line": 52,
+   "container": "PropertySetterCall",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": null,
+   "batch": null
+  },
+  {
+   "file": "src/engine/object/ordinary/set.rs",
+   "line": 71,
+   "container": "SetRequestEdges",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2c-e:set:002",
+   "batch": "B2c-e"
+  },
+  {
+   "file": "src/engine/object/ordinary/set.rs",
+   "line": 114,
+   "container": "State",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2c-e:set:003",
+   "batch": "B2c-e"
+  },
+  {
+   "file": "src/engine/object/owned_descriptor.rs",
+   "line": 16,
+   "container": "OwnedPropertyDescriptor",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2e:define:002",
+   "batch": "B2e"
+  },
+  {
+   "file": "src/engine/object/owned_descriptor.rs",
+   "line": 251,
+   "container": "OwnedCompletePropertyDescriptor",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2e:define:003",
+   "batch": "B2e"
+  },
+  {
+   "file": "src/engine/value/conversion/descriptor.rs",
+   "line": 250,
+   "container": "DescriptorStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2b:key-and-conversion:003",
+   "batch": "B2b"
+  },
+  {
+   "file": "src/engine/value/conversion/number.rs",
+   "line": 101,
+   "container": "NumberStepPending",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2b:key-and-conversion:004",
+   "batch": "B2b"
+  },
+  {
+   "file": "src/engine/value/conversion/primitive.rs",
+   "line": 27,
+   "container": "PrimitiveResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2b:key-and-conversion:005",
+   "batch": "B2b"
+  },
+  {
+   "file": "src/engine/vm/async_from_sync_iterator/operation.rs",
+   "line": 35,
+   "container": "FromSyncResume",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:007",
+   "batch": "B4"
+  },
+  {
+   "file": "src/engine/vm/async_function/operation.rs",
+   "line": 23,
+   "container": "AsyncResume",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:010",
+   "batch": "B4"
+  },
+  {
+   "file": "src/engine/vm/async_generator/operation.rs",
+   "line": 30,
+   "container": "AsyncGeneratorResume",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:009",
+   "batch": "B4"
+  },
+  {
+   "file": "src/engine/vm/async_generator.rs",
+   "line": 31,
+   "container": "RootedAsyncGeneratorRequest",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:002",
+   "batch": "B4"
+  },
+  {
+   "file": "src/engine/vm/call/native.rs",
+   "line": 20,
+   "container": "NativeActivation",
+   "field": "runtime",
+   "type": "Option<Runtime>",
+   "id": "B1:native-lifecycle:001",
+   "batch": "B1"
+  },
+  {
+   "file": "src/engine/vm/call/prototype.rs",
+   "line": 79,
+   "container": "ProtoSourceResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:019",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/construct_driver.rs",
+   "line": 609,
+   "container": "PendingClass",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:006",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/conversion_driver.rs",
+   "line": 36,
+   "container": "ConversionState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2b:key-and-conversion:001",
+   "batch": "B2b"
+  },
+  {
+   "file": "src/engine/vm/conversion_driver.rs",
+   "line": 673,
+   "container": "ConversionInvocation",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B2b:key-and-conversion:002",
+   "batch": "B2b"
+  },
+  {
+   "file": "src/engine/vm/environment_bindings/operation.rs",
+   "line": 466,
+   "container": "EnvironmentStepPending",
+   "field": "runtime",
+   "type": "Option<Runtime>",
+   "id": "B5:execution-and-restoration:021",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/eval_driver.rs",
+   "line": 420,
+   "container": "ApplyArgumentsOwner",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:007",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/frames.rs",
+   "line": 850,
+   "container": "ActiveFrameGuard",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:002",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/frames.rs",
+   "line": 904,
+   "container": "ActiveCollectionRecordGuard",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:003",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/frames.rs",
+   "line": 911,
+   "container": "BacktraceBarrierGuard",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:004",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/generator/resume.rs",
+   "line": 38,
+   "container": "GeneratorResume",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:008",
+   "batch": "B4"
+  },
+  {
+   "file": "src/engine/vm/iterator_driver.rs",
+   "line": 106,
+   "container": "PendingIteratorState",
+   "field": "runtime",
+   "type": "Option<Runtime>",
+   "id": "B5:execution-and-restoration:005",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/numeric/operation.rs",
+   "line": 171,
+   "container": "NumericResumeState",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:022",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/predicate_driver.rs",
+   "line": 19,
+   "container": "Input",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:001",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/protocol.rs",
+   "line": 17,
+   "container": "DirectEvalInvocation",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": null,
+   "batch": null
+  },
+  {
+   "file": "src/engine/vm/proxy_get_driver/construct.rs",
+   "line": 15,
+   "container": "ConstructorBoundary",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B5:execution-and-restoration:020",
+   "batch": "B5"
+  },
+  {
+   "file": "src/engine/vm/proxy_get_driver/native.rs",
+   "line": 258,
+   "container": "NativeWaitRecord",
+   "field": "runtime",
+   "type": "Option<Runtime>",
+   "id": "B1:native-lifecycle:002",
+   "batch": "B1"
+  },
+  {
+   "file": "src/engine/vm/suspend.rs",
+   "line": 228,
+   "container": "EncodedActivationEntry",
+   "field": "runtime",
+   "type": "Runtime",
+   "id": "B4:module-job-suspend:001",
+   "batch": "B4"
+  }
+ ],
+ "closed_b0_ids": [
+  "B2c-e:set:001",
+  "B2a-b:read:002",
+  "B2a-b:read:003",
+  "B5:execution-and-restoration:012"
+ ],
+ "counters": {
+  "richards": {
+   "core.runtime_clone": 517,
+   "core.state.borrow": 1104,
+   "core.state.borrow_mut": 1040,
+   "core.state.try_borrow": 239,
+   "core.state.try_borrow_mut": 822,
+   "core.object_root.clone": 30,
+   "core.object_root.promote": 42,
+   "core.object_root.adopt": 151,
+   "core.atom_root.clone": 27,
+   "core.var_ref_root.promote": 54,
+   "core.call_decline.native_hint": 1,
+   "core.call_decline.native": 1,
+   "core.legacy_boundary.ordinary_call": 2
+  },
+  "deltablue": {
+   "core.runtime_clone": 93905,
+   "core.state.borrow": 97831,
+   "core.state.borrow_mut": 258896,
+   "core.state.try_borrow": 621,
+   "core.state.try_borrow_mut": 171131,
+   "core.object_root.clone": 145,
+   "core.object_root.promote": 8293,
+   "core.object_root.adopt": 60384,
+   "core.atom_root.clone": 142,
+   "core.var_ref_root.promote": 74,
+   "core.call_decline.native_hint": 43811,
+   "core.call_decline.native": 1,
+   "core.legacy_boundary.ordinary_call": 43812
+  },
+  "navier-stokes": {
+   "core.runtime_clone": 3105,
+   "core.state.borrow": 7134,
+   "core.state.borrow_mut": 5558,
+   "core.state.try_borrow": 1276,
+   "core.state.try_borrow_mut": 4406,
+   "core.object_root.clone": 71,
+   "core.object_root.promote": 111,
+   "core.object_root.adopt": 610,
+   "core.atom_root.clone": 26,
+   "core.var_ref_root.promote": 641,
+   "core.call_decline.native_hint": 21,
+   "core.call_decline.native": 1,
+   "core.legacy_boundary.ordinary_call": 22
+  },
+  "crypto": {
+   "core.runtime_clone": 199104,
+   "core.state.borrow": 137159,
+   "core.state.borrow_mut": 347077,
+   "core.state.try_borrow": 102964,
+   "core.state.try_borrow_mut": 152365,
+   "core.object_root.clone": 21484,
+   "core.object_root.promote": 37337,
+   "core.object_root.adopt": 15386,
+   "core.atom_root.clone": 5707,
+   "core.var_ref_root.promote": 206,
+   "core.call_decline.native_hint": 14827,
+   "core.call_decline.native": 141,
+   "core.legacy_boundary.ordinary_call": 14968
+  },
+  "raytrace": {
+   "core.runtime_clone": 224533,
+   "core.state.borrow": 385956,
+   "core.state.borrow_mut": 1014227,
+   "core.state.try_borrow": 96458,
+   "core.state.try_borrow_mut": 278276,
+   "core.object_root.clone": 32002,
+   "core.object_root.promote": 64020,
+   "core.object_root.adopt": 32027,
+   "core.atom_root.clone": 86,
+   "core.var_ref_root.promote": 45,
+   "core.call_decline.native_hint": 220656,
+   "core.call_decline.native": 11041,
+   "core.legacy_boundary.ordinary_call": 231697
+  },
+  "earley-boyer": {
+   "core.runtime_clone": 180042,
+   "core.state.borrow": 296403,
+   "core.state.borrow_mut": 3388618,
+   "core.state.try_borrow": 50484,
+   "core.state.try_borrow_mut": 361791,
+   "core.object_root.clone": 208,
+   "core.object_root.promote": 8423,
+   "core.object_root.adopt": 8809,
+   "core.atom_root.clone": 159,
+   "core.var_ref_root.promote": 69237,
+   "core.call_decline.native_hint": 31,
+   "core.call_decline.native": 1,
+   "core.legacy_boundary.ordinary_call": 32
+  },
+  "regexp": {
+   "core.runtime_clone": 1484163,
+   "core.state.borrow": 1958487,
+   "core.state.borrow_mut": 2402998,
+   "core.state.try_borrow": 254123,
+   "core.state.try_borrow_mut": 1521887,
+   "core.object_root.clone": 78347,
+   "core.object_root.promote": 145735,
+   "core.object_root.adopt": 374252,
+   "core.atom_root.clone": 226,
+   "core.var_ref_root.promote": 206,
+   "core.call_decline.native_hint": 280369,
+   "core.call_decline.native": 65917,
+   "core.legacy_boundary.ordinary_call": 346286
+  },
+  "splay": {
+   "core.runtime_clone": 145611,
+   "core.state.borrow": 226697,
+   "core.state.borrow_mut": 2423994,
+   "core.state.try_borrow": 48662,
+   "core.state.try_borrow_mut": 97333,
+   "core.object_root.clone": 16193,
+   "core.object_root.promote": 32364,
+   "core.object_root.adopt": 32200,
+   "core.atom_root.clone": 30,
+   "core.var_ref_root.promote": 31,
+   "core.call_decline.native_hint": 16001,
+   "core.call_decline.native": 16161,
+   "core.legacy_boundary.ordinary_call": 32162
+  }
+ }
+}

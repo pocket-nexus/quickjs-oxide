@@ -245,6 +245,7 @@ impl<'a> FrameExecution<'a> {
 
     /// Install `f.apply(thisArg, array)` as an ordinary call of `f`. The
     /// caller selected `f` and read `values` from the array in this lease.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn install_apply(
         &mut self,
         runtime: &Runtime,

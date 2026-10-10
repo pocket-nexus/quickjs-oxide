@@ -32,6 +32,44 @@ impl Runtime {
             )
         })
     }
+
+    /// Predicate for the plain builtin match on a genuine RegExp with a
+    /// primitive String input and an immediate `lastIndex`, used by the
+    /// direct method entry: dispatch already resolved `exec` to this builtin,
+    /// so ToString and ToLength observe nothing and the builtin match can
+    /// start without the step machine. `None` keeps the general steps; the
+    /// abstract operation always takes the step machine (see
+    /// `RegExpExecStep::abstract_exec`).
+    fn plain_exec_inputs(
+        &self,
+        object: crate::engine::heap::ObjectId,
+        input: &JsValue,
+    ) -> Result<Option<(JsString, u64)>, RuntimeError> {
+        let JsValue::String(id) = input else {
+            return Ok(None);
+        };
+        let state = self.0.state.borrow();
+        if !matches!(
+            state.heap.object(object)?.payload,
+            crate::engine::heap::ObjectPayload::RegExp(
+                crate::engine::heap::RegExpObjectData::Compiled { .. }
+            )
+        ) {
+            return Ok(None);
+        }
+        let number = match state.regexp_last_index_immediate(object)? {
+            Some(JsValue::Int(value)) => f64::from(value),
+            Some(JsValue::Float(value)) => value,
+            Some(JsValue::Bool(value)) => f64::from(u8::from(value)),
+            Some(JsValue::Null) => 0.0,
+            Some(JsValue::Undefined) => f64::NAN,
+            _ => return Ok(None),
+        };
+        Ok(Some((
+            state.heap.string(*id)?.clone(),
+            Runtime::length_from_number(number),
+        )))
+    }
     pub(crate) fn regexp_exec_abstract(
         &self,
         realm: ContextId,
@@ -47,12 +85,12 @@ impl Runtime {
     fn finish_builtin_regexp_exec(
         &self,
         realm: ContextId,
-        object: &ObjectRef,
+        object: crate::engine::heap::ObjectId,
         input: JsString,
         input_value: &JsValue,
         last_index: u64,
     ) -> Result<Completion, RuntimeError> {
-        let this_value = &JsValue::Object(object.object_id());
+        let this_value = &JsValue::Object(object);
         // QuickJS keeps the branded RegExp identity across both coercions, but
         // reads `re->bytecode` only afterwards. Either conversion may call the
         // legacy `compile()` method, so snapshot the current program and flags
@@ -113,7 +151,7 @@ impl Runtime {
 
         let Some(matched) = matched else {
             if updates_last_index
-                && let Some(exception) = self.set_regexp_last_index(realm, object, 0)?
+                && let Some(exception) = self.set_regexp_last_index_id(realm, object, 0)?
             {
                 return Ok(Completion::Throw(exception));
             }
@@ -128,7 +166,7 @@ impl Runtime {
                 RuntimeError::Invariant("RegExp match end exceeded signed String range")
             })?;
             // This write happens before any result/indices allocation.
-            if let Some(exception) = self.set_regexp_last_index(realm, object, end)? {
+            if let Some(exception) = self.set_regexp_last_index_id(realm, object, end)? {
                 return Ok(Completion::Throw(exception));
             }
         }
@@ -143,6 +181,14 @@ impl Runtime {
     }
 
     fn regexp_last_index_value(&self, object: &ObjectRef) -> Result<JsValue, RuntimeError> {
+        if let Some(value) = self
+            .0
+            .state
+            .borrow()
+            .regexp_last_index_immediate(object.object_id())?
+        {
+            return Ok(value);
+        }
         let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let descriptor =
             self.get_own_property_owned(object, &key)?
@@ -163,12 +209,41 @@ impl Runtime {
         )
     }
 
+    /// [`Self::set_regexp_last_index`] for a receiver this execution owns;
+    /// a public root is built only for the general Set.
+    pub(super) fn set_regexp_last_index_id(
+        &self,
+        realm: ContextId,
+        object: crate::engine::heap::ObjectId,
+        value: i32,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        if self
+            .0
+            .state
+            .borrow_mut()
+            .try_write_regexp_last_index(object, value)?
+        {
+            return Ok(None);
+        }
+        let object = ObjectRef::from_borrowed_handle(self.clone(), object)?;
+        self.set_regexp_last_index(realm, &object, value)
+    }
+
     pub(crate) fn set_regexp_last_index(
         &self,
         realm: ContextId,
         object: &ObjectRef,
         value: i32,
     ) -> Result<Option<JsValue>, RuntimeError> {
+        if object.belongs_to(self)
+            && self
+                .0
+                .state
+                .borrow_mut()
+                .try_write_regexp_last_index(object.object_id(), value)?
+        {
+            return Ok(None);
+        }
         let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         self.set_property_or_throw(realm, object, &key, Value::Int(value))
     }
@@ -238,6 +313,31 @@ impl RegExpExecStep {
                 "RegExp exec/test did not receive a generic invocation",
             ));
         };
+        // RegExp.prototype.exec on a genuine RegExp with a primitive String
+        // input and an immediate `lastIndex` observes nothing in ToString or
+        // ToLength, so the builtin match starts directly instead of
+        // duplicating both operands into a boxed resume state and releasing
+        // them through the Runtime. Both the public native entry and the
+        // interpreter's in-loop continuation reach this start, so the plain
+        // predicate lives here rather than in either caller.
+        if kind == RegExpNativeKind::Exec
+            && let JsValue::Object(object) = this_value
+            && let Some(input_value @ JsValue::String(_)) = arguments.readable.first()
+            && let Some((input, last_index)) = runtime.plain_exec_inputs(*object, input_value)?
+        {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_runtime_event(
+                "regexp_exec.plain",
+                "core.regexp_exec.plain",
+            );
+            return Ok(Self::Complete(runtime.finish_builtin_regexp_exec(
+                realm,
+                *object,
+                input,
+                input_value,
+                last_index,
+            )?));
+        }
         let mut resume = RegExpExecResume(Box::new(RegExpExecResumeState {
             step_pending: RegExpExecStepPending::new(runtime),
             realm,
@@ -266,6 +366,13 @@ impl RegExpExecStep {
         regexp: JsValue,
         input: JsValue,
     ) -> Result<Self, RuntimeError> {
+        // The abstract operation must keep the step machine: completing the
+        // builtin match synchronously here (2a28117d) left two owner
+        // containers unreleased — the resident replace/split resume state's
+        // regexp field and a caller frame's operand slot — keeping the whole
+        // realm alive at teardown in getter/custom-exec tests. The direct
+        // method entry below keeps the plain predicate; the protocols take
+        // the verified machine path.
         Self::abstract_start(runtime, realm, regexp, input, false)
     }
     fn abstract_start(
@@ -480,10 +587,9 @@ impl RegExpExecResume {
                         "RegExp lastIndex conversion lost its branded receiver",
                     ));
                 };
-                let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object)?;
                 let result = runtime.finish_builtin_regexp_exec(
                     self.0.realm,
-                    &object,
+                    *object,
                     input,
                     &self.string_input,
                     last_index,

@@ -4,7 +4,9 @@ use crate::engine::builtins::native::{RegExpFlagKind, RegExpNativeKind};
 use crate::engine::heap::RegExpObjectData;
 use crate::engine::value::ReplacementStringBuffer;
 
-use crate::regexp::{CompiledRegExp, ExecError, RegExpFlags, execute_with_interrupt};
+use crate::regexp::{
+    CompiledRegExp, ExecError, RegExpFlags, execute_latin1_with_interrupt, execute_with_interrupt,
+};
 use std::rc::Rc;
 
 use super::super::replacement::{
@@ -57,18 +59,61 @@ impl Runtime {
         })
     }
 
+    /// The String.prototype.replace delegation gate: the String method only
+    /// does Get(search, @@replace) + Call, so the chain must resolve
+    /// @@replace to the standard builtin for the delegation to observe
+    /// nothing beyond the standard predicate.
+    pub(crate) fn regexp_replace_method_is_standard(
+        &self,
+        regexp: ObjectId,
+    ) -> Result<bool, RuntimeError> {
+        let state = self.0.state.borrow();
+        let replace = state.well_known_symbols[&crate::engine::object::WellKnownSymbol::Replace];
+        raw_regexp_data_property_matches(
+            &state.heap,
+            regexp,
+            replace,
+            NativeFunctionId::RegExp(RegExpNativeKind::Replace),
+        )
+    }
+
+    /// Run the standard RegExp replace for the String.prototype.replace
+    /// delegation; `None` keeps the caller's general steps.
+    pub(crate) fn try_standard_regexp_replace_completion(
+        &self,
+        realm: ContextId,
+        regexp: ObjectId,
+        input: &JsString,
+        replacement: &JsString,
+    ) -> Result<Option<Completion>, RuntimeError> {
+        let Some(standard) = self.standard_regexp_replace(regexp)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.call_standard_regexp_replace(
+            realm,
+            regexp,
+            input,
+            replacement,
+            standard,
+        )?))
+    }
+
     fn standard_regexp_replace(
         &self,
-        regexp: &ObjectRef,
+        regexp: ObjectId,
     ) -> Result<Option<StandardRegExpReplace>, RuntimeError> {
-        let last_index =
-            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
-        let exec = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Exec)?;
-        let flags = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Flags)?;
-        let global = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Global)?;
-        let unicode = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Unicode)?;
+        use crate::engine::atom::pinned::PinnedAtom;
+        // Pinned atoms live as long as the runtime; no owning key is needed.
         let state = self.0.state.borrow();
-        let object = state.heap.object(regexp.object_id())?;
+        let pinned = |atom| state.pinned_atoms.get(atom);
+        let (last_index, exec, flags, global, unicode) = (
+            pinned(PinnedAtom::LastIndex),
+            pinned(PinnedAtom::Exec),
+            pinned(PinnedAtom::Flags),
+            pinned(PinnedAtom::Global),
+            pinned(PinnedAtom::Unicode),
+        );
+        let object = state.heap.object(regexp)?;
         let ObjectPayload::RegExp(RegExpObjectData::Compiled { program, .. }) = &object.payload
         else {
             return Ok(None);
@@ -80,7 +125,7 @@ impl Runtime {
             return Ok(None);
         }
         let shape = state.heap.shape(object.shape)?;
-        let Some(last_index_slot) = shape.find(AtomIdx::from_raw(last_index.atom().raw())) else {
+        let Some(last_index_slot) = shape.find(AtomIdx::from_raw(last_index.raw())) else {
             return Ok(None);
         };
         let last_index_slot = usize::try_from(last_index_slot)
@@ -99,23 +144,23 @@ impl Runtime {
 
         if !raw_regexp_data_property_matches(
             &state.heap,
-            regexp.object_id(),
-            exec.atom(),
+            regexp,
+            exec,
             NativeFunctionId::RegExp(RegExpNativeKind::Exec),
         )? || !raw_regexp_getter_matches(
             &state.heap,
-            regexp.object_id(),
-            flags.atom(),
+            regexp,
+            flags,
             NativeFunctionId::RegExp(RegExpNativeKind::Flags),
         )? || !raw_regexp_getter_matches(
             &state.heap,
-            regexp.object_id(),
-            global.atom(),
+            regexp,
+            global,
             NativeFunctionId::RegExp(RegExpNativeKind::Flag(RegExpFlagKind::Global)),
         )? || !raw_regexp_getter_matches(
             &state.heap,
-            regexp.object_id(),
-            unicode.atom(),
+            regexp,
+            unicode,
             NativeFunctionId::RegExp(RegExpNativeKind::Flag(RegExpFlagKind::Unicode)),
         )? {
             return Ok(None);
@@ -131,7 +176,7 @@ impl Runtime {
     fn call_standard_regexp_replace(
         &self,
         realm: ContextId,
-        regexp: &ObjectRef,
+        regexp: ObjectId,
         input: &JsString,
         replacement: &JsString,
         standard: StandardRegExpReplace,
@@ -145,7 +190,7 @@ impl Runtime {
         let global = flags.contains(RegExpFlags::GLOBAL);
         let sticky = flags.contains(RegExpFlags::STICKY);
         let mut last_index = if global {
-            if let Some(value) = self.set_regexp_last_index(realm, regexp, 0)? {
+            if let Some(value) = self.set_regexp_last_index_id(realm, regexp, 0)? {
                 return Ok(Completion::Throw(value));
             }
             0
@@ -154,19 +199,27 @@ impl Runtime {
         } else {
             0
         };
-        let input_units = input.utf16_units().collect::<Vec<_>>();
+        // Match on the flat string as exec does, without copying its units.
+        let flat = input.linearize();
         let mut next_source_position = 0_usize;
 
         loop {
-            let matched = if last_index > input_units.len() as u64 {
+            let matched = if last_index > flat.len() as u64 {
                 None
             } else {
-                match execute_with_interrupt(
-                    program.as_ref(),
-                    &input_units,
-                    usize::try_from(last_index).expect("RegExp start was bounded by String length"),
-                    || false,
-                ) {
+                let start =
+                    usize::try_from(last_index).expect("RegExp start was bounded by String length");
+                let execution = if let Some(units) = flat.flat_latin1() {
+                    execute_latin1_with_interrupt(program.as_ref(), units, start, || false)
+                } else {
+                    execute_with_interrupt(
+                        program.as_ref(),
+                        flat.flat_utf16().expect("linearized input"),
+                        start,
+                        || false,
+                    )
+                };
+                match execution {
                     Ok(value) => value,
                     Err(ExecError::OutOfMemory) => {
                         return Ok(Completion::Throw(self.new_native_error_jsvalue(
@@ -197,7 +250,7 @@ impl Runtime {
 
             let Some(matched) = matched else {
                 if (global || sticky)
-                    && let Some(value) = self.set_regexp_last_index(realm, regexp, 0)?
+                    && let Some(value) = self.set_regexp_last_index_id(realm, regexp, 0)?
                 {
                     return Ok(Completion::Throw(value));
                 }
@@ -247,7 +300,7 @@ impl Runtime {
                     let end = i32::try_from(complete.end).map_err(|_| {
                         RuntimeError::Invariant("RegExp match end exceeded signed String range")
                     })?;
-                    if let Some(value) = self.set_regexp_last_index(realm, regexp, end)? {
+                    if let Some(value) = self.set_regexp_last_index_id(realm, regexp, end)? {
                         return Ok(Completion::Throw(value));
                     }
                 }
@@ -280,7 +333,7 @@ impl Runtime {
     }
 }
 
-fn raw_regexp_data_property_matches(
+pub(super) fn raw_regexp_data_property_matches(
     heap: &Heap,
     object: ObjectId,
     atom: Atom,
@@ -295,7 +348,7 @@ fn raw_regexp_data_property_matches(
     raw_native_function_matches(heap, *function, expected)
 }
 
-fn raw_regexp_getter_matches(
+pub(super) fn raw_regexp_getter_matches(
     heap: &Heap,
     object: ObjectId,
     atom: Atom,
@@ -313,7 +366,7 @@ fn raw_regexp_getter_matches(
     raw_native_function_matches(heap, function, expected)
 }
 
-fn raw_regexp_property_slot(
+pub(super) fn raw_regexp_property_slot(
     heap: &Heap,
     object: ObjectId,
     atom: Atom,
@@ -352,7 +405,7 @@ fn regexp_chain_object_is_exotic(object: &ObjectData) -> bool {
     )
 }
 
-fn raw_native_function_matches(
+pub(super) fn raw_native_function_matches(
     heap: &Heap,
     object: ObjectId,
     expected: NativeFunctionId,
@@ -539,7 +592,6 @@ impl RegExpReplaceStep {
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
-        let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
         let input = arguments.readable.first().ok_or(RuntimeError::Invariant(
             "RegExp @@replace input argv was not padded",
         ))?;
@@ -569,12 +621,13 @@ impl RegExpReplaceStep {
             }
         }
         if let (Some(source), Some(text)) = (&source, &text)
-            && let Some(standard) = runtime.standard_regexp_replace(&regexp)?
+            && let Some(standard) = runtime.standard_regexp_replace(*id)?
         {
             return Ok(Self::Complete(runtime.call_standard_regexp_replace(
-                realm, &regexp, source, text, standard,
+                realm, *id, source, text, standard,
             )?));
         }
+        let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "regexpreplace_resident_allocated",
@@ -851,13 +904,14 @@ impl RegExpReplaceResume {
     }
     fn prepared(&mut self, runtime: &Runtime) -> Result<ReplaceAction, RuntimeError> {
         if self.0.state.functional.is_none()
-            && let Some(standard) = runtime.standard_regexp_replace(&self.0.state.regexp)?
+            && let Some(standard) =
+                runtime.standard_regexp_replace(self.0.state.regexp.object_id())?
         {
             // Preserve the existing raw predicate and matcher unchanged.
             return Ok(ReplaceAction::Complete(
                 runtime.call_standard_regexp_replace(
                     self.0.realm,
-                    &self.0.state.regexp,
+                    self.0.state.regexp.object_id(),
                     self.source(),
                     self.0
                         .state
@@ -1655,7 +1709,12 @@ mod tests {
             panic!("RegExp object");
         };
         // The original direct-matcher guard intentionally rejects lazy exec.
-        assert!(runtime.standard_regexp_replace(&regexp).unwrap().is_none());
+        assert!(
+            runtime
+                .standard_regexp_replace(regexp.object_id())
+                .unwrap()
+                .is_none()
+        );
         let invocation = NativeInvocation::Call {
             this_value: runtime.into_jsvalue(Value::Object(regexp)).unwrap(),
         };

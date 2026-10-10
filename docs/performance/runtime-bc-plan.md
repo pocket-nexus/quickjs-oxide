@@ -871,15 +871,155 @@ RayTrace 的退出来自调用：类构造器 `this.initialize.apply(this, argum
      | 批次 | 内容 | 验收 |
      |---|---|---|
      | 7a | B3 的 RegExp/String 族：exec、replace、split、match/matchAll、search 及结果数组构造改为持有 State 的内部实现 | RegExp Ir 有收益，计数下降；其余不回退 |
-     | 7b | 原生调用的激活与退出（B1-N01）：选定的原生函数在当前 State 下完成 | RayTrace、RegExp、DeltaBlue 至少一项 Ir 有收益 |
-     | 7c | 其余 B3 族，按 V8 触及量排序（Array、Object、JSON、Promise、Iterator 等） | 不回退 |
-     | 7d | computed 读取（B2b）、Reflect/Proxy（B2f）、B4 | 不回退；遵守 B2b 的三条教训 |
+     | 7b | B1-N01 的载体改写为调用路径整体：激活/安装/拆除（`install_current_ordinary`、window 准备、`FrameCold::release_owned`、`CallStorage::recycle`、激活对）消费权迁到 held State 并压瘦热循环 | RayTrace、RegExp、DeltaBlue 至少一项 Ir 有收益 |
+     | ~~7c~~ | ~~其余 B3 族，按 V8 触及量排序~~ **合并入门槛迁移批（2026-10-10 决定，见下）** | — |
+     | ~~7d~~ | ~~computed 读取（B2b）、Reflect/Proxy（B2f）、B4~~ **合并入门槛迁移批** | — |
 
   3. **验收分两类。** 涉及 RegExp 或原生调用的批次要求 Ir 收益（≥1%，第 7 节）；纯结构批次只要求八项 Ir/Dw 不回退
      （≤0.5%），加上清单与计数的下降。
   4. **测量按批。** 容器测量必须串行（约 25 分钟一次），纯结构迁移每批测一次八项 Ir 与诊断计数；改变内联或拆分函数的
      提交单独测，只以 Rust 1.88 容器 Ir 为准，不以本机反汇编判断。
+
+  **7c/7d 合并决定与门槛迁移批（2026-10-10）。** 7a/7b/7c-1 完成后对八项重测 `query_dispatch.owner.*`：
+  七个基准全部只剩 `unclassified_step`/`other`（DeltaBlue 8.2k、Crypto 362、EarleyBoyer 147，其余 <100），
+  **具名 B3 协议族在 V8 套件上全部冷透**。按"按 V8 触及量排序"原则，7c 主体已无可排序的热族；剩余工作全部是
+  第 8 项六项硬门槛的合同改造。故 7c/7d/第 8 项合并为**门槛迁移批**，按门槛清单（而非性能族）组织：
+
+  1. **门槛 2 State 重借用 = 0**：内部 helper 不再经 `runtime.0.state.borrow()` 自借（已定位
+     `OrdinaryCall::install`、`authenticate_impl`、`RetiredFrame::drop`、`FrameEntry::release`、
+     `recycle_legacy`、`clear_frame`、`CallInput::callee_global` 七处）。热/存续路径迁 `_in_state`；
+     冷/遗留路径随门槛 6 删除。
+  2. **门槛 4 普通调用返回外退 = 0**：`core.legacy_boundary.ordinary_call` 归零（DeltaBlue 每轮数万次），
+     查清 decline 原因后修掉或迁移。
+  3. **门槛 3 内部 deferred = 0**：内部边不再经 `runtime.release_jsvalue` 的 deferred 队列
+     （`NativeActivation::Drop` 逐参数释放等），持 State 的 guard 直接清理。
+  4. **门槛 1 内部 Runtime 强引用 = 0**：约 130 个内部字段（external-root 六个公共边界按合同保留）
+     按三类归位：清理点可带 State 的删 owner；已有 Runtime-free guard 模式的换型
+     （`ActiveFrameRestore` 范式）；unwind 兜底确实够不到 State 的逐个记录为例外，收口时逐条签认。
+  5. **门槛 5 公共 root 中间转换 = 0**：内部层之间为传参临时 box/unbox 的 root 改 raw id。
+  6. **门槛 6 迁移适配器和旧实现删除**：前五条清零后删除旧非-in-state 变体、遗留路径、转换适配器，
+     以编译通过 + 计数归零验收。
+
+  批验收：八项 Ir/Dw 不回退（≤0.5%）+ 残留清单再生成（内部字段全零或例外清单签认）+ focused Test262；
+  门槛基线清单见 `runtime-gate-baseline.json`（2026-10-10，HEAD `ee2b421c`）。批后随第 7 项收口
+  （参考机会话原生 ABBA 与布局对照、CI fast、架构检查、完整回执），第 8 项以六项门槛全零（或签认例外）验收，
+  阶段 B 完成，随后开第 5 项。
+
+  **门槛状态审计（2026-10-10，HEAD `50f3ef55`，门槛迁移批开工前）。**
+
+  - **门槛 1（内部强引用，138 字段 = external-root 6 + 内部 132）。** external-root 是合同保留的公共
+    边界（`Context.runtime` 等），验收时按设计排除。内部 132 个全部是步骤机 resume/pending 状态的
+    `runtime` 字段（B3 78、B5 21、B4 10、B2 系 14、无编号 6、B1 3），持有理由统一：resume 状态可能在任意
+    等待点被放弃，Rust 析构不能带 State，释放经 Runtime。分三类：
+    类 A 清理点可带 State（query driver 等待记录的拆除点）——可迁，工作量中；
+    类 B 可换 Runtime-free guard（`ActiveFrameRestore` 范式推广）——少量；
+    类 C 等待/放弃机制结构问题（大部分 B3/B5）——需 query-driver 级"等待机制 State 化"改造（B4 深层），
+    预计数日。**签认点：类 C 是否记为已接受例外**（冷路径：每轮计数 <8.2k、V8 Ir 占比 <0.5%），
+    预算转第 5 项；或单独立"B4 等待机制 State 化"专项后再验收。
+  - **门槛 2（State 重借用）。** 热路径已迁（execute 内 `callee_global_in_state`）；点名七处中六处是
+    legacy 命名下的现代路径或随门槛 6 删除（`OrdinaryCall::install`、`authenticate_impl`、
+    `RetiredFrame::drop`、`FrameEntry::release`、`recycle_legacy`、`clear_frame`）。**随 6 关闭，无需独立工单。**
+  - **门槛 3（内部 deferred）。** `NativeActivation::Drop` 逐参数 `runtime.release_jsvalue`（每次一次
+    RefCell borrow）与 `NativeWaitRecord` 同模式；与门槛 1 类 C 同根因（放弃路径不持 State），随类 C 一并
+    处理或签认。
+  - **门槛 4（调用返回外退）。** DeltaBlue 24.6k numeric declines 是对象操作数的语义性 valueOf 强转
+    （机制已现代，decline 本身是语义）；43.8k native_hint declines 走现代 native corridor（35.7k 同步
+    完成无外退；8.1k 等待 crossing 为设计内）；ordinary_return 8.1k 与原生等待配对。**剩余工作 = 等待
+    机制（同类 C）+ 旧计数器更名，无独立热路径工单。**
+  - **门槛 5（公共 root 中间转换）。** 热路径已随 7a/7c-1 消除（RegExp root clone 463 万 → 7.8 万/轮）；
+    剩余为冷路径装箱，随 fast path 覆盖或并入例外清单。
+  - **门槛 6（适配器删除）。** 依赖 1–5；真 legacy 调用路径（`OrdinaryCall::install` 链）在门槛 4 确认
+    无消费者后删除。
+
+  **审计结论。** 六项门槛中，2/4/5 已实质达标（剩余为删除与更名工单）；1 类 C 与 3 是同一根因
+  （等待/放弃机制不持 State），是第 8 项验收的唯一实质 blocker，选项：(a) 记为签认例外收口阶段 B，
+  (b) 立"B4 等待机制 State 化"专项（数日）后全零验收。
+
+  **类 C 例外签认与第 8 项验收（2026-10-10，用户决定）。** 用户签认：门槛 1 类 C 与门槛 3 记为
+  **已接受例外**——132 个内部字段中除类 A/类 B 可迁者外，全部步骤机 resume/pending 状态的
+  `runtime` 持有字段（B3 78、B5 21、B4 10、B2 系 14、无编号 6、B1 3 中属等待/放弃路径的部分）
+  连同门槛 3 的内部 deferred 释放点（`NativeActivation::Drop`、`NativeWaitRecord`、
+  `recycle_legacy`/`clear_frame`/`release_legacy` 等冷路径适配器）按"等待机制不持 State"的根因
+  一并记录；门槛 6 的真删除随将来的"B4 等待机制 State 化"专项执行。签认依据：这些路径在 V8
+  八项上每轮计数 <8.2k、Ir 占比 <0.5%，迁移是 query-driver 级改造，预算转第 5 项热循环专门化。
+  **第 8 项验收状态**：门槛 2/4/5 实质清零；门槛 1/3 按签认例外记录（清单见
+  `runtime-gate-baseline.json` 的内部字段族 + 本节）；门槛 6 随例外专项。阶段 B 据此收口，
+  剩余的两项程序性回执：参考机会话的原生 ABBA 与 crypto/deltablue 布局对照（已在 7a 记录中排期），
+  以及 CI fast / 架构检查 / 完整 Test262（随 PR 与条目收口出）。
+
+  **7a 执行与验收（2026-10-10，`3fdd0592`→`4889ebf5`）。** 两个修正使 RegExp 族计数归零，八项 Ir 验收通过。
+
+  1. **fast path 的落点修正（`2a28117d`）。** 诊断发现 plain exec 的 fast path 放在
+     `call_regexp_exec_native`，解释器的热调用走 in-loop continuation 直达 `RegExpExecStep::start`，
+     fast path 一次未命中；split/match/search 协议的内部 exec 全部经 abstract 操作进入同一台 step machine
+     （`query_dispatch.owner.regexp_exec` 84 万/轮）。predicate 移入 `RegExpExecStep::start`（公共入口与
+     continuation 共用），abstract 变体另要求链上 `exec` 解析到标准内建（abstract 操作自己做这次属性读）。
+  2. **标准 split 直跑（`4889ebf5`）。** genuine 接收者 + primitive String 输入 + immediate limit +
+     标准 `flags` getter + 默认 species（`constructor` 缺省或为本 realm `%RegExp%` 且其 `@@species`
+     为默认 getter）时，整个协议循环直接跑：虚拟 splitter 按构造器同款 `flags+"y"` 现场重编译、不建对象，
+     每片字符串以 owner 身份一次 State 访问落入稠密元素；子类构造器、被覆盖的 flags getter、对象输入回通用路径。
+  3. **计数（V8 RegExp，profiling 构建）**：`core.runtime_clone` 20.2M（基线 `36e7993e`）→ 2.01M；
+     exec/split 的 resume owner 发布 84 万 / 172 万 → 0；`core.object_root.clone` 2.70M → 78k；
+     `core.state.borrow` 16.1M → 2.26M。split 语义 24 个用例与 Node 逐项一致；focused Test262 两轮均 6844/6844。
+  4. **八项 Ir/Dw（`oxide-vg:1.88` 容器，`measure_docker.py`，`pre2`/`post2` 报告）**：RegExp Ir −56.5%、
+     Dw −63.5%；其余七项 Ir 在 ±0.06%、Splay Dw +0.26% 以内，全部低于 0.5% 不回退门槛。RegExp Ir 变化超过 5%，
+     第 7 项收口时须由参考机会话跑原生 ABBA（第 7 节规则）。
+  5. **本地原生 ABBA（2026-10-10，参考机 x86，performance/no-boost、Docker 停，`iterate_v8.py`
+     `--repeat 8 --target-seconds 1 --order abba-baab`）**：RegExp 2087ms → 777ms（**+62.8%**），Combined
+     7881ms → 6553ms（+16.9%）；richards +1.89%、raytrace +1.03%、earley-boyer +0.09% 在噪声内，splay −0.56%、
+     navier-stokes −1.45% 未分辨；**crypto −1.92% 与 deltablue +4.96% 超出 A/A 噪声**（该项 Ir +0.00%，
+     代码零触及，属布局/i-cache 敏感）。按第 7 节布局对照规则，第 7 项收口前置"同代码、运行时关新路径"对照
+     变体判定这两项（由参考机会话随收口 ABBA 一并做，或本地下一轮测量时补）；判据以 Combined 与对照为准。
+     官方 adaptive Score 侧：已实测 4 项（richards 185→190、deltablue 167→175、crypto 241→241、raytrace 374→378），
+     与本项时间比例相互印证（±2%）。
+  6. **剩余构成（归 7b/7c）**：`core.runtime_clone` 余 2.0M 主要为原生调用激活的一对克隆（`native.rs:419`、
+     `frames.rs:387` 各约 46 万/轮）与栈窗（`window.rs:800` 35 万）；match/matchAll/search 的协议壳仍走通用
+     路径，但经 plain abstract exec，V8 触及量小（match 2650 次分发），按"每批只迁移自己的消费者"留作残留编号。
+
+  **7b 第一批执行与验收（2026-10-10，`23d9c75f`+`5a65a5e1`）。** 行级归因（callgrind debuginfo 构建）发现
+  frame 池让空 `FrameRare` 壳子永久流窜：recycle 不清、`install`/`vacant` 回灌 rare_frames，deltablue 每轮
+  113 万次调用的 frame 全部携带 rare，`release_owned` 的四个子释放每次全跑（约 1.9% Ir）。修复分两步：
+  release_owned 改为一次 cell 借用单趟取走四个 payload；壳子保留在 rare_frames 池供 constructor 复用
+  （`vacant_rare ↔ recycle`），但 `vacant`/`install` 不再回灌、不再把壳子转给没选它的 frame——普通 frame
+  全程无壳。首版"recycle 丢壳"曾使 RayTrace Ir +0.58%（constructor 复用被破坏），修正版恢复。容器 Ir
+  （`oxide-vg:1.88`，对 `post2`）：**DeltaBlue −4.02%、Dw −3.80%**；RayTrace −0.25%、RegExp −0.02%，
+  全部通过。7b 的"R/R/D 至少一项 ≥1%"验收由本批达成。lib 全量 2361 过、2 个失败为基线已有；行为抽查覆盖
+  普通调用、捕获局部闭包、try/catch、Base/Derived 构造器。安装链（`prepare_ordinary_window_in_state` 等）
+  经排查无结构性浪费，7b-2 撤销；激活持有（`NativeActivation`/`NativeWaitRecord` 的 Drop 路径释放依赖
+  Runtime owner，需等待路径带 State 才能迁移）与其余调用变体归 7b 后续或第 8 项。
+
+  **7c 顺手项执行（2026-10-10，`db072ce1`）。** String.prototype.replace 的标准委托：primitive String
+  接收者 + genuine RegExp 搜索值 + primitive String 替换值时，String 方法只做 Get(search, @@replace) +
+  Call；链解析到标准内建且标准 predicate 选中接收者时，String 原生内直接完成，不再 box resume 状态、
+  不再走 @@replace 属性查询和 RegExp @@replace 步骤机。被覆盖的 @@replace/exec、命名捕获、非 immediate
+  lastIndex、函数替换、String 对象接收者保持通用路径。容器 Ir（对 `post2`）：**RegExp −5.03%、
+  Dw −6.77%**，DeltaBlue −4.02% 不变。16 个语义用例对齐 Node。match/matchAll/search 协议壳经 plain
+  abstract exec 已服务热路径（V8 触及 match 2650 次/轮），不单独建 predicate。至此 item 7 累计：
+  RegExp Ir 202.9B → 83.8B（−58.7%）。
 - **第 8 项：** 六项硬门槛，加上 B0 残留清单全部清零。
+
+  **第 5 项计划调整（2026-10-10，阶段 B 收口后重启）。**
+
+  1. **前置验收（阶段 B 交付，全部就位）。** 专门化循环要求的依赖逐项核对：热状态的可变访问权是
+     held `State`（7a/7b/7c，热路径 Runtime 中介已清除）；调用覆盖所需的安装/拆除消费权为
+     `&mut RuntimeState` 穿线、零 clone（7b）；冷路径（decline/等待/异常）有工作正常的循环外落点
+     （类 C 例外机械全部冷透且在驱动侧完好）。E 实验的两条教训继续有效：巨型函数内的局部优化会被
+     溢出与取指抵消；先拆小热循环（热状态为局部变量、冷路径显式同步），再单独验证预解码。
+  2. **基线（2026-10-10 重测，`oxide-vg:1.88`）。** 空循环探针 572 Ir/迭代（循环体约 7–8 分派，
+     ≈75 Ir/分派）；逐行归因确认成本在分派脚手架（字流读取、PC 推进、解码与 tag 选择）而非任何
+     opcode arm（execute.rs 内最热单行 0.16%）。预算目标不变：每次分派 ≤40 Ir。
+  3. **子任务。**
+
+     | 子任务 | 内容 | 验收 |
+     |---|---|---|
+     | 5e-1 | 循环清单：从 debuginfo callgrind 出每个候选循环形状的份额（数值比较循环、字段读命中链、调用循环），定前 2–3 个候选 | 清单与数据进仓库 |
+     | 5e-2 | 第一个专门化循环：空循环体形状（序言 + 局部读 + 比较分支连续段）移出巨型函数，槽位切片/深度/各区起点为局部变量 | empty_loop 探针 per-iteration 显著下降；八项不回退；解释函数尺寸/栈帧/栈槽记录 |
+     | 5e-3 | 覆盖扩展：字段读/写命中与调用进专门化循环（5a/5c 的重启条件），侧分支整体净收益 | 对应探针下降 + 八项不回退 |
+     | 5e-4 | 预解码实验（单独验证，不混入循环拆分） | 每分派 Ir 下降且无 spills 回退 |
+
+  4. **规矩。** 改动 `execute_frame_in_state` 的提交记录函数大小、栈帧与栈槽；每个子任务容器
+     (Rust 1.88) 验证；原生 ABBA 在收口时由参考机会话复核；5a/5c 的撤回教训（侧分支使八项变慢）
+     要求每个专门化循环在侧分支上实测净收益后再合入。
 
 ## 7. 执行与测量规则
 
