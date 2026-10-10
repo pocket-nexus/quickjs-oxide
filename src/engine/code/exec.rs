@@ -22,13 +22,10 @@ use super::region::{
     NumericRegion, PublishedNumericRegion, UpdateDelta,
 };
 
-// Header layout shared with the specialized execution loop: keep the bit
-// constants visible outside this module so both decode paths agree by
-// construction rather than by duplicated literals.
-pub(crate) const OPCODE_MASK: u16 = 0x03ff;
-pub(crate) const COUNT_SHIFT: u16 = 10;
-pub(crate) const WIDE_FIRST: u16 = 0x1000;
-pub(crate) const WIDTH_SHIFT: u16 = 13;
+const OPCODE_MASK: u16 = 0x03ff;
+const COUNT_SHIFT: u16 = 10;
+const WIDE_FIRST: u16 = 0x1000;
+const WIDTH_SHIFT: u16 = 13;
 const RESERVED_MASK: u16 = 0x8000;
 
 #[cfg(test)]
@@ -348,14 +345,6 @@ impl ExecCode {
             count,
             next_pc: cursor,
         })
-    }
-
-    /// The published word slice, shared with the specialized execution loop.
-    /// Direct indexing follows the same verified-layout convention as
-    /// [`PublishedDecoded::operand`].
-    #[inline(always)]
-    pub(crate) fn published_words(&self) -> &[Cell<u32>] {
-        &self.words
     }
 
     /// Published words and all static control-flow targets were verified once.
