@@ -391,7 +391,7 @@ fn regexp_split_resident_results_and_late_set_errors_keep_the_defining_realm() {
 
 #[cfg(feature = "profiling")]
 #[test]
-fn regexp_split_resident_production_loop_allocates_one_box_per_split() {
+fn regexp_split_standard_receiver_completes_without_a_resident_box() {
     use crate::engine::api::profiling::CostProfile;
     let runtime = Runtime::new();
     let mut context = runtime.new_context().expect("create context");
@@ -402,6 +402,29 @@ fn regexp_split_resident_production_loop_allocates_one_box_per_split() {
     );
     let events = profile.snapshot().owned_execution_events;
     let count = |name| events.get(name).copied().unwrap_or(0);
+    assert_eq!(count("regexp_split.standard"), 1);
+    assert_eq!(count("regexp_split.resident_box"), 0);
+    assert!(runtime.0.state.borrow().active_frames.is_empty());
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn regexp_split_resident_production_loop_allocates_one_box_per_split() {
+    use crate::engine::api::profiling::CostProfile;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    let profile = CostProfile::start();
+    // A String limit fails the standard predicate (only an immediate limit
+    // observes nothing), so this split keeps the resident continuation.
+    assert_eq!(
+        context
+            .eval(r#"'a-b-c'.split(/(-)/, '10').join('|')"#)
+            .unwrap(),
+        Value::String(JsString::from_static("a|-|b|-|c"))
+    );
+    let events = profile.snapshot().owned_execution_events;
+    let count = |name| events.get(name).copied().unwrap_or(0);
+    assert_eq!(count("regexp_split.standard"), 0);
     assert_eq!(count("regexp_split.resident_box"), 1);
     assert_eq!(count("regexp_split.next_box_reused"), 5);
     assert_eq!(count("regexp_split.exec_box_reused"), 5);
