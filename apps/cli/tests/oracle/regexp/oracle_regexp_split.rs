@@ -311,6 +311,23 @@ const CAPTURE_CASES: &[(&str, &str)] = &[(
 
 const LAST_INDEX_AND_EXEC_CASES: &[(&str, &str)] = &[
     (
+        "a genuine RegExp receiver still calls an overridden prototype exec",
+        r#"(function(){
+            var exec=RegExp.prototype.exec;
+            RegExp.prototype.exec=function(){this.lastIndex=100;return {length:0,index:0}};
+            try{return __array(/a/[Symbol.split]("foo"))}
+            finally{RegExp.prototype.exec=exec}
+        })()"#,
+    ),
+    (
+        "a genuine RegExp receiver still reads an @@match accessor for the splitter",
+        r#"(function(){
+            var reads=0,regexp=/a/;
+            Object.defineProperty(regexp,Symbol.match,{get:function(){reads++;regexp.compile("b")}});
+            return __array(regexp[Symbol.split]("abba"))+":"+reads;
+        })()"#,
+    ),
+    (
         "empty matches advance and a retreating lastIndex is consumed exactly",
         r#"(function(){
             function empty(){

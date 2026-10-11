@@ -66,9 +66,12 @@ impl Runtime {
     /// Raw standard-RegExp predicate for `@@split`, in the shape of the
     /// `@@replace` predicate: a genuine compiled receiver, a primitive String
     /// input (ToString observes nothing), an immediate limit (ToUint32 of a
-    /// primitive observes nothing), the standard `flags` getter, and the
-    /// default species (`constructor` missing or the realm `%RegExp%` whose
-    /// `@@species` getter is the builtin). `None` keeps the general steps.
+    /// primitive observes nothing), the standard `flags` getter, the default
+    /// species (`constructor` missing or the realm `%RegExp%` whose
+    /// `@@species` getter is the builtin), no `@@match` accessor for the
+    /// splitter construction's IsRegExp to call, and the builtin `exec` on
+    /// `%RegExp.prototype%`, which the fresh splitter inherits. `None` keeps
+    /// the general steps.
     fn standard_regexp_split(
         &self,
         realm: ContextId,
@@ -101,13 +104,13 @@ impl Runtime {
         )? {
             return Ok(None);
         }
-        let constructor = state
+        let realm_regexp = state
             .heap
             .context(realm)?
             .regexp
             .as_ref()
-            .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))?
-            .constructor;
+            .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))?;
+        let (constructor, prototype) = (realm_regexp.constructor, realm_regexp.prototype);
         match super::replace::raw_regexp_property_slot(
             &state.heap,
             regexp,
@@ -124,6 +127,21 @@ impl Runtime {
             constructor,
             species,
             NativeFunctionId::RegExp(RegExpNativeKind::Species),
+        )? {
+            return Ok(None);
+        }
+        let match_symbol = state.well_known_symbols[&WellKnownSymbol::Match];
+        if matches!(
+            super::replace::raw_regexp_property_slot(&state.heap, regexp, match_symbol)?,
+            Some(PropertySlot::Accessor { .. })
+        ) {
+            return Ok(None);
+        }
+        if !super::replace::raw_regexp_data_property_matches(
+            &state.heap,
+            prototype,
+            pinned(PinnedAtom::Exec),
+            NativeFunctionId::RegExp(RegExpNativeKind::Exec),
         )? {
             return Ok(None);
         }
