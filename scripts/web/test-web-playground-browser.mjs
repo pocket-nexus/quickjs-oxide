@@ -540,14 +540,14 @@ async function runAcceptance(url, serverErrors) {
       : "main";
     const expectedDocumentationBase =
       `https://github.com/pocket-nexus/quickjs-oxide/blob/${expectedDocumentationRef}`;
-    const parityContract = page.locator("#parity-contract-link");
+    const compatibilityLink = page.locator("#compatibility-link");
     const test262Progress = page.locator("#test262-progress-link");
     assert.equal(
-      await parityContract.getAttribute("href"),
-      `${expectedDocumentationBase}/docs/parity.md`,
+      await compatibilityLink.getAttribute("href"),
+      `${expectedDocumentationBase}/docs/compatibility.md`,
     );
     assert.equal(
-      await parityContract.getAttribute("data-repository-ref"),
+      await compatibilityLink.getAttribute("data-repository-ref"),
       expectedDocumentationRef,
     );
     assert.equal(

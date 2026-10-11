@@ -29,8 +29,8 @@ pass rate is 81.641%.
 — it runs this Rust engine's actual WebAssembly build, not host `eval`. The
 page reports its exact build commit, QuickJS target, and browser host policy.
 Its curated Script-goal examples include a function returning 42 and the
-`Atomics.wait` boundary. The playground is a pre-parity milestone, not a
-Feature Parity claim.
+`Atomics.wait` boundary. [Compatibility](docs/compatibility.md) lists what the
+engine supports today.
 
 ## Install
 
@@ -74,7 +74,7 @@ See the [execution architecture](docs/architecture.md).
 - [Current execution paths](docs/performance/roadmap.md)
 - [Profiling and external benchmarks](docs/profiling.md)
 - [Pinned Test262 baseline and metric definitions](docs/test262.md)
-- [Parity acceptance contract](docs/parity.md)
+- [Compatibility with QuickJS 2026-06-04](docs/compatibility.md)
 - [Playground build and trust boundary](docs/playground.md)
 - [Pinned upstream release](compat/upstream.toml)
 - [Test262 gate data and receipts](dev-support/test262/README.md)

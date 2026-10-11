@@ -262,7 +262,7 @@ function validatePageAndBuildLabel(page, wasm, expectedCommit) {
   const requiredPageMarkers = [
     'id="build-commit"',
     'id="frozen-global-vector"',
-    'id="parity-contract-link"',
+    'id="compatibility-link"',
     'id="test262-progress-link"',
     "function that returns 42",
     "real quickjs-oxide Rust interpreter compiled to WebAssembly",

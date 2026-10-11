@@ -1,8 +1,9 @@
 # Deviation ledger
 
-This ledger is subordinate to [`parity.md`](parity.md). Each approved target
-deviation covers exactly the observable behavior and test variants named below.
-Any other unsupported feature or mismatch blocks the relevant parity claim.
+This ledger lists the approved differences from QuickJS 2026-06-04 described in
+[compatibility](compatibility.md). Each approved target deviation covers exactly
+the observable behavior and test variants named below; any other mismatch is a
+defect.
 
 ## Approved target deviations
 

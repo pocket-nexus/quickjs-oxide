@@ -277,6 +277,12 @@ function currentTest262DocumentBlocks(metrics) {
     : `${formatInteger(metrics.eligibleTimeouts)} timeouts`;
   return new Map([
     [
+      "docs/compatibility.md",
+      `- ${fullPasses} of the ${quickJsScope} Test262 variants in QuickJS 2026-06-04's scope pass (${metrics.quickJsScopePercent}%).\n` +
+        `- ${formatInteger(metrics.eligibleFailures)} executed variants fail, and ` +
+        `${formatInteger(metrics.quickJsScope - metrics.fullRunnable)} variants in that scope are not yet run.`,
+    ],
+    [
       "README.md",
       `Within the Test262 scope that QuickJS 2026-06-04 runs, quickjs-oxide passes\n` +
         `**${fullPasses} of ${quickJsScope} variants (${metrics.quickJsScopePercent}%)**. QuickJS's \`test262.conf\`\n` +

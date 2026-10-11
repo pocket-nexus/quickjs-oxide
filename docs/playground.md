@@ -83,12 +83,11 @@ dedicated worker and WASM resources loaded, and rejects console, page, worker,
 request, or HTTP errors. Set `QUICKJS_OXIDE_COMMIT` when testing an artifact
 built with an explicit commit identity.
 
-The page footer keeps the frozen global Test262 vector visibly marked
-pre-parity. Its full-pass, eligible-coverage, runnable-quality, and focused
-figures are rendered from the authenticated
-[`current.conf`](../dev-support/test262/current.conf) rather than copied into
-the page. The footer links the parity contract and Test262 ledger to the exact
-commit reported by the loaded WASM package. A local build labelled `local`
+The page footer shows the Test262 pass rate within QuickJS 2026-06-04's scope,
+the full-corpus rate and the focused vector, rendered from the authenticated
+[`current.conf`](../dev-support/test262/current.conf) at build time. The footer
+links the compatibility page and Test262 ledger to the exact commit reported
+by the loaded WASM package. A local build labelled `local`
 falls back to the repository's `main` documentation links.
 
 ## Deployment
