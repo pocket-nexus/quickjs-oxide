@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+description = "Test262 conformance runner for quickjs-oxide"
 
 [lints]
 workspace = true

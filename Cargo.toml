@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+description = "A safe Rust JavaScript engine targeting semantic parity with QuickJS"
+homepage.workspace = true
+readme = "README.md"
+keywords = ["javascript", "ecmascript", "quickjs", "interpreter", "engine"]
+categories = ["compilers", "development-tools"]
 
 [lints]
 workspace = true
@@ -35,6 +40,7 @@ edition = "2024"
 rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/pocket-nexus/quickjs-oxide"
+homepage = "https://pocket-nexus.github.io/quickjs-oxide/"
 # Releases ship as GitHub Release assets, not crates.io packages.
 publish = false
 

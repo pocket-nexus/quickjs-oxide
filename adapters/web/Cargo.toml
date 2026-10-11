@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+description = "Browser host services for quickjs-oxide on wasm32"
 
 [lints]
 workspace = true
