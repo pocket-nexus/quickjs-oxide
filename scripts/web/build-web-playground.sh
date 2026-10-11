@@ -19,17 +19,24 @@ if [[ "${cargo_target_dir}" != /* ]]; then
 fi
 wasm_file="${cargo_target_dir}/${wasm_target}/web/${wasm_stem}.wasm"
 
-if ! rustup run stable rustc --version >/dev/null 2>&1; then
-  echo "missing the rustup stable toolchain; run: rustup toolchain install stable" >&2
+# The WebAssembly build uses the toolchain pinned for the whole workspace.
+toolchain="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "${repo_root}/rust-toolchain.toml")"
+if [[ -z "${toolchain}" ]]; then
+  echo "rust-toolchain.toml has no channel" >&2
   exit 1
 fi
 
-stable_rustc="$(rustup which --toolchain stable rustc)"
-stable_rustdoc="$(rustup which --toolchain stable rustdoc)"
+if ! rustup run "${toolchain}" rustc --version >/dev/null 2>&1; then
+  echo "missing the pinned Rust ${toolchain} toolchain; run: rustup toolchain install ${toolchain}" >&2
+  exit 1
+fi
 
-if ! rustup target list --installed --toolchain stable | grep -Fxq "${wasm_target}"; then
+toolchain_rustc="$(rustup which --toolchain "${toolchain}" rustc)"
+toolchain_rustdoc="$(rustup which --toolchain "${toolchain}" rustdoc)"
+
+if ! rustup target list --installed --toolchain "${toolchain}" | grep -Fxq "${wasm_target}"; then
   echo "missing Rust target ${wasm_target}; run:" >&2
-  echo "  rustup target add --toolchain stable ${wasm_target}" >&2
+  echo "  rustup target add --toolchain ${toolchain} ${wasm_target}" >&2
   exit 1
 fi
 
@@ -52,9 +59,9 @@ fi
 
 cd "${repo_root}"
 QUICKJS_OXIDE_COMMIT="${build_commit}" \
-  RUSTC="${stable_rustc}" \
-  RUSTDOC="${stable_rustdoc}" \
-  rustup run stable cargo build \
+  RUSTC="${toolchain_rustc}" \
+  RUSTDOC="${toolchain_rustdoc}" \
+  rustup run "${toolchain}" cargo build \
   --locked \
   --profile web \
   --target "${wasm_target}" \

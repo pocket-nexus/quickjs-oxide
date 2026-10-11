@@ -126,12 +126,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # Same toolchain policy as the Pages playground build.
       - name: Install Rust and the WebAssembly target
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add --toolchain stable wasm32-unknown-unknown
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --target wasm32-unknown-unknown
+          rustup default "${RUST_VERSION}"
 
       - name: Install matching wasm-bindgen CLI
         run: cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked

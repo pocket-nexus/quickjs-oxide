@@ -37,10 +37,11 @@ identity boundary is the repository-owned Pages workflow.
 
 ## Build and test locally
 
-Install the WebAssembly target and the exact CLI release used by the wrapper:
+Install the WebAssembly target for the toolchain pinned in
+`rust-toolchain.toml` and the exact CLI release used by the wrapper:
 
 ```bash
-rustup target add --toolchain stable wasm32-unknown-unknown
+rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.126 --locked
 ```
 

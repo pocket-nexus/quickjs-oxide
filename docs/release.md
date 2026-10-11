@@ -25,8 +25,9 @@ prebuilt binaries report the same version.
 | `quickjs-oxide-playground-vX.Y.Z.tar.gz` | The static playground site built from the tag |
 | `SHA256SUMS` | Digests of every asset |
 
-Native binaries use the pinned Rust toolchain; the WebAssembly build follows
-the Pages playground's `scripts/web/build-web-playground.sh`. Each native
+Every build uses the Rust toolchain pinned in `rust-toolchain.toml`; the
+WebAssembly packages come from `scripts/web/build-web-playground.sh`, as the
+Pages playground does. Each native
 binary except the cross-compiled `x86_64-apple-darwin` one evaluates a smoke
 expression before packaging. Re-running the workflow for an existing release
 replaces its assets.
