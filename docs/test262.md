@@ -10,13 +10,15 @@ pinned in [`compat/upstream.toml`](../compat/upstream.toml) and mirrored by
 <!-- current-test262-metrics:start -->
 Metrics are reported in this order:
 
-1. **Full pass:** 83,304 / 102,037 (81.641%). Every frozen Test262 variant is in
+1. **QuickJS-scope pass:** 83,304 / 83,562 (99.691%). The denominator is
+   every variant the pinned QuickJS `test262.conf` runs; it excludes the
+   18,475 `skipped-*` variants that QuickJS itself skips.
+2. **Full pass:** 83,304 / 102,037 (81.641%). Every frozen Test262 variant is in
    the denominator.
-2. **Eligible coverage:** 83,354 / 102,037 (81.690%). This measures how much of
+3. **Eligible coverage:** 83,354 / 102,037 (81.690%). This measures how much of
    the full vector the current profile admits to execution.
-3. **Runnable pass quality:** 83,304 / 83,354 (99.940%). This is useful for
-   diagnosing admitted behavior, but it must not replace either coverage
-   metric above.
+4. **Runnable pass quality:** 83,304 / 83,354 (99.940%). This diagnoses
+   admitted behavior and complements the coverage metrics above.
 
 The frozen outcome summary is:
 

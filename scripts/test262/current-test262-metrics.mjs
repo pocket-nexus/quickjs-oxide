@@ -173,15 +173,24 @@ export function parseCurrentTest262Metrics(source) {
   }
 
   const milestone = displayMilestone(required(values, "milestone"));
+  // QuickJS's own test262.conf skips these variants; the rest form the scope
+  // the pinned release runs and the compatibility target.
+  const quickJsSkipped = [...fullSummary]
+    .filter(([name]) => name.startsWith("skipped-"))
+    .reduce((total, [, count]) => total + count, 0);
+  const quickJsScope = fullVariants - quickJsSkipped;
+  if (fullPasses > quickJsScope || fullEligible > quickJsScope) {
+    throw new TypeError("Test262 passes exceed the QuickJS scope");
+  }
+  const quickJsScopePercent = formatPercent(fullPasses, quickJsScope);
   const fullPassPercent = formatPercent(fullPasses, fullVariants);
   const eligiblePercent = formatPercent(fullEligible, fullVariants);
   const runnableQuality = formatPercent(fullPasses, fullRunnable);
   return Object.freeze({
     detailText:
-      `${milestone} authenticated vector · ` +
-      `${formatInteger(focusedPasses)}/${formatInteger(focusedEligible)} focused · ` +
-      `runnable quality ${formatInteger(fullPasses)}/${formatInteger(fullRunnable)} ` +
-      `(${runnableQuality}%, secondary) · pre-parity`,
+      `full corpus ${formatInteger(fullPasses)}/${formatInteger(fullVariants)} ` +
+      `(${fullPassPercent}%) · ` +
+      `${formatInteger(focusedPasses)}/${formatInteger(focusedEligible)} focused on every change`,
     eligibleFailures: fullRunnable - fullPasses,
     eligiblePercent,
     eligibleTimeouts: fullSummary.get("timeout") ?? 0,
@@ -195,9 +204,11 @@ export function parseCurrentTest262Metrics(source) {
     fullVariants,
     milestone,
     primaryText:
-      `${formatInteger(fullPasses)} full passes / ` +
-      `${formatInteger(fullEligible)} eligible / ` +
-      `${formatInteger(fullVariants)} total`,
+      `${formatInteger(fullPasses)} / ${formatInteger(quickJsScope)} passing ` +
+      `(${quickJsScopePercent}%)`,
+    quickJsScope,
+    quickJsScopePercent,
+    quickJsSkipped,
     runnableQuality,
   });
 }
@@ -259,36 +270,39 @@ function currentTest262DocumentBlocks(metrics) {
   const fullEligible = formatInteger(metrics.fullEligible);
   const fullVariants = formatInteger(metrics.fullVariants);
   const fullRunnable = formatInteger(metrics.fullRunnable);
+  const quickJsScope = formatInteger(metrics.quickJsScope);
+  const quickJsSkipped = formatInteger(metrics.quickJsSkipped);
   const timeoutText = metrics.eligibleTimeouts === 0
     ? "no timeouts"
     : `${formatInteger(metrics.eligibleTimeouts)} timeouts`;
   return new Map([
     [
       "README.md",
-      `The authoritative Test262 baseline records **${fullPasses} full-corpus passes\n` +
-        `out of ${fullVariants} variants (${metrics.fullPassPercent}%)**, with **${fullEligible} eligible variants\n` +
-        `(${metrics.eligiblePercent}%)**. The ${fullPasses} / ${fullRunnable} runnable pass rate (${metrics.runnableQuality}%) is a secondary\n` +
-        "quality measure, not the headline compatibility metric.",
+      `Within the Test262 scope that QuickJS 2026-06-04 runs, quickjs-oxide passes\n` +
+        `**${fullPasses} of ${quickJsScope} variants (${metrics.quickJsScopePercent}%)**. QuickJS's \`test262.conf\`\n` +
+        `skips the other ${quickJsSkipped} of the ${fullVariants} variants; across the full corpus the\n` +
+        `pass rate is ${metrics.fullPassPercent}%.`,
     ],
     [
       "docs/status.md",
       `The authoritative Test262 vector has:\n\n` +
+        `- ${fullPasses} passes out of the ${quickJsScope} variants in QuickJS 2026-06-04's scope (${metrics.quickJsScopePercent}%)\n` +
         `- ${fullPasses} full-corpus passes out of ${fullVariants} variants (${metrics.fullPassPercent}%)\n` +
         `- ${fullEligible} eligible variants out of ${fullVariants} (${metrics.eligiblePercent}%)\n` +
-        `- ${fullPasses} passes out of ${fullRunnable} runnable variants (${metrics.runnableQuality}%, secondary quality\n` +
-        "  metric)\n" +
-        `- ${formatInteger(metrics.eligibleFailures)} classified failures and ${timeoutText} among eligible variants`,
+        `- ${formatInteger(metrics.eligibleFailures)} failures and ${timeoutText} among the ${fullRunnable} eligible variants`,
     ],
     [
       "docs/test262.md",
       "Metrics are reported in this order:\n\n" +
-        `1. **Full pass:** ${fullPasses} / ${fullVariants} (${metrics.fullPassPercent}%). Every frozen Test262 variant is in\n` +
+        `1. **QuickJS-scope pass:** ${fullPasses} / ${quickJsScope} (${metrics.quickJsScopePercent}%). The denominator is\n` +
+        "   every variant the pinned QuickJS `test262.conf` runs; it excludes the\n" +
+        `   ${quickJsSkipped} \`skipped-*\` variants that QuickJS itself skips.\n` +
+        `2. **Full pass:** ${fullPasses} / ${fullVariants} (${metrics.fullPassPercent}%). Every frozen Test262 variant is in\n` +
         "   the denominator.\n" +
-        `2. **Eligible coverage:** ${fullEligible} / ${fullVariants} (${metrics.eligiblePercent}%). This measures how much of\n` +
+        `3. **Eligible coverage:** ${fullEligible} / ${fullVariants} (${metrics.eligiblePercent}%). This measures how much of\n` +
         "   the full vector the current profile admits to execution.\n" +
-        `3. **Runnable pass quality:** ${fullPasses} / ${fullRunnable} (${metrics.runnableQuality}%). This is useful for\n` +
-        "   diagnosing admitted behavior, but it must not replace either coverage\n" +
-        "   metric above.\n\n" +
+        `4. **Runnable pass quality:** ${fullPasses} / ${fullRunnable} (${metrics.runnableQuality}%). This diagnoses\n` +
+        "   admitted behavior and complements the coverage metrics above.\n\n" +
         "The frozen outcome summary is:\n\n" +
         "```text\n" +
         `${metrics.fullSummaryText}\n` +

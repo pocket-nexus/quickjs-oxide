@@ -19,10 +19,10 @@ loader boundaries accept byte-exact source buffers, and the file CLI preserves
 those bytes end to end. The remaining conformance gaps are parity work.
 
 <!-- current-test262-metrics:start -->
-The authoritative Test262 baseline records **83,304 full-corpus passes
-out of 102,037 variants (81.641%)**, with **83,354 eligible variants
-(81.690%)**. The 83,304 / 83,354 runnable pass rate (99.940%) is a secondary
-quality measure, not the headline compatibility metric.
+Within the Test262 scope that QuickJS 2026-06-04 runs, quickjs-oxide passes
+**83,304 of 83,562 variants (99.691%)**. QuickJS's `test262.conf`
+skips the other 18,475 of the 102,037 variants; across the full corpus the
+pass rate is 81.641%.
 <!-- current-test262-metrics:end -->
 
 **[Open the browser playground →](https://pocket-nexus.github.io/quickjs-oxide/)**
