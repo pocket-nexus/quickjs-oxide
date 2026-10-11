@@ -13,5 +13,4 @@ object 和 builtins 等模块实现。公有入口不复制这些算法，也不
 发起请求的 Context，并保持重入与 JS 抛出值的语义。
 
 Test262 与差分测试能力通过专用 feature 暴露，不扩大默认生产接口。
-跨包职责见[架构说明](../../../docs/architecture.md)，后续 VM 内部重组
-继续通过这一嵌入边界提供执行能力。
+跨包职责见[架构说明](../../../docs/architecture.md)。

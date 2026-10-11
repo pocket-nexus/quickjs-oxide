@@ -38,22 +38,26 @@ The scaling dimensions differ intentionally:
 | scope, constants, module, module-imports | Declarations, names, exports or import/reexport bindings | Unused; each generated program executes once |
 | long-key | String length | Repeated lookup of one separately constructed equal key |
 
-This initial runner measures time, not allocation counts or memory reclamation.
-Churn timings include history creation and cannot alone prove a memory bound.
-Use storage tests and a separate memory experiment for that acceptance criterion.
+Scaling workloads also cover Array/TypedArray integer reads and writes,
+repeated interior Array deletion/reinsertion, strict and mapped Arguments
+construction, and RegExp named groups/indices. Use sizes below 255 for
+`regexp-groups`. Mapped arguments use a non-strict Function body because
+workload files are modules.
+
+The runner measures time only. Churn timings include history creation; use
+storage tests and a separate memory experiment to establish a memory bound.
 All generated programs live in the requested output directory. Results directories
-must not already exist, protecting previous evidence from accidental overwrite.
+must not already exist, protecting existing evidence from accidental overwrite.
 
 Run admission and workload smoke tests with
 `python3 -m unittest discover -s scripts/benchmark -p 'test_*.py'`.
 Node, when present, independently checks every generated workload at small sizes;
 its absence skips only that check. Repeat a CLI smoke run against Oxide as well.
 
-These tools orchestrate external workloads; they do not vendor benchmark code.
-Use Python 3.10+ on a Unix host. Run timing serially, without competing builds
-or tests. Compare both sides of one series on the same machine with the same
-toolchain and configuration; use a new series for another machine. `run.py` uses process-group timeout
-cleanup; Windows process management is not implemented by this runner.
+These tools orchestrate external workloads. Use Python 3.10+ on a Unix host;
+`run.py` uses process-group timeout cleanup. Run timing serially, without
+competing builds or tests. Compare both sides of one series on the same machine
+with the same toolchain and configuration; use a new series for another machine.
 
 ## Prepare binaries with provenance
 
@@ -71,9 +75,8 @@ records source and tooling identities separately, snapshots the build/runner
 scripts, and rejects a build whose source or tool scripts change while Cargo
 runs. It records the release profile and overrides, actual qjs/dependency rustc
 flags for crates Cargo recompiles, and paths/hashes of complete build
-stdout/stderr logs. The source commit is embedded in profiling
-reports. The benchmark
-runner verifies matching receipts when present. External engines without a
+stdout/stderr logs and `vm_configuration: stack-vm`. The source commit is
+embedded in profiling reports. The benchmark runner verifies matching receipts when present. External engines without a
 receipt are identified by binary hash/version output; attach their compiler
 and build configuration separately when publishing comparisons.
 
@@ -86,10 +89,11 @@ The source identities, build protocol and A/A and A/B design are in
 ## External V8 v7 suite
 
 ```sh
-# A sibling checkout, outside quickjs-oxide; record/fix its commit for repeats.
+# A sibling checkout outside quickjs-oxide, at the commit pinned in run.py.
 git clone https://github.com/ahaoboy/js-engine-benchmark.git ../js-engine-benchmark
-git -C ../js-engine-benchmark checkout 2034d98fc8c5f8044e186267593f5d5ea5232caf
-# Use the project's existing, pinned QuickJS oracle builder if needed.
+git -C ../js-engine-benchmark checkout \
+  "$(sed -n 's/^V8_V7_SOURCE_COMMIT = "\(.*\)"$/\1/p' scripts/benchmark/run.py)"
+# The pinned QuickJS oracle builder supplies the reference engine.
 reference=$(./scripts/quickjs/build-quickjs-oracle.sh)
 
 python3 scripts/benchmark/run.py --suite v8-v7 \
@@ -99,15 +103,15 @@ python3 scripts/benchmark/run.py --suite v8-v7 \
 ```
 
 `run.py` requires that pinned V8 checkout with no tracked local changes.
-Use `--v8-source-commit` only to start an explicitly documented new series.
+`--v8-source-commit` starts an explicitly documented new series.
 For two-engine comparisons, `--order abba`, `--order baab`, or
 `--order abba-baab` selects complete balanced blocks; repeat must be divisible
-by two or four respectively. The default preserves the previous alternating
-order. The runner generates bundles under the external checkout's
+by two or four respectively. The default alternates engine order per
+repetition. The runner generates bundles under the external checkout's
 `dist/quickjs-oxide`, following its `scripts/build.ts` algorithm: inline `load`
 calls for the complete suite, or concatenate `base.js`, one suite and the
-unchanged runner for isolated cases. It does not change benchmark bodies or
-timing policy. The generated complete suite can also be run directly:
+unchanged runner for isolated cases. Benchmark bodies and timing policy stay
+unchanged. The generated complete suite can also be run directly:
 
 ```sh
 ./target/release/qjs ../js-engine-benchmark/dist/quickjs-oxide/run.js
@@ -126,9 +130,8 @@ can swallow failures. Internal assertions remain the original suite's checks.
 `paired.py` reads `fixed.py` or original V8 `run.py` results. It requires at
 least six complete pairs per case in a declared balanced ABBA/BAAB schedule.
 It verifies the sample journal order and rejects missing, duplicated, failed,
-or mismatched observations before calculating any ratio. The existing runners'
-shorter diagnostic schedules remain available; they cannot pass this acceptance
-report.
+or mismatched observations before calculating any ratio. The runners' shorter
+diagnostic schedules serve diagnostics only and fail this acceptance report.
 
 Freeze a same-binary A/A matrix before comparing candidates. Use the same
 workload bytes, CPU affinity, machine and metric for both matrices. On Linux,
@@ -167,11 +170,10 @@ still reported with a negative gain. A/A quality is reported separately and
 must be considered before using a result. A failed gate returns exit status 1;
 invalid evidence is rejected. Do not keep adding samples until a gate passes.
 
-Original combined subscore medians are listed separately for comparison with
-historical **combined-run** Boa data. They never replace isolated acceptance
-results. Reuse unchanged Boa data; this report neither runs Boa nor invents an
-aggregate from isolated scores. Compare the final stack directly with its
-original baseline, rather than multiplying separately measured stage gains.
+Original combined subscore medians are listed separately from isolated
+acceptance results; the report derives no aggregate from isolated scores.
+Compare a final change directly with its baseline rather than multiplying
+separately measured stage gains.
 
 ### Fixed V8 function and callsite diagnostic
 
@@ -203,10 +205,11 @@ construct paths, so a zero count is not evidence that JavaScript did no calls.
 
 ### Bounded fixed-iteration V8 comparison
 
-For implementation rounds, `iterate_v8.py` compares the eight pinned bodies
+`iterate_v8.py` compares the eight pinned bodies
 separately and as one combined program. It uses **plain release** binaries with
 matching build configuration and receipts. The output must be a new directory
-outside both repositories:
+outside both repositories. `--comparison build-technique` compares builds of
+the same source, such as a PGO candidate against its matching baseline:
 
 ```sh
 python3 scripts/benchmark/iterate_v8.py \
@@ -248,8 +251,8 @@ The summary's eight-suite geometric mean and combined whole-process speed ratio
 are fixed-work diagnostics, **not the original adaptive V8-v7 Score**. Do not
 admit a small change within the observed A/A spread; annotate known concurrent
 work or other timing interference in the result receipt. The machine snapshot
-does not prove the host was isolated. The original-score runner above remains
-available for a separately planned final release check, not every iteration.
+does not prove the host was isolated. Use the original-score runner above for
+a separately planned final check.
 
 ## Pinned QuickJS microbench
 
@@ -261,24 +264,22 @@ python3 scripts/benchmark/run.py --suite microbench \
   --repeat 3 --timeout 120 --output target/benchmark-microbench
 ```
 
-The default initial matrix is `empty_loop`, `prop_read`, `array_read`,
+The default matrix is `empty_loop`, `prop_read`, `array_read`,
 `func_call`, and `int_arith`. `--case` follows the original function-name prefix
 matching. The tool admits ordinary benchmark rows with N and ns/op; specialized
 sort output that does not match this contract is retained as incomplete rather
 than assigned a score. A shared prefix disables `performance`/`os` clock
 selection on both engines, preserving every byte of the original body and using
-its existing Date.now fallback. This is necessary because pinned QuickJS adds
-`performance.now` even without `--std`, while Oxide currently does not. A dynamic
+its existing Date.now fallback, so both engines use the same clock. A dynamic
 clock marker is checked on every run; mismatched clocks disqualify the result.
 Prepared microbench source stays in an external temporary directory, with its
 path/hash and exact prefix/hash recorded in metadata. Its millisecond resolution and minimum-of-many
 sampling limit what the resulting ns/op says; these are not individual-operation
 latency distributions. No ratio is admitted without the matching clock marker.
 
-Reference loading/saving in JS is not needed. Python records stdout, per-run
-ns/op, N, median/min/max/stdev across independent runs and per-case ratios.
-Only the shared clock prefix is added; workload bodies are untouched. On engines without `std`/`fs`, the harness's
-reference-file operations are no-ops; Python owns result files.
+Python records stdout, per-run ns/op, N, median/min/max/stdev across
+independent runs and per-case ratios, and owns all result files. On engines
+without `std`/`fs`, the harness's reference-file operations are no-ops.
 
 ## Cross-engine front-end compile matrix
 
@@ -340,8 +341,8 @@ repetition succeeds on both engines; no overall score is inferred from a subset.
 
 The built-in harness warm-up/calibration is unchanged and recorded as such.
 Process wall times include startup, parse/compile, execution and teardown;
-benchmark operation timings are reported separately. These tools do not claim
-to isolate parse/compile time without a separate embedding harness.
+benchmark operation timings are reported separately. Compile-only timing uses
+the compile probes below.
 
 ```sh
 python3 -m unittest discover -s scripts/benchmark -p 'test_*.py'
@@ -351,95 +352,118 @@ cargo test --locked -p quickjs-oxide --lib --features profiling profiling_
 ```
 
 Run the broader Rust/QuickJS comparison tests and Test262 independently of
-benchmarking. Never revise conformance baselines to turn a performance change
-into an apparent pass.
-
-Scaling workloads also cover Array/TypedArray integer reads and writes, repeated interior Array deletion/reinsertion, strict and mapped Arguments construction, and RegExp named groups/indices. Use sizes below 255 for regexp-groups. Mapped arguments use a non-strict Function body explicitly because workload files are modules.
+benchmarking. Conformance baselines change only for conformance reasons.
 
 ## Replay the fixed-work matrix
 
-`fixed.py` replays a workload manifest.
+`fixed.py` replays a workload manifest, such as the one generated by
+[`build_fixed_matrix.py`](../../docs/performance/probes/README.md).
 It checks every source hash before measuring, rotates engine order by default,
 and accepts the same balanced `--order` modes as `run.py`. It retains raw
 outputs and rejects nonempty stderr. `--workload-dir` relocates existing files;
-it never regenerates or silently changes third-party workloads. Reconstruct
-missing files using the recipe in the fixed-work report, then verify the hashes.
-On macOS, `--darwin-counters` wraps each sample with
-`/usr/bin/time -l -o <raw-file>` and records its whole-process retired
-instructions, elapsed cycles, maximum resident set size and peak memory
-footprint. Missing fields invalidate the counter measurement while preserving
-the program's stdout/stderr and the raw time output.
+the manifest hashes must still match.
 
 ```sh
 python3 scripts/benchmark/fixed.py \
   --manifest docs/performance/probes/fixed/manifest.json \
   --workload-dir docs/performance/probes/fixed \
   --engine before=/absolute/baseline/qjs --engine after=/absolute/changed/qjs \
-  --repeat 5 --cpu 2 --output target/published-fixed
+  --repeat 5 --cpu 2 --output target/fixed-results
 ```
 
-Omitting `--case` covers every manifest entry. Repeated `--case` options are
-for step-level experiments only. All times include the whole process; these are
-not adaptive harness scores. Preserve build receipts separately and do not run
-benchmarks alongside builds, tests or architecture canaries.
+Omitting `--case` covers every manifest entry; repeated `--case` options select
+a subset. All times include the whole process; these are not adaptive harness
+scores. Preserve build receipts separately and run benchmarks without
+concurrent builds or tests.
 
-All builds use the sole explicit-stack execution core. `build.py` records
-`vm_configuration: stack-vm`; no backend-selection feature or legacy build is available.
+On macOS, `--darwin-counters` wraps each sample with
+`/usr/bin/time -l -o <raw-file>` and records its whole-process retired
+instructions, elapsed cycles, maximum resident set size and peak memory
+footprint. Missing fields invalidate the counter measurement while preserving
+the program's stdout/stderr and the raw time output.
 
-## Frozen public compilation and original V8 replay
+`--callgrind /path/to/valgrind --callgrind-cache-config cache.json` runs each
+sample under Callgrind (`callgrind.py`) instead of timing it. The cache config
+is a JSON object with exactly `I1`, `D1` and `LL`, each
+`[bytes, associativity, line_bytes]`. Cache and branch simulation are enabled;
+the summary reports per-case median `Ir`, `Dr`, `Dw`, cache-miss and branch
+counters for the whole process. `--callgrind-instructions` also keeps
+instruction positions and jumps for code-generation attribution. These are
+simulated counters, not native timings.
 
-`replay.py` uses the primitive VM baseline receipt's existing 67 source files.
-Compile mode includes every entry. Original mode selects the nine entries with
-score contracts (the original eight suites and their original combined entry).
-Both modes validate source and binary hashes before every run, rotate engine
-order, preserve every stdout/stderr and failed round, and reject a comparison
-if either engine has a failed round. Ratios always mean **after / before**:
-compile elapsed time is lower-is-better; original score is higher-is-better.
-Combined scores come only from the original combined workload, never a subset.
+## Profile-guided optimization
 
-Build the public API probe before starting any timed matrix:
+```sh
+python3 scripts/benchmark/pgo_verified.py --output /absolute/outside/pgo-run
+```
+
+`pgo_verified.py` requires a clean source worktree and an output directory
+outside the repositories. Through `build.py --optimization`, it builds an
+instrumented CLI, trains it on every scaling workload, merges the raw profiles
+with the `llvm-profdata` matching rustc's LLVM version, writes
+`training.json`, then builds the profile-use candidate and a matching
+uninstrumented baseline for the same target. `engines.json` names both
+binaries. V8 v7 stays out of training so `iterate_v8.py --comparison
+build-technique` can evaluate the candidate independently. `build.py
+--optimization profile-use` accepts only a training receipt that
+`pgo_validation.py` verifies against the source and every recorded artifact.
+
+`pgo.py` is a quicker unverified builder: it builds into `target/pgo-generate`,
+trains on scaling workloads (plus V8 v7 with `--v8-source`), merges profiles
+in `target/pgo-profiles`, and writes the optimized CLI to `target/pgo-use`.
+
+## Compile probes and frozen-workload replay
+
+`build_compile_probe.py` builds a probe source as a standalone crate against
+`--repo`, by default `apps/cli/examples/compile_probe.rs`. That probe times
+`Context::compile_with_filename`; source I/O, Runtime/Context creation and
+teardown stay outside its `Instant` interval, and it never executes JavaScript.
+`--profiling` additionally writes phase attribution to stderr, which formal
+replay rejects. The builder copies the checkout's lockfile, rejects dependency
+checksum drift, and records toolchain, features and flags.
+
+`replay.py` replays a receipt whose `workloads` entries give `case`, `path`,
+`sha256` and `expected`. Compile mode uses every entry and requires exactly one
+`compile_ns:` line. Original mode selects entries whose `expected` is a list
+of V8 score names. Both modes validate source and binary hashes before every
+run, rotate engine order, preserve every stdout/stderr and failed round, and
+reject a comparison if either engine has a failed round. Ratios mean
+**after / before**: compile time is lower-is-better; original score is
+higher-is-better. Default repetitions are 10 for compile and 5 for original.
 
 ```sh
 python3 scripts/benchmark/build_compile_probe.py --repo . \
   --output target/candidate-compile
 python3 scripts/benchmark/replay.py --mode compile \
-  --receipt target/primitive-vm-s07-performance/reproduction/workload-receipt.json \
-  --workload-dir target/primitive-vm-s07-performance/reproduction/workloads \
-  --engine pr19=/absolute/baseline/compile-probe \
+  --receipt /absolute/workloads/receipt.json \
+  --workload-dir /absolute/workloads \
+  --engine baseline=/absolute/baseline/oxide-compile-probe \
   --engine candidate=target/candidate-compile/target/release/oxide-compile-probe \
-  --repeat 10 --output target/candidate-compile-results
+  --output target/candidate-compile-results
 python3 scripts/benchmark/replay.py --mode original \
-  --receipt target/primitive-vm-s07-performance/reproduction/workload-receipt.json \
-  --workload-dir target/primitive-vm-s07-performance/reproduction/workloads \
-  --engine pr19=target/primitive-vm-baseline/pr19-qjs \
+  --receipt /absolute/workloads/receipt.json \
+  --workload-dir /absolute/workloads \
+  --engine baseline=/absolute/baseline/qjs \
   --engine candidate=/absolute/candidate/qjs \
-  --repeat 5 --timeout 1800 --output target/candidate-original-results
+  --output target/candidate-original-results
 ```
 
-The compile probe uses the same `Context::compile_with_filename` boundary as
-the frozen S07 probe. Source I/O, Runtime/Context creation and teardown remain
-outside its `Instant` interval; it never executes JavaScript. A build with
-`profiling` additionally writes phase attribution to stderr and is rejected by
-the formal replay harness. Preserve separate build/patch/toolchain receipts
-for all binaries. The standalone builder avoids the CLI example dev dependency's
-`test-support` feature, validates all registry dependency checksums against the
-checkout lockfile, and records toolchain/features/flags. Admission for this frozen S07 experiment requires all 58 fixed entries with
-10 rounds in addition to the two replay commands above; this is not the bounded V8 iteration protocol. `--case` subsets only
-support directional experiments. Run each matrix serially with builds, tests,
-profiling, and CPU/memory sampling stopped.
+Run each matrix serially with builds, tests, profiling, and CPU/memory sampling
+stopped. `--case` subsets support directional comparisons.
 
-For a frozen source export, pass `--repo /absolute/source-export` and
-`--source-manifest /absolute/source-export.json`; its `files` or `source_files`
-map must describe every exported file by SHA-256. The builder validates the
-complete inventory and contents both before and after compilation, copies the
-receipt alongside the binary metadata, and refuses to use an ancestor Git
-checkout's revision or working diff as the export's identity. Keep build output
-outside the frozen export. `--profiling` requires a source version containing
-the new phase fields; plain probes remain compatible with older baselines.
+For a source export without Git metadata, pass `--repo /absolute/source-export`
+and `--source-manifest /absolute/source-export.json`; its `files` or
+`source_files` map must describe every exported file by SHA-256. The builder
+validates the complete inventory and contents before and after compilation,
+copies the manifest alongside the binary metadata, and requires build output
+outside the export.
 
 `--probe`/`--name` build another probe source through the same generated crate
-and receipts. The front-end allocation counter
-(`scripts/benchmark/probes/compile_alloc_probe.rs`) is built that way and reports
-alloc/realloc/dealloc calls and bytes around the same compile window; its
-`--version` deliberately matches no matrix magic, so `compile_matrix.py` rejects
-it. The probe records its allocation counts alongside the compile window.
+and receipts. `scripts/benchmark/probes/` holds:
+
+- `compile_alloc_probe.rs`: counts alloc/realloc/dealloc calls, bytes and peak
+  live bytes around the same compile window. Its `--version` matches no matrix
+  magic, so `compile_matrix.py` rejects it.
+- `error_alloc_probe.rs`: an allocation diagnostic for the public Error channel.
+- `boa_compile_probe.rs` and `node_compile_probe.mjs`: the Boa and Node probes
+  used by `build_compile_probes.py` and `compile_matrix.py`.

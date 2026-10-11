@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-iteration Ir and per-function self-cost diffs for the runtime items 2-4 probes.
+"""Per-iteration Ir and per-function self-cost diffs for binding, property, array, call and construct probes.
 
 Every probe is a `work(n)` loop with the same shape as `empty_loop` and a checked
 result. Each probe runs under Callgrind at N, 2N and 4N; the slope (2N - N) / N is
@@ -25,9 +25,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "allocation"))
 sys.path.insert(0, str(HERE.parents[3] / "scripts" / "benchmark"))
-import ledger  # noqa: E402  (existing empty_loop/object_literal/constructor probes)
+import ledger  # noqa: E402  (empty_loop/object_literal/constructor probes)
 
-# Items 2-4 probes (runtime-bc-plan.md §5). `i` equals n after the loop.
+# Binding, property, array, call and construct probes. `i` equals n after the loop.
 NEW_PROBES = {
     "s=o": ("function work(n){ var o={x:1}; var s; for (var i=0;i<n;i++){ s=o; } return s.x+i; }\n",
             lambda n: n + 1),

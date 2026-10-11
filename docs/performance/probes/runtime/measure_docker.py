@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a source tree in the aarch64 valgrind container and run `probes.py` on it.
+"""Build a source tree in the valgrind container and run `probes.py` on it.
 
 The source tree is mounted read-only at /src and built with Rust 1.88 into
 /target/<target-subdir> of the `oxide-target` volume. With --rev, --source is a Git
@@ -15,8 +15,8 @@ macOS permission prompt for such a path.
 Example (A/B: run once per revision, then compare the two JSON files):
 
     python3 docs/performance/probes/runtime/measure_docker.py \\
-        --source . --rev <commit> --target-subdir item2-a \\
-        --json /private/tmp/item2/a.json
+        --source . --rev <commit> --v8 <v8-v7-dir> --target-subdir candidate \\
+        --json <output-dir>/candidate.json
 """
 import argparse
 import shutil
@@ -29,7 +29,6 @@ TOOL_FILES = ("docs/performance/probes/runtime/probes.py", "docs/performance/pro
               "scripts/benchmark/profile_v8.py", "scripts/benchmark/run.py")
 V8_FILES = ("base.js", "richards.js", "deltablue.js", "crypto.js", "raytrace.js", "earley-boyer.js",
             "regexp.js", "splay.js", "navier-stokes.js")
-DEFAULT_V8 = Path("/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark")
 
 
 def main():
@@ -40,7 +39,7 @@ def main():
     parser.add_argument("--json", type=Path, required=True, help="report path on the host")
     parser.add_argument("--workdir", type=Path, help="new host directory for scripts and Callgrind files "
                                                        "(default: <json without suffix>.work)")
-    parser.add_argument("--v8", type=Path, default=DEFAULT_V8, help="V8-v7 source root ('none' to skip)")
+    parser.add_argument("--v8", type=Path, required=True, help="V8-v7 source root ('none' to skip)")
     parser.add_argument("--image", default="oxide-vg:1.88")
     parser.add_argument("--n", type=int, default=100_000)
     parser.add_argument("--v8-iterations", type=int, default=10)

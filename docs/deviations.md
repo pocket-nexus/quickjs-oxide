@@ -1,22 +1,20 @@
 # Deviation ledger
 
-This ledger is subordinate to [`parity.md`](parity.md). Approved target
-deviations are limited to the exact observable behavior and test variants named
-below; they do not authorize adjacent differences. An unsupported feature or an
-unresolved mismatch still blocks the relevant parity claim and is not silently
-accepted as a deviation.
+This ledger is subordinate to [`parity.md`](parity.md). Each approved target
+deviation covers exactly the observable behavior and test variants named below.
+Any other unsupported feature or mismatch blocks the relevant parity claim.
 
 ## Approved target deviations
 
 ### ECMASCRIPT-WEAKREF-LIFETIME-001
 
-- Status: target approved by the maintainer on 2026-09-30; kept-object execution
-  scopes and ordinary argument ownership transfer implemented.
+- Status: approved target; kept-object execution scopes and ordinary argument
+  ownership transfer are implemented.
 - Surface: WeakRef target liveness, FinalizationRegistry cleanup scheduling, and
   observable argument lifetimes during function calls.
 - Authority: the maintainer explicitly directed that ECMAScript govern this
-  behavior. Pinned QuickJS remains a comparison implementation; its differing
-  weak-reference results and argv-copy conditions do not define this target.
+  behavior. Pinned QuickJS is a comparison implementation for its weak-reference
+  results and argv-copy conditions.
 - Required behavior: WeakRef construction and successful dereferencing keep
   targets alive through the current synchronous execution sequence via the
   effect of `AddToKeptObjects`. The host schedules `ClearKeptObjects` at an
@@ -28,28 +26,26 @@ accepted as a deviation.
   transfer argument ownership without a second original-argument owner.
   Neither universal retention until return nor immediate collection of dead
   values is a language requirement.
-- Baseline evidence: pinned QuickJS and PR #73 evaluated
-  `new WeakRef({}).deref() === undefined` to `true`. The implementation now
-  returns the required `false`, with coverage for object and symbol targets,
-  explicit GC, nested execution scopes, errors, panic cleanup and job dispatch.
+- Baseline evidence: pinned QuickJS evaluates
+  `new WeakRef({}).deref() === undefined` to `true`. Rust returns the required
+  `false`, with coverage for object and symbol targets, explicit GC, nested
+  execution scopes, errors, panic cleanup and job dispatch.
   `Runtime::with_execution_turn` groups multiple embedding entries when the
   host requires one synchronous execution sequence. Job dispatch is rejected
-  during an active turn without removing the pending FIFO entry.
-  The ordinary-frame test retaining overwritten object arguments until teardown
-  cannot serve as a universal semantic requirement.
+  during an active turn and leaves the pending FIFO entry queued.
 - Acceptance: cover construction and repeated successful dereferencing within
   one synchronous execution, nested host re-entry and GC, permitted clearing
   boundaries, asynchronous cleanup, and arguments/closure aliasing. Across a
-  permitted clearing boundary, ECMAScript does not require collection to occur.
+  permitted clearing boundary, collection is permitted but optional.
 - Specification: [WeakRef](https://tc39.es/ecma262/multipage/managing-memory.html#sec-weak-ref-objects),
   [liveness and execution](https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-liveness),
   [ClearKeptObjects](https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-clear-kept-objects).
 
 ### TEST262-ANNEXB-EVAL-001
 
-- Status: approved target deviation on 2026-08-09.
-- Approved by: the architecture-hygiene milestone review, under the repository
-  maintainer's standing delegation of Feature Parity implementation judgment.
+- Status: approved target deviation.
+- Approved by: review under the repository maintainer's standing delegation of
+  Feature Parity implementation judgment.
 - Surface: Annex B eval function declarations inside a `with` environment.
 - Exact Test262 key:
   `test/staging/sm/lexical-environment/block-scoped-functions-annex-b-eval.js`
@@ -98,9 +94,9 @@ Pinned QuickJS prints `outer-gouter-geval-g`; Rust prints
 
 ### TEST262-ARROW-FOR-HEAD-001
 
-- Status: approved target deviation on 2026-08-09.
-- Approved by: the architecture-hygiene milestone review, under the repository
-  maintainer's standing delegation of Feature Parity implementation judgment.
+- Status: approved target deviation.
+- Approved by: review under the repository maintainer's standing delegation of
+  Feature Parity implementation judgment.
 - Surface: early-error parsing of an arrow expression in a classic `for`
   statement head created through the `Function` constructor.
 - Exact Test262 keys:
@@ -139,43 +135,6 @@ cargo run --quiet --locked --bin qjs -- -e 'try{Function("for (x => 0 in 1;;) br
 
 Pinned QuickJS prints `accepted`; Rust prints `SyntaxError`.
 
-## Resolved findings
-
-### FORIN-FAST-ARRAY-001
-
-- Status: resolved on 2026-07-15; no deviation approval requested.
-- Surface: representation-sensitive Array mutation during `for-in`.
-- Upstream anchor: `quickjs.c` 16282-16509.
-- Compatibility impact while open: a deleted dense own index could incorrectly
-  hide an inherited key, and a newly added own key could fail to hide one.
-
-Minimal deletion probe:
-
-```js
-(function () {
-  var p = [];
-  p[1] = "proto";
-  var a = [0, 1], out = "";
-  Object.setPrototypeOf(a, p);
-  for (var key in a) {
-    out += key + ",";
-    if (key === "0") delete a[1];
-  }
-  return out;
-})()
-```
-
-Pinned QuickJS and the current Rust engine both return `0,1,`. A second
-differential forces the same current key set through `Object.defineProperty` or
-sparse growth first; both engines then retain the slow representation and
-return `0,`.
-
-The fix records QuickJS's irreversible fast/slow Array state in the heap
-payload. A count-only fast iterator refreshes the source's current own names
-when prototype enumeration becomes necessary; a slow iterator retains its
-initial snapshot. Both paths are pinned in
-`apps/cli/tests/oracle/control_flow/oracle_for_in.rs`.
-
 ## Open implementation frontiers
 
 - Dynamic import retries failed acyclic source graphs as pinned QuickJS does.
@@ -189,29 +148,24 @@ initial snapshot. Both paths are pinned in
   it from name lookup, and gives a same-name retry a new identity. Pinned
   QuickJS can instead retain a dangling `JSModuleDef *`; subsequent use enters
   native undefined behavior and may manifest as a native crash or allocator
-  aliasing. Those unsafe operations are deliberately excluded from the
-  automated oracle suite. Reproducing those lifetimes is not an approved
-  parity target. Vacant Rust module-cache slots and orphaned sentinels are
-  currently not compacted, so repeated failed publications remain a
-  resource-hygiene frontier.
+  aliasing. The automated oracle suite omits those unsafe operations, and
+  reproducing those lifetimes is outside the parity target. Rust keeps vacant
+  module-cache slots and orphaned sentinels uncompacted, so repeated failed
+  publications are a resource-hygiene frontier.
 - Admitted ordinary async-generator function, object-method, and public
   class-method direct-yield/await paths match the pinned driver, including
   poisoned Promise constructors, iterator-result resolution reentry, and
-  completed-state queue re-entry.
-  Internal allocation/setup
-  failure is not yet recovered identically: iterator-result allocation can
-  fail after the VM has advanced, and failure to create or install a private
-  continuation can leave the front request capability pending for a later
-  retry. These host-error paths require fault injection and a transactional
-  pending-settlement representation before they can be admitted; they are an
-  unresolved hardening frontier, not an approved observable deviation.
+  completed-state queue re-entry. Internal allocation/setup failure recovery
+  differs: iterator-result allocation can fail after the VM has advanced, and
+  failure to create or install a private continuation can leave the front
+  request capability pending for a later retry. Admitting these host-error
+  paths requires fault injection and a transactional pending-settlement
+  representation; they are an open hardening frontier.
 - `Promise.all`, `Promise.allSettled`, and `Promise.any` match pinned QuickJS on
-  ordinary JavaScript-observable paths, but internal allocation failure is not
-  yet routed identically. Failure to allocate the output Array currently
-  returns a host runtime error instead of rejecting the new capability;
-  failure to allocate an element callback also omits QuickJS's
-  close-then-reject path. Internal `AggregateError` allocation has the same
+  ordinary JavaScript-observable paths; internal allocation failure routes
+  differently. Failure to allocate the output Array returns a host runtime
+  error instead of rejecting the new capability, and failure to allocate an
+  element callback skips QuickJS's close-then-reject path. Internal `AggregateError` allocation has the same
   runtime-error boundary. The checked `u32` element index has a theoretical
   multi-billion-element RangeError boundary instead of QuickJS's C `int`
-  environment behavior. These are unresolved hardening frontiers, not
-  approved deviations.
+  environment behavior. These are open hardening frontiers.

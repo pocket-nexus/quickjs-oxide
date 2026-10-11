@@ -265,14 +265,14 @@ function currentTest262DocumentBlocks(metrics) {
   return new Map([
     [
       "README.md",
-      `The authoritative ${metrics.milestone} Test262 baseline records **${fullPasses} full-corpus passes\n` +
+      `The authoritative Test262 baseline records **${fullPasses} full-corpus passes\n` +
         `out of ${fullVariants} variants (${metrics.fullPassPercent}%)**, with **${fullEligible} eligible variants\n` +
         `(${metrics.eligiblePercent}%)**. The ${fullPasses} / ${fullRunnable} runnable pass rate (${metrics.runnableQuality}%) is a secondary\n` +
         "quality measure, not the headline compatibility metric.",
     ],
     [
       "docs/status.md",
-      `The authoritative ${metrics.milestone} Test262 vector has:\n\n` +
+      `The authoritative Test262 vector has:\n\n` +
         `- ${fullPasses} full-corpus passes out of ${fullVariants} variants (${metrics.fullPassPercent}%)\n` +
         `- ${fullEligible} eligible variants out of ${fullVariants} (${metrics.eligiblePercent}%)\n` +
         `- ${fullPasses} passes out of ${fullRunnable} runnable variants (${metrics.runnableQuality}%, secondary quality\n` +

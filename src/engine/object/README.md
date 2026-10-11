@@ -13,5 +13,5 @@ shape 与 dictionary 维护布局和属性顺序。物理槽可以移动，因�
 顺序替代。heap 承担原始记录与引用边的变更。
 
 用户 getter、setter 和 Proxy 回调由 VM 执行，内置方法的完整算法归
-builtins。后续回调恢复状态仍由语义所有者维护，详见
+builtins。回调恢复状态由语义所有者维护，详见
 [当前架构](../../../docs/architecture.md)。

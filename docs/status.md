@@ -14,7 +14,7 @@ quickjs-oxide is a Rust JavaScript engine available through its command-line app
 ## Test262 baseline
 
 <!-- current-test262-metrics:start -->
-The authoritative R3fj Test262 vector has:
+The authoritative Test262 vector has:
 
 - 80,010 full-corpus passes out of 102,037 variants (78.413%)
 - 80,060 eligible variants out of 102,037 (78.462%)

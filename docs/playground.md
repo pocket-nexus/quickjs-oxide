@@ -7,10 +7,9 @@ editor submission through the public `Runtime` and `Context` APIs. It does not
 delegate JavaScript execution to the browser's `eval` or `Function`
 implementations.
 
-The editor currently evaluates Script-goal source through the public
-`eval_with_filename` path. The Rust engine's static-module and core
-`import.meta` support is real but is not exposed through this browser UI until
-it has a module-loader interface of its own.
+The editor evaluates Script-goal source through the public
+`eval_with_filename` path. Modules and `import.meta` run through the Rust API
+and CLI; the browser UI has no module loader.
 
 Each run gets a fresh runtime and realm. The WebAssembly boundary returns a
 small record:
@@ -66,8 +65,8 @@ Atomics` example that stores 40, atomically adds 2, and loads 42 from the shared
 backing. The engine implements synchronous `Atomics.wait`, but the browser
 runtime intentionally keeps QuickJS's default `can_block=false`. The
 `Atomics.wait host policy` example returns 42 only after observing the exact
-TypeError boundary, without blocking the worker event loop. The Test262 agent
-host remains outside R3dj, and pinned QuickJS has no `waitAsync` parity target.
+TypeError boundary, without blocking the worker event loop. Pinned QuickJS has
+no `waitAsync` parity target.
 
 For the same acceptance used by Pages, install the pinned browser dependency
 and run Chromium against the final `target/pages` artifact:

@@ -427,7 +427,7 @@ pub(in crate::engine::compiler) fn install_eval_external_bindings(
 
     // Scope bindings are searched newest-first. Install outer-to-inner so the
     // innermost exact descriptor wins for duplicate names while every closure
-    // slot remains available to the specialized publication verifier. The
+    // slot remains available to publication validation. The
     // `<var>` remains unspellable source metadata, but it must still have a
     // binding identity in the synthetic root.  QuickJS relays the same hidden
     // closure VarRef when eval source itself contains a direct eval; retaining

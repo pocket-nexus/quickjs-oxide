@@ -1,10 +1,10 @@
 # 类型化堆存储
 
-当前堆把 Object、Context 和 FunctionBytecode 存于共享 arena，把捕获变量 cell 与 Shape 分别存于独立的类型化 arena，把 String 与 BigInt 存于共享的 leaf arena。`VarRefId`、`ShapeId` 等 ID 携带完整代际身份。主要实现位于 `src/engine/heap/arena.rs`、`auxiliary_arena.rs`、`identity.rs`、`binding_storage.rs`、`object_storage.rs` 和 `gc.rs`。
+当前堆把 Object、Context 和 FunctionBytecode 存于共享 arena，把捕获变量 cell 与 Shape 分别存于独立的类型化 arena，把 String 与 BigInt 存于共享的 leaf arena。`VarRefId`、`ShapeId` 等 ID 携带完整代际身份。主要实现位于 `src/engine/heap/arena.rs`、`auxiliary_arena.rs`、`identity.rs`、`binding_storage.rs`、`object_storage.rs`、`gc.rs` 与 `src/engine/object/shape.rs`。
 
 ## 捕获变量与形状
 
-捕获变量 cell 是活动帧与闭包共享的可变绑定。普通替换取得新边的 owner 并释放旧边；拥有式替换转移传入 owner，并交出被替换 owner。形状存储维护共享布局的 copy-on-write、唯一 owner 的原位更新、布局 revision、字典序、原型边、属性键 atom 边和弱 interner 清理。
+捕获变量 cell 是活动帧与闭包共享的可变绑定。普通替换取得新边的 owner 并释放被替换的边；拥有式替换转移传入 owner，并交出被替换 owner。形状存储维护共享布局的 copy-on-write、唯一 owner 的原位更新、布局 revision、字典序、原型边、属性键 atom 边和弱 interner 清理。
 
 每个类型化 arena 管理槽、空闲索引、代际、引用计数和状态。分配与发布建立记录身份；释放进入零计数队列；回收沿完整 `RawId` 跨 arena 遍历引用边。循环回收使用各 arena 的 trial/reachability 空间，并保留 Object、Context 与 FunctionBytecode 的 finalization 锚点。
 

@@ -10,16 +10,15 @@ builtins 实现 ECMAScript 的内置对象与函数，以及显式启用的 qjs 
 代替。Promise 反应与 jobs、async 驱动也各有自己的职责。
 
 环境能力通过 host 契约取得，具体系统或浏览器实现位于 adapters。
-内置对象的原始载荷与引用边由 heap 保存；语言行为仍留在这里。
+内置对象的原始载荷与引用边由 heap 保存；语言行为留在这里。
 
 [缓冲区与视图](array_buffer/README.md)有独立介绍，说明二进制内置的
-共享存储边界。其余小型方法分组使用源码说明。[当前架构](../../../docs/architecture.md)
-统一了内部 JS 回调的推进机制，各内置领域继续拥有其算法与恢复状态。
+共享存储边界。其余小型方法分组使用源码说明。
 
 `continuation` 是 native 算法的封闭登记表；它只选择领域
 step，不保存属性或转换算法。各领域的 Step/Resume 保存阶段与必要 roots，
-旧同步入口及 owned VM 共用同一算法。VM 的 request 模块按领域适配有类型的
-请求和回复，回调由显式子帧推进；无回调叶函数仍直接执行。
+同步入口与 VM 驱动共用同一算法。VM 的 `call/request` 模块按领域适配有类型的
+请求和回复，回调由显式子帧推进；无回调叶函数直接执行。
 
-各同步领域已接入统一 owned 驱动，Promise/generator、模块与真实
-host/API 入口也通过同一驱动推进；原子性要求见[当前架构](../../../docs/architecture.md)。
+同步内置、Promise/generator、模块与 host/API 入口通过同一 owned 驱动推进；
+原子性要求见[当前架构](../../../docs/architecture.md)。

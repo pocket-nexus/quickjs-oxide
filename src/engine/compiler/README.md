@@ -17,8 +17,7 @@ compiler 使用 source 的精确源码表示和 code 的代码契约。它不选
 provider，也不拥有正在执行的帧；运行时链接、roots 和发布事务属于 code
 及 heap。对象和 Symbol 的运行时身份不成为普通编译常量。
 
-[当前架构](../../../docs/architecture.md)
-记录当前阶段边界；完整前端及其语义仍由本模块负责。
+阶段边界见[当前架构](../../../docs/architecture.md)。
 
 优化必须保留精确源码字节、UTF-16 字符串、token span、ASI 与
 `line_terminator_before`、词法 goal/context、转义标识符和 private name 身份。
@@ -32,5 +31,3 @@ goal 与 context，不能跨词法上下文复用。重扫保留已观测的换�
 惰性文本处理不能推迟扫描期必须报告的畸形字节或长度错误。诊断的阶段、
 文案、位置、首错及求值顺序依照现有契约和 oracle 保持，解析资源限制与
 栈耗尽行为也需对拍。
-
-当前 capture 分析主要用于局部生命周期处理。

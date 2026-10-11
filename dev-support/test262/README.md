@@ -4,16 +4,14 @@
 the current profile, focused manifest and receipts, full-corpus metrics, line
 counts, summaries, SHA-256 hashes, and the current negative-diagnostic contract.
 It also pins the exact admission catalog by repository path, line count, and
-SHA-256.
-The gate parses it as inert `key=value` data; it is never sourced or evaluated
-by a shell.
+SHA-256. The gate parses it as inert `key=value` data.
 
-The focused manifest is a sorted set of source paths. Its receipt remains a
+The focused manifest is a sorted set of source paths. Its receipt is a
 full `(path, variant)` vector, so one path may produce multiple metadata-driven
-variants. The current vector includes source-authenticated static JSON and
-top-level-await module graphs, the exact dynamic-import Script-goal cohort, and
-the complete dependency-free module local-binding family. Unauthenticated
-module graphs remain excluded by generator canaries.
+variants. The vector includes source-authenticated static JSON and top-level-await module
+graphs, the exact dynamic-import Script-goal cohort, and the complete
+dependency-free module local-binding family. Generator canaries keep
+unauthenticated module graphs out of the vector.
 
 `admissions.tsv` is the hash-pinned source of exact Module-goal graphs,
 dynamic-import Script-goal graphs, dependency-free module roots, `$262.agent`
@@ -38,8 +36,8 @@ gate. Its path/variant rows carry the pinned source hash, phase/type, semantic
 rule, exact QuickJS message, and an `exact` or `absent` location policy. The
 runner validates the table and source metadata before scheduling tests. A
 contracted variant passes only when phase, type, message, and location all
-match; Test262 paths and source hashes remain dev-support data and never enter
-the production parser.
+match. Test262 paths and source hashes stay in dev-support data, outside the
+production parser.
 
 `negative-diagnostic-rules.tsv` is the complete registry for the semantic
 `rule` column and names the corresponding pinned QuickJS source anchor. The
@@ -56,30 +54,30 @@ own data properties, including the Error stack, when recovering the matching
 location and separately observes compilation, linking, and execution to enforce
 the declared phase. An absent location is represented by two empty TSV fields.
 
-`negative-diagnostic-exemptions.tsv` freezes the legacy variants admitted
-before exact diagnostic contracts became mandatory. Every audited negative
-variant must belong to exactly one of the two files: an exact contract or this
-legacy phase/type-only ledger. Overlap and missing rows are fatal. New
-admissions therefore extend the exact contract and cannot silently inherit the
-old phase/type-only behavior; removing an exemption requires replacing it with
-an exact contract.
+`negative-diagnostic-exemptions.tsv` is the frozen ledger of variants that check
+phase and type only. Every audited negative variant belongs to exactly one of
+the two files: an exact contract or this ledger. Overlap and missing rows are
+fatal. New admissions extend the exact contract; an exemption leaves the ledger
+only by becoming an exact contract.
 
 The gate authenticates the current worktree with a canonical engine-semantics
-fingerprint; the baseline does not require an external source commit to replay.
-The fingerprint hashes sorted repository paths and exact contents
-for `Cargo.toml`, `Cargo.lock`, `src/**`, the active profile/upstream pins, and
-the central preparation/gate scripts. It excludes generated caches, vendors,
-historical vectors, receipts, and `current.conf` itself. The spec remains
-separately authenticated, so excluding it avoids a circular checksum.
-The gate fixes that coverage contract independently of profile data and rejects
-known repository-local implicit build inputs until they are explicitly added to
-the contract.
+fingerprint computed by `scripts/test262/test262-engine-fingerprint.mjs`. It
+hashes sorted repository paths and exact contents of the files and trees listed
+in `engine_semantics_files` and `engine_semantics_trees`: `Cargo.toml`,
+`Cargo.lock`, the profile and upstream pins, the central preparation, gate and
+report-verification scripts, and the `adapters`, `apps`, `conformance`,
+`examples`, `src` and `tests` trees. `current.conf` and `dev-support/` lie
+outside that coverage and are authenticated separately, which avoids a circular
+checksum. `test-test262.sh` fixes the coverage contract independently of
+profile data and fails if an implicit build input such as `build.rs`,
+`rust-toolchain.toml` or `.cargo/config.toml` exists.
 
 The gate always builds the Rust runner from the authenticated worktree. It
 embeds the workspace fingerprint at compile time, verifies the binding before
 execution, and runs a private byte-identical copy so another Cargo invocation
-cannot replace workers during a long run. `TEST262_RUNNER` is retired; use
-`CARGO_TARGET_DIR` to reuse Cargo's authenticated build cache.
+cannot replace workers during a long run. Set `CARGO_TARGET_DIR` to reuse
+Cargo's authenticated build cache; the gate rejects a `TEST262_RUNNER`
+override.
 
 Use the one parameterized entry point:
 
@@ -106,39 +104,34 @@ Generation first inserts a leading runtime sentinel and requires both engines
 to report the same source diagnostic one line later, proving that parsing fails
 before execution. It then succeeds only when the original pinned QuickJS and
 Oxide diagnostics match exactly. The candidate file assigns reviewed semantic
-rules explicitly; the tool never infers a rule from a fixture path or error
-string. Module candidates still use the runner's module path rather than this
-Script-only CLI helper. Scheduled differential CI runs the checked-in smoke
+rules explicitly. Module candidates use the runner's module path; this CLI
+helper covers Script-goal candidates. Scheduled differential CI runs the checked-in smoke
 cohort plus runtime-deception, metadata, and A/A regression checks.
 
-`--check` authenticates the pinned baseline and prints whether the working tree
-is current or stale; staleness is explicit but does not fail fast CI. Focused
-byte-for-byte replay refuses a stale source. A full run may produce a new
-current-source receipt for promotion, but cannot authenticate against the old
-baseline hashes. Promotion updates the pinned source commit and result hashes
-only after report metadata matches the recomputed workspace fingerprint. The
-gate recomputes that fingerprint after building the runner and after execution,
-so concurrent source edits invalidate the receipt rather than producing a
-mixed-source baseline.
+`--check` authenticates the spec, pinned inputs, and frozen receipts without
+building or running the engine. `--focused` and `--full` stamp new receipts with
+the current workspace fingerprint and compare their result bodies with the
+frozen hashes. The gate recomputes that fingerprint after building the runner
+and after execution, so concurrent source edits fail the run instead of
+producing a mixed-source receipt.
 
-The repository keeps only the current profile and focused receipt plus the
-small semantic ledgers used by runner unit tests. A fast inventory gate requires
-every tracked `dev-support/test262/generated/test262-*` artifact to be referenced by the current spec,
-runner, or a generator. Earlier milestone profiles, 168 cohort-specific gates,
-result vectors, baselines, 313 superseded manifests, and former long-form status
-ledgers are preserved in the public `test262-history-*` release assets. Their
-authenticated inventory is in `archive/index.tsv`.
+The repository holds the current profile and focused receipt plus the small
+semantic ledgers used by runner unit tests.
+`scripts/checks/check-test262-artifact-inventory.mjs` requires every tracked
+`dev-support/test262/generated/test262-*` artifact to be referenced by the
+current spec, runner, or a generator. Archived milestone profiles, gates, result
+vectors, baselines, and manifests are public `test262-history-*` release
+assets; `archive/index.tsv` is their authenticated inventory.
 
-The `$262` realm and agent host is excluded from default library, CLI, and
-WASM builds. The central gate explicitly enables the non-default
-`test262-host` feature when it builds `run-test262`. Feature-specific checks
+The `$262` realm and agent host lives behind the non-default `test262-host`
+feature; the central gate enables it when it builds `run-test262`. Feature-specific checks
 can be run with `cargo test --locked --features test262-host --lib --bins`.
 
 Official progress reports lead with full pass and eligible coverage. Runnable
 pass rate is secondary. A new admission must be expressed in profile data and
-must validate the correct negative phase/type and QuickJS diagnostic rule; the
-central gate must not acquire cohort names or fixture-specific branches.
+must validate the correct negative phase/type and QuickJS diagnostic rule. The
+central gate stays generic over cohorts and fixtures.
 
 Active generated manifests and ledgers live in [`generated/`](generated/README.md).
-Handwritten test inputs and frozen QuickJS observations are separated under
-`tests/fixtures/inputs/` and `tests/fixtures/expected/`.
+Handwritten test inputs and frozen QuickJS observations live in
+[`apps/cli/tests/fixtures/`](../../apps/cli/tests/fixtures/README.md).

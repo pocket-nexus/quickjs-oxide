@@ -3,7 +3,7 @@
 An unsafe-free Rust rewrite of QuickJS, targeting semantic Feature Parity with
 the official **QuickJS 2026-06-04** release and its ES2025 behavior.
 
-The engine is runnable, but it is not at Feature Parity yet. Implemented slices
+The engine is runnable and has not reached Feature Parity. Implemented slices
 include binary data and Atomics, collections and weak references, Promise jobs,
 Unicode behavior, class elements, and static-module graphs with live bindings,
 top-level await, import attributes, JSON modules, `import.meta`, and dynamic
@@ -16,10 +16,10 @@ budget. Parse-in-progress module identities and source-order request prefixes
 are visible to those callbacks in QuickJS order, with unsafe failed identities
 represented deterministically. Script, ECMAScript Module, and JSON-module
 loader boundaries accept byte-exact source buffers, and the file CLI preserves
-those bytes end to end. The remaining conformance gaps are still parity work.
+those bytes end to end. The remaining conformance gaps are parity work.
 
 <!-- current-test262-metrics:start -->
-The authoritative R3fj Test262 baseline records **80,010 full-corpus passes
+The authoritative Test262 baseline records **80,010 full-corpus passes
 out of 102,037 variants (78.413%)**, with **80,060 eligible variants
 (78.462%)**. The 80,010 / 80,060 runnable pass rate (99.938%) is a secondary
 quality measure, not the headline compatibility metric.
@@ -52,7 +52,8 @@ The file loader follows QuickJS policy: `.json` is strict JSON,
 file without that attribute remains a JavaScript module. Main files and
 dependencies are read as explicitly sized byte buffers.
 
-The compiler publishes a verified `ExecCode` stream for the engine's stack VM.
+The compiler verifies each function's bytecode and encodes it as an `ExecCode`
+stream for the engine's stack VM.
 See the [execution architecture](docs/architecture.md).
 
 ## Status
@@ -66,7 +67,7 @@ See the [execution architecture](docs/architecture.md).
 - [Parity acceptance contract](docs/parity.md)
 - [Playground build and trust boundary](docs/playground.md)
 - [Pinned upstream release](compat/upstream.toml)
-- [Test262 gate data and archived history](dev-support/test262/README.md)
+- [Test262 gate data and receipts](dev-support/test262/README.md)
 
 ## Verify
 

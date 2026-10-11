@@ -1,8 +1,9 @@
 # Dynamic-import trace oracle
 
 `dynamic-import-trace-2026-06-04.patch` is a test-only instrumentation patch
-for the authenticated QuickJS 2026-06-04 archive. It is not product code and
-must never be applied to `target/oracle/quickjs-2026-06-04`.
+for the authenticated QuickJS 2026-06-04 archive. It applies only to the
+isolated extraction made by the build script; the shared oracle in
+`target/oracle/quickjs-2026-06-04` stays stock.
 
 `scripts/quickjs/build-quickjs-dynamic-import-trace.sh` verifies the archive, patch,
 and patched-source fingerprints, extracts into a fresh temporary directory,
@@ -35,10 +36,10 @@ event-specific fields. Record types are:
   `errno`
 - `T`: root, compiled module name, parser-derived `has_tla` bit
 
-`scripts/quickjs/parse-quickjs-dynamic-import-trace.mjs` is the strict parser. The
-regression test covers computed and bare requests, missing-file `errno`, and
+`scripts/quickjs/parse-quickjs-dynamic-import-trace.mjs` is the strict parser.
+`scripts/quickjs/test-quickjs-dynamic-import-trace.sh` covers computed and bare requests, missing-file `errno`, and
 top-level await in blocks/templates versus await inside a nested function. It
 also compares the stock and instrumented runners' exit status, stdout, and
-stderr to detect instrumentation-induced behavior drift. As a separate opt-in
-gate, the test passes an otherwise-valid descriptor 3 without the environment
-variable and requires the trace to remain empty.
+stderr to detect instrumentation-induced behavior drift. It also passes an
+otherwise-valid descriptor 3 without the environment variable and requires the
+trace to stay empty.
