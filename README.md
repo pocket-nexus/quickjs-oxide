@@ -16,6 +16,8 @@ pass rate is 81.641%.
   compiler, VM, regular expression engine and Unicode tables are all safe
   Rust; the only third-party code in the engine is `num-bigint` and
   `num-traits` for BigInt arithmetic.
+- **Fast without `unsafe`.** On the Octane suite it outperforms most Rust
+  JavaScript engines, all of which rely on `unsafe` code.
 - **Same behavior as QuickJS.** Every failing Test262 variant is one QuickJS
   2026-06-04 also fails, early errors carry QuickJS's exact messages and
   positions, and a differential suite compares the two engines case by case.
