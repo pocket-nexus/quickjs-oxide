@@ -1,22 +1,7 @@
 # quickjs-oxide
 
-An unsafe-free Rust rewrite of QuickJS, targeting semantic Feature Parity with
-the official **QuickJS 2026-06-04** release and its ES2025 behavior.
-
-The engine is runnable and has not reached Feature Parity. Implemented slices
-include binary data and Atomics, collections and weak references, Promise jobs,
-Unicode behavior, class elements, and static-module graphs with live bindings,
-top-level await, import attributes, JSON modules, `import.meta`, and dynamic
-`import()`. The Rust embedding API and file-module CLI also expose QuickJS's
-canonical, host-populated `import.meta` object. JavaScript-valued module-host
-errors retain their exact values and object/Symbol identity. Context-aware
-module-host callbacks can synchronously compile and return same-Context
-modules, including nested loader re-entry protected by a finite host-stack
-budget. Parse-in-progress module identities and source-order request prefixes
-are visible to those callbacks in QuickJS order, with unsafe failed identities
-represented deterministically. Script, ECMAScript Module, and JSON-module
-loader boundaries accept byte-exact source buffers, and the file CLI preserves
-those bytes end to end. The remaining conformance gaps are parity work.
+A JavaScript engine in safe Rust that reproduces the behavior of
+[QuickJS](https://bellard.org/quickjs/) 2026-06-04.
 
 <!-- current-test262-metrics:start -->
 Within the Test262 scope that QuickJS 2026-06-04 runs, quickjs-oxide passes
@@ -25,63 +10,92 @@ skips the other 18,475 of the 102,037 variants; across the full corpus the
 pass rate is 81.641%.
 <!-- current-test262-metrics:end -->
 
-**[Open the browser playground →](https://pocket-nexus.github.io/quickjs-oxide/)**
-— it runs this Rust engine's actual WebAssembly build, not host `eval`. The
-page reports its exact build commit, QuickJS target, and browser host policy.
-Its curated Script-goal examples include a function returning 42 and the
-`Atomics.wait` boundary. [Compatibility](docs/compatibility.md) lists what the
-engine supports today.
+- **Same behavior as QuickJS.** Every failing Test262 variant is one QuickJS
+  2026-06-04 also fails, early errors carry QuickJS's exact messages and
+  positions, and a differential suite compares the two engines case by case.
+- **Pure Rust.** The workspace forbids `unsafe` code, and the engine crate
+  depends only on `num-bigint` and `num-traits`.
+- **Runs where you need it.** A `qjs` command line, a Rust embedding API and a
+  WebAssembly build.
+
+**[Try it in the browser →](https://pocket-nexus.github.io/quickjs-oxide/)**
+The playground runs the engine compiled to WebAssembly and reports the exact
+build it runs.
 
 ## Install
 
 [GitHub Releases](https://github.com/pocket-nexus/quickjs-oxide/releases)
-carry prebuilt `qjs` binaries, WebAssembly packages and a versioned
-playground. See [releases](docs/release.md).
+carry prebuilt `qjs` binaries for Linux, macOS and Windows, WebAssembly
+packages and a versioned playground.
 
 ```sh
 cargo binstall --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
+# or build from source with Rust 1.95 or newer
+cargo install --locked --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
 ```
 
-## Try it
+## Command line
 
-Rust 1.95 or newer is required.
+```sh
+qjs -e 'console.log({ answer: 42 })'
+qjs --print-result -e '(function (a) { return a + 1; })(41)'  # 42
+qjs module.mjs            # ES modules: -m/--module, --script, or .mjs detection
+qjs data.js arg1 arg2     # arguments are available as scriptArgs
+```
+
+The file loader follows QuickJS: `.json` imports are strict JSON, and
+`with { type: "json5" }` selects QuickJS's extended JSON.
+
+## Embedding
+
+```toml
+[dependencies]
+quickjs-oxide = { git = "https://github.com/pocket-nexus/quickjs-oxide" }
+quickjs-oxide-host = { git = "https://github.com/pocket-nexus/quickjs-oxide" }
+```
+
+```rust
+use quickjs_oxide::engine::api::{Runtime, Value};
+use quickjs_oxide_host::SystemHostServices;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+    let mut context = runtime.new_context()?;
+    let value = context.eval("[1, 2, 3].map((x) => x * 2).join()")?;
+    if let Value::String(text) = value {
+        println!("{}", text.to_utf8_lossy()); // 2,4,6
+    }
+    Ok(())
+}
+```
+
+`examples/eval.rs` handles every completion value and uncaught exceptions.
+Host services supply time, randomness and output; module loader callbacks let
+an application resolve and load ES modules.
+
+## Compatibility
+
+The language, built-ins and ES modules (static and dynamic `import`,
+top-level `await`, import attributes, JSON modules) follow QuickJS 2026-06-04.
+The `std` and `os` modules, the REPL, `Worker`, `qjsc` and the C API are not
+yet supported. [Compatibility](docs/compatibility.md) details the baseline,
+how conformance is measured, the approved deviations and the full product
+surface.
+
+## Documentation
+
+- [Compatibility with QuickJS 2026-06-04](docs/compatibility.md)
+- [Architecture](docs/architecture.md) and [implementation status](docs/status.md)
+- [Test262 baseline and metrics](docs/test262.md)
+- [Execution and performance](docs/performance/README.md) and [profiling](docs/profiling.md)
+- [Browser playground](docs/playground.md) and [releases](docs/release.md)
+
+## Development
 
 ```sh
 git clone https://github.com/pocket-nexus/quickjs-oxide.git
 cd quickjs-oxide
-./scripts/demo-42.sh  # 42
-cargo run --quiet --bin qjs -- --print-result -e \
-  '(function (a) { return a + 1; })(41)'  # 42
-cargo run --quiet --bin qjs -- -e 'console.log({ answer: 42 })'
-# File modules: -m/--module, --script, .mjs and source detection
 cargo run --quiet --bin qjs -- examples/module-42.mjs  # 42
-```
-
-The file loader follows QuickJS policy: `.json` is strict JSON,
-`type: "json5"` selects QuickJS extended JSON for any suffix, and a `.json5`
-file without that attribute remains a JavaScript module. Main files and
-dependencies are read as explicitly sized byte buffers.
-
-The compiler verifies each function's bytecode and encodes it as an `ExecCode`
-stream for the engine's stack VM.
-See the [execution architecture](docs/architecture.md).
-
-## Status
-
-- [Engine module responsibilities](docs/architecture.md)
-- [Current implementation status](docs/status.md)
-- [Execution and performance](docs/performance/README.md)
-- [Current execution paths](docs/performance/roadmap.md)
-- [Profiling and external benchmarks](docs/profiling.md)
-- [Pinned Test262 baseline and metric definitions](docs/test262.md)
-- [Compatibility with QuickJS 2026-06-04](docs/compatibility.md)
-- [Playground build and trust boundary](docs/playground.md)
-- [Pinned upstream release](compat/upstream.toml)
-- [Test262 gate data and receipts](dev-support/test262/README.md)
-
-## Verify
-
-```sh
 cargo test --locked --workspace --all-targets
 ./scripts/test262/test-test262.sh --check
 ./scripts/test262/test-test262.sh --focused
@@ -90,27 +104,13 @@ TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full
 npm ci && npx playwright install chromium && npm run test:browser
 ```
 
+`rust-toolchain.toml` pins the toolchain. The engine lives in `src/`
+(`source/`, `regexp/` and `engine/`), host adapters in `adapters/`, the CLI
+and WebAssembly apps in `apps/`, and the Test262 runner in
+`conformance/test262`; the [architecture guide](docs/architecture.md)
+describes each module's responsibilities.
+
 ## License
 
-[MIT](LICENSE). Third-party notices: [NOTICE](NOTICE), [LICENSES](LICENSES/).
-
-## Workspace layout
-
-The root quickjs-oxide package has three source modules: `source/` for authored
-text and Unicode support, `regexp/` for regex programs and matching, and
-`engine/` for the interpreter's responsibility modules. `src/lib.rs` is the
-only top-level Rust source file.
-
-Native and browser providers live in `adapters/`, applications in `apps/`,
-and the Test262 runner in `conformance/test262`. See
-[architecture](docs/architecture.md) for responsibilities and boundaries.
-
-```sh
-cargo run -p quickjs-oxide-cli -- -e 'print(6 * 7)'
-cargo run -p quickjs-oxide --example eval -- '6 * 7'
-cargo check --workspace --all-targets
-cargo test -p quickjs-oxide --lib
-```
-
-Generated Unicode tables are checked in under `src/source/unicode/generated`;
-normal product builds do not run their generators.
+[MIT](LICENSE). Third-party notices are in [NOTICE](NOTICE) and
+[LICENSES](LICENSES/).
