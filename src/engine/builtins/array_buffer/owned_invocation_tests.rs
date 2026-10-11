@@ -395,7 +395,7 @@ fn owned_binary_buffer_release_failure_quarantines_before_later_native_owners() 
         )
     }));
     match result {
-        Err(_) => assert!(cfg!(debug_assertions)),
+        Err(_) if cfg!(debug_assertions) => {}
         Ok(Err(RuntimeError::Poisoned)) => {}
         _ => panic!("invalid original receiver retirement did not quarantine"),
     }

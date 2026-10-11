@@ -219,7 +219,7 @@ fn owned_date_release_failure_quarantines_before_remaining_native_owners() {
         )
     }));
     match result {
-        Err(_) => assert!(cfg!(debug_assertions)),
+        Err(_) if cfg!(debug_assertions) => {}
         Ok(Err(RuntimeError::Poisoned)) => {}
         _ => panic!("invalid Date receiver retirement did not quarantine"),
     }

@@ -109,8 +109,9 @@ jobs:
             --test oracle test262_
           ./scripts/checks/check-oracle-registry.sh --compiled
 
-      - name: Lint production targets
+      - name: Lint targets
         run: |
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
           cargo clippy --locked --workspace --lib --bins -- -D warnings
           cargo clippy --locked -p quickjs-oxide-cli --features profiling --bin qjs -- -D warnings
           cargo clippy --locked --test oracle -- -D warnings
