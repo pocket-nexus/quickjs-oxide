@@ -68,6 +68,12 @@ jobs:
       - name: Test the non-cancelling Pages deploy client
         run: node scripts/web/test-deploy-pages.mjs
 
+      - name: Add the playground of every published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: ./scripts/release/assemble-release-playgrounds.sh target/pages
+
       - name: Configure GitHub Pages
         id: pages
         uses: actions/configure-pages@v6

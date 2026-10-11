@@ -2,7 +2,7 @@ import { DEFAULT_EXAMPLE_ID, EXAMPLES } from "./examples.js";
 
 const EXECUTION_TIMEOUT_MS = 2_000;
 const LOAD_TIMEOUT_MS = 15_000;
-const REPOSITORY_URL = "https://github.com/pocket-stack/quickjs-oxide";
+const REPOSITORY_URL = "https://github.com/pocket-nexus/quickjs-oxide";
 
 const elements = {
   editor: document.querySelector("#source-editor"),

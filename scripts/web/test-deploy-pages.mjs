@@ -50,12 +50,12 @@ async function startMockPages({ deploymentId = "77", statuses }) {
     }
     if (
       request.method === "POST" &&
-      url.pathname === "/repos/pocket-stack/quickjs-oxide/pages/deployments"
+      url.pathname === "/repos/pocket-nexus/quickjs-oxide/pages/deployments"
     ) {
       json(response, 200, {
-        page_url: "https://pocket-stack.github.io/quickjs-oxide/",
+        page_url: "https://pocket-nexus.github.io/quickjs-oxide/",
         status_url:
-          `${baseUrl}/repos/pocket-stack/quickjs-oxide/pages/deployments/` +
+          `${baseUrl}/repos/pocket-nexus/quickjs-oxide/pages/deployments/` +
           `${deploymentId}/status`,
       });
       return;
@@ -63,7 +63,7 @@ async function startMockPages({ deploymentId = "77", statuses }) {
     if (
       request.method === "GET" &&
       url.pathname ===
-        `/repos/pocket-stack/quickjs-oxide/pages/deployments/${deploymentId}`
+        `/repos/pocket-nexus/quickjs-oxide/pages/deployments/${deploymentId}`
     ) {
       const status = statuses[Math.min(statusIndex, statuses.length - 1)];
       statusIndex += 1;
@@ -99,7 +99,7 @@ function scenarioEnvironment(baseUrl) {
     ACTIONS_ID_TOKEN_REQUEST_TOKEN: OIDC_REQUEST_TOKEN,
     ACTIONS_ID_TOKEN_REQUEST_URL: `${baseUrl}/oidc?api-version=2.0`,
     GITHUB_API_URL: baseUrl,
-    GITHUB_REPOSITORY: "pocket-stack/quickjs-oxide",
+    GITHUB_REPOSITORY: "pocket-nexus/quickjs-oxide",
     GITHUB_SHA: BUILD_SHA,
     GITHUB_TOKEN,
     QUICKJS_OXIDE_PAGES_ARTIFACT_ID: String(ARTIFACT_ID),
@@ -158,7 +158,7 @@ function assertCreateContract(requests) {
   assert.equal(requests[1].method, "POST");
   assert.equal(
     requests[1].pathname,
-    "/repos/pocket-stack/quickjs-oxide/pages/deployments",
+    "/repos/pocket-nexus/quickjs-oxide/pages/deployments",
   );
   assert.equal(requests[1].authorization, `token ${GITHUB_TOKEN}`);
   assert.deepEqual(JSON.parse(requests[1].body), {
@@ -171,7 +171,7 @@ function assertCreateContract(requests) {
     assert.equal(request.authorization, `token ${GITHUB_TOKEN}`);
     assert.match(
       request.pathname,
-      /^\/repos\/pocket-stack\/quickjs-oxide\/pages\/deployments\/[0-9A-Za-z._-]+$/u,
+      /^\/repos\/pocket-nexus\/quickjs-oxide\/pages\/deployments\/[0-9A-Za-z._-]+$/u,
     );
   }
 }
