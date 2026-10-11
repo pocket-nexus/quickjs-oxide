@@ -361,11 +361,14 @@ pub(super) fn raw_regexp_builtin_data_matches(
     expected: NativeFunctionId,
 ) -> Result<bool, RuntimeError> {
     match raw_regexp_property_slot(heap, object, atom)? {
+        Some(PropertySlot::Data(RawValue::Object(function))) => {
+            raw_native_function_matches(heap, *function, expected)
+        }
         Some(PropertySlot::AutoInit(property)) => Ok(matches!(
             **property,
             AutoInitProperty::NativeBuiltin { target, .. } if target == expected
         )),
-        _ => raw_regexp_data_property_matches(heap, object, atom, expected),
+        _ => Ok(false),
     }
 }
 
