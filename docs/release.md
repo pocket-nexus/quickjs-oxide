@@ -6,6 +6,8 @@ every crate sets `publish = false`.
 
 ## Cutting a release
 
+Record the release in [`CHANGELOG.md`](../CHANGELOG.md) on `main`, then tag it:
+
 ```sh
 ./scripts/release/cut-release.sh 0.1.0
 git push --atomic origin main v0.1.0

@@ -94,7 +94,7 @@ surface.
 - [Architecture](docs/architecture.md) and [implementation status](docs/status.md)
 - [Test262 baseline and metrics](docs/test262.md)
 - [Execution and performance](docs/performance/README.md) and [profiling](docs/profiling.md)
-- [Browser playground](docs/playground.md) and [releases](docs/release.md)
+- [Browser playground](docs/playground.md), [releases](docs/release.md) and the [changelog](CHANGELOG.md)
 
 ## Development
 
