@@ -524,8 +524,14 @@ fn load_exact_module_fixture_from_admission(
             "module loader rejected unaudited fixture: {normalized_name}"
         ));
     }
+    // A static Module root is already the graph's entry module. A dynamic
+    // import from a Script root may request that same file as a Module, which
+    // evaluates it once more under the Module goal.
     let file = module_graph_file(admission, normalized_name)
-        .filter(|file| file.path != admission.root_path)
+        .filter(|file| {
+            file.path != admission.root_path
+                || admission.goal == ModuleGraphRootGoal::DynamicImportScript
+        })
         .ok_or_else(|| format!("module loader rejected unaudited fixture: {normalized_name}"))?;
     let source = read_regular_module_graph_text(suite, &file.path)?;
     let metadata = module_graph_file_metadata(&source, file)?;

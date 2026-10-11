@@ -73,6 +73,7 @@ jobs:
           node --check scripts/test262/audit-negative-diagnostics.mjs
           node --check scripts/test262/test-negative-diagnostic-generator.mjs
           node --check scripts/test262/generate-test262-dynamic-import-a.mjs
+          node --check scripts/test262/generate-test262-dynamic-import-b.mjs
           node --check scripts/test262/generate-test262-tla-core-a.mjs
           node --check scripts/test262/generate-test262-tla-b.mjs
           node --check scripts/test262/test-generate-test262-tla-b.mjs
