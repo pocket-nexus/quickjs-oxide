@@ -283,10 +283,13 @@ impl<'source> Parser<'source> {
         scope: ScopeId,
         is_for_await: bool,
     ) -> Result<(), Error> {
-        let iteration_hint = self
-            .for_iteration_kind_ahead()
-            .ok_or_else(|| self.syntax_here("expected 'of' or 'in' in for control expression"))?;
-        if is_for_await && iteration_hint != ForIterationKind::Of {
+        // Without a top-level `in`/`of`, QuickJS still parses the assignment
+        // target first and reports its error, or the missing delimiter at the
+        // token that follows it. The placeholder layout is discarded with the
+        // failed compilation.
+        let probed_kind = self.for_iteration_kind_ahead();
+        let iteration_hint = probed_kind.unwrap_or(ForIterationKind::In);
+        if is_for_await && probed_kind == Some(ForIterationKind::In) {
             return Err(self.syntax_here("'for await' loop should be used with 'of'"));
         }
         let retained_slots = match iteration_hint {
@@ -346,7 +349,9 @@ impl<'source> Parser<'source> {
             false
         };
 
-        let iteration_kind = if self.is_for_of_keyword() {
+        let iteration_kind = if probed_kind.is_none() {
+            return Err(self.syntax_here("expected 'of' or 'in' in for control expression"));
+        } else if self.is_for_of_keyword() {
             ForIterationKind::Of
         } else if matches!(self.current().kind, TokenKind::Keyword(Keyword::In)) {
             ForIterationKind::In
@@ -514,18 +519,20 @@ impl<'source> Parser<'source> {
                 self.current_ir().strict,
                 IdentifierContext::Variable,
             )?;
-            if self.identical_name(&identifier, "let") {
-                return Err(Error::syntax(
-                    "'let' is not a valid lexical identifier",
-                    source_span(token.span),
-                ));
-            }
             let name = self.intern_identifier(&identifier);
             let strict = self.current_ir().strict;
             self.advance()?;
+            // QuickJS `js_define_var` validates the name after the head has
+            // advanced past it, so both errors point at the following token.
             if strict && matches!(self.names.name(name), "eval" | "arguments") {
                 return Err(Error::syntax(
                     "invalid variable name in strict mode",
+                    source_span(self.current().span),
+                ));
+            }
+            if self.names.name(name) == "let" {
+                return Err(Error::syntax(
+                    "invalid lexical variable name",
                     source_span(self.current().span),
                 ));
             }

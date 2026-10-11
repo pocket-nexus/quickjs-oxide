@@ -414,6 +414,43 @@ impl<'source> Parser<'source> {
         allow_body_parameter_shadow: bool,
     ) -> Result<(), Error> {
         let scope = self.current_ir().context.current_scope;
+        let is_module_body = matches!(
+            self.current_ir().scopes[scope.0].kind,
+            ScopeKind::ProgramBody
+        ) && matches!(self.current_ir().kind, FunctionKind::Module)
+            && scope == self.current_ir().body_scope;
+        let result = self.register_lexical_binding_in_scope(
+            name,
+            declaration_span,
+            conflict_span,
+            is_const,
+            allow_body_parameter_shadow,
+        );
+        // QuickJS keeps module-body lexical declarations in its global
+        // variable table, so a conflict there is a global redefinition.
+        match result {
+            Err(error)
+                if is_module_body
+                    && error.message() == "invalid redefinition of lexical identifier" =>
+            {
+                Err(Error::syntax(
+                    "invalid redefinition of global identifier",
+                    error.span().unwrap_or(source_span(conflict_span)),
+                ))
+            }
+            result => result,
+        }
+    }
+
+    fn register_lexical_binding_in_scope(
+        &mut self,
+        name: NameId,
+        declaration_span: Span,
+        conflict_span: Span,
+        is_const: bool,
+        allow_body_parameter_shadow: bool,
+    ) -> Result<(), Error> {
+        let scope = self.current_ir().context.current_scope;
         let scope_kind = self.current_ir().scopes[scope.0].kind;
         let is_global = matches!(scope_kind, ScopeKind::ProgramBody)
             && matches!(self.current_ir().kind, FunctionKind::Script)

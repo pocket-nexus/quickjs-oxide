@@ -155,6 +155,8 @@ mod closures;
 
 mod syntax;
 
+mod quickjs_diagnostics;
+
 mod dynamic_import;
 
 mod limits;

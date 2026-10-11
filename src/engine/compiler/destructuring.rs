@@ -1712,11 +1712,9 @@ impl<'source> Parser<'source> {
                 }
                 ForAssignmentDeclaration::Var => {
                     if site == BindingSite::Parameter {
-                        self.register_pattern_parameter_binding(
-                            name,
-                            token.span,
-                            self.current().span,
-                        )?;
+                        // QuickJS checks a duplicate element parameter before
+                        // advancing past its name.
+                        self.register_pattern_parameter_binding(name, token.span, token.span)?;
                     } else {
                         self.register_var_binding(name, token.span, self.current().span)?;
                     }
@@ -2136,7 +2134,15 @@ impl<'source> Parser<'source> {
             )?,
             ForAssignmentDeclaration::Var => {
                 if site == BindingSite::Parameter {
-                    self.register_pattern_parameter_binding(name, token.span, self.current().span)?;
+                    // A shorthand property is checked after QuickJS has read
+                    // the property name; a `key: name` target is checked at
+                    // the name, before advancing.
+                    let conflict_span = if shorthand_binding {
+                        self.current().span
+                    } else {
+                        token.span
+                    };
+                    self.register_pattern_parameter_binding(name, token.span, conflict_span)?;
                 } else {
                     self.register_var_binding(name, token.span, self.current().span)?;
                 }
@@ -2274,7 +2280,7 @@ impl<'source> Parser<'source> {
             )?,
             ForAssignmentDeclaration::Var => {
                 if site == BindingSite::Parameter {
-                    self.register_pattern_parameter_binding(name, token.span, self.current().span)?;
+                    self.register_pattern_parameter_binding(name, token.span, token.span)?;
                 } else {
                     self.register_var_binding(name, token.span, self.current().span)?;
                 }

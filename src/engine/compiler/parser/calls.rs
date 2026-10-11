@@ -238,20 +238,22 @@ impl<'source> Parser<'source> {
             self.anonymous_function_definition = None;
             return Ok(());
         }
+        // QuickJS reports both `super` errors after advancing past the
+        // keyword, at the token that follows it.
         if !matches!(
             self.current().kind,
             TokenKind::Punctuator(Punctuator::Dot | Punctuator::LeftBracket)
         ) {
             return Err(Error::syntax(
                 "invalid use of 'super'",
-                source_span(super_span),
+                source_span(self.current().span),
             ));
         }
 
         if !self.current_ir().super_allowed {
             return Err(Error::syntax(
                 "'super' is only valid in a method",
-                source_span(super_span),
+                source_span(self.current().span),
             ));
         }
 

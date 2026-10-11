@@ -948,7 +948,7 @@ impl<'a> Lexer<'a> {
                             return Err(self.error_from(
                                 comment_start,
                                 LexErrorKind::UnterminatedComment,
-                                "unterminated block comment",
+                                "unexpected end of comment",
                             ));
                         }
                     }
@@ -1400,6 +1400,20 @@ impl<'a> Lexer<'a> {
             had_separator |= run.had_separator;
         } else {
             leading_zero = self.peek_char() == Some('0');
+            // QuickJS rejects any strict-mode digit after a leading zero
+            // before it scans the rest of the literal.
+            if leading_zero
+                && self.options.context.strict
+                && self
+                    .peek_nth_char(1)
+                    .is_some_and(|next| next.is_ascii_digit())
+            {
+                return Err(self.error_from(
+                    start,
+                    LexErrorKind::InvalidNumber,
+                    "octal literals are deprecated in strict mode",
+                ));
+            }
             if leading_zero && self.peek_nth_char(1) == Some('_') {
                 self.bump_char();
                 self.bump_char();
@@ -1453,13 +1467,6 @@ impl<'a> Lexer<'a> {
                 start,
                 LexErrorKind::InvalidNumber,
                 "numeric separators are not allowed in legacy leading-zero literals",
-            ));
-        }
-        if legacy_leading_zero && self.options.context.strict {
-            return Err(self.error_from(
-                start,
-                LexErrorKind::InvalidNumber,
-                "legacy leading-zero numeric literals are not allowed in strict mode",
             ));
         }
 

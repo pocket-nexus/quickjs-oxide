@@ -268,8 +268,16 @@ impl<'source> Parser<'source> {
             ));
         }
         if strict {
-            for (identifier, span) in &parameter_tokens {
-                self.validate_identifier(identifier, *span, true, IdentifierContext::Argument)?;
+            // QuickJS checks parameter names once the body starts, at its
+            // first token.
+            let strict_validation_span = self.current().span;
+            for (identifier, _) in &parameter_tokens {
+                self.validate_identifier(
+                    identifier,
+                    strict_validation_span,
+                    true,
+                    IdentifierContext::Argument,
+                )?;
             }
         }
         let parameters = &self.functions[child].parameter_names;
@@ -442,23 +450,6 @@ impl<'source> Parser<'source> {
             }
             _ => None,
         }
-    }
-
-    /// A reserved word followed by `=>` is an attempted ArrowFunction head,
-    /// not an unimplemented statement/expression form. Preserve that syntax
-    /// error identity before the primary-expression frontier can classify the
-    /// keyword as a missing feature.
-    pub(super) fn reserved_arrow_head_ahead(&self) -> bool {
-        if !matches!(self.current().kind, TokenKind::Keyword(_)) {
-            return false;
-        }
-        let mut lexer = self.lexer.clone();
-        lexer.seek(self.current().span.end);
-        let Ok(arrow) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
-            return false;
-        };
-        !arrow.line_terminator_before
-            && matches!(arrow.kind, TokenKind::Punctuator(Punctuator::Arrow))
     }
 
     pub(super) fn async_arrow_ahead(&self) -> Option<ArrowHead> {

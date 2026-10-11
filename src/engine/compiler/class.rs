@@ -8,6 +8,7 @@
 
 use super::function::ParsedFunctionDefinition;
 use crate::engine::api::error::Error;
+use crate::engine::api::error::ErrorKind;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::compiler::lexer::Keyword;
 use crate::engine::compiler::lexer::LexicalGoal;
@@ -129,15 +130,23 @@ impl<'source> Parser<'source> {
 
         // The declaration binding is distinct from the immutable inner class
         // name binding. It is registered in the surrounding scope before the
-        // class evaluation scope is entered, just like QuickJS JS_VAR_DEF_LET.
-        if let Some((outer_name, outer_span)) = outer_binding {
-            self.register_lexical_binding(
+        // class evaluation scope is entered. QuickJS defines it only after the
+        // class body, so a redeclaration is reported after any error inside the
+        // class and at the token that follows it.
+        let mut deferred_redeclaration = None;
+        if let Some((outer_name, outer_span)) = outer_binding
+            && let Err(error) = self.register_lexical_binding(
                 outer_name,
                 outer_span,
                 self.current().span,
                 false,
                 false,
-            )?;
+            )
+        {
+            if error.kind() != ErrorKind::Syntax {
+                return Err(error);
+            }
+            deferred_redeclaration = Some(error);
         }
 
         let class_scope = self.push_scope(ScopeKind::Block);
@@ -244,6 +253,9 @@ impl<'source> Parser<'source> {
 
         self.current_ir_mut().strict = outer_strict;
         self.relex_current_with_strict(outer_strict)?;
+        if let Some(error) = deferred_redeclaration {
+            return Err(error.with_span(source_span(self.current().span)));
+        }
         if expression {
             self.anonymous_function_definition =
                 name.is_none()

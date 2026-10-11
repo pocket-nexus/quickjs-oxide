@@ -98,11 +98,6 @@ impl<'source> Parser<'source> {
         if let Some(head) = self.async_arrow_ahead() {
             return self.parse_async_arrow_function(head);
         }
-        if self.reserved_arrow_head_ahead()
-            && !matches!(self.current().kind, TokenKind::Keyword(Keyword::Await))
-        {
-            return Err(self.syntax_here("invalid arrow function parameter"));
-        }
         if let Some(head) = self.arrow_head_ahead() {
             return self.parse_arrow_function(head);
         }
