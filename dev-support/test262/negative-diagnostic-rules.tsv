@@ -11,6 +11,7 @@ assignment-target.update-operand	get_lvalue	increment and decrement operands mus
 assignment-target.yield-keyword-context	js_parse_assign_expr2	yield is reserved outside generator expression contexts in strict code
 assignment-target.yield-parenthesized-boundary	js_parse_expr_paren	sloppy parenthesized yield identifier syntax must close before assignment-target validation
 assignment-target.yield-statement-boundary	js_parse_expect_semi	sloppy Script yield identifier parsing reaches a statement boundary before assignment-target validation
+async-function.await-in-parameter	js_parse_unary	await expressions are rejected in async parameter defaults
 class-field.contains-arguments	js_parse_class	arguments is forbidden in class field initializers
 class-field.contains-super-call	js_parse_class	super calls are forbidden in class field initializers
 class-field.invalid-name	js_parse_class	class field name is not a valid property name
@@ -46,6 +47,11 @@ class-static-block.lexical-redeclaration	js_parse_class	static block lexical dec
 class-static-block.return	js_parse_class	static blocks cannot return
 class-static-block.undefined-label	js_parse_class	static block break and continue labels must resolve locally
 class-static-block.yield	js_parse_class	static blocks reject yield
+comment.unterminated	next_token	block comments must be terminated
+declaration.const-initializer	js_parse_var	const declarations require an initializer
+declaration.global-redefinition	define_var	a lexical declaration conflicts with a var or function binding in the same body
+declaration.let-binding	js_parse_var	lexical declarations cannot bind let
+declaration.parameter-redefinition	define_var	a lexical body declaration cannot redeclare a parameter
 declaration.single-statement.class	js_parse_statement_or_decl	class declarations are forbidden where a single statement is required
 declaration.single-statement.function	js_parse_statement_or_decl	function declarations are forbidden outside Annex B allowances where a single statement is required
 declaration.single-statement.lexical	js_parse_statement_or_decl	lexical declarations are forbidden where a single statement is required
@@ -56,9 +62,19 @@ dynamic-import.missing-specifier	js_parse_postfix_expr	ImportCall requires a mod
 dynamic-import.second-argument-yield-context	js_parse_assign_expr2	ImportCall options expressions preserve the surrounding Yield grammar parameter
 dynamic-import.spread-argument	js_parse_postfix_expr	ImportCall does not accept spread arguments
 dynamic-import.typeof-keyword	js_parse_postfix_expr	the bare import keyword cannot be a unary typeof operand
+exponentiation.unary-base	js_parse_unary	a unary expression base of ** must be parenthesized
+for-in-of.in-head-initializer	js_parse_for_in_of	for-in head initializers are limited to sloppy simple var bindings
+for-in-of.let-binding	js_define_var	for-in and for-of lexical heads cannot bind let
+for-in-of.missing-delimiter	js_parse_for_in_of	a for head without a top-level semicolon requires in or of
+for-in-of.of-head-async	js_parse_for_in_of	a for-of head expression cannot start with async
+for-in-of.of-head-initializer	js_parse_for_in_of	for-of head declarations cannot have an initializer
+function-parameter.duplicate-argument	js_parse_function_check_names	duplicate simple parameters are rejected in strict, arrow and method contexts
+function-parameter.duplicate-pattern	js_parse_check_duplicate_parameter	pattern and non-simple parameter lists cannot repeat a name
+function-parameter.missing	js_parse_function_decl2	formal parameter lists require binding identifiers or patterns
 function-parameter.rest-default	js_parse_function_decl2	rest parameters cannot have default initializers
 function-parameter.rest-not-final	js_parse_function_decl2	rest parameters must be final
 generator.yield-identifier-reference	js_parse_unary	yield cannot be used as an identifier reference in generators
+generator.yield-in-parameter	js_parse_assign_expr2	yield expressions are rejected in generator parameter defaults
 generator.yield-weak-binding	js_parse_unary	yield parsing preserves QuickJS weak-binding diagnostics
 logical-assignment.non-simple-target	get_lvalue	logical assignment requires a simple assignment target
 module.import-attributes.duplicate-key	js_parse_with_clause	static import attributes reject decoded duplicate keys
@@ -68,12 +84,35 @@ module.missing-export	js_resolve_export_throw_error	module resolution reports a 
 module.tla-dependency-rejection	js_async_module_execution_rejected	async module evaluation propagates the dependency rejection unchanged
 module.top-level-await.escaped-keyword	js_parse_error_reserved_identifier	the await terminal cannot contain Unicode escapes
 module.top-level-await.function-context	js_parse_unary	the Await grammar parameter does not propagate into nested function syntax
+new-target.invalid-meta-property	js_parse_postfix_expr	new. must be followed by target
 numeric-literal.invalid	js_parse_get_number	malformed numeric and BigInt literals share the single QuickJS invalid number literal diagnostic
+numeric-literal.strict-legacy-octal	next_token	strict code rejects a digit after a leading zero
 object-literal.private-name	js_parse_object_literal	private names are invalid object literal properties
 optional-chaining.invalid-assignment-target	get_lvalue	optional chains are not assignment targets
+regexp.class-escape	get_class_atom	regular expression class escapes must be valid
+regexp.class-range	re_parse_nested_class	regular expression class ranges must be ordered and atomic
 regexp.flags.unicode-mode-conflict	lre_compile	the u and v Unicode modes are mutually exclusive
+regexp.literal.line-terminator	js_parse_regexp	regular expression literals cannot contain a line terminator
+regexp.quantifier.nothing-to-repeat	re_parse_term	a regular expression quantifier requires a quantifiable atom
+regexp.syntax	re_parse_term	a regular expression term is malformed
 regexp.unicode-set.negated-string-class	re_parse_nested_class	negated Unicode Sets classes cannot retain string members
 regexp.unicode-set.reserved-punctuator	get_class_atom	Unicode Sets syntax rejects unescaped reserved punctuators
 regexp.unicode-set.string-property-complement	parse_unicode_property	properties of strings cannot be complemented with uppercase P
 regexp.unicode-set.string-property-requires-v	parse_unicode_property	properties of strings require Unicode Sets mode
+script-goal.export	js_unsupported_keyword	export declarations are rejected in Script code
+statement.expected-keyword	js_parse_expect	a required keyword token is missing; QuickJS prints its token code as a character
+statement.return-outside-function	js_parse_statement_or_decl	return statements require a function body
+statement.switch-duplicate-default	js_parse_statement_or_decl	a switch statement can contain one default clause
+statement.switch-invalid-clause	js_parse_statement_or_decl	switch bodies contain only case and default clauses
+statement.throw-line-terminator	js_parse_statement_or_decl	throw requires its expression on the same line
+statement.try-without-handler	js_parse_statement_or_decl	try statements require a catch or finally clause
+strict-mode.delete-identifier	js_parse_delete	strict code cannot delete an unqualified identifier
+strict-mode.function-name	js_parse_function_check_names	strict function names cannot be eval, arguments or a strict reserved word
+strict-mode.parameter-name	js_parse_function_check_names	strict function parameters cannot be eval, arguments or a strict reserved word
+strict-mode.variable-name	js_define_var	strict code cannot bind eval or arguments as a variable
 strict-mode.with-statement	js_parse_statement_or_decl	with statements are forbidden in strict code
+string-literal.malformed-escape	js_parse_string	string and template escape sequences must be well formed
+string-literal.strict-octal-escape	js_parse_string	strict code rejects legacy octal string escapes
+string-literal.unterminated	js_parse_string	string and template literals must be terminated
+super.property-outside-method	js_parse_postfix_expr	super property access requires a method home object
+token.unexpected-character	next_token	the source contains a character that starts no token
