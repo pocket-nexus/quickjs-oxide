@@ -25,6 +25,10 @@ const pagesDir = path.resolve(
 );
 const pagesBasePath = "/quickjs-oxide/";
 const upstreamPath = path.join(repoRoot, "compat/upstream.toml");
+const workspaceVersion = (await readFile(path.join(repoRoot, "Cargo.toml"), "utf8")).match(
+  /^\[workspace\.package\][^[]*?^version = "([^"]+)"$/msu,
+)?.[1];
+assert.ok(workspaceVersion, "Cargo.toml has no [workspace.package] version");
 const requiredArtifactFiles = [
   "index.html",
   "og.png",
@@ -520,7 +524,7 @@ async function runAcceptance(url, serverErrors) {
     const quickJsVersion = await expectedQuickJsVersion();
     assert.equal(
       (await page.locator("#engine-version").textContent())?.trim(),
-      "quickjs-oxide v0.0.1",
+      `quickjs-oxide v${workspaceVersion}`,
     );
     assert.equal(
       (await page.locator("#quickjs-target").textContent())?.trim(),

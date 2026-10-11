@@ -20,6 +20,14 @@ const currentSpec = await readFile(
   "utf8",
 );
 const currentMetrics = parseCurrentTest262Metrics(currentSpec);
+const workspaceManifest = await readFile(
+  path.resolve(process.cwd(), "Cargo.toml"),
+  "utf8",
+);
+const workspaceVersion = workspaceManifest.match(
+  /^\[workspace\.package\][^[]*?^version = "([^"]+)"$/msu,
+)?.[1];
+assert.ok(workspaceVersion, "Cargo.toml has no [workspace.package] version");
 const renderedIndex = await readFile(
   path.resolve(process.cwd(), "target/pages/index.html"),
   "utf8",
@@ -99,7 +107,7 @@ assert.deepEqual(
   },
   {
     engine: "quickjs-oxide",
-    crateVersion: "0.0.1",
+    crateVersion: workspaceVersion,
     quickjsTarget: "QuickJS 2026-06-04",
     buildCommit:
       process.env.QUICKJS_OXIDE_COMMIT || process.env.GITHUB_SHA || "local",
