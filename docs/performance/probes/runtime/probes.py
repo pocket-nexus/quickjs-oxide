@@ -185,7 +185,7 @@ def measure_v8(qjs, v8_root: Path, case, iterations, out: Path, top):
     ir = {fn: c["Ir"] for fn, c in costs.items()}
     refcount = {k: v for k, v in by_leaf(ir, REFCOUNT).items()}
     mechanism = sum(v for fn, v in ir.items()
-                    if ledger.mechanism_of(ledger.short(fn)) == "引用计数、释放与回收")
+                    if ledger.mechanism_of(ledger.short(fn)) == "refcount, release and collection")
     return {"iterations": iterations, "Ir": totals["Ir"], "Dw": totals.get("Dw"), "Dr": totals.get("Dr"),
             "refcount_self": refcount,
             "refcount_share": sum(refcount.values()) / totals["Ir"],

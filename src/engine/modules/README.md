@@ -1,16 +1,21 @@
-# JavaScript 模块
+# JavaScript modules
 
-modules 负责 ECMAScript 模块实例及依赖图，从加载请求、链接到求值，
-维护 live bindings、模块命名空间、循环依赖和顶层 await。动态 import
-以及异步依赖的完成也在这条模块生命周期中处理。
+modules owns ECMAScript module instances and the dependency graph from load
+requests through linking and evaluation, maintaining live bindings, module
+namespaces, cyclic dependencies and top-level await. Dynamic import and
+asynchronous dependency completion run through the same module lifecycle.
 
-应用通过 ModuleLoader 提供名称规范化、属性校验与源码加载策略。
-code 提供模块草稿和已发布代码，heap 保存实例记录，VM 执行模块代码，
-jobs 承接延后完成。模块层决定图的状态转换和错误传播，不自行实现
-文件系统或浏览器加载器。
+Applications supply name normalization, attribute checks and source loading
+policy through ModuleLoader. code provides module drafts and published code,
+heap stores instance records, the VM runs module code and jobs carry deferred
+completion. The module layer decides graph state transitions and error
+propagation; file-system and browser loaders live outside it.
 
-加载回调可以使用发起请求的 Context 重入引擎。请求顺序、可见模块身份、
-失败状态和抛出值的 Object/Symbol 身份需要保持一致；不能把任意 JS
-异常简化为字符串，也不能重复执行已完成的加载阶段。
+Loader callbacks can reenter the engine through the requesting Context.
+Request order, visible module identity, failure state and the Object/Symbol
+identity of thrown values stay consistent; arbitrary JS exceptions are kept
+as values rather than reduced to strings, and completed load phases are not
+re-run.
 
-模块与统一 VM 驱动的集成见[当前架构](../../../docs/architecture.md)。
+See [workspace architecture](../../../docs/architecture.md) for module
+integration with the unified VM driver.

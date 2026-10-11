@@ -1,22 +1,30 @@
-# 代码表示与发布
+# Code representation and publication
 
-code 连接编译草稿、运行时链接和执行，拥有指令、常量、函数与模块草稿、
-位置和异常信息，以及已发布的代码。修改指令契约、代码布局或
-发布保证时，从这里确定编译器和 VM 共同依赖的约定。
+code connects compiler drafts, runtime linking and execution. It owns
+instructions, constants, function and module drafts, source positions and
+exception metadata, and published code. Changes to the instruction contract,
+code layout or publication guarantees start here, since the compiler and VM
+both depend on these conventions.
 
-草稿在发布入口里链接名称、保留运行时引用并事务性发布；失败清理、
-Runtime 身份和 realm 检查属于这条流程。发布快照检查不能代替挂起
-恢复时对实际动态状态的检查。
+The publication entry point links names in drafts, retains runtime references
+and publishes transactionally; failure cleanup, Runtime identity and realm
+checks are part of that flow. Publication-time snapshot checks complement the
+dynamic-state checks performed when a suspended execution resumes.
 
-已发布执行快照共享 `ExecCode` 和常量存储，并持有相应 root。执行字存于
-`Rc<[Cell<u32>]>`。当前 PC、操作数栈和调用状态由 VM 管理。共享静态存储不代表跨
-Runtime 共享身份，也不消除调用期间对动态值的所有权责任。
+Published execution snapshots share `ExecCode` and constant storage and hold
+the corresponding roots. Execution words live in `Rc<[Cell<u32>]>`. The VM
+manages the current PC, operand stack and call state. Shared static storage
+does not share identity across Runtimes, and callers keep ownership
+obligations for dynamic values during calls.
 
-[当前架构](../../../docs/architecture.md)
-记录布局与发布流程。
+[Workspace architecture](../../../docs/architecture.md) documents the layout
+and publication flow.
 
-`bytecode_publish.rs` 和其私有绑定子模块负责名称与私有绑定链接，`runtime.rs`
-负责迭代后序发布及 Atom/heap 事务。发布保留属性键及 eval
-绑定名的 atom 引用，完成模板对象实例化与 RegExp 常量链接。父节点接管子节点
-之前必须保留子根；失败要释放已取得的辅助 atom、子根与物化常量 roots。
-编译请求和源码错误边界由 `api/compile.rs` 编排。
+`bytecode_publish.rs` and its private-binding submodule link names and private
+bindings; `runtime.rs` performs iterative post-order publication and the
+Atom/heap transaction. Publication retains atom references for property keys
+and eval binding names, instantiates template objects and links RegExp
+constants. A parent retains a child's root before taking it over; on failure
+it releases the auxiliary atoms, child roots and materialized-constant roots
+already acquired. `api/compile.rs` orchestrates compile requests and the
+source-error boundary.

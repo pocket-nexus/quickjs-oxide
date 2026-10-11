@@ -1,18 +1,17 @@
-# 固定版本 Unicode 生成表
+# Generated Unicode tables
 
-保存上游固定版本对应的 Unicode 数据及生成说明。正常构建直接读取这些文件，不执行生成器。
+generated holds Unicode data for a pinned upstream version together with its
+regeneration instructions. Ordinary builds read these files directly without
+running generators.
 
-## 文件与子目录
+## Files and subdirectories
 
-- [unicode/](unicode/README.md)：子模块职责与文件说明。
+- [unicode/](unicode/README.md): the four checksum-pinned Rust Unicode tables.
 
-## 补充实现说明
+## Regeneration
 
-# Generated production data
-
-`unicode/` contains the four checksum-pinned Rust Unicode tables. The
-handwritten algorithms in `src/source/unicode/` include these files in private
-table modules; generated files add no public API.
+The handwritten algorithms in `src/source/unicode/` include the tables in
+`unicode/` in private table modules; generated files add no public API.
 
 Regenerate with the corresponding `scripts/unicode/generate-unicode-*-tables`
 command and the pinned QuickJS source, following the source and license

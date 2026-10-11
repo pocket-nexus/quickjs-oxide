@@ -1,14 +1,16 @@
-# 正则程序
+# Regular expression programs
 
-负责模式解析、正则指令生成、匹配和受限中断回调。
+regexp parses patterns, generates regular-expression instructions, runs
+matches and supports bounded interrupt callbacks.
 
-JS RegExp 对象、属性、强制转换和用户回调由 engine/builtins/regexp 负责。
+engine/builtins/regexp owns JS RegExp objects, properties, coercions and user
+callbacks.
 
-## 文件与子目录
+## Files and subdirectories
 
-- [compiler.rs](compiler.rs)：Typed RegExp parser/compiler foundation.。
-- [executor.rs](executor.rs)：Explicit-stack execution for the typed RegExp instruction program.。
-- [flags.rs](flags.rs)：Typed flags from pinned QuickJS `libregexp.h` lines 30-38.。
-- [group_name.rs](group_name.rs)：QuickJS-shaped RegExp group-name parsing and lexical capture scans.。
-- [mod.rs](mod.rs)：模块入口、共享接口与子模块声明。
-- [opcode.rs](opcode.rs)：Runtime-independent RegExp instruction IR.。
+- [compiler.rs](compiler.rs): typed RegExp parser and compiler.
+- [executor.rs](executor.rs): explicit-stack execution of the typed RegExp instruction program.
+- [flags.rs](flags.rs): typed flags from pinned QuickJS `libregexp.h` lines 30-38.
+- [group_name.rs](group_name.rs): QuickJS-shaped RegExp group-name parsing and lexical capture scans.
+- [mod.rs](mod.rs): module entry, shared interfaces and submodule declarations.
+- [opcode.rs](opcode.rs): runtime-independent RegExp instruction IR.

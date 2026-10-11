@@ -1,24 +1,34 @@
-# 语言内置行为
+# Language builtins
 
-builtins 实现 ECMAScript 的内置对象与函数，以及显式启用的 qjs 辅助
-行为。每个内置领域拥有自己的构造、原型方法和算法；原生调用选择器
-将调用分派到这些实现。
+builtins implements the ECMAScript built-in objects and functions, plus the
+explicitly enabled qjs helper behavior. Each built-in domain owns its
+constructors, prototype methods and algorithms; the native call selector
+dispatches calls to those implementations.
 
-一个内置方法通常会交错进行参数转换、属性访问、存储操作和用户回调。
-转换使用 value，属性语义使用 object，执行 JS 使用 VM；这些步骤的
-顺序和中途异常已经产生的效果由内置算法决定，不能由通用存储批处理
-代替。Promise 反应与 jobs、async 驱动也各有自己的职责。
+A built-in method typically interleaves argument conversion, property access,
+storage operations and user callbacks. Conversion uses value, property
+semantics use object and JS execution uses the VM. The built-in algorithm
+determines the order of these steps and the effects already performed when an
+exception occurs midway; generic storage batching does not stand in for it.
+Promise reactions, jobs and async driving each keep their own
+responsibilities.
 
-环境能力通过 host 契约取得，具体系统或浏览器实现位于 adapters。
-内置对象的原始载荷与引用边由 heap 保存；语言行为留在这里。
+Environment capabilities come through the host contract; concrete system and
+browser implementations live in `adapters`. heap stores the raw payloads and
+reference edges of built-in objects; language behavior stays here.
 
-[缓冲区与视图](array_buffer/README.md)有独立介绍，说明二进制内置的
-共享存储边界。其余小型方法分组使用源码说明。
+[Buffers and views](array_buffer/README.md) documents the shared-storage
+boundary of the binary builtins. Other small method groups are documented in
+source.
 
-`continuation` 是 native 算法的封闭登记表；它只选择领域
-step，不保存属性或转换算法。各领域的 Step/Resume 保存阶段与必要 roots，
-同步入口与 VM 驱动共用同一算法。VM 的 `call/request` 模块按领域适配有类型的
-请求和回复，回调由显式子帧推进；无回调叶函数直接执行。
+`continuation` is the closed registry of native algorithms; it only selects a
+domain step and holds no property or conversion algorithms. Each domain's
+Step/Resume types store the phase and required roots, and synchronous entry
+points and the VM driver share the same algorithm. The VM `call/request`
+module adapts typed per-domain requests and replies; explicit child frames
+advance callbacks, and callback-free leaf functions run directly.
 
-同步内置、Promise/generator、模块与 host/API 入口通过同一 owned 驱动推进；
-原子性要求见[当前架构](../../../docs/architecture.md)。
+Synchronous builtins, Promise/generator, module and host/API entry points all
+advance through the same owned driver; see
+[workspace architecture](../../../docs/architecture.md) for atomicity
+requirements.

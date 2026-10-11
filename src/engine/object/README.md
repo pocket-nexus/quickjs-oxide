@@ -1,17 +1,21 @@
-# 对象与属性语义
+# Objects and property semantics
 
-object 负责对象句柄、属性描述符、shape 和对象内部方法，包括普通属性
-读写、定义、删除，以及 Array、Arguments 等特殊对象需要的属性行为。
-修改 Get、Set、Define 或枚举顺序时，先在这里区分普通规则与特殊语义。
+object owns object handles, property descriptors, shapes and object internal
+methods, including ordinary property get, set, define and delete, and the
+property behavior of exotic objects such as Array and Arguments. Changes to
+Get, Set, Define or enumeration order start here, separating ordinary rules
+from exotic semantics.
 
-普通属性算法通过存储探测完成分类和定位，只取得当前操作需要的数据。
-访问器、不同 receiver、原型链和特殊对象仍按对应语义处理；直接存储
-路径的成立条件不能扩大成对所有对象的假设。
+Ordinary property algorithms classify and locate properties through storage
+probes and fetch only the data the operation needs. Accessors, distinct
+receivers, the prototype chain and exotic objects follow their own semantics;
+direct storage paths apply only under their stated conditions.
 
-shape 与 dictionary 维护布局和属性顺序。物理槽可以移动，因此缓存的
-槽位置不能跨越可能修改对象的调用；可观察枚举顺序也不能直接用物理槽
-顺序替代。heap 承担原始记录与引用边的变更。
+Shapes and dictionaries maintain layout and property order. Physical slots
+can move, so cached slot positions do not survive calls that may modify the
+object, and observable enumeration order is tracked separately from physical
+slot order. heap performs mutations of raw records and reference edges.
 
-用户 getter、setter 和 Proxy 回调由 VM 执行，内置方法的完整算法归
-builtins。回调恢复状态由语义所有者维护，详见
-[当前架构](../../../docs/architecture.md)。
+The VM runs user getters, setters and Proxy traps, and builtins owns complete
+built-in method algorithms. Semantic owners maintain callback resume state;
+see [workspace architecture](../../../docs/architecture.md).

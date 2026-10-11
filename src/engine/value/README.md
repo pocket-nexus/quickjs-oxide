@@ -1,16 +1,22 @@
-# 值、字符串与数值转换
+# Values, strings and numeric conversion
 
-value 拥有完整 JS Value、受限的原始常量表示、字符串与 BigInt，
-并提供 Number 算法和 ECMAScript 值转换。编译器、VM、对象和内置方法
-共用这些值与算法，避免各自解释同一种数值或字符串语义。
+value owns the full JS Value, the restricted primitive-constant
+representation, strings and BigInt, and provides the Number algorithms and
+ECMAScript value conversions. The compiler, VM, object and builtins share
+these values and algorithms so that numeric and string semantics have a
+single definition.
 
-纯数值、字符串和集合键算法与运行时转换分开。ToPrimitive 等转换可能
-读取属性、调用对象方法并抛出任意 JS 值，必须保留顺序、上下文和身份。
-精确 Number 的直接运算不能替代对象转换或 BigInt 混合操作的规则。
+Pure numeric, string and collection-key algorithms are separate from runtime
+conversions. Conversions such as ToPrimitive can read properties, call object
+methods and throw arbitrary JS values, so they preserve order, context and
+identity. Direct exact-Number arithmetic does not replace the rules for object
+conversion or mixed BigInt operations.
 
-字符串以 UTF-16 code unit 表达语义，包括孤立 surrogate。Latin1、
-UTF-16 和 rope 是存储选择，比较和哈希要得到一致结果；集合的随机种子
-哈希与 QuickJS 内容指纹承担不同职责。
+Strings carry UTF-16 code-unit semantics, including lone surrogates. Latin1,
+UTF-16 and rope are storage choices, and comparison and hashing give
+consistent results across them; the randomly seeded collection hash and the
+QuickJS content fingerprint serve different purposes.
 
-对象身份与属性行为由 object 管理，原始引用边由 heap 管理，栈槽和值的
-移动由 VM 管理。value 负责值本身及其转换语义，不拥有活动执行帧。
+object manages object identity and property behavior, heap manages raw
+reference edges and the VM manages stack slots and value movement. value owns
+values and their conversion semantics, not active execution frames.

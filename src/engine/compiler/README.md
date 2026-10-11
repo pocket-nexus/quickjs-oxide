@@ -1,33 +1,47 @@
-# 编译器
+# Compiler
 
-compiler 负责把完整 JavaScript 源码转换为尚未发布的函数和模块草稿，
-包括词法与语法分析、声明和作用域处理、名字解析、闭包捕获及栈指令生成。
-修改语法、绑定规则或编译期改写时，从这个模块开始。
+compiler turns complete JavaScript source into unpublished function and module
+drafts: lexing and parsing, declaration and scope handling, name resolution,
+closure capture and stack-instruction generation. Changes to syntax, binding
+rules or compile-time rewrites start here.
 
-入口只编排请求；options 管配置，parser 管语法/诊断与构造状态，model 管
-阶段间共享产物。FunctionBuilder 的消费式 finish 检查临时控制状态后交出 IR；
-resolution 解析名字，lowering 生成栈码，relocation 管目标重定位，flow 复用
-必需验证，optimize 管有限局部改写与源码位置投影。
+The entry point only orchestrates requests. `options` holds configuration,
+`parser` owns syntax, diagnostics and construction state, and `model` holds
+artifacts shared between phases. FunctionBuilder's consuming `finish` checks
+temporary control state and yields the IR; `resolution` resolves names,
+`lowering` emits stack code, `relocation` handles target relocation, `flow`
+provides shared required validation, and `optimize` performs bounded local
+rewrites and source-position projection.
 
-当前管线使用线性 FunctionIr/IrOp，解析和绑定解析完成后生成栈式代码。
-声明顺序、稳定绑定身份、异常区域和源码位置贯穿这些阶段；名字索引是
-查找工具，不能代替遮蔽、重复声明或 eval 的语义判断。
+The pipeline uses linear FunctionIr/IrOp and emits stack code after parsing
+and binding resolution. Declaration order, stable binding identity, exception
+regions and source positions carry through every phase; name indexes are
+lookup aids and do not decide shadowing, duplicate declarations or eval
+semantics.
 
-compiler 使用 source 的精确源码表示和 code 的代码契约。它不选择宿主
-provider，也不拥有正在执行的帧；运行时链接、roots 和发布事务属于 code
-及 heap。对象和 Symbol 的运行时身份不成为普通编译常量。
+compiler uses the exact source representation from source and the code
+contracts from code. It does not select host providers or own executing
+frames; runtime linking, roots and the publication transaction belong to code
+and heap. Runtime identities of objects and Symbols are never ordinary
+compile-time constants.
 
-阶段边界见[当前架构](../../../docs/architecture.md)。
+See [workspace architecture](../../../docs/architecture.md) for phase
+boundaries.
 
-优化必须保留精确源码字节、UTF-16 字符串、token span、ASI 与
-`line_terminator_before`、词法 goal/context、转义标识符和 private name 身份。
-名字驻留不能代替作用域/遮蔽判断。前瞻缓存必须保持各探针的吞错/传播错误
-策略，不得把 speculative 失败变成提交错误；缓存身份包含 source、offset、
-goal 与 context，不能跨词法上下文复用。重扫保留已观测的换行与 token 起点，
-模板续段不能按除法 goal 重扫；前瞻不提前修改已提交状态。
+Optimizations preserve exact source bytes, UTF-16 strings, token spans, ASI
+and `line_terminator_before`, the lexical goal/context, escaped identifiers
+and private-name identity. Name interning does not decide scoping or
+shadowing. Lookahead caches preserve each probe's swallow-or-propagate error
+policy and never turn a speculative failure into a committed error; cache
+identity includes source, offset, goal and context and is never reused across
+lexical contexts. Rescans keep the observed line breaks and token starts,
+template continuations are never rescanned with the division goal, and
+lookahead does not mutate committed state early.
 
-模板的 cooked/raw、tagged/untagged 无效转义行为与首次错误位置必须保持。
-转义标识符按解码名判断；private name 的身份及包含 `#` 的长度限制保持。
-惰性文本处理不能推迟扫描期必须报告的畸形字节或长度错误。诊断的阶段、
-文案、位置、首错及求值顺序依照现有契约和 oracle 保持，解析资源限制与
-栈耗尽行为也需对拍。
+Template cooked/raw values, tagged/untagged invalid-escape behavior and the
+first error position are preserved. Escaped identifiers are checked by their
+decoded names; private-name identity and length limits that include `#` are
+preserved. Lazy text handling still reports malformed bytes and length errors
+at scan time. Diagnostic phase, message text, position, first error and
+evaluation order follow the existing contracts and oracle, and parser resource
+limits and stack-exhaustion behavior are checked against the oracle.

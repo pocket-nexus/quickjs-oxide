@@ -1,19 +1,19 @@
-# 执行不变量
+# Execution invariants
 
-这些约束对应当前栈 VM 的编译、发布、执行和回收路径。模块责任与实际操作见[架构](../architecture.md)和[现行执行路径](roadmap.md)。
+These constraints apply to the compilation, publication, execution and collection paths of the stack VM. Module responsibilities and concrete operations are in [Architecture](../architecture.md) and [Current execution paths](roadmap.md).
 
-## 事实的有效期
+## Lifetime of facts
 
-编译期确定的绑定、控制流和操作形态写入发布的执行字与元数据。运行时的值类型、对象布局、属性槽、引用计数与 alias 在使用时验证。`FrameSlots` 和堆借用把这些动态事实限制在一次短操作内；回调、挂起、可观察清理与帧转换结束该访问作用域。
+Bindings, control flow and operation shapes determined at compile time are written into the published execution words and metadata. Runtime value types, object layouts, property slots, reference counts and aliases are verified at the point of use. `FrameSlots` and heap borrows confine these dynamic facts to one short operation; callbacks, suspension, observable cleanup and frame transitions end that access scope.
 
-## 所有权
+## Ownership
 
-帧槽、堆边或拥有式 pending 状态承担值的 root。移动把现有 owner 交给目的地；复制建立额外 owner；借用在保护它的帧或堆访问结束前完成消费。替换目标时按被替换值的释放需求处理，`Put`、`Set` 和初始化各自保持操作数深度与 owner 数量的语义。
+Frame slots, heap edges or owned pending state root values. A move hands an existing owner to the destination; a copy creates an additional owner; a borrow is consumed before the protecting frame or heap access ends. Replacing a target follows the release requirement of the replaced value; `Put`, `Set` and initialization each preserve their semantics for operand depth and owner count.
 
-## 进度与位置
+## Progress and positions
 
-准入先于提交。请求重试的操作保持源、目的地、深度和 owner 责任；已选择的属性操作携带结果或拥有式 pending 状态继续。`fault_pc`、正常 fallthrough 和恢复位置分别遵守所属操作的顺序。getter、Proxy、转换与宿主回调沿语义驱动器执行，效果顺序由现有算法保持。
+Admission precedes commit. An operation that requests a retry keeps its source, destination, depth and owner responsibilities; a selected property operation continues with its result or owned pending state. `fault_pc`, normal fallthrough and resume positions each follow the ordering of their operation. Getters, Proxy, conversions and host callbacks run through the semantic drivers, and the existing algorithms preserve effect order.
 
-## 测量
+## Measurement
 
-一次性能判断同时记录完整程序时间、固定工作量、退休指令、编译、代码体积及生命周期。普通构建提供正式时间样本，profiling 构建提供事件分类。源码、二进制、负载、机器、样本顺序与输出校验共同标识一次测量。运行方法见[测量方法](measurement.md)。
+A performance judgment records whole-program time, fixed workloads, retired instructions, compilation, code size and lifetime together. Plain builds provide the formal time samples; profiling builds provide event classification. Source, binary, workload, machine, sample order and output validation together identify one measurement. The procedure is in [Measurement method](measurement.md).

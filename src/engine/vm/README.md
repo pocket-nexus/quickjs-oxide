@@ -1,16 +1,23 @@
-# 栈虚拟机
+# Stack virtual machine
 
-vm 执行已发布代码，协调函数调用、绑定访问、异常展开、回溯以及 generator
-和 async 的挂起、恢复。执行核心是显式栈 VM。
+vm executes published code and coordinates function calls, binding access,
+exception unwinding, backtraces, and generator and async suspension and
+resumption. The execution core is an explicit-stack VM.
 
-`SlotStore` 持有参数、局部与操作数的窗口，`FrameEntry` / `Frame` 保存代码所有者、
-PC 和恢复状态。普通 JS 调用与内部回调由 driver 推进显式帧；只有真正的宿主调用
-建立宿主边界。生成器 freeze/thaw 直接编码与恢复帧。
+`SlotStore` holds the argument, local and operand windows; `FrameEntry` /
+`Frame` store the code owner, PC and resume state. The driver advances
+explicit frames for ordinary JS calls and internal callbacks; only genuine
+host calls establish a host boundary. Generator freeze/thaw encodes and
+restores frames directly.
 
-转换算法属于 value，属性语义属于 object，内置方法属于 builtins。
-VM 执行这些算法请求的 JS 调用，并传播返回值、异常及挂起结果。
-长期挂起数据的引用边由 heap 保存；发布代码的静态保证与恢复状态的动态验证
-共同约束重新进入执行的边界。
+Conversion algorithms belong to value, property semantics to object and
+built-in methods to builtins. The VM runs the JS calls these algorithms
+request and propagates return values, exceptions and suspension results.
+heap stores reference edges of long-lived suspended data; static guarantees
+of published code together with dynamic validation of resume state govern
+re-entry into execution.
 
-发布字流、调用帧、槽所有权和观察边界见[当前架构](../../../docs/architecture.md)；
-执行路径见[现行执行路径](../../../docs/performance/roadmap.md)。
+See [workspace architecture](../../../docs/architecture.md) for the published
+word stream, call frames, slot ownership and observation boundaries, and
+[current execution paths](../../../docs/performance/roadmap.md) for the
+execution mechanisms.

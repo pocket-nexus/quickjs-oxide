@@ -1,24 +1,24 @@
-# 执行与性能
+# Execution and performance
 
-当前引擎使用单一 `ExecCode` 字流和栈 VM。编译器发布指令、控制流边界、数值区域和有界快速入口；`vm/execute.rs` 持有状态访问，普通调用、返回与 Base 构造在同一解释循环继续。驱动器处理其余属性语义、内建、异常与挂起边界。普通绑定写入按所有权转移，命名属性读取在同一选择流程中处理数据、访问器和完整缺失。捕获变量与形状使用各自的类型化 arena。
+The engine uses a single `ExecCode` word stream and a stack VM. The compiler publishes instructions, control-flow boundaries, numeric regions and bounded fast entries; `vm/execute.rs` holds state access, and ordinary calls, returns and Base construction continue in the same interpreter loop. Drivers handle the remaining property semantics, builtins, exceptions and suspension boundaries. Ordinary binding writes transfer ownership, and named property reads handle data, accessors and complete misses in one selection flow. Captured variables and shapes use their own typed arenas.
 
-## 文档
+## Documents
 
-- [架构](../architecture.md)：模块责任、发布和执行边界。
-- [现行执行路径](roadmap.md)：数值操作、普通写入、命名属性读取和 continuation。
-- [执行不变量](principles.md)：所有权、借用、位置与可观察操作。
-- [类型化存储](typed-arenas.md)：捕获变量、形状和回收。
-- [测量方法](measurement.md)：构建身份、固定工作量、profile 与资源成本。
-- [GC 策略](../cycle-collection.md)：自动循环回收的预算与服务位置。
+- [Architecture](../architecture.md): module responsibilities, publication and execution boundaries.
+- [Current execution paths](roadmap.md): numeric operations, ordinary writes, named property reads and continuations.
+- [Execution invariants](principles.md): ownership, borrowing, positions and observable operations.
+- [Typed storage](typed-arenas.md): captured variables, shapes and collection.
+- [Measurement method](measurement.md): build identity, fixed workloads, profiles and resource costs.
+- [GC policy](../cycle-collection.md): budget and service points for automatic cycle collection.
 
-## 工具
+## Tools
 
-- [诊断探针](probes/README.md)：固定工作量矩阵、普通写入程序、对象分配账本与 Callgrind 运行时探针。
-- [benchmark 工具](../../scripts/benchmark/README.md)：构建身份、固定工作量、扩展性、编译、Callgrind、PGO 与 V8 运行。
-- [诊断说明](../profiling.md)：`profiling` 构建的报告字段。
+- [Diagnostic probes](probes/README.md): fixed workload matrix, ordinary-write programs, object allocation ledger and Callgrind runtime probes.
+- [Benchmark tools](../../scripts/benchmark/README.md): build identity, fixed workloads, scaling, compilation, Callgrind, PGO and V8 runs.
+- [Diagnostics reference](../profiling.md): report fields of the `profiling` build.
 
-性能结论以受测源码、二进制、负载和原始样本为单位。改动执行路径时，同时核对语义、局部操作成本、完整程序时间、编译成本和内存生命周期。
+Performance conclusions are stated per measured source, binary, workload and raw samples. A change to an execution path is checked for semantics, local operation cost, whole-program time, compile cost and memory lifetime.
 
-优化先明确目标属性、场景、硬约束及允许的交换，再根据 Profile 或确定的资源问题选择机制。现有接口支持时直接改实现；契约阻碍目标机制时再改类型和职责。分别验证机制、目标结果与完整代价；指令数与时间分别测量。
+An optimization first states the target property, scenarios, hard constraints and acceptable trade-offs, then selects a mechanism from a profile or an established resource problem. When the existing interface supports the mechanism, only the implementation changes; when a contract blocks the target mechanism, types and responsibilities change. The mechanism, the target result and the full cost are verified separately; instruction counts and time are measured separately.
 
-原始采样、日志、profile、测量结果和实验归档保存在 `target/` 或仓库外；版本库维护现行设计、测量方法和测量工具。
+Raw samples, logs, profiles, measurement results and experiment archives are kept in `target/` or outside the repository; the repository maintains the current design, measurement method and measurement tools.

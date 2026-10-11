@@ -1,16 +1,21 @@
-# Rust 嵌入接口
+# Rust embedding API
 
-api 是 Rust 调用者使用 quickjs-oxide 的边界，导出 Runtime、Context、
-Value、错误和受 root 保护的句柄。它组织编译、执行、模块、任务与诊断
-入口，将请求交给引擎内各职责模块。
+api is the boundary through which Rust callers use quickjs-oxide. It exports
+Runtime, Context, Value, errors and root-protected handles, and organizes the
+compile, execute, module, job and diagnostic entry points that hand requests
+to the engine's responsibility modules.
 
-Runtime 的共享存储由 heap 管理，语言算法由 compiler、code、VM、
-object 和 builtins 等模块实现。公有入口不复制这些算法，也不暴露内部
-字节码、帧或存储结构作为另一套嵌入接口。
+heap manages the Runtime's shared storage; compiler, code, VM, object,
+builtins and the other semantic modules implement the language algorithms.
+Public entry points delegate to those algorithms and keep internal bytecode,
+frames and storage layouts private.
 
-调用者显式注入 HostServices；应用负责输入、模块加载策略、输出和任务
-驱动。ModuleLoader 的 normalize、check_attributes 与 load 回调接收
-发起请求的 Context，并保持重入与 JS 抛出值的语义。
+Callers inject HostServices explicitly; the application owns input, module
+loading policy, output and job driving. The ModuleLoader `normalize`,
+`check_attributes` and `load` callbacks receive the requesting Context and
+preserve reentrancy and JS thrown-value semantics.
 
-Test262 与差分测试能力通过专用 feature 暴露，不扩大默认生产接口。
-跨包职责见[架构说明](../../../docs/architecture.md)。
+Test262 and differential-testing support sit behind dedicated features and
+stay outside the default production API. See
+[workspace architecture](../../../docs/architecture.md) for cross-package
+responsibilities.

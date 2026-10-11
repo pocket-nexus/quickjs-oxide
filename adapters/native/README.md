@@ -8,4 +8,4 @@ cargo test -p quickjs-oxide-host
 
 See [workspace architecture](../../docs/architecture.md) for dependency and lifetime boundaries.
 
-`engine-test-support` 仅供引擎单元测试识别 Cargo 的独立 trait 实例；生产调用方从 `quickjs_oxide::engine::api` 使用 HostServices。
+`engine-test-support` lets engine unit tests identify the HostServices trait in Cargo's separate engine instance; production callers use HostServices from `quickjs_oxide::engine::api`.

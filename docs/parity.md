@@ -1,293 +1,284 @@
-# QuickJS 语义 Feature Parity 契约
+# QuickJS semantic feature parity contract
 
-本文是 quickjs-oxide 的完成定义。它约束实现方向、测试证据和对外声明；阶段计划、当前测试数量或某个 demo 的可运行性都不能覆盖本文。
+This document is the definition of done for quickjs-oxide. It constrains implementation direction, test evidence and public claims; stage plans, current test counts or whether a demo runs do not override it.
 
-## 1. 目标与固定基线
+## 1. Goal and fixed baseline
 
-目标是用 Rust 独立重写 QuickJS，并与 **QuickJS 2026-06-04** 达成语义和产品表面的 feature parity。这里的“parity”不是“能执行一部分 JavaScript”，而是同一输入在语言语义、宿主能力、嵌入 API、命令行、模块、序列化和生命周期上具有与该版本相同的可观察行为。
+The goal is an independent Rust rewrite of QuickJS that reaches semantic and product-surface feature parity with **QuickJS 2026-06-04**. "Parity" does not mean "can execute some JavaScript"; it means that the same input has the same observable behavior as that release in language semantics, host capabilities, embedding API, command line, modules, serialization and lifecycle.
 
-**WeakRef 与调用参数生命周期以 ECMAScript 为准（维护者指定）。** WeakRef 的保活、弱目标清除和 FinalizationRegistry 清理必须满足
-规范；普通调用的参数存活按实际可观察的绑定、arguments、闭包及执行状态确定。
-固定 QuickJS 的参数复制分支和弱引用提前失效行为仅作实现对照，不作为此处的验收
-预期。具体范围见 [deviations.md](deviations.md#ecmascript-weakref-lifetime-001)。
+**WeakRef and call-argument lifetimes follow ECMAScript (maintainer decision).** WeakRef keep-alive, weak target clearing and FinalizationRegistry cleanup must conform to the specification; argument liveness in ordinary calls is determined by the observable bindings, `arguments`, closures and execution state. The pinned QuickJS argument-copying paths and early weak-reference invalidation serve only as implementation references and are not acceptance expectations here. The exact scope is in [deviations.md](deviations.md#ecmascript-weakref-lifetime-001).
 
-基线必须固定为官方 `quickjs-2026-06-04` 发布源码，而不是滚动的仓库 `master`、quickjs-ng、其他 fork 或系统里碰巧安装的 `qjs`。基线的关键锚点是：
+The baseline is the official `quickjs-2026-06-04` release source, not the rolling repository `master`, quickjs-ng, other forks, or whatever `qjs` happens to be installed on the system. The key baseline anchors are:
 
-- `VERSION` 为 `2026-06-04`；
-- 字节码版本是 `quickjs.c` 中的 `BC_VERSION = 5`；
-- Unicode 数据版本是 `libunicode.h` 中的 `17.0.0`；
-- Test262 固定为发布包 `Makefile` 中的 `TEST262_COMMIT`，并应用发布包的 `tests/test262.patch`；仓库中的固定值见 [`compat/upstream.toml`](../compat/upstream.toml)；
-- Test262 的启用/跳过范围以该发布包的 `test262.conf`、`test262o.conf` 为准，已知结果以 `test262_errors.txt`、`test262o_errors.txt` 为准。发布包分别记录 58 行和 0 行已知错误；这个行数只能做完整性校验，不能替代逐测试结果比对。
+- `VERSION` is `2026-06-04`;
+- the bytecode version is `BC_VERSION = 5` in `quickjs.c`;
+- the Unicode data version is `17.0.0` in `libunicode.h`;
+- Test262 is pinned to `TEST262_COMMIT` in the release `Makefile`, with the release `tests/test262.patch` applied; the pinned values in the repository are in [`compat/upstream.toml`](../compat/upstream.toml);
+- the enabled/skipped Test262 scope is defined by the release `test262.conf` and `test262o.conf`, and known results by `test262_errors.txt` and `test262o_errors.txt`. The release records 58 and 0 known-error lines respectively; these line counts are only an integrity check and do not replace per-test result comparison.
 
-在 CI 接受任何 parity 结果前，仓库必须记录官方源码包的来源、SHA-256 和解包后文件清单。测试报告也必须带上基线 SHA-256、目标三元组、编译选项和 Test262 提交，避免同名版本漂移。
+Before CI accepts any parity result, the repository must record the provenance, SHA-256 and unpacked file manifest of the official source archive. Test reports must also include the baseline SHA-256, target triple, build options and Test262 commit, so that same-named versions cannot drift.
 
-本契约复刻的是该版本实际提供的范围，不把“ES2025”当作一个会随时间变化的目标。上游文档明确未支持 proper tail calls、`Atomics.waitAsync`，也未实现 ECMA-402 Intl；`test262.conf` 中标记为 `skip` 的其他特性同样不在本基线的必达范围。新增这些能力可以另行立项，但不能用来抵消基线内的缺失或不兼容。
+This contract reproduces the scope that release actually provides; it does not treat "ES2025" as a moving target. The upstream documentation states that proper tail calls and `Atomics.waitAsync` are unsupported and that ECMA-402 Intl is not implemented; other features marked `skip` in `test262.conf` are likewise outside the required scope of this baseline. Adding these capabilities is separate work and cannot offset missing or incompatible behavior inside the baseline.
 
-## 2. 纯 Rust 边界与 oracle 规则
+## 2. Pure Rust boundary and oracle rules
 
-所有交付给用户的产品实现都必须是 Rust：解释器、编译器、GC、RegExp、Unicode、BigInt、标准库、Worker、CLI、静态库/动态库和 C ABI 适配层均由 Rust 编译产生。本路线保留 workspace `unsafe_code = "forbid"` 的 safe Rust 约束；未来宿主和 ABI 能力需在该约束下设计，不能由 parity 目标推定允许放宽它。
+Every product implementation delivered to users must be Rust: the interpreter, compiler, GC, RegExp, Unicode, BigInt, standard library, Worker, CLI, static/dynamic libraries and the C ABI adapter layer are all compiled from Rust. The workspace keeps the safe-Rust constraint `unsafe_code = "forbid"`; host and ABI capabilities are designed within it, and the parity goal does not imply permission to relax it.
 
-以下行为禁止出现在产品构建或运行路径中：
+The following are forbidden in product builds and runtime paths:
 
-- 编译、链接或 vendoring `quickjs.c`、`libquickjs.a`、其他 QuickJS fork，或通过 FFI 把它当作实际引擎；
-- 运行时启动 `qjs`、Node.js、JavaScriptCore、V8 等外部解释器来完成解析或执行；
-- 把外部引擎隐藏在 build script、动态库、可选 feature、WASM blob 或生成代码中；
-- 在 Rust API 后面仅包一层现有 QuickJS binding。
+- compiling, linking or vendoring `quickjs.c`, `libquickjs.a` or another QuickJS fork, or using it as the actual engine through FFI;
+- launching `qjs`, Node.js, JavaScriptCore, V8 or another external interpreter at runtime to parse or execute;
+- hiding an external engine in a build script, dynamic library, optional feature, WASM blob or generated code;
+- wrapping an existing QuickJS binding behind a Rust API.
 
-官方 C 版 `qjs` 只允许存在于测试 oracle 路径：构建基线、生成 golden、执行差分和确认上游已知行为。测试用的 C embedder/native-module fixture，以及 `qjsc -c/-e` 按兼容契约生成给用户的 C 源文件，不属于产品引擎实现，因而可以使用 C；它们必须链接到 Rust 产出的库，而不能反向带入 C 引擎。
+The official C `qjs` is allowed only on test oracle paths: building the baseline, generating goldens, running differentials and confirming known upstream behavior. Test C embedder/native-module fixtures, and the C source files that `qjsc -c/-e` generates for users under the compatibility contract, are not part of the product engine and may use C; they must link against the Rust-built library and must not bring the C engine back in.
 
-实现必须参考上游算法、状态机和不变量，而不是只参考语法示例。允许把上游逻辑重新表达为合适的 Rust 数据结构；不要求逐行翻译，也不要求内部地址、对象布局或优化完全相同，除非它们通过 C ABI、内存统计、终结时机或字节码格式变成可观察行为。每个核心模块应在模块文档或 source map 中注明对应的上游文件/符号，方便逐项审计。
+The implementation follows upstream algorithms, state machines and invariants, not just syntax examples. Upstream logic may be re-expressed with suitable Rust data structures; line-by-line translation is not required, nor are identical internal addresses, object layouts or optimizations, unless they become observable through the C ABI, memory statistics, finalization timing or bytecode format. Each core module records its corresponding upstream files/symbols in module documentation or a source map for item-by-item audit.
 
-## 3. 可运行切片必须走产品路径
+## 3. Runnable slices use the product path
 
-增量实现可以只覆盖很窄的语法，但必须连通实际产品的编译、执行及生命周期。内部表示可以迭代，不存在预先固定的“最终架构”。核对路径包括：
+An increment may cover only narrow syntax, but it must connect through the real product compilation, execution and lifecycle. The internal representation may evolve; there is no predetermined "final architecture". The path to check is:
 
-1. 按 `qjs.c::eval_file` / `eval_buf` 建立参数、脚本/模块判定和错误出口；
-2. 按 `JS_NewRuntime`、`JS_NewContext` 建立隔离的 heap/realm、atoms、intrinsics 和异常槽；
-3. 对照 `next_token`、`js_parse_*` 和 `JS_EvalInternal` 的语义完成词法、作用域分析和编译；编译结果发布为单一 `ExecCode`，不要求复制 `quickjs-opcode.h` 的编码；
-4. 保持 `JS_CallInternal` 对应的调用、栈/资源限制与异常行为，通过产品执行器传播 completion/exception；
-5. 经 `JS_ExecutePendingJob` 排空 job，最后沿 `JS_FreeContext` / `JS_FreeRuntime` 释放资源。
+1. establish arguments, script/module detection and error exits following `qjs.c::eval_file` / `eval_buf`;
+2. establish isolated heap/realm, atoms, intrinsics and exception slot following `JS_NewRuntime` and `JS_NewContext`;
+3. perform lexing, scope analysis and compilation against the semantics of `next_token`, `js_parse_*` and `JS_EvalInternal`; the compilation result is published as a single `ExecCode`, without copying the `quickjs-opcode.h` encoding;
+4. keep the call, stack/resource-limit and exception behavior of `JS_CallInternal`, propagating completion/exception through the product executor;
+5. drain jobs through `JS_ExecutePendingJob`, then release resources along `JS_FreeContext` / `JS_FreeRuntime`.
 
-骨架从一开始就应使用真实的 `Value`、atom、string、object/shape、property descriptor、environment/closure、bytecode function 和 exception 表示；尚未实现的语法应明确报错。临时 AST evaluator、把所有值都降成 JSON、跳过 property descriptor、用 Rust panic 表示 JS throw，或调用 oracle 得到答案，都不是可保留的解释器骨架。
+The skeleton uses the real `Value`, atom, string, object/shape, property descriptor, environment/closure, bytecode function and exception representations from the start; unimplemented syntax reports an explicit error. A temporary AST evaluator, lowering all values to JSON, skipping property descriptors, representing JS throws as Rust panics, or calling the oracle for answers are not acceptable interpreter skeletons.
 
-## 4. 上游组件到 Rust 实现的审计映射
+## 4. Audit mapping from upstream components to the Rust implementation
 
-下表不是要求复制 C 的文件布局，而是要求 Rust 实现覆盖同一责任和关键不变量。
+The table does not require copying the C file layout; it requires the Rust implementation to cover the same responsibilities and key invariants.
 
-| 领域 | 上游锚点 | Rust 实现必须覆盖 |
+| Area | Upstream anchors | Rust implementation must cover |
 | --- | --- | --- |
-| runtime、realm、值和对象 | `quickjs.c` 的 `JSRuntime`、`JSContext`、`JSObject`、`JSShape`，`quickjs.h` 的 `JSValue`/tag 与 property flags | runtime/context 隔离、值转换、atoms/symbols、原型、shape/property descriptor、exotic object、异常槽和所有权 |
-| lexer、compiler、VM | `next_token`、`js_parse_*`、`JS_EvalInternal`、`JSFunctionBytecode`、`quickjs-opcode.h`、`JS_CallInternal` | script/module grammar、作用域/闭包、栈效应、调用/构造、completion、debug/line info、优化后仍等价 |
-| intrinsics | `JS_NewContext`、`JS_NewContextRaw`、`JS_AddIntrinsic*` | 基础对象以及 Date、eval、normalize、RegExp、JSON、Proxy、Map/Set、TypedArray、Promise、WeakRef 的可选择安装语义 |
-| 数字和 BigInt | `dtoa.c` 的 `js_dtoa`，`quickjs.c` 的 `js_atof`、`js_bigint_*`、`JS_TAG_SHORT_BIG_INT` | IEEE-754 转换/格式化、`-0`/NaN/Infinity、任意精度二补数运算及小 BigInt 快路径的语义 |
-| RegExp | `libregexp.c` 的 `lre_compile` / `lre_exec`、`libregexp-opcode.h` | ECMAScript RegExp parser、bytecode、显式回溯栈、captures、Unicode modes 和 API 行为 |
-| Unicode | `libunicode.c` / `libunicode-table.h`、`unicode_normalize`、`unicode_script`、`unicode_prop` | Unicode 17.0.0 的 identifier、case、normalization、script/category/binary/string properties |
-| modules | `js_resolve_module`、`JS_ResolveModule`、`JS_LoadModule`、module namespace exotic methods | parse/link/evaluate、live binding、cycles、TLA、dynamic import、`import.meta`、attributes 和 loader callbacks |
-| GC/生命周期 | `JS_DupValue` / `JS_FreeValue`、`free_zero_refcount`、`gc_decref`、`gc_scan`、`gc_free_cycles`、`JS_RunGC` | 确定性引用计数、循环回收、weak objects、finalizer/mark、内存限制和公开所有权规则 |
-| object serialization | `JS_WriteObject(2)`、`JS_ReadObject`、`JS_EvalFunction` | BJSON 对象图、boxed primitives、TypedArray/ArrayBuffer、共享引用/循环图；**不含上游 `BC_VERSION` 字节码互读**（见 §11） |
-| host library/event loop | `quickjs-libc.c`、`js_std_loop`、`js_std_await`、`js_module_loader` | `std`/`os`、global helpers、文件/进程/信号/定时器/handlers、promise rejection 和事件循环 |
-| Worker | `JSWorkerMessagePipe`、`worker_func`、`js_worker_postMessage` | 每线程独立 runtime/context、FIFO 消息、structured clone、SAB 共享、生命周期及上游限制 |
-| CLI/compiler | `qjs.c`、`repl.js`、`qjsc.c` | `qjs`/REPL 的完整行为，以及 `qjsc` 的 C 源/可执行输出、feature stripping 和 module 收集 |
+| runtime, realm, values and objects | `JSRuntime`, `JSContext`, `JSObject`, `JSShape` in `quickjs.c`; `JSValue`/tags and property flags in `quickjs.h` | runtime/context isolation, value conversion, atoms/symbols, prototypes, shape/property descriptor, exotic objects, exception slot and ownership |
+| lexer, compiler, VM | `next_token`, `js_parse_*`, `JS_EvalInternal`, `JSFunctionBytecode`, `quickjs-opcode.h`, `JS_CallInternal` | script/module grammar, scopes/closures, stack effects, call/construct, completion, debug/line info, equivalence after optimization |
+| intrinsics | `JS_NewContext`, `JS_NewContextRaw`, `JS_AddIntrinsic*` | base objects and selectable installation semantics for Date, eval, normalize, RegExp, JSON, Proxy, Map/Set, TypedArray, Promise, WeakRef |
+| numbers and BigInt | `js_dtoa` in `dtoa.c`; `js_atof`, `js_bigint_*`, `JS_TAG_SHORT_BIG_INT` in `quickjs.c` | IEEE-754 conversion/formatting, `-0`/NaN/Infinity, arbitrary-precision two's-complement arithmetic and small-BigInt fast-path semantics |
+| RegExp | `lre_compile` / `lre_exec` in `libregexp.c`, `libregexp-opcode.h` | ECMAScript RegExp parser, bytecode, explicit backtracking stack, captures, Unicode modes and API behavior |
+| Unicode | `libunicode.c` / `libunicode-table.h`, `unicode_normalize`, `unicode_script`, `unicode_prop` | Unicode 17.0.0 identifier, case, normalization, script/category/binary/string properties |
+| modules | `js_resolve_module`, `JS_ResolveModule`, `JS_LoadModule`, module namespace exotic methods | parse/link/evaluate, live bindings, cycles, TLA, dynamic import, `import.meta`, attributes and loader callbacks |
+| GC/lifecycle | `JS_DupValue` / `JS_FreeValue`, `free_zero_refcount`, `gc_decref`, `gc_scan`, `gc_free_cycles`, `JS_RunGC` | deterministic reference counting, cycle collection, weak objects, finalizer/mark, memory limits and public ownership rules |
+| object serialization | `JS_WriteObject(2)`, `JS_ReadObject`, `JS_EvalFunction` | BJSON object graphs, boxed primitives, TypedArray/ArrayBuffer, shared references/cyclic graphs; **excludes reading/writing upstream `BC_VERSION` bytecode** (see §11) |
+| host library/event loop | `quickjs-libc.c`, `js_std_loop`, `js_std_await`, `js_module_loader` | `std`/`os`, global helpers, files/processes/signals/timers/handlers, promise rejection and event loop |
+| Worker | `JSWorkerMessagePipe`, `worker_func`, `js_worker_postMessage` | per-thread runtime/context, FIFO messages, structured clone, SAB sharing, lifecycle and upstream restrictions |
+| CLI/compiler | `qjs.c`, `repl.js`, `qjsc.c` | full `qjs`/REPL behavior, and `qjsc` C source/executable output, feature stripping and module collection |
 
-## 5. 全局完成门禁
+## 5. Global completion gates
 
-只有以下条件同时成立，项目才可以声明“QuickJS 2026-06-04 feature parity”：
+The project may claim "QuickJS 2026-06-04 feature parity" only when all of the following hold:
 
-1. 本文各分区的门禁均有同一提交上的可复现报告，且没有未分类的失败、skip、timeout、crash 或差分；
-2. 产品依赖审计证明运行和发布产物不包含任何外部 JS 引擎；在移除 oracle 工具和网络后，产品仍可构建并运行；
-3. oracle 与 Rust 引擎的测试必须在独立进程、相同 fixture、固定环境下运行，测试不得根据被测引擎改变语义；
-4. 所有允许差异都进入版本化 [deviation ledger](deviations.md)，记录最小复现、上游输出、Rust 输出、理由、兼容影响和批准者。没有记录的“行为更合理”仍是失败；
-5. 测试报告必须保存逐用例结果和命令，而不只保存 pass rate；任何过滤、重试、更新 golden 或扩大 timeout 都必须在 diff 中可见；
-6. 支持平台矩阵逐项通过同一套语义门禁。未验证平台可以标为 unsupported，但不能宣称该平台 parity；
-7. release 构建在 OOM、stack limit、interrupt、恶意深层对象图、复杂 RegExp 和循环模块等压力用例中不 panic、abort、死锁或越界。超时本身是失败，除非 oracle 在相同限制下也产生同类结果并已登记。
+1. every gate in this document has a reproducible report from the same commit, with no unclassified failure, skip, timeout, crash or differential;
+2. a product dependency audit shows that runtime and release artifacts contain no external JS engine; with oracle tools and network removed, the product still builds and runs;
+3. oracle and Rust engine tests run in separate processes, with the same fixtures, in a fixed environment; tests must not change semantics depending on the engine under test;
+4. every permitted difference is recorded in the versioned [deviation ledger](deviations.md) with a minimal reproduction, upstream output, Rust output, rationale, compatibility impact and approver. An unrecorded "more reasonable behavior" is still a failure;
+5. test reports keep per-case results and commands, not only the pass rate; any filtering, retry, golden update or timeout increase must be visible in the diff;
+6. every entry in the supported platform matrix passes the same semantic gates. Unverified platforms may be marked unsupported, but parity cannot be claimed for them;
+7. release builds do not panic, abort, deadlock or access out of bounds under stress cases such as OOM, stack limit, interrupt, malicious deep object graphs, complex RegExps and cyclic modules. A timeout is itself a failure unless the oracle produces the same kind of result under the same limits and it is recorded.
 
-性能和体积不是本文的主要等价判据，不要求复现内部地址或逐指令优化；但慢到使上游功能用例、Test262 或 worker/event-loop 门禁无法在约定预算内结束，仍属于功能不可用。
+Performance and size are not primary equivalence criteria in this document, and internal addresses or per-instruction optimizations need not be reproduced; however, being so slow that upstream functional cases, Test262 or the worker/event-loop gates cannot finish within the agreed budget still counts as the feature being unusable.
 
-## 6. 语言与内建对象门禁
+## 6. Language and built-in object gates
 
-语言核心必须覆盖基线 `test262.conf` 启用的全部语法和语义，包括 strict/sloppy、Annex B、lexical/var environment、closures、direct/indirect eval、classes/private elements、`this`/`super`/`new.target`、destructuring、generators、async/await、iterators、exceptions、Proxy、Symbols、property order、Promises/jobs、WeakRef/FinalizationRegistry、ArrayBuffer/TypedArray/SharedArrayBuffer/Atomics 等。
+The language core must cover all syntax and semantics enabled by the baseline `test262.conf`, including strict/sloppy, Annex B, lexical/var environments, closures, direct/indirect eval, classes/private elements, `this`/`super`/`new.target`, destructuring, generators, async/await, iterators, exceptions, Proxy, Symbols, property order, Promises/jobs, WeakRef/FinalizationRegistry, ArrayBuffer/TypedArray/SharedArrayBuffer/Atomics and so on.
 
-门禁是：
+The gates are:
 
-- 官方 `Makefile::test` 中所有无修改 JS 文件都由 Rust `qjs` 通过：`test_closure.js`、`test_language.js`、`test_builtin.js`、`test_loop.js`、`test_bigint.js`、`test_cyclic_import.js`、`test_worker.js`、`test_std.js`、`test_rw_handler.js`；
-- shared-library 配置下的 `test_bjson.js` 和 `examples/test_point.js` 也必须通过，并用于证明 native module/C API 路径，不得简单从测试清单移除；
-- 每个 opcode 都有栈效应、异常边和控制流测试；parser/bytecode/VM 的覆盖报告能回溯到 `quickjs-opcode.h` 的 opcode 清单，未实现 opcode 不允许被当作 unreachable；
-- 对 coercion、property descriptor、prototype/exotic methods、enumeration order、cross-realm、exception completion 和 job ordering 建立独立回归集，因为“程序最终打印相同”不足以证明中间语义。
+- every unmodified JS file in the official `Makefile::test` passes under Rust `qjs`: `test_closure.js`, `test_language.js`, `test_builtin.js`, `test_loop.js`, `test_bigint.js`, `test_cyclic_import.js`, `test_worker.js`, `test_std.js`, `test_rw_handler.js`;
+- `test_bjson.js` and `examples/test_point.js` under the shared-library configuration also pass and serve as evidence for the native module/C API path; they must not simply be removed from the test list;
+- every opcode has stack-effect, exception-edge and control-flow tests; parser/bytecode/VM coverage reports trace back to the opcode list in `quickjs-opcode.h`, and unimplemented opcodes must not be treated as unreachable;
+- independent regression suites exist for coercion, property descriptors, prototype/exotic methods, enumeration order, cross-realm, exception completion and job ordering, because "the program prints the same final output" does not prove the intermediate semantics.
 
-允许 Rust 内部采用不同优化，但不能把 Proxy、eval、with、Annex B 或 WeakRef 等困难能力降级成 stub 或永久 feature flag。`qjsc -fno-*` 的裁剪模式是上游产品能力，不能被误解成默认引擎可缺少这些能力。
+Rust may use different internal optimizations, but hard capabilities such as Proxy, eval, `with`, Annex B or WeakRef must not be downgraded to stubs or permanent feature flags. The `qjsc -fno-*` stripping modes are an upstream product capability and do not mean the default engine may lack these capabilities.
 
-## 7. Test262 门禁
+## 7. Test262 gates
 
-Test262 必须由仓库脚本一键从固定提交准备，应用上游 `tests/test262.patch`，并分别运行现代套件和 ES5.1 套件（`test262o`）。门禁至少等价于上游的 `make test2-check`、`make test2` 和 `make test2o` 路径。
+A repository script prepares Test262 from the pinned commit in one step, applies the upstream `tests/test262.patch`, and runs the modern suite and the ES5.1 suite (`test262o`) separately. The gate is at least equivalent to the upstream `make test2-check`, `make test2` and `make test2o` paths.
 
-结果判定采用逐测试 outcome vector，而不是总通过率：
+Results are judged by a per-test outcome vector, not an overall pass rate:
 
-- Rust 不能比官方 oracle 多任何 fail、skip、timeout、crash 或 harness error；
-- 对 baseline 的已知失败，Rust 若通过可以保留，但必须作为“修复的上游差异”进入 deviation ledger，确保不是 harness 没有真正执行；
-- 对 oracle 和 Rust 都通过的测试，strict/noStrict、module、async 等运行变体必须一致；
-- `test262.conf` 的 feature skip 是基线范围说明，不能自行新增 skip、按目录排除、忽略 stderr 或把 crash 记作预期失败；
-- CI 保存配置文件哈希、Test262 提交、patch 哈希、逐用例结果和汇总。只展示“99.x%”不能作为证据。
+- Rust must not have any fail, skip, timeout, crash or harness error beyond the official oracle;
+- Rust may pass a known baseline failure, but each such case is recorded in the deviation ledger as a "fixed upstream difference", to confirm the harness actually executed it;
+- for tests that pass under both the oracle and Rust, the strict/noStrict, module, async and other run variants must match;
+- feature skips in `test262.conf` describe the baseline scope; adding skips, excluding by directory, ignoring stderr or counting crashes as expected failures is not allowed;
+- CI stores the configuration file hashes, Test262 commit, patch hash, per-case results and summary. Showing only "99.x%" is not evidence.
 
-Test262 证明规范覆盖，但不单独证明 QuickJS parity；CLI、C API、BJSON/bytecode、`std`/`os`、Worker 和 QuickJS 特有诊断仍由后续门禁证明。
+Test262 demonstrates specification coverage but does not by itself demonstrate QuickJS parity; CLI, C API, BJSON/bytecode, `std`/`os`, Worker and QuickJS-specific diagnostics are covered by the gates that follow.
 
-## 8. 差分门禁
+## 8. Differential gates
 
-差分 runner 必须把完全相同的输入分别交给官方 `qjs` 和 Rust `qjs`，比较：
+The differential runner passes identical input to the official `qjs` and to Rust `qjs`, and compares:
 
-- parse/early-error 的接受或拒绝、错误种类和发生阶段；
-- 正常值、property descriptors、own-key 顺序、原型和可观察 side-effect trace；
-- stdout、stderr、exit status、uncaught exception 类型/消息/stack，以及 Promise rejection；
-- module link/evaluate 顺序、dynamic import/TLA、job 和 timer/message 顺序；
-- compile/serialize/read/evaluate 的跨引擎结果。
+- parse/early-error acceptance or rejection, error kind and phase;
+- normal values, property descriptors, own-key order, prototypes and observable side-effect traces;
+- stdout, stderr, exit status, uncaught exception type/message/stack, and Promise rejections;
+- module link/evaluate order, dynamic import/TLA, and job and timer/message order;
+- cross-engine compile/serialize/read/evaluate results.
 
-路径、地址、wall clock、随机数、线程调度等非确定字段只能通过版本化的最小 normalization 规则处理，不能整段丢弃 stderr 或 stack。测试环境固定 locale、timezone、cwd、环境变量和资源限制；需要时间/随机性的用例使用显式 fixture，无法稳定化的用例单独分类。
+Nondeterministic fields such as paths, addresses, wall clock, random numbers and thread scheduling are handled only by versioned, minimal normalization rules; stderr or stacks must not be discarded wholesale. The test environment pins locale, timezone, cwd, environment variables and resource limits; cases that need time/randomness use explicit fixtures, and cases that cannot be stabilized are classified separately.
 
-语料至少包含：全部上游 tests、Test262 的代表性缩减集、每个公开 API 的 probe、每个 opcode/builtin 的定向用例、历史回归、以及可复现 seed 的 grammar/property/bytecode/object-graph fuzz。fuzzer 发现的差异必须自动缩减并落入回归集。固定跑若干 happy-path 示例不构成差分门禁。
+The corpus includes at least: all upstream tests, a representative reduced Test262 set, a probe for every public API, targeted cases for every opcode/builtin, regression cases, and grammar/property/bytecode/object-graph fuzzing with reproducible seeds. Differences found by fuzzers are reduced automatically and added to the regression set. Running a fixed set of happy-path examples does not constitute a differential gate.
 
-## 9. CLI 与 REPL 门禁
+## 9. CLI and REPL gates
 
-Rust `qjs` 必须兼容 `qjs.c` 的实际参数解析，而不仅是文档里最常用的选项。需覆盖 `-e/--eval`、`-i/--interactive`、`-m/--module`、`--script`、`-I/--include`、`--std`、`--strict`、`-d/--dump`、`-T/--trace`、`-q/--quit`、`--memory-limit`、`--stack-size`、`-s`、`--strip-source`、`--no-unhandled-rejection`、`--` 和脚本参数。
+Rust `qjs` must be compatible with the actual argument parsing in `qjs.c`, not only the options most commonly documented. Coverage includes `-e/--eval`, `-i/--interactive`, `-m/--module`, `--script`, `-I/--include`, `--std`, `--strict`, `-d/--dump`, `-T/--trace`, `-q/--quit`, `--memory-limit`, `--stack-size`, `-s`, `--strip-source`, `--no-unhandled-rejection`, `--` and script arguments.
 
-门禁逐项比较：
+The gate compares item by item:
 
-- option grouping、缺参/未知参数、help/version 文本、stdout/stderr 和 exit code；
-- `.mjs` 与 `JS_DetectModule` 自动判定、显式 script/module、include 顺序、`scriptArgs`；
-- `print`、`console.log`、`performance.now`、`__loadScript`、`std`/`os` 注入；
-- REPL 的 multiline、completion/printing、exception recovery、top-level await 和 EOF/TTY 行为，对照 `repl.js`；
-- memory/stack/interrupt/unhandled-rejection 行为及 `-d/-T` 中稳定可比较的字段。
+- option grouping, missing/unknown arguments, help/version text, stdout/stderr and exit code;
+- `.mjs` and `JS_DetectModule` autodetection, explicit script/module, include order, `scriptArgs`;
+- injection of `print`, `console.log`, `performance.now`, `__loadScript`, `std`/`os`;
+- REPL multiline, completion/printing, exception recovery, top-level await and EOF/TTY behavior, against `repl.js`;
+- memory/stack/interrupt/unhandled-rejection behavior and the stably comparable fields of `-d/-T`.
 
-Rust `qjsc` 必须覆盖 `qjsc.c` 的 `-c`、`-e`、`-o`、`-N`、`-m`、`-D`、`-M`、`-x`、`-p`、`-S`、`-s`、`--keep-source`、`-flto` 和所有 `-fno-*` 模式。生成的 C 不要求文本逐字相同，但必须遵守相同的 symbol/initialization 契约并能链接 Rust runtime；默认生成的可执行文件及 module/native-module/worker 收集行为必须与基线等价。
+Rust `qjsc` must cover `-c`, `-e`, `-o`, `-N`, `-m`, `-D`, `-M`, `-x`, `-p`, `-S`, `-s`, `--keep-source`, `-flto` and all `-fno-*` modes of `qjsc.c`. Generated C need not be textually identical, but it must follow the same symbol/initialization contract and link against the Rust runtime; the default generated executable and module/native-module/worker collection behavior must be equivalent to the baseline.
 
-## 10. 嵌入 API 与 C ABI 门禁
+## 10. Embedding API and C ABI gates
 
-Rust-first API 可以更符合 Rust 习惯，但它不能代替 QuickJS 的嵌入表面。必须由 Rust `staticlib`/`cdylib` 提供对 `quickjs.h` 和 `quickjs-libc.h` 的 source/ABI-compatible facade，并建立从头文件自动抽取的公开符号清单。每个函数、类型、常量、flag、callback 和 inline/macro 行为都必须标为 implemented、platform-specific 或 baseline-unsupported；“没有被当前 demo 调用”不是跳过理由。
+The Rust-first API may be more idiomatic Rust, but it does not replace the QuickJS embedding surface. Rust `staticlib`/`cdylib` outputs provide a source/ABI-compatible facade for `quickjs.h` and `quickjs-libc.h`, with a public symbol inventory extracted automatically from the headers. Every function, type, constant, flag, callback and inline/macro behavior is marked implemented, platform-specific or baseline-unsupported; "not called by the current demo" is not a reason to skip.
 
-门禁包括：
+The gates include:
 
-- `JSRuntime`/`JSContext` 生命周期和多 context 同 runtime 的对象共享边界；
-- `JSValue`、tag、常量与调用约定，`JS_DupValue`/`JS_FreeValue` 的 ownership，以及 exception sentinel/`JS_GetException`；
-- atoms/strings/UTF-8-CESU-8 转换、numeric/BigInt coercion、objects/arrays/property descriptors/prototypes/enumeration；
-- `JS_Call*`、`JS_Eval*`、JSON、ArrayBuffer/TypedArray/SAB、Promise/job、interrupt、memory allocator/limit、class/exotic/finalizer/gc_mark；
-- module loader/C module、`JS_WriteObject*`/`JS_ReadObject`、print/memory usage，以及 `quickjs-libc.h` 的 helpers/event loop；
-- upstream `examples/fib.c`、`examples/point.c`、`tests/bjson.c` 及额外 ownership/error fixture 在不改业务逻辑的情况下，针对 Rust header/library 编译、链接并通过；
-- C ABI sanitizer/valgrind 类测试和 Rust Miri/并发模型能覆盖跨边界 use-after-free、double-free、panic unwind、callback re-entry 与 allocator failure。
+- `JSRuntime`/`JSContext` lifecycle and the object-sharing boundary between multiple contexts in one runtime;
+- `JSValue`, tags, constants and calling convention, `JS_DupValue`/`JS_FreeValue` ownership, and the exception sentinel/`JS_GetException`;
+- atoms/strings/UTF-8-CESU-8 conversion, numeric/BigInt coercion, objects/arrays/property descriptors/prototypes/enumeration;
+- `JS_Call*`, `JS_Eval*`, JSON, ArrayBuffer/TypedArray/SAB, Promise/job, interrupt, memory allocator/limit, class/exotic/finalizer/gc_mark;
+- module loader/C modules, `JS_WriteObject*`/`JS_ReadObject`, print/memory usage, and the `quickjs-libc.h` helpers/event loop;
+- upstream `examples/fib.c`, `examples/point.c`, `tests/bjson.c` and additional ownership/error fixtures compile, link and pass against the Rust header/library without changes to their logic;
+- C ABI sanitizer/valgrind-style tests and Rust Miri/concurrency models cover cross-boundary use-after-free, double-free, panic unwind, callback re-entry and allocator failure.
 
-若某个平台的 C ABI 尚未验证，只能声明该平台的 Rust API 可用，不能声明完整 QuickJS API parity。
+If a platform's C ABI is not yet verified, only the Rust API may be claimed as usable on that platform, not full QuickJS API parity.
 
-## 11. 内部执行表示
+## 11. Internal execution representation
 
-编译器把源码降低为栈指令，验证并发布为引擎内部的 `ExecCode` 字流。运行时按已发布的边界、操作数和控制流目标执行；对外使用源码编译与 `engine::api`。具体责任见[架构说明](architecture.md)。
+The compiler lowers source to stack instructions, then verifies and publishes them as the engine-internal `ExecCode` word stream. The runtime executes within the published bounds, operands and control-flow targets; the external interface is source compilation and `engine::api`. Responsibilities are described in the [architecture notes](architecture.md).
 
-## 12. `std`、`os` 与事件循环门禁
+## 12. `std`, `os` and event-loop gates
 
-`quickjs-libc.c` 是基线的一部分。`std` 模块的环境变量、扩展 JSON、文件/stdio、printf、popen、load/eval、error constants 等，以及 `os` 模块的 fd I/O、TTY、filesystem、signals、process、pipe、time/timer、async handlers 和平台常量，都必须按 `js_std_funcs`、`js_std_file_proto_funcs`、`js_os_funcs` 的导出清单逐项盘点。
+`quickjs-libc.c` is part of the baseline. The `std` module's environment variables, extended JSON, files/stdio, printf, popen, load/eval, error constants and so on, and the `os` module's fd I/O, TTY, filesystem, signals, process, pipe, time/timer, async handlers and platform constants, are all inventoried item by item from the export lists in `js_std_funcs`, `js_std_file_proto_funcs` and `js_os_funcs`.
 
-门禁包括：
+The gates include:
 
-- 导出名、arity、property flags、常量、错误码和 platform conditional 与 oracle 一致；
-- `js_module_loader` 的相对路径、system module、JSON import attribute、native `.so` module 行为一致；
-- `js_std_loop` 同时驱动 Promise jobs、fd handlers、timers、worker ports，并保持 queue ordering 和退出条件；
-- `js_std_await`、unhandled rejection tracking、异常打印和 async 错误出口一致；
-- 上游 `tests/test_std.js`、`test_rw_handler.js`、进程/信号/文件/定时器的隔离 integration tests 在每个支持平台通过，无权限的 CI 能力必须有明确的平台 runner，而不是 skip 后仍宣布 parity。
+- export names, arity, property flags, constants, error codes and platform conditionals match the oracle;
+- `js_module_loader` behavior for relative paths, system modules, the JSON import attribute and native `.so` modules matches;
+- `js_std_loop` drives Promise jobs, fd handlers, timers and worker ports together, preserving queue ordering and exit conditions;
+- `js_std_await`, unhandled rejection tracking, exception printing and async error exits match;
+- upstream `tests/test_std.js`, `test_rw_handler.js` and isolated process/signal/file/timer integration tests pass on every supported platform; CI capabilities that need permissions have an explicit platform runner rather than being skipped while parity is still claimed.
 
-只实现 `print` 和文件读取，或把 `std`/`os` 永久定义为“宿主自行提供”，不符合 QuickJS CLI feature parity。
+Implementing only `print` and file reading, or permanently defining `std`/`os` as "provided by the host", does not meet QuickJS CLI feature parity.
 
-## 13. GC、WeakRef 与资源门禁
+## 13. GC, WeakRef and resource gates
 
-本节的生命周期对照受第 1 节的 ECMAScript 优先规则约束。WeakRef 构造及成功的
-解引用必须实现 `AddToKeptObjects` 的效果；宿主在同步执行序列完成后的适当边界
-执行 `ClearKeptObjects`。嵌套调用返回、形参覆盖或显式 GC 都不能提前解除该保证，
-FinalizationRegistry 清理回调不能打断同步 ECMAScript 执行。
+Lifecycle comparisons in this section are subject to the ECMAScript-first rule in §1. WeakRef construction and successful dereference must implement the effect of `AddToKeptObjects`; the host performs `ClearKeptObjects` at an appropriate boundary after a synchronous execution sequence completes. Nested call returns, parameter overwrites or explicit GC must not release this guarantee early, and FinalizationRegistry cleanup callbacks must not interrupt synchronous ECMAScript execution.
 
-调用帧应通过转移现有持有权或借用已被可靠保活的值减少复制。对象实参不因其类型
-而一律增加保留至函数退出的副本；独立的 arguments 值、映射参数绑定、直接 eval、
-闭包、rest 和暂停状态仍须保留各自实际需要的值。测试不得以“零引用后立即可从
-WeakRef 观察消失”或“所有原始对象实参始终活到退出”作为通用语言要求。
+Call frames reduce copying by transferring existing ownership or borrowing values that are already reliably kept alive. Object arguments do not get an extra copy held until function exit merely because of their type; separate `arguments` values, mapped parameter bindings, direct eval, closures, rest parameters and suspended state still retain the values each actually needs. Tests must not treat "disappearance is observable through WeakRef immediately after the last reference drops" or "all original object arguments always live until exit" as general language requirements.
 
-为了保持 C API ownership 和可观察的 finalization，默认生命周期模型应以 QuickJS 的引用计数加 cycle removal 为设计基准，而不是依赖 Rust 所有权自动“碰巧”释放。Rust 可以改变内部容器，但必须保留：
+To preserve C API ownership and observable finalization, the default lifecycle model takes QuickJS reference counting plus cycle removal as its design reference, rather than relying on Rust ownership to free things "by coincidence". Rust may change internal containers, but must preserve:
 
-- `Dup/Free` 的确定性引用计数效果，零引用对象释放和递归释放队列；
-- `gc_decref -> gc_scan -> gc_free_cycles` 所表达的 cycle 判定与 `JS_RunGC` 行为；
-- class finalizer、`gc_mark`、opaque resource、weak refs/finalization jobs 和 SAB backing store 的关系；
-- finalizer 中不能执行 JS 等上游约束、context/runtime teardown 次序，以及 allocator failure/limit/threshold；
-- 共享 shape、closures/var refs、async frames、modules、Promises 和 worker message 中的 cycle 不泄漏也不提前释放。
+- the deterministic reference-counting effect of `Dup/Free`, freeing of zero-reference objects and the recursive free queue;
+- the cycle detection expressed by `gc_decref -> gc_scan -> gc_free_cycles` and the behavior of `JS_RunGC`;
+- the relationships among class finalizers, `gc_mark`, opaque resources, weak refs/finalization jobs and SAB backing stores;
+- upstream constraints such as no JS execution inside finalizers, context/runtime teardown order, and allocator failure/limit/threshold;
+- cycles through shared shapes, closures/var refs, async frames, modules, Promises and worker messages neither leak nor are freed early.
 
-门禁使用确定性 drop probes、带 finalizer 的 C/Rust classes、随机循环对象图、WeakRef/FinalizationRegistry、反复创建销毁 runtime/context、OOM fault injection 和长时间 leak test。测试必须同时检查“最终释放”和“释放时机/次数”；只看进程退出后 OS 回收内存不能证明 GC parity。
+The gates use deterministic drop probes, C/Rust classes with finalizers, random cyclic object graphs, WeakRef/FinalizationRegistry, repeated runtime/context creation and destruction, OOM fault injection and long-running leak tests. Tests check both "eventually freed" and "free timing/count"; relying on the OS to reclaim memory after process exit does not demonstrate GC parity.
 
-## 14. Unicode 门禁
+## 14. Unicode gates
 
-Unicode 行为固定在 17.0.0。门禁覆盖：
+Unicode behavior is pinned at 17.0.0. The gates cover:
 
-- UTF-8 输入、UTF-16 code units、lone surrogates、C API 的 UTF-8/CESU-8 转换和字符串索引；
-- identifier start/continue、case conversion/folding、locale-independent casing；
-- NFC/NFD/NFKC/NFKD normalization；
-- script/script extensions、general category、binary properties、Unicode sequence properties；
-- RegExp `u`/`v` 模式、property escapes、word boundary/canonicalization 与 astral code points。
+- UTF-8 input, UTF-16 code units, lone surrogates, C API UTF-8/CESU-8 conversion and string indexing;
+- identifier start/continue, case conversion/folding, locale-independent casing;
+- NFC/NFD/NFKC/NFKD normalization;
+- script/script extensions, general category, binary properties, Unicode sequence properties;
+- RegExp `u`/`v` modes, property escapes, word boundary/canonicalization and astral code points.
 
-除 Test262 外，表驱动测试应遍历 Unicode 17 数据的所有 code point/range，并与 `libunicode.c` oracle 比较；生成表必须记录数据来源、版本和校验和。使用宿主 OS/ICU 的“最新 Unicode”而不锁版本，即使大多数测试通过，也不是 parity。
+Beyond Test262, table-driven tests iterate over every code point/range of the Unicode 17 data and compare against the `libunicode.c` oracle; generated tables record their data source, version and checksum. Using the host OS/ICU "latest Unicode" without pinning the version is not parity, even if most tests pass.
 
-## 15. RegExp 门禁
+## 15. RegExp gates
 
-RegExp 必须实现 `libregexp.c` 对应的完整 parser/compiler/executor，而不是转发给 Rust `regex` crate，因为后者通常不具备 ECMAScript backreference、lookaround、lastIndex 和回溯语义。
+RegExp must implement the full parser/compiler/executor corresponding to `libregexp.c`, rather than forwarding to the Rust `regex` crate, which generally lacks ECMAScript backreference, lookaround, `lastIndex` and backtracking semantics.
 
-门禁覆盖基线接受的全部 flags/grammar、named/numbered captures、backreferences、lookahead/lookbehind、greedy/lazy quantifiers、sticky/global `lastIndex`、indices、Unicode properties/sets、replace/split/search/match/matchAll 和空匹配推进。生成式测试同时比较 compile error、capture spans、结果数组的 properties 和状态变化。
+The gates cover all flags/grammar accepted by the baseline, named/numbered captures, backreferences, lookahead/lookbehind, greedy/lazy quantifiers, sticky/global `lastIndex`, indices, Unicode properties/sets, replace/split/search/match/matchAll and empty-match advancement. Generative tests compare compile errors, capture spans, result array properties and state changes together.
 
-回溯使用显式栈并受 runtime stack/memory/interrupt 控制，参照 `lre_exec` 和 `libregexp-opcode.h`；复杂或灾难性输入不能造成 Rust stack overflow、panic 或无法中断。只通过简单字面量、或依赖 Test262 没覆盖到某个回溯顺序，不能算 RegExp parity。
+Backtracking uses an explicit stack bounded by runtime stack/memory/interrupt controls, following `lre_exec` and `libregexp-opcode.h`; complex or catastrophic input must not cause a Rust stack overflow, panic or uninterruptible execution. Passing only simple literals, or relying on Test262 not covering some backtracking order, does not count as RegExp parity.
 
-## 16. Number 与 BigInt 门禁
+## 16. Number and BigInt gates
 
-Number 门禁对照 `dtoa.c`/`js_atof`，覆盖二进制 IEEE-754 边界、十进制最短表示、radix、舍入、subnormal、`-0`、NaN/Infinity、numeric literal 和 String/JSON 转换。不得把 Rust 标准格式化输出未经证明地视为等价。
+The Number gate compares against `dtoa.c`/`js_atof` and covers binary IEEE-754 boundaries, shortest decimal representation, radix, rounding, subnormals, `-0`, NaN/Infinity, numeric literals and String/JSON conversion. Rust standard formatting output must not be assumed equivalent without proof.
 
-BigInt 门禁对照 `js_bigint_*` 的任意精度二补数语义和 short-BigInt normalization，覆盖：
+The BigInt gate compares against the arbitrary-precision two's-complement semantics of `js_bigint_*` and short-BigInt normalization, covering:
 
-- 各 radix 解析/格式化、正负边界和超大输入/OOM；
-- `+ - * / % ** << >> & | ^ ~`，除零、负指数和 shift 边界；
-- 与 Number/String/Boolean 的 coercion、abstract/strict equality 和 relational comparison；
-- `BigInt.asIntN/asUintN`、BigInt typed arrays、DataView、Atomics；
-- C API `JS_NewBigInt64`/`JS_NewBigUint64`/`JS_ToBigInt64` 及 BJSON round-trip。
+- parsing/formatting in every radix, positive/negative boundaries and very large input/OOM;
+- `+ - * / % ** << >> & | ^ ~`, division by zero, negative exponents and shift boundaries;
+- coercion with Number/String/Boolean, abstract/strict equality and relational comparison;
+- `BigInt.asIntN/asUintN`, BigInt typed arrays, DataView, Atomics;
+- the C API `JS_NewBigInt64`/`JS_NewBigUint64`/`JS_ToBigInt64` and BJSON round-trips.
 
-除上游 `tests/` 与 Test262 外，使用独立任意精度模型生成可复现随机向量，并对 oracle、Rust 和模型三方比较。固定 64/128 位整数实现不可能满足此门禁。
+Beyond upstream `tests/` and Test262, an independent arbitrary-precision model generates reproducible random vectors, and the oracle, Rust and the model are compared three ways. A fixed 64/128-bit integer implementation cannot satisfy this gate.
 
-## 17. Module 门禁
+## 17. Module gates
 
-module parser/linker/evaluator 必须覆盖 static import/export、live bindings、namespace exotic object、re-export/star ambiguity、cycles、dynamic `import()`、top-level await、`import.meta`、JSON modules/import attributes 和 host normalize/load/check-attributes callbacks。
+The module parser/linker/evaluator must cover static import/export, live bindings, the namespace exotic object, re-export/star ambiguity, cycles, dynamic `import()`, top-level await, `import.meta`, JSON modules/import attributes and host normalize/load/check-attributes callbacks.
 
-门禁需要比较 parse、resolve、instantiate、evaluate 四个阶段的错误类型和顺序，并覆盖：
+The gates compare error types and ordering across the parse, resolve, instantiate and evaluate phases, and cover:
 
-- 同一 module identity/cache、relative/system/native module resolution；
-- sync/async module graph、diamond/cycle、TLA fulfillment/rejection 与 job ordering；
-- namespace own keys/descriptors/immutability 和 live binding 更新；
-- `JS_EVAL_FLAG_COMPILE_ONLY`、`JS_ResolveModule`、`JS_EvalFunction`、`JS_GetImportMeta/ModuleName/ModuleNamespace`；
-- CLI autodetection、`qjsc -D/-M`、bytecode module、worker 相对路径。
+- module identity/cache, relative/system/native module resolution;
+- sync/async module graphs, diamonds/cycles, TLA fulfillment/rejection and job ordering;
+- namespace own keys/descriptors/immutability and live binding updates;
+- `JS_EVAL_FLAG_COMPILE_ONLY`, `JS_ResolveModule`, `JS_EvalFunction`, `JS_GetImportMeta/ModuleName/ModuleNamespace`;
+- CLI autodetection, `qjsc -D/-M`, bytecode modules, worker relative paths.
 
-把每个文件当独立 script 拼接执行，或仅支持无环 static import，不是 module parity。
+Concatenating each file as an independent script, or supporting only acyclic static imports, is not module parity.
 
-## 18. Worker 门禁
+## 18. Worker gates
 
-`os.Worker` 必须保持上游模型：worker 使用独立线程、独立 `JSRuntime`/`JSContext` 和 module entry；父子通过 FIFO pipe/port 通信。`postMessage` 按 `JS_WRITE_OBJ_SAB | JS_WRITE_OBJ_REFERENCE` structured-clone 普通对象图，同时保持 SharedArrayBuffer backing store 共享，而不是共享普通 JS object。
+`os.Worker` keeps the upstream model: a worker uses its own thread, its own `JSRuntime`/`JSContext` and a module entry; parent and child communicate through a FIFO pipe/port. `postMessage` structured-clones ordinary object graphs with `JS_WRITE_OBJ_SAB | JS_WRITE_OBJ_REFERENCE` and shares SharedArrayBuffer backing stores, rather than sharing ordinary JS objects.
 
-门禁覆盖：
+The gates cover:
 
-- `new os.Worker(relative_module)` 的调用方基准路径、module loader 和启动错误；
-- `Worker.parent`、`postMessage`、`onmessage` set/get/null、event `{ data }` shape 和消息顺序；
-- primitives、BigInt、ArrayBuffer/TypedArray、循环/共享引用图、SAB+Atomics 的跨线程行为；
-- worker 异常/unhandled rejection、父子提前退出、队列 drain、资源释放和大量并发消息；
-- 上游明确禁止 worker 内再创建 worker 的行为及错误；
-- 上游 `tests/test_worker.js`/`test_worker_module.js` 不修改通过，并有 stress/GC/teardown/TSAN 类测试证明无丢消息、死锁和 use-after-free。
+- the caller base path, module loader and startup errors for `new os.Worker(relative_module)`;
+- `Worker.parent`, `postMessage`, `onmessage` set/get/null, the event `{ data }` shape and message ordering;
+- cross-thread behavior of primitives, BigInt, ArrayBuffer/TypedArray, cyclic/shared reference graphs, SAB+Atomics;
+- worker exceptions/unhandled rejections, early parent/child exit, queue draining, resource release and high message concurrency;
+- the upstream prohibition on creating a worker inside a worker, and its error;
+- upstream `tests/test_worker.js`/`test_worker_module.js` pass unmodified, and stress/GC/teardown/TSAN-style tests demonstrate no lost messages, deadlocks or use-after-free.
 
-用同线程 task 模拟而改变隔离/阻塞语义，或只支持 JSON message，不是 Worker parity。
+Simulating workers with same-thread tasks that change isolation/blocking semantics, or supporting only JSON messages, is not Worker parity.
 
-## 19. 实现顺序
+## 19. Implementation order
 
-以下顺序用于降低返工，不代表某一阶段完成后已经 parity：
+This order reduces rework; completing a stage does not mean parity is reached:
 
-1. **锁定证据**：引入官方基线 metadata、oracle builder、差分协议、逐测试结果格式和 source-map 清单。
-2. **真实核心骨架**：实现 runtime/context、Value、atoms/strings、object/shape/property、异常，以及 lexer -> bytecode compiler -> stack VM 的最小纵向路径；让 Rust `qjs -e` 走最终管线。
-3. **语言基础闭环**：作用域/closure、call/construct、control flow、function/class、eval、exceptions，逐步覆盖 `test_language`、`test_closure`、`test_loop`，同步补 opcode tests。
-4. **对象模型与 intrinsics**：完成 coercion、descriptor/prototype/exotic、Array、Symbol、Date、JSON、Map/Set、Proxy、TypedArray 等，再扩展到 generators、Promises/jobs、async 和 WeakRef。
-5. **精确子系统**：按上游逻辑实现 dtoa/number、BigInt、Unicode 17 和 RegExp，并各自建立生成式差分门禁。
-6. **modules 与序列化**：实现完整 module graph/TLA/import attributes，再完成 BJSON 对象序列化与 `qjsc` 打包（不含上游 BC5 字节码互读，见 §11）。
-7. **生命周期与嵌入**：闭合 refcount/cycle GC、limits/interrupts、完整 Rust API 和由 Rust 导出的 QuickJS C ABI，跑通 upstream C examples/native modules。
-8. **宿主产品面**：实现 `std`、`os`、event loop、native loader 和 Worker，再补齐 `qjs`/REPL/`qjsc` 的全部选项与输出模式。
-9. **收口而非改名**：跑完整 upstream tests、Test262/ES5.1、差分/fuzz、平台/ABI/压力矩阵，清零或批准所有 deviation 后才发布 parity 声明。
+1. **Lock down evidence**: introduce official baseline metadata, the oracle builder, the differential protocol, the per-test result format and the source-map inventory.
+2. **Real core skeleton**: implement runtime/context, Value, atoms/strings, object/shape/property, exceptions, and the minimal vertical path lexer -> bytecode compiler -> stack VM; route Rust `qjs -e` through the final pipeline.
+3. **Language foundation**: scopes/closures, call/construct, control flow, functions/classes, eval, exceptions, progressively covering `test_language`, `test_closure`, `test_loop`, with opcode tests added alongside.
+4. **Object model and intrinsics**: complete coercion, descriptor/prototype/exotic, Array, Symbol, Date, JSON, Map/Set, Proxy, TypedArray and so on, then extend to generators, Promises/jobs, async and WeakRef.
+5. **Precise subsystems**: implement dtoa/number, BigInt, Unicode 17 and RegExp following upstream logic, each with its own generative differential gate.
+6. **Modules and serialization**: implement the full module graph/TLA/import attributes, then BJSON object serialization and `qjsc` packaging (excluding reading/writing upstream BC5 bytecode, see §11).
+7. **Lifecycle and embedding**: close out refcount/cycle GC, limits/interrupts, the full Rust API and the Rust-exported QuickJS C ABI, and run the upstream C examples/native modules.
+8. **Host product surface**: implement `std`, `os`, the event loop, the native loader and Worker, then complete all `qjs`/REPL/`qjsc` options and output modes.
+9. **Close out, not rename**: run the full upstream tests, Test262/ES5.1, differential/fuzz and the platform/ABI/stress matrix, and publish a parity claim only after every deviation is cleared or approved.
 
-每一阶段只能报告具体 coverage，例如“`test_closure.js` 通过”或“已实现 37/NN 个 opcode”；禁止把“可运行”“MVP”“核心语法完成”“Test262 某通过率”改写成 feature parity。
+Each stage reports only concrete coverage, for example "`test_closure.js` passes" or "37/NN opcodes implemented"; "runnable", "MVP", "core syntax complete" or "Test262 at some pass rate" must not be restated as feature parity.
 
-## 20. 明确不能算完成的情况
+## 20. What does not count as done
 
-出现以下任一情况，都不能宣布 parity：
+Parity cannot be claimed if any of the following holds:
 
-- 只能运行 hello world、算术、JSON 或某个 benchmark；
-- 解析器覆盖大部分语法，但 VM、异常、descriptor、module phase 或 job ordering 是近似实现；
-- Test262 通过率很高，但提交/patch/config 不固定，新增了 skip，或没有逐测试结果；
-- upstream JS tests 通过，却跳过 native module、C API、`std`/`os`、Worker、BJSON、REPL 或 `qjsc`；
-- 只提供 idiomatic Rust API，不提供 `quickjs.h`/`quickjs-libc.h` 兼容面；
-- 把内部执行字流包装成 upstream bytecode parity 声明；内部表示见 §11；
-- RegExp、Unicode、BigInt、GC 或 Worker 由 stub、固定宽度近似、宿主库的漂移版本或外部进程代办；
-- 产品包仍含 QuickJS C 实现，或在运行时需要 oracle；
-- 为了让 CI 变绿修改上游测试含义、只比较 stdout 的一部分、吞掉异常、无限重试或扩大排除集；
-- 已知差异没有最小复现和 deviation 记录；
-- 某个平台、feature flag 或 release profile 没跑门禁，却对其做无条件 parity 宣称；
-- 阶段性架构是一次性 toy interpreter，后续仍计划“换成真正的 QuickJS 模型”。
+- only hello world, arithmetic, JSON or a particular benchmark runs;
+- the parser covers most syntax, but the VM, exceptions, descriptors, module phases or job ordering are approximations;
+- the Test262 pass rate is high, but the commit/patch/config is not pinned, skips were added, or there are no per-test results;
+- upstream JS tests pass, but native modules, the C API, `std`/`os`, Worker, BJSON, REPL or `qjsc` are skipped;
+- only an idiomatic Rust API is provided, without the `quickjs.h`/`quickjs-libc.h` compatible surface;
+- the internal execution word stream is presented as an upstream bytecode parity claim; the internal representation is described in §11;
+- RegExp, Unicode, BigInt, GC or Worker is delegated to a stub, a fixed-width approximation, a drifting version of a host library or an external process;
+- the product package still contains the QuickJS C implementation, or requires the oracle at runtime;
+- upstream test meaning is changed, only part of stdout is compared, exceptions are swallowed, retries are unbounded or the exclusion set is widened to make CI green;
+- a known difference has no minimal reproduction and deviation record;
+- an unconditional parity claim is made for a platform, feature flag or release profile on which the gates were not run;
+- the staged architecture is a throwaway toy interpreter that is still planned to be "replaced with the real QuickJS model" later.
 
-最终判定只看可复现证据是否覆盖本契约全部门禁，不看实现投入、代码行数、计划完成比例或主观相似度。
+The final verdict depends only on whether reproducible evidence covers every gate in this contract, not on implementation effort, lines of code, plan completion percentage or subjective similarity.
