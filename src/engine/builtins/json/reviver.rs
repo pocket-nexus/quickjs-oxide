@@ -15,7 +15,12 @@ use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::NativeArguments;
 
-const MAX_JSON_REVIVER_DEPTH: usize = 128;
+/// Maximum nesting the reviver walk visits. QuickJS recurses through
+/// `internalize_json_property` on its C stack, so its limit moves with the
+/// caller's stack and the reviver kind; this budget matches a top-level call
+/// with a bytecode reviver on the reference build. The walk keeps its nodes
+/// on the heap.
+const MAX_JSON_REVIVER_DEPTH: usize = 3_630;
 
 impl Runtime {
     pub(crate) fn call_json_parse(

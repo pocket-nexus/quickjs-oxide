@@ -154,6 +154,16 @@ Pinned QuickJS prints `accepted`; Rust prints `SyntaxError`.
   `missing formal parameter`, where Rust reports `stack overflow`. The `qjs`
   CLI evaluates on a 32 MiB (release) thread so that release builds reach
   these depths.
+- `JSON.parse`, its reviver walk and JSON modules throw a catchable
+  `stack overflow` past fixed nesting budgets: 10,891 containers around a leaf
+  for parsing (`SyntaxError`) and 3,630 for the reviver (`InternalError`).
+  QuickJS checks its one-MiB C stack instead, so its limits shift with the
+  compiler that builds it, fall as the caller's stack deepens, and differ
+  between reviver kinds and module import paths. The budgets match a top-level
+  call on the reference build; under 500 JavaScript frames, QuickJS stops near
+  6,850 and 2,280. Far beyond the budget, QuickJS reports the overflow one
+  token earlier. Parsing also samples the host stack, so a thread too small
+  for the budget throws earlier rather than overflowing.
 - Dynamic import retries failed acyclic source graphs as pinned QuickJS does.
   Parse-in-progress definitions and request prefixes are published in the same
   callback order as pinned QuickJS, including its one-shot resolution latch.

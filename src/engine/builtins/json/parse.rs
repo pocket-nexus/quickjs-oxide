@@ -10,6 +10,7 @@ use std::rc::Rc;
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::compiler::stack_guard::ParserStackGuard;
 use crate::engine::heap::ContextId;
 use crate::source::{LineColumn, QuickJsSourceLocator};
 
@@ -18,7 +19,13 @@ use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsStringError, JsValue, Value};
 use crate::engine::vm::frames::ExplicitBacktraceLocation;
 
-const MAX_JSON_PARSE_DEPTH: usize = 256;
+/// Maximum container nesting for `JSON.parse`, `JSON.rawJSON` and JSON
+/// modules. QuickJS has no nesting constant: it checks its one-MiB C stack
+/// while `json_parse_value` recurses once per open container, so its limit
+/// moves with the caller's stack. This budget matches a top-level call on the
+/// reference build. The recursion also samples the native stack, so a thread
+/// too small for the budget throws instead of overflowing.
+const MAX_JSON_PARSE_DEPTH: usize = 10_891;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum JsonParseMode {
@@ -141,6 +148,7 @@ struct JsonParser<'a> {
     cursor: usize,
     retain_record: bool,
     mode: JsonParseMode,
+    stack_guard: ParserStackGuard,
 }
 
 #[derive(Clone, Copy)]
@@ -165,6 +173,7 @@ impl Runtime {
             raw_source: None,
             cursor: 0,
             retain_record,
+            stack_guard: ParserStackGuard::new(),
             mode: JsonParseMode::Strict,
         };
         match parser.parse_document() {
@@ -282,6 +291,7 @@ impl Runtime {
                 raw_source: None,
                 cursor: 0,
                 retain_record: false,
+                stack_guard: ParserStackGuard::new(),
                 mode,
             },
             JsonModuleSource::Bytes(source) => {
@@ -374,6 +384,7 @@ impl<'a> JsonParser<'a> {
             raw_source: Some(source),
             cursor: 0,
             retain_record: false,
+            stack_guard: ParserStackGuard::new(),
             mode,
         })
     }
@@ -400,16 +411,23 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_value(&mut self, depth: usize) -> JsonParseResult<(JsValue, Option<JsonParseRecord>)> {
+        self.skip_whitespace()?;
         if depth > MAX_JSON_PARSE_DEPTH {
             return self.syntax("stack overflow");
         }
-        self.skip_whitespace()?;
         if self.current_unit_is_invalid() {
             return self.syntax("unexpected character");
         }
         let Some(unit) = self.peek() else {
             return self.syntax("Unexpected end of JSON input");
         };
+        // Only containers recurse. A thread too small for the logical budget
+        // stops here before its native stack runs out.
+        if (unit == u16::from(b'{') || unit == u16::from(b'['))
+            && self.stack_guard.check_physical().is_err()
+        {
+            return self.syntax("stack overflow");
+        }
         match unit {
             unit if unit == u16::from(b'{') => self.parse_object(depth),
             unit if unit == u16::from(b'[') => self.parse_array(depth),

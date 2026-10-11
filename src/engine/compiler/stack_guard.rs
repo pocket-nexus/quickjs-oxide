@@ -239,16 +239,16 @@ fn stack_floor(entry: usize) -> usize {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct ParserStackOverflow;
+pub(crate) struct ParserStackOverflow;
 
-pub(super) struct ParserStackGuard {
+pub(crate) struct ParserStackGuard {
     logical: u64,
     floor: usize,
     reserve: usize,
 }
 
 impl ParserStackGuard {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let entry = current_stack_address();
         let floor = DECLARED_STACK_FLOOR
             .with(Cell::get)
@@ -265,7 +265,7 @@ impl ParserStackGuard {
     /// Check at every committed token edge, as QuickJS's next_token() does.
     /// This is independent of logical weights, so it also covers recursive
     /// productions without one.
-    pub(super) fn check_physical(&self) -> Result<(), ParserStackOverflow> {
+    pub(crate) fn check_physical(&self) -> Result<(), ParserStackOverflow> {
         let current = current_stack_address();
         if current <= self.floor.saturating_add(self.reserve) {
             Err(ParserStackOverflow)
