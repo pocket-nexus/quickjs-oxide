@@ -23,8 +23,8 @@ use super::super::replacement::{
     NamedSubstitutionCapture, SubstitutionAction, named_substitution_capture,
 };
 use crate::engine::heap::{
-    ContextId, Heap, ObjectData, ObjectId, ObjectPayload, PrimitiveObjectData, PropertySlot,
-    RawValue,
+    AutoInitProperty, ContextId, Heap, ObjectData, ObjectId, ObjectPayload, PrimitiveObjectData,
+    PropertySlot, RawValue,
 };
 use crate::engine::object::operations::InternalSetResult;
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
@@ -346,6 +346,27 @@ pub(super) fn raw_regexp_data_property_matches(
         return Ok(false);
     };
     raw_native_function_matches(heap, *function, expected)
+}
+
+/// Like [`raw_regexp_data_property_matches`], and also accepts a lazy
+/// intrinsic slot for the same builtin. Materializing a lazy builtin is not
+/// observable, so predicates for paths that only skip unobservable protocol
+/// steps use this. Pinned QuickJS's own standard predicate rejects lazy slots,
+/// so `@@replace`, whose direct matcher differs observably, keeps the strict
+/// form.
+pub(super) fn raw_regexp_builtin_data_matches(
+    heap: &Heap,
+    object: ObjectId,
+    atom: Atom,
+    expected: NativeFunctionId,
+) -> Result<bool, RuntimeError> {
+    match raw_regexp_property_slot(heap, object, atom)? {
+        Some(PropertySlot::AutoInit(property)) => Ok(matches!(
+            **property,
+            AutoInitProperty::NativeBuiltin { target, .. } if target == expected
+        )),
+        _ => raw_regexp_data_property_matches(heap, object, atom, expected),
+    }
 }
 
 pub(super) fn raw_regexp_getter_matches(

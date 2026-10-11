@@ -70,8 +70,9 @@ impl Runtime {
     /// species (`constructor` missing or the realm `%RegExp%` whose
     /// `@@species` getter is the builtin), no `@@match` accessor for the
     /// splitter construction's IsRegExp to call, and the builtin `exec` on
-    /// `%RegExp.prototype%`, which the fresh splitter inherits. `None` keeps
-    /// the general steps.
+    /// `%RegExp.prototype%`, which the fresh splitter inherits; a lazy `exec`
+    /// that has not been read yet is that builtin. `None` keeps the general
+    /// steps.
     fn standard_regexp_split(
         &self,
         realm: ContextId,
@@ -137,7 +138,7 @@ impl Runtime {
         ) {
             return Ok(None);
         }
-        if !super::replace::raw_regexp_data_property_matches(
+        if !super::replace::raw_regexp_builtin_data_matches(
             &state.heap,
             prototype,
             pinned(PinnedAtom::Exec),

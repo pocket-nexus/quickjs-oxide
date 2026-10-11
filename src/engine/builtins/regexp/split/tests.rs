@@ -389,6 +389,22 @@ fn regexp_split_resident_results_and_late_set_errors_keep_the_defining_realm() {
     assert_eq!(caller.eval("40+2").unwrap(), Value::Int(42));
 }
 
+#[test]
+fn regexp_split_on_a_fresh_realm_observes_a_replaced_exec() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().expect("create context");
+    assert_eq!(
+        context
+            .eval(
+                r#"var calls = 0;
+                RegExp.prototype.exec = function () { calls++; return null; };
+                'a-b-c'.split(/-/).join('|') + ':' + (calls > 0)"#
+            )
+            .unwrap(),
+        Value::String(JsString::from_static("a-b-c:true"))
+    );
+}
+
 #[cfg(feature = "profiling")]
 #[test]
 fn regexp_split_standard_receiver_completes_without_a_resident_box() {
