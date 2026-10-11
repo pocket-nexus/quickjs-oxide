@@ -117,10 +117,10 @@ impl RuntimeState {
         let mut ordered = Vec::with_capacity(pairs.len());
         let shape = self.heap.shape(self.heap.object(object)?.shape)?;
         for index in shape.ordered_indices() {
-            if let Some(&replacement) = incoming.get(&shape.entries()[index].atom) {
-                if let Some(pair) = pairs[replacement].take() {
-                    ordered.push(pair);
-                }
+            if let Some(&replacement) = incoming.get(&shape.entries()[index].atom)
+                && let Some(pair) = pairs[replacement].take()
+            {
+                ordered.push(pair);
             }
         }
         ordered.extend(pairs.into_iter().flatten());

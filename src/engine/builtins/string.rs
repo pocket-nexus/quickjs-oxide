@@ -665,16 +665,16 @@ impl Runtime {
             }
             StringIndexOfKind::LastIndexOf => {
                 let mut position = source_len - needle_len;
-                if let Some(number) = position_number {
-                    if !number.is_nan() {
-                        if number <= 0.0 {
-                            position = 0;
-                        } else if number < f64::from(position) {
-                            // This branch proves 0 < number < position and
-                            // String lengths are below 2^30, so the cast is
-                            // exactly QuickJS's truncating C assignment.
-                            position = number as i32;
-                        }
+                if let Some(number) = position_number
+                    && !number.is_nan()
+                {
+                    if number <= 0.0 {
+                        position = 0;
+                    } else if number < f64::from(position) {
+                        // This branch proves 0 < number < position and
+                        // String lengths are below 2^30, so the cast is
+                        // exactly QuickJS's truncating C assignment.
+                        position = number as i32;
                     }
                 }
                 scan_string_region(&source, &needle, position, 0, -1)
@@ -855,12 +855,11 @@ impl Runtime {
         let source_len = source.len();
         let separator_len = separator_string.len();
         if source_len == 0 {
-            if separator_len != 0 {
-                if let Some(value) =
+            if separator_len != 0
+                && let Some(value) =
                     self.define_string_split_element(realm, &result, &mut length, source)?
-                {
-                    return Ok(Completion::Throw(value));
-                }
+            {
+                return Ok(Completion::Throw(value));
             }
             return Ok(Completion::Return(
                 self.into_jsvalue(Value::Object(result))?,

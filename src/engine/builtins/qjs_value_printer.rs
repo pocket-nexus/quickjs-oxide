@@ -749,18 +749,17 @@ impl QjsValuePrinter<'_, '_> {
             if !entry.flags.enumerable {
                 continue;
             }
-            if let Some(fast_len) = arguments_fast_len {
-                if state
+            if let Some(fast_len) = arguments_fast_len
+                && state
                     .atoms
                     .array_index(state.atoms.brand(entry.atom)?)?
                     .is_some_and(|index| index < fast_len)
-                {
-                    // QuickJS keeps the fast Arguments prefix in shape slots,
-                    // but JS_PrintValue intentionally visits only its ordinary
-                    // slow properties. Once fast_len becomes None these same
-                    // entries become printer-visible.
-                    continue;
-                }
+            {
+                // QuickJS keeps the fast Arguments prefix in shape slots,
+                // but JS_PrintValue intentionally visits only its ordinary
+                // slow properties. Once fast_len becomes None these same
+                // entries become printer-visible.
+                continue;
             }
             property_count += 1;
             if properties.len() >= MAX_ITEM_COUNT {

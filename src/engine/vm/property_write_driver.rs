@@ -87,12 +87,12 @@ pub(super) fn write_progress(
         };
         (slots.pop()?, value, discarded_key)
     };
-    if let Some(discarded_key) = discarded_key {
-        if let Err(error) = runtime.release_jsvalue(discarded_key) {
-            let _ = runtime.release_jsvalue(value);
-            let _ = runtime.release_jsvalue(base);
-            return Err(runtime_error_to_vm_error(error));
-        }
+    if let Some(discarded_key) = discarded_key
+        && let Err(error) = runtime.release_jsvalue(discarded_key)
+    {
+        let _ = runtime.release_jsvalue(value);
+        let _ = runtime.release_jsvalue(base);
+        return Err(runtime_error_to_vm_error(error));
     }
     dispatch(runtime, execution, frame, base, key, value, depth)
 }

@@ -146,26 +146,25 @@ impl Heap {
                 ));
             }
         }
-        if let RawModuleTransition::FinishNamespace(namespace) = &transition {
-            if self.object(*namespace)?.kind != ObjectKind::ModuleNamespace {
-                return Err(HeapError::Invariant(
-                    "loaded-module namespace transition has the wrong object class",
-                ));
-            }
+        if let RawModuleTransition::FinishNamespace(namespace) = &transition
+            && self.object(*namespace)?.kind != ObjectKind::ModuleNamespace
+        {
+            return Err(HeapError::Invariant(
+                "loaded-module namespace transition has the wrong object class",
+            ));
         }
-        if let RawModuleTransition::FinishEvaluation { cycle_root } = &transition {
-            if self
+        if let RawModuleTransition::FinishEvaluation { cycle_root } = &transition
+            && self
                 .context(module.cache)?
                 .loaded_modules
                 .records
                 .get(cycle_root.0)
                 .and_then(Option::as_ref)
                 .is_none()
-            {
-                return Err(HeapError::Invariant(
-                    "loaded-module evaluation transition has a missing cycle root",
-                ));
-            }
+        {
+            return Err(HeapError::Invariant(
+                "loaded-module evaluation transition has a missing cycle root",
+            ));
         }
 
         if matches!(
@@ -586,19 +585,18 @@ impl Heap {
                 }
             }
         }
-        if let Some(cycle_root) = record.evaluation_cycle_root {
-            if self
+        if let Some(cycle_root) = record.evaluation_cycle_root
+            && self
                 .context(cache)?
                 .loaded_modules
                 .records
                 .get(cycle_root.0)
                 .and_then(Option::as_ref)
                 .is_none()
-            {
-                return Err(HeapError::Invariant(
-                    "loaded-module evaluation cycle root is missing",
-                ));
-            }
+        {
+            return Err(HeapError::Invariant(
+                "loaded-module evaluation cycle root is missing",
+            ));
         }
         match (
             record.evaluation_promise,

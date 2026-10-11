@@ -169,10 +169,10 @@ impl Drop for FrameEntryGuard<'_> {
             return;
         }
         let _unwind = self.runtime.unwind_guard();
-        if let Some(entry) = self.entry.take() {
-            if entry.release(self.runtime).is_err() {
-                self.runtime.0.poisoned.set(true);
-            }
+        if let Some(entry) = self.entry.take()
+            && entry.release(self.runtime).is_err()
+        {
+            self.runtime.0.poisoned.set(true);
         }
     }
 }
@@ -203,14 +203,14 @@ impl<'a> RetiredFrame<'a> {
     }
     pub(super) fn clear_window(&mut self) -> Result<(), Error> {
         let frame = self.frame.as_mut().expect("retired frame owner");
-        if let Some(window) = frame.window.take_optional() {
-            if let Err(error) = self.slots.clear_frame(self.runtime, window) {
-                // Failed window/edge validation means state is not fit for a
-                // second teardown attempt. All ordinary allocation failures
-                // happen before the frame enters this retirement scope.
-                self.runtime.0.poisoned.set(true);
-                return Err(error);
-            }
+        if let Some(window) = frame.window.take_optional()
+            && let Err(error) = self.slots.clear_frame(self.runtime, window)
+        {
+            // Failed window/edge validation means state is not fit for a
+            // second teardown attempt. All ordinary allocation failures
+            // happen before the frame enters this retirement scope.
+            self.runtime.0.poisoned.set(true);
+            return Err(error);
         }
         Ok(())
     }

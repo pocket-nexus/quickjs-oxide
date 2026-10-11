@@ -235,11 +235,10 @@ impl CollectionResume {
             self.0.pending_effect.close_completion = Some(Completion::Throw(value));
             // WeakMap explicitly releases the yielded pair and key before
             // close. Strong Map retains that pair until its ordinary exit.
-            if !matches!(self.0.kind, CollectionKind::Map) {
-                if let Phase::Value { key, .. } = std::mem::replace(&mut self.0.phase, Phase::Next)
-                {
-                    runtime.release_jsvalue(key)?;
-                }
+            if !matches!(self.0.kind, CollectionKind::Map)
+                && let Phase::Value { key, .. } = std::mem::replace(&mut self.0.phase, Phase::Next)
+            {
+                runtime.release_jsvalue(key)?;
             }
             self.0.closing = true;
             return Ok({

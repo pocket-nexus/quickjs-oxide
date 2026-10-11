@@ -914,21 +914,21 @@ impl Runtime {
         if let Some(defined) = self.define_arguments_index_owned(object, key, descriptor)? {
             return Ok(PropertyDefineOutcome::Defined(defined));
         }
-        if self.array_own_key(object, key)? == ArrayOwnKey::Length {
-            if let DescriptorField::Present(value) = &descriptor.value {
-                let length = match self.to_array_length_jsvalue(realm, self.dup_jsvalue(value)?)? {
-                    ArrayLengthConversion::Length(value) => value,
-                    ArrayLengthConversion::Throw(value) => {
-                        return Ok(PropertyDefineOutcome::Throw(value));
-                    }
-                };
-                return self.apply_array_length_descriptor(
-                    object,
-                    key,
-                    &descriptor.attributes_public()?,
-                    length,
-                );
-            }
+        if self.array_own_key(object, key)? == ArrayOwnKey::Length
+            && let DescriptorField::Present(value) = &descriptor.value
+        {
+            let length = match self.to_array_length_jsvalue(realm, self.dup_jsvalue(value)?)? {
+                ArrayLengthConversion::Length(value) => value,
+                ArrayLengthConversion::Throw(value) => {
+                    return Ok(PropertyDefineOutcome::Throw(value));
+                }
+            };
+            return self.apply_array_length_descriptor(
+                object,
+                key,
+                &descriptor.attributes_public()?,
+                length,
+            );
         }
         self.define_ordinary_owned_property(object, key, descriptor)
             .map(PropertyDefineOutcome::Defined)
@@ -2277,10 +2277,10 @@ impl RuntimeState {
                 .heap
                 .delete_dictionary_property_with_status(object_id, atom)
                 .map_err(|failure| {
-                    if failure.published {
-                        if let Some(poisoned) = poisoned {
-                            poisoned.set(true);
-                        }
+                    if failure.published
+                        && let Some(poisoned) = poisoned
+                    {
+                        poisoned.set(true);
                     }
                     RuntimeError::from(failure.error)
                 })?;

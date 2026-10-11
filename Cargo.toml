@@ -31,7 +31,7 @@ resolver = "3"
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 license = "MIT"
 repository = "https://github.com/pocket-stack/quickjs-oxide"
 
@@ -49,6 +49,10 @@ wasm-bindgen = "=0.2.126"
 unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+# Its arm-guard rewrite moves the inner test into the guard, so a false
+# test falls through to later arms instead of leaving the arm; several
+# sites test with side effects (`delimiters.pop()`).
+collapsible_match = "allow"
 
 [profile.release]
 lto = "fat"

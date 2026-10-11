@@ -243,11 +243,11 @@ impl PublishedFunctionSnapshot {
         if self.bytecode.is_some() && !self.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
-        if self.root.get().is_none() {
-            if let Some(id) = self.bytecode {
-                let root = FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), id)?;
-                let _ = self.root.set(root);
-            }
+        if self.root.get().is_none()
+            && let Some(id) = self.bytecode
+        {
+            let root = FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), id)?;
+            let _ = self.root.set(root);
         }
         Ok(())
     }

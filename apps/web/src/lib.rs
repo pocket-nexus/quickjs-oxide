@@ -145,16 +145,16 @@ fn value_text(runtime: &Runtime, value: &Value) -> (&'static str, String) {
 }
 
 fn exception_text(runtime: &Runtime, value: &Value) -> String {
-    if let Value::Object(object) = value {
-        if runtime.is_error_object(object).unwrap_or(false) {
-            let name =
-                diagnostic_property(runtime, object, "name").unwrap_or_else(|| "Error".to_owned());
-            let message = diagnostic_property(runtime, object, "message");
-            return match message {
-                Some(message) if !message.is_empty() => format!("{name}: {message}"),
-                Some(_) | None => name,
-            };
-        }
+    if let Value::Object(object) = value
+        && runtime.is_error_object(object).unwrap_or(false)
+    {
+        let name =
+            diagnostic_property(runtime, object, "name").unwrap_or_else(|| "Error".to_owned());
+        let message = diagnostic_property(runtime, object, "message");
+        return match message {
+            Some(message) if !message.is_empty() => format!("{name}: {message}"),
+            Some(_) | None => name,
+        };
     }
 
     value_text(runtime, value).1

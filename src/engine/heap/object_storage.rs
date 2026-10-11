@@ -1080,27 +1080,27 @@ impl Heap {
         // every replacement enforce it) and the replacement is a scalar, so
         // the storage validation is redundant here. The transactional
         // retain/release machinery is a no-op for the same reason.
-        if let PropertySlot::Data(new) = &replacement {
-            if raw_value_is_immediate(new) {
-                let object = self.object_mut(id).map_err(|error| SlotReplacementError {
+        if let PropertySlot::Data(new) = &replacement
+            && raw_value_is_immediate(new)
+        {
+            let object = self.object_mut(id).map_err(|error| SlotReplacementError {
+                error,
+                published: false,
+            })?;
+            let old_is_immediate = matches!(
+                object.slots.get(slot_index),
+                Some(PropertySlot::Data(old)) if raw_value_is_immediate(old)
+            );
+            if old_is_immediate {
+                let slot = object.slots.get_mut(slot_index).ok_or(HeapError::Invariant(
+                    "immediate property slot disappeared before replacement",
+                ));
+                let slot = slot.map_err(|error| SlotReplacementError {
                     error,
                     published: false,
                 })?;
-                let old_is_immediate = matches!(
-                    object.slots.get(slot_index),
-                    Some(PropertySlot::Data(old)) if raw_value_is_immediate(old)
-                );
-                if old_is_immediate {
-                    let slot = object.slots.get_mut(slot_index).ok_or(HeapError::Invariant(
-                        "immediate property slot disappeared before replacement",
-                    ));
-                    let slot = slot.map_err(|error| SlotReplacementError {
-                        error,
-                        published: false,
-                    })?;
-                    *slot = replacement;
-                    return Ok(HeapCleanup::default());
-                }
+                *slot = replacement;
+                return Ok(HeapCleanup::default());
             }
         }
         self.validate_replacement_slot(id, slot_index, &replacement)
@@ -2351,8 +2351,8 @@ impl Heap {
                 (_, None) => {}
             }
         }
-        if let ObjectPayload::Promise(data) = &object.payload {
-            if !is_promise_storable_value(&data.result)
+        if let ObjectPayload::Promise(data) = &object.payload
+            && (!is_promise_storable_value(&data.result)
                 || (data.state == PromiseState::Pending
                     && !matches!(data.result, RawValue::Undefined))
                 || (data.state != PromiseState::Pending
@@ -2364,12 +2364,11 @@ impl Heap {
                 || data
                     .reject_reactions
                     .iter()
-                    .any(|reaction| reaction.kind != PromiseReactionKind::Reject)
-            {
-                return Err(HeapError::Invariant(
-                    "Promise payload has invalid hidden state",
-                ));
-            }
+                    .any(|reaction| reaction.kind != PromiseReactionKind::Reject))
+        {
+            return Err(HeapError::Invariant(
+                "Promise payload has invalid hidden state",
+            ));
         }
         if let ObjectPayload::BytecodeFunction {
             bytecode,
@@ -2739,10 +2738,10 @@ impl Heap {
         if let ObjectPayload::WeakSet { records } = &object.payload {
             records.validate_order()?;
             for key in records.keys() {
-                if let WeakCollectionKey::Object(key) = key {
-                    if self.is_live(RawId::Object(*key)) {
-                        self.object(*key)?;
-                    }
+                if let WeakCollectionKey::Object(key) = key
+                    && self.is_live(RawId::Object(*key))
+                {
+                    self.object(*key)?;
                 }
             }
         }

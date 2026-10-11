@@ -426,10 +426,10 @@ impl UnlinkedFunction {
     #[must_use]
     pub fn with_name(mut self, name: Option<crate::engine::value::JsString>) -> Self {
         self.func_name = name.clone();
-        if let Some(index) = self.metadata.function_name_local {
-            if let Some(definition) = self.local_definitions.get_mut(usize::from(index)) {
-                *definition = UnlinkedVariableDefinition::function_name(name, self.metadata.strict);
-            }
+        if let Some(index) = self.metadata.function_name_local
+            && let Some(definition) = self.local_definitions.get_mut(usize::from(index))
+        {
+            *definition = UnlinkedVariableDefinition::function_name(name, self.metadata.strict);
         }
         self
     }

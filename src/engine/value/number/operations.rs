@@ -189,19 +189,19 @@ impl Number {
     }
 
     pub(crate) fn add(self, rhs: Self) -> Self {
-        if let (Self::Int(a), Self::Int(b)) = (self, rhs) {
-            if let Some(value) = a.checked_add(b) {
-                return Self::Int(value);
-            }
+        if let (Self::Int(a), Self::Int(b)) = (self, rhs)
+            && let Some(value) = a.checked_add(b)
+        {
+            return Self::Int(value);
         }
         Self::compact(self.float() + rhs.float())
     }
 
     pub(crate) fn sub(self, rhs: Self) -> Self {
-        if let (Self::Int(a), Self::Int(b)) = (self, rhs) {
-            if let Some(value) = a.checked_sub(b) {
-                return Self::Int(value);
-            }
+        if let (Self::Int(a), Self::Int(b)) = (self, rhs)
+            && let Some(value) = a.checked_sub(b)
+        {
+            return Self::Int(value);
         }
         Self::compact(self.float() - rhs.float())
     }

@@ -874,7 +874,7 @@ fn decode_base64(
 }
 
 fn decode_hex(source: &[u8], target: &mut [u8]) -> DecodeProgress {
-    if source.len() % 2 != 0 {
+    if !source.len().is_multiple_of(2) {
         return DecodeProgress {
             read: 0,
             written: 0,

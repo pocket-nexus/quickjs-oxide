@@ -67,10 +67,11 @@ pub(crate) fn same_value_zero(heap: &Heap, left: &RawValue, right: &RawValue) ->
 /// SameValue shares the non-coercing key equality rules, but distinguishes
 /// the two zero signs. Inputs have already passed runtime-domain validation.
 pub(crate) fn same_value(heap: &Heap, left: &RawValue, right: &RawValue) -> bool {
-    if let (Some(left), Some(right)) = (number(left), number(right)) {
-        if left == 0.0 && right == 0.0 {
-            return left.is_sign_negative() == right.is_sign_negative();
-        }
+    if let (Some(left), Some(right)) = (number(left), number(right))
+        && left == 0.0
+        && right == 0.0
+    {
+        return left.is_sign_negative() == right.is_sign_negative();
     }
     same_value_zero(heap, left, right)
 }

@@ -559,10 +559,10 @@ fn record_agent_failure(
     error: &RuntimeError,
 ) {
     failures.push(format!("{operation}: {error}"));
-    if matches!(context.has_exception(), Ok(true)) {
-        if let Err(clear_error) = context.take_exception() {
-            failures.push(format!("clear {operation} exception: {clear_error}"));
-        }
+    if matches!(context.has_exception(), Ok(true))
+        && let Err(clear_error) = context.take_exception()
+    {
+        failures.push(format!("clear {operation} exception: {clear_error}"));
     }
 }
 

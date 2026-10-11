@@ -1726,12 +1726,11 @@ fn reply_outcome(
             _ => None,
         };
         pending.release(runtime);
-        if let Some(id) = iterator {
-            if let Ok(frame) = execution.frames.current_mut(id) {
-                if let Some(rare) = frame.cold.rare.get_mut() {
-                    rare.iterator_wait = None;
-                }
-            }
+        if let Some(id) = iterator
+            && let Ok(frame) = execution.frames.current_mut(id)
+            && let Some(rare) = frame.cold.rare.get_mut()
+        {
+            rare.iterator_wait = None;
         }
         return Err(Error::internal(
             "request reply belongs to another operation",
@@ -1899,14 +1898,12 @@ fn drive<'a>(
     step: Result<Step, Error>,
 ) -> Result<Progress, Error> {
     let result = drive_inner(runtime, execution, owner, identity, query, step);
-    if result.is_err() {
-        if let Ok(id) = owner.frame() {
-            if let Ok(frame) = execution.frames.current_mut(id) {
-                if let Some(rare) = frame.cold.rare.get_mut() {
-                    rare.iterator_wait = None;
-                }
-            }
-        }
+    if result.is_err()
+        && let Ok(id) = owner.frame()
+        && let Ok(frame) = execution.frames.current_mut(id)
+        && let Some(rare) = frame.cold.rare.get_mut()
+    {
+        rare.iterator_wait = None;
     }
     result
 }

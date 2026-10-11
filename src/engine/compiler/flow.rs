@@ -287,11 +287,11 @@ pub(super) fn plan_numeric_regions(
             } else {
                 None
             };
-            if let Some(region) = region {
-                if region.start as usize >= occupied_until {
-                    occupied_until = region.end as usize;
-                    selected.push(region);
-                }
+            if let Some(region) = region
+                && region.start as usize >= occupied_until
+            {
+                occupied_until = region.end as usize;
+                selected.push(region);
             }
         }
         stack.extend(std::iter::repeat_n(node, effect.pushed));

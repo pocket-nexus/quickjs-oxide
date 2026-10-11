@@ -207,10 +207,10 @@ impl Runtime {
         realm: ContextId,
         function: &Value,
     ) -> Result<bool, RuntimeError> {
-        if let Value::Object(object) = function {
-            if !object.belongs_to(self) {
-                return Err(RuntimeError::WrongRuntime("eval function"));
-            }
+        if let Value::Object(object) = function
+            && !object.belongs_to(self)
+        {
+            return Err(RuntimeError::WrongRuntime("eval function"));
         }
         let original = self
             .0

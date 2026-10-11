@@ -1744,18 +1744,18 @@ fn execute_admitted_in_state(
                             });
                             continue;
                         }
-                        if matches!(comparison, Opcode::Eq | Opcode::Neq) {
-                            if let Some(equal) = cursor.with_slots(|slots| {
+                        if matches!(comparison, Opcode::Eq | Opcode::Neq)
+                            && let Some(equal) = cursor.with_slots(|slots| {
                                 slots.nullish_equality_in_state(state, &runtime.0.poisoned)
-                            })? {
-                                let decision = equal != (comparison == Opcode::Neq);
-                                cursor.advance(if decision == (descriptor & 0x400 != 0) {
-                                    decoded.operand(1) as usize
-                                } else {
-                                    next + 2
-                                });
-                                continue;
-                            }
+                            })?
+                        {
+                            let decision = equal != (comparison == Opcode::Neq);
+                            cursor.advance(if decision == (descriptor & 0x400 != 0) {
+                                decoded.operand(1) as usize
+                            } else {
+                                next + 2
+                            });
+                            continue;
                         }
                         let completed = cursor.with_slots(|slots| {
                             slots.binary_number(|left, right| {
@@ -2303,16 +2303,16 @@ fn execute_admitted_in_state(
                             })
                         })?;
                         if !completed {
-                            if matches!(decoded.opcode, Opcode::Eq | Opcode::Neq) {
-                                if let Some(equal) = cursor.with_slots(|slots| {
+                            if matches!(decoded.opcode, Opcode::Eq | Opcode::Neq)
+                                && let Some(equal) = cursor.with_slots(|slots| {
                                     slots.nullish_equality_in_state(state, &runtime.0.poisoned)
-                                })? {
-                                    cursor.commit_push(JsValue::Bool(
-                                        equal != (decoded.opcode == Opcode::Neq),
-                                    ))?;
-                                    cursor.advance(next);
-                                    continue;
-                                }
+                                })?
+                            {
+                                cursor.commit_push(JsValue::Bool(
+                                    equal != (decoded.opcode == Opcode::Neq),
+                                ))?;
+                                cursor.advance(next);
+                                continue;
                             }
                             if matches!(decoded.opcode, Opcode::StrictEq | Opcode::StrictNeq) {
                                 let equal = cursor.strict_comparison(state, active_frame)?;

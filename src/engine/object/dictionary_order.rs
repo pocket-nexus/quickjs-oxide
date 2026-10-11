@@ -134,7 +134,7 @@ mod tests {
         let mut seed = 0x348a_6571_u64;
         for label in 0..4096 {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            if !physical.is_empty() && seed % 3 != 0 {
+            if !physical.is_empty() && !seed.is_multiple_of(3) {
                 let index = (seed >> 32) as usize % physical.len();
                 let removed = physical.swap_remove(index);
                 expected.retain(|value| *value != removed);

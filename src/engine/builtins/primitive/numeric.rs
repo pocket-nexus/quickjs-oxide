@@ -106,14 +106,13 @@ impl NumericStep {
                 }
             }
         };
-        if let NumericKind::ToString(brand) = kind {
-            if !matches!(brand, PrimitiveKind::Number | PrimitiveKind::BigInt)
-                || matches!(argument, JsValue::Undefined)
-            {
-                return Ok(Self::Complete(
-                    runtime.finish_branded_to_string(realm, brand, value, 10)?,
-                ));
-            }
+        if let NumericKind::ToString(brand) = kind
+            && (!matches!(brand, PrimitiveKind::Number | PrimitiveKind::BigInt)
+                || matches!(argument, JsValue::Undefined))
+        {
+            return Ok(Self::Complete(
+                runtime.finish_branded_to_string(realm, brand, value, 10)?,
+            ));
         }
         let phase = match kind {
             NumericKind::ToString(_) => Phase::Radix,

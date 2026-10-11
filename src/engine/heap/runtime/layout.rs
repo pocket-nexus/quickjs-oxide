@@ -37,11 +37,11 @@ impl RuntimeState {
             }
             result => result,
         };
-        if let Err(failure) = &result {
-            if !failure.published {
-                self.release_atoms(atoms)
-                    .inspect_err(|_| poisoned.set(true))?;
-            }
+        if let Err(failure) = &result
+            && !failure.published
+        {
+            self.release_atoms(atoms)
+                .inspect_err(|_| poisoned.set(true))?;
         }
         let cleanup = self
             .heap

@@ -67,7 +67,7 @@ fn is_in_table(code_point: u32, table: &[u8], index: &[u8]) -> bool {
 }
 
 fn index_position(code_point: u32, index: &[u8]) -> Option<(u32, usize)> {
-    debug_assert!(!index.is_empty() && index.len() % 3 == 0);
+    debug_assert!(!index.is_empty() && index.len().is_multiple_of(3));
     let entry_count = index.len() / 3;
     let first = read_u24(index, 0);
     let first_code = first & CODE_MASK;

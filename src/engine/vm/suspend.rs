@@ -273,10 +273,10 @@ impl Drop for RootedVmActivation {
                 return;
             }
             let _unwind = runtime.unwind_guard();
-            if let Some(entry) = self.entry.take() {
-                if entry.release(&runtime).is_err() {
-                    runtime.0.poisoned.set(true);
-                }
+            if let Some(entry) = self.entry.take()
+                && entry.release(&runtime).is_err()
+            {
+                runtime.0.poisoned.set(true);
             }
         }
     }

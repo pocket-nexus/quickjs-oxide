@@ -222,20 +222,19 @@ impl StringFactoryResume {
             if matches!(
                 self.0.kind,
                 StringFactoryKind::Static(StringStaticKind::FromCodePoint)
-            ) {
-                if let JsValue::Int(value) = value {
-                    if !(0..=0x10_ffff).contains(&value) {
-                        let error = runtime.new_native_error_jsvalue(
-                            self.0.realm,
-                            NativeErrorKind::Range,
-                            "invalid code point",
-                        )?;
-                        return Ok(self.abrupt(error));
-                    }
-                    self.builder()?.push_code_point(value as u32)?;
-                    self.0.index += 1;
-                    continue;
+            ) && let JsValue::Int(value) = value
+            {
+                if !(0..=0x10_ffff).contains(&value) {
+                    let error = runtime.new_native_error_jsvalue(
+                        self.0.realm,
+                        NativeErrorKind::Range,
+                        "invalid code point",
+                    )?;
+                    return Ok(self.abrupt(error));
                 }
+                self.builder()?.push_code_point(value as u32)?;
+                self.0.index += 1;
+                continue;
             }
             return Ok(StringFactoryStep::Number {
                 value,

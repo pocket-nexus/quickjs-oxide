@@ -152,7 +152,7 @@ impl Runtime {
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let width = u64::from(element.byte_length());
         // Alignment precedes the detached-buffer check in pinned QuickJS.
-        if byte_offset % width != 0 {
+        if !byte_offset.is_multiple_of(width) {
             return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,

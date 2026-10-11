@@ -155,13 +155,12 @@ impl Drop for CallInputGuard<'_> {
             return;
         }
         let _unwind = self.runtime.unwind_guard();
-        if let Some(mut input) = self.input.take() {
-            if input
+        if let Some(mut input) = self.input.take()
+            && input
                 .release(&mut self.runtime.0.state.borrow_mut())
                 .is_err()
-            {
-                self.runtime.0.poisoned.set(true);
-            }
+        {
+            self.runtime.0.poisoned.set(true);
         }
     }
 }

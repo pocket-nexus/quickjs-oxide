@@ -439,13 +439,12 @@ impl SlotStore {
         range: std::ops::Range<usize>,
     ) -> Result<(), Error> {
         for index in range {
-            if let Some(binding) = self.slots[index].take() {
-                if let Err(error) =
+            if let Some(binding) = self.slots[index].take()
+                && let Err(error) =
                     crate::engine::vm::bindings::release_frame_binding_in_state(state, binding)
-                {
-                    poisoned.set(true);
-                    return Err(runtime_error_to_vm_error(error));
-                }
+            {
+                poisoned.set(true);
+                return Err(runtime_error_to_vm_error(error));
             }
         }
         Ok(())

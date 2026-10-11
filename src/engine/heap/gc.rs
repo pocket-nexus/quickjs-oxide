@@ -972,12 +972,11 @@ impl Heap {
                                             "ordered weak-map record disappeared during pruning",
                                         ))?
                                     };
-                                    if let Some(index) = raw_value_atom(&value) {
-                                        if !hook(WeakSymbolGcEvent::Release(index))
+                                    if let Some(index) = raw_value_atom(&value)
+                                        && !hook(WeakSymbolGcEvent::Release(index))
                                             .inspect_err(|_| poisoned.set(true))?
-                                        {
-                                            cleanup.atoms.push(index);
-                                        }
+                                    {
+                                        cleanup.atoms.push(index);
                                     }
                                     for edge in raw_value_edges(&value) {
                                         self.release_raw_no_drain(edge)
@@ -1368,10 +1367,10 @@ impl Heap {
             if let Some(&first) = edges.first() {
                 let duplicate = edges.get(1) == Some(&first);
                 self.preflight_edge_retain(first, if duplicate { 2 } else { 1 })?;
-                if let Some(&second) = edges.get(1) {
-                    if !duplicate {
-                        self.preflight_edge_retain(second, 1)?;
-                    }
+                if let Some(&second) = edges.get(1)
+                    && !duplicate
+                {
+                    self.preflight_edge_retain(second, 1)?;
                 }
                 for &edge in edges {
                     self.retain_raw(edge, 1)
@@ -3243,10 +3242,10 @@ fn visit_raw_module_record_edges<E>(
         RawModuleNamespaceState::Building(namespace)
         | RawModuleNamespaceState::Ready(namespace) => visit(RawId::Object(namespace))?,
     }
-    if let RawModuleEvaluationState::Errored(exception) = &record.evaluation {
-        if let Some(edge) = raw_value_edge(exception) {
-            visit(edge)?;
-        }
+    if let RawModuleEvaluationState::Errored(exception) = &record.evaluation
+        && let Some(edge) = raw_value_edge(exception)
+    {
+        visit(edge)?;
     }
     if let Some(edge) = record.evaluation_promise.map(RawId::Object) {
         visit(edge)?;
@@ -3792,16 +3791,15 @@ impl Heap {
         for (index, slot) in self.slots.iter().enumerate() {
             if let SlotState::Resident(node) = &slot.state
                 && node.strong.get() != 0
+                && let NodeData::FunctionBytecode(data) = &node.data
             {
-                if let NodeData::FunctionBytecode(data) = &node.data {
-                    bytecode_names.insert(
-                        index,
-                        match &data.func_name {
-                            Some(name) => name.to_utf8_lossy(),
-                            None => "<anon>".to_string(),
-                        },
-                    );
-                }
+                bytecode_names.insert(
+                    index,
+                    match &data.func_name {
+                        Some(name) => name.to_utf8_lossy(),
+                        None => "<anon>".to_string(),
+                    },
+                );
             }
         }
         let mut roots = Vec::new();

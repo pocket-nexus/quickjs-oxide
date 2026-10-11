@@ -1765,14 +1765,13 @@ pub fn validate_pattern_parameter_bytecode_layout(
         return Err("constructor completion protocol escaped into parameter initialization");
     }
 
-    if let Some(rest) = metadata.rest_parameter {
-        if unnamed_arguments
+    if let Some(rest) = metadata.rest_parameter
+        && unnamed_arguments
             .get(usize::from(rest))
             .copied()
             .unwrap_or(true)
-        {
-            return Err("identifier rest parameter has no named argument slot");
-        }
+    {
+        return Err("identifier rest parameter has no named argument slot");
     }
 
     let synthetic_arguments_local =

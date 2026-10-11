@@ -238,12 +238,11 @@ impl Drop for FrameStorageGuard<'_> {
             return;
         }
         let _unwind = self.runtime.unwind_guard();
-        if let Some(storage) = self.storage.take() {
-            if release_frame_storage_in_state(&mut self.runtime.0.state.borrow_mut(), storage)
+        if let Some(storage) = self.storage.take()
+            && release_frame_storage_in_state(&mut self.runtime.0.state.borrow_mut(), storage)
                 .is_err()
-            {
-                self.runtime.0.poisoned.set(true);
-            }
+        {
+            self.runtime.0.poisoned.set(true);
         }
     }
 }
@@ -288,10 +287,10 @@ impl Drop for StateFrameStorageGuard<'_> {
             return;
         }
         let _unwind = crate::engine::api::runtime::RuntimeUnwindGuard::from_flag(self.poisoned);
-        if let Some(storage) = self.storage.take() {
-            if release_frame_storage_in_state(self.state, storage).is_err() {
-                self.poisoned.set(true);
-            }
+        if let Some(storage) = self.storage.take()
+            && release_frame_storage_in_state(self.state, storage).is_err()
+        {
+            self.poisoned.set(true);
         }
     }
 }

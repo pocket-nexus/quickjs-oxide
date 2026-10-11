@@ -495,10 +495,10 @@ impl HelperResume {
         let value = match reply {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                if matches!(phase, Phase::Callback) {
-                    if let Some(item) = self.0.item.take() {
-                        runtime.release_jsvalue(item)?;
-                    }
+                if matches!(phase, Phase::Callback)
+                    && let Some(item) = self.0.item.take()
+                {
+                    runtime.release_jsvalue(item)?;
                 }
                 return match phase {
                     Phase::InnerMethod => self.close_inner(Some(value)),

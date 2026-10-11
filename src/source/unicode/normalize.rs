@@ -447,7 +447,7 @@ fn compose_pair(first: u32, second: u32) -> Option<u32> {
     if (0x1100..0x1100 + 19).contains(&first) && (0x1161..0x1161 + 21).contains(&second) {
         Some(0xac00 + (first - 0x1100) * 588 + (second - 0x1161) * 28)
     } else if (0xac00..0xac00 + 11_172).contains(&first)
-        && (first - 0xac00) % 28 == 0
+        && (first - 0xac00).is_multiple_of(28)
         && (0x11a7..0x11a7 + 28).contains(&second)
     {
         Some(first + second - 0x11a7)

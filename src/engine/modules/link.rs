@@ -259,15 +259,14 @@ impl Drop for LinkResume {
             return;
         }
         // An abandoned or engine-failed active prefix cannot be replayed.
-        if let Some(frame) = self.pending.take() {
-            if self
+        if let Some(frame) = self.pending.take()
+            && self
                 .runtime
                 .transition_module_record(frame.module, RawModuleTransition::PoisonLink)
                 .is_err()
-            {
-                self.runtime.0.poisoned.set(true);
-                return;
-            }
+        {
+            self.runtime.0.poisoned.set(true);
+            return;
         }
         for id in &self.dfs.stack {
             let member = RawModuleRef {

@@ -87,10 +87,10 @@ impl Runtime {
             }
         }
         for accessor in [&descriptor.get, &descriptor.set] {
-            if let DescriptorField::Present(AccessorValue::Callable(callable)) = accessor {
-                if !callable.belongs_to(self) {
-                    return Err(RuntimeError::WrongRuntime("descriptor accessor"));
-                }
+            if let DescriptorField::Present(AccessorValue::Callable(callable)) = accessor
+                && !callable.belongs_to(self)
+            {
+                return Err(RuntimeError::WrongRuntime("descriptor accessor"));
             }
         }
         Ok(())
@@ -708,45 +708,46 @@ impl RuntimeState {
 
         // Replacing a value does not change the layout. Resolve that case while
         // borrowing the shape, before cloning entries or unrelated value slots.
-        if let Some((index, existing_flags)) = existing {
-            if existing_flags == flags {
-                return if let Some(poisoned) = poisoned {
-                    state.replace_property_slot_with_poison(poisoned, object_id, index, replacement)
-                } else {
-                    state.replace_property_slot(object_id, index, replacement)
-                };
-            }
+        if let Some((index, existing_flags)) = existing
+            && existing_flags == flags
+        {
+            return if let Some(poisoned) = poisoned {
+                state.replace_property_slot_with_poison(poisoned, object_id, index, replacement)
+            } else {
+                state.replace_property_slot(object_id, index, replacement)
+            };
         }
-        if let Some((index, _)) = existing {
-            if dictionary && state.heap.shape_strong_count(shape_id)? == 1 {
-                let atoms = state.retain_slot_atoms(std::slice::from_ref(&replacement))?;
-                return match state.heap.replace_dictionary_property_with_status(
-                    object_id,
-                    index,
-                    flags,
-                    replacement,
-                ) {
-                    Ok(cleanup) => state.apply_cleanup(cleanup).inspect_err(|_| {
+        if let Some((index, _)) = existing
+            && dictionary
+            && state.heap.shape_strong_count(shape_id)? == 1
+        {
+            let atoms = state.retain_slot_atoms(std::slice::from_ref(&replacement))?;
+            return match state.heap.replace_dictionary_property_with_status(
+                object_id,
+                index,
+                flags,
+                replacement,
+            ) {
+                Ok(cleanup) => state.apply_cleanup(cleanup).inspect_err(|_| {
+                    if let Some(poisoned) = poisoned {
+                        poisoned.set(true);
+                    }
+                }),
+                Err(failure) => {
+                    if failure.published {
                         if let Some(poisoned) = poisoned {
                             poisoned.set(true);
                         }
-                    }),
-                    Err(failure) => {
-                        if failure.published {
+                    } else {
+                        state.release_atoms(atoms).inspect_err(|_| {
                             if let Some(poisoned) = poisoned {
                                 poisoned.set(true);
                             }
-                        } else {
-                            state.release_atoms(atoms).inspect_err(|_| {
-                                if let Some(poisoned) = poisoned {
-                                    poisoned.set(true);
-                                }
-                            })?;
-                        }
-                        Err(failure.error.into())
+                        })?;
                     }
-                };
-            }
+                    Err(failure.error.into())
+                }
+            };
         }
         // Reconfiguration does not inherit append-only facts.
         state.unlink_shape_transitions(shape_id);

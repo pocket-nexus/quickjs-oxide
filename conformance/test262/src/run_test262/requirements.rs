@@ -908,11 +908,10 @@ fn contains_async_function_or_arrow_syntax(tokens: &[SourceToken<'_>]) -> bool {
             SourceToken::Identifier(_) => {
                 if let Some((next_index, crossed_line_terminator)) =
                     next_significant_token(tokens, head_index + 1)
+                    && matches!(tokens[next_index], SourceToken::Arrow)
+                    && !crossed_line_terminator
                 {
-                    if matches!(tokens[next_index], SourceToken::Arrow) && !crossed_line_terminator
-                    {
-                        return true;
-                    }
+                    return true;
                 }
             }
             SourceToken::LeftParen => {

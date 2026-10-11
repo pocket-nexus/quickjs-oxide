@@ -326,56 +326,82 @@ fn capture_native_step(
                 pending,
             );
         };
-        if resume.awaits_protocol_result() {
-            if let Some(mut selected) =
+        if resume.awaits_protocol_result()
+            && let Some(mut selected) =
                 super::super::frames::NativeClassification::select(runtime, &callable)
                     .map_err(runtime_error_to_vm_error)?
                     .filter(|selected| {
                         selected.target() == NativeFunctionId::RegExp(RegExpNativeKind::Replace)
                     })
-            {
-                let result = if !nested_budget || runtime.host_stack_would_overflow() {
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    let _ = runtime.release_jsvalue(receiver);
-                    for argument in arguments {
-                        let _ = runtime.release_jsvalue(argument);
+        {
+            let result = if !nested_budget || runtime.host_stack_would_overflow() {
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                let _ = runtime.release_jsvalue(receiver);
+                for argument in arguments {
+                    let _ = runtime.release_jsvalue(argument);
+                }
+                LocalNativeResult::Complete(overflow(runtime, realm)?)
+            } else {
+                let target = selected.target();
+                let defining_realm = selected.defining_realm();
+                let minimum = selected.minimum();
+                let kind = selected
+                    .take_operation()
+                    .ok_or_else(|| Error::internal("selected replace has no continuation"))?;
+                // Keep raw inputs in the concrete resume owner until every
+                // fallible selection step has completed.
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
+                begin_local(
+                    runtime,
+                    slots,
+                    storage,
+                    realm,
+                    callable,
+                    target,
+                    defining_realm,
+                    minimum,
+                    receiver,
+                    arguments,
+                    kind,
+                    Some(selected),
+                    false,
+                )?
+            };
+            return match result {
+                LocalNativeResult::Complete(result) => {
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "string_replace_protocol_completed_locally",
+                    );
+                    match resume
+                        .resume(runtime, result)
+                        .map_err(runtime_error_to_vm_error)?
+                    {
+                        StringReplaceStep::Complete(result) => {
+                            Ok(Some(NativeInvokeOutcome::Completion(result)))
+                        }
+                        _ => Err(Error::internal(
+                            "replace protocol reply selected another effect",
+                        )),
                     }
-                    LocalNativeResult::Complete(overflow(runtime, realm)?)
-                } else {
-                    let target = selected.target();
-                    let defining_realm = selected.defining_realm();
-                    let minimum = selected.minimum();
-                    let kind = selected
-                        .take_operation()
-                        .ok_or_else(|| Error::internal("selected replace has no continuation"))?;
-                    // Keep raw inputs in the concrete resume owner until every
-                    // fallible selection step has completed.
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    begin_local(
-                        runtime,
-                        slots,
-                        storage,
-                        realm,
-                        callable,
-                        target,
-                        defining_realm,
-                        minimum,
-                        receiver,
-                        arguments,
-                        kind,
-                        Some(selected),
-                        false,
-                    )?
-                };
-                return match result {
-                    LocalNativeResult::Complete(result) => {
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "string_replace_protocol_completed_locally",
-                        );
-                        match resume
+                }
+                LocalNativeResult::Waiting(mut records) => {
+                    if storage::reserve(&mut records[0].parents, 1, "query.replace_parent").is_err()
+                    {
+                        let inner = records[0].call.take().expect("nested replace activation");
+                        let result = finish_result(
+                            runtime,
+                            slots,
+                            inner,
+                            Err(Error::internal("replace parent storage allocation failed")),
+                        )
+                        .and_then(identity_completion);
+                        records[0].step.release_owned(runtime);
+                        storage.recycle_native_wait(records);
+                        let result = result?;
+                        return match resume
                             .resume(runtime, result)
                             .map_err(runtime_error_to_vm_error)?
                         {
@@ -383,45 +409,17 @@ fn capture_native_step(
                                 Ok(Some(NativeInvokeOutcome::Completion(result)))
                             }
                             _ => Err(Error::internal(
-                                "replace protocol reply selected another effect",
+                                "replace protocol error selected another effect",
                             )),
-                        }
+                        };
                     }
-                    LocalNativeResult::Waiting(mut records) => {
-                        if storage::reserve(&mut records[0].parents, 1, "query.replace_parent")
-                            .is_err()
-                        {
-                            let inner = records[0].call.take().expect("nested replace activation");
-                            let result = finish_result(
-                                runtime,
-                                slots,
-                                inner,
-                                Err(Error::internal("replace parent storage allocation failed")),
-                            )
-                            .and_then(identity_completion);
-                            records[0].step.release_owned(runtime);
-                            storage.recycle_native_wait(records);
-                            let result = result?;
-                            return match resume
-                                .resume(runtime, result)
-                                .map_err(runtime_error_to_vm_error)?
-                            {
-                                StringReplaceStep::Complete(result) => {
-                                    Ok(Some(NativeInvokeOutcome::Completion(result)))
-                                }
-                                _ => Err(Error::internal(
-                                    "replace protocol error selected another effect",
-                                )),
-                            };
-                        }
-                        records[0]
-                            .parents
-                            .push(ReplaceParent { call: None, resume });
-                        *pending = Some(records);
-                        Ok(None)
-                    }
-                };
-            }
+                    records[0]
+                        .parents
+                        .push(ReplaceParent { call: None, resume });
+                    *pending = Some(records);
+                    Ok(None)
+                }
+            };
         }
         let receiver = resume.take_call_receiver();
         let arguments = resume.take_call_arguments();

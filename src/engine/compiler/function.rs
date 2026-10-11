@@ -492,13 +492,14 @@ impl<'source> Parser<'source> {
         } else {
             loop {
                 let is_rest = self.consume_punctuator(Punctuator::Ellipsis)?;
-                if let Some(method_kind) = options.object_method_kind {
-                    if is_rest && matches!(method_kind, DefineMethodKind::Setter) {
-                        return Err(Error::syntax(
-                            "invalid number of arguments for getter or setter",
-                            source_span(self.current().span),
-                        ));
-                    }
+                if let Some(method_kind) = options.object_method_kind
+                    && is_rest
+                    && matches!(method_kind, DefineMethodKind::Setter)
+                {
+                    return Err(Error::syntax(
+                        "invalid number of arguments for getter or setter",
+                        source_span(self.current().span),
+                    ));
                 }
                 let pattern = match self.current().kind {
                     TokenKind::Punctuator(Punctuator::LeftBracket) => Some(true),

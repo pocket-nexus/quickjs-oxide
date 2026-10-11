@@ -629,7 +629,7 @@ impl Runtime {
         requested_length: Option<u64>,
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let width = u64::from(element.byte_length());
-        if byte_offset % width != 0 {
+        if !byte_offset.is_multiple_of(width) {
             return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,

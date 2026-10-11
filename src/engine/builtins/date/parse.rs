@@ -384,11 +384,11 @@ fn parse_other_string(bytes: &[u8; PARSE_BUFFER_LEN]) -> Option<ParsedDateString
                     }
                 }
                 has_time = true;
-                if matches!(bytes[cursor], b'+' | b'-') {
-                    if let Some(offset) = get_time_zone_offset(bytes, &mut cursor, false) {
-                        fields[8] = offset;
-                        is_local = false;
-                    }
+                if matches!(bytes[cursor], b'+' | b'-')
+                    && let Some(offset) = get_time_zone_offset(bytes, &mut cursor, false)
+                {
+                    fields[8] = offset;
+                    is_local = false;
                 }
             } else if cursor - token_start > 2 && !has_year {
                 fields[0] = value;
