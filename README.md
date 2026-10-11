@@ -1,7 +1,7 @@
 # quickjs-oxide
 
-A JavaScript engine in safe Rust that reproduces the behavior of
-[QuickJS](https://bellard.org/quickjs/) 2026-06-04.
+A JavaScript engine written entirely in safe Rust, with zero `unsafe`, that
+reproduces the behavior of [QuickJS](https://bellard.org/quickjs/) 2026-06-04.
 
 <!-- current-test262-metrics:start -->
 Within the Test262 scope that QuickJS 2026-06-04 runs, quickjs-oxide passes
@@ -10,11 +10,15 @@ skips the other 18,475 of the 102,037 variants; across the full corpus the
 pass rate is 81.641%.
 <!-- current-test262-metrics:end -->
 
+- **Zero `unsafe`.** Every crate in the workspace sets
+  `unsafe_code = "forbid"`, so the compiler rejects `unsafe` anywhere in the
+  engine, the CLI and the WebAssembly bindings. The garbage collector,
+  compiler, VM, regular expression engine and Unicode tables are all safe
+  Rust; the only third-party code in the engine is `num-bigint` and
+  `num-traits` for BigInt arithmetic.
 - **Same behavior as QuickJS.** Every failing Test262 variant is one QuickJS
   2026-06-04 also fails, early errors carry QuickJS's exact messages and
   positions, and a differential suite compares the two engines case by case.
-- **Pure Rust.** The workspace forbids `unsafe` code, and the engine crate
-  depends only on `num-bigint` and `num-traits`.
 - **Runs where you need it.** A `qjs` command line, a Rust embedding API and a
   WebAssembly build.
 
