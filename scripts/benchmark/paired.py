@@ -288,8 +288,7 @@ def write_markdown(report, output):
                   "A/A noise does not relax this fixed margin; a within-margin slowdown remains a slowdown."]
     if report["combined_subscores"]:
         lines += ["", "## Subscores from the complete combined run", "",
-                  "These contextual scores can be compared with a historical combined-run Boa table. "
-                  "They do not replace isolated acceptance results.", "",
+                  "These scores give context; acceptance uses the isolated results.", "",
                   "| Benchmark | Baseline median | Candidate median |",
                   "| --- | ---: | ---: |"]
         for row in report["combined_subscores"]:

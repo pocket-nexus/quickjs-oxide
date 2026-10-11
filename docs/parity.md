@@ -27,7 +27,7 @@ Every product implementation delivered to users must be Rust: the interpreter, c
 The following are forbidden in product builds and runtime paths:
 
 - compiling, linking or vendoring `quickjs.c`, `libquickjs.a` or another QuickJS fork, or using it as the actual engine through FFI;
-- launching `qjs`, Node.js, JavaScriptCore, V8 or another external interpreter at runtime to parse or execute;
+- launching `qjs` or any other external JavaScript interpreter at runtime to parse or execute;
 - hiding an external engine in a build script, dynamic library, optional feature, WASM blob or generated code;
 - wrapping an existing QuickJS binding behind a Rust API.
 

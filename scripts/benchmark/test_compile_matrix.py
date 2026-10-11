@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from compile_matrix import admit, classify, engine_command, load_corpus, summarize
+from compile_matrix import admit, classify, load_corpus, summarize
 from compile_workloads import generate
 from run import digest
 
@@ -24,28 +24,19 @@ class CompileMatrixTests(unittest.TestCase):
     def test_probe_versions_classify_or_fail(self):
         self.assertEqual(classify("oxide-compile-probe 1\n"), "oxide")
         self.assertEqual(classify("quickjs-compile-probe 1\n"), "quickjs")
-        self.assertEqual(classify("boa-compile-probe 1\n"), "boa")
-        self.assertEqual(classify("v24.21.0\n"), "node")
         with self.assertRaises(ValueError):
             classify("qjs 2026-06-04\n")
         with self.assertRaises(ValueError):
             classify("oxide-compile-alloc-probe 1\n")
 
-    def test_node_commands_use_eager_and_parse_only_flags(self):
-        compile_command = engine_command("node", Path("/usr/bin/node"), "compile", Path("/tmp/a.js"))
-        self.assertIn("--no-lazy", compile_command)
-        parse_command = engine_command("node", Path("/usr/bin/node"), "parse", Path("/tmp/a.js"))
-        self.assertIn("--parse-only", parse_command)
-        self.assertEqual(engine_command("boa", Path("/tmp/boa"), "parse", Path("/tmp/a.js"))[1], "parse")
-
     def test_output_requires_exact_framing_and_empty_stderr(self):
-        self.assertEqual(admit(self.sample("compile_ns:42\n"), "compile"), ("ok", {"compile_ns": 42}))
-        self.assertEqual(admit(self.sample("compile_ns:42\nextra\n"), "compile")[0], "invalid-output")
-        self.assertEqual(admit(self.sample("compile_ns:0\n"), "compile")[0], "invalid-output")
-        self.assertEqual(admit(self.sample("parse_ns:42\n"), "compile")[0], "invalid-output")
-        self.assertEqual(admit(self.sample("compile_ns:42\n", stderr="warning\n"), "compile")[0], "unexpected-stderr")
-        self.assertEqual(admit(self.sample("compile_ns:42\n", exit_code=1), "compile")[0], "failed")
-        self.assertEqual(admit(self.sample("", timed_out=True), "compile")[0], "timeout")
+        self.assertEqual(admit(self.sample("compile_ns:42\n")), ("ok", {"compile_ns": 42}))
+        self.assertEqual(admit(self.sample("compile_ns:42\nextra\n"))[0], "invalid-output")
+        self.assertEqual(admit(self.sample("compile_ns:0\n"))[0], "invalid-output")
+        self.assertEqual(admit(self.sample("parse_ns:42\n"))[0], "invalid-output")
+        self.assertEqual(admit(self.sample("compile_ns:42\n", stderr="warning\n"))[0], "unexpected-stderr")
+        self.assertEqual(admit(self.sample("compile_ns:42\n", exit_code=1))[0], "failed")
+        self.assertEqual(admit(self.sample("", timed_out=True))[0], "timeout")
 
     def test_corpus_manifest_authenticates_generated_sources(self):
         directory = self.root / "corpus"

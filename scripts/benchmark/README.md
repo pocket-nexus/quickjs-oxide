@@ -86,7 +86,7 @@ Ordinary release builds take `lto = "fat"` and `codegen-units = 1` from
 The source identities, build protocol and A/A and A/B design are in
 [the performance measurement guide](../../docs/performance/measurement.md).
 
-## External V8 v7 suite
+## V8 benchmark suite v7
 
 ```sh
 # A sibling checkout outside quickjs-oxide, at the commit pinned in run.py.
@@ -281,31 +281,28 @@ Python records stdout, per-run ns/op, N, median/min/max/stdev across
 independent runs and per-case ratios, and owns all result files. On engines
 without `std`/`fs`, the harness's reference-file operations are no-ops.
 
-## Cross-engine front-end compile matrix
+## Front-end compile matrix
 
 ```sh
 python3 scripts/benchmark/compile_workloads.py --output target/compile-corpus
 python3 scripts/benchmark/build_compile_probes.py \
   --repo . --output target/compile-probes \
   --quickjs-source target/oracle/quickjs-2026-06-04
-python3 scripts/benchmark/compile_matrix.py --metric compile \
+python3 scripts/benchmark/compile_matrix.py \
   --corpus target/compile-corpus --repeat 5 \
   --engine oxide=target/compile-probes/oxide/target/release/oxide-compile-probe \
   --engine quickjs=target/compile-probes/quickjs/quickjs-compile-probe \
-  --engine boa=target/compile-probes/boa/target/release/boa-compile-probe \
-  --engine node="$(command -v node)" \
   --output target/compile-matrix
 ```
 
 `compile_workloads.py` generates deterministic Script-goal sources (syntax-mixed,
 functions, expressions) with per-repetition unique names; generated files stay in
 the requested output directory. `build_compile_probes.py` builds the QuickJS C
-probe against the pinned oracle's `libquickjs.a` and an offline Boa crate outside
-the workspace; the Oxide probe reuses `build_compile_probe.py`. `compile_matrix.py`
-classifies each engine by its `--version` line, runs one fresh process per sample,
-requires exactly one `compile_ns:`/`parse_ns:` line on stdout with empty stderr,
-rotates engine order, and never derives a ratio from a partial matrix. `--metric
-parse` admits only Boa and V8; Oxide and QuickJS expose no public parse-only entry.
+probe against the pinned oracle's `libquickjs.a`; the Oxide probe reuses
+`build_compile_probe.py`. `compile_matrix.py` classifies each probe by its
+`--version` line, runs one fresh process per sample, requires exactly one
+`compile_ns:` line on stdout with empty stderr, rotates probe order, and derives
+ratios only from a complete matrix.
 Use `--corpus` with any flat directory of `.js` files, or with a manifest produced
 by `compile_workloads.py`. Third-party bundles stay outside the repository.
 The runner records raw samples and per-case ratios in its output directory.
@@ -465,5 +462,3 @@ and receipts. `scripts/benchmark/probes/` holds:
   live bytes around the same compile window. Its `--version` matches no matrix
   magic, so `compile_matrix.py` rejects it.
 - `error_alloc_probe.rs`: an allocation diagnostic for the public Error channel.
-- `boa_compile_probe.rs` and `node_compile_probe.mjs`: the Boa and Node probes
-  used by `build_compile_probes.py` and `compile_matrix.py`.

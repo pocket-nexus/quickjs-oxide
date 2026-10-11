@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Cross-engine front-end compile/parse matrix over an external corpus.
+"""Front-end compile matrix for Oxide and the pinned QuickJS over an external corpus.
 
-Every engine compiles the same Script-goal files in a fresh process and prints
-one exact line (compile_ns:N or parse_ns:N). Runtime/Context construction,
-source I/O and teardown stay outside the timed interval. Corpora and engine
-builds live outside this repository; results are directional, not upstream
-scores.
+Every probe compiles the same Script-goal files in a fresh process and prints
+one exact line (compile_ns:N). Runtime/Context construction, source I/O and
+teardown stay outside the timed interval. Corpora and probe builds live
+outside this repository.
 """
 import argparse
 import json
@@ -16,15 +15,11 @@ import statistics
 import time
 from pathlib import Path
 
-from run import ROOT, binary_metadata, command_output, digest, machine_metadata, run_sample
+from run import binary_metadata, command_output, digest, machine_metadata, run_sample
 
-METRICS = ("compile", "parse")
-VERSION_MAGIC = {"oxide-compile-probe": "oxide", "quickjs-compile-probe": "quickjs",
-                 "boa-compile-probe": "boa"}
-NODE_VERSION = re.compile(r"v\d+\.\d+\.\d+")
-NODE_PROBE = ROOT / "scripts/benchmark/probes/node_compile_probe.mjs"
-OUTPUT_LINE = {"compile": re.compile(r"compile_ns:(\d+)\n"), "parse": re.compile(r"parse_ns:(\d+)\n")}
-UNSUPPORTED_METRIC = {"oxide": ("parse",), "quickjs": ("parse",)}
+METRIC = "compile"
+VERSION_MAGIC = {"oxide-compile-probe": "oxide", "quickjs-compile-probe": "quickjs"}
+OUTPUT_LINE = re.compile(r"compile_ns:(\d+)\n")
 
 
 def classify(version_text):
@@ -32,21 +27,10 @@ def classify(version_text):
     for magic, engine in VERSION_MAGIC.items():
         if text.startswith(magic):
             return engine
-    if NODE_VERSION.fullmatch(text):
-        return "node"
     raise ValueError(f"unrecognized probe version: {text!r}")
 
 
-def engine_command(engine_type, binary, metric, path):
-    if engine_type == "node":
-        flag = "--no-lazy" if metric == "compile" else "--parse-only"
-        return [str(binary), flag, str(NODE_PROBE), metric, str(path)]
-    if engine_type == "boa":
-        return [str(binary), metric, str(path)]
-    return [str(binary), str(path)]
-
-
-def admit(sample, metric):
+def admit(sample):
     if sample["timed_out"]:
         return "timeout", {}
     if sample["exit_code"] != 0:
@@ -54,10 +38,10 @@ def admit(sample, metric):
     if Path(sample["stderr"]).read_text(errors="replace").strip():
         return "unexpected-stderr", {}
     text = Path(sample["stdout"]).read_text(errors="replace")
-    match = OUTPUT_LINE[metric].fullmatch(text)
+    match = OUTPUT_LINE.fullmatch(text)
     if match is None or int(match[1]) <= 0:
         return "invalid-output", {}
-    return "ok", {f"{metric}_ns": int(match[1])}
+    return "ok", {f"{METRIC}_ns": int(match[1])}
 
 
 def load_corpus(directory, cases):
@@ -150,7 +134,6 @@ def write_report(output, results, ratios, metric, engines):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, required=True)
-    parser.add_argument("--metric", choices=METRICS, default="compile")
     parser.add_argument("--engine", action="append", required=True, help="NAME=/path/to/probe (repeat)")
     parser.add_argument("--case", action="append", dest="cases")
     parser.add_argument("--repeat", type=int, default=5)
@@ -164,8 +147,6 @@ def main():
         name, sep, path = item.partition("=")
         if not sep or not re.fullmatch(r"[A-Za-z0-9_-]+", name) or name in engines:
             parser.error("use unique NAME=/path/to/probe engine specifications")
-        # Do not resolve symlinks: argv[0] basename selects behaviour for
-        # multiplexer shims such as vite-plus's `node`.
         binary = Path(os.path.abspath(path))
         if not binary.is_file() or not os.access(binary, os.X_OK):
             parser.error(f"engine is not an executable file: {binary}")
@@ -176,10 +157,6 @@ def main():
             engine_types[name] = classify(command_output([str(binary), "--version"])["stdout"])
         except ValueError as error:
             parser.error(f"{name}: {error}")
-        if args.metric in UNSUPPORTED_METRIC.get(engine_types[name], ()):
-            parser.error(f"{name}: {engine_types[name]} has no public {args.metric}-only entry point")
-    if "node" in engine_types.values() and not NODE_PROBE.is_file():
-        parser.error(f"missing node probe: {NODE_PROBE}")
     try:
         workloads = load_corpus(args.corpus, args.cases)
     except (ValueError, OSError) as error:
@@ -191,12 +168,11 @@ def main():
     (output / "raw").mkdir()
     metadata = {"schema": "oxide-compile-matrix-v1",
                 "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "metric": args.metric, "goal": "script", "repeat": args.repeat, "timeout_seconds": args.timeout,
+                "metric": METRIC, "goal": "script", "repeat": args.repeat, "timeout_seconds": args.timeout,
                 "order": "serial, alternating per repetition", "instrumentation": "off (no profiling flags)",
                 "machine": machine_metadata(), "corpus": str(args.corpus.resolve()), "workloads": workloads,
                 "engines": {name: {"type": engine_types[name], **binary_metadata(path)}
                             for name, path in engines.items()},
-                "node_probe_sha256": digest(NODE_PROBE) if NODE_PROBE.is_file() else None,
                 "runner_sha256": digest(__file__)}
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     samples = []
@@ -206,11 +182,11 @@ def main():
                 order = list(engines) if iteration % 2 == 0 else list(reversed(engines))
                 for name in order:
                     prefix = output / "raw" / f"{workload['case']}-{name}-{iteration}"
-                    command = engine_command(engine_types[name], engines[name], args.metric, workload["path"])
+                    command = [str(engines[name]), workload["path"]]
                     sample = run_sample(command, output, prefix, args.timeout)
                     sample.update(case=workload["case"], engine=name, repetition=iteration,
                                   workload_sha256=workload["sha256"])
-                    status, measurements = admit(sample, args.metric)
+                    status, measurements = admit(sample)
                     sample.update(status=status, measurements=measurements)
                     samples.append(sample)
                     journal.write(json.dumps(sample) + "\n")
@@ -219,7 +195,7 @@ def main():
     results, ratios = summarize(samples, list(engines), workloads)
     (output / "results.json").write_text(json.dumps({**metadata, "samples": samples, "summary": results,
                                                      "ratios": ratios}, indent=2) + "\n")
-    write_report(output, results, ratios, args.metric, list(engines))
+    write_report(output, results, ratios, METRIC, list(engines))
     print(output / "report.md")
     return 0 if all(sample["status"] == "ok" for sample in samples) else 1
 

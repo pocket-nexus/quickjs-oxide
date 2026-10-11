@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""Build the cross-engine front-end probes under one fresh output directory.
+"""Build the Oxide and pinned QuickJS front-end probes under one fresh output directory.
 
 Oxide reuses build_compile_probe.py and its provenance receipts. QuickJS links a
-small C probe against the pinned oracle's libquickjs.a. Boa generates a
-standalone crate outside the workspace and builds it offline. Node needs no
-build; only its path/version receipt is recorded. Nothing here vendors
-third-party source or benchmark corpora.
+small C probe against the pinned oracle's libquickjs.a. Benchmark corpora stay
+outside the repository.
 """
 import argparse
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import time
@@ -181,39 +178,6 @@ def build_quickjs(source, output, cc):
     return {"binary": str(binary), "build": receipt}
 
 
-BOA_MANIFEST = """[package]
-name = "boa-compile-probe"
-version = "0.0.0"
-edition = "2021"
-
-[workspace]
-
-[dependencies]
-boa_engine = { version = "=0.22.0", default-features = false }
-"""
-
-
-def build_boa(output, cargo):
-    probe_source = ROOT / "scripts/benchmark/probes/boa_compile_probe.rs"
-    directory = output / "boa"
-    (directory / "src").mkdir(parents=True)
-    shutil.copyfile(probe_source, directory / "src/main.rs")
-    (directory / "Cargo.toml").write_text(BOA_MANIFEST)
-    command = [cargo, "build", "--release", "--offline", "--manifest-path", str(directory / "Cargo.toml"),
-               "--target-dir", str(directory / "target")]
-    run(command, log=directory / "build.log")
-    binary = directory / "target/release/boa-compile-probe"
-    if not binary.is_file():
-        raise ValueError(f"boa probe build did not produce a binary: {binary}")
-    receipt = {"command": command, "probe_source": str(probe_source), "probe_sha256": digest(probe_source),
-               "manifest_sha256": digest(directory / "Cargo.toml"),
-               "cargo_lock_sha256": digest(directory / "Cargo.lock"),
-               "cargo_version": command_output([cargo, "--version"]),
-               "binary": str(binary), "binary_sha256": digest(binary)}
-    binary.with_suffix(".build.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    return {"binary": str(binary), "build": receipt}
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="new probe directory")
@@ -223,7 +187,6 @@ def main():
     parser.add_argument("--profiling", action="store_true", help="build the Oxide probe with profiling")
     parser.add_argument("--skip-oxide", action="store_true")
     parser.add_argument("--cc", default="cc")
-    parser.add_argument("--cargo", default="cargo")
     args = parser.parse_args()
     output = args.output.resolve()
     try:
@@ -232,12 +195,8 @@ def main():
         if not args.skip_oxide:
             probes["oxide"] = build_oxide(args.repo.resolve(), output, args.profiling)
         probes["quickjs"] = build_quickjs(args.quickjs_source, output, args.cc)
-        probes["boa"] = build_boa(output, args.cargo)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
-    node = shutil.which("node")
-    probes["node"] = {"binary": node, "version": command_output([node, "--version"]) if node else None,
-                      "probe": str(ROOT / "scripts/benchmark/probes/node_compile_probe.mjs")}
     receipt = {"schema": "oxide-compile-probes-v1",
                "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                "repository": str(args.repo.resolve()), "probes": probes,
