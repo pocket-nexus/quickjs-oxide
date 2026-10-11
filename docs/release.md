@@ -1,8 +1,8 @@
 # Releases
 
 Every crate shares the `[workspace.package]` version. A `vX.Y.Z` tag on that
-version publishes a GitHub Release; nothing is published to crates.io
-(`publish = false`). Releases run no conformance gate of their own.
+version publishes a GitHub Release, which is the only distribution channel;
+every crate sets `publish = false`.
 
 ## Cutting a release
 

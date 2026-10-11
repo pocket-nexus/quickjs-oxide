@@ -37,6 +37,10 @@ macro_rules! assert_trusted_handle {
     ($check:expr, $message:literal) => {
         #[cfg(any(debug_assertions, feature = "checked-handles"))]
         assert!($check, $message);
+        // Unchecked builds type-check the condition without evaluating it, so
+        // bindings that exist only for the check stay used.
+        #[cfg(not(any(debug_assertions, feature = "checked-handles")))]
+        let _ = || $check;
     };
 }
 
