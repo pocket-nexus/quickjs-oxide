@@ -46,6 +46,46 @@ fn namespace_cache_preserves_cycles_identity_and_live_cells() {
 }
 
 #[test]
+fn namespace_prototype_set_writes_the_child_while_direct_set_rejects() {
+    let runtime = Runtime::new();
+    let (loader, _, _) = MapModuleLoader::new([("pkg/dep.js", "export let counter = 1;")]);
+    let _loader_registration = runtime.set_module_loader(loader);
+    let mut context = runtime.new_context().expect("create context");
+    let module = context
+        .compile_module_with_filename(
+            "import * as ns from './dep.js'; globalThis.__ns = ns;",
+            "pkg/entry.js",
+        )
+        .unwrap();
+
+    drop(context.execute_module(&module).unwrap());
+    assert_script_true(
+        &mut context,
+        r#"
+        (() => {
+            'use strict';
+            const symbol = Symbol('s');
+            for (const key of ['counter', 'brandNew', symbol]) {
+                const child = Object.create(__ns);
+                child[key] = 42;
+                if (!Object.hasOwn(child, key) || child[key] !== 42) return false;
+                const grandchild = Object.create(Object.create(__ns));
+                grandchild[key] = 7;
+                if (!Object.hasOwn(grandchild, key)) return false;
+                if (!Reflect.set(Object.create(__ns), key, 9)) return false;
+                if (Reflect.set(__ns, key, 1)) return false;
+                if (Reflect.set(__ns, key, 1, {})) return false;
+                try { __ns[key] = 1; return false; } catch (error) {
+                    if (!(error instanceof TypeError)) return false;
+                }
+            }
+            return __ns.counter === 1;
+        })()
+        "#,
+    );
+}
+
+#[test]
 fn self_namespace_import_export_keeps_the_preallocated_cell() {
     let runtime = Runtime::new();
     let (loader, _, _) = MapModuleLoader::new([(

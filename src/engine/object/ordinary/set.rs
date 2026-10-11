@@ -113,7 +113,7 @@ enum Phase {
 struct State {
     runtime: Runtime,
     realm: Option<ContextId>,
-    _target: ObjectRef,
+    target: ObjectRef,
     key: PropertyKey,
     value: JsValue,
     receiver: JsValue,
@@ -600,7 +600,7 @@ fn start_waiting(
     let mut state = State {
         runtime: runtime.clone(),
         realm,
-        _target: clone_set_object(&object)?,
+        target: clone_set_object(&object)?,
         key,
         value,
         receiver,
@@ -730,7 +730,13 @@ impl State {
                         }
                         return Ok(SelectedSet::Proxy(current));
                     }
-                    if self.realm.is_some() && matches!(kind, SpecialKind::ModuleNamespace) {
+                    // Only a namespace that is the direct Set target rejects.
+                    // Reached through a prototype chain, its writable export
+                    // descriptors (or a missing key) select the receiver.
+                    if self.realm.is_some()
+                        && matches!(kind, SpecialKind::ModuleNamespace)
+                        && current.object_id() == self.target.object_id()
+                    {
                         return Ok(SelectedSet::Complete(PropertySetAction::Rejected(
                             PropertySetRejection::ReadOnly,
                         )));
