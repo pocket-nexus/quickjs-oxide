@@ -1,0 +1,201 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.95.0"
+  WASM_BINDGEN_VERSION: "0.2.126"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Match the tag to the workspace version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(./scripts/release/workspace-version.sh)"
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match workspace version ${version}; cut releases with scripts/release/cut-release.sh"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  cli:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            smoke: true
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            smoke: true
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            smoke: false
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            smoke: true
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            smoke: true
+            rustflags: -C target-feature=+crt-static
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.version.outputs.version }}
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --target "${TARGET}"
+          rustup default "${RUST_VERSION}"
+
+      - name: Install musl tools
+        if: contains(matrix.target, '-musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Build qjs
+        run: cargo build --locked --release --package quickjs-oxide-cli --bin qjs --target "${TARGET}"
+
+      - name: Run the built qjs
+        if: matrix.smoke
+        run: |
+          set -euo pipefail
+          qjs="target/${TARGET}/release/qjs"
+          "${qjs}" --version
+          result="$("${qjs}" --print-result -e '(function (a) { return a + 1; })(41)' | tr -d '\r')"
+          [[ "${result}" == "42" ]] || { echo "unexpected result: ${result}" >&2; exit 1; }
+
+      - name: Package qjs
+        run: ./scripts/release/package-cli.sh "${VERSION}" "${TARGET}" target/dist
+
+      - name: Upload qjs archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-cli-${{ matrix.target }}
+          path: target/dist/
+          if-no-files-found: error
+
+  web:
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      QUICKJS_OXIDE_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same toolchain policy as the Pages playground build.
+      - name: Install Rust and the WebAssembly target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add --toolchain stable wasm32-unknown-unknown
+
+      - name: Install matching wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
+
+      - name: Build the playground
+        run: ./scripts/web/build-web-playground.sh
+
+      - name: Package the playground and WebAssembly bindings
+        run: ./scripts/release/package-web.sh "${VERSION}" target/dist
+
+      - name: Upload web archives
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-web
+          path: target/dist/
+          if-no-files-found: error
+
+  publish:
+    needs: [version, cli, web]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download release archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: target/dist
+          merge-multiple: true
+
+      - name: Create the GitHub Release
+        run: |
+          set -euo pipefail
+          (cd target/dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" target/dist/* --clobber
+          else
+            ./scripts/release/release-notes.sh "${VERSION}" "${GITHUB_REPOSITORY}" > target/release-notes.md
+            # Explicit --latest: the archival test262-history-* releases
+            # would otherwise compete for "Latest".
+            channel=(--latest)
+            [[ "${VERSION}" != *-* ]] || channel=(--prerelease --latest=false)
+            gh release create "${GITHUB_REF_NAME}" target/dist/* \
+              --verify-tag \
+              --title "quickjs-oxide ${GITHUB_REF_NAME}" \
+              --notes-file target/release-notes.md \
+              --generate-notes \
+              "${channel[@]}"
+          fi
+
+      # Releases created with GITHUB_TOKEN do not trigger other workflows, so
+      # redeploy Pages explicitly to serve this release's playground.
+      - name: Redeploy Pages with the release playground
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run pages.yml --ref "${DEFAULT_BRANCH}"

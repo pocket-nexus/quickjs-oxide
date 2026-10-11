@@ -513,8 +513,8 @@ async function runAcceptance(url, serverErrors) {
     assert.equal((await buildCommit.textContent())?.trim(), expectedCommit);
     assert.equal(await buildCommit.getAttribute("data-commit"), expectedCommit);
     const expectedCommitUrl = /^[0-9a-f]{7,64}$/iu.test(expectedCommit)
-      ? `https://github.com/pocket-stack/quickjs-oxide/commit/${expectedCommit}`
-      : "https://github.com/pocket-stack/quickjs-oxide";
+      ? `https://github.com/pocket-nexus/quickjs-oxide/commit/${expectedCommit}`
+      : "https://github.com/pocket-nexus/quickjs-oxide";
     assert.equal(await buildCommit.getAttribute("href"), expectedCommitUrl);
 
     const quickJsVersion = await expectedQuickJsVersion();
@@ -532,14 +532,14 @@ async function runAcceptance(url, serverErrors) {
     );
     assert.equal(
       await page.locator('meta[property="og:image"]').getAttribute("content"),
-      "https://pocket-stack.github.io/quickjs-oxide/og.png",
+      "https://pocket-nexus.github.io/quickjs-oxide/og.png",
     );
 
     const expectedDocumentationRef = /^[0-9a-f]{40}$/iu.test(expectedCommit)
       ? expectedCommit
       : "main";
     const expectedDocumentationBase =
-      `https://github.com/pocket-stack/quickjs-oxide/blob/${expectedDocumentationRef}`;
+      `https://github.com/pocket-nexus/quickjs-oxide/blob/${expectedDocumentationRef}`;
     const parityContract = page.locator("#parity-contract-link");
     const test262Progress = page.locator("#test262-progress-link");
     assert.equal(

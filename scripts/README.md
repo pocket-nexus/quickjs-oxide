@@ -10,6 +10,7 @@ Implementations have a single owner:
 | `quickjs/` | Pinned reference builds, cache tests, differential fixtures and dynamic-import traces |
 | `unicode/` | Unicode table generation and source-fingerprint verification |
 | `web/` | Playground build, Node/browser checks and Pages deployment tooling |
+| `release/` | Version tagging and GitHub Release packaging; see `docs/release.md` |
 
 Commands, CI and generated-file headers use these paths directly. `demo-42.sh`
 is a small repository-level example. New tools belong in their owner directory.

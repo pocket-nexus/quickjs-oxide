@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish.workspace = true
 
 [lints]
 workspace = true
@@ -33,7 +34,9 @@ version = "0.0.1"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
-repository = "https://github.com/pocket-stack/quickjs-oxide"
+repository = "https://github.com/pocket-nexus/quickjs-oxide"
+# Releases ship as GitHub Release assets, not crates.io packages.
+publish = false
 
 [workspace.dependencies]
 quickjs-oxide-web-host = { path = "adapters/web" }

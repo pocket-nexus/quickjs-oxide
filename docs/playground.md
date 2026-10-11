@@ -1,7 +1,7 @@
 # Browser playground
 
 The public playground at
-<https://pocket-stack.github.io/quickjs-oxide/> runs quickjs-oxide itself. The
+<https://pocket-nexus.github.io/quickjs-oxide/> runs quickjs-oxide itself. The
 Rust crate is compiled to WebAssembly, loaded in the browser, and given each
 editor submission through the public `Runtime` and `Context` APIs. It does not
 delegate JavaScript execution to the browser's `eval` or `Function`

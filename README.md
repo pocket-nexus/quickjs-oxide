@@ -25,19 +25,29 @@ out of 102,037 variants (78.413%)**, with **80,060 eligible variants
 quality measure, not the headline compatibility metric.
 <!-- current-test262-metrics:end -->
 
-**[Open the browser playground →](https://pocket-stack.github.io/quickjs-oxide/)**
+**[Open the browser playground →](https://pocket-nexus.github.io/quickjs-oxide/)**
 — it runs this Rust engine's actual WebAssembly build, not host `eval`. The
 page reports its exact build commit, QuickJS target, and browser host policy.
 Its curated Script-goal examples include a function returning 42 and the
 `Atomics.wait` boundary. The playground is a pre-parity milestone, not a
 Feature Parity claim.
 
+## Install
+
+[GitHub Releases](https://github.com/pocket-nexus/quickjs-oxide/releases)
+carry prebuilt `qjs` binaries, WebAssembly packages and a versioned
+playground. See [releases](docs/release.md).
+
+```sh
+cargo binstall --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
+```
+
 ## Try it
 
 Rust 1.95 or newer is required.
 
 ```sh
-git clone https://github.com/pocket-stack/quickjs-oxide.git
+git clone https://github.com/pocket-nexus/quickjs-oxide.git
 cd quickjs-oxide
 ./scripts/demo-42.sh  # 42
 cargo run --quiet --bin qjs -- --print-result -e \
