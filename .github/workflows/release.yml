@@ -181,14 +181,16 @@ jobs:
             gh release upload "${GITHUB_REF_NAME}" target/dist/* --clobber
           else
             ./scripts/release/release-notes.sh "${VERSION}" "${GITHUB_REPOSITORY}" > target/release-notes.md
-            prerelease=()
-            [[ "${VERSION}" != *-* ]] || prerelease=(--prerelease)
+            # Explicit --latest: the archival test262-history-* releases
+            # would otherwise compete for "Latest".
+            channel=(--latest)
+            [[ "${VERSION}" != *-* ]] || channel=(--prerelease --latest=false)
             gh release create "${GITHUB_REF_NAME}" target/dist/* \
               --verify-tag \
               --title "quickjs-oxide ${GITHUB_REF_NAME}" \
               --notes-file target/release-notes.md \
               --generate-notes \
-              "${prerelease[@]}"
+              "${channel[@]}"
           fi
 
       # Releases created with GITHUB_TOKEN do not trigger other workflows, so
