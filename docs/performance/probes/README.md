@@ -36,13 +36,6 @@ python3 docs/performance/probes/runtime/probes.py --qjs "$CANDIDATE_QJS" \
   --v8 "$V8_V7_DIR" --output "$OUTPUT/probes"
 ```
 
-[`runtime/measure_docker.py`](runtime/measure_docker.py) 在 valgrind 容器中构建给定源码树或修订，并用本仓库的探针运行整套测量，输出 JSON 供 A/B 比较：
-
-```sh
-python3 docs/performance/probes/runtime/measure_docker.py --source "$SOURCE_TREE" --rev "$REVISION" \
-  --v8 "$V8_V7_DIR" --target-subdir candidate --json "$OUTPUT/candidate.json"
-```
-
 [`runtime/classify.py`](runtime/classify.py) 把 `probes.py` 报告中 V8 用例的函数 self 成本归入读缓存、dense 数组、属性写入、调用与返回、释放/GC/分配、RegExp 与内建、解释循环与数值等类别；`--other` 列出最大的未分类函数。
 
 [`runtime/ic_events.py`](runtime/ic_events.py) 用 profiling 构建运行八项 V8 用例，统计读缓存事件的种类（单态与多态首项/后项命中及其原型命中、guard 失败、超容量跳过、访问器站点、冷站点、未命中），并写出 `ic.json`。
