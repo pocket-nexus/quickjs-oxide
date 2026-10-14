@@ -1,3 +1,4 @@
+use crate::object_graph_observation::object_static_after_delete;
 use crate::object_graph_observation::{
     data_bits, data_descriptor, global_callable, int_property, intrinsic_prototype, oracle_lines,
     own_key_names,
@@ -9,7 +10,6 @@ use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
 };
-use crate::runtime_oracle::value_type;
 use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 
@@ -183,28 +183,7 @@ fn object_is_graph_matches_pinned_quickjs() {
 fn object_is_autoinit_can_be_deleted_before_materialization() {
     let oracle = require_qjs_oracle!("Object.is AutoInit delete");
     let expected = oracle_lines(&oracle, FRESH_DELETE_ORACLE, "Object.is fresh delete");
-
-    let (runtime, mut context) = host_runtime_context();
-    let object = global_callable(&runtime, &mut context, "Object");
-    let key = runtime.intern_property_key("is").unwrap();
-    let deleted = runtime.delete_property(object.as_object(), &key).unwrap();
-    let Value::Bool(in_object) = context.eval("'is' in Object").unwrap() else {
-        panic!("Object.is membership check was not Boolean");
-    };
-    let values = [
-        deleted.to_string(),
-        in_object.to_string(),
-        runtime
-            .has_own_property(object.as_object(), &key)
-            .unwrap()
-            .to_string(),
-        value_type(
-            &runtime,
-            &context.get_property(object.as_object(), &key).unwrap(),
-        )
-        .to_owned(),
-    ];
-    assert_eq!(vec![values.join("|")], expected);
+    assert_eq!(vec![object_static_after_delete("is")], expected);
 }
 
 #[test]

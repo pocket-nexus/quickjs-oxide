@@ -1,3 +1,4 @@
+use crate::object_graph_observation::{PresenceProbe, object_statics_after_delete};
 use crate::object_graph_observation::{
     data_bits, data_descriptor, eval_object, global_callable, int_property, intrinsic_prototype,
     oracle_lines, own_key_names,
@@ -9,7 +10,6 @@ use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
 };
-use crate::runtime_oracle::value_type;
 use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 
@@ -216,34 +216,13 @@ fn object_enumeration_autoinit_can_be_deleted_before_materialization() {
         FRESH_DELETE_ORACLE,
         "Object enumeration fresh delete",
     );
-
-    let (runtime, mut context) = host_runtime_context();
-    let object = global_callable(&runtime, &mut context, "Object");
-    let mut values = Vec::new();
-    for name in ["keys", "values", "entries"] {
-        let key = runtime.intern_property_key(name).unwrap();
-        values.push(
-            runtime
-                .delete_property(object.as_object(), &key)
-                .unwrap()
-                .to_string(),
-        );
-    }
-    for name in ["keys", "values", "entries"] {
-        let key = runtime.intern_property_key(name).unwrap();
-        values.push(
-            runtime
-                .has_own_property(object.as_object(), &key)
-                .unwrap()
-                .to_string(),
-        );
-    }
-    for name in ["keys", "values", "entries"] {
-        let key = runtime.intern_property_key(name).unwrap();
-        let value = context.get_property(object.as_object(), &key).unwrap();
-        values.push(value_type(&runtime, &value).to_owned());
-    }
-    assert_eq!(vec![values.join("|")], expected);
+    assert_eq!(
+        vec![object_statics_after_delete(
+            &["keys", "values", "entries"],
+            PresenceProbe::Own
+        )],
+        expected,
+    );
 }
 
 #[test]

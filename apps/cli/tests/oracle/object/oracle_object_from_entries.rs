@@ -1,3 +1,4 @@
+use crate::object_graph_observation::object_static_after_delete;
 use crate::object_graph_observation::{
     data_bits, data_descriptor, eval_object, global_callable, int_property, intrinsic_prototype,
     oracle_lines, own_key_names,
@@ -9,7 +10,6 @@ use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
 };
-use crate::runtime_oracle::value_type;
 use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 
@@ -417,29 +417,7 @@ fn object_from_entries_autoinit_can_be_deleted_before_materialization() {
         FRESH_DELETE_ORACLE,
         "Object.fromEntries fresh delete",
     );
-
-    let (runtime, mut context) = host_runtime_context();
-    let object = global_callable(&runtime, &mut context, "Object");
-    let key = runtime.intern_property_key("fromEntries").unwrap();
-    let deleted = runtime
-        .delete_property(object.as_object(), &key)
-        .unwrap()
-        .to_string();
-    let Value::Bool(in_object) = context.eval("'fromEntries' in Object").unwrap() else {
-        panic!("Object.fromEntries inherited-presence probe was not boolean");
-    };
-    let own = runtime
-        .has_own_property(object.as_object(), &key)
-        .unwrap()
-        .to_string();
-    let kind = value_type(
-        &runtime,
-        &context.get_property(object.as_object(), &key).unwrap(),
-    );
-    assert_eq!(
-        vec![format!("{deleted}|{in_object}|{own}|{kind}")],
-        expected,
-    );
+    assert_eq!(vec![object_static_after_delete("fromEntries")], expected);
 }
 
 #[test]

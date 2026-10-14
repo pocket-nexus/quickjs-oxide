@@ -1,3 +1,4 @@
+use crate::object_graph_observation::{PresenceProbe, object_statics_after_delete};
 use crate::object_graph_observation::{
     data_bits, data_descriptor, eval_object, global_callable, int_property, intrinsic_prototype,
     oracle_lines, own_key_names,
@@ -9,7 +10,6 @@ use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
 };
-use crate::runtime_oracle::value_type;
 use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 
@@ -325,31 +325,13 @@ fn object_integrity_autoinit_can_be_deleted_before_materialization() {
         FRESH_DELETE_ORACLE,
         "Object integrity fresh delete",
     );
-
-    let (runtime, mut context) = host_runtime_context();
-    let object = global_callable(&runtime, &mut context, "Object");
-    let mut values = Vec::new();
-    for name in ["seal", "freeze", "isSealed", "isFrozen"] {
-        let key = runtime.intern_property_key(name).unwrap();
-        values.push(
-            runtime
-                .delete_property(object.as_object(), &key)
-                .unwrap()
-                .to_string(),
-        );
-    }
-    for name in ["seal", "freeze", "isSealed", "isFrozen"] {
-        let Value::Bool(present) = context.eval(&format!("'{name}' in Object")).unwrap() else {
-            panic!("Object.{name} inherited-presence probe was not boolean");
-        };
-        values.push(present.to_string());
-    }
-    for name in ["seal", "freeze", "isSealed", "isFrozen"] {
-        let key = runtime.intern_property_key(name).unwrap();
-        let value = context.get_property(object.as_object(), &key).unwrap();
-        values.push(value_type(&runtime, &value).to_owned());
-    }
-    assert_eq!(vec![values.join("|")], expected);
+    assert_eq!(
+        vec![object_statics_after_delete(
+            &["seal", "freeze", "isSealed", "isFrozen"],
+            PresenceProbe::In
+        )],
+        expected,
+    );
 }
 
 #[test]
