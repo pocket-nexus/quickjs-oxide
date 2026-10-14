@@ -1026,10 +1026,16 @@ fn signed_limb_len(value: &BigInt) -> u64 {
     let signed_bits = match value.sign() {
         Sign::NoSign => 1,
         Sign::Plus => value.bits() + 1,
+        // -m needs bits(m - 1) + 1 two's-complement bits; m - 1 only loses a
+        // bit when m is a power of two, so no copy of the magnitude is needed.
         Sign::Minus => {
-            let mut below_magnitude = value.magnitude().clone();
-            below_magnitude -= 1u8;
-            below_magnitude.bits() + 1
+            let magnitude = value.magnitude();
+            let bits = magnitude.bits();
+            if magnitude.trailing_zeros() == Some(bits - 1) {
+                bits
+            } else {
+                bits + 1
+            }
         }
     };
     signed_bits.div_ceil(BIGINT_LIMB_BITS).max(1)
@@ -1108,6 +1114,35 @@ mod tests {
             bigint("-170141183460469231731687303715884105729").signed_limb_len(),
             3
         );
+    }
+
+    #[test]
+    fn copy_free_signed_limb_len_matches_decremented_magnitude_formula() {
+        use num_bigint::{BigInt, Sign};
+        fn reference(value: &BigInt) -> u64 {
+            let bits = match value.sign() {
+                Sign::NoSign => 1,
+                Sign::Plus => value.bits() + 1,
+                Sign::Minus => (value.magnitude() - 1u8).bits() + 1,
+            };
+            bits.div_ceil(BIGINT_LIMB_BITS).max(1)
+        }
+        let mut samples = vec![BigInt::from(0)];
+        for shift in 0..300_u32 {
+            let power = BigInt::from(1) << shift;
+            samples.extend([&power - 1, power.clone(), &power + 1]);
+        }
+        let mut state = BigInt::from(0x9e37_79b9_7f4a_7c15_u64);
+        for _ in 0..200 {
+            state = (&state * 6_364_136_223_846_793_005_u64 + 1_442_695_040_888_963_407_u64)
+                % (BigInt::from(1) << 400_u32);
+            samples.push(&state >> (state.bits() % 397));
+        }
+        for magnitude in samples {
+            for value in [magnitude.clone(), -magnitude] {
+                assert_eq!(super::signed_limb_len(&value), reference(&value), "{value}");
+            }
+        }
     }
 
     #[test]
