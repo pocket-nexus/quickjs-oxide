@@ -266,6 +266,47 @@ impl JsBigInt {
         }
     }
 
+    /// Compare exactly with a Number, as IsLessThan requires (`None` for NaN).
+    #[must_use]
+    pub fn cmp_f64(&self, number: f64) -> Option<Ordering> {
+        const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+        if number.is_nan() {
+            return None;
+        }
+        if (-TWO_POW_63..TWO_POW_63).contains(&number) {
+            let ordering = match &self.0 {
+                BigIntRepr::Short(value) => value.cmp(&(number.trunc() as i64)),
+                // A heap value lies outside i64 and so beyond this Number.
+                BigIntRepr::Heap(value) if value.sign() == Sign::Minus => Ordering::Less,
+                BigIntRepr::Heap(_) => Ordering::Greater,
+            };
+            return Some(ordering.then(0.0.partial_cmp(&number.fract())?));
+        }
+        // |number| >= 2^63 is integral or infinite and beyond every short
+        // value; a heap value of the opposite sign is likewise decided.
+        match &self.0 {
+            BigIntRepr::Heap(value)
+                if number.is_finite() && (value.sign() == Sign::Minus) == (number < 0.0) =>
+            {
+                let number_bits = ((number.to_bits() >> 52) & 0x7ff) - 1022;
+                let magnitude = value.bits().cmp(&number_bits).then_with(|| {
+                    let number = BigUint::from_f64(number.abs()).expect("finite Number");
+                    value.magnitude().cmp(&number)
+                });
+                Some(if number < 0.0 {
+                    magnitude.reverse()
+                } else {
+                    magnitude
+                })
+            }
+            _ => Some(if number > 0.0 {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }),
+        }
+    }
+
     /// The unsigned magnitude bit length (`0` for zero).
     #[must_use]
     pub fn magnitude_bits(&self) -> u64 {
@@ -1141,6 +1182,70 @@ mod tests {
         for magnitude in samples {
             for value in [magnitude.clone(), -magnitude] {
                 assert_eq!(super::signed_limb_len(&value), reference(&value), "{value}");
+            }
+        }
+    }
+
+    #[test]
+    fn cmp_f64_matches_exact_arbitrary_precision_comparison() {
+        use num_bigint::BigInt;
+        use num_traits::FromPrimitive;
+        use std::cmp::Ordering;
+        fn reference(left: &JsBigInt, number: f64) -> Option<Ordering> {
+            if number.is_nan() {
+                return None;
+            }
+            if number.is_infinite() {
+                return Some(if number > 0.0 {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                });
+            }
+            let truncated = BigInt::from_f64(number.trunc()).unwrap();
+            Some(
+                left.to_bigint()
+                    .cmp(&truncated)
+                    .then(0.0.partial_cmp(&number.fract()).unwrap()),
+            )
+        }
+        let mut values = vec![JsBigInt::from(i64::MIN), JsBigInt::from(i64::MAX)];
+        for text in [
+            "0",
+            "1",
+            "9007199254740993",
+            "9223372036854775808",
+            "1000000000000000000000000000000",
+        ] {
+            for sign in ["", "-"] {
+                let value = bigint(&format!("{sign}{text}"));
+                values.extend([value.sub(&JsBigInt::one()).unwrap(), value.clone()]);
+                values.push(value.add(&JsBigInt::one()).unwrap());
+            }
+        }
+        let mut numbers = vec![
+            f64::NAN,
+            f64::INFINITY,
+            -0.0,
+            0.5,
+            1.5,
+            1e20,
+            1e30,
+            f64::MAX,
+        ];
+        numbers.extend([2f64.powi(53), 2f64.powi(63), 2f64.powi(64), 2f64.powi(99)]);
+        numbers.extend(values.iter().map(JsBigInt::to_f64));
+        for number in numbers.clone() {
+            let next = f64::from_bits(number.to_bits() + 1);
+            numbers.extend([next, f64::from_bits(number.to_bits().saturating_sub(1))]);
+        }
+        for value in &values {
+            for number in numbers.iter().flat_map(|number| [*number, -*number]) {
+                assert_eq!(
+                    value.cmp_f64(number),
+                    reference(value, number),
+                    "{value} vs {number}"
+                );
             }
         }
     }

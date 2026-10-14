@@ -8,8 +8,6 @@ use crate::engine::{
         bigint::{BigIntError, JsBigInt},
     },
 };
-use num_bigint::BigInt;
-use num_traits::FromPrimitive;
 
 pub(in crate::engine::vm) enum NumericValue {
     Number(f64),
@@ -336,34 +334,6 @@ pub(in crate::engine::vm) fn jsvalue_from_number(
     match number {
         crate::engine::value::number::operations::Number::Int(value) => JsValue::Int(value),
         crate::engine::value::number::operations::Number::Float(value) => JsValue::Float(value),
-    }
-}
-
-pub(in crate::engine::vm) fn compare_bigint_number(
-    bigint: &JsBigInt,
-    number: f64,
-) -> Option<std::cmp::Ordering> {
-    if number.is_nan() {
-        return None;
-    }
-    if number == f64::INFINITY {
-        return Some(std::cmp::Ordering::Less);
-    }
-    if number == f64::NEG_INFINITY {
-        return Some(std::cmp::Ordering::Greater);
-    }
-
-    let truncated = BigInt::from_f64(number.trunc())?;
-    let ordering = bigint.to_bigint().cmp(&truncated);
-    if !ordering.is_eq() {
-        return Some(ordering);
-    }
-    if number.fract().is_sign_positive() && number.fract() != 0.0 {
-        Some(std::cmp::Ordering::Less)
-    } else if number.fract().is_sign_negative() && number.fract() != 0.0 {
-        Some(std::cmp::Ordering::Greater)
-    } else {
-        Some(std::cmp::Ordering::Equal)
     }
 }
 

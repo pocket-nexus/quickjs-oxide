@@ -1,8 +1,8 @@
 //! Numeric operators retain ordered conversion operands across JavaScript callbacks.
 use super::{
-    NumericValue, add_primitives, bigint_error, bigint_value_payload, compare_bigint_number,
-    jsvalue_number, mixed_numeric_type_error, number_to_int32, number_to_uint32, string_payload,
-    string_to_bigint, to_number_jsvalue, to_numeric_primitive, unary_plus_primitive,
+    NumericValue, add_primitives, bigint_error, bigint_value_payload, jsvalue_number,
+    mixed_numeric_type_error, number_to_int32, number_to_uint32, string_payload, string_to_bigint,
+    to_number_jsvalue, to_numeric_primitive, unary_plus_primitive,
 };
 use crate::engine::{
     api::runtime::Runtime,
@@ -550,11 +550,9 @@ fn compare(
             to_numeric_primitive(runtime, right)?,
         ) {
             (NumericValue::BigInt(left), NumericValue::BigInt(right)) => Some(left.cmp(&right)),
-            (NumericValue::BigInt(left), NumericValue::Number(right)) => {
-                compare_bigint_number(&left, right)
-            }
+            (NumericValue::BigInt(left), NumericValue::Number(right)) => left.cmp_f64(right),
             (NumericValue::Number(left), NumericValue::BigInt(right)) => {
-                compare_bigint_number(&right, left).map(std::cmp::Ordering::reverse)
+                right.cmp_f64(left).map(std::cmp::Ordering::reverse)
             }
             (NumericValue::Number(left), NumericValue::Number(right)) => left.partial_cmp(&right),
         },
@@ -734,7 +732,7 @@ fn equality(
                     Ok(converted) => converted,
                     Err(error) => return Err(equality_error(runtime, left, right, error)),
                 };
-                let equal = compare_bigint_number(&a, number) == Some(std::cmp::Ordering::Equal);
+                let equal = a.cmp_f64(number) == Some(std::cmp::Ordering::Equal);
                 return equality_complete(runtime, kind, left, right, equal);
             }
             (JsValue::Int(_) | JsValue::Float(_), b) if b.is_bigint() => {
@@ -744,7 +742,7 @@ fn equality(
                     Ok(converted) => converted,
                     Err(error) => return Err(equality_error(runtime, left, right, error)),
                 };
-                let equal = compare_bigint_number(&b, number) == Some(std::cmp::Ordering::Equal);
+                let equal = b.cmp_f64(number) == Some(std::cmp::Ordering::Equal);
                 return equality_complete(runtime, kind, left, right, equal);
             }
             (JsValue::Bool(_), _) => {
