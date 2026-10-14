@@ -199,13 +199,11 @@ const helperAllowlist = new Set([
   "apps/cli/tests/oracle/global/oracle_global_numeric_predicates.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
   "apps/cli/tests/oracle/global/oracle_global_uri_codecs.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
   "apps/cli/tests/oracle/number/oracle_number_constructor_conversion.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u00002ecb9b416736102f1170cfa102c85182007491633a58badf2c1677354d8fa244",
   "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u00003da3ed15c59afc7ed8c28f61354fa7f1ad406d948f45faa8d6989b5805fbeec7",
   "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
   "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u0000174e66d9def3034c785ba13ce8818d1a4b6132fa1aa62f3956f8a870a18c6690",
   "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u0000ae3af224efe82f1d4d7b2adf0ac80991c51681123f90bc2ed647e15b29c3832d",
   "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u0000decb1b0e66595c263bc68421bb9797396e381256f18cfb9bf9892c576822ad4a",
-  "apps/cli/tests/oracle/object/oracle_object_intrinsic.rs\u00002ecb9b416736102f1170cfa102c85182007491633a58badf2c1677354d8fa244",
   "apps/cli/tests/oracle/object/oracle_object_intrinsic.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
   "apps/cli/tests/oracle/object/oracle_object_intrinsic.rs\u0000decb1b0e66595c263bc68421bb9797396e381256f18cfb9bf9892c576822ad4a",
   "apps/cli/tests/oracle/string/oracle_string_index_search.rs\u0000ae3af224efe82f1d4d7b2adf0ac80991c51681123f90bc2ed647e15b29c3832d",
@@ -216,7 +214,6 @@ const helperAllowlist = new Set([
   "apps/cli/tests/oracle/string/oracle_string_intrinsic.rs\u0000c09ce90549ab8e65e6a88c4f7261c5ec6e7aa8a11bee43106b827b8823bc1377",
   "apps/cli/tests/oracle/string/oracle_string_intrinsic.rs\u0000decb1b0e66595c263bc68421bb9797396e381256f18cfb9bf9892c576822ad4a",
   "apps/cli/tests/oracle/string/oracle_string_split.rs\u0000174e66d9def3034c785ba13ce8818d1a4b6132fa1aa62f3956f8a870a18c6690",
-  "apps/cli/tests/oracle/math_intrinsic.rs\u00002ecb9b416736102f1170cfa102c85182007491633a58badf2c1677354d8fa244",
 ]);
 
 runCanaries();

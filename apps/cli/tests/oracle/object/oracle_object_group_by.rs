@@ -1,3 +1,4 @@
+use crate::object_graph_observation::data_bits;
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
 
@@ -603,13 +604,4 @@ fn data_descriptor(
         panic!("property was not a data descriptor");
     };
     (value, writable, enumerable, configurable)
-}
-
-fn data_bits(writable: bool, enumerable: bool, configurable: bool) -> String {
-    format!(
-        "D:{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable),
-    )
 }

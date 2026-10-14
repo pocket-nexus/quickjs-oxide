@@ -1,4 +1,5 @@
 use super::quickjs_array_completion_oracle::observe_array_completion;
+use crate::object_graph_observation::data_bits;
 use crate::runtime_observation::{
     error_string_property, primitive_value_text,
     property_callable_with_read_context as property_callable,
@@ -950,15 +951,6 @@ fn data_descriptor(
         panic!("expected a data property descriptor");
     };
     (value, writable, enumerable, configurable)
-}
-
-fn data_bits(writable: bool, enumerable: bool, configurable: bool) -> String {
-    format!(
-        "D:{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable),
-    )
 }
 
 fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
