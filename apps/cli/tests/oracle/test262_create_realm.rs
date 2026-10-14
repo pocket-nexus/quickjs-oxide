@@ -1,6 +1,6 @@
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{eval, string_text as text};
-use quickjs_oxide::engine::api::{PendingJobOutcome, Runtime, Value};
+use quickjs_oxide::engine::api::{PendingJobOutcome, Value};
 
 const FIXTURE: &str = include_str!("../fixtures/inputs/create_realm_host.js");
 const QUICKJS_2026_06_04: &str =

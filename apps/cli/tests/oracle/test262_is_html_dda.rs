@@ -1,6 +1,5 @@
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{eval, string_text as text};
-use quickjs_oxide::engine::api::Runtime;
 
 const FIXTURE: &str = include_str!("../fixtures/inputs/is_html_dda.js");
 const QUICKJS_2026_06_04: &str =
@@ -8,7 +7,7 @@ const QUICKJS_2026_06_04: &str =
 
 #[test]
 fn is_html_dda_semantics_match_pinned_quickjs_transcript() {
-    let (runtime, mut context) = host_runtime_context();
+    let (_runtime, mut context) = host_runtime_context();
     context
         .install_test262_host()
         .expect("install Test262 host surface");
