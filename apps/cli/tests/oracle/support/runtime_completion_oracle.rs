@@ -306,6 +306,34 @@ pub(crate) fn assert_runtime_completion_helper_contracts() {
     );
 }
 
+/// Self-check prelude vectors under pinned QuickJS: every `groups` vector
+/// must return and every `error_cases` vector must throw.
+pub(crate) fn self_check_prelude_vectors(
+    oracle: &std::ffi::OsStr,
+    prelude: &str,
+    groups: &[(&str, &[(&str, &str)])],
+    error_cases: &[(&str, &str)],
+) {
+    for &(group, cases) in groups {
+        for &(description, source) in cases {
+            let observation =
+                observe_quickjs_completion_with_prelude(prelude, oracle, source, description);
+            assert!(
+                observation.starts_with("return|"),
+                "{group} oracle vector unexpectedly threw for {description}: {observation:?}",
+            );
+        }
+    }
+    for &(description, source) in error_cases {
+        let observation =
+            observe_quickjs_completion_with_prelude(prelude, oracle, source, description);
+        assert!(
+            observation.starts_with("throw|"),
+            "error oracle vector unexpectedly returned for {description}: {observation:?}",
+        );
+    }
+}
+
 /// Observe QuickJS after prepending a domain-owned source prelude.
 pub(crate) fn observe_quickjs_completion_with_prelude(
     prelude: &str,

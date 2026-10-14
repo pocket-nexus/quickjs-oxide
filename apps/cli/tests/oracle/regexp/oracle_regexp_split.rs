@@ -1,7 +1,5 @@
-use crate::runtime_completion_oracle::{
-    compare_read_context_eval_completion_cases_with_prelude,
-    observe_quickjs_completion_with_prelude,
-};
+use crate::runtime_completion_oracle::compare_read_context_eval_completion_cases_with_prelude;
+use crate::runtime_completion_oracle::self_check_prelude_vectors;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_value;
 use crate::runtime_observation::{
@@ -511,27 +509,23 @@ const RECURSION_CASES: &[(&str, &str)] = &[(
 #[test]
 fn regexp_split_oracle_vectors_self_check() {
     let oracle = require_qjs_oracle!("String/RegExp split oracle self-check");
-    for &(group, cases) in &[
-        ("metadata", METADATA_CASES),
-        ("String integration", STRING_INTEGRATION_CASES),
-        ("species order", SPECIES_ORDER_CASES),
-        ("flags and advance", FLAGS_AND_ADVANCE_CASES),
-        ("limit and empty", LIMIT_AND_EMPTY_CASES),
-        ("captures", CAPTURE_CASES),
-        ("lastIndex and exec", LAST_INDEX_AND_EXEC_CASES),
-        ("abrupt completion", ABRUPT_CASES),
-        ("errors", ERROR_CASES),
-        ("recursion", RECURSION_CASES),
-    ] {
-        for &(description, source) in cases {
-            let observation =
-                observe_quickjs_completion_with_prelude(PRELUDE, &oracle, source, description);
-            assert!(
-                observation.starts_with("return|"),
-                "{group} oracle vector unexpectedly threw for {description}: {observation:?}",
-            );
-        }
-    }
+    self_check_prelude_vectors(
+        &oracle,
+        PRELUDE,
+        &[
+            ("metadata", METADATA_CASES),
+            ("String integration", STRING_INTEGRATION_CASES),
+            ("species order", SPECIES_ORDER_CASES),
+            ("flags and advance", FLAGS_AND_ADVANCE_CASES),
+            ("limit and empty", LIMIT_AND_EMPTY_CASES),
+            ("captures", CAPTURE_CASES),
+            ("lastIndex and exec", LAST_INDEX_AND_EXEC_CASES),
+            ("abrupt completion", ABRUPT_CASES),
+            ("errors", ERROR_CASES),
+            ("recursion", RECURSION_CASES),
+        ],
+        &[],
+    );
 }
 
 #[test]

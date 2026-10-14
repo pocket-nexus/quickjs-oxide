@@ -1,8 +1,7 @@
 use crate::object_graph_observation::{define_builtin_data as define_data, intrinsic_prototype};
 use crate::runtime_completion_oracle::STRING_CAPTURE_PRELUDE as CASE_PRELUDE;
-use crate::runtime_completion_oracle::{
-    compare_eval_completion_cases_with_prelude, observe_quickjs_completion_with_prelude,
-};
+use crate::runtime_completion_oracle::compare_eval_completion_cases_with_prelude;
+use crate::runtime_completion_oracle::self_check_prelude_vectors;
 use crate::runtime_observation::assert_native_error;
 use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
@@ -358,32 +357,20 @@ const STACK_CASES: &[(&str, &str)] = &[
 #[test]
 fn string_case_oracle_vectors_self_check() {
     let oracle = require_qjs_oracle!("String case oracle self-check");
-    for &(group, cases) in &[
-        ("graph", GRAPH_CASES),
-        ("properties", PROPERTY_CASES),
-        ("outputs", OUTPUT_CASES),
-        ("final sigma", FINAL_SIGMA_CASES),
-        ("locale", LOCALE_CASES),
-        ("construction", CONSTRUCT_CASES),
-        ("stack", STACK_CASES),
-    ] {
-        for &(description, source) in cases {
-            let observation =
-                observe_quickjs_completion_with_prelude(CASE_PRELUDE, &oracle, source, description);
-            assert!(
-                observation.starts_with("return|"),
-                "{group} oracle vector unexpectedly threw for {description}: {observation:?}",
-            );
-        }
-    }
-    for &(description, source) in ERROR_CASES {
-        let observation =
-            observe_quickjs_completion_with_prelude(CASE_PRELUDE, &oracle, source, description);
-        assert!(
-            observation.starts_with("throw|"),
-            "error oracle vector unexpectedly returned for {description}: {observation:?}",
-        );
-    }
+    self_check_prelude_vectors(
+        &oracle,
+        CASE_PRELUDE,
+        &[
+            ("graph", GRAPH_CASES),
+            ("properties", PROPERTY_CASES),
+            ("outputs", OUTPUT_CASES),
+            ("final sigma", FINAL_SIGMA_CASES),
+            ("locale", LOCALE_CASES),
+            ("construction", CONSTRUCT_CASES),
+            ("stack", STACK_CASES),
+        ],
+        ERROR_CASES,
+    );
 }
 
 #[test]
