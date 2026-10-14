@@ -4,9 +4,21 @@ Every crate shares the `[workspace.package]` version. A `vX.Y.Z` tag on that
 version publishes a GitHub Release, which is the only distribution channel;
 every crate sets `publish = false`.
 
+## Release notes come from pull-request titles
+
+A release's notes are GitHub's generated list of the pull requests merged since
+the previous tag, after an install section from `release-notes.sh`. Title each
+pull request for the people who use the release: say what changed for them
+(behavior, performance, embedding API, required Rust version), not how the code
+was reorganized. Put the most user-visible change first when a pull request
+bundles several, e.g. `Require Rust 1.99; refactor std API usage`.
+
+[`CHANGELOG.md`](../CHANGELOG.md) keeps the notes of 0.1.0 and 0.1.1 and is not
+updated for later releases.
+
 ## Cutting a release
 
-Record the release in [`CHANGELOG.md`](../CHANGELOG.md) on `main`, then tag it:
+Tag the release from `main`:
 
 ```sh
 ./scripts/release/cut-release.sh 0.1.0

@@ -1,6 +1,8 @@
 # Changelog
 
-All notable changes to quickjs-oxide are recorded here. Versions follow
+Notes for releases after 0.1.1 are on
+[GitHub Releases](https://github.com/pocket-nexus/quickjs-oxide/releases),
+generated from pull-request titles. Versions follow
 [Semantic Versioning](https://semver.org/); before 1.0, minor versions may
 change the embedding API.
 
