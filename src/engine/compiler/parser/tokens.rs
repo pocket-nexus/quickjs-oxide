@@ -25,7 +25,6 @@ use crate::engine::compiler::parser::diagnostics::lex_error;
 use crate::engine::compiler::pseudo_binding::NEW_TARGET_LOCAL_NAME;
 use crate::engine::value::JsString;
 
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::stack_guard::ParserStackFrame;
 
 impl<'source> Parser<'source> {
@@ -763,7 +762,7 @@ impl<'source> Parser<'source> {
     }
 
     pub(in crate::engine::compiler) fn syntax_here(&self, message: impl Into<String>) -> Error {
-        Error::syntax(message, source_span(self.current().span))
+        Error::syntax(message, self.current().span)
     }
 
     /// Charge one recursive grammar production at the current token, run
@@ -805,7 +804,7 @@ impl<'source> Parser<'source> {
         &self,
         message: impl Into<String>,
     ) -> Error {
-        Error::unsupported(message, source_span(self.current().span))
+        Error::unsupported(message, self.current().span)
     }
 }
 

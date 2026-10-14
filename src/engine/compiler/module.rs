@@ -32,7 +32,6 @@ use crate::engine::compiler::parser::context::StatementCompletion;
 use crate::engine::compiler::parser::context::StatementPosition;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::lex_error;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 use std::collections::HashMap;
@@ -143,9 +142,7 @@ impl IrModule {
             message.push_utf8("duplicate exported name '");
             export_name.push_atom_get_str_to(&mut message);
             message.push_utf8("'");
-            return Err(
-                Error::from_native_message(ErrorKind::Syntax, message).with_span(source_span(span))
-            );
+            return Err(Error::from_native_message(ErrorKind::Syntax, message).with_span(span));
         }
         self.local_exports.push(IrModuleLocalExport {
             local_name,
@@ -175,9 +172,7 @@ impl IrModule {
             message.push_utf8("duplicate exported name '");
             export_name.push_atom_get_str_to(&mut message);
             message.push_utf8("'");
-            return Err(
-                Error::from_native_message(ErrorKind::Syntax, message).with_span(source_span(span))
-            );
+            return Err(Error::from_native_message(ErrorKind::Syntax, message).with_span(span));
         }
         self.exports.push(ModuleExport {
             export_name,
@@ -310,7 +305,7 @@ impl<'source> Parser<'source> {
                     let TokenKind::Identifier(identifier) = imported_token.kind else {
                         return Err(Error::syntax(
                             "imported keyword requires an 'as' binding",
-                            source_span(imported_token.span),
+                            imported_token.span,
                         )
                         .into());
                     };
@@ -450,7 +445,7 @@ impl<'source> Parser<'source> {
             let TokenKind::String(_) = value_token.kind else {
                 // `js_parse_with_clause` intentionally reports a non-string
                 // value at the beginning of its key, not at the value token.
-                return Err(Error::syntax("string expected", source_span(key_token.span)).into());
+                return Err(Error::syntax("string expected", key_token.span).into());
             };
             if attributes
                 .iter()
@@ -527,7 +522,7 @@ impl<'source> Parser<'source> {
                 if record.import.is_some() {
                     return Err(Error::syntax(
                         "invalid redefinition of lexical identifier",
-                        source_span(span),
+                        span,
                     ));
                 }
                 record.import = Some(import);
@@ -703,9 +698,8 @@ impl<'source> Parser<'source> {
         let name = match token.kind {
             TokenKind::String(_) => {
                 let name = self.decode_string_literal(token.span)?;
-                String::from_utf16(&name.utf16_units().collect::<Vec<_>>()).map_err(|_| {
-                    Error::syntax("contains unpaired surrogate", source_span(token.span))
-                })?;
+                String::from_utf16(&name.utf16_units().collect::<Vec<_>>())
+                    .map_err(|_| Error::syntax("contains unpaired surrogate", token.span))?;
                 name
             }
             TokenKind::Identifier(identifier) => {
@@ -934,7 +928,7 @@ impl<'source> Parser<'source> {
         {
             return Err(Error::syntax(
                 "invalid redefinition of global identifier in module code",
-                source_span(redefinition_span),
+                redefinition_span,
             ));
         }
         let parsed = self.parse_function_definition_tail(header, false)?;
@@ -1036,7 +1030,7 @@ pub(super) fn resolve_module_exports(tree: &mut FunctionTree) -> Result<(), Erro
                         "exported variable '{}' does not exist",
                         tree.names.name(export.local_name)
                     ),
-                    source_span(export.span),
+                    export.span,
                 )
             })?;
         export.binding = Some(binding);

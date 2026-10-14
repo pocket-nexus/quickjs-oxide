@@ -5,7 +5,7 @@
 //! accepting the realm's `Date.prototype` object.
 
 use super::calendar::{DateFields, DateInputFields, get_date_fields, set_date_fields};
-use super::format::{DateStringKind as DateFormatKind, format_date_string};
+use super::format::format_date_string;
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
@@ -22,19 +22,6 @@ use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
 pub(crate) mod operation;
-
-fn date_format_kind(method: DateStringMethod) -> DateFormatKind {
-    match method {
-        DateStringMethod::String => DateFormatKind::String,
-        DateStringMethod::DateString => DateFormatKind::DateString,
-        DateStringMethod::TimeString => DateFormatKind::TimeString,
-        DateStringMethod::UtcString => DateFormatKind::UtcString,
-        DateStringMethod::IsoString => DateFormatKind::IsoString,
-        DateStringMethod::LocaleString => DateFormatKind::LocaleString,
-        DateStringMethod::LocaleDateString => DateFormatKind::LocaleDateString,
-        DateStringMethod::LocaleTimeString => DateFormatKind::LocaleTimeString,
-    }
-}
 
 fn date_input_fields(fields: &DateFields) -> DateInputFields {
     [
@@ -204,7 +191,7 @@ impl Runtime {
                 return Ok(Completion::Throw(value));
             }
         };
-        let kind = date_format_kind(method);
+        let kind = method;
         let fields = get_date_fields(value, kind.uses_local_time(), false, |instant| {
             self.date_timezone_offset_minutes(instant)
         });

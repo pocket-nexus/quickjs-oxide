@@ -10,6 +10,7 @@
 //! where the representation is observable (notably `BigInt.asUintN`) explicitly
 //! emulate the upstream signed-limb behavior.
 
+use super::primitive::is_ecmascript_whitespace;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;
@@ -160,7 +161,9 @@ impl JsBigInt {
     /// Returns [`BigIntError::InvalidSyntax`] for malformed input and an
     /// allocation-size error for values beyond the upstream limit.
     pub fn parse_js_string(source: &str) -> Result<Self, BigIntError> {
-        let source = source.trim_matches(is_ecmascript_whitespace);
+        let source = source.trim_matches(|character: char| {
+            u16::try_from(character).is_ok_and(is_ecmascript_whitespace)
+        });
         if source.is_empty() {
             return Ok(Self::zero());
         }
@@ -1030,28 +1033,6 @@ fn signed_limb_len(value: &BigInt) -> u64 {
         }
     };
     signed_bits.div_ceil(BIGINT_LIMB_BITS).max(1)
-}
-
-fn is_ecmascript_whitespace(character: char) -> bool {
-    matches!(
-        character,
-        '\u{0009}'
-            | '\u{000A}'
-            | '\u{000B}'
-            | '\u{000C}'
-            | '\u{000D}'
-            | '\u{0020}'
-            | '\u{00A0}'
-            | '\u{1680}'
-            | '\u{2000}'
-            ..='\u{200A}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202F}'
-                | '\u{205F}'
-                | '\u{3000}'
-                | '\u{FEFF}'
-    )
 }
 
 #[cfg(test)]

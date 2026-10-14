@@ -66,7 +66,7 @@ pub(super) fn step(
             }
         };
     }
-    let callable_identity_operation = super::bindings::is_private_callable_kind(kind)
+    let callable_identity_operation = kind.is_private_callable()
         && match access {
             Access::In => true,
             Access::Put => kind != ClosureVariableKind::PrivateSetter,

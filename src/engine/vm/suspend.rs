@@ -17,7 +17,7 @@ use crate::engine::heap::{
 };
 use crate::engine::object::ObjectRef;
 use crate::engine::value::JsValue;
-use crate::engine::vm::bindings::{FrameBinding, is_private_callable_kind, release_frame_binding};
+use crate::engine::vm::bindings::{FrameBinding, release_frame_binding};
 use crate::engine::vm::call::CallableExecution;
 use crate::engine::vm::frames::ActiveFrameToken;
 use crate::engine::vm::{BytecodePc, Completion, VmResume, VmSuspendKind};
@@ -74,7 +74,7 @@ fn validate_decoded_generator_binding(
             ))
         }
         FrameBinding::PrivateCallable(_)
-            if !is_private_callable_kind(definition.kind)
+            if !definition.kind.is_private_callable()
                 || !definition.is_lexical
                 || !definition.is_const =>
         {

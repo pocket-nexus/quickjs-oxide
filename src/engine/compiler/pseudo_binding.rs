@@ -9,7 +9,6 @@ use crate::engine::compiler::model::ir::function::FunctionKind;
 use crate::engine::compiler::model::ir::function::FunctionTree;
 use crate::engine::compiler::model::ir::{FunctionId, IrOp, SpannedIrOp};
 use crate::engine::compiler::model::scope::ScopeId;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::relocation::prepend_hoist_prefix;
 use crate::engine::compiler::resolution::find_or_create_own_binding;
 use crate::engine::compiler::resolution::lookup_interned_name;
@@ -321,10 +320,7 @@ pub(super) fn find_or_create_own_pseudo_binding(
 
     let function = &mut tree.functions[function_id];
     if function.locals.len() >= MAX_LOCAL_VARIABLES {
-        return Err(
-            Error::new(ErrorKind::JsInternal, "too many local variables")
-                .with_span(source_span(span)),
-        );
+        return Err(Error::new(ErrorKind::JsInternal, "too many local variables").with_span(span));
     }
     let index = u16::try_from(function.locals.len())
         .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;

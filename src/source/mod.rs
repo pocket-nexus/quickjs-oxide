@@ -5,7 +5,7 @@ pub mod text;
 pub use text::*;
 
 /// A byte and human-readable location in a UTF-8 source file.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub struct SourceLocation {
     pub byte_offset: usize,
     pub line: u32,
@@ -24,7 +24,7 @@ impl SourceLocation {
 }
 
 /// Half-open source range `[start, end)`.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub struct SourceSpan {
     pub start: SourceLocation,
     pub end: SourceLocation,

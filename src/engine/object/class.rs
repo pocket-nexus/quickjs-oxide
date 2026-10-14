@@ -318,6 +318,7 @@ mod tests {
     use crate::engine::api::Context;
     use crate::engine::code::function::metadata::FunctionMetadata;
     use crate::engine::object::CompleteOrdinaryPropertyDescriptor;
+    use crate::engine::test_support::eval_string;
 
     use super::*;
     use crate::engine::code::bytecode::Instruction;
@@ -328,13 +329,6 @@ mod tests {
             panic!("{source} did not evaluate to an Object");
         };
         object
-    }
-
-    fn eval_string(context: &mut Context, source: &str) -> String {
-        let Value::String(value) = context.eval(source).unwrap() else {
-            panic!("{source} did not evaluate to a String");
-        };
-        value.to_utf8_lossy()
     }
 
     fn class_constructor(

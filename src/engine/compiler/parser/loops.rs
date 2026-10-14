@@ -26,7 +26,6 @@ use crate::engine::compiler::parser::context::StatementCompletion;
 use crate::engine::compiler::parser::context::StatementPosition;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::relocation::relocate_ir_fragment;
 use crate::engine::compiler::stack_guard::ParserStackFrame;
 
@@ -541,13 +540,13 @@ impl<'source> Parser<'source> {
             if strict && matches!(self.names.name(name), "eval" | "arguments") {
                 return Err(Error::syntax(
                     "invalid variable name in strict mode",
-                    source_span(self.current().span),
+                    self.current().span,
                 ));
             }
             if self.names.name(name) == "let" {
                 return Err(Error::syntax(
                     "invalid lexical variable name",
-                    source_span(self.current().span),
+                    self.current().span,
                 ));
             }
             self.register_lexical_binding(name, token.span, self.current().span, is_const, false)?;
@@ -599,7 +598,7 @@ impl<'source> Parser<'source> {
             if strict && matches!(self.names.name(name), "eval" | "arguments") {
                 return Err(Error::syntax(
                     "invalid variable name in strict mode",
-                    source_span(self.current().span),
+                    self.current().span,
                 ));
             }
             self.register_var_binding(name, token.span, self.current().span)?;
@@ -639,7 +638,7 @@ impl<'source> Parser<'source> {
         {
             return Err(Error::syntax(
                 "'for of' expression cannot start with 'async'",
-                source_span(async_span),
+                async_span,
             ));
         }
         self.parse_left_hand_side_expression()?;

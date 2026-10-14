@@ -6,6 +6,7 @@
 //! coupled to the toolchain and whose scalar-only API cannot preserve lone
 //! UTF-16 surrogates.
 
+use super::is_in_table;
 use crate::engine::value::{JsString, JsStringError};
 #[cfg(test)]
 use std::cell::Cell;
@@ -28,9 +29,6 @@ const RUN_TYPE_LF_EXT: u32 = 10;
 const RUN_TYPE_UF_EXT2: u32 = 11;
 const RUN_TYPE_LF_EXT2: u32 = 12;
 const RUN_TYPE_UF_EXT3: u32 = 13;
-
-const INDEX_BLOCK_LEN: usize = 32;
-const CODE_MASK: u32 = (1 << 21) - 1;
 
 #[cfg(test)]
 thread_local! {
@@ -547,79 +545,6 @@ fn normalize_half_open_ranges(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
     normalized
 }
 
-fn index_position(code_point: u32, index: &[u8]) -> Option<(u32, usize)> {
-    debug_assert!(!index.is_empty() && index.len().is_multiple_of(3));
-    let entry_count = index.len() / 3;
-    let first = read_u24(index, 0);
-    let first_code = first & CODE_MASK;
-    if code_point < first_code {
-        return Some((0, 0));
-    }
-
-    let last = read_u24(index, entry_count - 1);
-    if code_point >= last & CODE_MASK {
-        return None;
-    }
-
-    let mut lower = 0;
-    let mut upper = entry_count - 1;
-    while upper - lower > 1 {
-        let middle = (upper + lower) / 2;
-        if code_point < read_u24(index, middle) & CODE_MASK {
-            upper = middle;
-        } else {
-            lower = middle;
-        }
-    }
-    let entry = read_u24(index, lower);
-    Some((
-        entry & CODE_MASK,
-        (lower + 1) * INDEX_BLOCK_LEN + (entry >> 21) as usize,
-    ))
-}
-
-fn read_u24(index: &[u8], entry: usize) -> u32 {
-    let offset = entry * 3;
-    u32::from(index[offset])
-        | (u32::from(index[offset + 1]) << 8)
-        | (u32::from(index[offset + 2]) << 16)
-}
-
-fn is_in_table(code_point: u32, table: &[u8], index: &[u8]) -> bool {
-    let Some((mut code, mut position)) = index_position(code_point, index) else {
-        return false;
-    };
-    let mut included = false;
-    loop {
-        let byte = table[position];
-        position += 1;
-        if byte < 0x40 {
-            code += u32::from(byte >> 3) + 1;
-            if code_point < code {
-                return included;
-            }
-            included = !included;
-            code += u32::from(byte & 7) + 1;
-        } else if byte >= 0x80 {
-            code += u32::from(byte - 0x80) + 1;
-        } else if byte < 0x60 {
-            code += (u32::from(byte - 0x40) << 8) | u32::from(table[position]);
-            code += 1;
-            position += 1;
-        } else {
-            code += (u32::from(byte - 0x60) << 16)
-                | (u32::from(table[position]) << 8)
-                | u32::from(table[position + 1]);
-            code += 1;
-            position += 2;
-        }
-        if code_point < code {
-            return included;
-        }
-        included = !included;
-    }
-}
-
 fn is_cased(code_point: u32) -> bool {
     let mut lower = 0;
     let mut upper = tables::CASE_CONV_TABLE1.len();
@@ -1021,13 +946,7 @@ mod tests {
 
     #[test]
     fn exhaustive_kernel_fingerprint_matches_pinned_quickjs_c() {
-        fn hash_u32(mut hash: u64, value: u32) -> u64 {
-            for byte in value.to_le_bytes() {
-                hash ^= u64::from(byte);
-                hash = hash.wrapping_mul(1_099_511_628_211);
-            }
-            hash
-        }
+        use crate::source::unicode::tests::hash_u32;
 
         let mut case_hash = 14_695_981_039_346_656_037_u64;
         let mut property_hash = 14_695_981_039_346_656_037_u64;

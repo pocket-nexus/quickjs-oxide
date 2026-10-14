@@ -11,8 +11,6 @@
 use crate::engine::builtins::native::{DataViewElementKind, DataViewNativeKind};
 use crate::engine::heap::{ArrayBufferViewData, DataViewRealmData, ObjectData, ObjectPayload};
 
-#[cfg(test)]
-use crate::engine::api::context::Context;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::NativeFunctionId,

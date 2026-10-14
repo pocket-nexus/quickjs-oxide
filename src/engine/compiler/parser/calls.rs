@@ -15,7 +15,6 @@ use crate::engine::compiler::model::ir::IrOp;
 use crate::engine::compiler::model::ir::function::FunctionKind;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::pseudo_binding::ACTIVE_FUNCTION_LOCAL_NAME;
 use crate::engine::compiler::pseudo_binding::HOME_OBJECT_LOCAL_NAME;
 use crate::engine::compiler::pseudo_binding::NEW_TARGET_LOCAL_NAME;
@@ -118,7 +117,7 @@ impl<'source> Parser<'source> {
             if !self.current_new_target_allowed() {
                 return Err(Error::syntax(
                     "new.target only allowed within functions",
-                    source_span(new_span),
+                    new_span,
                 ));
             }
             self.advance()?;
@@ -268,16 +267,13 @@ impl<'source> Parser<'source> {
             self.current().kind,
             TokenKind::Punctuator(Punctuator::Dot | Punctuator::LeftBracket)
         ) {
-            return Err(Error::syntax(
-                "invalid use of 'super'",
-                source_span(self.current().span),
-            ));
+            return Err(Error::syntax("invalid use of 'super'", self.current().span));
         }
 
         if !self.current_ir().super_allowed {
             return Err(Error::syntax(
                 "'super' is only valid in a method",
-                source_span(self.current().span),
+                self.current().span,
             ));
         }
 
@@ -301,7 +297,7 @@ impl<'source> Parser<'source> {
                 TokenKind::PrivateIdentifier(_) => {
                     return Err(Error::syntax(
                         "private class field forbidden after super",
-                        source_span(token.span),
+                        token.span,
                     ));
                 }
                 TokenKind::Identifier(identifier) => self.intern_identifier(&identifier),

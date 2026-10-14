@@ -459,16 +459,6 @@ impl Runtime {
         Ok(index)
     }
 
-    const fn is_private_callable_kind(kind: ClosureVariableKind) -> bool {
-        matches!(
-            kind,
-            ClosureVariableKind::PrivateMethod
-                | ClosureVariableKind::PrivateGetter
-                | ClosureVariableKind::PrivateSetter
-                | ClosureVariableKind::PrivateGetterSetter
-        )
-    }
-
     /// Capture one class-private callable in its dedicated immutable lexical
     /// cell. Its HomeObject must already be installed: it is the authority
     /// from which QuickJS derives the class-side brand.
@@ -479,7 +469,7 @@ impl Runtime {
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
         let _operation = self.operation()?;
-        if !Self::is_private_callable_kind(kind) {
+        if !kind.is_private_callable() {
             return Err(RuntimeError::Invariant(
                 "private-callable VarRef received a non-callable binding kind",
             ));
@@ -513,7 +503,7 @@ impl Runtime {
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
         let _operation = self.operation()?;
-        if !Self::is_private_callable_kind(kind) {
+        if !kind.is_private_callable() {
             return Err(RuntimeError::Invariant(
                 "private-callable VarRef received a non-callable binding kind",
             ));
@@ -553,7 +543,7 @@ impl Runtime {
                 "private-callable closure variable",
             ));
         }
-        if !Self::is_private_callable_kind(kind) {
+        if !kind.is_private_callable() {
             return Err(RuntimeError::Invariant(
                 "private-callable initialization received a non-callable binding kind",
             ));
@@ -597,7 +587,7 @@ impl Runtime {
                 "private-callable closure variable",
             ));
         }
-        if !Self::is_private_callable_kind(kind) {
+        if !kind.is_private_callable() {
             return Err(RuntimeError::Invariant(
                 "private-callable read received a non-callable binding kind",
             ));
@@ -649,7 +639,7 @@ impl Runtime {
                 "private-callable closure variable",
             ));
         }
-        if !Self::is_private_callable_kind(kind) {
+        if !kind.is_private_callable() {
             return Err(RuntimeError::Invariant(
                 "private-callable read received a non-callable binding kind",
             ));

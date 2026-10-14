@@ -28,7 +28,6 @@ use crate::engine::compiler::parser::context::StatementCompletion;
 use crate::engine::compiler::parser::context::StatementPosition;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::stack_guard::ParserStackFrame;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
@@ -327,10 +326,7 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         let with_span = self.current().span;
         if self.current_ir().strict {
-            return Err(Error::syntax(
-                "invalid keyword: with",
-                source_span(with_span),
-            ));
+            return Err(Error::syntax("invalid keyword: with", with_span));
         }
         self.advance()?;
         self.expect_punctuator(Punctuator::LeftParen)?;
@@ -344,7 +340,7 @@ impl<'source> Parser<'source> {
             if function.locals.len() >= MAX_LOCAL_VARIABLES {
                 return Err(
                     Error::new(ErrorKind::JsInternal, "too many local variables")
-                        .with_span(source_span(with_span)),
+                        .with_span(with_span),
                 );
             }
             let local = u16::try_from(function.locals.len())
@@ -633,7 +629,7 @@ impl<'source> Parser<'source> {
                     if invalid_strict_name {
                         return Err(Error::syntax(
                             "invalid variable name in strict mode",
-                            source_span(self.current().span),
+                            self.current().span,
                         ));
                     }
                     self.register_lexical_binding(
@@ -834,7 +830,7 @@ impl<'source> Parser<'source> {
         if self.current().line_terminator_before {
             return Err(Error::syntax(
                 "line terminator not allowed after throw",
-                source_span(self.current().span),
+                self.current().span,
             ));
         }
         self.parse_expression()?;
@@ -877,7 +873,7 @@ impl<'source> Parser<'source> {
                 if self.identical_name(&identifier, "let") {
                     return Err(Error::syntax(
                         "'let' is not a valid lexical identifier",
-                        source_span(token.span),
+                        token.span,
                     ));
                 }
                 let name = self.intern_identifier(&identifier);
@@ -886,7 +882,7 @@ impl<'source> Parser<'source> {
                 if strict && matches!(self.names.name(name), "eval" | "arguments") {
                     return Err(Error::syntax(
                         "invalid variable name in strict mode",
-                        source_span(self.current().span),
+                        self.current().span,
                     ));
                 }
                 self.register_lexical_binding(
@@ -915,7 +911,7 @@ impl<'source> Parser<'source> {
                     if is_const {
                         return Err(Error::syntax(
                             "missing initializer for const variable",
-                            source_span(self.current().span),
+                            self.current().span,
                         ));
                     }
                     self.emit_instruction(Instruction::Undefined)?;
@@ -972,7 +968,7 @@ impl<'source> Parser<'source> {
                 if strict && matches!(self.names.name(name), "eval" | "arguments") {
                     return Err(Error::syntax(
                         "invalid variable name in strict mode",
-                        source_span(self.current().span),
+                        self.current().span,
                     ));
                 }
                 self.register_var_binding(name, token.span, self.current().span)?;

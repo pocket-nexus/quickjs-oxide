@@ -17,8 +17,6 @@ use crate::engine::heap::{
 use crate::engine::object::builtin_properties::NativeBuiltinProperty;
 
 use super::MAX_ARRAY_BUFFER_LENGTH;
-#[cfg(test)]
-use crate::engine::api::context::Context;
 use crate::engine::{
     api::{
         error::{Error, ErrorKind, NativeErrorKind},

@@ -19,7 +19,6 @@ use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::model::scope::ScopeKind;
 use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::context::Parser;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 
@@ -42,12 +41,11 @@ impl<'source> Parser<'source> {
         {
             return Err(Error::syntax(
                 "duplicate parameter names not allowed in this context",
-                source_span(span),
+                span,
             ));
         }
         if function.parameters.len() >= MAX_LOCAL_VARIABLES {
-            return Err(Error::new(ErrorKind::JsInternal, "too many arguments")
-                .with_span(source_span(span)));
+            return Err(Error::new(ErrorKind::JsInternal, "too many arguments").with_span(span));
         }
         let index = u16::try_from(function.parameters.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many arguments"))?;
@@ -75,8 +73,7 @@ impl<'source> Parser<'source> {
     ) -> Result<u16, Error> {
         let function = self.current_ir_mut();
         if function.parameters.len() >= MAX_LOCAL_VARIABLES {
-            return Err(Error::new(ErrorKind::JsInternal, "too many arguments")
-                .with_span(source_span(span)));
+            return Err(Error::new(ErrorKind::JsInternal, "too many arguments").with_span(span));
         }
         let index = u16::try_from(function.parameters.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many arguments"))?;
@@ -146,7 +143,7 @@ impl<'source> Parser<'source> {
         if self.current_ir().parameter_names.contains(&name) {
             return Err(Error::syntax(
                 "duplicate parameter names not allowed in this context",
-                source_span(conflict_span),
+                conflict_span,
             ));
         }
         self.current_ir_mut().parameter_names.push(name);
@@ -188,8 +185,7 @@ impl<'source> Parser<'source> {
         } else {
             if function.locals.len() >= MAX_LOCAL_VARIABLES {
                 return Err(
-                    Error::new(ErrorKind::JsInternal, "too many local variables")
-                        .with_span(source_span(span)),
+                    Error::new(ErrorKind::JsInternal, "too many local variables").with_span(span),
                 );
             }
             let local = u16::try_from(function.locals.len())
@@ -275,7 +271,7 @@ impl<'source> Parser<'source> {
             {
                 return Err(
                     Error::new(ErrorKind::JsInternal, "too many local variables")
-                        .with_span(source_span(scan_span)),
+                        .with_span(scan_span),
                 );
             }
             let reserved = self.names.intern("<parameter-reserved>");
@@ -506,7 +502,7 @@ impl<'source> Parser<'source> {
             if function.locals.len() >= MAX_LOCAL_VARIABLES {
                 return Err(
                     Error::new(ErrorKind::JsInternal, "too many local variables")
-                        .with_span(source_span(declaration_span)),
+                        .with_span(declaration_span),
                 );
             }
             let body_local = u16::try_from(function.locals.len())

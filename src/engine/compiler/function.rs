@@ -1,6 +1,5 @@
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 
 use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::{DefineMethodKind, Instruction};
@@ -252,10 +251,7 @@ impl<'source> Parser<'source> {
                 || identifier.has_escape
                 || identifier.keyword_hint != Some(crate::engine::compiler::lexer::Keyword::Yield))
         {
-            return Err(Error::syntax(
-                "'yield' is a reserved identifier",
-                source_span(*span),
-            ));
+            return Err(Error::syntax("'yield' is a reserved identifier", *span));
         }
         // Pinned QuickJS rejects an identifier-token `await` as an async
         // FunctionExpression name. The contextual TOK_AWAIT admitted above is
@@ -272,10 +268,7 @@ impl<'source> Parser<'source> {
                 || identifier.has_escape
                 || identifier.keyword_hint != Some(crate::engine::compiler::lexer::Keyword::Await))
         {
-            return Err(Error::syntax(
-                "'await' is a reserved identifier",
-                source_span(*span),
-            ));
+            return Err(Error::syntax("'await' is a reserved identifier", *span));
         }
         let mut options = FunctionDefinitionOptions::ordinary(private_name_binding);
         options.execution_kind = header.execution_kind;
@@ -499,7 +492,7 @@ impl<'source> Parser<'source> {
                 {
                     return Err(Error::syntax(
                         "invalid number of arguments for getter or setter",
-                        source_span(self.current().span),
+                        self.current().span,
                     ));
                 }
                 let pattern = match self.current().kind {
@@ -535,10 +528,7 @@ impl<'source> Parser<'source> {
 
                     if !self.consume_punctuator(Punctuator::Comma)? {
                         if !self.is_punctuator(Punctuator::RightParen) {
-                            return Err(Error::syntax(
-                                "expecting ','",
-                                source_span(self.current().span),
-                            ));
+                            return Err(Error::syntax("expecting ','", self.current().span));
                         }
                         parameter_list_end_span = self.current().span;
                         self.advance()?;
@@ -585,10 +575,7 @@ impl<'source> Parser<'source> {
                 }
                 if !self.consume_punctuator(Punctuator::Comma)? {
                     if !self.is_punctuator(Punctuator::RightParen) {
-                        return Err(Error::syntax(
-                            "expecting ','",
-                            source_span(self.current().span),
-                        ));
+                        return Err(Error::syntax("expecting ','", self.current().span));
                     }
                     parameter_list_end_span = self.current().span;
                     self.advance()?;
@@ -612,7 +599,7 @@ impl<'source> Parser<'source> {
         {
             return Err(Error::syntax(
                 "invalid number of arguments for getter or setter",
-                source_span(parameter_list_end_span),
+                parameter_list_end_span,
             ));
         }
         self.expect_punctuator(Punctuator::LeftBrace)?;
@@ -625,7 +612,7 @@ impl<'source> Parser<'source> {
         if has_use_strict && !has_simple_parameter_list {
             return Err(Error::syntax(
                 "\"use strict\" not allowed in function with default or destructuring parameter",
-                source_span(self.current().span),
+                self.current().span,
             ));
         }
         if strict {
@@ -653,7 +640,7 @@ impl<'source> Parser<'source> {
                 if parameters[..index].contains(parameter) {
                     return Err(Error::syntax(
                         "duplicate argument names not allowed in this context",
-                        source_span(self.current().span),
+                        self.current().span,
                     ));
                 }
             }

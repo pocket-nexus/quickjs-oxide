@@ -1,4 +1,5 @@
 //! TypedArray construction and static factories own inputs until all writes finish.
+use crate::engine::builtins::array_buffer::constructor::primitive_index;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::TypedArrayElementKind,
@@ -819,18 +820,6 @@ impl Population {
                 phase: Phase::Element(self),
             })),
         ))
-    }
-}
-fn primitive_index(
-    runtime: &Runtime,
-    realm: ContextId,
-    value: JsValue,
-) -> Result<NativeConversion<u64>, RuntimeError> {
-    let number = runtime.number_from_primitive_jsvalue(realm, &value);
-    runtime.release_jsvalue(value)?;
-    match number? {
-        NativeConversion::Value(number) => runtime.index_from_number(realm, number),
-        NativeConversion::Throw(value) => Ok(NativeConversion::Throw(value)),
     }
 }
 fn complete_object(

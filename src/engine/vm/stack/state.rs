@@ -73,20 +73,11 @@ impl FrameSlots<'_> {
         &mut self,
         state: &mut RuntimeState,
     ) -> Option<bool> {
-        fn edge(value: &JsValue) -> Option<Option<crate::engine::heap::ObjectId>> {
-            match value {
-                JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_) => Some(None),
-                JsValue::Object(id) => Some(Some(*id)),
-                _ => None,
-            }
-        }
         let (left, right) = self.store.top_pair_current(self.window)?;
-        let equal = match (edge(left)?, edge(right)?) {
+        let equal = match (
+            immediate_or_object_edge(left)?,
+            immediate_or_object_edge(right)?,
+        ) {
             (None, None) => crate::engine::object::storage::strict_equal_immediate(left, right),
             // An object never equals an immediate.
             (Some(id), None) | (None, Some(id)) => {
@@ -584,22 +575,13 @@ impl FrameSlots<'_> {
     /// nothing changes and the caller takes its general release.
     #[inline(always)]
     fn discard_top_pair_nonfinal(&mut self, state: &mut RuntimeState) -> bool {
-        fn edge(value: &JsValue) -> Option<Option<crate::engine::heap::ObjectId>> {
-            match value {
-                JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_) => Some(None),
-                JsValue::Object(id) => Some(Some(*id)),
-                _ => None,
-            }
-        }
         let Some((below, top)) = self.store.top_pair_current(self.window) else {
             return false;
         };
-        let (Some(below), Some(top)) = (edge(below), edge(top)) else {
+        let (Some(below), Some(top)) = (
+            immediate_or_object_edge(below),
+            immediate_or_object_edge(top),
+        ) else {
             return false;
         };
         match (below, top) {
@@ -758,6 +740,23 @@ impl FrameSlots<'_> {
             "typed_array_number_write_in_execute"
         });
         Ok(true)
+    }
+}
+
+/// Classify an operand for the in-place release fast paths: `Some(None)` for
+/// an immediate, `Some(Some(id))` for an object edge, `None` for a heap
+/// payload (string, BigInt, Symbol) that needs the general release.
+#[inline(always)]
+fn immediate_or_object_edge(value: &JsValue) -> Option<Option<crate::engine::heap::ObjectId>> {
+    match value {
+        JsValue::Undefined
+        | JsValue::Null
+        | JsValue::Bool(_)
+        | JsValue::Int(_)
+        | JsValue::Float(_)
+        | JsValue::ShortBigInt(_) => Some(None),
+        JsValue::Object(id) => Some(Some(*id)),
+        _ => None,
     }
 }
 

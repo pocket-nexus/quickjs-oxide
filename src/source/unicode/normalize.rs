@@ -6,6 +6,7 @@
 //! particular Unicode release, and ECMAScript strings must preserve lone
 //! UTF-16 surrogates that Rust scalar-value APIs cannot represent.
 
+use super::index_position;
 use crate::engine::value::{JsString, JsStringError};
 #[cfg(test)]
 use std::cell::Cell;
@@ -15,8 +16,6 @@ mod tables {
     include!("generated/unicode/unicode_normalize_tables.rs");
 }
 
-const INDEX_BLOCK_LEN: usize = 32;
-const CODE_MASK: u32 = (1 << 21) - 1;
 const DECOMPOSITION_MAX_LEN: usize = 18;
 
 const DECOMP_TYPE_C1: u32 = 0;
@@ -300,48 +299,8 @@ fn append_decomposed(
     }
 }
 
-fn read_le24(table: &[u8], entry: usize) -> u32 {
-    let position = entry * 3;
-    u32::from(table[position])
-        | (u32::from(table[position + 1]) << 8)
-        | (u32::from(table[position + 2]) << 16)
-}
-
-/// Return the compressed-table byte position and code point at the start of
-/// the containing index block, matching QuickJS `get_index_pos`.
-fn index_position(code_point: u32, index: &[u8]) -> Option<(usize, u32)> {
-    let entry_count = index.len() / 3;
-    let first = read_le24(index, 0) & CODE_MASK;
-    if code_point < first {
-        return Some((0, 0));
-    }
-
-    // QuickJS deliberately reads the final upper-bound entry without masking
-    // its packed position bits. Unicode's generated upper bound has none.
-    if code_point >= read_le24(index, entry_count - 1) {
-        return None;
-    }
-
-    let mut lower = 0_usize;
-    let mut upper = entry_count - 1;
-    while upper - lower > 1 {
-        let middle = (lower + upper) / 2;
-        let entry = read_le24(index, middle);
-        if code_point < entry & CODE_MASK {
-            upper = middle;
-        } else {
-            lower = middle;
-        }
-    }
-    let entry = read_le24(index, lower);
-    Some((
-        (lower + 1) * INDEX_BLOCK_LEN + (entry >> 21) as usize,
-        entry & CODE_MASK,
-    ))
-}
-
 fn combining_class(code_point: u32) -> u32 {
-    let Some((mut position, mut code)) = index_position(code_point, &tables::UNICODE_CC_INDEX)
+    let Some((mut code, mut position)) = index_position(code_point, &tables::UNICODE_CC_INDEX)
     else {
         return 0;
     };
@@ -790,13 +749,7 @@ mod tests {
 
     #[test]
     fn exhaustive_table_readers_match_pinned_quickjs_c_fingerprints() {
-        fn hash_u32(mut hash: u64, value: u32) -> u64 {
-            for byte in value.to_le_bytes() {
-                hash ^= u64::from(byte);
-                hash = hash.wrapping_mul(1_099_511_628_211);
-            }
-            hash
-        }
+        use crate::source::unicode::tests::hash_u32;
 
         let mut decomposition_hash = 14_695_981_039_346_656_037_u64;
         let mut class_hash = 14_695_981_039_346_656_037_u64;

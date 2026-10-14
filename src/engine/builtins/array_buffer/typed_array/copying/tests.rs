@@ -1,26 +1,5 @@
 use super::*;
-use crate::engine::api::context::Context;
-
-fn eval_string(context: &mut Context, source: &str) -> String {
-    let Value::String(value) = context.eval(source).unwrap() else {
-        panic!("TypedArray copying test did not return a String");
-    };
-    value.to_utf8_lossy()
-}
-
-fn assert_script(context: &mut Context, source: &str) {
-    assert_eq!(eval_string(context, source), "ok");
-}
-
-fn eval_object(context: &mut Context, source: &str, description: &str) -> ObjectRef {
-    let Value::Object(object) = context
-        .eval(source)
-        .unwrap_or_else(|error| panic!("TypedArray copying rejected {description}: {error}"))
-    else {
-        panic!("TypedArray copying {description} was not an Object");
-    };
-    object
-}
+use crate::engine::test_support::{assert_script, eval_object};
 
 #[test]
 fn with_and_to_reversed_publish_quickjs_copying_surface() {

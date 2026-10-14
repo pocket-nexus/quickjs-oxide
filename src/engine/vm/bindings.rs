@@ -34,16 +34,6 @@ pub(in crate::engine::vm) enum FrameBinding {
 const _: () = assert!(std::mem::size_of::<FrameBinding>() == 16);
 const _: () = assert!(std::mem::size_of::<Option<FrameBinding>>() == 16);
 
-pub(in crate::engine::vm) const fn is_private_callable_kind(kind: ClosureVariableKind) -> bool {
-    matches!(
-        kind,
-        ClosureVariableKind::PrivateMethod
-            | ClosureVariableKind::PrivateGetter
-            | ClosureVariableKind::PrivateSetter
-            | ClosureVariableKind::PrivateGetterSetter
-    )
-}
-
 /// Release every owner a frame binding carried. Direct internal values take
 /// the deferred-release path; the handle variants release their single edge
 /// through the nothrow heap paths.
@@ -312,7 +302,7 @@ pub(in crate::engine::vm) fn capture_frame_binding(
             Ok(root)
         }
         FrameBinding::PrivateCallable(object) => {
-            if !is_private_callable_kind(descriptor.kind)
+            if !descriptor.kind.is_private_callable()
                 || !descriptor.is_lexical
                 || !descriptor.is_const
             {
@@ -380,7 +370,7 @@ pub(in crate::engine::vm) fn close_frame_binding(
                 .private_name_index_from_raw_var_ref(&view)
                 .map_err(runtime_error_to_vm_error)?,
         ),
-        RawValue::Object(_) if is_private_callable_kind(kind) => FrameBinding::PrivateCallable(
+        RawValue::Object(_) if kind.is_private_callable() => FrameBinding::PrivateCallable(
             runtime
                 .private_callable_id_from_raw_var_ref(&view, kind)
                 .map_err(runtime_error_to_vm_error)?,

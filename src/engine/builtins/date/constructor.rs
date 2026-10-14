@@ -11,10 +11,11 @@
 use crate::engine::builtins::native::DateNativeKind;
 
 use super::calendar::{DateInputFields, get_date_fields, set_date_fields, time_clip};
-use super::format::{DateStringKind, format_date_string};
+use super::format::format_date_string;
 use super::parse::ParsedDateString;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::builtins::native::DateStringMethod;
 
 use crate::engine::heap::{ContextId, ObjectData, ObjectPayload};
 use crate::engine::object::ObjectRef;
@@ -53,7 +54,7 @@ impl Runtime {
         let fields = get_date_fields(date_value, true, false, |epoch_millis| {
             self.date_timezone_offset_minutes(epoch_millis)
         });
-        let text = format_date_string(fields.as_ref(), DateStringKind::String).map_err(|_| {
+        let text = format_date_string(fields.as_ref(), DateStringMethod::String).map_err(|_| {
             RuntimeError::Invariant("the host clock produced an invalid Date string")
         })?;
         Ok(Completion::Return(self.unroot_value(&Value::String(

@@ -13,7 +13,6 @@ use crate::engine::compiler::model::ir::{
 use crate::engine::compiler::model::scope::{ScopeId, ScopeKind};
 use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::names::NameTable;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::relocation::{insert_hoist_fragment, prepend_hoist_prefix};
 
 use super::{
@@ -2594,10 +2593,7 @@ fn find_or_create_private_function_name_binding(
 
     let function = &mut tree.functions[function_id];
     if function.locals.len() >= MAX_LOCAL_VARIABLES {
-        return Err(
-            Error::new(ErrorKind::JsInternal, "too many local variables")
-                .with_span(source_span(span)),
-        );
+        return Err(Error::new(ErrorKind::JsInternal, "too many local variables").with_span(span));
     }
     let index = u16::try_from(function.locals.len())
         .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
@@ -2660,8 +2656,7 @@ pub(super) fn find_or_create_own_binding(
         }
         if function.locals.len() >= MAX_LOCAL_VARIABLES {
             return Err(
-                Error::new(ErrorKind::JsInternal, "too many local variables")
-                    .with_span(source_span(span)),
+                Error::new(ErrorKind::JsInternal, "too many local variables").with_span(span),
             );
         }
         let index = u16::try_from(function.locals.len())

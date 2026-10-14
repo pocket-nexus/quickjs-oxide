@@ -21,8 +21,6 @@ use model::ir::function::FunctionTree;
 use model::ir::function::{FunctionIrOptions, FunctionSourceInfo, SuperCapabilities};
 
 mod parser;
-#[cfg(test)]
-use parser::diagnostics::source_span;
 
 /// Probe-cache hit/miss counters, exposed for the profiling compile probe.
 #[cfg(feature = "profiling")]
@@ -120,7 +118,7 @@ pub fn compile_script(source: &str) -> Result<DetachedBytecode<Value>, Error> {
     if tree.functions.len() != 1 {
         return Err(Error::unsupported(
             "nested function bytecode requires runtime publication; use Context::compile or Context::eval",
-            source_span(tree.functions[1].source.span),
+            tree.functions[1].source.span,
         ));
     }
     lower_detached_script(tree)

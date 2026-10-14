@@ -35,7 +35,6 @@ use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::lex_error;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::parser::literals::parse_number;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
@@ -254,7 +253,7 @@ impl<'source> Parser<'source> {
         self.current_ir_mut().strict = outer_strict;
         self.relex_current_with_strict(outer_strict)?;
         if let Some(error) = deferred_redeclaration {
-            return Err(error.with_span(source_span(self.current().span)));
+            return Err(error.with_span(self.current().span));
         }
         if expression {
             self.anonymous_function_definition =
@@ -423,7 +422,7 @@ impl<'source> Parser<'source> {
             if constructor.is_some() {
                 return Err(Error::syntax(
                     "property constructor appears more than once",
-                    source_span(function_span),
+                    function_span,
                 ));
             }
             *constructor =
@@ -478,7 +477,7 @@ impl<'source> Parser<'source> {
                 if string.has_legacy_octal_escape {
                     return Err(Error::syntax(
                         "legacy octal escapes are forbidden in strict mode",
-                        source_span(token.span),
+                        token.span,
                     ));
                 }
                 self.advance()?;
@@ -491,12 +490,12 @@ impl<'source> Parser<'source> {
                 ) {
                     return Err(Error::syntax(
                         "legacy leading-zero numeric literals are forbidden in strict mode",
-                        source_span(token.span),
+                        token.span,
                     ));
                 }
                 self.advance()?;
                 parse_number(&number)
-                    .map_err(|message| Error::syntax(message, source_span(token.span)))?
+                    .map_err(|message| Error::syntax(message, token.span))?
                     .to_js_string()?
             }
             TokenKind::Punctuator(Punctuator::LeftBracket) => {

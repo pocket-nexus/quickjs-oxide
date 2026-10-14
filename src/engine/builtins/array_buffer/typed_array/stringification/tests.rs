@@ -1,17 +1,7 @@
 use super::*;
 use crate::engine::api::context::Context;
 use crate::engine::api::error::ErrorKind;
-
-fn eval_string(context: &mut Context, source: &str) -> String {
-    let Value::String(value) = context.eval(source).unwrap() else {
-        panic!("TypedArray stringification test did not return a String");
-    };
-    value.to_utf8_lossy()
-}
-
-fn assert_script(context: &mut Context, source: &str) {
-    assert_eq!(eval_string(context, source), "ok");
-}
+use crate::engine::test_support::assert_script;
 
 fn eval_object(context: &mut Context, source: &str, description: &str) -> ObjectRef {
     let Value::Object(object) = context.eval(source).unwrap_or_else(|error| {

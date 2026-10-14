@@ -21,7 +21,6 @@ use crate::engine::compiler::parser::context::ForHeadDelimiter;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::parser::tokens::for_head_regexp_allowed_after;
 use crate::engine::compiler::stack_guard::ParserStackFrame;
 use crate::source::SourceOffset;
@@ -265,7 +264,7 @@ impl<'source> Parser<'source> {
         if has_use_strict && !has_simple_parameter_list {
             return Err(Error::syntax(
                 "\"use strict\" not allowed in function with default or destructuring parameter",
-                source_span(self.current().span),
+                self.current().span,
             ));
         }
         if strict {
@@ -286,7 +285,7 @@ impl<'source> Parser<'source> {
             if parameters[..index].contains(parameter) {
                 return Err(Error::syntax(
                     "duplicate argument names not allowed in this context",
-                    source_span(self.current().span),
+                    self.current().span,
                 ));
             }
         }

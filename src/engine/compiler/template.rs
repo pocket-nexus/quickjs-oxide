@@ -17,7 +17,6 @@ use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::compiler::model::ir::IrOp;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::stack_guard::ParserStackFrame;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
@@ -51,7 +50,7 @@ impl<'source> Parser<'source> {
                     .map(|error| error.span);
                 return Err(Error::syntax(
                     "malformed escape sequence in string literal",
-                    source_span(invalid_span.unwrap_or(token.span)),
+                    invalid_span.unwrap_or(token.span),
                 ));
             };
 

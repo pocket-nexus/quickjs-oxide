@@ -21,7 +21,6 @@ use crate::engine::compiler::model::scope::ScopeKind;
 use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::private_reference;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
@@ -53,8 +52,7 @@ impl<'source> Parser<'source> {
         let function = self.current_ir_mut();
         if function.locals.len() >= MAX_LOCAL_VARIABLES {
             return Err(
-                Error::new(ErrorKind::JsInternal, "too many local variables")
-                    .with_span(source_span(span)),
+                Error::new(ErrorKind::JsInternal, "too many local variables").with_span(span),
             );
         }
         let local = u16::try_from(function.locals.len())

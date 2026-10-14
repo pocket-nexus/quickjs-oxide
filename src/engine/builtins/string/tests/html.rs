@@ -479,7 +479,7 @@ fn string_create_html_reservation_oom_uses_defining_realm_is_latched_and_recover
     let receiver = caller.eval("createHtmlReservationReceiver").unwrap();
     let attribute = caller.eval("createHtmlReservationAttribute").unwrap();
 
-    crate::engine::value::fail_next_create_html_reservation_for_test();
+    crate::engine::value::fail_next_replacement_reservation_for_test();
     assert_eq!(
         caller.call(
             &anchor,
@@ -524,7 +524,7 @@ fn string_create_html_reservation_oom_uses_defining_realm_is_latched_and_recover
 
     drop(caller.eval("createHtmlReservationLog=''").unwrap());
     let throwing_attribute = caller.eval("createHtmlReservationThrow").unwrap();
-    crate::engine::value::fail_next_create_html_reservation_for_test();
+    crate::engine::value::fail_next_replacement_reservation_for_test();
     assert_eq!(
         caller.call(
             &anchor,

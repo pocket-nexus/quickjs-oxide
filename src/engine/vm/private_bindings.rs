@@ -369,7 +369,7 @@ pub(in crate::engine::vm) fn optional_callable(
     match source {
         PrivateSource::Local(definition, binding) => {
             let kind = validate_definition(definition)?.1;
-            if kind != expected_kind || !super::bindings::is_private_callable_kind(kind) {
+            if kind != expected_kind || !kind.is_private_callable() {
                 return Err(Error::internal(
                     "private-callable operation referenced an incompatible local",
                 ));
@@ -402,7 +402,7 @@ pub(in crate::engine::vm) fn optional_callable(
         }
         PrivateSource::Closure(descriptor, root) => {
             let kind = validate_descriptor(descriptor)?;
-            if kind != expected_kind || !super::bindings::is_private_callable_kind(kind) {
+            if kind != expected_kind || !kind.is_private_callable() {
                 return Err(Error::internal(
                     "private-callable operation referenced an incompatible closure",
                 ));

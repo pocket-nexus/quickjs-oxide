@@ -11,9 +11,7 @@ use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::value::JsString;
 use crate::engine::value::JsStringError;
-use crate::source::SourceLocation;
 use crate::source::SourceOffset;
-use crate::source::SourceSpan;
 
 #[derive(Clone, Copy)]
 pub(in crate::engine::compiler) enum IdentifierContext {
@@ -45,7 +43,7 @@ impl<'source> Parser<'source> {
                 IdentifierContext::Argument => "invalid argument name in strict code",
                 IdentifierContext::Reference => unreachable!("reference context was excluded"),
             };
-            return Err(Error::syntax(message, source_span(span)));
+            return Err(Error::syntax(message, span));
         }
         Ok(())
     }
@@ -85,7 +83,7 @@ impl<'source> Parser<'source> {
                 IdentifierContext::FunctionName => "invalid function name in strict code",
                 IdentifierContext::Argument => "invalid argument name in strict code",
             };
-            return Err(Error::syntax(message, source_span(span)));
+            return Err(Error::syntax(message, span));
         }
         Ok(())
     }
@@ -97,7 +95,7 @@ pub(in crate::engine::compiler) fn syntax_atom_error(
     suffix: &str,
     span: Span,
 ) -> Result<Error, JsStringError> {
-    Ok(syntax_atom_error_without_span(prefix, atom, suffix)?.with_span(source_span(span)))
+    Ok(syntax_atom_error_without_span(prefix, atom, suffix)?.with_span(span))
 }
 
 pub(in crate::engine::compiler) fn syntax_atom_error_without_span(
@@ -134,18 +132,11 @@ pub(in crate::engine::compiler) fn lex_error(error: LexError) -> Error {
     if error.kind == LexErrorKind::StringTooLong {
         Error::new(ErrorKind::JsInternal, error.message)
     } else {
-        Error::syntax(error.message, source_span(error.span))
+        Error::syntax(error.message, error.span)
     }
 }
 
 pub(in crate::engine::compiler) fn source_offset(span: Span) -> Result<SourceOffset, Error> {
     SourceOffset::try_from_usize(span.start.byte_offset)
         .map_err(|error| Error::internal(error.to_string()))
-}
-
-pub(in crate::engine::compiler) const fn source_span(span: Span) -> SourceSpan {
-    SourceSpan::new(
-        SourceLocation::new(span.start.byte_offset, span.start.line, span.start.column),
-        SourceLocation::new(span.end.byte_offset, span.end.line, span.end.column),
-    )
 }

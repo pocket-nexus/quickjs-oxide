@@ -29,39 +29,10 @@ use std::ops::Range;
 
 const TEMPLATE_QUOTE: char = '\u{0060}';
 
-/// A location in the original UTF-8 source.
-///
-/// byte_offset is zero-based. line and column are one-based. Columns count
-/// Unicode scalar values, not bytes; CRLF counts as one line terminator.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Position {
-    pub byte_offset: usize,
-    pub line: u32,
-    pub column: u32,
-}
-
-impl Position {
-    pub const fn new(byte_offset: usize, line: u32, column: u32) -> Self {
-        Self {
-            byte_offset,
-            line,
-            column,
-        }
-    }
-}
-
-/// A half-open source range.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Span {
-    pub start: Position,
-    pub end: Position,
-}
-
-impl Span {
-    pub const fn new(start: Position, end: Position) -> Self {
-        Self { start, end }
-    }
-}
+/// Lexer positions and spans are the crate's source coordinates: zero-based
+/// byte offsets with one-based lines and Unicode-scalar columns, where CRLF
+/// counts as one line terminator.
+pub use crate::source::{SourceLocation as Position, SourceSpan as Span};
 
 /// Context which changes whether QuickJS treats a word as a keyword.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]

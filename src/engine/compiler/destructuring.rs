@@ -24,7 +24,6 @@ use crate::engine::compiler::parser::context::MemberReference;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::parser::literals::parse_number;
 use crate::engine::compiler::parser::tokens::for_head_regexp_allowed_after;
 use crate::engine::value::JsString;
@@ -478,10 +477,7 @@ impl<'source> Parser<'source> {
 
         let pattern_span = self.current().span;
         if !self.binding_initializer_ahead(pattern) {
-            return Err(Error::syntax(
-                "variable name expected",
-                source_span(pattern_span),
-            ));
+            return Err(Error::syntax("variable name expected", pattern_span));
         }
         let entry_depth = self.current_ir().context.stack_depth;
         let initializer_jump = self.emit_instruction(Instruction::Goto(u32::MAX))?;
@@ -512,10 +508,7 @@ impl<'source> Parser<'source> {
                     punctuator.as_str()
                 )));
             }
-            return Err(Error::syntax(
-                "variable name expected",
-                source_span(pattern_span),
-            ));
+            return Err(Error::syntax("variable name expected", pattern_span));
         }
         // QuickJS's destructuring helper always restores PF_IN_ACCEPTED for
         // the whole-pattern initializer, including inside a classic-for NoIn
@@ -1142,10 +1135,7 @@ impl<'source> Parser<'source> {
                     TokenKind::Punctuator(Punctuator::Comma | Punctuator::RightBracket)
                 )
             {
-                return Err(Error::syntax(
-                    "missing binding pattern...",
-                    source_span(element_span),
-                ));
+                return Err(Error::syntax("missing binding pattern...", element_span));
             }
 
             let nested_object_follow = self
@@ -1169,7 +1159,7 @@ impl<'source> Parser<'source> {
                 {
                     return Err(Error::syntax(
                         "rest element cannot have a default value",
-                        source_span(element_span),
+                        element_span,
                     ));
                 }
                 if is_rest {
@@ -1658,7 +1648,7 @@ impl<'source> Parser<'source> {
                 {
                     return Err(Error::syntax(
                         "rest element cannot have a default value",
-                        source_span(object_binding_span),
+                        object_binding_span,
                     ));
                 }
                 if is_rest {
@@ -1700,7 +1690,7 @@ impl<'source> Parser<'source> {
                 {
                     return Err(Error::syntax(
                         "rest element cannot have a default value",
-                        source_span(nested_array_span),
+                        nested_array_span,
                     ));
                 }
                 if is_rest {
@@ -1736,21 +1726,12 @@ impl<'source> Parser<'source> {
                         TokenKind::Punctuator(Punctuator::Comma | Punctuator::RightBracket)
                     )
                 {
-                    return Err(Error::syntax(
-                        "missing binding pattern...",
-                        source_span(token.span),
-                    ));
+                    return Err(Error::syntax("missing binding pattern...", token.span));
                 }
-                return Err(Error::syntax(
-                    "invalid destructuring target",
-                    source_span(token.span),
-                ));
+                return Err(Error::syntax("invalid destructuring target", token.span));
             };
             if identifier.escaped_reserved_word {
-                return Err(Error::syntax(
-                    "invalid destructuring target",
-                    source_span(token.span),
-                ));
+                return Err(Error::syntax("invalid destructuring target", token.span));
             }
             self.validate_identifier_reservation(
                 &identifier,
@@ -1767,10 +1748,7 @@ impl<'source> Parser<'source> {
                 return Err(self.syntax_here("invalid lexical variable name"));
             }
             if strict && matches!(self.names.name(name), "eval" | "arguments") {
-                return Err(Error::syntax(
-                    "invalid destructuring target",
-                    source_span(token.span),
-                ));
+                return Err(Error::syntax("invalid destructuring target", token.span));
             }
             match declaration {
                 ForAssignmentDeclaration::Lexical => {
@@ -2041,7 +2019,7 @@ impl<'source> Parser<'source> {
                 if self.current_ir().strict && string.has_legacy_octal_escape {
                     return Err(Error::syntax(
                         "legacy octal escapes are forbidden in strict mode",
-                        source_span(token.span),
+                        token.span,
                     ));
                 }
                 self.advance()?;
@@ -2060,12 +2038,12 @@ impl<'source> Parser<'source> {
                 {
                     return Err(Error::syntax(
                         "legacy leading-zero numeric literals are forbidden in strict mode",
-                        source_span(token.span),
+                        token.span,
                     ));
                 }
                 self.advance()?;
                 let key = parse_number(&number)
-                    .map_err(|message| Error::syntax(message, source_span(token.span)))?
+                    .map_err(|message| Error::syntax(message, token.span))?
                     .to_js_string()?;
                 Ok(ObjectBindingPropertyKey::Fixed {
                     key,
@@ -2080,14 +2058,10 @@ impl<'source> Parser<'source> {
                 self.expect_punctuator(Punctuator::RightBracket)?;
                 Ok(ObjectBindingPropertyKey::Computed { span: token.span })
             }
-            TokenKind::PrivateIdentifier(_) => Err(Error::syntax(
-                "invalid property name",
-                source_span(token.span),
-            )),
-            _ => Err(Error::syntax(
-                "invalid property name",
-                source_span(token.span),
-            )),
+            TokenKind::PrivateIdentifier(_) => {
+                Err(Error::syntax("invalid property name", token.span))
+            }
+            _ => Err(Error::syntax("invalid property name", token.span)),
         }
     }
 
@@ -2157,19 +2131,13 @@ impl<'source> Parser<'source> {
         } else {
             let token = *self.current();
             let TokenKind::Identifier(identifier) = token.kind else {
-                return Err(Error::syntax(
-                    "invalid destructuring target",
-                    source_span(token.span),
-                ));
+                return Err(Error::syntax("invalid destructuring target", token.span));
             };
             self.advance()?;
             (token, identifier)
         };
         if identifier.escaped_reserved_word {
-            return Err(Error::syntax(
-                "invalid destructuring target",
-                source_span(token.span),
-            ));
+            return Err(Error::syntax("invalid destructuring target", token.span));
         }
         self.validate_identifier_reservation(
             &identifier,
@@ -2191,10 +2159,7 @@ impl<'source> Parser<'source> {
             } else {
                 token.span
             };
-            return Err(Error::syntax(
-                "invalid destructuring target",
-                source_span(span),
-            ));
+            return Err(Error::syntax("invalid destructuring target", span));
         }
         match declaration {
             ForAssignmentDeclaration::Lexical => self.register_lexical_binding(
@@ -2311,16 +2276,10 @@ impl<'source> Parser<'source> {
         self.advance()?;
         let token = *self.current();
         let TokenKind::Identifier(identifier) = token.kind else {
-            return Err(Error::syntax(
-                "invalid destructuring target",
-                source_span(token.span),
-            ));
+            return Err(Error::syntax("invalid destructuring target", token.span));
         };
         if identifier.escaped_reserved_word {
-            return Err(Error::syntax(
-                "invalid destructuring target",
-                source_span(token.span),
-            ));
+            return Err(Error::syntax("invalid destructuring target", token.span));
         }
         let name = self.intern_identifier(&identifier);
         self.validate_identifier_reservation(
@@ -2330,10 +2289,7 @@ impl<'source> Parser<'source> {
             IdentifierContext::Variable,
         )?;
         if self.current_ir().strict && matches!(self.names.name(name), "eval" | "arguments") {
-            return Err(Error::syntax(
-                "invalid destructuring target",
-                source_span(token.span),
-            ));
+            return Err(Error::syntax("invalid destructuring target", token.span));
         }
         self.advance()?;
         if !self.is_punctuator(Punctuator::RightBrace) {

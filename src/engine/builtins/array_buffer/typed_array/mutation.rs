@@ -21,8 +21,6 @@ use crate::engine::{
 };
 
 #[cfg(test)]
-use crate::engine::value::Value;
-#[cfg(test)]
 mod tests;
 
 impl Runtime {

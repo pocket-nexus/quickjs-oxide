@@ -1,15 +1,5 @@
 use super::*;
-
-fn eval_string(context: &mut Context, source: &str) -> String {
-    let Value::String(value) = context.eval(source).unwrap() else {
-        panic!("TypedArray test did not return a String");
-    };
-    value.to_utf8_lossy()
-}
-
-fn assert_script(context: &mut Context, source: &str) {
-    assert_eq!(eval_string(context, source), "ok");
-}
+use crate::engine::test_support::assert_script;
 
 #[test]
 fn twelve_class_graph_and_descriptors_match_the_hidden_typed_array_family() {

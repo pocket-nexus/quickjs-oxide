@@ -20,7 +20,6 @@ use num_traits::ToPrimitive;
 
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::parser::diagnostics::strict_reserved_identifier;
 use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
 use crate::engine::value::JsString;
@@ -86,19 +85,19 @@ impl<'source> Parser<'source> {
                 {
                     return Err(Error::syntax(
                         "legacy leading-zero numeric literals are forbidden in strict mode",
-                        source_span(token.span),
+                        token.span,
                     ));
                 }
                 self.advance()?;
-                let value = parse_number(&number)
-                    .map_err(|message| Error::syntax(message, source_span(token.span)))?;
+                let value =
+                    parse_number(&number).map_err(|message| Error::syntax(message, token.span))?;
                 self.emit_value(value)?;
             }
             TokenKind::String(string) => {
                 if self.current_ir().strict && string.has_legacy_octal_escape {
                     return Err(Error::syntax(
                         "legacy octal escapes are forbidden in strict mode",
-                        source_span(token.span),
+                        token.span,
                     ));
                 }
                 self.advance()?;
@@ -224,7 +223,7 @@ impl<'source> Parser<'source> {
                     let kind = crate::regexp::javascript_compile_error_kind(&error);
                     let message =
                         crate::regexp::javascript_compile_error_message(&error).to_owned();
-                    Error::new(kind, message).with_span(source_span(token.span))
+                    Error::new(kind, message).with_span(token.span)
                 })?;
                 let constant = self.add_constant(IrConstant::RegExp {
                     pattern,
@@ -241,8 +240,9 @@ impl<'source> Parser<'source> {
                 message.push_utf8("unexpected token in expression: '");
                 message.push_utf8(identifier.raw);
                 message.push_utf8("'");
-                return Err(Error::from_native_message(ErrorKind::Syntax, message)
-                    .with_span(source_span(token.span)));
+                return Err(
+                    Error::from_native_message(ErrorKind::Syntax, message).with_span(token.span)
+                );
             }
             TokenKind::Punctuator(punctuator) => {
                 return Err(self.syntax_here(format!(
@@ -274,7 +274,7 @@ impl<'source> Parser<'source> {
         if name == "arguments" && self.current_ir().arguments_forbidden {
             return Err(Error::syntax(
                 "'arguments' identifier is not allowed in class field initializer",
-                source_span(span),
+                span,
             ));
         }
         Ok(())

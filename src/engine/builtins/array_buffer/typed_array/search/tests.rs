@@ -1,16 +1,5 @@
 use super::*;
-use crate::engine::api::context::Context;
-
-fn eval_string(context: &mut Context, source: &str) -> String {
-    let Value::String(value) = context.eval(source).unwrap() else {
-        panic!("TypedArray search test did not return a String");
-    };
-    value.to_utf8_lossy()
-}
-
-fn assert_script(context: &mut Context, source: &str) {
-    assert_eq!(eval_string(context, source), "ok");
-}
+use crate::engine::test_support::assert_script;
 
 #[test]
 fn at_and_search_methods_match_typed_numeric_comparison_rules() {

@@ -5,8 +5,6 @@
 //! element read remains live: shrink, detach, regrow, and callback writes are
 //! observed at the next index while growth never extends the traversal.
 
-#[cfg(test)]
-use super::*;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::ArrayFindKind,

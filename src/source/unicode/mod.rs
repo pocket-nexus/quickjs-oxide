@@ -107,6 +107,16 @@ fn read_u24(index: &[u8], entry: usize) -> u32 {
 mod tests {
     use super::{is_id_continue, is_id_start};
 
+    /// FNV-1a step over one little-endian `u32`, shared by the table
+    /// fingerprint tests that compare against pinned QuickJS C output.
+    pub(super) fn hash_u32(mut hash: u64, value: u32) -> u64 {
+        for byte in value.to_le_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(1_099_511_628_211);
+        }
+        hash
+    }
+
     #[test]
     fn unicode_17_identifier_tables_have_pinned_counts_and_boundaries() {
         let mut start_count = 0;

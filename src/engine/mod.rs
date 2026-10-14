@@ -15,3 +15,5 @@ pub(crate) mod value;
 pub(crate) mod vm;
 
 pub(crate) mod hash;
+#[cfg(test)]
+pub(crate) mod test_support;

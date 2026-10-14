@@ -31,7 +31,6 @@ use crate::engine::compiler::module;
 use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::context::PreparedScopedFunction;
-use crate::engine::compiler::parser::diagnostics::source_span;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn register_var_binding(
@@ -66,7 +65,7 @@ impl<'source> Parser<'source> {
                 {
                     return Err(Error::syntax(
                         "invalid redefinition of lexical identifier",
-                        source_span(conflict_span),
+                        conflict_span,
                     ));
                 }
             }
@@ -136,7 +135,7 @@ impl<'source> Parser<'source> {
             if !catch_parameter && !masked_program_lexical {
                 return Err(Error::syntax(
                     "invalid redefinition of lexical identifier",
-                    source_span(conflict_span),
+                    conflict_span,
                 ));
             }
         }
@@ -182,7 +181,7 @@ impl<'source> Parser<'source> {
         if function.locals.len() >= MAX_LOCAL_VARIABLES {
             return Err(
                 Error::new(ErrorKind::JsInternal, "too many local variables")
-                    .with_span(source_span(declaration_span)),
+                    .with_span(declaration_span),
             );
         }
         let index = u16::try_from(function.locals.len())
@@ -313,7 +312,7 @@ impl<'source> Parser<'source> {
             {
                 return Err(Error::syntax(
                     "invalid redefinition of lexical identifier",
-                    source_span(conflict_span),
+                    conflict_span,
                 ));
             }
         }
@@ -348,7 +347,7 @@ impl<'source> Parser<'source> {
                 if function.locals.len() >= MAX_LOCAL_VARIABLES {
                     return Err(
                         Error::new(ErrorKind::JsInternal, "too many local variables")
-                            .with_span(source_span(declaration_span)),
+                            .with_span(declaration_span),
                     );
                 }
                 let index = u16::try_from(function.locals.len())
@@ -435,7 +434,7 @@ impl<'source> Parser<'source> {
             {
                 Err(Error::syntax(
                     "invalid redefinition of global identifier",
-                    error.span().unwrap_or(source_span(conflict_span)),
+                    error.span().unwrap_or(conflict_span),
                 ))
             }
             result => result,
@@ -475,7 +474,7 @@ impl<'source> Parser<'source> {
                 if record.declaration.is_some() || record.import.is_none() {
                     return Err(Error::syntax(
                         "invalid redefinition of lexical identifier",
-                        source_span(conflict_span),
+                        conflict_span,
                     ));
                 }
                 let existing = self
@@ -533,7 +532,7 @@ impl<'source> Parser<'source> {
         {
             return Err(Error::syntax(
                 "invalid redefinition of lexical identifier",
-                source_span(conflict_span),
+                conflict_span,
             ));
         }
         let supported_scope = is_global
@@ -567,7 +566,7 @@ impl<'source> Parser<'source> {
         if direct_catch_parameter_conflict {
             return Err(Error::syntax(
                 "invalid redefinition of lexical identifier",
-                source_span(conflict_span),
+                conflict_span,
             ));
         }
         if let Some(existing) = function.binding_id_in_scope(scope, name) {
@@ -589,7 +588,7 @@ impl<'source> Parser<'source> {
             }
             return Err(Error::syntax(
                 "invalid redefinition of lexical identifier",
-                source_span(conflict_span),
+                conflict_span,
             ));
         }
         if let Some(binding) = function.binding_in_scope(function.ir.var_scope, name) {
@@ -665,7 +664,7 @@ impl<'source> Parser<'source> {
                 }
             };
             if !message.is_empty() {
-                return Err(Error::syntax(message, source_span(conflict_span)));
+                return Err(Error::syntax(message, conflict_span));
             }
         }
         if is_global {
@@ -689,7 +688,7 @@ impl<'source> Parser<'source> {
         if function.locals.len() >= MAX_LOCAL_VARIABLES {
             return Err(
                 Error::new(ErrorKind::JsInternal, "too many local variables")
-                    .with_span(source_span(declaration_span)),
+                    .with_span(declaration_span),
             );
         }
         let index = u16::try_from(function.locals.len())
@@ -772,7 +771,7 @@ impl<'source> Parser<'source> {
         {
             return Err(Error::syntax(
                 "invalid redefinition of lexical identifier",
-                source_span(conflict_span),
+                conflict_span,
             ));
         }
 
@@ -959,7 +958,7 @@ impl<'source> Parser<'source> {
         if conflicts_with_authored_global {
             return Err(Error::syntax(
                 "invalid redefinition of global identifier",
-                source_span(conflict_span),
+                conflict_span,
             ));
         }
 
@@ -1160,7 +1159,7 @@ impl<'source> Parser<'source> {
             if self.current_ir().strict || !duplicate_ordinary_function {
                 return Err(Error::syntax(
                     "invalid redefinition of lexical identifier",
-                    source_span(conflict_span),
+                    conflict_span,
                 ));
             }
 
@@ -1168,7 +1167,7 @@ impl<'source> Parser<'source> {
             if function.locals.len() >= MAX_LOCAL_VARIABLES {
                 return Err(
                     Error::new(ErrorKind::JsInternal, "too many local variables")
-                        .with_span(source_span(declaration_span)),
+                        .with_span(declaration_span),
                 );
             }
             let index = u16::try_from(function.locals.len())
@@ -1302,7 +1301,7 @@ impl<'source> Parser<'source> {
             if function.locals.len() >= MAX_LOCAL_VARIABLES {
                 return Err(
                     Error::new(ErrorKind::JsInternal, "too many local variables")
-                        .with_span(source_span(declaration_span)),
+                        .with_span(declaration_span),
                 );
             }
             let index = u16::try_from(function.locals.len())

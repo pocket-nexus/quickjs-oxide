@@ -2,22 +2,12 @@ use crate::engine::api::Context;
 use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native::NativeCProto;
 use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
+use crate::engine::test_support::assert_script;
 
 use super::*;
 use crate::engine::heap::shared_memory::SharedBufferHandle;
 use std::sync::{Arc, Barrier, mpsc};
 use std::time::{Duration, Instant};
-
-fn eval_string(context: &mut Context, source: &str) -> String {
-    let Value::String(value) = context.eval(source).unwrap() else {
-        panic!("Atomics test did not return a String");
-    };
-    value.to_utf8_lossy()
-}
-
-fn assert_script(context: &mut Context, source: &str) {
-    assert_eq!(eval_string(context, source), "ok");
-}
 
 fn publish_shared_buffer(
     runtime: &Runtime,

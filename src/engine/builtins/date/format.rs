@@ -5,6 +5,7 @@
 //! QuickJS does not consult ICU, a locale argument, or an options object here.
 
 use super::calendar::DateFields;
+use crate::engine::builtins::native::DateStringMethod;
 use std::fmt;
 
 const MONTH_NAMES: [&str; 12] = [
@@ -13,34 +14,7 @@ const MONTH_NAMES: [&str; 12] = [
 const DAY_NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const INVALID_DATE: &str = "Invalid Date";
 
-/// The eight distinct formatting entry points backed by QuickJS's
-/// `get_date_string` native.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DateStringKind {
-    String,
-    DateString,
-    TimeString,
-    UtcString,
-    IsoString,
-    LocaleString,
-    LocaleDateString,
-    LocaleTimeString,
-}
-
-impl DateStringKind {
-    /// Whether `calendar::get_date_fields` must decompose using host local time.
-    pub(crate) const fn uses_local_time(self) -> bool {
-        matches!(
-            self,
-            Self::String
-                | Self::DateString
-                | Self::TimeString
-                | Self::LocaleString
-                | Self::LocaleDateString
-                | Self::LocaleTimeString
-        )
-    }
-
+impl DateStringMethod {
     const fn format(self) -> Format {
         match self {
             Self::UtcString => Format::Utc,
@@ -103,14 +77,14 @@ impl std::error::Error for InvalidIsoDate {}
 /// Formats already-decomposed fields for a pinned QuickJS Date method.
 ///
 /// `None` represents an invalid Date payload. Callers should use
-/// [`DateStringKind::uses_local_time`] when obtaining `fields` from
+/// [`DateStringMethod::uses_local_time`] when obtaining `fields` from
 /// `calendar::get_date_fields`.
 pub(crate) fn format_date_string(
     fields: Option<&DateFields>,
-    kind: DateStringKind,
+    kind: DateStringMethod,
 ) -> Result<String, InvalidIsoDate> {
     let Some(fields) = fields else {
-        return if kind == DateStringKind::IsoString {
+        return if kind == DateStringMethod::IsoString {
             Err(InvalidIsoDate)
         } else {
             Ok(INVALID_DATE.to_owned())
@@ -268,23 +242,23 @@ mod tests {
 
     const UTC: fn(i64) -> i32 = |_| 0;
 
-    fn format_utc(time: f64, kind: DateStringKind) -> String {
+    fn format_utc(time: f64, kind: DateStringMethod) -> String {
         let fields = get_date_fields(time, false, false, UTC);
         format_date_string(fields.as_ref(), kind).unwrap()
     }
 
     #[test]
     fn kinds_select_the_same_utc_or_local_decomposition_as_quickjs_magic() {
-        for kind in [DateStringKind::UtcString, DateStringKind::IsoString] {
+        for kind in [DateStringMethod::UtcString, DateStringMethod::IsoString] {
             assert!(!kind.uses_local_time(), "{kind:?}");
         }
         for kind in [
-            DateStringKind::String,
-            DateStringKind::DateString,
-            DateStringKind::TimeString,
-            DateStringKind::LocaleString,
-            DateStringKind::LocaleDateString,
-            DateStringKind::LocaleTimeString,
+            DateStringMethod::String,
+            DateStringMethod::DateString,
+            DateStringMethod::TimeString,
+            DateStringMethod::LocaleString,
+            DateStringMethod::LocaleDateString,
+            DateStringMethod::LocaleTimeString,
         ] {
             assert!(kind.uses_local_time(), "{kind:?}");
         }
@@ -293,11 +267,11 @@ mod tests {
     #[test]
     fn all_utc_forms_match_quickjs_at_the_epoch() {
         assert_eq!(
-            format_utc(0.0, DateStringKind::UtcString),
+            format_utc(0.0, DateStringMethod::UtcString),
             "Thu, 01 Jan 1970 00:00:00 GMT"
         );
         assert_eq!(
-            format_utc(0.0, DateStringKind::IsoString),
+            format_utc(0.0, DateStringMethod::IsoString),
             "1970-01-01T00:00:00.000Z"
         );
     }
@@ -306,15 +280,15 @@ mod tests {
     fn local_string_date_and_time_parts_match_quickjs() {
         let fields = [2020.0, 6.0, 1.0, 18.0, 19.0, 56.0, 789.0, 3.0, 345.0];
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::String).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::String).unwrap(),
             "Wed Jul 01 2020 18:19:56 GMT+0545"
         );
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::DateString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::DateString).unwrap(),
             "Wed Jul 01 2020"
         );
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::TimeString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::TimeString).unwrap(),
             "18:19:56 GMT+0545"
         );
     }
@@ -323,19 +297,19 @@ mod tests {
     fn timezone_sign_hours_and_minutes_are_not_rounded_or_reversed() {
         let mut fields = [2020.0, 6.0, 1.0, 10.0, 4.0, 56.0, 0.0, 3.0, -150.0];
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::TimeString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::TimeString).unwrap(),
             "10:04:56 GMT-0230"
         );
 
         fields[8] = 0.0;
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::TimeString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::TimeString).unwrap(),
             "10:04:56 GMT+0000"
         );
 
         fields[8] = 45.0;
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::TimeString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::TimeString).unwrap(),
             "10:04:56 GMT+0045"
         );
     }
@@ -344,26 +318,26 @@ mod tests {
     fn locale_methods_retain_quickjs_fixed_us_style() {
         let fields = [2020.0, 6.0, 1.0, 18.0, 19.0, 56.0, 789.0, 3.0, 345.0];
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::LocaleString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::LocaleString).unwrap(),
             "07/01/2020, 06:19:56 PM"
         );
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::LocaleDateString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::LocaleDateString).unwrap(),
             "07/01/2020"
         );
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::LocaleTimeString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::LocaleTimeString).unwrap(),
             "06:19:56 PM"
         );
 
         let midnight = [2020.0, 6.0, 1.0, 0.0, 1.0, 2.0, 0.0, 3.0, 0.0];
         let noon = [2020.0, 6.0, 1.0, 12.0, 1.0, 2.0, 0.0, 3.0, 0.0];
         assert_eq!(
-            format_date_string(Some(&midnight), DateStringKind::LocaleTimeString).unwrap(),
+            format_date_string(Some(&midnight), DateStringMethod::LocaleTimeString).unwrap(),
             "12:01:02 AM"
         );
         assert_eq!(
-            format_date_string(Some(&noon), DateStringKind::LocaleTimeString).unwrap(),
+            format_date_string(Some(&noon), DateStringMethod::LocaleTimeString).unwrap(),
             "12:01:02 PM"
         );
     }
@@ -371,13 +345,13 @@ mod tests {
     #[test]
     fn invalid_date_is_a_string_except_for_iso_range_error() {
         for kind in [
-            DateStringKind::String,
-            DateStringKind::DateString,
-            DateStringKind::TimeString,
-            DateStringKind::UtcString,
-            DateStringKind::LocaleString,
-            DateStringKind::LocaleDateString,
-            DateStringKind::LocaleTimeString,
+            DateStringMethod::String,
+            DateStringMethod::DateString,
+            DateStringMethod::TimeString,
+            DateStringMethod::UtcString,
+            DateStringMethod::LocaleString,
+            DateStringMethod::LocaleDateString,
+            DateStringMethod::LocaleTimeString,
         ] {
             assert_eq!(
                 format_date_string(None, kind).unwrap(),
@@ -386,7 +360,7 @@ mod tests {
             );
         }
 
-        let error = format_date_string(None, DateStringKind::IsoString).unwrap_err();
+        let error = format_date_string(None, DateStringMethod::IsoString).unwrap_err();
         assert_eq!(error, InvalidIsoDate);
         assert_eq!(error.to_string(), "Date value is NaN");
     }
@@ -406,15 +380,15 @@ mod tests {
         for (year, standard_year, iso_year) in cases {
             let fields = [year as f64, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 5.0, 0.0];
             assert_eq!(
-                format_date_string(Some(&fields), DateStringKind::DateString).unwrap(),
+                format_date_string(Some(&fields), DateStringMethod::DateString).unwrap(),
                 format!("Fri Jan 01 {standard_year}")
             );
             assert_eq!(
-                format_date_string(Some(&fields), DateStringKind::IsoString).unwrap(),
+                format_date_string(Some(&fields), DateStringMethod::IsoString).unwrap(),
                 format!("{iso_year}-01-01T00:00:00.000Z")
             );
             assert_eq!(
-                format_date_string(Some(&fields), DateStringKind::LocaleDateString).unwrap(),
+                format_date_string(Some(&fields), DateStringMethod::LocaleDateString).unwrap(),
                 format!("01/01/{standard_year}")
             );
         }
@@ -423,19 +397,19 @@ mod tests {
     #[test]
     fn timeclip_boundaries_format_with_extended_iso_years() {
         assert_eq!(
-            format_utc(8.64e15, DateStringKind::UtcString),
+            format_utc(8.64e15, DateStringMethod::UtcString),
             "Sat, 13 Sep 275760 00:00:00 GMT"
         );
         assert_eq!(
-            format_utc(8.64e15, DateStringKind::IsoString),
+            format_utc(8.64e15, DateStringMethod::IsoString),
             "+275760-09-13T00:00:00.000Z"
         );
         assert_eq!(
-            format_utc(-8.64e15, DateStringKind::UtcString),
+            format_utc(-8.64e15, DateStringMethod::UtcString),
             "Tue, 20 Apr -271821 00:00:00 GMT"
         );
         assert_eq!(
-            format_utc(-8.64e15, DateStringKind::IsoString),
+            format_utc(-8.64e15, DateStringMethod::IsoString),
             "-271821-04-20T00:00:00.000Z"
         );
     }
@@ -445,11 +419,11 @@ mod tests {
         let time = set_date_fields(&[-1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0], false, UTC);
         let fields = get_date_fields(time, false, false, UTC).unwrap();
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::UtcString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::UtcString).unwrap(),
             "Fri, 01 Jan -0001 00:00:00 GMT"
         );
         assert_eq!(
-            format_date_string(Some(&fields), DateStringKind::IsoString).unwrap(),
+            format_date_string(Some(&fields), DateStringMethod::IsoString).unwrap(),
             "-000001-01-01T00:00:00.000Z"
         );
     }

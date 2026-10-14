@@ -289,8 +289,8 @@ impl DateStringMethod {
         }
     }
 
+    /// Whether `calendar::get_date_fields` must decompose using host local time.
     #[must_use]
-    #[cfg(test)]
     pub const fn uses_local_time(self) -> bool {
         matches!(
             self,
