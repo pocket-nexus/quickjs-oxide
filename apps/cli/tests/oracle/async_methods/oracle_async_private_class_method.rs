@@ -1,7 +1,5 @@
 use crate::oracle_cases::SuccessCase;
-use crate::runtime_observation::assert_success;
-use std::ffi::OsStr;
-use std::process::{Command, Output};
+use crate::runtime_completion_oracle::compare_success_cases;
 
 const SEMANTIC_CASES: &[SuccessCase] = &[
     SuccessCase {
@@ -218,33 +216,4 @@ bodyPromise.then(undefined, function (error) {
 #[test]
 fn ordinary_private_async_class_method_semantics_match_pinned_quickjs() {
     compare_success_cases("private async class method", SEMANTIC_CASES);
-}
-
-fn compare_success_cases(group: &str, cases: &[SuccessCase]) {
-    let oracle = std::env::var_os("QJS_ORACLE");
-    if oracle.is_none() {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to pinned upstream qjs");
-    }
-
-    for case in cases {
-        let oxide = run(env!("CARGO_BIN_EXE_qjs").as_ref(), case.source);
-        assert_success("quickjs-oxide", case, &oxide);
-
-        if let Some(oracle) = &oracle {
-            let quickjs = run(oracle, case.source);
-            assert_success("pinned QuickJS", case, &quickjs);
-            assert_eq!(
-                oxide.stdout, quickjs.stdout,
-                "{group} output differed for {}",
-                case.description
-            );
-        }
-    }
-}
-
-fn run(executable: &OsStr, source: &str) -> Output {
-    Command::new(executable)
-        .args(["-e", source])
-        .output()
-        .unwrap_or_else(|error| panic!("failed to run {}: {error}", executable.to_string_lossy()))
 }

@@ -190,15 +190,9 @@ const tombstoneSources = [
 // Path-and-fingerprint exceptions for token-identical copies whose callees
 // differ from the provider's (a same-named local helper with another panic
 // message), so importing the provider would change behavior. Every entry must
-// be used exactly once so stale exceptions are reported.
-const helperAllowlist = new Set([
-  // Calls a local run() whose spawn-failure message differs.
-  "apps/cli/tests/oracle/async_methods/oracle_async_private_class_method.rs\u000044095ad11928db4927f9174e67d596ac1975ddf9c3c11da77dad742f4803176f",
-  // Reads through property_callable_with_read_context.
-  "apps/cli/tests/oracle/object/oracle_object_intrinsic.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  // Calls a local define_accessor_key without the rejection message.
-  "apps/cli/tests/oracle/string/oracle_string_conversion_core.rs\u0000fafe7ff0140e2317e09cf4ddd63708de2f6fb43d597e316958ea216d74122678",
-]);
+// be used exactly once so stale exceptions are reported. It is currently
+// empty: every former exception now imports the shared provider.
+const helperAllowlist = new Set([]);
 
 runCanaries();
 

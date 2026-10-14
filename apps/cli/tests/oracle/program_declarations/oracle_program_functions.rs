@@ -2,6 +2,7 @@ use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_stri
 use super::quickjs_program_property_oracle::observe_program_property_lines;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::take_exception_object as take_object_exception;
 
 use crate::object_graph_observation::{define_global_data, function_setup as function};
 use crate::runtime_completion_oracle::compare_cli;
@@ -9,7 +10,7 @@ use crate::runtime_observation::eval_text;
 use crate::runtime_oracle::value_type;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
-    JsString, ObjectRef, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
+    JsString, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
 
 const VALUE_CASES: &[(&str, &str)] = &[
@@ -846,17 +847,6 @@ fn define_global_accessor(
             )
             .unwrap()
     );
-}
-
-fn take_object_exception(context: &mut Context, description: &str) -> ObjectRef {
-    let Value::Object(error) = context
-        .take_exception()
-        .unwrap_or_else(|failure| panic!("take {description} exception: {failure}"))
-        .unwrap_or_else(|| panic!("{description} exception was missing"))
-    else {
-        panic!("{description} did not throw an object");
-    };
-    error
 }
 
 fn descriptor_text(runtime: &Runtime, context: &mut Context, name: &str) -> String {

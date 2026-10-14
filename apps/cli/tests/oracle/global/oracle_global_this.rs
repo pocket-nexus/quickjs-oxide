@@ -2,6 +2,7 @@ use super::quickjs_plain_eval_oracle::eval_plain_lines;
 use crate::object_graph_observation::descriptor_bits;
 use crate::runtime_observation::error_text as error_string_property;
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::value_text;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -605,17 +606,4 @@ fn reference_error_prototype(runtime: &Runtime, context: &mut Context) -> Object
 fn global_value(runtime: &Runtime, context: &mut Context, global: &ObjectRef, name: &str) -> Value {
     let key = runtime.intern_property_key(name).unwrap();
     context.get_property(global, &key).unwrap()
-}
-
-fn value_text(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => value.to_string(),
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Object(_) | Value::Symbol(_) => panic!("unexpected scalar observation value"),
-    }
 }

@@ -1,6 +1,7 @@
 use crate::object_graph_observation::{bit, function, get_property};
 use crate::runtime_observation::hex;
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::text as plain_string;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -1396,13 +1397,6 @@ fn show_value(value: Value) -> String {
         Value::String(value) => format!("string:{}", value.to_utf8_lossy()),
         value => panic!("unexpected probe value: {value:?}"),
     }
-}
-
-fn plain_string(value: Value) -> String {
-    let Value::String(value) = value else {
-        panic!("expected a string, got {value:?}");
-    };
-    value.to_utf8_lossy()
 }
 
 fn plain_bool(value: Value) -> bool {

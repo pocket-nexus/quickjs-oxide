@@ -1,8 +1,10 @@
+use crate::object_graph_observation::data_descriptor;
+use crate::object_graph_observation::eval_callable;
 use crate::object_graph_observation::expect_object;
 use crate::runtime_observation::host_runtime_context;
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
-    JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value,
+    AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
+    OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value,
 };
 
 // This oracle is deliberately narrower than the future `%String%` intrinsic.
@@ -513,16 +515,6 @@ fn box_string(runtime: &Runtime, context: &mut Context, value: JsString) -> Obje
     )
 }
 
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("source did not produce a function: {source:?}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("source was not callable: {source:?}"))
-}
-
 fn property_callable(
     runtime: &Runtime,
     context: &mut Context,
@@ -555,26 +547,6 @@ fn define_data(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey, value: 
             },
         )
         .unwrap()
-}
-
-fn data_descriptor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-) -> (Value, bool, bool, bool) {
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        value,
-        writable,
-        enumerable,
-        configurable,
-    } = runtime
-        .get_own_property(object, key)
-        .unwrap()
-        .expect("data property was absent")
-    else {
-        panic!("property was not data");
-    };
-    (value, writable, enumerable, configurable)
 }
 
 fn own_key_names(

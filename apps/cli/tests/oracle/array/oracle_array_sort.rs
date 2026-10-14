@@ -2,7 +2,7 @@ use super::support::*;
 use crate::runtime_observation::host_runtime_context;
 
 use crate::object_graph_observation::int_property;
-use quickjs_oxide::engine::api::{CallableRef, Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 
 // This target pins QuickJS 2026-06-04's ordinary Array sort kernel and its
@@ -744,17 +744,4 @@ fn rust_graph_observations() -> Vec<String> {
 
 fn oracle_graph_observations(oracle: &OsStr) -> Vec<String> {
     super::quickjs_oracle::eval_std_lines(oracle, GRAPH_ORACLE, "Array sort graph oracle")
-}
-
-fn eval_callable(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> CallableRef {
-    let function = eval_object(context, source, description);
-    runtime
-        .as_callable(&function)
-        .unwrap()
-        .unwrap_or_else(|| panic!("{description} was not callable"))
 }

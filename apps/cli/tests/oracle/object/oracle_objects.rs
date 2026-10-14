@@ -1,4 +1,5 @@
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::integer as int_value;
 use crate::runtime_observation::string_units as units;
 use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString,
@@ -371,11 +372,4 @@ fn string_keys(runtime: &Runtime, object: &quickjs_oxide::engine::api::ObjectRef
                 .to_utf8_lossy()
         })
         .collect()
-}
-
-fn int_value(value: Value) -> i32 {
-    let Value::Int(value) = value else {
-        panic!("expected integer property value");
-    };
-    value
 }

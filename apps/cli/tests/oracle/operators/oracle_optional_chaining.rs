@@ -1,11 +1,10 @@
 use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_completion_oracle::oracle_script_case_name_observation as oracle_observation;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text as primitive_text,
 };
 use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
-use std::ffi::OsStr;
-use std::process::Command;
 
 // Pins QuickJS 2026-06-04's optional-chain lowering before the Test262 feature
 // is admitted globally. In addition to the ordinary successful paths, this
@@ -855,45 +854,6 @@ fn rust_observation(case: &Case) -> String {
         }
         Err(error) => format!("engine|{error}"),
     }
-}
-
-fn oracle_observation(oracle: &OsStr, case: &Case) -> String {
-    let wrapper = r#"
-try {
-  var value = std.evalScript(scriptArgs[0]);
-  print("return|" + typeof value + "|" + String(value));
-} catch (error) {
-  if (error !== null && typeof error === "object")
-    print("throw|object|" + error.name);
-  else
-    print("throw|" + typeof error + "|" + String(error));
-}
-"#;
-    let output = Command::new(oracle)
-        .args(["--std", "-e", wrapper, case.source])
-        .output()
-        .unwrap_or_else(|error| {
-            panic!(
-                "could not run QuickJS for {} / {}: {error}",
-                case.group, case.description,
-            )
-        });
-    assert!(
-        output.status.success(),
-        "QuickJS observer failed for {} / {}: {}",
-        case.group,
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-    );
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| {
-            panic!(
-                "QuickJS output was not UTF-8 for {} / {}: {error}",
-                case.group, case.description,
-            )
-        })
-        .trim_end()
-        .to_owned()
 }
 
 fn error_name(

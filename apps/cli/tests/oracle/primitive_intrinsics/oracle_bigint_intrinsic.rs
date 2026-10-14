@@ -7,6 +7,7 @@ use crate::object_graph_observation::{
 use crate::runtime_observation::error_text;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::property_callable;
+use crate::runtime_observation::take_error_object as take_exception_object;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsBigInt, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
@@ -1651,13 +1652,6 @@ fn take_error(runtime: &Runtime, context: &mut Context) -> String {
     let name = error_text(runtime, context, &error, "name");
     let message = error_text(runtime, context, &error, "message");
     format!("throw:{name}:{message}")
-}
-
-fn take_exception_object(context: &mut Context) -> ObjectRef {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("BigInt operation did not throw an Error object");
-    };
-    error
 }
 
 fn join_values(values: &[Value]) -> String {

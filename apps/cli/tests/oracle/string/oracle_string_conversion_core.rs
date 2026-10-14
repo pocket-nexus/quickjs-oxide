@@ -3,12 +3,13 @@ use crate::object_graph_observation::{
     define_named_builtin_data as define_data, eval_callable, global_object_value as global_value,
     intrinsic_prototype, own_key_names,
 };
+use crate::object_graph_observation::{define_accessor, define_accessor_key};
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{error_string, hex};
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
+    CallableRef, Context, JsString, ObjectRef, PropertyKey, Runtime, RuntimeError, Value,
+    WellKnownSymbol,
 };
 
 // Deliberate partial-surface probe: key order is compared only after filtering
@@ -469,45 +470,6 @@ fn signature(runtime: &Runtime, context: &mut Context, callable: &CallableRef) -
             .collect::<Vec<_>>()
             .join(",")
     )
-}
-
-fn define_accessor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    name: &str,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_accessor_key(runtime, object, &key, get, set);
-}
-
-fn define_accessor_key(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(
-                        get.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    set: DescriptorField::Present(
-                        set.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
 }
 
 fn observe_call(

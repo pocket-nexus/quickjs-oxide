@@ -1,5 +1,6 @@
 use super::quickjs_array_completion_oracle::observe_array_completion;
 use crate::object_graph_observation::data_bits;
+use crate::object_graph_observation::global_callable;
 use crate::object_graph_observation::{own_data_descriptor as data_descriptor, own_key_names};
 use crate::runtime_completion_oracle::{
     compare_array_value_cases as compare_value_cases, observe_array_aware_eval as observe_rust_eval,
@@ -836,11 +837,6 @@ fn callable_meta(
             == Some(function_prototype),
         runtime.is_constructor(callable.as_object()).unwrap(),
     )
-}
-
-fn global_callable(runtime: &Runtime, context: &mut Context, name: &str) -> CallableRef {
-    let global = context.global_object().unwrap();
-    property_callable(runtime, context, &global, name)
 }
 
 fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {

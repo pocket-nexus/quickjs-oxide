@@ -3,6 +3,7 @@ use crate::runtime_completion_oracle::{
     ErrorPropertyStyle, compare_prelude_cases_collecting_failures,
 };
 use crate::runtime_observation::{property_callable, string_property};
+use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 
@@ -726,16 +727,6 @@ fn observed_source(source: &str) -> String {
 fn observe_oracle(oracle: &OsStr, source: &str, description: &str) -> String {
     let source = observed_source(source);
     super::quickjs_oracle::observe_completion(oracle, &source, description)
-}
-
-fn eval_object(context: &mut Context, source: &str, description: &str) -> ObjectRef {
-    let Value::Object(object) = context
-        .eval(source)
-        .unwrap_or_else(|error| panic!("evaluate {description}: {error}"))
-    else {
-        panic!("{description} was not an object");
-    };
-    object
 }
 
 fn take_exception_object(context: &mut Context, description: &str) -> ObjectRef {

@@ -1,4 +1,5 @@
 use super::quickjs_string_result_oracle::observe_string_result;
+use crate::object_graph_observation::checked_property_value as object_property;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::observe_oxide;
 use crate::runtime_observation::host_runtime_context;
@@ -6,7 +7,7 @@ use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 const ORACLE_WRAPPER: &str = r#"
 var value = std.evalScript(scriptArgs[0]);
@@ -849,16 +850,4 @@ fn iterator_concat_cross_realm_graph_and_native_next_use_the_current_realm() {
         runtime.get_prototype_of(&error).unwrap(),
         Some(caller_type_error),
     );
-}
-
-fn object_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> Value {
-    let key = runtime.intern_property_key(name).unwrap();
-    context
-        .get_property(object, &key)
-        .unwrap_or_else(|error| panic!("read {name}: {error}"))
 }

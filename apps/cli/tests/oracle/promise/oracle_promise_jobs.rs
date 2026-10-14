@@ -1,22 +1,10 @@
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::integer;
+use crate::runtime_observation::text;
 use crate::runtime_observation::{drain, eval};
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError};
 use std::cell::RefCell;
 use std::rc::Rc;
-
-fn text(value: Value) -> String {
-    let Value::String(value) = value else {
-        panic!("expected string value");
-    };
-    value.to_utf8_lossy()
-}
-
-fn integer(value: Value) -> i32 {
-    let Value::Int(value) = value else {
-        panic!("expected integer value");
-    };
-    value
-}
 
 #[test]
 fn promise_constructor_and_internal_functions_have_quickjs_shapes() {

@@ -3,6 +3,7 @@ use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text_with_rust_float as primitive_text,
 };
+use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
@@ -1458,16 +1459,6 @@ try {
         .unwrap_or_else(|error| panic!("QuickJS output was not UTF-8 for {description}: {error}"))
         .trim_end()
         .to_owned()
-}
-
-fn eval_object(context: &mut Context, source: &str, description: &str) -> ObjectRef {
-    let Value::Object(object) = context
-        .eval(source)
-        .unwrap_or_else(|error| panic!("Rust rejected {description} ({source:?}): {error}"))
-    else {
-        panic!("{description} was not an object");
-    };
-    object
 }
 
 fn object_property(

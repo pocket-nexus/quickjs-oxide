@@ -1,5 +1,7 @@
+use crate::object_graph_observation::object as expect_object;
 use crate::object_graph_observation::{function, get_property};
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::take_error_object as take_exception_object;
 use crate::runtime_observation::{show, string_value as string};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
@@ -1290,20 +1292,6 @@ fn property_callable(
         .as_callable(&value)
         .unwrap()
         .unwrap_or_else(|| panic!("property {name} was not callable"))
-}
-
-fn expect_object(value: Value) -> ObjectRef {
-    let Value::Object(value) = value else {
-        panic!("expected object, got {value:?}");
-    };
-    value
-}
-
-fn take_exception_object(context: &mut Context) -> ObjectRef {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("expected an Error object exception");
-    };
-    error
 }
 
 fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {

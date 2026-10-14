@@ -430,8 +430,7 @@ pub(crate) fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, descri
     assert_eq!(rust.stderr, quickjs.stderr, "{description}");
 }
 
-pub(crate) fn oracle_script_case_observation(oracle: &OsStr, case: &Case) -> String {
-    let wrapper = r#"
+const SCRIPT_CASE_OBSERVER: &str = r#"
 try {
   var value = std.evalScript(scriptArgs[0]);
   print('return|' + typeof value + '|' + String(value));
@@ -442,6 +441,30 @@ try {
     print('throw|' + typeof error + '|' + String(error));
 }
 "#;
+
+const SCRIPT_CASE_NAME_OBSERVER: &str = r#"
+try {
+  var value = std.evalScript(scriptArgs[0]);
+  print('return|' + typeof value + '|' + String(value));
+} catch (error) {
+  if (error !== null && typeof error === 'object')
+    print('throw|object|' + error.name);
+  else
+    print('throw|' + typeof error + '|' + String(error));
+}
+"#;
+
+pub(crate) fn oracle_script_case_observation(oracle: &OsStr, case: &Case) -> String {
+    observe_script_case(oracle, SCRIPT_CASE_OBSERVER, case)
+}
+
+/// Like [`oracle_script_case_observation`], but a thrown object reports only
+/// its `name`.
+pub(crate) fn oracle_script_case_name_observation(oracle: &OsStr, case: &Case) -> String {
+    observe_script_case(oracle, SCRIPT_CASE_NAME_OBSERVER, case)
+}
+
+fn observe_script_case(oracle: &OsStr, wrapper: &str, case: &Case) -> String {
     let output = Command::new(oracle)
         .args(["--std", "-e", wrapper, case.source])
         .output()

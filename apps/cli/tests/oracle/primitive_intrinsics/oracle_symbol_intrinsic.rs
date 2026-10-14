@@ -4,6 +4,7 @@ use crate::object_graph_observation::{
     named_data_flags as data_flags,
 };
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::take_error_object as take_exception_object;
 use crate::runtime_observation::{error_text, string_units as utf16_units};
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, JsBigInt, JsString, ObjectRef,
@@ -2081,13 +2082,6 @@ fn take_error(runtime: &Runtime, context: &mut Context) -> String {
     let name = error_text(runtime, context, &error, "name");
     let message = error_text(runtime, context, &error, "message");
     format!("throw:{name}:{message}")
-}
-
-fn take_exception_object(context: &mut Context) -> ObjectRef {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("Symbol operation did not throw an Error object");
-    };
-    error
 }
 
 fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {

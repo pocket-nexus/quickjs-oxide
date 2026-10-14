@@ -1,4 +1,5 @@
 use crate::object_graph_observation::require_object as expect_object;
+use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
@@ -6,8 +7,6 @@ use crate::runtime_observation::{
 };
 use crate::runtime_oracle::{eval_object, value_type};
 use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
-use std::ffi::OsStr;
-use std::process::Command;
 
 // Pins the complete QuickJS 2026-06-04 Reflect intrinsic. In particular, the
 // construct-order vectors intentionally follow `js_reflect_construct` rather
@@ -609,31 +608,6 @@ fn observe_rust_eval(
         }
         Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
     }
-}
-
-fn observe_oracle(oracle: &OsStr, source: &str, description: &str) -> String {
-    let wrapper = r#"
-try {
-  var value=std.evalScript(scriptArgs[0]);
-  print('return|'+typeof value+'|'+String(value));
-} catch(error) {
-  if(error!==null&&typeof error==='object')print('throw|object|'+error.name+'|'+error.message);
-  else print('throw|'+typeof error+'|'+String(error));
-}
-"#;
-    let output = Command::new(oracle)
-        .args(["--std", "-e", wrapper, source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run QuickJS for {description}: {error}"));
-    assert!(
-        output.status.success(),
-        "QuickJS observer failed for {description}: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| panic!("QuickJS output was not UTF-8 for {description}: {error}"))
-        .trim_end()
-        .to_owned()
 }
 
 fn reflect_object(runtime: &Runtime, context: &mut Context) -> ObjectRef {
