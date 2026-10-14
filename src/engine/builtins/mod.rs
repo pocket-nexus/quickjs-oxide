@@ -192,10 +192,6 @@ pub(crate) mod primitive;
 
 pub(crate) mod native;
 
-pub(crate) use array::callback::{
-    CallbackResume as ArrayCallbackResume, CallbackStep as ArrayCallbackStep,
-};
-
 pub(crate) use array::mutation::{
     MutationResume as ArrayMutationResume, MutationStep as ArrayMutationStep,
 };

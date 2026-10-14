@@ -211,7 +211,6 @@ pub(super) enum Resume {
     ArrayMutationSet {
         resume: crate::engine::builtins::ArrayMutationResume,
     },
-    ArrayCallback(crate::engine::builtins::ArrayCallbackResume),
     ArraySpecies(crate::engine::builtins::ArraySpeciesResume),
     StringReplace(crate::engine::builtins::StringReplaceResume),
     DataView(crate::engine::builtins::DataViewAccessResume),
@@ -1643,7 +1642,6 @@ impl Resume {
             Self::ArrayConcat(resume) => resume.defined(runtime, result).and_then(Step::try_from),
             Self::ArrayFlatten(resume) => resume.defined(runtime, result).and_then(Step::try_from),
             Self::Native(then) => effect::reply_native(then, runtime, Reply::Defined(result)),
-            Self::ArrayCallback(resume) => resume.defined(runtime, result).and_then(Step::try_from),
             Self::ObjectIteration(resume) => {
                 resume.defined(runtime, result).and_then(Step::try_from)
             }
@@ -1690,7 +1688,7 @@ impl Resume {
             Self::ArrayIndexed(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
             Self::ArrayReverse(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
             Self::ArrayMutation(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
-            Self::ArrayCallback(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::Native(then) => effect::reply_native(then, runtime, Reply::Boolean(result)),
             Self::BooleanResult { payload } => runtime
                 .finish_property_delete(result, payload.strict_delete)
                 .map(|result| Step::Complete(Some(result))),
@@ -2028,9 +2026,6 @@ impl Resume {
             }
             Self::ArrayNext(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::ArrayMutation(resume) => {
-                resume.resume(runtime, completion).and_then(Step::try_from)
-            }
-            Self::ArrayCallback(resume) => {
                 resume.resume(runtime, completion).and_then(Step::try_from)
             }
             Self::ArraySpecies(resume) => {
@@ -2397,7 +2392,6 @@ impl Resume {
             Self::IteratorCreate(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::ArrayNext(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::ArrayMutation(resume) => resume.number(runtime, result).and_then(Step::try_from),
-            Self::ArrayCallback(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::Arguments(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::LengthNumber(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::Keys(resume) => resume.number(runtime, result).and_then(Step::try_from),

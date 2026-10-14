@@ -800,10 +800,10 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         self.dispatch_borrowed_invocation(invocation, |invocation| {
-            callback::finish(
+            super::effect::finish(
                 self,
                 realm,
-                callback::CallbackStep::start(
+                callback::start(
                     self,
                     realm,
                     callback::CallbackKind::Iteration(kind),
@@ -822,10 +822,10 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         self.dispatch_borrowed_invocation(invocation, |invocation| {
-            callback::finish(
+            super::effect::finish(
                 self,
                 realm,
-                callback::CallbackStep::start(
+                callback::start(
                     self,
                     realm,
                     callback::CallbackKind::Reduce(kind),
@@ -844,10 +844,10 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         self.dispatch_borrowed_invocation(invocation, |invocation| {
-            callback::finish(
+            super::effect::finish(
                 self,
                 realm,
-                callback::CallbackStep::start(
+                callback::start(
                     self,
                     realm,
                     callback::CallbackKind::Find(kind),

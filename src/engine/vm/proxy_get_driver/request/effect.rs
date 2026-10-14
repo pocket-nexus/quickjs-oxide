@@ -22,6 +22,22 @@ impl TryFrom<EffectStep> for Step {
             EffectStep::Effect(then) => then,
         };
         Ok(match then.take_pending()? {
+            Effect::Read { object, key } => Self::Read {
+                receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
+                object: Some(object),
+                key: Some(key),
+                resume: Some(Resume::Native(then)),
+            },
+            Effect::Has { object, key } => Self::Has {
+                object: Some(object),
+                key: Some(key),
+                resume: Some(Resume::Native(then)),
+            },
+            Effect::Species { source, length } => Self::ArraySpecies {
+                source: Some(source),
+                length: Some(length),
+                resume: Some(Resume::Native(then)),
+            },
             Effect::ReadValue { receiver, key } => Self::ReadValue {
                 receiver: Some(receiver),
                 key: Some(key),

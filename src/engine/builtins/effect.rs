@@ -10,6 +10,7 @@
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     builtins::{
+        array::species,
         iterator::step::{CloseStep, NextStep, finish_close, finish_next},
         object::ObjectIteratorStep,
     },
@@ -26,9 +27,23 @@ use crate::engine::{
 };
 
 pub(crate) enum Effect {
+    /// `[[Get]]` on an object, with the object as receiver.
+    Read {
+        object: ObjectRef,
+        key: PropertyKey,
+    },
     ReadValue {
         receiver: JsValue,
         key: PropertyKey,
+    },
+    Has {
+        object: ObjectRef,
+        key: PropertyKey,
+    },
+    /// ArraySpeciesCreate(source, length).
+    Species {
+        source: ObjectRef,
+        length: u64,
     },
     Number {
         value: JsValue,
@@ -87,7 +102,7 @@ impl Effect {
                 release_all(arguments);
             }
             Self::Construct { arguments, .. } => release_all(arguments),
-            Self::Define { .. } => {}
+            Self::Read { .. } | Self::Has { .. } | Self::Species { .. } | Self::Define { .. } => {}
         }
     }
 }
@@ -96,8 +111,9 @@ impl Effect {
 const _: () = assert!(std::mem::size_of::<Effect>() <= 64);
 
 pub(crate) enum Reply {
-    /// Reply to [`Effect::ReadValue`], [`Effect::Call`] and [`Effect::Construct`].
+    /// Reply to the reads, [`Effect::Call`], [`Effect::Construct`] and [`Effect::Species`].
     Completion(Completion),
+    Boolean(NativeConversion<bool>),
     Number(NativeConversion<f64>),
     Parsed(ObjectIteratorStep),
     Defined(NativeConversion<InternalDefineResult>),
@@ -167,6 +183,17 @@ pub(crate) fn finish(
 
 fn perform(runtime: &Runtime, realm: ContextId, effect: Effect) -> Result<Reply, RuntimeError> {
     Ok(match effect {
+        Effect::Read { object, key } => {
+            Reply::Completion(runtime.get_property_in_realm(realm, &object, &key)?)
+        }
+        Effect::Has { object, key } => {
+            Reply::Boolean(runtime.internal_has_property(realm, &object, &key)?)
+        }
+        Effect::Species { source, length } => Reply::Completion(species::finish(
+            runtime,
+            realm,
+            species::SpeciesStep::start(runtime, realm, &source, length)?,
+        )?),
         Effect::ReadValue { receiver, key } => {
             Reply::Completion(runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?)
         }

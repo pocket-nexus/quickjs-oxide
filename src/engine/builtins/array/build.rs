@@ -670,6 +670,9 @@ impl Continuation for Build {
             Reply::Parsed(step) => self.parsed(runtime, step),
             Reply::Defined(result) => self.defined(runtime, result),
             Reply::Set { key, result } => self.set(runtime, key, result),
+            Reply::Boolean(_) => Err(RuntimeError::Invariant(
+                "Array builder received an unexpected reply",
+            )),
         }
     }
 }

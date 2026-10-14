@@ -267,7 +267,6 @@ pub(crate) enum NativeStep {
     ArrayNext(super::ArrayNextStep),
     Raw(crate::engine::vm::call::NativeInvokeOutcome),
     ArrayMutation(super::ArrayMutationStep),
-    ArrayCallback(super::ArrayCallbackStep),
     ObjectIteration(super::ObjectIterationStep),
     StringReplace(super::StringReplaceStep),
     DataView(super::DataViewAccessStep),
@@ -1191,9 +1190,9 @@ impl NativeOperation {
                     &mut waiting,
                 ));
             }
-            Self::ArrayCallback(kind) => NativeStep::ArrayCallback(
-                super::ArrayCallbackStep::start(runtime, realm, kind, invocation, arguments)?,
-            ),
+            Self::ArrayCallback(kind) => NativeStep::Effect(super::array::callback::start(
+                runtime, realm, kind, invocation, arguments,
+            )?),
             Self::ObjectIteration(kind) => NativeStep::ObjectIteration(
                 super::ObjectIterationStep::start(runtime, realm, kind, invocation, arguments)?,
             ),
@@ -1358,7 +1357,6 @@ const _: () = assert!(std::mem::size_of::<super::IteratorCreateStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::ArrayNextStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<crate::engine::vm::call::NativeInvokeOutcome>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::ArrayMutationStep>() <= 56);
-const _: () = assert!(std::mem::size_of::<super::ArrayCallbackStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::ObjectIterationStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::StringReplaceStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::DataViewAccessStep>() <= 56);
