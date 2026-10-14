@@ -881,8 +881,10 @@ impl<'a> Parser<'a> {
         let mut set = if let Some(endpoints) = endpoints {
             UnicodeSet {
                 ranges: endpoints
-                    .chunks_exact(2)
-                    .map(|pair| CharacterRange::new(pair[0], pair[1] - 1))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|&[start, end]| CharacterRange::new(start, end - 1))
                     .collect(),
                 strings: BTreeSet::new(),
             }

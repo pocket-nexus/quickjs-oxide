@@ -36,7 +36,7 @@ packages and a versioned playground.
 
 ```sh
 cargo binstall --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
-# or build from source with Rust 1.95 or newer
+# or build from source with Rust 1.99 or newer
 cargo install --locked --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
 ```
 

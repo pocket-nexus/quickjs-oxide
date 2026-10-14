@@ -782,10 +782,10 @@ pub(super) fn sha256(input: &[u8]) -> String {
     }
     padded.extend_from_slice(&bit_length.to_be_bytes());
 
-    for chunk in padded.chunks_exact(64) {
+    for chunk in padded.as_chunks::<64>().0 {
         let mut schedule = [0u32; 64];
-        for (word, bytes) in schedule[..16].iter_mut().zip(chunk.chunks_exact(4)) {
-            *word = u32::from_be_bytes(bytes.try_into().expect("SHA-256 word has four bytes"));
+        for (word, bytes) in schedule[..16].iter_mut().zip(chunk.as_chunks::<4>().0) {
+            *word = u32::from_be_bytes(*bytes);
         }
         for index in 16..64 {
             let s0 = schedule[index - 15].rotate_right(7)

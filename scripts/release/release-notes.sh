@@ -17,7 +17,7 @@ Prebuilt binaries for Linux (static musl), macOS and Windows are attached below.
 \`\`\`sh
 # Prebuilt binary through cargo-binstall
 cargo binstall --git https://github.com/${repository} quickjs-oxide-cli
-# Build from source (Rust 1.95 or newer)
+# Build from source (Rust 1.99 or newer)
 cargo install --locked --git https://github.com/${repository} --tag v${version} quickjs-oxide-cli
 \`\`\`
 

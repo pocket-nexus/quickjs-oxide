@@ -121,7 +121,7 @@ impl<'source> QuickJsSourceLocator<'source> {
         let mut checkpoints = Vec::with_capacity(self.source.len() / SOURCE_CHECKPOINT_BYTES + 1);
         let mut position = LineColumn::default();
         checkpoints.push(position);
-        for chunk in self.source.chunks_exact(SOURCE_CHECKPOINT_BYTES) {
+        for chunk in self.source.as_chunks::<SOURCE_CHECKPOINT_BYTES>().0 {
             position = advance_position(position, chunk)?;
             checkpoints.push(position);
         }

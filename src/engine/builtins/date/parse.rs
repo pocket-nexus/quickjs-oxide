@@ -237,7 +237,7 @@ fn string_match(bytes: &[u8; PARSE_BUFFER_LEN], cursor: &mut usize, text: &[u8])
 }
 
 fn get_month(bytes: &[u8; PARSE_BUFFER_LEN], cursor: &mut usize) -> Option<i32> {
-    for (month, spelling) in MONTH_NAMES.chunks_exact(3).enumerate() {
+    for (month, spelling) in MONTH_NAMES.as_chunks::<3>().0.iter().enumerate() {
         if spelling
             .iter()
             .copied()

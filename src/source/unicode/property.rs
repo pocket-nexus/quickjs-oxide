@@ -61,11 +61,11 @@ mod tests {
         for range_set in ranges {
             assert_eq!(range_set.len() % 2, 0);
             let mut previous_end = 0;
-            for pair in range_set.chunks_exact(2) {
-                assert!(pair[0] < pair[1]);
-                assert!(pair[1] <= 0x11_0000);
-                assert!(pair[0] >= previous_end);
-                previous_end = pair[1];
+            for &[start, end] in range_set.as_chunks::<2>().0 {
+                assert!(start < end);
+                assert!(end <= 0x11_0000);
+                assert!(start >= previous_end);
+                previous_end = end;
             }
         }
     }

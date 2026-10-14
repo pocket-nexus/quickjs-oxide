@@ -47,6 +47,7 @@ const PARSER_THREAD_FALLBACK: usize = if cfg!(target_family = "wasm") {
 /// Native stack a parse may consume on a main thread whose RLIMIT_STACK is
 /// `unlimited`. The growable `[stack]` mapping has no known floor then; this
 /// stays below the common 8 MiB main-thread stack.
+#[cfg(target_os = "linux")]
 const PARSER_UNLIMITED_MAIN_GROWTH: usize = if cfg!(debug_assertions) {
     1024 * 1024
 } else {
@@ -192,7 +193,7 @@ fn linux_stack_metadata(entry: usize) -> LinuxStackMetadata {
             return metadata;
         }
         #[cfg(test)]
-        LINUX_STACK_METADATA_LOADS.with(|loads| loads.set(loads.get() + 1));
+        LINUX_STACK_METADATA_LOADS.with(|loads| loads.update(|value| value + 1));
         let metadata = match (
             std::fs::read_to_string("/proc/self/maps"),
             std::fs::read_to_string("/proc/self/limits"),
