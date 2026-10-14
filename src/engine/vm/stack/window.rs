@@ -61,14 +61,12 @@ impl<'a> FrameExecution<'a> {
         execution: &'a mut crate::engine::vm::execution::RunningExecution,
         id: crate::engine::vm::frame::FrameId,
     ) -> Result<Self, Error> {
-        #[cfg(any(debug_assertions, feature = "checked-handles"))]
-        {
-            Self::admit(execution, id)
-        }
-        #[cfg(not(any(debug_assertions, feature = "checked-handles")))]
-        {
-            execution.frames.current_mut(id)?;
-            Ok(Self { execution })
+        cfg_select! {
+            any(debug_assertions, feature = "checked-handles") => Self::admit(execution, id),
+            _ => {
+                execution.frames.current_mut(id)?;
+                Ok(Self { execution })
+            }
         }
     }
 
@@ -911,16 +909,16 @@ impl FrameSlots<'_> {
             DirectSlot::Argument(index) => (self.window.parameters(), usize::from(index)),
         };
         let source = source_range.start.checked_add(source_index)?;
-        if source >= source_range.end || source == destination {
+        if source >= source_range.end {
             return None;
         }
-        let (destination_binding, source_binding) = if destination < source {
-            let (before, after) = self.store.slots.split_at_mut(source);
-            (before.get_mut(destination)?, after.first()?.as_ref()?)
-        } else {
-            let (before, after) = self.store.slots.split_at_mut(destination);
-            (after.first_mut()?, before.get(source)?.as_ref()?)
-        };
+        // Overlap (`source == destination`) is rejected like an out-of-range slot.
+        let [destination_binding, source_binding] = self
+            .store
+            .slots
+            .get_disjoint_mut([destination, source])
+            .ok()?;
+        let source_binding = source_binding.as_ref()?;
         let FrameBinding::Direct(destination) = destination_binding.as_mut()? else {
             return None;
         };

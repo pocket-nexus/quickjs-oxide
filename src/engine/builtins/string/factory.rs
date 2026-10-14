@@ -232,7 +232,7 @@ impl StringFactoryResume {
                     )?;
                     return Ok(self.abrupt(error));
                 }
-                self.builder()?.push_code_point(value as u32)?;
+                self.builder()?.push_code_point(value.cast_unsigned())?;
                 self.0.index += 1;
                 continue;
             }
@@ -260,7 +260,7 @@ impl StringFactoryResume {
                     self.0.kind,
                     StringFactoryKind::Static(StringStaticKind::FromCharCode)
                 ) {
-                    (crate::engine::value::number::to_int32(number) as u32) & 0xffff
+                    crate::engine::value::number::to_int32(number).cast_unsigned() & 0xffff
                 } else {
                     if !number.is_finite()
                         || number < 0.0

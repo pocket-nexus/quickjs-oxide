@@ -65,8 +65,7 @@ impl ModuleLoader for ReentrantCompiledModuleLoader {
     ) -> Result<ModuleLoadResult, ModuleLoaderError> {
         let normalized_name = valid_fixture_module_name(normalized_name)?;
         let depth = self.depth.get();
-        self.maximum_load_depth
-            .set(self.maximum_load_depth.get().max(depth));
+        self.maximum_load_depth.update(|value| value.max(depth));
         self.events.borrow_mut().push((
             "load",
             depth,
@@ -167,7 +166,7 @@ impl ModuleLoader for ProvisionalImportMetaLoader {
         context: &mut Context,
         _attributes: &[ModuleImportAttribute],
     ) -> Result<(), ModuleLoaderError> {
-        self.controls.checks.set(self.controls.checks.get() + 1);
+        self.controls.checks.update(|value| value + 1);
         context
             .runtime()
             .run_gc()
@@ -443,8 +442,7 @@ impl ModuleLoader for RecoveringNestedFailureModuleLoader {
                 nested_compile_load_result(context, result)
             }
             "nested-missing.js" => {
-                self.nested_missing_loads
-                    .set(self.nested_missing_loads.get() + 1);
+                self.nested_missing_loads.update(|value| value + 1);
                 Err(ModuleLoaderError::new("intentional nested load failure"))
             }
             _ => Err(ModuleLoaderError::new("fixture module is missing")),
@@ -465,8 +463,7 @@ impl ModuleLoader for RecursiveContextModuleLoader {
         let previous_depth = self.active.get();
         let depth = previous_depth + 1;
         self.active.set(depth);
-        self.maximum_active
-            .set(self.maximum_active.get().max(depth));
+        self.maximum_active.update(|value| value.max(depth));
         let source = format!("import './overflow-{next}.js';");
         let result = context.compile_module_with_filename(&source, &normalized_name);
         self.active.set(previous_depth);

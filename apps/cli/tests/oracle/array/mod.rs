@@ -83,9 +83,9 @@ mod support {
         };
         format!(
             "D{}{}{}",
-            Number(*writable),
-            Number(*enumerable),
-            Number(*configurable),
+            u8::from(*writable),
+            u8::from(*enumerable),
+            u8::from(*configurable),
         )
     }
 
@@ -132,9 +132,9 @@ mod support {
             "{name}:{}:{}:D{}{}{}:{}:{}:{}:{}:{}",
             primitive_value_text(function_name),
             primitive_value_text(function_length),
-            Number(*writable),
-            Number(*enumerable),
-            Number(*configurable),
+            u8::from(*writable),
+            u8::from(*enumerable),
+            u8::from(*configurable),
             data_descriptor_bits(&name_descriptor),
             data_descriptor_bits(&length_descriptor),
             true,
@@ -169,14 +169,6 @@ mod support {
                 }
             }
             Value::Symbol(_) => "symbol",
-        }
-    }
-
-    pub(super) struct Number(pub(super) bool);
-
-    impl std::fmt::Display for Number {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str(if self.0 { "1" } else { "0" })
         }
     }
 }

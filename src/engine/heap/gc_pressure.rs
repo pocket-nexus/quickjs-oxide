@@ -36,7 +36,7 @@ impl GcPressure {
 
     #[inline]
     fn allocated(&self) {
-        self.remaining.set(self.remaining.get().saturating_sub(1));
+        self.remaining.update(|value| value.saturating_sub(1));
     }
 
     fn reclaimed(&self, nodes: usize) {

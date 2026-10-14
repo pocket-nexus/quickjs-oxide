@@ -511,9 +511,9 @@ fn rust_graph_observations() -> Vec<String> {
             runtime.as_callable(&function).unwrap().is_some(),
             runtime.is_constructor(&function).unwrap(),
             own_key_names(&runtime, &function).join(","),
-            Number(descriptor.1),
-            Number(descriptor.2),
-            Number(descriptor.3),
+            u8::from(descriptor.1),
+            u8::from(descriptor.2),
+            u8::from(descriptor.3),
         ),
         format!("length={}", data_bits(length.1, length.2, length.3)),
         format!("name={}", data_bits(name.1, name.2, name.3)),
@@ -608,16 +608,8 @@ fn data_descriptor(
 fn data_bits(writable: bool, enumerable: bool, configurable: bool) -> String {
     format!(
         "D:{}{}{}",
-        Number(writable),
-        Number(enumerable),
-        Number(configurable),
+        u8::from(writable),
+        u8::from(enumerable),
+        u8::from(configurable),
     )
-}
-
-struct Number(bool);
-
-impl std::fmt::Display for Number {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(if self.0 { "1" } else { "0" })
-    }
 }

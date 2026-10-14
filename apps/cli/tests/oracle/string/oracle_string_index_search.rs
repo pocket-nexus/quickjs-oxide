@@ -704,20 +704,12 @@ fn data_descriptor(
 fn descriptor_bits(descriptor: (Value, bool, bool, bool)) -> String {
     format!(
         "D:{}{}{}",
-        Number(descriptor.1),
-        Number(descriptor.2),
-        Number(descriptor.3),
+        u8::from(descriptor.1),
+        u8::from(descriptor.2),
+        u8::from(descriptor.3),
     )
 }
 
-struct Number(bool);
-
 fn js_string(value: &str) -> JsString {
     JsString::try_from_utf8(value).unwrap()
-}
-
-impl std::fmt::Display for Number {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(if self.0 { "1" } else { "0" })
-    }
 }

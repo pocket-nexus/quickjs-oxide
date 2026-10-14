@@ -352,7 +352,7 @@ impl Runtime {
                 let signed = narrowed.as_i64().ok_or(RuntimeError::Invariant(
                     "64-bit DataView BigInt did not normalize to an i64",
                 ))?;
-                Ok(NativeConversion::Value(signed as u64))
+                Ok(NativeConversion::Value(signed.cast_unsigned()))
             }
             DataViewElementKind::Float16 => {
                 match self.number_from_primitive_jsvalue(realm, value)? {
@@ -710,14 +710,14 @@ fn data_view_decode(element: DataViewElementKind, bytes: [u8; 8], little_endian:
         }
     };
     match element {
-        DataViewElementKind::Int8 => Value::Int(i32::from(bytes[0] as i8)),
+        DataViewElementKind::Int8 => Value::Int(i32::from(bytes[0].cast_signed())),
         DataViewElementKind::Uint8 => Value::Int(i32::from(bytes[0])),
-        DataViewElementKind::Int16 => Value::Int(i32::from(u16_value() as i16)),
+        DataViewElementKind::Int16 => Value::Int(i32::from(u16_value().cast_signed())),
         DataViewElementKind::Uint16 => Value::Int(i32::from(u16_value())),
-        DataViewElementKind::Int32 => Value::Int(u32_value() as i32),
+        DataViewElementKind::Int32 => Value::Int(u32_value().cast_signed()),
         DataViewElementKind::Uint32 => Runtime::array_length_value(u32_value()),
         DataViewElementKind::BigInt64 => Value::BigInt(
-            crate::engine::value::bigint::JsBigInt::from(u64_value() as i64),
+            crate::engine::value::bigint::JsBigInt::from(u64_value().cast_signed()),
         ),
         DataViewElementKind::BigUint64 => {
             Value::BigInt(crate::engine::value::bigint::JsBigInt::from(u64_value()))

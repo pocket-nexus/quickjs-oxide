@@ -358,7 +358,7 @@ impl TypedWithResume {
                     self.0.realm,
                     self.0.source.try_clone()?,
                     self.0.element,
-                    self.0.length as u64,
+                    self.0.length.cast_unsigned(),
                     index,
                     &self.0.replacement,
                 )?))

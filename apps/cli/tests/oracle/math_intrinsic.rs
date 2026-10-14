@@ -887,9 +887,9 @@ fn data_descriptor(
 fn data_bits(writable: bool, enumerable: bool, configurable: bool) -> String {
     format!(
         "D:{}{}{}",
-        Number(writable),
-        Number(enumerable),
-        Number(configurable),
+        u8::from(writable),
+        u8::from(enumerable),
+        u8::from(configurable),
     )
 }
 
@@ -914,12 +914,4 @@ fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
             }
         })
         .collect()
-}
-
-struct Number(bool);
-
-impl std::fmt::Display for Number {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(if self.0 { "1" } else { "0" })
-    }
 }

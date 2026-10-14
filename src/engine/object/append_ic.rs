@@ -88,8 +88,7 @@ impl PropertyAppendCache {
     /// Count a miss of the learned existing-slot fact.
     pub(crate) fn existing_missed(&self) {
         if self.existing.get().is_some() {
-            self.existing_misses
-                .set(self.existing_misses.get().saturating_add(1));
+            self.existing_misses.update(|value| value.saturating_add(1));
         }
     }
 
@@ -266,7 +265,7 @@ impl PropertyAppendCacheTable {
             .learned(kind)
             .get_or_init(|| (0..self.sites.pc_words()).map(|_| Cell::new(0)).collect());
         if let Some(word) = learned.get(pc / 64) {
-            word.set(word.get() | 1u64 << (pc % 64));
+            word.update(|value| value | 1u64 << (pc % 64));
         }
     }
 }

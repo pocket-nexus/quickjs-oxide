@@ -1566,16 +1566,16 @@ impl Heap {
         }
         if let RawId::VarRef(cell) = id {
             let strong = &self.var_refs.live_fast(cell).strong;
-            strong.set(strong.get().saturating_add(1));
+            strong.update(|value| value.saturating_add(1));
             return;
         }
         if let RawId::Shape(shape) = id {
             let strong = &self.shapes.live_fast(shape).strong;
-            strong.set(strong.get().saturating_add(1));
+            strong.update(|value| value.saturating_add(1));
             return;
         }
         let node = self.live_node_fast(id);
-        node.strong.set(node.strong.get().saturating_add(1));
+        node.strong.update(|value| value.saturating_add(1));
         #[cfg(debug_assertions)]
         match id {
             RawId::Object(object) if super::ownership::trace_object_matches(object) => {
@@ -1594,7 +1594,7 @@ impl Heap {
     #[inline]
     fn retain_leaf_fast(&self, id: RawId) {
         let strong = &self.live_leaf_fast(id).strong;
-        strong.set(strong.get().saturating_add(1));
+        strong.update(|value| value.saturating_add(1));
         #[cfg(debug_assertions)]
         if let RawId::String(string) = id
             && super::ownership::trace_string_matches(string)
@@ -1880,18 +1880,18 @@ impl Heap {
     /// and keeps the poison contract, so an ownership error is not masked.
     #[inline(always)]
     pub(crate) fn admits_trusted(&self, id: RawId) -> bool {
-        #[cfg(any(debug_assertions, feature = "checked-handles"))]
-        {
-            if id.is_leaf() {
-                self.live_leaf_slot(id).is_ok()
-            } else {
-                self.live_node(id).is_ok()
+        cfg_select! {
+            any(debug_assertions, feature = "checked-handles") => {
+                if id.is_leaf() {
+                    self.live_leaf_slot(id).is_ok()
+                } else {
+                    self.live_node(id).is_ok()
+                }
             }
-        }
-        #[cfg(not(any(debug_assertions, feature = "checked-handles")))]
-        {
-            let _ = id;
-            true
+            _ => {
+                let _ = id;
+                true
+            }
         }
     }
 

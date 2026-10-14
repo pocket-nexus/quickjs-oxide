@@ -371,7 +371,7 @@ fn finish_index(
         ScalarTextKind::CodePointAt => usize::try_from(index)
             .ok()
             .and_then(|index| string.code_point_at(index))
-            .map_or(Value::Undefined, |point| Value::Int(point as i32)),
+            .map_or(Value::Undefined, |point| Value::Int(point.cast_signed())),
         _ => return Err(RuntimeError::Invariant("String scalar index kind mismatch")),
     };
     Ok(Completion::Return(runtime.into_jsvalue(value)?))

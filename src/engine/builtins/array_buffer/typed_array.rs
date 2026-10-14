@@ -1576,7 +1576,7 @@ fn typed_array_encode_bigint(
     let signed = narrowed.as_i64().ok_or(RuntimeError::Invariant(
         "64-bit TypedArray BigInt did not normalize to an i64",
     ))?;
-    Ok((signed as u64).to_ne_bytes())
+    Ok(signed.cast_unsigned().to_ne_bytes())
 }
 
 fn typed_array_encode_number(element: TypedArrayElementKind, number: f64) -> [u8; 8] {
@@ -1648,7 +1648,7 @@ fn typed_array_decode_number(
         TypedArrayElementKind::Uint8Clamped | TypedArrayElementKind::Uint8 => {
             Number::Int(i32::from(bytes[0]))
         }
-        TypedArrayElementKind::Int8 => Number::Int(i32::from(bytes[0] as i8)),
+        TypedArrayElementKind::Int8 => Number::Int(i32::from(bytes[0].cast_signed())),
         TypedArrayElementKind::Int16 => {
             Number::Int(i32::from(i16::from_ne_bytes([bytes[0], bytes[1]])))
         }

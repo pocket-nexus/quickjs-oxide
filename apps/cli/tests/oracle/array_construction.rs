@@ -418,9 +418,9 @@ fn descriptor_token(descriptor: CompleteOrdinaryPropertyDescriptor) -> String {
         } => format!(
             "D:{}:{}:{}:{}",
             value_token(value),
-            Number(writable),
-            Number(enumerable),
-            Number(configurable),
+            u8::from(writable),
+            u8::from(enumerable),
+            u8::from(configurable),
         ),
         CompleteOrdinaryPropertyDescriptor::Accessor {
             get,
@@ -429,10 +429,10 @@ fn descriptor_token(descriptor: CompleteOrdinaryPropertyDescriptor) -> String {
             configurable,
         } => format!(
             "A:{}:{}:{}:{}",
-            Number(get.is_some()),
-            Number(set.is_some()),
-            Number(enumerable),
-            Number(configurable),
+            u8::from(get.is_some()),
+            u8::from(set.is_some()),
+            u8::from(enumerable),
+            u8::from(configurable),
         ),
     }
 }
@@ -693,7 +693,7 @@ fn value_token(value: Value) -> String {
     match value {
         Value::Undefined => "u".to_owned(),
         Value::Null => "n".to_owned(),
-        Value::Bool(value) => format!("b{}", Number(value)),
+        Value::Bool(value) => format!("b{}", u8::from(value)),
         Value::Int(value) => format!("d{value}"),
         Value::Float(value) if value.is_nan() => "dNaN".to_owned(),
         Value::Float(value) if value == 0.0 && value.is_sign_negative() => "d-0".to_owned(),
@@ -711,12 +711,4 @@ fn string_units(value: &JsString) -> String {
         .map(|unit| format!("{unit:04x}"))
         .collect::<Vec<_>>()
         .join(",")
-}
-
-struct Number(bool);
-
-impl std::fmt::Display for Number {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(if self.0 { "1" } else { "0" })
-    }
 }

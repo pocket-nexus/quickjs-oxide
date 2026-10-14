@@ -389,7 +389,7 @@ impl FrameSlots<'_> {
         keep_key: bool,
     ) -> Result<bool, Error> {
         let index = match self.peek(0)? {
-            JsValue::Int(index) if *index >= 0 => *index as u32,
+            JsValue::Int(index) if *index >= 0 => index.cast_unsigned(),
             JsValue::String(id) => {
                 let Some(index) = crate::engine::atom::AtomTable::canonical_array_index(
                     state.heap.string_fast(*id),
@@ -429,7 +429,7 @@ impl FrameSlots<'_> {
         poisoned: &std::cell::Cell<bool>,
     ) -> Result<bool, Error> {
         let index = match self.peek(0)? {
-            JsValue::Int(index) if *index >= 0 => *index as u32,
+            JsValue::Int(index) if *index >= 0 => index.cast_unsigned(),
             JsValue::String(id) => {
                 let Some(index) = crate::engine::atom::AtomTable::canonical_array_index(
                     state.heap.string_fast(*id),

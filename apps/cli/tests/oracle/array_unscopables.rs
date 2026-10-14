@@ -262,9 +262,9 @@ fn rust_graph_observations() -> Vec<String> {
             };
             format!(
                 "{name}:{entry}:D{}{}{}",
-                Number(writable),
-                Number(enumerable),
-                Number(configurable),
+                u8::from(writable),
+                u8::from(enumerable),
+                u8::from(configurable),
             )
         })
         .collect::<Vec<_>>();
@@ -272,9 +272,9 @@ fn rust_graph_observations() -> Vec<String> {
         format!("symbols={}:own={own_key_count}", symbols.join(",")),
         format!(
             "outer=D{}{}{}:null-proto={}:array={}",
-            Number(writable),
-            Number(enumerable),
-            Number(configurable),
+            u8::from(writable),
+            u8::from(enumerable),
+            u8::from(configurable),
             runtime.get_prototype_of(&value).unwrap().is_none(),
             runtime.is_array_object(&value).unwrap(),
         ),
@@ -308,12 +308,4 @@ fn bool_property(runtime: &Runtime, context: &mut Context, object: &ObjectRef, n
         panic!("{name} was not a boolean property");
     };
     value
-}
-
-struct Number(bool);
-
-impl std::fmt::Display for Number {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(if self.0 { "1" } else { "0" })
-    }
 }

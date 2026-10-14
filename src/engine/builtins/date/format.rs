@@ -219,11 +219,11 @@ fn push_timezone(output: &mut String, timezone: i64) {
     let (sign, magnitude) = if timezone < 0 {
         ('-', timezone.unsigned_abs())
     } else {
-        ('+', timezone as u64)
+        ('+', timezone.cast_unsigned())
     };
     output.push(sign);
-    push_two_digits(output, (magnitude / 60) as i64);
-    push_two_digits(output, (magnitude % 60) as i64);
+    push_two_digits(output, (magnitude / 60).cast_signed());
+    push_two_digits(output, (magnitude % 60).cast_signed());
 }
 
 fn push_standard_year(output: &mut String, year: i64) {
@@ -231,28 +231,28 @@ fn push_standard_year(output: &mut String, year: i64) {
         output.push('-');
         push_at_least_digits(output, year.unsigned_abs(), 4);
     } else {
-        push_at_least_digits(output, year as u64, 4);
+        push_at_least_digits(output, year.cast_unsigned(), 4);
     }
 }
 
 fn push_iso_year(output: &mut String, year: i64) {
     if (0..=9999).contains(&year) {
-        push_at_least_digits(output, year as u64, 4);
+        push_at_least_digits(output, year.cast_unsigned(), 4);
     } else if year < 0 {
         output.push('-');
         push_at_least_digits(output, year.unsigned_abs(), 6);
     } else {
         output.push('+');
-        push_at_least_digits(output, year as u64, 6);
+        push_at_least_digits(output, year.cast_unsigned(), 6);
     }
 }
 
 fn push_two_digits(output: &mut String, value: i64) {
-    push_at_least_digits(output, value as u64, 2);
+    push_at_least_digits(output, value.cast_unsigned(), 2);
 }
 
 fn push_three_digits(output: &mut String, value: i64) {
-    push_at_least_digits(output, value as u64, 3);
+    push_at_least_digits(output, value.cast_unsigned(), 3);
 }
 
 fn push_at_least_digits(output: &mut String, value: u64, width: usize) {

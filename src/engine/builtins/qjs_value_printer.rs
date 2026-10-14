@@ -159,10 +159,12 @@ impl QjsValuePrinter<'_, '_> {
             RawValue::Null => self.push_ascii("null"),
             RawValue::Bool(false) => self.push_ascii("false"),
             RawValue::Bool(true) => self.push_ascii("true"),
-            RawValue::Int(value) => self.push_ascii(&value.to_string()),
+            RawValue::Int(value) => {
+                self.push_ascii(value.format_into(&mut std::fmt::NumBuffer::new()))
+            }
             RawValue::Float(value) => self.print_float(*value),
             RawValue::ShortBigInt(value) => {
-                self.push_ascii(&value.to_string());
+                self.push_ascii(value.format_into(&mut std::fmt::NumBuffer::new()));
                 self.output.push(b'n');
             }
             RawValue::BigInt(value) => {
@@ -796,7 +798,7 @@ impl QjsValuePrinter<'_, '_> {
                     .find(AtomIdx::from_raw(self.length_atom.raw()))
                     .and_then(|index| object_data.slots.get(index as usize))
                     .and_then(|slot| match slot {
-                        PropertySlot::Data(RawValue::Int(value)) => Some(*value as u32),
+                        PropertySlot::Data(RawValue::Int(value)) => Some(value.cast_unsigned()),
                         PropertySlot::Data(RawValue::Float(value)) => Some(*value as u32),
                         _ => None,
                     })

@@ -1848,7 +1848,7 @@ fn published_operands(
             target: false,
         });
         operands.push(EncodedOperand {
-            bits: u32::from(mask as i16 as u16),
+            bits: u32::from((mask as i16).cast_unsigned()),
             short: false,
             target: false,
         });
@@ -1942,7 +1942,7 @@ fn published_operands(
         let (rhs_bits, rhs_mode) = match code[source + if index_binary { 2 } else { 3 }] {
             Instruction::GetLocal(index) => (index, 0u32),
             Instruction::GetArg(index) => (index, 1u32),
-            Instruction::PushI32(value) => (value as i16 as u16, 2u32),
+            Instruction::PushI32(value) => ((value as i16).cast_unsigned(), 2u32),
             _ => unreachable!("binary dense read has no direct rhs"),
         };
         operands.push(EncodedOperand {
@@ -2055,7 +2055,7 @@ fn published_operands(
 
 fn encode_operand(operand: Operand) -> EncodedOperand {
     let (bits, short, target) = match operand {
-        Operand::Integer(value) => (value as u32, i16::try_from(value).is_ok(), false),
+        Operand::Integer(value) => (value.cast_unsigned(), i16::try_from(value).is_ok(), false),
         Operand::Target(value) => (value, false, true),
         Operand::AtomValueIndex(value) | Operand::Constant { index: value, .. } => {
             (value, u16::try_from(value).is_ok(), false)

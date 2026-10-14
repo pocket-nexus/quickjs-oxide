@@ -47,7 +47,7 @@ impl ArrayLengthStep {
     ) -> Result<Self, RuntimeError> {
         Ok(match value {
             JsValue::Int(value) if value >= 0 => {
-                Self::Complete(ArrayLengthConversion::Length(value as u32))
+                Self::Complete(ArrayLengthConversion::Length(value.cast_unsigned()))
             }
             JsValue::Bool(value) => Self::Complete(ArrayLengthConversion::Length(u32::from(value))),
             JsValue::Null => Self::Complete(ArrayLengthConversion::Length(0)),

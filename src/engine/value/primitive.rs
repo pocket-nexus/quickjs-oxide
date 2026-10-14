@@ -1083,20 +1083,10 @@ impl JsString {
     /// representation on every call; routing this spelling through an atom or
     /// constant pool would make QuickJS's representation identity observable.
     #[must_use]
-    pub fn from_fresh_decimal_u32(mut value: u32) -> Self {
-        let mut digits = [0_u8; 10];
-        let mut start = digits.len();
-        loop {
-            start -= 1;
-            digits[start] = b'0' + (value % 10) as u8;
-            value /= 10;
-            if value == 0 {
-                break;
-            }
-        }
-        Self(StringRepr::allocate(StringData::Latin1(
-            digits[start..].to_vec(),
-        )))
+    pub fn from_fresh_decimal_u32(value: u32) -> Self {
+        let mut buffer = fmt::NumBuffer::new();
+        let digits = value.format_into(&mut buffer).as_bytes().to_vec();
+        Self(StringRepr::allocate(StringData::Latin1(digits)))
     }
 
     /// Adopt a checked wide result buffer without collecting its contents a
@@ -1130,7 +1120,6 @@ impl JsString {
         self.len() == 0
     }
 
-    #[must_use]
     #[inline]
     pub fn utf16_units(&self) -> impl ExactSizeIterator<Item = u16> + '_ {
         // Flat strings walk their storage slice directly; only a live rope

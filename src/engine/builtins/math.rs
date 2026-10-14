@@ -73,7 +73,7 @@ impl SumPrecise {
         let mut carry = 0_i64;
         for limb in &mut self.acc[..self.n_limbs] {
             let value = limb.wrapping_add(carry);
-            *limb = (value as u64 & SP_LIMB_MASK) as i64;
+            *limb = (value.cast_unsigned() & SP_LIMB_MASK).cast_signed();
             carry = value >> SP_LIMB_BITS;
         }
         // QuickJS calls this a failsafe which should not be reached in a
@@ -127,11 +127,11 @@ impl SumPrecise {
         let low = (mantissa << shift) & SP_LIMB_MASK;
         let high = mantissa >> (SP_LIMB_BITS - shift);
         if is_negative {
-            self.acc[position] = self.acc[position].wrapping_sub(low as i64);
-            self.acc[position + 1] = self.acc[position + 1].wrapping_sub(high as i64);
+            self.acc[position] = self.acc[position].wrapping_sub(low.cast_signed());
+            self.acc[position + 1] = self.acc[position + 1].wrapping_sub(high.cast_signed());
         } else {
-            self.acc[position] = self.acc[position].wrapping_add(low as i64);
-            self.acc[position + 1] = self.acc[position + 1].wrapping_add(high as i64);
+            self.acc[position] = self.acc[position].wrapping_add(low.cast_signed());
+            self.acc[position + 1] = self.acc[position + 1].wrapping_add(high.cast_signed());
         }
         self.n_limbs = self.n_limbs.max(position + 2);
 
@@ -167,14 +167,16 @@ impl SumPrecise {
         if is_negative {
             let mut carry = 1_u64;
             for limb in &mut self.acc[..limb_count - 1] {
-                let value = SP_LIMB_MASK.wrapping_sub(*limb as u64).wrapping_add(carry);
+                let value = SP_LIMB_MASK
+                    .wrapping_sub(limb.cast_unsigned())
+                    .wrapping_add(carry);
                 carry = value >> SP_LIMB_BITS;
-                *limb = (value & SP_LIMB_MASK) as i64;
+                *limb = (value & SP_LIMB_MASK).cast_signed();
             }
             let top = &mut self.acc[limb_count - 1];
             *top = top
                 .wrapping_neg()
-                .wrapping_add(carry as i64)
+                .wrapping_add(carry.cast_signed())
                 .wrapping_sub(1);
             while limb_count > 1 && self.acc[limb_count - 1] == 0 {
                 limb_count -= 1;
@@ -187,19 +189,19 @@ impl SumPrecise {
             );
         }
 
-        let mut exponent = (limb_count as i32) * (SP_LIMB_BITS as i32);
+        let mut exponent = (limb_count as i32) * SP_LIMB_BITS.cast_signed();
         let mut position = limb_count - 1;
-        let mut mantissa = self.acc[position] as u64;
+        let mut mantissa = self.acc[position].cast_unsigned();
         let shift = mantissa.leading_zeros() - (64 - SP_LIMB_BITS);
-        exponent -= shift as i32 + 52;
+        exponent -= shift.cast_signed() + 52;
 
         if shift != 0 {
             mantissa <<= shift;
             if position > 0 {
                 position -= 1;
                 let lower_shift = SP_LIMB_BITS - shift;
-                let discarded = self.acc[position] as u64 & ((1_u64 << lower_shift) - 1);
-                mantissa |= (self.acc[position] as u64) >> lower_shift;
+                let discarded = self.acc[position].cast_unsigned() & ((1_u64 << lower_shift) - 1);
+                mantissa |= self.acc[position].cast_unsigned() >> lower_shift;
                 mantissa |= u64::from(discarded != 0);
             }
         }

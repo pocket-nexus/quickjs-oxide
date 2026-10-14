@@ -238,7 +238,7 @@ impl IndexedResume {
         };
         match self.0.phase {
             Phase::LengthNumber => {
-                self.0.length = Runtime::length_from_number(number) as i64;
+                self.0.length = Runtime::length_from_number(number).cast_signed();
                 self.0.bounds[2] = self.0.length;
                 if matches!(self.0.kind, IndexedKind::Search(_)) && self.0.length == 0 {
                     return self.complete(runtime);
@@ -337,9 +337,9 @@ impl IndexedResume {
                 self.0.phase = Phase::Copy;
                 return Ok(IndexedStep::request_copy(
                     self.0.object.try_clone()?,
-                    to as u64,
-                    from as u64,
-                    count as u64,
+                    to.cast_unsigned(),
+                    from.cast_unsigned(),
+                    count.cast_unsigned(),
                     from < to && to < from + count,
                     self,
                 ));
@@ -363,7 +363,7 @@ impl IndexedResume {
     fn allocate(&mut self, runtime: &Runtime) -> Result<Option<JsValue>, RuntimeError> {
         match runtime.native_allocate_fast_array_values(
             self.0.realm,
-            self.0.length as u64,
+            self.0.length.cast_unsigned(),
             || JsValue::Undefined,
         )? {
             NativeConversion::Value(values) => {
@@ -389,7 +389,7 @@ impl IndexedResume {
                 self.0.index += 1;
                 continue;
             }
-            let key = runtime.property_key_for_index(self.0.index as u64)?;
+            let key = runtime.property_key_for_index(self.0.index.cast_unsigned())?;
             if matches!(self.0.kind, IndexedKind::Fill) {
                 self.0.phase = Phase::Write;
                 return Ok(IndexedStep::request_set(
@@ -449,7 +449,7 @@ impl IndexedResume {
                     self.0.phase = Phase::Read;
                     return Ok(IndexedStep::request_read(
                         self.0.object.try_clone()?,
-                        runtime.property_key_for_index(self.0.index as u64)?,
+                        runtime.property_key_for_index(self.0.index.cast_unsigned())?,
                         self,
                     ));
                 }

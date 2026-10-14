@@ -210,7 +210,9 @@ impl MathResumeState {
             MathKind::Unary(kind) => quickjs_unary(kind, value),
             MathKind::Clz32 => {
                 return Ok(Some(Completion::Return(JsValue::Int(
-                    Runtime::to_uint32_number(value).leading_zeros() as i32,
+                    Runtime::to_uint32_number(value)
+                        .leading_zeros()
+                        .cast_signed(),
                 ))));
             }
             MathKind::Binary(kind) => {

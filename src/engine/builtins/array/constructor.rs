@@ -177,7 +177,9 @@ impl ConstructorResume {
             && matches!(self.0.arguments[0], JsValue::Int(_) | JsValue::Float(_))
         {
             let length = match match &self.0.arguments[0] {
-                JsValue::Int(value) if *value >= 0 => ArrayLengthConversion::Length(*value as u32),
+                JsValue::Int(value) if *value >= 0 => {
+                    ArrayLengthConversion::Length(value.cast_unsigned())
+                }
                 JsValue::Int(_) => runtime.invalid_array_length(Some(self.0.realm))?,
                 JsValue::Float(value) => {
                     runtime.validate_array_length_number(Some(self.0.realm), *value, None)?

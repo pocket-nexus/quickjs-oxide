@@ -98,7 +98,7 @@ fn quickjs_to_int64_free(number: f64) -> i64 {
         let significand = (bits & MANTISSA_MASK) | (1_u64 << MANTISSA_BITS);
         let shift = u32::try_from(exponent - EXPONENT_BIAS - MANTISSA_BITS)
             .expect("QuickJS ToInt64 exponent shift fits u32");
-        let signed = (significand << shift) as i64;
+        let signed = (significand << shift).cast_signed();
         return if bits >> 63 == 0 {
             signed
         } else {

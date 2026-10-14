@@ -190,9 +190,9 @@ fn rust_observations() -> Vec<String> {
     };
     output.push(format!(
         "defaults={value},{},{},{}",
-        Number(writable),
-        Number(enumerable),
-        Number(configurable)
+        u8::from(writable),
+        u8::from(enumerable),
+        u8::from(configurable)
     ));
 
     let frozen = runtime.new_object(None).unwrap();
@@ -389,12 +389,4 @@ fn int_value(value: Value) -> i32 {
         panic!("expected integer property value");
     };
     value
-}
-
-struct Number(bool);
-
-impl std::fmt::Display for Number {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(if self.0 { "1" } else { "0" })
-    }
 }

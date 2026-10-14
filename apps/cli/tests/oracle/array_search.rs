@@ -457,19 +457,11 @@ fn method_metadata(
         "{name}:{}:{}:D:{}{}{}:{}:{}:{}",
         primitive_value_text(function_name),
         primitive_value_text(function_length),
-        Number(writable),
-        Number(enumerable),
-        Number(configurable),
+        u8::from(writable),
+        u8::from(enumerable),
+        u8::from(configurable),
         true,
         runtime.get_prototype_of(&function).unwrap().as_ref() == Some(function_prototype),
         runtime.is_constructor(callable.as_object()).unwrap(),
     )
-}
-
-struct Number(bool);
-
-impl std::fmt::Display for Number {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(if self.0 { "1" } else { "0" })
-    }
 }

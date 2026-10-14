@@ -51,7 +51,11 @@ pub fn parse_int(input: &JsString, radix: i32) -> f64 {
         _ => false,
     };
 
-    let mut effective_radix = if radix == 0 { 10 } else { radix as u32 };
+    let mut effective_radix = if radix == 0 {
+        10
+    } else {
+        radix.cast_unsigned()
+    };
     if (radix == 0 || radix == 16)
         && matches!(units.get(cursor), Some(&unit) if unit == u16::from(b'0'))
         && matches!(units.get(cursor + 1), Some(&unit) if unit == u16::from(b'x') || unit == u16::from(b'X'))

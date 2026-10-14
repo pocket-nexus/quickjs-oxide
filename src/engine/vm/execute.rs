@@ -532,7 +532,7 @@ fn execute_admitted_in_state(
                         let value = if decoded.next_pc == pc as u32 + 1 {
                             i32::from(operand as i16)
                         } else {
-                            operand as i32
+                            operand.cast_signed()
                         };
                         cursor.commit_push(JsValue::Int(value))?;
                     }
@@ -731,7 +731,7 @@ fn execute_admitted_in_state(
                             Error::internal("published numeric region is missing")
                         })?;
                         #[cfg(test)]
-                        NUMERIC_REGION_ATTEMPTS.set(NUMERIC_REGION_ATTEMPTS.get() + 1);
+                        NUMERIC_REGION_ATTEMPTS.update(|value| value + 1);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
                             runtime, executable, pc, true,
@@ -1036,7 +1036,7 @@ fn execute_admitted_in_state(
                                         None,
                                     );
                                     #[cfg(test)]
-                                    NUMERIC_REGION_HITS.set(NUMERIC_REGION_HITS.get() + 1);
+                                    NUMERIC_REGION_HITS.update(|value| value + 1);
                                     let target = if decision == region.when_true {
                                         decoded.operand(1) as usize
                                     } else {
@@ -1077,12 +1077,12 @@ fn execute_admitted_in_state(
                         let _ = miss_reason;
                         if hit {
                             #[cfg(test)]
-                            NUMERIC_REGION_HITS.set(NUMERIC_REGION_HITS.get() + 1);
+                            NUMERIC_REGION_HITS.update(|value| value + 1);
                             cursor.advance(decoded.operand(1) as usize);
                             continue;
                         }
                         #[cfg(test)]
-                        NUMERIC_REGION_MISSES.set(NUMERIC_REGION_MISSES.get() + 1);
+                        NUMERIC_REGION_MISSES.update(|value| value + 1);
                         let first = match decoded.opcode {
                             Opcode::NumericArrayStoreAndLocal => {
                                 cursor.with_slots(|slots| {
@@ -1378,7 +1378,7 @@ fn execute_admitted_in_state(
                         let packed = decoded.operand(1);
                         let base_index = published_u16(packed & 0xffff);
                         let key_index = published_u16(packed >> 16);
-                        let mask = i32::from(decoded.operand(2) as u16 as i16);
+                        let mask = i32::from((decoded.operand(2) as u16).cast_signed());
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
                             runtime, executable, pc, true,
@@ -3360,7 +3360,7 @@ fn dense_binary_rhs(slots: &FrameSlots<'_>, mode: u32, bits: u16) -> Option<Numb
         1 => slots
             .direct_value(DirectSlot::Argument(bits))
             .and_then(JsValue::as_number_repr),
-        2 => Some(Number::Int(i32::from(bits as i16))),
+        2 => Some(Number::Int(i32::from(bits.cast_signed()))),
         _ => unreachable!("published numeric source was verified"),
     }
 }
@@ -3431,10 +3431,13 @@ fn binary_number_result(opcode: Opcode, left: Number, right: Number) -> JsValue 
         Opcode::Div => number_value(left.div(right)),
         Opcode::Mod => number_value(left.rem(right)),
         Opcode::Pow => number_value(left.pow(right)),
-        Opcode::Shl => JsValue::Int(left.int32().wrapping_shl(right.int32() as u32 & 31)),
-        Opcode::Sar => JsValue::Int(left.int32() >> (right.int32() as u32 & 31)),
+        Opcode::Shl => JsValue::Int(
+            left.int32()
+                .wrapping_shl(right.int32().cast_unsigned() & 31),
+        ),
+        Opcode::Sar => JsValue::Int(left.int32() >> (right.int32().cast_unsigned() & 31)),
         Opcode::Shr => number_value(Number::compact(f64::from(
-            (left.int32() as u32) >> (right.int32() as u32 & 31),
+            left.int32().cast_unsigned() >> (right.int32().cast_unsigned() & 31),
         ))),
         Opcode::BitAnd => JsValue::Int(left.int32() & right.int32()),
         Opcode::BitOr => JsValue::Int(left.int32() | right.int32()),

@@ -314,7 +314,7 @@ fn compare_typed_array_words(
     right: &[u8; 8],
 ) -> Ordering {
     match element {
-        TypedArrayElementKind::Int8 => (left[0] as i8).cmp(&(right[0] as i8)),
+        TypedArrayElementKind::Int8 => left[0].cast_signed().cmp(&right[0].cast_signed()),
         TypedArrayElementKind::Uint8 | TypedArrayElementKind::Uint8Clamped => {
             left[0].cmp(&right[0])
         }

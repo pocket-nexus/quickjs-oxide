@@ -173,7 +173,7 @@ impl NumericResume {
                     self.0.realm,
                     kind,
                     std::mem::replace(&mut self.0.value, JsValue::Undefined),
-                    radix as u32,
+                    radix.cast_unsigned(),
                 )?))
             }
             Phase::Digits => {

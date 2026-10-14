@@ -1219,7 +1219,7 @@ impl Runtime {
             "Array length property slot is missing",
         ))?;
         let value = match raw {
-            PropertySlot::Data(RawValue::Int(value)) if *value >= 0 => *value as u32,
+            PropertySlot::Data(RawValue::Int(value)) if *value >= 0 => value.cast_unsigned(),
             PropertySlot::Data(RawValue::Float(value))
                 if value.is_finite()
                     && *value >= 0.0

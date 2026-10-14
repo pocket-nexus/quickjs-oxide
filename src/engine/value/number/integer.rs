@@ -38,7 +38,7 @@ pub fn to_int32(value: f64) -> i32 {
         // high bits performs modulo 2^32; dropping the low 32 truncates
         // fractional bits. Neither shift can exceed its operand width.
         let unsigned = ((significand << (exponent - (1023 + 20))) >> 32) as u32;
-        let signed = unsigned as i32;
+        let signed = unsigned.cast_signed();
         if bits >> 63 != 0 {
             signed.wrapping_neg()
         } else {

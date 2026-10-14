@@ -178,7 +178,7 @@ pub(super) fn start(
     };
     let array = crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *array)
         .map_err(heap_error_to_vm_error)?;
-    let position = *position as u32;
+    let position = position.cast_unsigned();
     let iterable = runtime
         .dup_jsvalue(execution.slots.peek(&frame.window, 0)?)
         .map_err(runtime_error_to_vm_error)?;
@@ -418,9 +418,10 @@ fn finish_local(
                 execution
                     .slots
                     .push(&mut frame.window, JsValue::Object(id))?;
-                execution
-                    .slots
-                    .push(&mut frame.window, JsValue::Int(pending.position as i32))?;
+                execution.slots.push(
+                    &mut frame.window,
+                    JsValue::Int(pending.position.cast_signed()),
+                )?;
             }
         }
         Mode::Start {

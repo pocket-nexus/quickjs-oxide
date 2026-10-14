@@ -295,7 +295,7 @@ mod tests {
         }
 
         fn random_seed(&self) -> u64 {
-            self.random_seed_calls.set(self.random_seed_calls.get() + 1);
+            self.random_seed_calls.update(|value| value + 1);
             self.random_seed
         }
     }

@@ -851,7 +851,7 @@ mod enabled {
         struct FailingWriter(Rc<Cell<usize>>);
         impl Write for FailingWriter {
             fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-                self.0.set(self.0.get() + 1);
+                self.0.update(|value| value + 1);
                 Err(io::Error::other("injected diagnostic failure"))
             }
             fn flush(&mut self) -> io::Result<()> {

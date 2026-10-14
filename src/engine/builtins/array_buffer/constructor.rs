@@ -216,7 +216,7 @@ impl BufferConstructorResume {
                         return Ok(BufferConstructorStep::Complete(Completion::Throw(value)));
                     }
                 };
-                if maximum > MAX_SAFE_INTEGER_I64 || length > maximum as u64 {
+                if maximum > MAX_SAFE_INTEGER_I64 || length > maximum.cast_unsigned() {
                     return Ok(BufferConstructorStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
                             self.0.realm,
@@ -225,7 +225,7 @@ impl BufferConstructorResume {
                         )?,
                     )));
                 }
-                self.lookup(runtime, length, Some(maximum as u64))
+                self.lookup(runtime, length, Some(maximum.cast_unsigned()))
             }
             ConstructorPhase::Prototype { .. } => {
                 runtime.release_jsvalue(value)?;

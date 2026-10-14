@@ -466,10 +466,10 @@ fn compose(code_points: &mut Vec<u32>) {
     let mut output_len = 1_usize;
     while input < input_len {
         let mut last_class = combining_class(code_points[input]);
-        let mut starter = output_len as isize - 1;
+        let mut starter = output_len.cast_signed() - 1;
         let mut blocked = false;
         while starter >= 0 {
-            let class = combining_class(code_points[starter as usize]);
+            let class = combining_class(code_points[starter.cast_unsigned()]);
             if class == 0 {
                 break;
             }
@@ -482,7 +482,7 @@ fn compose(code_points: &mut Vec<u32>) {
         }
 
         if !blocked && starter >= 0 {
-            let starter = starter as usize;
+            let starter = starter.cast_unsigned();
             if let Some(composed) = compose_pair(code_points[starter], code_points[input]) {
                 code_points[starter] = composed;
                 input += 1;

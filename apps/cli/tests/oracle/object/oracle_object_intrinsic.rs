@@ -868,8 +868,8 @@ fn rust_graph_observations() -> Vec<String> {
     };
     output.push(format!(
         "proto-accessor=__proto__:A:{}{}:{}:{}",
-        Number(enumerable),
-        Number(configurable),
+        u8::from(enumerable),
+        u8::from(configurable),
         callable_meta(&runtime, &mut context, &getter, &function_prototype),
         callable_meta(&runtime, &mut context, &setter, &function_prototype),
     ));
@@ -955,9 +955,9 @@ fn data_descriptor(
 fn data_bits(writable: bool, enumerable: bool, configurable: bool) -> String {
     format!(
         "D:{}{}{}",
-        Number(writable),
-        Number(enumerable),
-        Number(configurable),
+        u8::from(writable),
+        u8::from(enumerable),
+        u8::from(configurable),
     )
 }
 
@@ -988,12 +988,4 @@ fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> Call
         .as_callable(&function)
         .unwrap()
         .expect("evaluated object was not callable")
-}
-
-struct Number(bool);
-
-impl std::fmt::Display for Number {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(if self.0 { "1" } else { "0" })
-    }
 }

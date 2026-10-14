@@ -1459,7 +1459,9 @@ impl Runtime {
         let comparison = source
             .iter()
             .zip(&that)
-            .find_map(|(left, right)| (*left != *right).then_some(*left as i32 - *right as i32))
+            .find_map(|(left, right)| {
+                (*left != *right).then_some(left.cast_signed() - right.cast_signed())
+            })
             .unwrap_or_else(|| match source.len().cmp(&that.len()) {
                 std::cmp::Ordering::Less => -1,
                 std::cmp::Ordering::Equal => 0,

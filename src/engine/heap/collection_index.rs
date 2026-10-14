@@ -96,7 +96,7 @@ impl CollectionIndex {
 
     fn hash_uncached(&self, heap: &Heap, key: &RawValue) -> u64 {
         #[cfg(test)]
-        self.hash_computations.set(self.hash_computations.get() + 1);
+        self.hash_computations.update(|value| value + 1);
         let RawValue::String(id) = key else {
             let mut hasher = self.key_hasher.build_hasher();
             collection_key::hash(heap, key, &mut hasher);

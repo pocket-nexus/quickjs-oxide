@@ -144,7 +144,7 @@ impl Timing {
         cost.inclusive_ns = cost.inclusive_ns.saturating_add(elapsed);
         cost.exclusive_ns = cost.exclusive_ns.saturating_add(exclusive);
         if let Some(parent) = self.parent.as_ref().and_then(Weak::upgrade) {
-            parent.set(parent.get().saturating_add(elapsed));
+            parent.update(|value| value.saturating_add(elapsed));
         }
     }
 }

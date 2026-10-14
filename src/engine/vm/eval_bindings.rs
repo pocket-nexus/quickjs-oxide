@@ -46,18 +46,14 @@ pub(super) fn validate(
         for binding in &scope.bindings {
             match binding.source {
                 EvalBindingSource::Local(index) => {
-                    (usize::from(index) < local_count)
-                        .then_some(())
-                        .ok_or_else(|| {
-                            Error::internal("eval local binding index is out of bounds")
-                        })?;
+                    (usize::from(index) < local_count).ok_or_else(|| {
+                        Error::internal("eval local binding index is out of bounds")
+                    })?;
                 }
                 EvalBindingSource::Argument(index) => {
-                    (usize::from(index) < argument_count)
-                        .then_some(())
-                        .ok_or_else(|| {
-                            Error::internal("eval argument binding index is out of bounds")
-                        })?;
+                    (usize::from(index) < argument_count).ok_or_else(|| {
+                        Error::internal("eval argument binding index is out of bounds")
+                    })?;
                 }
                 EvalBindingSource::Closure(index) => {
                     let descriptor = *executable

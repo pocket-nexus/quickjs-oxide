@@ -798,7 +798,7 @@ impl ModuleLoader for RuntimeHoldingLoader {
 
 impl Drop for RuntimeHoldingLoader {
     fn drop(&mut self) {
-        self.drops.set(self.drops.get() + 1);
+        self.drops.update(|value| value + 1);
     }
 }
 

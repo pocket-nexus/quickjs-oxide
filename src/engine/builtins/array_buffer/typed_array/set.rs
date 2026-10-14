@@ -161,7 +161,7 @@ impl TypedSetResume {
                         )?,
                     )));
                 }
-                let offset = offset as u64;
+                let offset = offset.cast_unsigned();
                 let target_length = match runtime.typed_array_validated_length(realm, &target)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {

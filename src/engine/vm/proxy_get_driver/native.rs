@@ -1659,7 +1659,7 @@ mod cached_native_inplace_tests {
                 if event.is_handled() {
                     return;
                 }
-                observed.set(observed.get() + 1);
+                observed.update(|value| value + 1);
                 assert_eq!(
                     host_context
                         .borrow_mut()

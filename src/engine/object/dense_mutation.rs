@@ -26,7 +26,7 @@ pub(super) fn writable_dense_length(
         return Ok(None);
     }
     let length = match data.slots.first() {
-        Some(PropertySlot::Data(RawValue::Int(n))) if *n >= 0 => *n as u32,
+        Some(PropertySlot::Data(RawValue::Int(n))) if *n >= 0 => n.cast_unsigned(),
         Some(PropertySlot::Data(RawValue::Float(n)))
             if *n >= 0.0 && *n <= u32::MAX as f64 && n.fract() == 0.0 =>
         {

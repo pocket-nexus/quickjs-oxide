@@ -536,17 +536,17 @@ fn atomic_encode_word(bytes: &mut [u8], value: u64) {
 
 fn atomic_decode_value(element: TypedArrayElementKind, word: u64) -> Value {
     match element {
-        TypedArrayElementKind::Int8 => Value::Int(i32::from(word as u8 as i8)),
+        TypedArrayElementKind::Int8 => Value::Int(i32::from((word as u8).cast_signed())),
         TypedArrayElementKind::Uint8 => Value::Int(i32::from(word as u8)),
-        TypedArrayElementKind::Int16 => Value::Int(i32::from(word as u16 as i16)),
+        TypedArrayElementKind::Int16 => Value::Int(i32::from((word as u16).cast_signed())),
         TypedArrayElementKind::Uint16 => Value::Int(i32::from(word as u16)),
-        TypedArrayElementKind::Int32 => Value::Int(word as u32 as i32),
+        TypedArrayElementKind::Int32 => Value::Int((word as u32).cast_signed()),
         TypedArrayElementKind::Uint32 => i32::try_from(word as u32)
             .map(Value::Int)
             .unwrap_or_else(|_| Value::number(f64::from(word as u32))),
-        TypedArrayElementKind::BigInt64 => {
-            Value::BigInt(crate::engine::value::bigint::JsBigInt::from(word as i64))
-        }
+        TypedArrayElementKind::BigInt64 => Value::BigInt(
+            crate::engine::value::bigint::JsBigInt::from(word.cast_signed()),
+        ),
         TypedArrayElementKind::BigUint64 => {
             Value::BigInt(crate::engine::value::bigint::JsBigInt::from(word))
         }

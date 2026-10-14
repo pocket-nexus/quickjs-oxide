@@ -179,7 +179,7 @@ impl<'source> LookaheadCache<'source> {
             self.active().partition_point(|entry| entry.start < start)
         };
         if self.base >= COMPACT_MIN_PREFIX && self.base >= self.entries.len() - self.base {
-            self.cursor.set(self.cursor.get().saturating_sub(self.base));
+            self.cursor.update(|value| value.saturating_sub(self.base));
             self.entries.drain(..self.base);
             self.base = 0;
         }

@@ -512,7 +512,7 @@ mod tests {
                 _name: &JsString,
                 _attributes: &ModuleImportAttributes,
             ) -> Result<ModuleLoadResult, ModuleLoaderError> {
-                self.calls.set(self.calls.get() + 1);
+                self.calls.update(|value| value + 1);
                 let before = ACTIVE_EXECUTIONS.with(|active| active.borrow().clone());
                 let boundary =
                     HOST_BOUNDARIES.with(|boundaries| *boundaries.borrow().last().unwrap());
