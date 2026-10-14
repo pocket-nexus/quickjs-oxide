@@ -1,4 +1,5 @@
 use crate::runtime_completion_oracle::observe_rust_result as observe_rust;
+use crate::runtime_observation::from_char_code_source as js_utf16;
 use crate::runtime_observation::utf16;
 use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::regexp::{compile, execute};
@@ -237,13 +238,4 @@ for (var __qjo_i = 0; __qjo_i < __qjo_regexp_cases.length; __qjo_i++)
         cases.len(),
         "RegExp matching",
     )
-}
-
-fn js_utf16(units: &[u16]) -> String {
-    let values = units
-        .iter()
-        .map(|unit| format!("0x{unit:04x}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("String.fromCharCode({values})")
 }

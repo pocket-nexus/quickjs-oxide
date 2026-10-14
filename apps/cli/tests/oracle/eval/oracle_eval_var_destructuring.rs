@@ -6,7 +6,7 @@
 //! still retarget the later write to the global fallback.
 
 use std::ffi::OsStr;
-use std::process::{Command, Output};
+use std::process::Output;
 
 const MATRIX_SOURCE: &str = r#"
 function emit(label, value, cleanup) {
@@ -142,8 +142,5 @@ fn assert_success(engine: &str, output: &Output) {
 }
 
 fn run(executable: &OsStr) -> Output {
-    Command::new(executable)
-        .args(["-e", MATRIX_SOURCE])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
+    crate::runtime_completion_oracle::run(executable, MATRIX_SOURCE)
 }

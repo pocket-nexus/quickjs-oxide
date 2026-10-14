@@ -1,4 +1,5 @@
 use crate::oracle_cases::ExpectedMatchCase as MatchCase;
+use crate::runtime_observation::from_char_code_source as js_utf16;
 use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::regexp::{CompileErrorKind, compile, execute};
 use std::ffi::OsStr;
@@ -331,13 +332,4 @@ fn observe_quickjs(oracle: &OsStr, cases: &[MatchCase]) -> Vec<String> {
         cases.len(),
         "RegExp v character class escapes",
     )
-}
-
-fn js_utf16(units: &[u16]) -> String {
-    let values = units
-        .iter()
-        .map(|unit| format!("0x{unit:04x}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("String.fromCharCode({values})")
 }

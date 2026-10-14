@@ -4,8 +4,9 @@ use crate::object_graph_observation::{
     intrinsic_prototype, own_key_names,
 };
 use crate::object_graph_observation::{define_accessor, define_accessor_key};
+use crate::runtime_observation::hex;
 use crate::runtime_observation::host_runtime_context;
-use crate::runtime_observation::{error_string, hex};
+use crate::runtime_observation::take_hex_error as take_error;
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     CallableRef, Context, JsString, ObjectRef, PropertyKey, Runtime, RuntimeError, Value,
@@ -509,11 +510,4 @@ fn encoded_value(value: Value) -> String {
         Value::Symbol(_) => panic!("unexpected Symbol observation"),
         Value::Object(_) => panic!("unexpected Object observation"),
     }
-}
-
-fn take_error(runtime: &Runtime, context: &mut Context) -> String {
-    let error = take_exception_object(context);
-    let name = error_string(runtime, context, &error, "name");
-    let message = error_string(runtime, context, &error, "message");
-    format!("throw:{}:{}", hex(&name), hex(&message))
 }

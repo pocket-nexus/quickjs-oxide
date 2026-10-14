@@ -5,6 +5,7 @@ use crate::object_graph_observation::{
 };
 use crate::runtime_observation::hex;
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::take_hex_error as take_error;
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     CallableRef, Context, JsBigInt, JsString, ObjectRef, Runtime, RuntimeError, Value,
@@ -713,26 +714,6 @@ fn render(value: Value) -> String {
         Value::Symbol(_) => panic!("unexpected Symbol observation"),
         Value::Object(_) => panic!("unexpected Object observation"),
     }
-}
-
-fn take_error(runtime: &Runtime, context: &mut Context) -> String {
-    let error = take_exception_object(context);
-    let name = error_string(runtime, context, &error, "name");
-    let message = error_string(runtime, context, &error, "message");
-    format!("throw:{}:{}", hex(&name), hex(&message))
-}
-
-fn error_string(
-    runtime: &Runtime,
-    context: &mut Context,
-    error: &ObjectRef,
-    name: &str,
-) -> JsString {
-    expect_string(
-        context
-            .get_property(error, &runtime.intern_property_key(name).unwrap())
-            .unwrap(),
-    )
 }
 
 fn expect_string(value: Value) -> JsString {
