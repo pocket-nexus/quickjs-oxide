@@ -1,16 +1,10 @@
+use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text as primitive_text,
 };
 use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-struct Case {
-    group: &'static str,
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
 
 // Pins QuickJS 2026-06-04's optional-chain lowering before the Test262 feature
 // is admitted globally. In addition to the ordinary successful paths, this

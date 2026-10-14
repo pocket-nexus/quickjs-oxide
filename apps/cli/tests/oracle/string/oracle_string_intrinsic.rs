@@ -1,3 +1,8 @@
+use crate::object_graph_observation::{
+    define_builtin_data_key as define_data_key, define_named_builtin_data as define_data,
+    eval_object, eval_source_callable as eval_callable, intrinsic_prototype, oracle_lines,
+    own_key_names,
+};
 use crate::runtime_completion_oracle::{
     compare_eval_completion_cases_with_prelude, observe_quickjs_completion_with_prelude,
 };
@@ -5,10 +10,9 @@ use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
 };
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
+    AccessorValue, CallableRef, DescriptorField, JsString, ObjectRef, OrdinaryPropertyDescriptor,
+    PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
-use std::ffi::OsStr;
 
 // Pins QuickJS 2026-06-04 `js_string_constructor`, `js_string_fromCharCode`,
 // `js_string_fromCodePoint`, `js_string_raw`, and `js_string_funcs`. The
@@ -748,10 +752,6 @@ fn string_wrapper_retains_then_releases_its_realm_graph() {
     assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
-fn oracle_lines(oracle: &OsStr, source: &str, description: &str) -> Vec<String> {
-    super::quickjs_oracle::eval_std_lines(oracle, source, description)
-}
-
 fn rust_custom_new_target_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -883,69 +883,6 @@ fn rust_custom_new_target_observations() -> Vec<String> {
     vec![first, second]
 }
 
-fn intrinsic_prototype(
-    runtime: &Runtime,
-    context: &mut Context,
-    constructor_name: &str,
-) -> ObjectRef {
-    let global = context.global_object().unwrap();
-    let constructor = property_callable(runtime, context, &global, constructor_name);
-    let Value::Object(prototype) = context
-        .get_property(
-            constructor.as_object(),
-            &runtime.intern_property_key("prototype").unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("{constructor_name}.prototype was not an object");
-    };
-    prototype
-}
-
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("{source:?} did not evaluate to an object");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("{source:?} was not callable"))
-}
-
-fn eval_object(context: &mut Context, source: &str) -> ObjectRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("{source:?} did not evaluate to an object");
-    };
-    object
-}
-
-fn define_data(runtime: &Runtime, object: &ObjectRef, name: &str, value: Value) {
-    define_data_key(
-        runtime,
-        object,
-        &runtime.intern_property_key(name).unwrap(),
-        value,
-    );
-}
-
-fn define_data_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey, value: Value) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
 fn define_accessor(runtime: &Runtime, object: &ObjectRef, name: &str, getter: Option<CallableRef>) {
     assert!(
         runtime
@@ -965,18 +902,4 @@ fn define_accessor(runtime: &Runtime, object: &ObjectRef, name: &str, getter: Op
             )
             .unwrap()
     );
-}
-
-fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
-    runtime
-        .own_property_keys(object)
-        .unwrap()
-        .into_iter()
-        .map(|key| {
-            runtime
-                .property_key_to_js_string(&key)
-                .unwrap()
-                .to_utf8_lossy()
-        })
-        .collect()
 }

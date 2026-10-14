@@ -3,8 +3,8 @@
 //! This keeps the stack-budget repair tied to observable QuickJS behavior:
 //! delegated result identity plus `next`, `return`, and `throw` propagation.
 
-use std::ffi::OsStr;
-use std::process::{Command, Output};
+use crate::runtime_completion_oracle::run;
+use std::process::Output;
 
 const MATRIX_SOURCE: &str = r#"
 function* chain(depth, delegate) {
@@ -102,11 +102,4 @@ fn assert_success(engine: &str, description: &str, source: &str, output: &Output
         EXPECTED_STDOUT,
         "{engine} output drifted for the {description} deep yield-star matrix"
     );
-}
-
-fn run(executable: &OsStr, source: &str) -> Output {
-    Command::new(executable)
-        .args(["-e", source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
 }

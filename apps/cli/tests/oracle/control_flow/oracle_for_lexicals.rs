@@ -1,7 +1,8 @@
 //! Differential coverage for classic `for` lexical environments.
 
-use crate::runtime_oracle::run_cli;
-use quickjs_oxide::engine::api::{Runtime, Value};
+use crate::runtime_completion_oracle::{compare_cli, rust_value_observation};
+use crate::runtime_observation::normalize_rust_value_text as normalize_rust_value;
+use quickjs_oxide::engine::api::Runtime;
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -290,44 +291,6 @@ fn classic_for_lexical_parser_diagnostics_match_pinned_quickjs() {
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         compare_cli(&oracle, &[], source, description);
-    }
-}
-
-fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, description: &str) {
-    let rust = run_cli(
-        env!("CARGO_BIN_EXE_qjs").as_ref(),
-        options,
-        source,
-        description,
-    );
-    let quickjs = run_cli(oracle, options, source, description);
-    assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
-    assert_eq!(rust.stdout, quickjs.stdout, "{description}");
-    assert_eq!(rust.stderr, quickjs.stderr, "{description}");
-}
-
-fn rust_value_observation(source: &str, description: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let value = runtime
-        .new_context()
-        .expect("create context")
-        .eval(source)
-        .unwrap_or_else(|error| panic!("Rust rejected {description} ({source:?}): {error}"));
-    normalize_rust_value(value)
-}
-
-fn normalize_rust_value(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined|undefined".to_owned(),
-        Value::Null => "object|null".to_owned(),
-        Value::Bool(value) => format!("boolean|{value}"),
-        Value::Int(value) => format!("number|{value}"),
-        Value::Float(value) => format!("number|{value}"),
-        Value::BigInt(value) => format!("bigint|{value}"),
-        Value::String(value) => format!("string|{}", value.to_utf8_lossy()),
-        Value::Object(_) => "object|<object>".to_owned(),
-        Value::Symbol(_) => "symbol|<symbol>".to_owned(),
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::runtime_observation::string_units as units;
 use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value, WellKnownSymbol,
@@ -374,14 +375,6 @@ fn string_keys(runtime: &Runtime, object: &quickjs_oxide::engine::api::ObjectRef
                 .to_utf8_lossy()
         })
         .collect()
-}
-
-fn units(value: &JsString) -> String {
-    value
-        .utf16_units()
-        .map(|unit| format!("{unit:04x}"))
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 fn int_value(value: Value) -> i32 {

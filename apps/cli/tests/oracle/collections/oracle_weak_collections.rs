@@ -1,20 +1,15 @@
+use crate::object_graph_observation::{expect_object, global_callable};
+use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_observation::{
     primitive_value_text, property_callable, string_property, take_exception_object,
 };
 use crate::runtime_oracle::{eval_callable, eval_object, value_type};
-use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 
 // Differential lock for the WeakMap and WeakSet surface exposed by pinned
 // QuickJS 2026-06-04. The vectors use only primitive ASCII observations so
 // they can be compared without sharing object identities across engines.
-
-struct Case {
-    group: &'static str,
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
 
 const PRELUDE: &str = r#"
 function __bit(value){return value?"1":"0"}
@@ -607,16 +602,4 @@ fn oracle_observation(oracle: &OsStr, case: &Case) -> String {
     let source = observed_source(case.source);
     let description = format!("{} / {}", case.group, case.description);
     super::quickjs_oracle::observe_completion(oracle, &source, &description)
-}
-
-fn global_callable(runtime: &Runtime, context: &mut Context, name: &str) -> CallableRef {
-    let global = context.global_object().unwrap();
-    property_callable(runtime, context, &global, name)
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} did not produce an object");
-    };
-    object
 }

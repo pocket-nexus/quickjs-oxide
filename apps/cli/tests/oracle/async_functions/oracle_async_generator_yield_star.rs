@@ -5,16 +5,10 @@
 //! iterator passes yielded promises through unchanged, while the hidden
 //! Async-from-Sync iterator assimilates synchronous iterator values.
 
-use std::ffi::OsStr;
-use std::process::{Command, Output};
-
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
-
-struct SuccessCase {
-    description: &'static str,
-    source: &'static str,
-    expected_stdout: &'static str,
-}
+use crate::oracle_cases::SuccessCase;
+use crate::runtime_completion_oracle::run;
+use crate::runtime_observation::{assert_success, eval, text};
+use quickjs_oxide::engine::api::Runtime;
 
 const SEMANTIC_CASES: &[SuccessCase] = &[
     SuccessCase {
@@ -975,46 +969,4 @@ syncIterator = null;
         text(eval(&mut context, "asyncOutcome + '|' + syncOutcome")),
         "42:false|42:false"
     );
-}
-
-fn assert_success(engine: &str, case: &SuccessCase, output: &Output) {
-    assert!(
-        output.status.success(),
-        "{engine} rejected {}: {}\nsource:\n{}",
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-        case.source
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        case.expected_stdout,
-        "{engine} output drifted for {}",
-        case.description
-    );
-}
-
-fn run(executable: &OsStr, source: &str) -> Output {
-    Command::new(executable)
-        .args(["-e", source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
-}
-
-fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
-        panic!("unexpected engine error: {error}");
-    })
-}
-
-fn text(value: Value) -> String {
-    let Value::String(value) = value else {
-        panic!("expected a string");
-    };
-    value.to_utf8_lossy()
 }

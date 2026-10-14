@@ -1,16 +1,11 @@
 use super::quickjs_string_result_oracle::observe_string_result;
+use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_completion_oracle::observe_oxide;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
-
-struct Case {
-    group: &'static str,
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
 
 const ORACLE_WRAPPER: &str = r#"
 var value = std.evalScript(scriptArgs[0]);
@@ -869,19 +864,6 @@ fn iterator_concat_cross_realm_graph_and_native_next_use_the_current_realm() {
         runtime.get_prototype_of(&error).unwrap(),
         Some(caller_type_error),
     );
-}
-
-fn observe_oxide(context: &mut Context, case: &Case) -> String {
-    let value = context
-        .eval(case.source)
-        .unwrap_or_else(|error| panic!("Oxide observer failed for {}: {error}", case.description));
-    let Value::String(value) = value else {
-        panic!(
-            "Oxide observer returned a non-String for {}",
-            case.description
-        );
-    };
-    value.to_utf8_lossy()
 }
 
 fn object_property(

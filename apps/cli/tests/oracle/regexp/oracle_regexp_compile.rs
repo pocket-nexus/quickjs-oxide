@@ -1,49 +1,20 @@
+use crate::runtime_completion_oracle::REGEXP_COMPLETION_PRELUDE as PRELUDE;
 use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
+use crate::runtime_observation::string_value;
 use crate::runtime_observation::{
     string_property_with_read_context as string_property, take_exception_object,
 };
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04
 // `js_regexp_compile` (`quickjs.c` 47584-47626). This Annex B method is
 // deliberately tested against the pinned implementation rather than a later
 // specification interpretation: QuickJS accepts every genuine RegExp class
 // instance, including derived and cross-realm objects.
-
-const PRELUDE: &str = r#"
-function __bit(value){return value?"1":"0"}
-function __bits(object,key){
-    var descriptor=Object.getOwnPropertyDescriptor(object,key);
-    if(descriptor===undefined)return "missing";
-    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+
-        __bit(descriptor.configurable);
-}
-function __isConstructor(value){
-    try{Reflect.construct(function(){},[],value);return true}
-    catch(_error){return false}
-}
-function __show(value){
-    if(value===undefined)return "undefined";
-    if(value===null)return "null";
-    if(typeof value==="number"){
-        if(value!==value)return "NaN";
-        if(value===0)return 1/value===-Infinity?"-0":"+0";
-    }
-    return String(value);
-}
-function __completion(callback){
-    try{return "return:"+String(callback())}
-    catch(error){
-        if(error!==null&&typeof error==="object")
-            return "throw:"+error.name+":"+error.message;
-        return "throw:"+typeof error+":"+String(error);
-    }
-}
-"#;
 
 const METADATA_CASES: &[(&str, &str)] = &[
     (
@@ -525,8 +496,4 @@ fn number_property(
         .unwrap_or_else(|error| panic!("read number property {name}: {error}"))
         .as_number()
         .unwrap_or_else(|| panic!("{name} was not a number"))
-}
-
-fn string_value(value: &str) -> Value {
-    Value::String(JsString::try_from_utf8(value).unwrap())
 }

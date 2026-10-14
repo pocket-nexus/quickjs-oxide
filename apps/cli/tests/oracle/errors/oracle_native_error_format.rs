@@ -1,14 +1,9 @@
+use crate::oracle_cases::NativeErrorObservation as Observation;
 use quickjs_oxide::engine::api::{
     DescriptorField, JsString, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
 use std::ffi::OsStr;
 use std::process::Command;
-
-#[derive(Debug, Eq, PartialEq)]
-struct Observation {
-    name: Vec<u16>,
-    message: Vec<u16>,
-}
 
 #[test]
 fn native_error_format_uses_the_quickjs_255_byte_payload_boundary() {

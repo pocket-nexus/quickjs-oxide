@@ -1,3 +1,5 @@
+use crate::object_graph_observation::{bit, get_property as property_value, property_text};
+use crate::runtime_observation::{string_value as string, value_text};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DebugInfoMode,
     DescriptorField, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime,
@@ -854,25 +856,6 @@ fn property_callable_by_key(
     runtime.as_callable(&value).unwrap().unwrap()
 }
 
-fn property_value(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> Value {
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(object, &key).unwrap()
-}
-
-fn property_text(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> String {
-    value_text(property_value(runtime, context, object, name))
-}
-
 fn own_data(runtime: &Runtime, object: &ObjectRef, name: &str) -> (Value, bool, bool, bool) {
     let key = runtime.intern_property_key(name).unwrap();
     let Some(CompleteOrdinaryPropertyDescriptor::Data {
@@ -991,27 +974,6 @@ fn expect_bool(value: Value) -> bool {
         panic!("expected a boolean observation");
     };
     value
-}
-
-fn value_text(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => value.to_string(),
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Object(_) | Value::Symbol(_) => panic!("unexpected observation value"),
-    }
-}
-
-fn string(value: &str) -> Value {
-    Value::String(JsString::try_from_utf8(value).unwrap())
-}
-
-const fn bit(value: bool) -> u8 {
-    value as u8
 }
 
 fn oracle_observations(oracle: &OsStr, flag: Option<&str>) -> Vec<String> {

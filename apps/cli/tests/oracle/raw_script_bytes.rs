@@ -1,6 +1,7 @@
 use crate::quickjs_raw_source_oracle::{
     RawScriptObservation, normalized_filename, observe_raw_script,
 };
+use crate::runtime_observation::hex_bytes;
 use quickjs_oxide::engine::api::{
     CompileOptions, Context, EvalOptions, Runtime, RuntimeError, Value,
 };
@@ -375,12 +376,4 @@ fn oxide_exception(runtime: &Runtime, context: &mut Context, case: &Case) -> Raw
         line: u32::try_from(line).unwrap(),
         column: u32::try_from(column).unwrap(),
     }
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<Vec<_>>()
-        .join(" ")
 }

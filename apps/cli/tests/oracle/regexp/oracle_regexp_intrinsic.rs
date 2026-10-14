@@ -1,3 +1,4 @@
+use crate::object_graph_observation::require_object as expect_object;
 use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude, observe_read_context_eval_completion_with_prelude,
@@ -6,9 +7,7 @@ use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{
-    CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
-};
+use quickjs_oxide::engine::api::{CallableRef, Context, JsString, Runtime, RuntimeError, Value};
 
 // Differential lock for observable RegExp semantics in pinned QuickJS
 // 2026-06-04. The vectors deliberately stay below later String.prototype
@@ -893,11 +892,4 @@ fn regexp_constructor(runtime: &Runtime, context: &mut Context) -> CallableRef {
 fn regexp_prototype_callable(runtime: &Runtime, context: &mut Context, name: &str) -> CallableRef {
     let prototype = eval_object(context, "RegExp.prototype", "RegExp prototype");
     property_callable(runtime, context, &prototype, name)
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} was not an object");
-    };
-    object
 }

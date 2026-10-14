@@ -1,3 +1,5 @@
+use crate::object_graph_observation::intrinsic_prototype;
+use crate::runtime_observation::error_string;
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     Context, DescriptorField, JsString, ObjectRef, OrdinaryPropertyDescriptor, Runtime,
@@ -430,21 +432,6 @@ fn define_data(runtime: &Runtime, object: &ObjectRef, name: &str, value: Value) 
     );
 }
 
-fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {
-    let global = context.global_object().unwrap();
-    let constructor = property_callable(runtime, context, &global, name);
-    let Value::Object(prototype) = context
-        .get_property(
-            constructor.as_object(),
-            &runtime.intern_property_key("prototype").unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("{name}.prototype was not an object");
-    };
-    prototype
-}
-
 fn assert_internal_string_too_long(runtime: &Runtime, context: &mut Context, error: &ObjectRef) {
     assert_eq!(
         error_string(runtime, context, error, "name"),
@@ -466,19 +453,4 @@ fn take_error_observation(runtime: &Runtime, context: &mut Context) -> String {
 fn observe_source_exception(runtime: &Runtime, context: &mut Context, source: &str) -> String {
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     take_error_observation(runtime, context)
-}
-
-fn error_string(
-    runtime: &Runtime,
-    context: &mut Context,
-    error: &ObjectRef,
-    name: &str,
-) -> JsString {
-    let Value::String(value) = context
-        .get_property(error, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("Error.{name} was not a String");
-    };
-    value
 }

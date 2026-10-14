@@ -1,9 +1,8 @@
+use crate::object_graph_observation::define_global;
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text_with_rust_float as primitive_text,
 };
-use quickjs_oxide::engine::api::{
-    Context, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
-};
+use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -1473,26 +1472,6 @@ try {
         .unwrap_or_else(|error| panic!("QuickJS output was not UTF-8 for {description}: {error}"))
         .trim_end()
         .to_owned()
-}
-
-fn define_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    assert!(
-        context
-            .define_own_property(
-                &global,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
 }
 
 fn eval_object(context: &mut Context, source: &str, description: &str) -> ObjectRef {

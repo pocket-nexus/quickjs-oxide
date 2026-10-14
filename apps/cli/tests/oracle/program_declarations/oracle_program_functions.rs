@@ -1,14 +1,15 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
 use super::quickjs_program_property_oracle::observe_program_property_lines;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use crate::runtime_observation::primitive_value_text_with_rust_float as primitive_value_text;
 
-use crate::runtime_oracle::{run_cli, value_type};
+use crate::object_graph_observation::{define_global_data, function_setup as function};
+use crate::runtime_completion_oracle::compare_cli;
+use crate::runtime_observation::eval_text;
+use crate::runtime_oracle::value_type;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
-use std::ffi::OsStr;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -840,34 +841,6 @@ fn rust_property_observations() -> Vec<String> {
     output
 }
 
-fn define_global_data(
-    runtime: &Runtime,
-    context: &mut Context,
-    name: &str,
-    value: Value,
-    writable: bool,
-    enumerable: bool,
-    configurable: bool,
-) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    assert!(
-        context
-            .define_own_property(
-                &global,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(writable),
-                    enumerable: DescriptorField::Present(enumerable),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
 fn define_global_accessor(
     runtime: &Runtime,
     context: &mut Context,
@@ -896,13 +869,6 @@ fn define_global_accessor(
             )
             .unwrap()
     );
-}
-
-fn function(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("function setup did not produce an object: {source}");
-    };
-    runtime.as_callable(&object).unwrap().unwrap()
 }
 
 fn take_object_exception(context: &mut Context, description: &str) -> ObjectRef {
@@ -951,21 +917,4 @@ fn accessor_type(value: &Option<CallableRef>) -> &'static str {
     } else {
         "undefined"
     }
-}
-
-fn eval_text(context: &mut Context, source: &str) -> String {
-    primitive_value_text(context.eval(source).unwrap())
-}
-
-fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, description: &str) {
-    let rust = run_cli(
-        env!("CARGO_BIN_EXE_qjs").as_ref(),
-        options,
-        source,
-        description,
-    );
-    let quickjs = run_cli(oracle, options, source, description);
-    assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
-    assert_eq!(rust.stdout, quickjs.stdout, "{description}");
-    assert_eq!(rust.stderr, quickjs.stderr, "{description}");
 }

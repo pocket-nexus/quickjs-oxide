@@ -1,18 +1,12 @@
+use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_completion_oracle::{
+    oracle_script_case_observation as oracle_observation, rust_case_observation as rust_observation,
+};
 use crate::runtime_observation::{
-    checked_value_type as value_type, primitive_value_text,
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
-use std::ffi::OsStr;
-use std::process::Command;
-
-struct Case {
-    group: &'static str,
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04's `js_json_rawJSON`, `js_json_isRawJSON`, and the
 // `JS_CLASS_RAWJSON` branch in `js_json_to_str`. Every observer returns an
@@ -585,112 +579,4 @@ fn json_raw_brand_and_native_errors_cross_realms() {
         Some(caller_syntax_error),
         "JSON.rawJSON native SyntaxError unexpectedly used the caller realm",
     );
-}
-
-fn rust_observation(case: &Case) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
-    match context.eval(case.source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            value_type(&runtime, &value),
-            primitive_value_text(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "take Rust exception for {} / {}: {error}",
-                        case.group, case.description,
-                    )
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Rust exception was missing for {} / {}",
-                        case.group, case.description,
-                    )
-                });
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    error_string_property(&runtime, &mut context, &error, "name", case),
-                    error_string_property(&runtime, &mut context, &error, "message", case),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(&runtime, &value),
-                    primitive_value_text(value),
-                ),
-            }
-        }
-        Err(error) => panic!(
-            "Rust engine failure for {} / {} ({:?}): {error}",
-            case.group, case.description, case.source,
-        ),
-    }
-}
-
-fn error_string_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    error: &ObjectRef,
-    name: &str,
-    case: &Case,
-) -> String {
-    let key = runtime
-        .intern_property_key(name)
-        .unwrap_or_else(|failure| panic!("intern Error.{name} key: {failure}"));
-    let Value::String(value) = context.get_property(error, &key).unwrap_or_else(|failure| {
-        panic!(
-            "read Error.{name} for {} / {}: {failure}",
-            case.group, case.description,
-        )
-    }) else {
-        panic!(
-            "Error.{name} was not a string for {} / {}",
-            case.group, case.description,
-        );
-    };
-    value.to_utf8_lossy()
-}
-
-fn oracle_observation(oracle: &OsStr, case: &Case) -> String {
-    let wrapper = r#"
-try {
-  var value = std.evalScript(scriptArgs[0]);
-  print('return|' + typeof value + '|' + String(value));
-} catch (error) {
-  if (error !== null && typeof error === 'object')
-    print('throw|object|' + error.name + '|' + error.message);
-  else
-    print('throw|' + typeof error + '|' + String(error));
-}
-"#;
-    let output = Command::new(oracle)
-        .args(["--std", "-e", wrapper, case.source])
-        .output()
-        .unwrap_or_else(|error| {
-            panic!(
-                "could not run QuickJS for {} / {}: {error}",
-                case.group, case.description,
-            )
-        });
-    assert!(
-        output.status.success(),
-        "QuickJS observer failed for {} / {}: {}",
-        case.group,
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-    );
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| {
-            panic!(
-                "QuickJS output was not UTF-8 for {} / {}: {error}",
-                case.group, case.description,
-            )
-        })
-        .trim_end()
-        .to_owned()
 }

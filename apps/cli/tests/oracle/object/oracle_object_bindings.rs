@@ -1,5 +1,4 @@
-use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use quickjs_oxide::engine::api::Runtime;
+use crate::runtime_completion_oracle::compare_object_pattern_cases as compare_cases;
 
 // This target pins the object-binding declaration path shared by direct
 // declarations, classic for heads, and for-in/of heads in QuickJS 2026-06-04.
@@ -409,26 +408,5 @@ fn object_binding_parser_diagnostics_match_pinned_quickjs() {
         assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
         assert_eq!(rust.stdout, quickjs.stdout, "{description}");
         assert_eq!(rust.stderr, quickjs.stderr, "{description}");
-    }
-}
-
-fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
-    for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            observe_rust_eval(&runtime, &mut context, source, description),
-            super::quickjs_object_pattern_oracle::observe_completion_strip_one_lf(
-                &oracle,
-                source,
-                description,
-            ),
-            "{group} drifted for {description}: {source:?}",
-        );
     }
 }

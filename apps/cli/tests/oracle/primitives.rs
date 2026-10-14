@@ -3,7 +3,8 @@ use std::io::Write;
 
 use std::process::{Command, Stdio};
 
-use quickjs_oxide::engine::api::{CompileOptions, Runtime, RuntimeError, Value, number_to_string};
+use crate::runtime_observation::normalize_rust_value_units as normalize_rust_value;
+use quickjs_oxide::engine::api::{CompileOptions, Runtime, RuntimeError, Value};
 
 const ORACLE_NORMALIZER: &str = r#"
 var __qjo_type = typeof __qjo_value;
@@ -1401,40 +1402,4 @@ fn take_rust_error_observation(
         panic!("Rust Error message was not a string");
     };
     format!("{}|{}", name.to_utf8_lossy(), message.to_utf8_lossy())
-}
-
-fn normalize_rust_value(value: &Value) -> String {
-    match value {
-        Value::Undefined => "undefined|undefined".to_owned(),
-        Value::Null => "object|null".to_owned(),
-        Value::Bool(value) => format!("boolean|{value}"),
-        Value::Int(value) => normalize_number(f64::from(*value)),
-        Value::Float(value) => normalize_number(*value),
-        Value::BigInt(value) => format!("bigint|{value}"),
-        Value::String(value) => {
-            let units = value
-                .utf16_units()
-                .map(|unit| format!("{unit:04x}"))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("string|{}|{units}", value.len())
-        }
-        Value::Symbol(_) => "symbol|<identity>".to_owned(),
-        Value::Object(_) => "object|<identity>".to_owned(),
-    }
-}
-
-#[allow(clippy::float_cmp)]
-fn normalize_number(value: f64) -> String {
-    if value.is_nan() {
-        "number|NaN".to_owned()
-    } else if value == 0.0 && value.is_sign_negative() {
-        "number|-0".to_owned()
-    } else if value == f64::INFINITY {
-        "number|Infinity".to_owned()
-    } else if value == f64::NEG_INFINITY {
-        "number|-Infinity".to_owned()
-    } else {
-        format!("number|{}", number_to_string(value))
-    }
 }

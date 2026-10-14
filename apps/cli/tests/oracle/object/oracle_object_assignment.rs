@@ -1,3 +1,4 @@
+use crate::runtime_completion_oracle::compare_object_pattern_cases as compare_cases;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
 use quickjs_oxide::engine::api::Runtime;
 
@@ -584,25 +585,4 @@ fn object_assignment_smoke_runs_without_an_oracle() {
         ),
         "return|string|42|true",
     );
-}
-
-fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
-    for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            observe_rust_eval(&runtime, &mut context, source, description),
-            super::quickjs_object_pattern_oracle::observe_completion_strip_one_lf(
-                &oracle,
-                source,
-                description,
-            ),
-            "{group} drifted for {description}: {source:?}",
-        );
-    }
 }

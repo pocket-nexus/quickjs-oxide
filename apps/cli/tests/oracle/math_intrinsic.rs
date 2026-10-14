@@ -1,14 +1,13 @@
 use crate::object_graph_observation::data_bits;
-use crate::quickjs_array_completion_oracle;
+use crate::object_graph_observation::own_data_descriptor as data_descriptor;
+use crate::runtime_completion_oracle::compare_array_value_cases as compare_value_cases;
 use crate::runtime_observation::{
-    error_string_property, primitive_value_text,
-    property_callable_with_read_context as property_callable, take_exception_object,
+    primitive_value_text, property_callable_with_read_context as property_callable,
+    take_exception_object,
 };
-use crate::runtime_oracle::{eval_object, value_type};
-use quickjs_array_completion_oracle::observe_array_completion;
+use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{
-    CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, PropertyKey, Runtime, RuntimeError,
-    Value, WellKnownSymbol,
+    Context, ObjectRef, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
 use std::process::Command;
@@ -639,92 +638,6 @@ fn math_rust_smoke_runs_without_an_oracle() {
     );
 }
 
-fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
-    for &(description, source) in cases {
-        let expected = observe_array_completion(&oracle, source, description);
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            observe_rust_eval(&runtime, &mut context, source, description),
-            expected,
-            "{group} drifted for {description}: {source:?}",
-        );
-    }
-}
-
-fn observe_rust_eval(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> String {
-    match context.eval(source) {
-        Ok(Value::Object(object)) if runtime.is_array_object(&object).unwrap() => format!(
-            "return|array|{}",
-            array_value_text(runtime, context, &object, description),
-        ),
-        Ok(value) => format!(
-            "return|{}|{}",
-            value_type(runtime, &value),
-            primitive_value_text(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
-                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    error_string_property(runtime, context, &error, "name", description),
-                    error_string_property(runtime, context, &error, "message", description),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(runtime, &value),
-                    primitive_value_text(value),
-                ),
-            }
-        }
-        Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
-    }
-}
-
-fn array_value_text(
-    runtime: &Runtime,
-    context: &mut Context,
-    array: &ObjectRef,
-    description: &str,
-) -> String {
-    let length_key = runtime.intern_property_key("length").unwrap();
-    let length = context
-        .get_property(array, &length_key)
-        .unwrap_or_else(|error| panic!("read result Array length for {description}: {error}"));
-    let length = match length {
-        Value::Int(value) if value >= 0 => value as usize,
-        Value::Float(value) if value >= 0.0 && value.fract() == 0.0 => value as usize,
-        value => panic!(
-            "result Array length for {description} was invalid: {}",
-            primitive_value_text(value),
-        ),
-    };
-    (0..length)
-        .map(|index| {
-            let key = runtime.intern_property_key(&index.to_string()).unwrap();
-            let value = context.get_property(array, &key).unwrap_or_else(|error| {
-                panic!("read result Array[{index}] for {description}: {error}")
-            });
-            primitive_value_text(value)
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -862,27 +775,6 @@ fn math_object(runtime: &Runtime, context: &mut Context) -> ObjectRef {
         panic!("global Math was not an object");
     };
     math
-}
-
-fn data_descriptor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-) -> (Value, bool, bool, bool) {
-    let descriptor = runtime
-        .get_own_property(object, key)
-        .unwrap()
-        .expect("expected own property descriptor");
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        value,
-        writable,
-        enumerable,
-        configurable,
-    } = descriptor
-    else {
-        panic!("expected a data property descriptor");
-    };
-    (value, writable, enumerable, configurable)
 }
 
 fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {

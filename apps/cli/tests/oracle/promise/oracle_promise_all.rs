@@ -1,27 +1,10 @@
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
+use crate::object_graph_observation::context_global_value as global_value;
+use crate::runtime_observation::eval;
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3p_promise_all.js");
 const EXPECTED: &str =
     include_str!("../../fixtures/expected/r3p_promise_all.quickjs-2026-06-04.txt");
-
-fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
-        panic!("unexpected engine error: {error}");
-    })
-}
-
-fn global_value(context: &mut Context, name: &str) -> Value {
-    let runtime = context.runtime();
-    let key = runtime.intern_property_key(name).unwrap();
-    let global = context.global_object().unwrap();
-    context.get_property(&global, &key).unwrap()
-}
 
 #[test]
 fn promise_all_matches_pinned_quickjs() {

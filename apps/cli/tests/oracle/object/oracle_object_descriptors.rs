@@ -1,3 +1,4 @@
+use crate::object_graph_observation::object_property;
 use crate::object_graph_observation::{
     data_bits, data_descriptor, eval_object, global_callable, int_property, intrinsic_prototype,
     oracle_lines, own_key_names,
@@ -10,7 +11,7 @@ use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
 };
 use crate::runtime_oracle::value_type;
-use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 
 // Pins QuickJS 2026-06-04 `js_object_getOwnPropertyDescriptor` and
@@ -698,19 +699,4 @@ fn rust_graph_observations() -> Vec<String> {
 
 fn oracle_graph_observations(oracle: &OsStr) -> Vec<String> {
     oracle_lines(oracle, GRAPH_ORACLE, "Object descriptor graph")
-}
-
-fn object_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> ObjectRef {
-    let Value::Object(value) = context
-        .get_property(object, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("{name} was not an object property");
-    };
-    value
 }

@@ -1,20 +1,9 @@
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
+use crate::runtime_observation::eval;
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3o_promise_finally.js");
 const EXPECTED: &str =
     include_str!("../../fixtures/expected/r3o_promise_finally.quickjs-2026-06-04.txt");
-
-fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
-        panic!("unexpected engine error: {error}");
-    })
-}
 
 #[test]
 fn promise_finally_matches_pinned_quickjs() {

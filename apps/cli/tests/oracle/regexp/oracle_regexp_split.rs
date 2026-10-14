@@ -2,11 +2,12 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
+use crate::runtime_observation::string_value;
 use crate::runtime_observation::{
     string_property_with_read_context as string_property, take_exception_object,
 };
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04
 // `js_regexp_Symbol_split` (`quickjs.c` 48875-48990), including
@@ -843,8 +844,4 @@ fn mixed_string_and_regexp_split_recursion_guard_is_catchable_and_recovers() {
         .expect("2 MiB String/RegExp split stack-proof thread did not start")
         .join()
         .expect("2 MiB String/RegExp split stack-proof thread panicked");
-}
-
-fn string_value(value: &str) -> Value {
-    Value::String(JsString::try_from_utf8(value).unwrap())
 }

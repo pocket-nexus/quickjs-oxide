@@ -1,4 +1,6 @@
 use super::quickjs_plain_eval_oracle::eval_plain_lines;
+use crate::object_graph_observation::descriptor_bits;
+use crate::runtime_observation::error_text as error_string_property;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -589,23 +591,6 @@ fn function(runtime: &Runtime, context: &mut Context, source: &str) -> CallableR
     runtime.as_callable(&object).unwrap().unwrap()
 }
 
-fn descriptor_bits(descriptor: &CompleteOrdinaryPropertyDescriptor) -> String {
-    match descriptor {
-        CompleteOrdinaryPropertyDescriptor::Data {
-            writable,
-            enumerable,
-            configurable,
-            ..
-        } => format!(
-            "{}{}{}",
-            u8::from(*writable),
-            u8::from(*enumerable),
-            u8::from(*configurable)
-        ),
-        CompleteOrdinaryPropertyDescriptor::Accessor { .. } => "accessor".to_owned(),
-    }
-}
-
 fn reference_error_prototype(runtime: &Runtime, context: &mut Context) -> ObjectRef {
     let global = context.global_object().unwrap();
     let constructor_key = runtime.intern_property_key("ReferenceError").unwrap();
@@ -619,19 +604,6 @@ fn reference_error_prototype(runtime: &Runtime, context: &mut Context) -> Object
         panic!("ReferenceError.prototype was not an object");
     };
     prototype
-}
-
-fn error_string_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    error: &ObjectRef,
-    name: &str,
-) -> String {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Value::String(value) = context.get_property(error, &key).unwrap() else {
-        panic!("Error.{name} was not a string");
-    };
-    value.to_utf8_lossy()
 }
 
 fn global_value(runtime: &Runtime, context: &mut Context, global: &ObjectRef, name: &str) -> Value {

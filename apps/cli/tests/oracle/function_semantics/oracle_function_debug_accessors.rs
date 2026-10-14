@@ -1,3 +1,5 @@
+use crate::object_graph_observation::bit;
+use crate::runtime_observation::hex;
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DebugInfoMode, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value, WellKnownSymbol,
@@ -474,17 +476,6 @@ fn plain_value(value: Value) -> String {
         Value::String(value) => value.to_utf8_lossy(),
         Value::Symbol(_) | Value::Object(_) => panic!("unexpected observation value"),
     }
-}
-
-fn hex(value: &JsString) -> String {
-    value
-        .utf16_units()
-        .map(|unit| format!("{unit:04x}"))
-        .collect()
-}
-
-const fn bit(value: bool) -> u8 {
-    value as u8
 }
 
 fn oracle_observations(oracle: &OsStr, flag: Option<&str>) -> Vec<String> {

@@ -1,14 +1,8 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
-use crate::runtime_observation::primitive_value_text_with_rust_float as primitive_text;
 
-use crate::runtime_oracle::{error_string_property, value_type};
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
-
-struct Case {
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
+use crate::oracle_cases::ExpectedCase as Case;
+use crate::runtime_completion_oracle::observe_rust;
+use quickjs_oxide::engine::api::Runtime;
 
 // Pins the synchronous QuickJS 2026-06-04 FormalParameters path where a
 // standalone `=` token makes BindingPatterns participate in the independent
@@ -273,39 +267,5 @@ fn parameter_expression_binding_patterns_match_pinned_quickjs() {
             "parameter-expression BindingPattern differential drifted for {}",
             case.description,
         );
-    }
-}
-
-fn observe_rust(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> String {
-    match context.eval(source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            value_type(runtime, &value),
-            primitive_text(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
-                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    error_string_property(runtime, context, &error, "name", description),
-                    error_string_property(runtime, context, &error, "message", description),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(runtime, &value),
-                    primitive_text(value),
-                ),
-            }
-        }
-        Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
     }
 }

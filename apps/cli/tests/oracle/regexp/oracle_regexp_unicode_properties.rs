@@ -1,3 +1,6 @@
+use crate::oracle_cases::{CompileCase, ExpectedMatchCase as MatchCase};
+use crate::runtime_completion_oracle::observe_rust_result;
+use crate::runtime_observation::{js_utf16, utf16};
 use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::regexp::{CompileErrorKind, compile, execute};
 use std::ffi::OsStr;
@@ -12,23 +15,6 @@ use std::fmt::Write as _;
 // pin representative canonical and short aliases, exact parser diagnostics,
 // class placement, Annex B non-Unicode identity behavior, the Unicode
 // ignoreCase ordering for \P, scoped modifiers, and UTF-16/code-point edges.
-
-#[derive(Debug)]
-struct MatchCase {
-    label: &'static str,
-    pattern: Vec<u16>,
-    flags: &'static str,
-    input: Vec<u16>,
-    expected: &'static str,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct CompileCase {
-    label: &'static str,
-    pattern: &'static str,
-    flags: &'static str,
-    expected: &'static str,
-}
 
 const COMPILE_CASES: &[CompileCase] = &[
     CompileCase {
@@ -551,10 +537,6 @@ fn ascii(
     }
 }
 
-fn utf16(value: &str) -> Vec<u16> {
-    value.encode_utf16().collect()
-}
-
 fn observe_rust_match(case: &MatchCase) -> String {
     let pattern = JsString::try_from_utf16(case.pattern.iter().copied()).unwrap();
     let flags = JsString::try_from_utf8(case.flags).unwrap();
@@ -585,31 +567,6 @@ fn observe_rust_compile(case: &CompileCase) -> String {
         }
         Err(error) => format!("CompileError|{:?}|{}", error.kind(), error.message()),
     }
-}
-
-fn observe_rust_result(
-    result: Option<&quickjs_oxide::regexp::RegExpMatch>,
-    input: &[u16],
-) -> String {
-    let Some(result) = result else {
-        return "N".to_owned();
-    };
-    let complete = result
-        .capture(0)
-        .expect("a successful match has capture zero");
-    let mut output = format!("M|{}|{}", complete.start, result.captures().len());
-    for capture in result.captures() {
-        match capture {
-            None => output.push_str("|U"),
-            Some(range) => {
-                write!(output, "|{},{}:", range.start, range.end).unwrap();
-                for unit in &input[range.clone()] {
-                    write!(output, "{unit:04x}").unwrap();
-                }
-            }
-        }
-    }
-    output
 }
 
 fn run_match_oracle(oracle: &OsStr, cases: &[MatchCase]) -> Vec<String> {
@@ -699,13 +656,4 @@ for (var __qjo_i = 0; __qjo_i < __qjo_unicode_property_compile_cases.length; __q
         cases.len(),
         "RegExp Unicode property grammar",
     )
-}
-
-fn js_utf16(units: &[u16]) -> String {
-    let mut source = String::from("\"");
-    for unit in units {
-        write!(source, "\\u{unit:04x}").unwrap();
-    }
-    source.push('"');
-    source
 }

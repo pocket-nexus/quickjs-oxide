@@ -1,5 +1,6 @@
 use super::support::*;
 
+use crate::object_graph_observation::int_property;
 use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, Runtime, RuntimeError, Value,
 };
@@ -413,12 +414,4 @@ fn method_metadata(
         runtime.get_prototype_of(function).unwrap().as_ref() == Some(function_prototype),
         runtime.is_constructor(callable.as_object()).unwrap(),
     )
-}
-
-fn int_property(runtime: &Runtime, context: &mut Context, object: &ObjectRef, name: &str) -> i32 {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Value::Int(value) = context.get_property(object, &key).unwrap() else {
-        panic!("{name} was not an Int property");
-    };
-    value
 }

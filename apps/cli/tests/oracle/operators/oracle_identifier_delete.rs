@@ -1,3 +1,4 @@
+use crate::runtime_observation::{error_text as error_property_text, value_text};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey, Runtime, RuntimeError, Value,
@@ -419,19 +420,6 @@ fn eval_text(context: &mut Context, source: &str) -> String {
     value_text(context.eval(source).unwrap())
 }
 
-fn value_text(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => value.to_string(),
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Object(_) | Value::Symbol(_) => panic!("unexpected observation value"),
-    }
-}
-
 fn rust_uncaught_error(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -451,19 +439,6 @@ fn rust_uncaught_error(source: &str) -> String {
         error_property_text(&runtime, &mut context, &error, "message"),
         error_property_text(&runtime, &mut context, &error, "stack"),
     )
-}
-
-fn error_property_text(
-    runtime: &Runtime,
-    context: &mut Context,
-    error: &ObjectRef,
-    name: &str,
-) -> String {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Value::String(value) = context.get_property(error, &key).unwrap() else {
-        panic!("Error.{name} was not a string");
-    };
-    value.to_utf8_lossy()
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {

@@ -1,12 +1,7 @@
+use crate::oracle_cases::ExpectedCase as Case;
 use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-struct Case {
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
 
 const PRELUDE: &str = r#"
 function __bit(value){return value?"1":"0"}

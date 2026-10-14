@@ -1,12 +1,16 @@
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
 
+use crate::object_graph_observation::{
+    data_descriptor, define_named_builtin_data as define_data, define_to_primitive,
+    eval_source_callable as eval_callable, int_property, intrinsic_prototype,
+    oracle_lines as oracle_script_lines, own_key_names,
+};
 use crate::runtime_observation::{
     property_callable, string_property, take_error_object as take_exception_object,
 };
 use quickjs_oxide::engine::api::{
-    CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
+    CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
 };
 use std::ffi::OsStr;
 
@@ -556,10 +560,6 @@ fn oracle_graph_observations(oracle: &OsStr) -> Vec<String> {
     oracle_script_lines(oracle, GRAPH_ORACLE, "String index search graph")
 }
 
-fn oracle_script_lines(oracle: &OsStr, source: &str, description: &str) -> Vec<String> {
-    super::quickjs_oracle::eval_std_lines(oracle, source, description)
-}
-
 fn rust_fresh_delete_observation() -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -576,19 +576,6 @@ fn rust_fresh_delete_observation() -> String {
     format!("{removed}|{present}|{text}")
 }
 
-fn define_to_primitive(runtime: &Runtime, object: &ObjectRef, callable: CallableRef) {
-    define_data_key(
-        runtime,
-        object,
-        &PropertyKey::from(
-            runtime
-                .well_known_symbol(WellKnownSymbol::ToPrimitive)
-                .expect("well-known symbol"),
-        ),
-        Value::Object(callable.as_object().try_clone().expect("duplicate root")),
-    );
-}
-
 fn define_method(
     runtime: &Runtime,
     context: &mut Context,
@@ -603,102 +590,6 @@ fn define_method(
         name,
         Value::Object(callable.as_object().try_clone().expect("duplicate root")),
     );
-}
-
-fn define_data(runtime: &Runtime, object: &ObjectRef, name: &str, value: Value) {
-    define_data_key(
-        runtime,
-        object,
-        &runtime.intern_property_key(name).unwrap(),
-        value,
-    );
-}
-
-fn define_data_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey, value: Value) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("{source:?} did not evaluate to an object");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("{source:?} was not callable"))
-}
-
-fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {
-    let global = context.global_object().unwrap();
-    let constructor = property_callable(runtime, context, &global, name);
-    let Value::Object(prototype) = context
-        .get_property(
-            constructor.as_object(),
-            &runtime.intern_property_key("prototype").unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("{name}.prototype was not an object");
-    };
-    prototype
-}
-
-fn int_property(runtime: &Runtime, context: &mut Context, object: &ObjectRef, name: &str) -> i32 {
-    let Value::Int(value) = context
-        .get_property(object, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("{name} was not an Int property");
-    };
-    value
-}
-
-fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
-    runtime
-        .own_property_keys(object)
-        .unwrap()
-        .into_iter()
-        .map(|key| {
-            runtime
-                .property_key_to_js_string(&key)
-                .unwrap()
-                .to_utf8_lossy()
-        })
-        .collect()
-}
-
-fn data_descriptor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-) -> (Value, bool, bool, bool) {
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        value,
-        writable,
-        enumerable,
-        configurable,
-    } = runtime
-        .get_own_property(object, key)
-        .unwrap()
-        .expect("missing data descriptor")
-    else {
-        panic!("property was not a data descriptor");
-    };
-    (value, writable, enumerable, configurable)
 }
 
 fn descriptor_bits(descriptor: (Value, bool, bool, bool)) -> String {

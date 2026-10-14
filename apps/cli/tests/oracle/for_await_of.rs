@@ -10,7 +10,9 @@ use std::path::PathBuf;
 
 use std::process::{Command, Output};
 
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
+use crate::runtime_completion_oracle::run as run_eval;
+use crate::runtime_observation::{eval, text};
+use quickjs_oxide::engine::api::Runtime;
 
 const EXPECTED: &str =
     include_str!("../fixtures/expected/r3ak_for_await_of.quickjs-2026-06-04.txt");
@@ -190,36 +192,10 @@ fn run_file(executable: &OsStr, fixture: &PathBuf) -> Output {
         .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
 }
 
-fn run_eval(executable: &OsStr, source: &str) -> Output {
-    Command::new(executable)
-        .args(["-e", source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
-}
-
 fn assert_success(engine: &str, output: &Output) {
     assert!(
         output.status.success(),
         "{engine} rejected for-await probe: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-}
-
-fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
-        panic!("unexpected engine error: {error}");
-    })
-}
-
-fn text(value: Value) -> String {
-    let Value::String(value) = value else {
-        panic!("expected a string");
-    };
-    value.to_utf8_lossy()
 }

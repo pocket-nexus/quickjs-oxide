@@ -1,9 +1,11 @@
 use crate::runtime_observation::primitive_value_text;
 use crate::runtime_oracle::value_type;
 
-use quickjs_oxide::engine::api::{
-    CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
+use crate::object_graph_observation::{
+    checked_property_value as value_property, eval_described_object as eval_object,
+    eval_named_callable as eval_callable, require_object as expect_object,
 };
+use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 
 // Differential lock for pinned QuickJS 2026-06-04 RegExp match indices.
@@ -396,47 +398,6 @@ fn observe_rust_eval(
 fn observe_oracle(oracle: &OsStr, source: &str, description: &str) -> String {
     let source = observed_source(source);
     super::quickjs_oracle::observe_completion(oracle, &source, description)
-}
-
-fn eval_callable(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> CallableRef {
-    let callable = eval_object(context, source, description);
-    runtime
-        .as_callable(&callable)
-        .unwrap()
-        .unwrap_or_else(|| panic!("{description} was not callable"))
-}
-
-fn eval_object(context: &mut Context, source: &str, description: &str) -> ObjectRef {
-    expect_object(
-        context
-            .eval(source)
-            .unwrap_or_else(|error| panic!("evaluate {description}: {error}")),
-        description,
-    )
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(value) = value else {
-        panic!("{description} was not an object");
-    };
-    value
-}
-
-fn value_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> Value {
-    let key = runtime.intern_property_key(name).unwrap();
-    context
-        .get_property(object, &key)
-        .unwrap_or_else(|error| panic!("read property {name}: {error}"))
 }
 
 fn object_property(

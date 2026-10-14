@@ -1,8 +1,6 @@
-use crate::quickjs_argv_completion_oracle;
-use crate::runtime_completion_oracle::observe_eval_completion_with_error_context as observe_rust_eval;
-
-use crate::runtime_oracle::{eval_object, run_cli};
-use quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
+use crate::runtime_completion_oracle::{compare_cli, compare_value_cases};
+use crate::runtime_observation::string_units;
+use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, Runtime, Value, number_to_string,
@@ -373,24 +371,6 @@ fn array_literal_iterator_and_errors_use_the_bytecode_defining_realm() {
     );
 }
 
-fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
-    for &(description, source) in cases {
-        let expected = observe_oracle(&oracle, source, description);
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            observe_rust_eval(&runtime, &mut context, source, description),
-            expected,
-            "{group} drifted for {description}: {source:?}",
-        );
-    }
-}
-
 fn array_snapshot(runtime: &Runtime, context: &mut Context, array: &ObjectRef) -> String {
     runtime
         .own_property_keys(array)
@@ -676,19 +656,6 @@ fn command_stdout(oracle: &OsStr, script: &str, description: &str) -> String {
         .to_owned()
 }
 
-fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, description: &str) {
-    let rust = run_cli(
-        env!("CARGO_BIN_EXE_qjs").as_ref(),
-        options,
-        source,
-        description,
-    );
-    let quickjs = run_cli(oracle, options, source, description);
-    assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
-    assert_eq!(rust.stdout, quickjs.stdout, "{description}");
-    assert_eq!(rust.stderr, quickjs.stderr, "{description}");
-}
-
 fn value_token(value: Value) -> String {
     match value {
         Value::Undefined => "u".to_owned(),
@@ -703,12 +670,4 @@ fn value_token(value: Value) -> String {
         Value::Object(_) => "o".to_owned(),
         Value::Symbol(_) => "y".to_owned(),
     }
-}
-
-fn string_units(value: &JsString) -> String {
-    value
-        .utf16_units()
-        .map(|unit| format!("{unit:04x}"))
-        .collect::<Vec<_>>()
-        .join(",")
 }

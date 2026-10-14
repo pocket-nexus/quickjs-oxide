@@ -1,9 +1,8 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use crate::runtime_oracle::run_cli;
 
+use crate::runtime_completion_oracle::compare_cli;
 use quickjs_oxide::engine::api::{Runtime, Value};
-use std::ffi::OsStr;
 
 const CATCH_CASES: &[(&str, &str)] = &[
     ("basic primitive catch", "try{throw 7}catch(e){e}"),
@@ -361,17 +360,4 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
             "{group} drifted for {description}: {source:?}",
         );
     }
-}
-
-fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, description: &str) {
-    let rust = run_cli(
-        env!("CARGO_BIN_EXE_qjs").as_ref(),
-        options,
-        source,
-        description,
-    );
-    let quickjs = run_cli(oracle, options, source, description);
-    assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
-    assert_eq!(rust.stdout, quickjs.stdout, "{description}");
-    assert_eq!(rust.stderr, quickjs.stderr, "{description}");
 }

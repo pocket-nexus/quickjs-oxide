@@ -1,3 +1,4 @@
+use crate::object_graph_observation::{bits, own_key_names};
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -348,20 +349,6 @@ fn global_callable(
     runtime.as_callable(&object).unwrap().unwrap()
 }
 
-fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
-    runtime
-        .own_property_keys(object)
-        .unwrap()
-        .into_iter()
-        .map(|key| {
-            runtime
-                .property_key_to_js_string(&key)
-                .unwrap()
-                .to_utf8_lossy()
-        })
-        .collect()
-}
-
 fn object_data_value(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey) -> ObjectRef {
     let CompleteOrdinaryPropertyDescriptor::Data {
         value: Value::Object(value),
@@ -400,15 +387,6 @@ fn descriptor_bits(descriptor: CompleteOrdinaryPropertyDescriptor) -> String {
             u8::from(configurable)
         ),
     }
-}
-
-fn bits(writable: bool, enumerable: bool, configurable: bool) -> String {
-    format!(
-        "{},{},{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
 }
 
 fn define_data(

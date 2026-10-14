@@ -1,7 +1,12 @@
+use crate::object_graph_observation::{
+    data_flags_key, define_accessor_key, define_data_key_with_flags as define_data_key,
+    define_global_key as define_global, expect_object, global_object_value as global_value,
+    named_data_flags as data_flags,
+};
+use crate::runtime_observation::{error_text, string_units as utf16_units};
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
-    JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
-    SymbolRef, Value, WellKnownSymbol,
+    CallableRef, CompleteOrdinaryPropertyDescriptor, Context, JsBigInt, JsString, ObjectRef,
+    PropertyKey, Runtime, RuntimeError, SymbolRef, Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
 use std::process::Command;
@@ -1648,12 +1653,6 @@ fn well_known_entries() -> [(&'static str, WellKnownSymbol); 13] {
     ]
 }
 
-fn define_global(runtime: &Runtime, global: &ObjectRef, name: &str, value: Value) -> PropertyKey {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key(runtime, global, &key, value, true, true, true);
-    key
-}
-
 fn define_data(
     runtime: &Runtime,
     object: &ObjectRef,
@@ -1674,33 +1673,6 @@ fn define_data(
     );
 }
 
-fn define_data_key(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    value: Value,
-    writable: bool,
-    enumerable: bool,
-    configurable: bool,
-) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(writable),
-                    enumerable: DescriptorField::Present(enumerable),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host data-property definition was rejected"
-    );
-}
-
 fn define_accessor(
     runtime: &Runtime,
     object: &ObjectRef,
@@ -1714,35 +1686,6 @@ fn define_accessor(
         &runtime.intern_property_key(name).unwrap(),
         get,
         set,
-    );
-}
-
-fn define_accessor_key(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(
-                        get.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    set: DescriptorField::Present(
-                        set.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host accessor-property definition was rejected"
     );
 }
 
@@ -1851,32 +1794,6 @@ fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
                 })
         })
         .collect()
-}
-
-fn data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    data_flags_key(runtime, object, &runtime.intern_property_key(name).unwrap())
-}
-
-fn data_flags_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey) -> String {
-    let descriptor = runtime
-        .get_own_property(object, key)
-        .unwrap()
-        .expect("property descriptor was absent");
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    } = descriptor
-    else {
-        panic!("property descriptor was not data");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
 }
 
 fn accessor_flags(
@@ -2077,14 +1994,6 @@ fn symbol_description_units(runtime: &Runtime, symbol: &SymbolRef) -> String {
         .map_or_else(|| "undefined".to_owned(), utf16_units)
 }
 
-fn utf16_units(value: &JsString) -> String {
-    value
-        .utf16_units()
-        .map(|unit| format!("{unit:04x}"))
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
 fn symbol_tags(
     runtime: &Runtime,
     context: &mut Context,
@@ -2139,25 +2048,12 @@ fn install_primitive_accessors(
     define_accessor(runtime, prototype, "__sloppySet", None, Some(sloppy_set));
 }
 
-fn global_value(runtime: &Runtime, context: &mut Context, global: &ObjectRef, name: &str) -> Value {
-    context
-        .get_property(global, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-}
-
 fn object_has_prototype(runtime: &Runtime, value: &Value, prototype: &ObjectRef) -> bool {
     let Value::Object(object) = value else {
         return false;
     };
     runtime.get_prototype_of(object).unwrap()
         == Some(prototype.try_clone().expect("duplicate root"))
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} did not produce an object");
-    };
-    object
 }
 
 fn expect_symbol(value: Value, description: &str) -> SymbolRef {
@@ -2197,16 +2093,6 @@ fn take_exception_object(context: &mut Context) -> ObjectRef {
         panic!("Symbol operation did not throw an Error object");
     };
     error
-}
-
-fn error_text(runtime: &Runtime, context: &mut Context, error: &ObjectRef, name: &str) -> String {
-    let Value::String(value) = context
-        .get_property(error, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("Error.{name} was not a string");
-    };
-    value.to_utf8_lossy()
 }
 
 fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {

@@ -1,4 +1,5 @@
 use super::quickjs_plain_eval_oracle::eval_plain_lines;
+use crate::object_graph_observation::descriptor_bits;
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, JsString,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value, WellKnownSymbol,
@@ -509,23 +510,6 @@ fn call_to_string(
             )
             .unwrap(),
     )
-}
-
-fn descriptor_bits(descriptor: &CompleteOrdinaryPropertyDescriptor) -> String {
-    match descriptor {
-        CompleteOrdinaryPropertyDescriptor::Data {
-            writable,
-            enumerable,
-            configurable,
-            ..
-        } => format!(
-            "{}{}{}",
-            u8::from(*writable),
-            u8::from(*enumerable),
-            u8::from(*configurable)
-        ),
-        CompleteOrdinaryPropertyDescriptor::Accessor { .. } => "accessor".to_owned(),
-    }
 }
 
 fn descriptor_enumerable(descriptor: &CompleteOrdinaryPropertyDescriptor) -> bool {

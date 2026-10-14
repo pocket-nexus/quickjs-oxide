@@ -1,13 +1,7 @@
+use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_completion_oracle::oracle_case_completion as oracle_observation;
 use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
 use quickjs_oxide::engine::api::Runtime;
-use std::ffi::OsStr;
-
-struct Case {
-    group: &'static str,
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
 
 // Pins the synchronous ObjectLiteral getter/setter slice from QuickJS
 // 2026-06-04. Default/destructuring setter parameters and `super` remain
@@ -454,9 +448,4 @@ fn rust_observation(case: &Case) -> String {
         value_type(&runtime, &value),
         primitive_value_text(value),
     )
-}
-
-fn oracle_observation(oracle: &OsStr, case: &Case) -> String {
-    let description = format!("{} / {}", case.group, case.description);
-    super::quickjs_oracle::observe_completion(oracle, case.source, &description)
 }

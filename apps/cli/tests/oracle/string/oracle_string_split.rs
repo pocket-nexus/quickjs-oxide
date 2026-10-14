@@ -1,3 +1,4 @@
+use crate::object_graph_observation::{int_property, intrinsic_prototype};
 use crate::runtime_observation::{property_callable, string_property};
 use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
@@ -778,25 +779,6 @@ fn observe_oracle(oracle: &OsStr, source: &str, description: &str) -> String {
     super::quickjs_oracle::observe_completion(oracle, &source, description)
 }
 
-fn intrinsic_prototype(
-    runtime: &Runtime,
-    context: &mut Context,
-    constructor_name: &str,
-) -> ObjectRef {
-    let global = context.global_object().unwrap();
-    let constructor = property_callable(runtime, context, &global, constructor_name);
-    let Value::Object(prototype) = context
-        .get_property(
-            constructor.as_object(),
-            &runtime.intern_property_key("prototype").unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("{constructor_name}.prototype was not an object");
-    };
-    prototype
-}
-
 fn eval_object(context: &mut Context, source: &str, description: &str) -> ObjectRef {
     let Value::Object(object) = context
         .eval(source)
@@ -815,16 +797,6 @@ fn take_exception_object(context: &mut Context, description: &str) -> ObjectRef 
         panic!("{description} was not an object");
     };
     error
-}
-
-fn int_property(runtime: &Runtime, context: &mut Context, object: &ObjectRef, name: &str) -> i32 {
-    let Value::Int(value) = context
-        .get_property(object, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("{name} was not an Int property");
-    };
-    value
 }
 
 fn value_type(runtime: &Runtime, value: &Value) -> &'static str {

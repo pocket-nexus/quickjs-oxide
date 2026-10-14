@@ -1,12 +1,18 @@
 use crate::runtime_observation::property_callable;
 use std::ffi::OsStr;
 
-use std::process::{Command, Output};
+use std::process::Command;
 
+use crate::object_graph_observation::{
+    define_accessor, define_accessor_key, define_data_key_with_flags as define_data_key,
+    define_data_with_flags as define_data, define_global_key as define_global, eval_callable,
+    expect_object, object_has_prototype,
+};
+use crate::runtime_observation::error_text;
+use crate::support::quickjs_object_pattern_oracle::run_cli_exact as run_cli;
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
-    JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
-    Value, WellKnownSymbol,
+    CallableRef, CompleteOrdinaryPropertyDescriptor, Context, JsBigInt, JsString, ObjectRef,
+    PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
 
 // The oracle is intentionally broader than the source subset currently parsed
@@ -2129,110 +2135,6 @@ fn rust_observations() -> Option<Vec<String>> {
     Some(observations)
 }
 
-fn define_global(runtime: &Runtime, global: &ObjectRef, name: &str, value: Value) -> PropertyKey {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key(runtime, global, &key, value, true, true, true);
-    key
-}
-
-fn define_data(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    name: &str,
-    value: Value,
-    writable: bool,
-    enumerable: bool,
-    configurable: bool,
-) {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key(
-        runtime,
-        object,
-        &key,
-        value,
-        writable,
-        enumerable,
-        configurable,
-    );
-}
-
-fn define_data_key(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    value: Value,
-    writable: bool,
-    enumerable: bool,
-    configurable: bool,
-) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(writable),
-                    enumerable: DescriptorField::Present(enumerable),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host data-property definition was rejected"
-    );
-}
-
-fn define_accessor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    name: &str,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_accessor_key(runtime, object, &key, get, set);
-}
-
-fn define_accessor_key(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(
-                        get.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    set: DescriptorField::Present(
-                        set.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host accessor-property definition was rejected"
-    );
-}
-
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("callable source did not produce an object: {source:?}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("source did not produce a callable: {source:?}"))
-}
-
 fn global_property(
     runtime: &Runtime,
     context: &mut Context,
@@ -2246,13 +2148,6 @@ fn global_property(
 
 fn global_value(runtime: &Runtime, context: &mut Context, global: &ObjectRef, name: &str) -> Value {
     global_property(runtime, context, global, name)
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} did not produce an object");
-    };
-    object
 }
 
 fn key_names(runtime: &Runtime, keys: &[PropertyKey]) -> Vec<String> {
@@ -2323,16 +2218,6 @@ fn function_signature(runtime: &Runtime, callable: &CallableRef) -> String {
         )
         .join(",")
     )
-}
-
-fn object_has_prototype(runtime: &Runtime, value: &Value, prototype: &ObjectRef) -> bool {
-    let Value::Object(object) = value else {
-        return false;
-    };
-    runtime
-        .get_prototype_of(object)
-        .unwrap()
-        .is_some_and(|actual| actual == *prototype)
 }
 
 fn same_number(value: &Value, expected: f64) -> bool {
@@ -2409,14 +2294,6 @@ fn take_error(runtime: &Runtime, context: &mut Context) -> String {
     format!("throw:{name}:{message}")
 }
 
-fn error_text(runtime: &Runtime, context: &mut Context, error: &ObjectRef, name: &str) -> String {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Value::String(value) = context.get_property(error, &key).unwrap() else {
-        panic!("Error.{name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
 fn number_bits(value: Value) -> String {
     let number = value
         .as_number()
@@ -2463,11 +2340,4 @@ fn oracle_observations(oracle: &OsStr) -> Vec<String> {
         .lines()
         .map(str::to_owned)
         .collect()
-}
-
-fn run_cli(program: &OsStr, source: &str, description: &str) -> Output {
-    Command::new(program)
-        .args(["-e", source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run CLI for {description}: {error}"))
 }

@@ -1,12 +1,7 @@
 use super::quickjs_string_result_oracle::observe_string_result;
-use quickjs_oxide::engine::api::{Context, Runtime, Value};
-
-struct Case {
-    group: &'static str,
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
+use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_completion_oracle::observe_oxide;
+use quickjs_oxide::engine::api::Runtime;
 
 const ORACLE_WRAPPER: &str = r#"
 var value = std.evalScript(scriptArgs[0]);
@@ -399,17 +394,4 @@ fn iterator_helpers_match_pinned_quickjs() {
         failures.len(),
         failures.join("\n\n"),
     );
-}
-
-fn observe_oxide(context: &mut Context, case: &Case) -> String {
-    let value = context
-        .eval(case.source)
-        .unwrap_or_else(|error| panic!("Oxide observer failed for {}: {error}", case.description));
-    let Value::String(value) = value else {
-        panic!(
-            "Oxide observer returned a non-String for {}",
-            case.description
-        );
-    };
-    value.to_utf8_lossy()
 }

@@ -3,15 +3,10 @@
 use crate::runtime_observation::primitive_value_text;
 use crate::runtime_oracle::value_type;
 
+use crate::oracle_cases::ExpectedCase as Case;
 use quickjs_oxide::engine::api::{JsString, Runtime, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-struct Case {
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
 
 // These probes intentionally stay within the language surface that predates
 // `with`. That keeps failures attributable to environment resolution instead

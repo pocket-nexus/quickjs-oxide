@@ -9,7 +9,8 @@ mod support {
         property_callable_with_read_context as property_callable, take_exception_object,
     };
     use quickjs_oxide::engine::api::{
-        CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, Runtime, RuntimeError, Value,
+        CallableRef, CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, Runtime, RuntimeError,
+        Value,
     };
     use std::ffi::OsStr;
 
@@ -141,6 +142,19 @@ mod support {
             runtime.get_prototype_of(function).unwrap().as_ref() == Some(function_prototype),
             runtime.is_constructor(callable.as_object()).unwrap(),
         )
+    }
+
+    pub(super) fn eval_callable(
+        runtime: &Runtime,
+        context: &mut Context,
+        source: &str,
+        description: &str,
+    ) -> CallableRef {
+        let object = eval_object(context, source, description);
+        runtime
+            .as_callable(&object)
+            .unwrap()
+            .unwrap_or_else(|| panic!("Rust {description} was not callable"))
     }
 
     pub(super) fn eval_object(context: &mut Context, source: &str, description: &str) -> ObjectRef {

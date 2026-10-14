@@ -1,8 +1,10 @@
+use crate::object_graph_observation::int_property;
+use crate::oracle_cases::ExpectedCase as Case;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -10,12 +12,6 @@ use std::process::Command;
 // QuickJS 2026-06-04. In particular, they preserve the upstream decoder's
 // complete-quantum capacity rule, partial writes before syntax errors, option
 // getter ordering, WTF-8 rejection, and detached/out-of-bounds revalidation.
-struct Case {
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
-
 const PRELUDE: &str = r#"
 function __bit(value){return value?"1":"0"}
 function __bits(object,key){
@@ -750,12 +746,4 @@ try {
         .unwrap()
         .trim_end()
         .to_owned()
-}
-
-fn int_property(runtime: &Runtime, context: &mut Context, object: &ObjectRef, name: &str) -> i32 {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Value::Int(value) = context.get_property(object, &key).unwrap() else {
-        panic!("{name} was not an Int property");
-    };
-    value
 }

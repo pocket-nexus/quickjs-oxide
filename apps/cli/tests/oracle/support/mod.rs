@@ -1,4 +1,5 @@
 pub(crate) mod object_graph_observation;
+pub(crate) mod oracle_cases;
 pub(crate) mod quickjs_argv_completion_oracle;
 pub(crate) mod quickjs_array_completion_oracle;
 pub(crate) mod quickjs_control_value_oracle;

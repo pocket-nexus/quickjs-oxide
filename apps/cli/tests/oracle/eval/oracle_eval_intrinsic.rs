@@ -1,3 +1,4 @@
+use crate::runtime_observation::string_value;
 use quickjs_oxide::engine::api::{
     CallableRef, Context, DebugInfoMode, JsString, Runtime, RuntimeError, Value,
 };
@@ -1861,10 +1862,6 @@ fn global_eval(runtime: &Runtime, context: &mut Context) -> CallableRef {
         .as_callable(&function)
         .unwrap()
         .expect("global eval was not callable")
-}
-
-fn string_value(value: &str) -> Value {
-    Value::String(JsString::try_from_utf8(value).unwrap())
 }
 
 fn eval_object(context: &mut Context, source: &str) -> quickjs_oxide::engine::api::ObjectRef {

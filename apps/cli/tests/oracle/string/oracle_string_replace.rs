@@ -5,51 +5,15 @@ use crate::runtime_completion_oracle::{
 use crate::runtime_observation::take_exception_object;
 use crate::runtime_oracle::eval_object;
 
-use quickjs_oxide::engine::api::{CallableRef, Context, JsString, Runtime, RuntimeError, Value};
+use crate::object_graph_observation::eval_optional_callable;
+use crate::runtime_completion_oracle::REGEXP_REPLACE_PRELUDE as PRELUDE;
+use crate::runtime_observation::string_value;
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_replace`
 // (`quickjs.c` 45781-45892), including the shared GetSubstitution helper
 // (`quickjs.c` 45661-45779), String.prototype.replace, and
 // String.prototype.replaceAll.
-
-const PRELUDE: &str = r#"
-function __bit(value){return value?"1":"0"}
-function __bits(object,key){
-    var descriptor=Object.getOwnPropertyDescriptor(object,key);
-    if(descriptor===undefined)return "missing";
-    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+
-        __bit(descriptor.configurable);
-}
-function __isConstructor(value){
-    try{Reflect.construct(function(){},[],value);return true}
-    catch(_error){return false}
-}
-function __show(value){
-    if(value===undefined)return "undefined";
-    if(value===null)return "null";
-    if(typeof value==="number"){
-        if(value!==value)return "NaN";
-        if(value===0)return 1/value===-Infinity?"-0":"+0";
-    }
-    return String(value);
-}
-function __completion(callback){
-    try{return "return:"+String(callback())}
-    catch(error){
-        if(error!==null&&typeof error==="object")
-            return "throw:"+error.name+":"+error.message;
-        return "throw:"+typeof error+":"+String(error);
-    }
-}
-function __units(value){
-    var string=String(value),output=[],index=0;
-    while(index<string.length){
-        output[index]=string.charCodeAt(index).toString(16);
-        index++;
-    }
-    return string.length+"["+output.join(",")+"]";
-}
-"#;
 
 const METADATA_CASES: &[(&str, &str)] = &[
     (
@@ -497,25 +461,4 @@ fn string_replace_recursion_matches_pinned_quickjs() {
         .unwrap()
         .join()
         .unwrap();
-}
-
-fn eval_optional_callable(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> Option<CallableRef> {
-    let value = context
-        .eval(source)
-        .unwrap_or_else(|error| panic!("Rust rejected {description} ({source:?}): {error}"));
-    let Value::Object(object) = value else {
-        return None;
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap_or_else(|error| panic!("inspect {description}: {error}"))
-}
-
-fn string_value(value: &str) -> Value {
-    Value::String(JsString::try_from_utf8(value).unwrap())
 }

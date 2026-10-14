@@ -1,3 +1,4 @@
+use crate::object_graph_observation::expect_object;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value,
@@ -542,13 +543,6 @@ fn property_callable(
         .as_callable(&value)
         .unwrap()
         .unwrap_or_else(|| panic!("{name} was not callable"))
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} did not produce an object");
-    };
-    object
 }
 
 fn define_data(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey, value: Value) -> bool {

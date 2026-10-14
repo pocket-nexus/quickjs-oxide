@@ -1,8 +1,12 @@
+use crate::object_graph_observation::{
+    checked_data_flags as data_flags, define_named_builtin_data as define_data,
+    define_to_primitive, eval_callable, global_object_value as global_value, intrinsic_prototype,
+    own_key_names,
+};
+use crate::runtime_observation::hex;
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
 use quickjs_oxide::engine::api::{
-    CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsBigInt, JsString,
-    ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
-    WellKnownSymbol,
+    CallableRef, Context, JsBigInt, JsString, ObjectRef, Runtime, RuntimeError, Value,
 };
 
 // The global String constructor and the full prototype table are intentionally
@@ -628,19 +632,6 @@ fn string_utf16_prefix_method_retains_then_releases_its_realm_graph() {
     assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
-fn define_to_primitive(runtime: &Runtime, object: &ObjectRef, callable: CallableRef) {
-    define_data_key(
-        runtime,
-        object,
-        &PropertyKey::from(
-            runtime
-                .well_known_symbol(WellKnownSymbol::ToPrimitive)
-                .expect("well-known symbol"),
-        ),
-        Value::Object(callable.as_object().try_clone().expect("duplicate root")),
-    );
-}
-
 fn define_method(
     runtime: &Runtime,
     context: &mut Context,
@@ -699,81 +690,6 @@ fn signature(runtime: &Runtime, context: &mut Context, callable: &CallableRef) -
     )
 }
 
-fn define_data(runtime: &Runtime, object: &ObjectRef, name: &str, value: Value) {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key(runtime, object, &key, value);
-}
-
-fn define_data_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey, value: Value) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("callable source did not produce an object: {source:?}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("source did not produce a callable: {source:?}"))
-}
-
-fn global_value(runtime: &Runtime, context: &mut Context, global: &ObjectRef, name: &str) -> Value {
-    context
-        .get_property(global, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-}
-
-fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
-    runtime
-        .own_property_keys(object)
-        .unwrap()
-        .iter()
-        .map(|key| {
-            runtime
-                .property_key_to_js_string(key)
-                .unwrap()
-                .to_utf8_lossy()
-        })
-        .collect()
-}
-
-fn data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    let descriptor = runtime
-        .get_own_property(object, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-        .unwrap_or_else(|| panic!("{name} descriptor was absent"));
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    } = descriptor
-    else {
-        panic!("{name} descriptor was not data");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
-}
-
 fn observe_call_args(
     runtime: &Runtime,
     context: &mut Context,
@@ -823,31 +739,9 @@ fn error_string(
     )
 }
 
-fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {
-    let global = context.global_object().unwrap();
-    let constructor = property_callable(runtime, context, &global, name);
-    let Value::Object(prototype) = context
-        .get_property(
-            constructor.as_object(),
-            &runtime.intern_property_key("prototype").unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("{name}.prototype was not an object");
-    };
-    prototype
-}
-
 fn expect_string(value: Value) -> JsString {
     let Value::String(value) = value else {
         panic!("value was not a String");
     };
     value
-}
-
-fn hex(value: &JsString) -> String {
-    value
-        .utf16_units()
-        .map(|unit| format!("{unit:04x}"))
-        .collect()
 }

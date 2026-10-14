@@ -1,9 +1,10 @@
+use crate::object_graph_observation::require_object as expect_object;
 use crate::runtime_completion_oracle::observe_read_context_eval_completion_with_prelude;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{CallableRef, Context, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -698,11 +699,4 @@ fn date_constructor(runtime: &Runtime, context: &mut Context) -> CallableRef {
 fn date_prototype_callable(runtime: &Runtime, context: &mut Context, name: &str) -> CallableRef {
     let prototype = eval_object(context, "Date.prototype", "Date prototype");
     property_callable(runtime, context, &prototype, name)
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} was not an object");
-    };
-    object
 }

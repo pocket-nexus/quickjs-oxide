@@ -1,6 +1,11 @@
+use crate::object_graph_observation::{
+    define_context_accessor as define_accessor, define_context_data_with_flags as define_data,
+    define_global_flagged as define_global, function_probe as function, global_value, set_global,
+    string_global,
+};
+use crate::runtime_observation::show;
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
+    AccessorValue, Context, JsString, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
 use std::process::Command;
@@ -1982,88 +1987,6 @@ fn rust_observations() -> Vec<String> {
     output
 }
 
-fn function(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("function probe did not return an object: {source}");
-    };
-    runtime.as_callable(&object).unwrap().unwrap()
-}
-
-fn define_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data(context, &global, &key, value, true, true);
-}
-
-fn set_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    assert!(context.set_property(&global, &key, value).unwrap());
-}
-
-fn global_value(runtime: &Runtime, context: &mut Context, name: &str) -> Value {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(&global, &key).unwrap()
-}
-
-fn string_global(runtime: &Runtime, context: &mut Context, name: &str) -> String {
-    let Value::String(value) = global_value(runtime, context, name) else {
-        panic!("global {name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn define_data(
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    value: Value,
-    writable: bool,
-    configurable: bool,
-) {
-    assert!(
-        context
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(writable),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-fn define_accessor(
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    get: AccessorValue,
-    set: AccessorValue,
-    configurable: bool,
-) {
-    assert!(
-        context
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(get),
-                    set: DescriptorField::Present(set),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
 fn observe(runtime: &Runtime, context: &mut Context, source: &str) -> String {
     match context.eval(source) {
         Ok(value) => show(value),
@@ -2082,20 +2005,6 @@ fn observe(runtime: &Runtime, context: &mut Context, source: &str) -> String {
             format!("throw:{}:{}", name.to_utf8_lossy(), message.to_utf8_lossy())
         }
         Err(error) => panic!("member-write probe hit engine error for {source:?}: {error}"),
-    }
-}
-
-fn show(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined:undefined".to_owned(),
-        Value::Null => "object:null".to_owned(),
-        Value::Bool(value) => format!("boolean:{value}"),
-        Value::Int(value) => format!("number:{value}"),
-        Value::Float(value) => format!("number:{value}"),
-        Value::BigInt(value) => format!("bigint:{value}"),
-        Value::String(value) => format!("string:{}", value.to_utf8_lossy()),
-        Value::Symbol(_) => "symbol:<symbol>".to_owned(),
-        Value::Object(_) => "object:<object>".to_owned(),
     }
 }
 

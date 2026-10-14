@@ -1,8 +1,14 @@
+use crate::object_graph_observation::{
+    data_flags_key, define_data_key_with_flags as define_data_key,
+    define_data_with_flags as define_data, define_global_key as define_global, expect_object,
+    global_object_value as global_value, intrinsic_prototype, named_data_flags as data_flags,
+    object_has_prototype,
+};
+use crate::runtime_observation::error_text;
 use crate::runtime_observation::property_callable;
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
-    JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
-    Value, WellKnownSymbol,
+    AccessorValue, CallableRef, Context, DescriptorField, JsBigInt, JsString, ObjectRef,
+    OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
 use std::process::Command;
@@ -1398,60 +1404,6 @@ fn bigint_wrapper_keeps_its_realm_graph_alive_until_collection() {
     );
 }
 
-fn define_global(runtime: &Runtime, global: &ObjectRef, name: &str, value: Value) -> PropertyKey {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key(runtime, global, &key, value, true, true, true);
-    key
-}
-
-fn define_data(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    name: &str,
-    value: Value,
-    writable: bool,
-    enumerable: bool,
-    configurable: bool,
-) {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key(
-        runtime,
-        object,
-        &key,
-        value,
-        writable,
-        enumerable,
-        configurable,
-    );
-}
-
-fn define_data_key(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    value: Value,
-    writable: bool,
-    enumerable: bool,
-    configurable: bool,
-) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(writable),
-                    enumerable: DescriptorField::Present(enumerable),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host data-property definition was rejected"
-    );
-}
-
 fn define_accessor(
     runtime: &Runtime,
     object: &ObjectRef,
@@ -1521,19 +1473,6 @@ fn conversion_object(runtime: &Runtime, context: &mut Context, source: &str) -> 
     object
 }
 
-fn global_value(runtime: &Runtime, context: &mut Context, global: &ObjectRef, name: &str) -> Value {
-    context
-        .get_property(global, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} did not produce an object");
-    };
-    object
-}
-
 fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
     let to_string_tag = PropertyKey::from(
         runtime
@@ -1555,32 +1494,6 @@ fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
             }
         })
         .collect()
-}
-
-fn data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    data_flags_key(runtime, object, &runtime.intern_property_key(name).unwrap())
-}
-
-fn data_flags_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey) -> String {
-    let descriptor = runtime
-        .get_own_property(object, key)
-        .unwrap()
-        .expect("property descriptor was absent");
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    } = descriptor
-    else {
-        panic!("property descriptor was not data");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
 }
 
 fn function_signature(runtime: &Runtime, context: &mut Context, callable: &CallableRef) -> String {
@@ -1614,16 +1527,6 @@ fn call_two(context: &mut Context, callable: &CallableRef, first: Value, second:
 
 fn parse_bigint(text: &str) -> JsBigInt {
     JsBigInt::parse_js_string(text).unwrap()
-}
-
-fn object_has_prototype(runtime: &Runtime, value: &Value, prototype: &ObjectRef) -> bool {
-    let Value::Object(object) = value else {
-        return false;
-    };
-    runtime
-        .get_prototype_of(object)
-        .unwrap()
-        .is_some_and(|actual| actual == *prototype)
 }
 
 fn object_tags(
@@ -1760,31 +1663,6 @@ fn take_exception_object(context: &mut Context) -> ObjectRef {
         panic!("BigInt operation did not throw an Error object");
     };
     error
-}
-
-fn error_text(runtime: &Runtime, context: &mut Context, error: &ObjectRef, name: &str) -> String {
-    let Value::String(value) = context
-        .get_property(error, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("Error.{name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {
-    let global = context.global_object().unwrap();
-    let constructor = property_callable(runtime, context, &global, name);
-    let Value::Object(prototype) = context
-        .get_property(
-            constructor.as_object(),
-            &runtime.intern_property_key("prototype").unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("{name}.prototype was not an object");
-    };
-    prototype
 }
 
 fn join_values(values: &[Value]) -> String {

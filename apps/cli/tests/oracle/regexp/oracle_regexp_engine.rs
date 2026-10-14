@@ -1,3 +1,5 @@
+use crate::runtime_completion_oracle::observe_rust_result as observe_rust;
+use crate::runtime_observation::utf16;
 use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::regexp::{compile, execute};
 use std::ffi::OsStr;
@@ -180,32 +182,6 @@ fn ascii(
         input: utf16(input),
         start,
     }
-}
-
-fn utf16(value: &str) -> Vec<u16> {
-    value.encode_utf16().collect()
-}
-
-fn observe_rust(result: Option<&quickjs_oxide::regexp::RegExpMatch>, input: &[u16]) -> String {
-    let Some(result) = result else {
-        return "N".to_owned();
-    };
-    let complete = result
-        .capture(0)
-        .expect("a successful match has capture zero");
-    let mut output = format!("M|{}|{}", complete.start, result.captures().len());
-    for capture in result.captures() {
-        match capture {
-            None => output.push_str("|U"),
-            Some(range) => {
-                write!(output, "|{},{}:", range.start, range.end).unwrap();
-                for unit in &input[range.clone()] {
-                    write!(output, "{unit:04x}").unwrap();
-                }
-            }
-        }
-    }
-    output
 }
 
 fn run_oracle_batch(oracle: &OsStr, cases: &[Case]) -> Vec<String> {

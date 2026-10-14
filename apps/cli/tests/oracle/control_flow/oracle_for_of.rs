@@ -1,7 +1,8 @@
-use super::quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf as observe_oracle;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
 
-use crate::runtime_oracle::{error_string_property, run_cli};
+use crate::object_graph_observation::define_global;
+use crate::runtime_completion_oracle::{compare_argv_cases as compare_value_cases, compare_cli};
+use crate::runtime_oracle::error_string_property;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
@@ -786,43 +787,6 @@ fn define_accessor(
     );
 }
 
-fn define_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    assert!(
-        context
-            .define_own_property(
-                &global,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
-    for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            observe_rust_eval(&runtime, &mut context, source, description),
-            observe_oracle(&oracle, source, description),
-            "{group} drifted for {description}: {source:?}",
-        );
-    }
-}
-
 fn observe_oracle_with_setup(
     oracle: &OsStr,
     setup: &str,
@@ -853,17 +817,4 @@ try {
     let stdout = String::from_utf8(output.stdout)
         .unwrap_or_else(|error| panic!("QuickJS output was not UTF-8 for {description}: {error}"));
     stdout.strip_suffix('\n').unwrap_or(&stdout).to_owned()
-}
-
-fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, description: &str) {
-    let rust = run_cli(
-        env!("CARGO_BIN_EXE_qjs").as_ref(),
-        options,
-        source,
-        description,
-    );
-    let quickjs = run_cli(oracle, options, source, description);
-    assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
-    assert_eq!(rust.stdout, quickjs.stdout, "{description}");
-    assert_eq!(rust.stderr, quickjs.stderr, "{description}");
 }

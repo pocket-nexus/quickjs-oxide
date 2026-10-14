@@ -1,4 +1,5 @@
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
+use crate::runtime_observation::{drain, eval};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -14,27 +15,6 @@ fn integer(value: Value) -> i32 {
         panic!("expected integer value");
     };
     value
-}
-
-fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
-        panic!("unexpected engine error: {error}");
-    })
-}
-
-fn drain(runtime: &Runtime) -> usize {
-    let mut count = 0;
-    while runtime.is_job_pending().expect("runtime state") {
-        assert!(runtime.execute_pending_job().unwrap().executed());
-        count += 1;
-    }
-    count
 }
 
 #[test]

@@ -1,3 +1,4 @@
+use crate::object_graph_observation::bits;
 use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, DescriptorField, OrdinaryPropertyDescriptor, Runtime,
     RuntimeError, Value,
@@ -630,15 +631,6 @@ fn function_name(
         panic!("function-name probe did not produce a string data property");
     };
     name.to_utf8_lossy()
-}
-
-fn bits(writable: bool, enumerable: bool, configurable: bool) -> String {
-    format!(
-        "{},{},{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {

@@ -1,3 +1,5 @@
+use crate::object_graph_observation::{function, get_property};
+use crate::runtime_observation::{show, string_value as string};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
@@ -1284,16 +1286,6 @@ fn rust_observations() -> Vec<String> {
     output
 }
 
-fn function(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("function probe did not return an object: {source}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("function probe was not callable: {source}"))
-}
-
 fn property_callable(
     runtime: &Runtime,
     context: &mut Context,
@@ -1455,33 +1447,10 @@ fn observe(runtime: &Runtime, context: &mut Context, sentinel: &ObjectRef, sourc
     }
 }
 
-fn show(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined:undefined".to_owned(),
-        Value::Null => "object:null".to_owned(),
-        Value::Bool(value) => format!("boolean:{value}"),
-        Value::Int(value) => format!("number:{value}"),
-        Value::Float(value) => format!("number:{value}"),
-        Value::BigInt(value) => format!("bigint:{value}"),
-        Value::String(value) => format!("string:{}", value.to_utf8_lossy()),
-        Value::Symbol(_) => "symbol:<symbol>".to_owned(),
-        Value::Object(_) => "object:<object>".to_owned(),
-    }
-}
-
-fn string(value: &str) -> Value {
-    Value::String(JsString::try_from_utf8(value).unwrap())
-}
-
 fn set_log(runtime: &Runtime, context: &mut Context, value: &str) {
     let global = context.global_object().unwrap();
     let key = runtime.intern_property_key("membershipLog").unwrap();
     assert!(context.set_property(&global, &key, string(value)).unwrap());
-}
-
-fn get_property(runtime: &Runtime, context: &mut Context, object: &ObjectRef, name: &str) -> Value {
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(object, &key).unwrap()
 }
 
 fn string_global(runtime: &Runtime, context: &mut Context, name: &str) -> String {

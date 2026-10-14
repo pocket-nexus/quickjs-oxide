@@ -187,33 +187,17 @@ const tombstoneSources = [
   },
 ];
 
-// The Object graph cleanup was deliberately bounded to eight oracle modules.
-// Adjacent pre-existing copies stay explicit as path-and-fingerprint
-// exceptions, so the gate still rejects any new copy and detects stale entries.
+// Path-and-fingerprint exceptions for token-identical copies whose callees
+// differ from the provider's (a same-named local helper with another panic
+// message), so importing the provider would change behavior. Every entry must
+// be used exactly once so stale exceptions are reported.
 const helperAllowlist = new Set([
-  "apps/cli/tests/oracle/collections/oracle_map.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  "apps/cli/tests/oracle/collections/oracle_set.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  "apps/cli/tests/oracle/collections/oracle_weak_collections.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  "apps/cli/tests/oracle/errors/oracle_errors.rs\u0000decb1b0e66595c263bc68421bb9797396e381256f18cfb9bf9892c576822ad4a",
-  "apps/cli/tests/oracle/function_semantics/oracle_function_prototype_prefix.rs\u0000decb1b0e66595c263bc68421bb9797396e381256f18cfb9bf9892c576822ad4a",
-  "apps/cli/tests/oracle/global/oracle_global_numeric_predicates.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  "apps/cli/tests/oracle/global/oracle_global_uri_codecs.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  "apps/cli/tests/oracle/number/oracle_number_constructor_conversion.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u00003da3ed15c59afc7ed8c28f61354fa7f1ad406d948f45faa8d6989b5805fbeec7",
-  "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u0000174e66d9def3034c785ba13ce8818d1a4b6132fa1aa62f3956f8a870a18c6690",
-  "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u0000ae3af224efe82f1d4d7b2adf0ac80991c51681123f90bc2ed647e15b29c3832d",
-  "apps/cli/tests/oracle/object/oracle_object_group_by.rs\u0000decb1b0e66595c263bc68421bb9797396e381256f18cfb9bf9892c576822ad4a",
+  // Calls a local run() whose spawn-failure message differs.
+  "apps/cli/tests/oracle/async_methods/oracle_async_private_class_method.rs\u000044095ad11928db4927f9174e67d596ac1975ddf9c3c11da77dad742f4803176f",
+  // Reads through property_callable_with_read_context.
   "apps/cli/tests/oracle/object/oracle_object_intrinsic.rs\u00005d9661cb5d6d4945fe9108896091b79c50bcf99ec24a535d745088a4bd150a86",
-  "apps/cli/tests/oracle/object/oracle_object_intrinsic.rs\u0000decb1b0e66595c263bc68421bb9797396e381256f18cfb9bf9892c576822ad4a",
-  "apps/cli/tests/oracle/string/oracle_string_index_search.rs\u0000ae3af224efe82f1d4d7b2adf0ac80991c51681123f90bc2ed647e15b29c3832d",
-  "apps/cli/tests/oracle/string/oracle_string_index_search.rs\u0000174e66d9def3034c785ba13ce8818d1a4b6132fa1aa62f3956f8a870a18c6690",
-  "apps/cli/tests/oracle/string/oracle_string_index_search.rs\u0000c09ce90549ab8e65e6a88c4f7261c5ec6e7aa8a11bee43106b827b8823bc1377",
-  "apps/cli/tests/oracle/string/oracle_string_index_search.rs\u0000decb1b0e66595c263bc68421bb9797396e381256f18cfb9bf9892c576822ad4a",
-  "apps/cli/tests/oracle/string/oracle_string_intrinsic.rs\u00003da3ed15c59afc7ed8c28f61354fa7f1ad406d948f45faa8d6989b5805fbeec7",
-  "apps/cli/tests/oracle/string/oracle_string_intrinsic.rs\u0000c09ce90549ab8e65e6a88c4f7261c5ec6e7aa8a11bee43106b827b8823bc1377",
-  "apps/cli/tests/oracle/string/oracle_string_intrinsic.rs\u0000decb1b0e66595c263bc68421bb9797396e381256f18cfb9bf9892c576822ad4a",
-  "apps/cli/tests/oracle/string/oracle_string_split.rs\u0000174e66d9def3034c785ba13ce8818d1a4b6132fa1aa62f3956f8a870a18c6690",
+  // Calls a local define_accessor_key without the rejection message.
+  "apps/cli/tests/oracle/string/oracle_string_conversion_core.rs\u0000fafe7ff0140e2317e09cf4ddd63708de2f6fb43d597e316958ea216d74122678",
 ]);
 
 runCanaries();
@@ -222,7 +206,7 @@ const providers = loadProviders();
 const tombstones = loadTombstones();
 const consumerFiles = collectConsumerFiles();
 const functions = consumerFiles.flatMap((path) => scanFile(path));
-runAllowlistMultiplicityCanary(functions, providers, tombstones);
+runAllowlistMultiplicityCanary(providers, tombstones);
 const failures = checkFunctions(functions, providers, tombstones);
 
 if (options.report) {
@@ -327,13 +311,18 @@ function scanFile(path) {
   return extractFunctions(source, path).filter((helper) => !helper.test);
 }
 
-function checkFunctions(functions, providers, tombstones) {
+function checkFunctions(
+  functions,
+  providers,
+  tombstones,
+  allowlist = helperAllowlist,
+) {
   const failures = [];
   const allowlistUseCounts = new Map();
   for (const helper of functions) {
     const displayPath = display(helper.path);
     const allowlistKey = `${displayPath}\0${helper.fingerprint}`;
-    const allowlisted = helperAllowlist.has(allowlistKey);
+    const allowlisted = allowlist.has(allowlistKey);
     let protectedHelper = false;
     const providersForFingerprint = providers.get(helper.fingerprint);
     if (providersForFingerprint !== undefined) {
@@ -367,7 +356,7 @@ function checkFunctions(functions, providers, tombstones) {
       );
     }
   }
-  for (const allowlistKey of helperAllowlist) {
+  for (const allowlistKey of allowlist) {
     const useCount = allowlistUseCounts.get(allowlistKey) ?? 0;
     if (useCount === 0) {
       failures.push(
@@ -383,16 +372,24 @@ function checkFunctions(functions, providers, tombstones) {
   return failures.sort();
 }
 
-function runAllowlistMultiplicityCanary(functions, providers, tombstones) {
-  const [allowlistKey] = helperAllowlist;
-  const helper = functions.find(
-    (candidate) =>
-      `${display(candidate.path)}\0${candidate.fingerprint}` === allowlistKey,
-  );
-  if (helper === undefined) {
-    fail("allowlist multiplicity canary could not find its protected helper");
+function runAllowlistMultiplicityCanary(providers, tombstones) {
+  const [fingerprint] = providers.keys();
+  if (fingerprint === undefined) {
+    fail("allowlist multiplicity canary found no protected provider");
   }
-  const failures = checkFunctions([helper, helper], providers, tombstones);
+  const helper = {
+    fingerprint,
+    line: 1,
+    name: "canary",
+    path: resolve(root, "apps/cli/tests/oracle/allowlist_canary.rs"),
+  };
+  const allowlist = new Set([`${display(helper.path)}\0${fingerprint}`]);
+  const failures = checkFunctions(
+    [helper, helper],
+    providers,
+    tombstones,
+    allowlist,
+  );
   if (
     !failures.some((failure) =>
       failure.startsWith("shared-helper allowlist multiplicity drift:"),

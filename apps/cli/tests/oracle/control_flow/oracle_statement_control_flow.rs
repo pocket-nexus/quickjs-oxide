@@ -1,36 +1,9 @@
 use super::quickjs_control_value_oracle::observe_normalized_value;
 use super::quickjs_syntax_diagnostic_oracle::observe_cmdline_syntax_error as oracle_error_observation;
 
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value, number_to_string};
-
-const ORACLE_NORMALIZER: &str = r#"
-var __qjo_type = typeof __qjo_value;
-if (__qjo_type === "number") {
-    if (__qjo_value !== __qjo_value) {
-        print("number|NaN");
-    } else if (__qjo_value === 0 && 1 / __qjo_value === -Infinity) {
-        print("number|-0");
-    } else if (__qjo_value === Infinity) {
-        print("number|Infinity");
-    } else if (__qjo_value === -Infinity) {
-        print("number|-Infinity");
-    } else {
-        print("number|" + String(__qjo_value));
-    }
-} else if (__qjo_type === "string") {
-    var __qjo_units = "";
-    for (var __qjo_index = 0; __qjo_index < __qjo_value.length; __qjo_index++) {
-        var __qjo_hex = __qjo_value.charCodeAt(__qjo_index).toString(16);
-        if (__qjo_index !== 0) __qjo_units += ",";
-        __qjo_units += ("0000" + __qjo_hex).slice(-4);
-    }
-    print("string|" + __qjo_value.length + "|" + __qjo_units);
-} else if (__qjo_value === null) {
-    print("object|null");
-} else {
-    print(__qjo_type + "|" + String(__qjo_value));
-}
-"#;
+use crate::runtime_completion_oracle::{ORACLE_NORMALIZER, rust_error_observation};
+use crate::runtime_observation::normalize_rust_value_units as normalize_rust_value;
+use quickjs_oxide::engine::api::Runtime;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     ("empty script", ""),
@@ -708,76 +681,5 @@ fn statement_control_flow_diagnostics_match_pinned_quickjs() {
             oracle_error_observation(&oracle, source),
             "diagnostic mismatch for {description:?} ({source:?})"
         );
-    }
-}
-
-fn rust_error_observation(source: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(context.eval(source), Err(RuntimeError::Exception));
-    take_rust_error(&runtime, &mut context)
-}
-
-fn take_rust_error(runtime: &Runtime, context: &mut Context) -> String {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("Rust parser did not materialize an Error object");
-    };
-    let read = |context: &mut Context, name: &str| {
-        let key = runtime.intern_property_key(name).unwrap();
-        context.get_property(&error, &key).unwrap()
-    };
-    let Value::String(name) = read(context, "name") else {
-        panic!("Rust Error.name was not a string");
-    };
-    let Value::String(message) = read(context, "message") else {
-        panic!("Rust Error.message was not a string");
-    };
-    let Value::Int(line) = read(context, "lineNumber") else {
-        panic!("Rust Error.lineNumber was not an integer");
-    };
-    let Value::Int(column) = read(context, "columnNumber") else {
-        panic!("Rust Error.columnNumber was not an integer");
-    };
-    format!(
-        "{}|{}|{line}:{column}",
-        name.to_utf8_lossy(),
-        message.to_utf8_lossy()
-    )
-}
-
-fn normalize_rust_value(value: &Value) -> String {
-    match value {
-        Value::Undefined => "undefined|undefined".to_owned(),
-        Value::Null => "object|null".to_owned(),
-        Value::Bool(value) => format!("boolean|{value}"),
-        Value::Int(value) => normalize_number(f64::from(*value)),
-        Value::Float(value) => normalize_number(*value),
-        Value::BigInt(value) => format!("bigint|{value}"),
-        Value::String(value) => {
-            let units = value
-                .utf16_units()
-                .map(|unit| format!("{unit:04x}"))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("string|{}|{units}", value.len())
-        }
-        Value::Symbol(_) => "symbol|<identity>".to_owned(),
-        Value::Object(_) => "object|<identity>".to_owned(),
-    }
-}
-
-#[allow(clippy::float_cmp)]
-fn normalize_number(value: f64) -> String {
-    if value.is_nan() {
-        "number|NaN".to_owned()
-    } else if value == 0.0 && value.is_sign_negative() {
-        "number|-0".to_owned()
-    } else if value == f64::INFINITY {
-        "number|Infinity".to_owned()
-    } else if value == f64::NEG_INFINITY {
-        "number|-Infinity".to_owned()
-    } else {
-        format!("number|{}", number_to_string(value))
     }
 }

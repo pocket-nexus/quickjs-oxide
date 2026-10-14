@@ -1,11 +1,8 @@
-use crate::quickjs_argv_completion_oracle;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use std::ffi::OsStr;
-
-use std::process::{Command, Output};
 
 use crate::common::compile_syntax_error;
-use quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf as observe_oracle;
+use crate::runtime_completion_oracle::compare_argv_cases as compare_cases;
+use crate::support::quickjs_object_pattern_oracle::run_cli_exact as run_cli;
 use quickjs_oxide::engine::api::Runtime;
 
 // Pins QuickJS 2026-06-04 ArrayAssignmentPattern lowering. Array binding
@@ -720,28 +717,4 @@ fn array_assignment_smoke_runs_without_an_oracle() {
         ),
         "return|string|42|true",
     );
-}
-
-fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
-    for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            observe_rust_eval(&runtime, &mut context, source, description),
-            observe_oracle(&oracle, source, description),
-            "{group} drifted for {description}: {source:?}",
-        );
-    }
-}
-
-fn run_cli(program: &OsStr, source: &str, description: &str) -> Output {
-    Command::new(program)
-        .args(["-e", source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run CLI for {description}: {error}"))
 }

@@ -1,49 +1,16 @@
-use crate::runtime_observation::take_exception_object;
-use crate::runtime_oracle::{eval_callable, eval_object, value_type};
-use quickjs_oxide::engine::api::{
-    CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
+use crate::object_graph_observation::{
+    callable_property, checked_property_value as object_property,
 };
-use std::ffi::OsStr;
+use crate::runtime_completion_oracle::{
+    compare_cases_collecting_failures as compare_cases, observe_oracle,
+};
+use crate::runtime_observation::string_value;
+use crate::runtime_observation::take_exception_object;
+use crate::runtime_oracle::{eval_callable, eval_object};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_match`'s
 // Symbol.matchAll path and `check_regexp_g_flag` (`quickjs.c` 45583-45657).
-
-const PRELUDE: &str = r#"
-function __bit(value){return value?"1":"0"}
-function __bits(object,key){
-    var descriptor=Object.getOwnPropertyDescriptor(object,key);
-    if(descriptor===undefined)return "missing";
-    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+
-        __bit(descriptor.configurable);
-}
-function __isConstructor(value){
-    try{Reflect.construct(function(){},[],value);return true}
-    catch(_error){return false}
-}
-function __show(value){
-    if(value===undefined)return "undefined";
-    if(value===null)return "null";
-    if(typeof value==="number"){
-        if(value!==value)return "NaN";
-        if(value===0)return 1/value===-Infinity?"-0":"+0";
-    }
-    return String(value);
-}
-function __completion(callback){
-    try{return "return:"+String(callback())}
-    catch(error){
-        if(error!==null&&typeof error==="object")
-            return "throw:"+error.name+":"+error.message;
-        return "throw:"+typeof error+":"+String(error);
-    }
-}
-function __step(iterator){
-    var result=iterator.next(),value=result.value;
-    return String(result.done)+":"+
-        (value===undefined?"undefined":__show(value[0])+":"+
-            __show(value.index));
-}
-"#;
 
 const METADATA_CASES: &[(&str, &str)] = &[
     (
@@ -559,139 +526,4 @@ fn string_match_all_delegation_and_fallback_preserve_cross_realm_ownership() {
         Some(caller_type_error),
         "String matchAll replaced a caller-realm flags exception",
     );
-}
-
-fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
-    let mut failures = Vec::new();
-    for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
-        let actual = observe_rust_eval(&runtime, &mut context, source, description);
-        let expected = observe_oracle(&oracle, source, description);
-        if actual != expected {
-            failures.push(format!(
-                "{description}\nsource: {source:?}\noxide: {actual:?}\noracle: {expected:?}",
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "{group} drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
-    );
-}
-
-fn observed_source(source: &str) -> String {
-    format!("{PRELUDE}\n{source}")
-}
-
-fn observe_rust_eval(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> String {
-    let source = observed_source(source);
-    match context.eval(&source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            value_type(runtime, &value),
-            primitive_value_text(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
-                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    string_property(runtime, context, &error, "name"),
-                    string_property(runtime, context, &error, "message"),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(runtime, &value),
-                    primitive_value_text(value),
-                ),
-            }
-        }
-        Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
-    }
-}
-
-fn observe_oracle(oracle: &OsStr, source: &str, description: &str) -> String {
-    let source = observed_source(source);
-    super::quickjs_oracle::observe_completion(oracle, &source, description)
-}
-
-fn callable_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> CallableRef {
-    let Value::Object(value) = object_property(runtime, context, object, name) else {
-        panic!("{name} was not an object");
-    };
-    runtime
-        .as_callable(&value)
-        .unwrap()
-        .unwrap_or_else(|| panic!("{name} was not callable"))
-}
-
-fn object_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> Value {
-    let key = runtime.intern_property_key(name).unwrap();
-    context
-        .get_property(object, &key)
-        .unwrap_or_else(|error| panic!("read property {name}: {error}"))
-}
-
-fn string_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> String {
-    let Value::String(value) = object_property(runtime, context, object, name) else {
-        panic!("{name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn string_value(value: &str) -> Value {
-    Value::String(JsString::try_from_utf8(value).unwrap())
-}
-
-fn primitive_value_text(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => {
-            if value.is_nan() {
-                "NaN".to_owned()
-            } else if value == 0.0 && value.is_sign_negative() {
-                "-0".to_owned()
-            } else {
-                value.to_string()
-            }
-        }
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Object(_) => "[object Object]".to_owned(),
-        Value::Symbol(_) => "Symbol()".to_owned(),
-    }
 }

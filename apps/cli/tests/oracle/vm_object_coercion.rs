@@ -1,7 +1,11 @@
+use crate::object_graph_observation::{
+    define_context_data as define_data, define_global_via_data as define_global, function,
+    getter_descriptor, global_value, set_global,
+};
+use crate::runtime_observation::show_exception;
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
-    number_to_string,
+    CallableRef, Context, JsString, ObjectRef, PropertyKey, Runtime, RuntimeError, Value,
+    WellKnownSymbol, number_to_string,
 };
 use std::ffi::OsStr;
 use std::process::Command;
@@ -1949,34 +1953,6 @@ fn rust_order_and_error_observations() -> Vec<String> {
     ]
 }
 
-fn function(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("function probe did not return an object: {source}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("function probe was not callable: {source}"))
-}
-
-fn define_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data(runtime, context, &global, &key, value);
-}
-
-fn set_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    assert!(context.set_property(&global, &key, value).unwrap());
-}
-
-fn global_value(runtime: &Runtime, context: &mut Context, name: &str) -> Value {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(&global, &key).unwrap()
-}
-
 fn integer_global(runtime: &Runtime, context: &mut Context, name: &str) -> i32 {
     let Value::Int(value) = global_value(runtime, context, name) else {
         panic!("global marker {name} was not an integer");
@@ -1989,40 +1965,6 @@ fn string_global(runtime: &Runtime, context: &mut Context, name: &str) -> JsStri
         panic!("global marker {name} was not a string");
     };
     value
-}
-
-fn define_data(
-    _runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    value: Value,
-) {
-    assert!(
-        context
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-fn getter_descriptor(getter: CallableRef) -> OrdinaryPropertyDescriptor {
-    OrdinaryPropertyDescriptor {
-        get: DescriptorField::Present(AccessorValue::Callable(getter)),
-        set: DescriptorField::Present(AccessorValue::Undefined),
-        enumerable: DescriptorField::Present(true),
-        configurable: DescriptorField::Present(true),
-        ..OrdinaryPropertyDescriptor::new()
-    }
 }
 
 fn observe_eval(runtime: &Runtime, context: &mut Context, source: &str) -> String {
@@ -2048,24 +1990,6 @@ fn show_value(value: Value) -> String {
         Value::BigInt(value) => format!("{value}n"),
         Value::String(value) => format!("string:{}", value.to_utf8_lossy()),
         value => panic!("unexpected probe return value: {value:?}"),
-    }
-}
-
-fn show_exception(runtime: &Runtime, context: &mut Context, exception: Value) -> String {
-    match exception {
-        Value::String(value) => format!("throw-string:{}", value.to_utf8_lossy()),
-        Value::Object(error) if runtime.is_error_object(&error).unwrap() => {
-            let name = runtime.intern_property_key("name").unwrap();
-            let message = runtime.intern_property_key("message").unwrap();
-            let Value::String(name) = context.get_property(&error, &name).unwrap() else {
-                panic!("error name was not a string");
-            };
-            let Value::String(message) = context.get_property(&error, &message).unwrap() else {
-                panic!("error message was not a string");
-            };
-            format!("throw:{}|{}", name.to_utf8_lossy(), message.to_utf8_lossy())
-        }
-        value => panic!("unexpected thrown probe value: {value:?}"),
     }
 }
 

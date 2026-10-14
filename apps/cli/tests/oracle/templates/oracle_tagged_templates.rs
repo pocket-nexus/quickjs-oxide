@@ -1,14 +1,8 @@
-use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
-use quickjs_oxide::engine::api::{DebugInfoMode, Runtime, RuntimeError, Value};
+use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_completion_oracle::rust_case_name_observation as rust_observation;
+use quickjs_oxide::engine::api::{DebugInfoMode, Runtime, Value};
 use std::ffi::OsStr;
 use std::process::Command;
-
-struct Case {
-    group: &'static str,
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
 
 // Pins the first tagged-template slice against QuickJS 2026-06-04. The
 // observer sources return primitive strings so object identity, descriptors,
@@ -543,73 +537,6 @@ fn tagged_template_semantics_match_pinned_quickjs() {
             case.source,
         );
     }
-}
-
-fn rust_observation(case: &Case) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
-    match context.eval(case.source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            value_type(&runtime, &value),
-            primitive_value_text(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "take Rust exception for {} / {}: {error}",
-                        case.group, case.description,
-                    )
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Rust exception was missing for {} / {}",
-                        case.group, case.description,
-                    )
-                });
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}",
-                    error_name(&runtime, &mut context, &error, case),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(&runtime, &value),
-                    primitive_value_text(value),
-                ),
-            }
-        }
-        Err(error) => panic!(
-            "Rust engine failure for {} / {} ({:?}): {error}",
-            case.group, case.description, case.source,
-        ),
-    }
-}
-
-fn error_name(
-    runtime: &Runtime,
-    context: &mut quickjs_oxide::engine::api::Context,
-    error: &quickjs_oxide::engine::api::ObjectRef,
-    case: &Case,
-) -> String {
-    let key = runtime
-        .intern_property_key("name")
-        .expect("Error name property key");
-    let Value::String(value) = context.get_property(error, &key).unwrap_or_else(|failure| {
-        panic!(
-            "read Error.name for {} / {}: {failure}",
-            case.group, case.description,
-        )
-    }) else {
-        panic!(
-            "Error.name was not a string for {} / {}",
-            case.group, case.description,
-        );
-    };
-    value.to_utf8_lossy()
 }
 
 fn oracle_observation(oracle: &OsStr, case: &Case) -> String {

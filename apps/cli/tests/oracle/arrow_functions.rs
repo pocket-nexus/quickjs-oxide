@@ -1,14 +1,7 @@
+use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_completion_oracle::oracle_script_case_observation as oracle_observation;
 use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
 use quickjs_oxide::engine::api::Runtime;
-use std::ffi::OsStr;
-use std::process::Command;
-
-struct Case {
-    group: &'static str,
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
 
 // Pins the synchronous, simple-parameter ArrowFunction slice from QuickJS
 // 2026-06-04. Identifier rest parameters have their own oracle; defaults,
@@ -502,43 +495,4 @@ fn rust_observation(case: &Case) -> String {
         value_type(&runtime, &value),
         primitive_value_text(value),
     )
-}
-
-fn oracle_observation(oracle: &OsStr, case: &Case) -> String {
-    let wrapper = r#"
-try {
-  var value = std.evalScript(scriptArgs[0]);
-  print('return|' + typeof value + '|' + String(value));
-} catch (error) {
-  if (error !== null && typeof error === 'object')
-    print('throw|object|' + error.name + '|' + error.message);
-  else
-    print('throw|' + typeof error + '|' + String(error));
-}
-"#;
-    let output = Command::new(oracle)
-        .args(["--std", "-e", wrapper, case.source])
-        .output()
-        .unwrap_or_else(|error| {
-            panic!(
-                "could not run QuickJS for {} / {}: {error}",
-                case.group, case.description,
-            )
-        });
-    assert!(
-        output.status.success(),
-        "QuickJS observer failed for {} / {}: {}",
-        case.group,
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-    );
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| {
-            panic!(
-                "QuickJS output was not UTF-8 for {} / {}: {error}",
-                case.group, case.description,
-            )
-        })
-        .trim_end()
-        .to_owned()
 }

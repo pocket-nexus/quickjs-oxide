@@ -1,11 +1,7 @@
+use crate::oracle_cases::SuccessCase;
+use crate::runtime_observation::assert_success;
 use std::ffi::OsStr;
 use std::process::{Command, Output};
-
-struct SuccessCase {
-    description: &'static str,
-    source: &'static str,
-    expected_stdout: &'static str,
-}
 
 const SEMANTIC_CASES: &[SuccessCase] = &[
     SuccessCase {
@@ -244,22 +240,6 @@ fn compare_success_cases(group: &str, cases: &[SuccessCase]) {
             );
         }
     }
-}
-
-fn assert_success(engine: &str, case: &SuccessCase, output: &Output) {
-    assert!(
-        output.status.success(),
-        "{engine} rejected {}: {}\nsource:\n{}",
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-        case.source
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        case.expected_stdout,
-        "{engine} output drifted for {}",
-        case.description
-    );
 }
 
 fn run(executable: &OsStr, source: &str) -> Output {

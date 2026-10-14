@@ -1,9 +1,34 @@
+use crate::object_graph_observation::error_string_property as error_string_property_2;
+use crate::object_graph_observation::string_property_value;
+use crate::oracle_cases::CompileCase;
+use crate::oracle_cases::ExpectedCase;
+use crate::oracle_cases::GroupedCase as Case;
+use crate::oracle_cases::StartMatchCase as MatchCase;
+use crate::oracle_cases::SuccessCase;
+use crate::quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf;
+use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end;
+use crate::quickjs_array_completion_oracle::observe_array_completion;
+use crate::runtime_observation::array_value_text;
+use crate::runtime_observation::assert_success;
+use crate::runtime_observation::error_name;
+use crate::runtime_observation::normalize_rust_value_text as normalize_rust_value;
+use crate::runtime_observation::primitive_value_text_with_signed_zero;
+use crate::runtime_observation::take_rust_error;
 use crate::runtime_observation::{
     checked_value_type, error_string_property, plain_value_type, primitive_value_text,
     primitive_value_text_with_rust_float, string_property, string_property_with_read_context,
 };
+use crate::runtime_oracle::run_cli;
 use crate::runtime_oracle::{error_string_property as runtime_error_string_property, value_type};
+use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::regexp::CompileErrorKind;
+use quickjs_oxide::regexp::compile;
+use quickjs_oxide::regexp::execute;
+use std::ffi::OsStr;
+use std::fmt::Write as _;
+use std::process::Command;
+use std::process::Output;
 
 #[derive(Clone, Copy)]
 enum ErrorPropertyStyle {
@@ -378,4 +403,727 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
         failures.len(),
         failures.join("\n\n"),
     );
+}
+
+// Helpers shared verbatim by several oracle modules.
+
+pub(crate) fn compare_argv_cases(group: &str, cases: &[(&str, &str)]) {
+    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
+        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
+        return;
+    };
+    for &(description, source) in cases {
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+        let mut context = runtime.new_context().expect("create context");
+        assert_eq!(
+            observe_legacy_float_eval_completion(&runtime, &mut context, source, description),
+            observe_completion_argv_strip_one_lf(&oracle, source, description),
+            "{group} drifted for {description}: {source:?}",
+        );
+    }
+}
+
+pub(crate) fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
+    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
+        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
+        return;
+    };
+    for &(description, source) in cases {
+        let expected = observe_completion_argv_trim_end(&oracle, source, description);
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+        let mut context = runtime.new_context().expect("create context");
+        assert_eq!(
+            observe_eval_completion_with_error_context(&runtime, &mut context, source, description),
+            expected,
+            "{group} drifted for {description}: {source:?}",
+        );
+    }
+}
+
+pub(crate) fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, description: &str) {
+    let rust = run_cli(
+        env!("CARGO_BIN_EXE_qjs").as_ref(),
+        options,
+        source,
+        description,
+    );
+    let quickjs = run_cli(oracle, options, source, description);
+    assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
+    assert_eq!(rust.stdout, quickjs.stdout, "{description}");
+    assert_eq!(rust.stderr, quickjs.stderr, "{description}");
+}
+
+pub(crate) fn oracle_script_case_observation(oracle: &OsStr, case: &Case) -> String {
+    let wrapper = r#"
+try {
+  var value = std.evalScript(scriptArgs[0]);
+  print('return|' + typeof value + '|' + String(value));
+} catch (error) {
+  if (error !== null && typeof error === 'object')
+    print('throw|object|' + error.name + '|' + error.message);
+  else
+    print('throw|' + typeof error + '|' + String(error));
+}
+"#;
+    let output = Command::new(oracle)
+        .args(["--std", "-e", wrapper, case.source])
+        .output()
+        .unwrap_or_else(|error| {
+            panic!(
+                "could not run QuickJS for {} / {}: {error}",
+                case.group, case.description,
+            )
+        });
+    assert!(
+        output.status.success(),
+        "QuickJS observer failed for {} / {}: {}",
+        case.group,
+        case.description,
+        String::from_utf8_lossy(&output.stderr),
+    );
+    String::from_utf8(output.stdout)
+        .unwrap_or_else(|error| {
+            panic!(
+                "QuickJS output was not UTF-8 for {} / {}: {error}",
+                case.group, case.description,
+            )
+        })
+        .trim_end()
+        .to_owned()
+}
+
+pub(crate) fn run(executable: &OsStr, source: &str) -> Output {
+    Command::new(executable)
+        .args(["-e", source])
+        .output()
+        .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
+}
+
+pub(crate) fn compare_success_cases(group: &str, cases: &[SuccessCase]) {
+    let oracle = std::env::var_os("QJS_ORACLE");
+    if oracle.is_none() {
+        eprintln!("SKIP {group} differential: set QJS_ORACLE to pinned upstream qjs");
+    }
+
+    for case in cases {
+        let oxide = run(env!("CARGO_BIN_EXE_qjs").as_ref(), case.source);
+        assert_success("quickjs-oxide", case, &oxide);
+
+        if let Some(oracle) = &oracle {
+            let quickjs = run(oracle, case.source);
+            assert_success("pinned QuickJS", case, &quickjs);
+            assert_eq!(
+                oxide.stdout, quickjs.stdout,
+                "{group} output differed for {}",
+                case.description
+            );
+        }
+    }
+}
+
+pub(crate) fn rust_value_observation(source: &str, description: &str) -> String {
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let value = runtime
+        .new_context()
+        .expect("create context")
+        .eval(source)
+        .unwrap_or_else(|error| panic!("Rust rejected {description} ({source:?}): {error}"));
+    normalize_rust_value(value)
+}
+
+pub(crate) const ORACLE_NORMALIZER: &str = r#"
+var __qjo_type = typeof __qjo_value;
+if (__qjo_type === "number") {
+    if (__qjo_value !== __qjo_value) {
+        print("number|NaN");
+    } else if (__qjo_value === 0 && 1 / __qjo_value === -Infinity) {
+        print("number|-0");
+    } else if (__qjo_value === Infinity) {
+        print("number|Infinity");
+    } else if (__qjo_value === -Infinity) {
+        print("number|-Infinity");
+    } else {
+        print("number|" + String(__qjo_value));
+    }
+} else if (__qjo_type === "string") {
+    var __qjo_units = "";
+    for (var __qjo_index = 0; __qjo_index < __qjo_value.length; __qjo_index++) {
+        var __qjo_hex = __qjo_value.charCodeAt(__qjo_index).toString(16);
+        if (__qjo_index !== 0) __qjo_units += ",";
+        __qjo_units += ("0000" + __qjo_hex).slice(-4);
+    }
+    print("string|" + __qjo_value.length + "|" + __qjo_units);
+} else if (__qjo_value === null) {
+    print("object|null");
+} else {
+    print(__qjo_type + "|" + String(__qjo_value));
+}
+"#;
+
+pub(crate) fn rust_error_observation(source: &str) -> String {
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let mut context = runtime.new_context().expect("create context");
+    assert_eq!(context.eval(source), Err(RuntimeError::Exception));
+    take_rust_error(&runtime, &mut context)
+}
+
+pub(crate) fn observe_rust_with_engine_errors(
+    runtime: &Runtime,
+    context: &mut Context,
+    source: &str,
+    description: &str,
+) -> String {
+    match context.eval(source) {
+        Ok(value) => format!(
+            "return|{}|{}",
+            checked_value_type(runtime, &value),
+            primitive_value_text_with_rust_float(value),
+        ),
+        Err(RuntimeError::Exception) => {
+            let exception = context
+                .take_exception()
+                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
+                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
+            match exception {
+                Value::Object(error) => format!(
+                    "throw|object|{}|{}",
+                    runtime_error_string_property(runtime, context, &error, "name", description),
+                    runtime_error_string_property(runtime, context, &error, "message", description),
+                ),
+                value => format!(
+                    "throw|{}|{}",
+                    checked_value_type(runtime, &value),
+                    primitive_value_text_with_rust_float(value),
+                ),
+            }
+        }
+        Err(error) => format!("engine|{error}"),
+    }
+}
+
+pub(crate) fn observe_oxide(context: &mut Context, case: &Case) -> String {
+    let value = context
+        .eval(case.source)
+        .unwrap_or_else(|error| panic!("Oxide observer failed for {}: {error}", case.description));
+    let Value::String(value) = value else {
+        panic!(
+            "Oxide observer returned a non-String for {}",
+            case.description
+        );
+    };
+    value.to_utf8_lossy()
+}
+
+pub(crate) fn rust_case_observation(case: &Case) -> String {
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let mut context = runtime.new_context().expect("create context");
+    match context.eval(case.source) {
+        Ok(value) => format!(
+            "return|{}|{}",
+            checked_value_type(&runtime, &value),
+            primitive_value_text(value),
+        ),
+        Err(RuntimeError::Exception) => {
+            let exception = context
+                .take_exception()
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "take Rust exception for {} / {}: {error}",
+                        case.group, case.description,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Rust exception was missing for {} / {}",
+                        case.group, case.description,
+                    )
+                });
+            match exception {
+                Value::Object(error) => format!(
+                    "throw|object|{}|{}",
+                    error_string_property_2(&runtime, &mut context, &error, "name", case),
+                    error_string_property_2(&runtime, &mut context, &error, "message", case),
+                ),
+                value => format!(
+                    "throw|{}|{}",
+                    checked_value_type(&runtime, &value),
+                    primitive_value_text(value),
+                ),
+            }
+        }
+        Err(error) => panic!(
+            "Rust engine failure for {} / {} ({:?}): {error}",
+            case.group, case.description, case.source,
+        ),
+    }
+}
+
+pub(crate) fn compare_array_value_cases(group: &str, cases: &[(&str, &str)]) {
+    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
+        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
+        return;
+    };
+    for &(description, source) in cases {
+        let expected = observe_array_completion(&oracle, source, description);
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+        let mut context = runtime.new_context().expect("create context");
+        assert_eq!(
+            observe_array_aware_eval(&runtime, &mut context, source, description),
+            expected,
+            "{group} drifted for {description}: {source:?}",
+        );
+    }
+}
+
+pub(crate) fn observe_array_aware_eval(
+    runtime: &Runtime,
+    context: &mut Context,
+    source: &str,
+    description: &str,
+) -> String {
+    match context.eval(source) {
+        Ok(Value::Object(object)) if runtime.is_array_object(&object).unwrap() => format!(
+            "return|array|{}",
+            array_value_text(runtime, context, &object, description),
+        ),
+        Ok(value) => format!(
+            "return|{}|{}",
+            value_type(runtime, &value),
+            primitive_value_text(value),
+        ),
+        Err(RuntimeError::Exception) => {
+            let exception = context
+                .take_exception()
+                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
+                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
+            match exception {
+                Value::Object(error) => format!(
+                    "throw|object|{}|{}",
+                    error_string_property(runtime, context, &error, "name", description),
+                    error_string_property(runtime, context, &error, "message", description),
+                ),
+                value => format!(
+                    "throw|{}|{}",
+                    value_type(runtime, &value),
+                    primitive_value_text(value),
+                ),
+            }
+        }
+        Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
+    }
+}
+
+pub(crate) fn oracle_case_completion(oracle: &OsStr, case: &Case) -> String {
+    let description = format!("{} / {}", case.group, case.description);
+    crate::quickjs_oracle::observe_completion(oracle, case.source, &description)
+}
+
+pub(crate) fn compare_object_pattern_cases(group: &str, cases: &[(&str, &str)]) {
+    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
+        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
+        return;
+    };
+    for &(description, source) in cases {
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+        let mut context = runtime.new_context().expect("create context");
+        assert_eq!(
+            observe_legacy_float_eval_completion(&runtime, &mut context, source, description),
+            crate::support::quickjs_object_pattern_oracle::observe_completion_strip_one_lf(
+                &oracle,
+                source,
+                description,
+            ),
+            "{group} drifted for {description}: {source:?}",
+        );
+    }
+}
+
+pub(crate) fn rust_case_name_observation(case: &Case) -> String {
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let mut context = runtime.new_context().expect("create context");
+    match context.eval(case.source) {
+        Ok(value) => format!(
+            "return|{}|{}",
+            checked_value_type(&runtime, &value),
+            primitive_value_text(value),
+        ),
+        Err(RuntimeError::Exception) => {
+            let exception = context
+                .take_exception()
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "take Rust exception for {} / {}: {error}",
+                        case.group, case.description,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Rust exception was missing for {} / {}",
+                        case.group, case.description,
+                    )
+                });
+            match exception {
+                Value::Object(error) => format!(
+                    "throw|object|{}",
+                    error_name(&runtime, &mut context, &error, case),
+                ),
+                value => format!(
+                    "throw|{}|{}",
+                    checked_value_type(&runtime, &value),
+                    primitive_value_text(value),
+                ),
+            }
+        }
+        Err(error) => panic!(
+            "Rust engine failure for {} / {} ({:?}): {error}",
+            case.group, case.description, case.source,
+        ),
+    }
+}
+
+pub(crate) fn observe_rust(
+    runtime: &Runtime,
+    context: &mut Context,
+    source: &str,
+    description: &str,
+) -> String {
+    match context.eval(source) {
+        Ok(value) => format!(
+            "return|{}|{}",
+            value_type(runtime, &value),
+            primitive_value_text_with_rust_float(value),
+        ),
+        Err(RuntimeError::Exception) => {
+            let exception = context
+                .take_exception()
+                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
+                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
+            match exception {
+                Value::Object(error) => format!(
+                    "throw|object|{}|{}",
+                    runtime_error_string_property(runtime, context, &error, "name", description),
+                    runtime_error_string_property(runtime, context, &error, "message", description),
+                ),
+                value => format!(
+                    "throw|{}|{}",
+                    value_type(runtime, &value),
+                    primitive_value_text_with_rust_float(value),
+                ),
+            }
+        }
+        Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
+    }
+}
+
+pub(crate) fn observe_rust_result(
+    result: Option<&quickjs_oxide::regexp::RegExpMatch>,
+    input: &[u16],
+) -> String {
+    let Some(result) = result else {
+        return "N".to_owned();
+    };
+    let complete = result
+        .capture(0)
+        .expect("a successful match has capture zero");
+    let mut output = format!("M|{}|{}", complete.start, result.captures().len());
+    for capture in result.captures() {
+        match capture {
+            None => output.push_str("|U"),
+            Some(range) => {
+                write!(output, "|{},{}:", range.start, range.end).unwrap();
+                for unit in &input[range.clone()] {
+                    write!(output, "{unit:04x}").unwrap();
+                }
+            }
+        }
+    }
+    output
+}
+
+pub(crate) const REGEXP_COMPLETION_PRELUDE: &str = r#"
+function __bit(value){return value?"1":"0"}
+function __bits(object,key){
+    var descriptor=Object.getOwnPropertyDescriptor(object,key);
+    if(descriptor===undefined)return "missing";
+    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+
+        __bit(descriptor.configurable);
+}
+function __isConstructor(value){
+    try{Reflect.construct(function(){},[],value);return true}
+    catch(_error){return false}
+}
+function __show(value){
+    if(value===undefined)return "undefined";
+    if(value===null)return "null";
+    if(typeof value==="number"){
+        if(value!==value)return "NaN";
+        if(value===0)return 1/value===-Infinity?"-0":"+0";
+    }
+    return String(value);
+}
+function __completion(callback){
+    try{return "return:"+String(callback())}
+    catch(error){
+        if(error!==null&&typeof error==="object")
+            return "throw:"+error.name+":"+error.message;
+        return "throw:"+typeof error+":"+String(error);
+    }
+}
+"#;
+
+pub(crate) fn observe_rust_match(case: &MatchCase) -> String {
+    let pattern = JsString::try_from_utf16(case.pattern.iter().copied()).unwrap();
+    let flags = JsString::try_from_utf8(case.flags).unwrap();
+    let program = match compile(&pattern, &flags) {
+        Ok(program) => program,
+        Err(error) => {
+            return format!(
+                "CompileError|{:?}|{}|{}",
+                error.kind(),
+                error.position(),
+                error.message(),
+            );
+        }
+    };
+    match execute(&program, &case.input, case.start) {
+        Ok(result) => observe_rust_result(result.as_ref(), &case.input),
+        Err(error) => format!("ExecError|{error}"),
+    }
+}
+
+pub(crate) fn observe_rust_compile(case: &CompileCase) -> String {
+    let pattern = JsString::try_from_utf8(case.pattern).unwrap();
+    let flags = JsString::try_from_utf8(case.flags).unwrap();
+    match compile(&pattern, &flags) {
+        Ok(_) => "ok".to_owned(),
+        Err(error) if matches!(error.kind(), CompileErrorKind::Syntax) => "SyntaxError".to_owned(),
+        Err(error) => format!("CompileError|{:?}", error.kind()),
+    }
+}
+
+pub(crate) const REGEXP_MATCH_ALL_PRELUDE: &str = r#"
+function __bit(value){return value?"1":"0"}
+function __bits(object,key){
+    var descriptor=Object.getOwnPropertyDescriptor(object,key);
+    if(descriptor===undefined)return "missing";
+    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+
+        __bit(descriptor.configurable);
+}
+function __isConstructor(value){
+    try{Reflect.construct(function(){},[],value);return true}
+    catch(_error){return false}
+}
+function __show(value){
+    if(value===undefined)return "undefined";
+    if(value===null)return "null";
+    if(typeof value==="number"){
+        if(value!==value)return "NaN";
+        if(value===0)return 1/value===-Infinity?"-0":"+0";
+    }
+    return String(value);
+}
+function __completion(callback){
+    try{return "return:"+String(callback())}
+    catch(error){
+        if(error!==null&&typeof error==="object")
+            return "throw:"+error.name+":"+error.message;
+        return "throw:"+typeof error+":"+String(error);
+    }
+}
+function __step(iterator){
+    var result=iterator.next(),value=result.value;
+    return String(result.done)+":"+
+        (value===undefined?"undefined":__show(value[0])+":"+
+            __show(value.index));
+}
+"#;
+
+pub(crate) fn compare_cases_collecting_failures(group: &str, cases: &[(&str, &str)]) {
+    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
+        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
+        return;
+    };
+    let mut failures = Vec::new();
+    for &(description, source) in cases {
+        let runtime =
+            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+        let mut context = runtime.new_context().expect("create context");
+        let actual = observe_match_all_eval(&runtime, &mut context, source, description);
+        let expected = observe_oracle(&oracle, source, description);
+        if actual != expected {
+            failures.push(format!(
+                "{description}\nsource: {source:?}\noxide: {actual:?}\noracle: {expected:?}",
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{group} drifted in {} case(s):\n\n{}",
+        failures.len(),
+        failures.join("\n\n"),
+    );
+}
+
+pub(crate) fn observed_source(source: &str) -> String {
+    format!("{REGEXP_MATCH_ALL_PRELUDE}\n{source}")
+}
+
+pub(crate) fn observe_match_all_eval(
+    runtime: &Runtime,
+    context: &mut Context,
+    source: &str,
+    description: &str,
+) -> String {
+    let source = observed_source(source);
+    match context.eval(&source) {
+        Ok(value) => format!(
+            "return|{}|{}",
+            value_type(runtime, &value),
+            primitive_value_text_with_signed_zero(value),
+        ),
+        Err(RuntimeError::Exception) => {
+            let exception = context
+                .take_exception()
+                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
+                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
+            match exception {
+                Value::Object(error) => format!(
+                    "throw|object|{}|{}",
+                    string_property_value(runtime, context, &error, "name"),
+                    string_property_value(runtime, context, &error, "message"),
+                ),
+                value => format!(
+                    "throw|{}|{}",
+                    value_type(runtime, &value),
+                    primitive_value_text_with_signed_zero(value),
+                ),
+            }
+        }
+        Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
+    }
+}
+
+pub(crate) fn observe_oracle(oracle: &OsStr, source: &str, description: &str) -> String {
+    let source = observed_source(source);
+    crate::quickjs_oracle::observe_completion(oracle, &source, description)
+}
+
+pub(crate) const REGEXP_REPLACE_PRELUDE: &str = r#"
+function __bit(value){return value?"1":"0"}
+function __bits(object,key){
+    var descriptor=Object.getOwnPropertyDescriptor(object,key);
+    if(descriptor===undefined)return "missing";
+    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+
+        __bit(descriptor.configurable);
+}
+function __isConstructor(value){
+    try{Reflect.construct(function(){},[],value);return true}
+    catch(_error){return false}
+}
+function __show(value){
+    if(value===undefined)return "undefined";
+    if(value===null)return "null";
+    if(typeof value==="number"){
+        if(value!==value)return "NaN";
+        if(value===0)return 1/value===-Infinity?"-0":"+0";
+    }
+    return String(value);
+}
+function __completion(callback){
+    try{return "return:"+String(callback())}
+    catch(error){
+        if(error!==null&&typeof error==="object")
+            return "throw:"+error.name+":"+error.message;
+        return "throw:"+typeof error+":"+String(error);
+    }
+}
+function __units(value){
+    var string=String(value),output=[],index=0;
+    while(index<string.length){
+        output[index]=string.charCodeAt(index).toString(16);
+        index++;
+    }
+    return string.length+"["+output.join(",")+"]";
+}
+"#;
+
+pub(crate) const STRING_CAPTURE_PRELUDE: &str = r#"
+function __bits(object,key){
+    var descriptor=Object.getOwnPropertyDescriptor(object,key);
+    return (descriptor.writable?"1":"0")+
+           (descriptor.enumerable?"1":"0")+
+           (descriptor.configurable?"1":"0");
+}
+function __isConstructor(value){
+    try{new value();return true}catch(_){return false}
+}
+function __units(value){
+    value=String(value);
+    var output="",index=0;
+    while(index<value.length){
+        var unit=value.charCodeAt(index).toString(16);
+        while(unit.length<4)unit="0"+unit;
+        if(index)output+=",";
+        output+=unit;
+        index++;
+    }
+    return output;
+}
+function __capture(callback){
+    try{return "return:"+callback()}
+    catch(error){
+        if(error!==null&&typeof error==="object")return "throw:"+error.name+":"+error.message;
+        return "throw:"+typeof error+":"+String(error);
+    }
+}
+"#;
+
+pub(crate) const STRING_CASE_PRELUDE: &str = r#"
+function __bits(object,key){
+    var descriptor=Object.getOwnPropertyDescriptor(object,key);
+    return (descriptor.writable?"1":"0")+
+           (descriptor.enumerable?"1":"0")+
+           (descriptor.configurable?"1":"0");
+}
+function __isConstructor(value){
+    try{new value();return true}catch(_){return false}
+}
+function __units(value){
+    value=String(value);
+    var output="",index=0;
+    while(index<value.length){
+        var unit=value.charCodeAt(index).toString(16);
+        while(unit.length<4)unit="0"+unit;
+        if(index)output+=",";
+        output+=unit;
+        index++;
+    }
+    return output;
+}
+"#;
+
+pub(crate) fn oxide_observation(case: &ExpectedCase) -> String {
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let mut context = runtime.new_context().expect("create context");
+    match context.eval(case.source) {
+        Ok(Value::String(value)) => value.to_utf8_lossy(),
+        Ok(value) => panic!(
+            "Oxide returned a non-string for {}: {value:?}",
+            case.description,
+        ),
+        Err(RuntimeError::Exception) => {
+            let exception = context.take_exception().unwrap();
+            panic!("Oxide threw for {}: {exception:?}", case.description);
+        }
+        Err(error) => panic!("Oxide failed for {}: {error}", case.description),
+    }
 }

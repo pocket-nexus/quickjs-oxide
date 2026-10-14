@@ -1,6 +1,6 @@
-use quickjs_oxide::engine::api::{
-    CallableRef, Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
-};
+use crate::object_graph_observation::{get_property as property_value, property_text};
+use crate::runtime_observation::{string_value as string, value_text};
+use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -209,42 +209,6 @@ fn stack_frames(
     let frames = stack.lines().collect::<Vec<_>>();
     assert_eq!(frames.len(), count, "Rust Error.stack grew extra frames");
     frames.join("|")
-}
-
-fn property_text(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> String {
-    value_text(property_value(runtime, context, object, name))
-}
-
-fn property_value(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> Value {
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(object, &key).unwrap()
-}
-
-fn value_text(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => value.to_string(),
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Object(_) | Value::Symbol(_) => panic!("unexpected observation value"),
-    }
-}
-
-fn string(value: &str) -> Value {
-    Value::String(JsString::try_from_utf8(value).unwrap())
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {

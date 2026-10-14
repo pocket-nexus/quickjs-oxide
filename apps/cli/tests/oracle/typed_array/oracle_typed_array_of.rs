@@ -1,21 +1,18 @@
 use super::quickjs_typed_array_oracle::observe_string_value;
 use crate::runtime_observation::take_exception_object;
 
-use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{
-    Context, DescriptorField, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
+use crate::object_graph_observation::{
+    define_global_with_message as define_global, eval_string_with_global,
 };
+use crate::oracle_cases::ExpectedCase as Case;
+use crate::runtime_completion_oracle::oxide_observation;
+use crate::runtime_oracle::{eval_callable, eval_object};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 // These vectors pin QuickJS 2026-06-04's `js_typed_array_of` and
 // `js_typed_array_create` paths. They intentionally cover construction,
 // validation, conversion, and integer-indexed writes as one observable
 // operation.
-struct Case {
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
-
 const CASES: &[Case] = &[
     Case {
         description: "surface descriptors and constructor receiver validation",
@@ -572,57 +569,5 @@ fn typed_array_of_cross_realm_results_errors_and_abrupt_values() {
         runtime.get_prototype_of(&error).unwrap(),
         Some(defining_type_error),
         "element conversion TypeError did not use the builtin defining realm",
-    );
-}
-
-fn oxide_observation(case: &Case) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
-    match context.eval(case.source) {
-        Ok(Value::String(value)) => value.to_utf8_lossy(),
-        Ok(value) => panic!(
-            "Oxide returned a non-string for {}: {value:?}",
-            case.description,
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context.take_exception().unwrap();
-            panic!("Oxide threw for {}: {exception:?}", case.description);
-        }
-        Err(error) => panic!("Oxide failed for {}: {error}", case.description),
-    }
-}
-
-fn eval_string_with_global(
-    runtime: &Runtime,
-    context: &mut Context,
-    name: &str,
-    value: Value,
-    source: &str,
-) -> String {
-    define_global(runtime, context, name, value);
-    let Value::String(value) = context.eval(source).expect("cross-realm observation") else {
-        panic!("cross-realm observation did not return a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn define_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
-    let key = runtime.intern_property_key(name).unwrap();
-    assert!(
-        context
-            .define_own_property(
-                &context.global_object().unwrap(),
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "could not define {name}",
     );
 }

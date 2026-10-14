@@ -1,6 +1,6 @@
-use quickjs_oxide::engine::api::{
-    Context, DescriptorField, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
-};
+use crate::object_graph_observation::data_property;
+use crate::runtime_observation::string_text as text;
+use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("host_gc_execution_turn.js");
 const QUICKJS_2026_06_04: &str =
@@ -23,23 +23,6 @@ fn eval(context: &mut Context, source: &str) -> Value {
         }
         panic!("unexpected engine error: {error}");
     })
-}
-
-fn text(value: Value) -> String {
-    let Value::String(value) = value else {
-        panic!("expected a string value");
-    };
-    value.to_utf8_lossy()
-}
-
-fn data_property(value: Value) -> OrdinaryPropertyDescriptor {
-    OrdinaryPropertyDescriptor {
-        value: DescriptorField::Present(value),
-        writable: DescriptorField::Present(true),
-        enumerable: DescriptorField::Present(true),
-        configurable: DescriptorField::Present(true),
-        ..OrdinaryPropertyDescriptor::new()
-    }
 }
 
 fn install_test262_gc(context: &mut Context) {

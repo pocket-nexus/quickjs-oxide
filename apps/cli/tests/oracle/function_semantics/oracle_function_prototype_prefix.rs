@@ -1,3 +1,7 @@
+use crate::object_graph_observation::{
+    bit, complete_data_descriptor as data_descriptor, function, own_key_names as key_names,
+};
+use crate::runtime_observation::show_exception;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -737,16 +741,6 @@ fn rust_has_instance_configurable_rejection() -> String {
     )
 }
 
-fn function(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("function probe did not return an object: {source}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("function probe was not callable: {source}"))
-}
-
 fn accessor_descriptor(
     runtime: &Runtime,
     object: &ObjectRef,
@@ -764,23 +758,6 @@ fn accessor_descriptor(
     (get, set, enumerable, configurable)
 }
 
-fn data_descriptor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-) -> (Value, bool, bool, bool) {
-    let Some(CompleteOrdinaryPropertyDescriptor::Data {
-        value,
-        writable,
-        enumerable,
-        configurable,
-    }) = runtime.get_own_property(object, key).unwrap()
-    else {
-        panic!("expected a complete data descriptor");
-    };
-    (value, writable, enumerable, configurable)
-}
-
 fn getter_descriptor(getter: CallableRef) -> OrdinaryPropertyDescriptor {
     OrdinaryPropertyDescriptor {
         get: DescriptorField::Present(AccessorValue::Callable(getter)),
@@ -789,20 +766,6 @@ fn getter_descriptor(getter: CallableRef) -> OrdinaryPropertyDescriptor {
         configurable: DescriptorField::Present(true),
         ..OrdinaryPropertyDescriptor::new()
     }
-}
-
-fn key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
-    runtime
-        .own_property_keys(object)
-        .unwrap()
-        .into_iter()
-        .map(|key| {
-            runtime
-                .property_key_to_js_string(&key)
-                .unwrap()
-                .to_utf8_lossy()
-        })
-        .collect()
 }
 
 fn observe_call(
@@ -833,28 +796,6 @@ fn show_value(value: Value) -> String {
         Value::String(value) => format!("string:{}", value.to_utf8_lossy()),
         value => panic!("unexpected probe return value: {value:?}"),
     }
-}
-
-fn show_exception(runtime: &Runtime, context: &mut Context, exception: Value) -> String {
-    match exception {
-        Value::String(value) => format!("throw-string:{}", value.to_utf8_lossy()),
-        Value::Object(error) if runtime.is_error_object(&error).unwrap() => {
-            let name = runtime.intern_property_key("name").unwrap();
-            let message = runtime.intern_property_key("message").unwrap();
-            let Value::String(name) = context.get_property(&error, &name).unwrap() else {
-                panic!("error name was not a string");
-            };
-            let Value::String(message) = context.get_property(&error, &message).unwrap() else {
-                panic!("error message was not a string");
-            };
-            format!("throw:{}|{}", name.to_utf8_lossy(), message.to_utf8_lossy())
-        }
-        value => panic!("unexpected thrown probe value: {value:?}"),
-    }
-}
-
-const fn bit(value: bool) -> u8 {
-    value as u8
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {

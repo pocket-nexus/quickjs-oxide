@@ -1,7 +1,13 @@
+use crate::object_graph_observation::{
+    callable_int_property, callable_string_property, data_flags,
+    define_checked_builtin_data as define_data, define_checked_builtin_data_key as define_data_key,
+    eval_callable, expect_object, global_callable, global_object_value as global_value,
+    intrinsic_prototype, joined_own_key_names as own_key_names,
+};
+use crate::runtime_observation::error_text;
 use crate::runtime_observation::{property_callable, take_thrown_object as take_exception_object};
 use quickjs_oxide::engine::api::{
-    CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, EvalOptions,
-    JsBigInt, JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError,
+    CallableRef, Context, EvalOptions, JsBigInt, JsString, PropertyKey, Runtime, RuntimeError,
     Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
@@ -749,133 +755,6 @@ fn rust_observations() -> Vec<String> {
     observations
 }
 
-fn global_callable(runtime: &Runtime, context: &mut Context, name: &str) -> CallableRef {
-    let global = context.global_object().unwrap();
-    property_callable(runtime, context, &global, name)
-}
-
-fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {
-    let constructor = global_callable(runtime, context, name);
-    let prototype = runtime.intern_property_key("prototype").unwrap();
-    let Value::Object(prototype) = context
-        .get_property(constructor.as_object(), &prototype)
-        .unwrap()
-    else {
-        panic!("{name}.prototype was not an object");
-    };
-    prototype
-}
-
-fn callable_int_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    callable: &CallableRef,
-    name: &str,
-) -> i32 {
-    let Value::Int(value) = context
-        .get_property(
-            callable.as_object(),
-            &runtime.intern_property_key(name).unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("callable {name} was not an Int");
-    };
-    value
-}
-
-fn callable_string_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    callable: &CallableRef,
-    name: &str,
-) -> String {
-    let Value::String(value) = context
-        .get_property(
-            callable.as_object(),
-            &runtime.intern_property_key(name).unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("callable {name} was not a String");
-    };
-    value.to_utf8_lossy()
-}
-
-fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> String {
-    runtime
-        .own_property_keys(object)
-        .unwrap()
-        .iter()
-        .map(|key| {
-            runtime
-                .property_key_to_js_string(key)
-                .unwrap()
-                .to_utf8_lossy()
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-fn data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Some(CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    }) = runtime.get_own_property(object, &key).unwrap()
-    else {
-        panic!("{name} was not an own data property");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
-}
-
-fn define_data(runtime: &Runtime, object: &ObjectRef, name: &str, value: Value) {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key(runtime, object, &key, value);
-}
-
-fn define_data_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey, value: Value) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host data-property definition was rejected"
-    );
-}
-
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("callable source did not produce an object: {source:?}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("source did not produce a callable: {source:?}"))
-}
-
-fn global_value(runtime: &Runtime, context: &mut Context, global: &ObjectRef, name: &str) -> Value {
-    context
-        .get_property(global, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-}
-
 fn call_bool(context: &mut Context, callable: &CallableRef, argument: Value) -> bool {
     let Value::Bool(value) = context
         .call(callable, Value::Undefined, &[argument])
@@ -908,23 +787,6 @@ fn observe_call(
         }
         Err(error) => panic!("numeric predicate returned engine error: {error}"),
     }
-}
-
-fn error_text(runtime: &Runtime, context: &mut Context, error: &ObjectRef, name: &str) -> String {
-    let Value::String(value) = context
-        .get_property(error, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("Error.{name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} did not produce an object");
-    };
-    object
 }
 
 fn plain_value(value: Value) -> String {

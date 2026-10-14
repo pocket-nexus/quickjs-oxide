@@ -1,8 +1,8 @@
 //! Differential coverage for the contextual `await` boundary of synthetic
 //! public/private, instance/static class-field initializer functions.
 
-use std::ffi::OsStr;
-use std::process::{Command, Output};
+use crate::runtime_completion_oracle::run;
+use std::process::Output;
 
 const MATRIX_SOURCE: &str = r#"
 var aw\u0061it = 40;
@@ -72,11 +72,4 @@ fn assert_success(engine: &str, description: &str, source: &str, output: &Output
         EXPECTED_STDOUT,
         "{engine} output drifted for the {description} class-field await matrix"
     );
-}
-
-fn run(executable: &OsStr, source: &str) -> Output {
-    Command::new(executable)
-        .args(["-e", source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
 }

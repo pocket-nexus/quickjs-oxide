@@ -1,3 +1,8 @@
+use crate::object_graph_observation::{
+    define_checked_builtin_data as define_data, define_checked_builtin_data_key as define_data_key,
+    eval_callable, expect_object, global_callable, global_string as string_global,
+};
+use crate::runtime_observation::error_text;
 use crate::runtime_observation::{property_callable, take_thrown_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsBigInt, JsString, ObjectRef,
@@ -693,11 +698,6 @@ fn rust_constructor_observations() -> Vec<String> {
     ]
 }
 
-fn global_callable(runtime: &Runtime, context: &mut Context, name: &str) -> CallableRef {
-    let global = context.global_object().unwrap();
-    property_callable(runtime, context, &global, name)
-}
-
 fn constructor_prototype(
     runtime: &Runtime,
     context: &mut Context,
@@ -725,42 +725,8 @@ fn bound_constructor(runtime: &Runtime, context: &mut Context) -> CallableRef {
     function
 }
 
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("callable source did not produce an object: {source:?}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("source did not produce a callable: {source:?}"))
-}
-
 fn define_global(runtime: &Runtime, global: &ObjectRef, name: &str, value: Value) {
     define_data(runtime, global, name, value);
-}
-
-fn define_data(runtime: &Runtime, object: &ObjectRef, name: &str, value: Value) {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key(runtime, object, &key, value);
-}
-
-fn define_data_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey, value: Value) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host data-property definition was rejected"
-    );
 }
 
 fn define_getter(runtime: &Runtime, object: &ObjectRef, name: &str, getter: CallableRef) {
@@ -781,38 +747,6 @@ fn define_getter(runtime: &Runtime, object: &ObjectRef, name: &str, getter: Call
             .unwrap(),
         "host accessor-property definition was rejected"
     );
-}
-
-fn string_global(
-    runtime: &Runtime,
-    context: &mut Context,
-    global: &ObjectRef,
-    name: &str,
-) -> String {
-    let Value::String(value) = context
-        .get_property(global, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("global {name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn error_text(runtime: &Runtime, context: &mut Context, error: &ObjectRef, name: &str) -> String {
-    let Value::String(value) = context
-        .get_property(error, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("Error.{name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} did not produce an object");
-    };
-    object
 }
 
 fn assert_number(value: Value, expected: f64) {

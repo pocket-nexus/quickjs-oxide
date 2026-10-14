@@ -1,16 +1,10 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
+use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text as primitive_text,
 };
 use crate::runtime_oracle::error_string_property;
 use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
-
-struct Case {
-    group: &'static str,
-    description: &'static str,
-    source: &'static str,
-    expected: &'static str,
-}
 
 // Pins QuickJS 2026-06-04's `OP_append`, `OP_apply`, and `OP_apply_eval`
 // pipeline. In particular, argument spread is not just generic IteratorStep:

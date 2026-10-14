@@ -1,71 +1,7 @@
-use quickjs_oxide::engine::api::{
-    CallableRef, Context, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, Runtime,
-    RuntimeError, Value,
-};
+use crate::object_graph_observation::{define_context_global as define_global, object};
+use crate::runtime_observation::{drain, eval, integer, text};
+use quickjs_oxide::engine::api::{CallableRef, Runtime, Value};
 use std::process::Command;
-
-fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
-        panic!("unexpected engine error: {error}");
-    })
-}
-
-fn text(value: Value) -> String {
-    let Value::String(value) = value else {
-        panic!("expected a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn integer(value: Value) -> i32 {
-    let Value::Int(value) = value else {
-        panic!("expected an integer");
-    };
-    value
-}
-
-fn object(value: Value) -> ObjectRef {
-    let Value::Object(value) = value else {
-        panic!("expected an object");
-    };
-    value
-}
-
-fn drain(runtime: &Runtime) -> usize {
-    let mut count = 0;
-    while runtime.is_job_pending().expect("runtime state") {
-        assert!(runtime.execute_pending_job().unwrap().executed());
-        count += 1;
-    }
-    count
-}
-
-fn define_global(context: &mut Context, name: &str, value: Value) {
-    let runtime = context.runtime().clone();
-    let key = runtime.intern_property_key(name).unwrap();
-    let global = context.global_object().unwrap();
-    assert!(
-        context
-            .define_own_property(
-                &global,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
 
 #[test]
 fn function_expression_await_names_match_pinned_quickjs_token_context() {

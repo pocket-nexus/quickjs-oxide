@@ -1,6 +1,6 @@
 use crate::quickjs_argv_completion_oracle;
-use crate::runtime_completion_oracle::observe_eval_completion_with_error_context as observe_rust_eval;
 
+use crate::runtime_completion_oracle::compare_value_cases;
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
 };
@@ -340,24 +340,6 @@ fn array_search_errors_use_the_native_defining_realm() {
             caller.get_property(&error, &marker_key).unwrap(),
             Value::String(JsString::try_from_utf8("defining").unwrap()),
             "{name} allocated its TypeError in the caller realm",
-        );
-    }
-}
-
-fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
-    for &(description, source) in cases {
-        let expected = observe_oracle(&oracle, source, description);
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            observe_rust_eval(&runtime, &mut context, source, description),
-            expected,
-            "{group} drifted for {description}: {source:?}",
         );
     }
 }

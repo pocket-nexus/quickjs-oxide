@@ -1,3 +1,4 @@
+use crate::object_graph_observation::require_object as expect_object;
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
     string_property_with_read_context as string_property, take_exception_object,
@@ -665,11 +666,4 @@ fn number_property(
         .unwrap_or_else(|error| panic!("read numeric property {name}: {error}"))
         .as_number()
         .unwrap_or_else(|| panic!("{name} was not numeric"))
-}
-
-fn expect_object(value: Value, description: &str) -> ObjectRef {
-    let Value::Object(object) = value else {
-        panic!("{description} was not an object");
-    };
-    object
 }

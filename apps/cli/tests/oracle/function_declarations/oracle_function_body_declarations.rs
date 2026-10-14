@@ -2,9 +2,9 @@ use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_stri
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
 use crate::runtime_observation::primitive_value_text_with_rust_float as primitive_value_text;
 
-use crate::runtime_oracle::{error_string_property, run_cli};
+use crate::runtime_completion_oracle::compare_cli;
+use crate::runtime_oracle::error_string_property;
 use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
-use std::ffi::OsStr;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -373,17 +373,4 @@ fn function_body_declaration_cross_realm_regression() {
         runtime.get_prototype_of(&error).unwrap(),
         Some(reference_error_prototype_b)
     );
-}
-
-fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, description: &str) {
-    let rust = run_cli(
-        env!("CARGO_BIN_EXE_qjs").as_ref(),
-        options,
-        source,
-        description,
-    );
-    let quickjs = run_cli(oracle, options, source, description);
-    assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
-    assert_eq!(rust.stdout, quickjs.stdout, "{description}");
-    assert_eq!(rust.stderr, quickjs.stderr, "{description}");
 }

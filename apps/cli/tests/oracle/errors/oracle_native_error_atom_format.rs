@@ -1,14 +1,9 @@
+use crate::oracle_cases::NativeErrorObservation as Observation;
 use quickjs_oxide::engine::api::{
     DescriptorField, JsString, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
 };
 use std::ffi::OsStr;
 use std::process::Command;
-
-#[derive(Debug, Eq, PartialEq)]
-struct Observation {
-    name: Vec<u16>,
-    message: Vec<u16>,
-}
 
 #[test]
 fn atom_error_format_preserves_ascii_fast_path_and_non_ascii_scratch_boundary() {

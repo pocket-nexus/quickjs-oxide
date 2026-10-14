@@ -1,27 +1,9 @@
-use quickjs_oxide::engine::api::{Context, PendingJobOutcome, Runtime, RuntimeError, Value};
+use crate::runtime_observation::{eval, string_text as text};
+use quickjs_oxide::engine::api::{PendingJobOutcome, Runtime, Value};
 
 const FIXTURE: &str = include_str!("../fixtures/inputs/create_realm_host.js");
 const QUICKJS_2026_06_04: &str =
     include_str!("../fixtures/expected/create_realm_host.quickjs-2026-06-04.txt");
-
-fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
-        panic!("unexpected engine error: {error}");
-    })
-}
-
-fn text(value: Value) -> String {
-    let Value::String(value) = value else {
-        panic!("expected a string value");
-    };
-    value.to_utf8_lossy()
-}
 
 #[test]
 fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {

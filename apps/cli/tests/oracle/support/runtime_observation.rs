@@ -1,4 +1,11 @@
+use crate::oracle_cases::GroupedCase as Case;
+use crate::oracle_cases::SuccessCase;
+use quickjs_oxide::engine::api::JsString;
+use quickjs_oxide::engine::api::RuntimeError;
+use quickjs_oxide::engine::api::number_to_string;
 use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, Value};
+use std::fmt::Write as _;
+use std::process::Output;
 
 /// Classify a value for completion-vector output while retaining the explicit
 /// callable-inspection assertion used by the older oracle helpers.
@@ -198,4 +205,357 @@ pub(crate) fn take_thrown_object(context: &mut Context) -> ObjectRef {
         panic!("operation did not throw an object");
     };
     error
+}
+
+// Helpers shared verbatim by several oracle modules.
+
+pub(crate) fn string_units(value: &JsString) -> String {
+    value
+        .utf16_units()
+        .map(|unit| format!("{unit:04x}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub(crate) fn eval(context: &mut Context, source: &str) -> Value {
+    context.eval(source).unwrap_or_else(|error| {
+        if error == RuntimeError::Exception {
+            panic!(
+                "unexpected JavaScript exception: {:?}",
+                context.take_exception()
+            );
+        }
+        panic!("unexpected engine error: {error}");
+    })
+}
+
+pub(crate) fn text(value: Value) -> String {
+    let Value::String(value) = value else {
+        panic!("expected a string");
+    };
+    value.to_utf8_lossy()
+}
+
+pub(crate) fn integer(value: Value) -> i32 {
+    let Value::Int(value) = value else {
+        panic!("expected an integer");
+    };
+    value
+}
+
+pub(crate) fn drain(runtime: &Runtime) -> usize {
+    let mut count = 0;
+    while runtime.is_job_pending().expect("runtime state") {
+        assert!(runtime.execute_pending_job().unwrap().executed());
+        count += 1;
+    }
+    count
+}
+
+pub(crate) fn assert_success(engine: &str, case: &SuccessCase, output: &Output) {
+    assert!(
+        output.status.success(),
+        "{engine} rejected {}: {}\nsource:\n{}",
+        case.description,
+        String::from_utf8_lossy(&output.stderr),
+        case.source
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        case.expected_stdout,
+        "{engine} output drifted for {}",
+        case.description
+    );
+}
+
+pub(crate) fn normalize_rust_value_text(value: Value) -> String {
+    match value {
+        Value::Undefined => "undefined|undefined".to_owned(),
+        Value::Null => "object|null".to_owned(),
+        Value::Bool(value) => format!("boolean|{value}"),
+        Value::Int(value) => format!("number|{value}"),
+        Value::Float(value) => format!("number|{value}"),
+        Value::BigInt(value) => format!("bigint|{value}"),
+        Value::String(value) => format!("string|{}", value.to_utf8_lossy()),
+        Value::Object(_) => "object|<object>".to_owned(),
+        Value::Symbol(_) => "symbol|<symbol>".to_owned(),
+    }
+}
+
+pub(crate) fn take_rust_error(runtime: &Runtime, context: &mut Context) -> String {
+    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+        panic!("Rust parser did not materialize an Error object");
+    };
+    let read = |context: &mut Context, name: &str| {
+        let key = runtime.intern_property_key(name).unwrap();
+        context.get_property(&error, &key).unwrap()
+    };
+    let Value::String(name) = read(context, "name") else {
+        panic!("Rust Error.name was not a string");
+    };
+    let Value::String(message) = read(context, "message") else {
+        panic!("Rust Error.message was not a string");
+    };
+    let Value::Int(line) = read(context, "lineNumber") else {
+        panic!("Rust Error.lineNumber was not an integer");
+    };
+    let Value::Int(column) = read(context, "columnNumber") else {
+        panic!("Rust Error.columnNumber was not an integer");
+    };
+    format!(
+        "{}|{}|{line}:{column}",
+        name.to_utf8_lossy(),
+        message.to_utf8_lossy()
+    )
+}
+
+pub(crate) fn normalize_rust_value_units(value: &Value) -> String {
+    match value {
+        Value::Undefined => "undefined|undefined".to_owned(),
+        Value::Null => "object|null".to_owned(),
+        Value::Bool(value) => format!("boolean|{value}"),
+        Value::Int(value) => normalize_number(f64::from(*value)),
+        Value::Float(value) => normalize_number(*value),
+        Value::BigInt(value) => format!("bigint|{value}"),
+        Value::String(value) => {
+            let units = value
+                .utf16_units()
+                .map(|unit| format!("{unit:04x}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("string|{}|{units}", value.len())
+        }
+        Value::Symbol(_) => "symbol|<identity>".to_owned(),
+        Value::Object(_) => "object|<identity>".to_owned(),
+    }
+}
+
+#[allow(clippy::float_cmp)]
+pub(crate) fn normalize_number(value: f64) -> String {
+    if value.is_nan() {
+        "number|NaN".to_owned()
+    } else if value == 0.0 && value.is_sign_negative() {
+        "number|-0".to_owned()
+    } else if value == f64::INFINITY {
+        "number|Infinity".to_owned()
+    } else if value == f64::NEG_INFINITY {
+        "number|-Infinity".to_owned()
+    } else {
+        format!("number|{}", number_to_string(value))
+    }
+}
+
+pub(crate) fn string_value(value: &str) -> Value {
+    Value::String(JsString::try_from_utf8(value).unwrap())
+}
+
+pub(crate) fn show_exception(runtime: &Runtime, context: &mut Context, exception: Value) -> String {
+    match exception {
+        Value::String(value) => format!("throw-string:{}", value.to_utf8_lossy()),
+        Value::Object(error) if runtime.is_error_object(&error).unwrap() => {
+            let name = runtime.intern_property_key("name").unwrap();
+            let message = runtime.intern_property_key("message").unwrap();
+            let Value::String(name) = context.get_property(&error, &name).unwrap() else {
+                panic!("error name was not a string");
+            };
+            let Value::String(message) = context.get_property(&error, &message).unwrap() else {
+                panic!("error message was not a string");
+            };
+            format!("throw:{}|{}", name.to_utf8_lossy(), message.to_utf8_lossy())
+        }
+        value => panic!("unexpected thrown probe value: {value:?}"),
+    }
+}
+
+pub(crate) fn hex(value: &JsString) -> String {
+    value
+        .utf16_units()
+        .map(|unit| format!("{unit:04x}"))
+        .collect()
+}
+
+pub(crate) fn value_text(value: Value) -> String {
+    match value {
+        Value::Undefined => "undefined".to_owned(),
+        Value::Null => "null".to_owned(),
+        Value::Bool(value) => value.to_string(),
+        Value::Int(value) => value.to_string(),
+        Value::Float(value) => value.to_string(),
+        Value::BigInt(value) => value.to_string(),
+        Value::String(value) => value.to_utf8_lossy(),
+        Value::Object(_) | Value::Symbol(_) => panic!("unexpected observation value"),
+    }
+}
+
+pub(crate) fn error_text(
+    runtime: &Runtime,
+    context: &mut Context,
+    error: &ObjectRef,
+    name: &str,
+) -> String {
+    let Value::String(value) = context
+        .get_property(error, &runtime.intern_property_key(name).unwrap())
+        .unwrap()
+    else {
+        panic!("Error.{name} was not a string");
+    };
+    value.to_utf8_lossy()
+}
+
+pub(crate) fn array_value_text(
+    runtime: &Runtime,
+    context: &mut Context,
+    array: &ObjectRef,
+    description: &str,
+) -> String {
+    let length_key = runtime.intern_property_key("length").unwrap();
+    let length = context
+        .get_property(array, &length_key)
+        .unwrap_or_else(|error| panic!("read result Array length for {description}: {error}"));
+    let length = match length {
+        Value::Int(value) if value >= 0 => value as usize,
+        Value::Float(value) if value >= 0.0 && value.fract() == 0.0 => value as usize,
+        value => panic!(
+            "result Array length for {description} was invalid: {}",
+            primitive_value_text(value),
+        ),
+    };
+    (0..length)
+        .map(|index| {
+            let key = runtime.intern_property_key(&index.to_string()).unwrap();
+            let value = context.get_property(array, &key).unwrap_or_else(|error| {
+                panic!("read result Array[{index}] for {description}: {error}")
+            });
+            primitive_value_text(value)
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub(crate) fn show(value: Value) -> String {
+    match value {
+        Value::Undefined => "undefined:undefined".to_owned(),
+        Value::Null => "object:null".to_owned(),
+        Value::Bool(value) => format!("boolean:{value}"),
+        Value::Int(value) => format!("number:{value}"),
+        Value::Float(value) => format!("number:{value}"),
+        Value::BigInt(value) => format!("bigint:{value}"),
+        Value::String(value) => format!("string:{}", value.to_utf8_lossy()),
+        Value::Symbol(_) => "symbol:<symbol>".to_owned(),
+        Value::Object(_) => "object:<object>".to_owned(),
+    }
+}
+
+pub(crate) fn error_name(
+    runtime: &Runtime,
+    context: &mut quickjs_oxide::engine::api::Context,
+    error: &quickjs_oxide::engine::api::ObjectRef,
+    case: &Case,
+) -> String {
+    let key = runtime
+        .intern_property_key("name")
+        .expect("Error name property key");
+    let Value::String(value) = context.get_property(error, &key).unwrap_or_else(|failure| {
+        panic!(
+            "read Error.name for {} / {}: {failure}",
+            case.group, case.description,
+        )
+    }) else {
+        panic!(
+            "Error.name was not a string for {} / {}",
+            case.group, case.description,
+        );
+    };
+    value.to_utf8_lossy()
+}
+
+pub(crate) fn eval_text(context: &mut Context, source: &str) -> String {
+    primitive_value_text_with_rust_float(context.eval(source).unwrap())
+}
+
+pub(crate) fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn utf16(value: &str) -> Vec<u16> {
+    value.encode_utf16().collect()
+}
+
+pub(crate) fn js_utf16(units: &[u16]) -> String {
+    let mut source = String::from("\"");
+    for unit in units {
+        write!(source, "\\u{unit:04x}").unwrap();
+    }
+    source.push('"');
+    source
+}
+
+pub(crate) fn primitive_value_text_with_signed_zero(value: Value) -> String {
+    match value {
+        Value::Undefined => "undefined".to_owned(),
+        Value::Null => "null".to_owned(),
+        Value::Bool(value) => value.to_string(),
+        Value::Int(value) => value.to_string(),
+        Value::Float(value) => {
+            if value.is_nan() {
+                "NaN".to_owned()
+            } else if value == 0.0 && value.is_sign_negative() {
+                "-0".to_owned()
+            } else {
+                value.to_string()
+            }
+        }
+        Value::BigInt(value) => value.to_string(),
+        Value::String(value) => value.to_utf8_lossy(),
+        Value::Object(_) => "[object Object]".to_owned(),
+        Value::Symbol(_) => "Symbol()".to_owned(),
+    }
+}
+
+pub(crate) fn assert_native_error(
+    runtime: &Runtime,
+    context: &mut Context,
+    method: &CallableRef,
+    this_value: Value,
+    arguments: &[Value],
+    expected_prototype: &ObjectRef,
+) {
+    assert_eq!(
+        context.call(method, this_value, arguments),
+        Err(RuntimeError::Exception),
+    );
+    assert_eq!(
+        runtime
+            .get_prototype_of(&take_pending_exception_object(context))
+            .unwrap()
+            .as_ref(),
+        Some(expected_prototype),
+    );
+}
+
+pub(crate) fn error_string(
+    runtime: &Runtime,
+    context: &mut Context,
+    error: &ObjectRef,
+    name: &str,
+) -> JsString {
+    let Value::String(value) = context
+        .get_property(error, &runtime.intern_property_key(name).unwrap())
+        .unwrap()
+    else {
+        panic!("Error.{name} was not a String");
+    };
+    value
+}
+
+#[cfg(feature = "test262-host")]
+pub(crate) fn string_text(value: Value) -> String {
+    let Value::String(value) = value else {
+        panic!("expected a string value");
+    };
+    value.to_utf8_lossy()
 }

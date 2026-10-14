@@ -5,18 +5,11 @@
 //! private method syntax, or `return` crossing an active iterator. Those surfaces
 //! need their own implementation milestones and focused oracles.
 
-use std::ffi::OsStr;
-use std::process::{Command, Output};
-
-use quickjs_oxide::engine::api::{
-    Context, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, Runtime, RuntimeError, Value,
-};
-
-struct SuccessCase {
-    description: &'static str,
-    source: &'static str,
-    expected_stdout: &'static str,
-}
+use crate::object_graph_observation::{define_context_global as define_global, object};
+use crate::oracle_cases::SuccessCase;
+use crate::runtime_completion_oracle::{compare_success_cases, run};
+use crate::runtime_observation::{eval, text};
+use quickjs_oxide::engine::api::{Runtime, Value};
 
 const CORE_CASES: &[SuccessCase] = &[
     SuccessCase {
@@ -625,96 +618,4 @@ crossRealm().next().then(undefined, function (error) {
         "the resumed async-generator body did not retain its defining realm"
     );
     assert_eq!(text(eval(&mut body, "crossRealmReason.message")), "callee");
-}
-
-fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
-        panic!("unexpected engine error: {error}");
-    })
-}
-
-fn object(value: Value) -> ObjectRef {
-    let Value::Object(value) = value else {
-        panic!("expected an object");
-    };
-    value
-}
-
-fn text(value: Value) -> String {
-    let Value::String(value) = value else {
-        panic!("expected a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn define_global(context: &mut Context, name: &str, value: Value) {
-    let runtime = context.runtime().clone();
-    let key = runtime.intern_property_key(name).unwrap();
-    let global = context.global_object().unwrap();
-    assert!(
-        context
-            .define_own_property(
-                &global,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-fn compare_success_cases(group: &str, cases: &[SuccessCase]) {
-    let oracle = std::env::var_os("QJS_ORACLE");
-    if oracle.is_none() {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to pinned upstream qjs");
-    }
-
-    for case in cases {
-        let oxide = run(env!("CARGO_BIN_EXE_qjs").as_ref(), case.source);
-        assert_success("quickjs-oxide", case, &oxide);
-
-        if let Some(oracle) = &oracle {
-            let quickjs = run(oracle, case.source);
-            assert_success("pinned QuickJS", case, &quickjs);
-            assert_eq!(
-                oxide.stdout, quickjs.stdout,
-                "{group} output differed for {}",
-                case.description
-            );
-        }
-    }
-}
-
-fn assert_success(engine: &str, case: &SuccessCase, output: &Output) {
-    assert!(
-        output.status.success(),
-        "{engine} rejected {}: {}\nsource:\n{}",
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-        case.source
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        case.expected_stdout,
-        "{engine} output drifted for {}",
-        case.description
-    );
-}
-
-fn run(executable: &OsStr, source: &str) -> Output {
-    Command::new(executable)
-        .args(["-e", source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
 }

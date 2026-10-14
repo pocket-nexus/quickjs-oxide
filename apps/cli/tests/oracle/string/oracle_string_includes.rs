@@ -1,12 +1,18 @@
+use crate::object_graph_observation::{
+    define_builtin_data_key as define_data_key, eval_source_callable as eval_callable,
+    intrinsic_prototype,
+};
+use crate::runtime_completion_oracle::STRING_CASE_PRELUDE as CASE_PRELUDE;
 use crate::runtime_completion_oracle::{
     compare_eval_completion_cases_with_prelude, observe_quickjs_completion_with_prelude,
 };
+use crate::runtime_observation::assert_native_error as assert_native_type_error;
 use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
 };
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
+    AccessorValue, CallableRef, DescriptorField, JsString, ObjectRef, OrdinaryPropertyDescriptor,
+    PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
 
 // Pins QuickJS 2026-06-04 `js_string_includes` (quickjs.c 45516-45578),
@@ -17,30 +23,6 @@ use quickjs_oxide::engine::api::{
 // Proxy, TypedArray, and genuine RegExp values participate in the same
 // differential. Module namespace conversion remains a separate
 // module/object-model boundary.
-
-const CASE_PRELUDE: &str = r#"
-function __bits(object,key){
-    var descriptor=Object.getOwnPropertyDescriptor(object,key);
-    return (descriptor.writable?"1":"0")+
-           (descriptor.enumerable?"1":"0")+
-           (descriptor.configurable?"1":"0");
-}
-function __isConstructor(value){
-    try{new value();return true}catch(_){return false}
-}
-function __units(value){
-    value=String(value);
-    var output="",index=0;
-    while(index<value.length){
-        var unit=value.charCodeAt(index).toString(16);
-        while(unit.length<4)unit="0"+unit;
-        if(index)output+=",";
-        output+=unit;
-        index++;
-    }
-    return output;
-}
-"#;
 
 const GRAPH_CASES: &[(&str, &str)] = &[
     (
@@ -722,74 +704,6 @@ fn string_includes_callables_are_per_realm_and_collectable() {
     drop(retained);
     runtime.run_gc().unwrap();
     assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
-}
-
-fn intrinsic_prototype(
-    runtime: &Runtime,
-    context: &mut Context,
-    constructor_name: &str,
-) -> ObjectRef {
-    let global = context.global_object().unwrap();
-    let constructor = property_callable(runtime, context, &global, constructor_name);
-    let Value::Object(prototype) = context
-        .get_property(
-            constructor.as_object(),
-            &runtime.intern_property_key("prototype").unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("{constructor_name}.prototype was not an object");
-    };
-    prototype
-}
-
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("{source:?} did not evaluate to an object");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("{source:?} was not callable"))
-}
-
-fn assert_native_type_error(
-    runtime: &Runtime,
-    context: &mut Context,
-    method: &CallableRef,
-    this_value: Value,
-    arguments: &[Value],
-    expected_prototype: &ObjectRef,
-) {
-    assert_eq!(
-        context.call(method, this_value, arguments),
-        Err(RuntimeError::Exception),
-    );
-    assert_eq!(
-        runtime
-            .get_prototype_of(&take_exception_object(context))
-            .unwrap()
-            .as_ref(),
-        Some(expected_prototype),
-    );
-}
-
-fn define_data_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey, value: Value) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
 }
 
 fn define_accessor_key(

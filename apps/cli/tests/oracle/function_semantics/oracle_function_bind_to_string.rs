@@ -1,3 +1,5 @@
+use crate::object_graph_observation::{bit, function, get_property};
+use crate::runtime_observation::hex;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -1172,21 +1174,6 @@ fn property_callable_key(
         .expect("callable property was not callable")
 }
 
-fn function(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("function probe did not return an object: {source}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("function probe was not callable: {source}"))
-}
-
-fn get_property(runtime: &Runtime, context: &mut Context, object: &ObjectRef, name: &str) -> Value {
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(object, &key).unwrap()
-}
-
 fn global_value(runtime: &Runtime, context: &mut Context, name: &str) -> Value {
     let global = context.global_object().unwrap();
     get_property(runtime, context, &global, name)
@@ -1443,17 +1430,6 @@ fn value_type(runtime: &Runtime, value: &Value) -> &'static str {
         Value::String(_) => "string",
         Value::Symbol(_) => "symbol",
     }
-}
-
-fn hex(value: &JsString) -> String {
-    value
-        .utf16_units()
-        .map(|unit| format!("{unit:04x}"))
-        .collect()
-}
-
-const fn bit(value: bool) -> u8 {
-    value as u8
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {

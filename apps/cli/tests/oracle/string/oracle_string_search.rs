@@ -1,46 +1,17 @@
+use crate::runtime_completion_oracle::REGEXP_COMPLETION_PRELUDE as PRELUDE;
 use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
+use crate::runtime_observation::string_value;
 use crate::runtime_observation::take_exception_object;
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_match`'s
 // Symbol.search branch (`quickjs.c` 45609-45657), abstract RegExpExec
 // (`quickjs.c` 48217-48236), and RegExp.prototype[Symbol.search]
 // (`quickjs.c` 48817-48873).
-
-const PRELUDE: &str = r#"
-function __bit(value){return value?"1":"0"}
-function __bits(object,key){
-    var descriptor=Object.getOwnPropertyDescriptor(object,key);
-    if(descriptor===undefined)return "missing";
-    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+
-        __bit(descriptor.configurable);
-}
-function __isConstructor(value){
-    try{Reflect.construct(function(){},[],value);return true}
-    catch(_error){return false}
-}
-function __show(value){
-    if(value===undefined)return "undefined";
-    if(value===null)return "null";
-    if(typeof value==="number"){
-        if(value!==value)return "NaN";
-        if(value===0)return 1/value===-Infinity?"-0":"+0";
-    }
-    return String(value);
-}
-function __completion(callback){
-    try{return "return:"+String(callback())}
-    catch(error){
-        if(error!==null&&typeof error==="object")
-            return "throw:"+error.name+":"+error.message;
-        return "throw:"+typeof error+":"+String(error);
-    }
-}
-"#;
 
 const METADATA_CASES: &[(&str, &str)] = &[(
     "search methods expose pinned metadata descriptors and key order",
@@ -487,8 +458,4 @@ fn search_intrinsics_use_defining_realms_and_accept_foreign_regexp_brands() {
         Some(caller_type_error),
         "RegExp Symbol.search replaced a caller-realm user exception",
     );
-}
-
-fn string_value(value: &str) -> Value {
-    Value::String(JsString::try_from_utf8(value).unwrap())
 }

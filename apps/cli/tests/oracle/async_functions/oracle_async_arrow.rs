@@ -1,42 +1,6 @@
-use std::ffi::OsStr;
-use std::process::{Command, Output};
-
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
-
-fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
-        panic!("unexpected engine error: {error}");
-    })
-}
-
-fn text(value: Value) -> String {
-    let Value::String(value) = value else {
-        panic!("expected a string");
-    };
-    value.to_utf8_lossy()
-}
-
-fn integer(value: Value) -> i32 {
-    let Value::Int(value) = value else {
-        panic!("expected an integer");
-    };
-    value
-}
-
-fn drain(runtime: &Runtime) -> usize {
-    let mut count = 0;
-    while runtime.is_job_pending().expect("runtime state") {
-        assert!(runtime.execute_pending_job().unwrap().executed());
-        count += 1;
-    }
-    count
-}
+use crate::runtime_completion_oracle::run;
+use crate::runtime_observation::{drain, eval, integer, text};
+use quickjs_oxide::engine::api::Runtime;
 
 #[test]
 fn async_arrow_shape_source_and_await_match_pinned_quickjs() {
@@ -290,11 +254,4 @@ outer().then(function (middle) {
             "pinned QuickJS accepted a recorded rejection edge {source:?}"
         );
     }
-}
-
-fn run(executable: &OsStr, source: &str) -> Output {
-    Command::new(executable)
-        .args(["-e", source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
 }

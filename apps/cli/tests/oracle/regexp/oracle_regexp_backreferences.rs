@@ -1,3 +1,5 @@
+use crate::runtime_completion_oracle::observe_rust_result as observe_rust;
+use crate::runtime_observation::{js_utf16, utf16};
 use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::regexp::{CompileErrorKind, compile, execute};
 use std::ffi::OsStr;
@@ -277,32 +279,6 @@ fn ascii_owned(
     }
 }
 
-fn utf16(value: &str) -> Vec<u16> {
-    value.encode_utf16().collect()
-}
-
-fn observe_rust(result: Option<&quickjs_oxide::regexp::RegExpMatch>, input: &[u16]) -> String {
-    let Some(result) = result else {
-        return "N".to_owned();
-    };
-    let complete = result
-        .capture(0)
-        .expect("a successful match has capture zero");
-    let mut output = format!("M|{}|{}", complete.start, result.captures().len());
-    for capture in result.captures() {
-        match capture {
-            None => output.push_str("|U"),
-            Some(range) => {
-                write!(output, "|{},{}:", range.start, range.end).unwrap();
-                for unit in &input[range.clone()] {
-                    write!(output, "{unit:04x}").unwrap();
-                }
-            }
-        }
-    }
-    output
-}
-
 fn run_match_oracle(oracle: &OsStr, cases: &[MatchCase]) -> Vec<String> {
     let mut source = String::from(
         r#"
@@ -383,13 +359,4 @@ for (var __qjo_i = 0; __qjo_i < __qjo_cases.length; __qjo_i++) {
         cases.len(),
         "RegExp decimal syntax",
     )
-}
-
-fn js_utf16(units: &[u16]) -> String {
-    let mut source = String::from("\"");
-    for unit in units {
-        write!(source, "\\u{unit:04x}").unwrap();
-    }
-    source.push('"');
-    source
 }

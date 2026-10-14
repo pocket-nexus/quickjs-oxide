@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::process::{Command, Output};
 
-use quickjs_oxide::engine::api::{Runtime, Value};
+use crate::runtime_completion_oracle::rust_value_observation;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -404,31 +404,6 @@ fn lexical_parser_diagnostics_match_pinned_quickjs() {
         assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
         assert_eq!(rust.stdout, quickjs.stdout, "{description}");
         assert_eq!(rust.stderr, quickjs.stderr, "{description}");
-    }
-}
-
-fn rust_value_observation(source: &str, description: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let value = runtime
-        .new_context()
-        .expect("create context")
-        .eval(source)
-        .unwrap_or_else(|error| panic!("Rust rejected {description} ({source:?}): {error}"));
-    normalize_rust_value(value)
-}
-
-fn normalize_rust_value(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined|undefined".to_owned(),
-        Value::Null => "object|null".to_owned(),
-        Value::Bool(value) => format!("boolean|{value}"),
-        Value::Int(value) => format!("number|{value}"),
-        Value::Float(value) => format!("number|{value}"),
-        Value::BigInt(value) => format!("bigint|{value}"),
-        Value::String(value) => format!("string|{}", value.to_utf8_lossy()),
-        Value::Object(_) => "object|<object>".to_owned(),
-        Value::Symbol(_) => "symbol|<symbol>".to_owned(),
     }
 }
 
