@@ -922,7 +922,7 @@ fn drain_pending_jobs(
         }
         match runtime
             .execute_pending_job()
-            .map_err(|error| error.into_error())
+            .map_err(quickjs_oxide::engine::api::PendingJobError::into_error)
         {
             Ok(outcome) if outcome.executed() => {}
             Ok(_) => {

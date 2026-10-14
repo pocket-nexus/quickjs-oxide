@@ -586,9 +586,7 @@ unless the data profile opts into the job-draining Test262 host."
 }
 
 fn default_worker_count() -> usize {
-    let available = thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(1);
+    let available = thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let quickjs_style = if available >= 8 {
         available - 1
     } else {
@@ -1132,7 +1130,7 @@ fn collect_js_files(
         .map_err(|error| format!("read {}: {error}", directory.display()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("read {}: {error}", directory.display()))?;
-    entries.sort_by_key(|entry| entry.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
         let file_type = entry

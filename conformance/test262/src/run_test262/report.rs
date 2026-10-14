@@ -130,16 +130,16 @@ pub(super) fn report_row(
     let relative = relative.to_string_lossy();
     let flags = metadata.flags.iter().cloned().collect::<Vec<_>>().join(",");
     let features = metadata.features.join(",");
-    let (expected_phase, expected_type) = metadata
-        .negative
-        .as_ref()
-        .map(|negative| {
-            (
-                negative.phase.as_deref().unwrap_or("any"),
-                negative.error_type.as_deref().unwrap_or("any"),
-            )
-        })
-        .unwrap_or(("normal", ""));
+    let (expected_phase, expected_type) =
+        metadata
+            .negative
+            .as_ref()
+            .map_or(("normal", ""), |negative| {
+                (
+                    negative.phase.as_deref().unwrap_or("any"),
+                    negative.error_type.as_deref().unwrap_or("any"),
+                )
+            });
     let (expected_rule, expected_message, expected_line, expected_column, location_policy) =
         expectation.map_or_else(
             || ("", "", String::new(), String::new(), ""),

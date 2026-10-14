@@ -363,7 +363,7 @@ mod tests {
         assert_eq!((expectation.line, expectation.column), (None, None));
         assert_eq!(expectation.location_policy, LocationPolicy::Absent);
 
-        assert!(NegativeDiagnostics::parse(&exact.replace("\n", "\r\n")).is_err());
+        assert!(NegativeDiagnostics::parse(&exact.replace('\n', "\r\n")).is_err());
         assert!(NegativeDiagnostics::parse(exact.trim_end()).is_err());
         assert!(NegativeDiagnostics::parse(&exact.replace("\texact", "\t\texact")).is_err());
     }

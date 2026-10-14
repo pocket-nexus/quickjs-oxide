@@ -219,12 +219,11 @@ pub(crate) fn string_units(value: &JsString) -> String {
 
 pub(crate) fn eval(context: &mut Context, source: &str) -> Value {
     context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            panic!(
-                "unexpected JavaScript exception: {:?}",
-                context.take_exception()
-            );
-        }
+        assert!(
+            error != RuntimeError::Exception,
+            "unexpected JavaScript exception: {:?}",
+            context.take_exception()
+        );
         panic!("unexpected engine error: {error}");
     })
 }

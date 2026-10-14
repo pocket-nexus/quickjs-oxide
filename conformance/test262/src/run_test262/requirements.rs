@@ -446,7 +446,7 @@ fn normalize_exact_graph_request(
         .ok_or_else(|| {
             format!("module loader rejected unaudited request from {base_name}: {specifier}")
         })?;
-    Ok(request.normalized_path.to_owned())
+    Ok(request.normalized_path.clone())
 }
 
 /// Load one exact fixture from a previously authenticated graph. The source
@@ -1680,24 +1680,24 @@ mod tests {
             includes: contract
                 .includes
                 .iter()
-                .map(|value| (*value).to_owned())
+                .map(|value| (*value).clone())
                 .collect(),
             flags: contract
                 .flags
                 .iter()
-                .map(|value| (*value).to_owned())
+                .map(|value| (*value).clone())
                 .collect(),
             features: contract
                 .features
                 .iter()
-                .map(|value| (*value).to_owned())
+                .map(|value| (*value).clone())
                 .collect(),
             negative: contract
                 .negative
                 .as_ref()
                 .map(|negative| NegativeExpectation {
-                    phase: Some(negative.phase.to_owned()),
-                    error_type: Some(negative.error_type.to_owned()),
+                    phase: Some(negative.phase.clone()),
+                    error_type: Some(negative.error_type.clone()),
                 }),
         }
     }
@@ -2502,7 +2502,7 @@ mod tests {
             natural_roots,
             DEFAULT_MODULE_ROOT_ADMISSIONS
                 .iter()
-                .map(|root| root.path.to_owned())
+                .map(|root| root.path.clone())
                 .collect()
         );
 
@@ -2527,7 +2527,7 @@ mod tests {
                 audited_module_specifiers(&source),
                 file.requests
                     .iter()
-                    .map(|request| request.specifier.to_owned())
+                    .map(|request| request.specifier.clone())
                     .collect(),
                 "{} static requests drifted",
                 file.path
@@ -2848,7 +2848,7 @@ mod tests {
             module_roots,
             IMPORT_META_MODULE_ROOT_ADMISSIONS
                 .iter()
-                .map(|root| root.path.to_owned())
+                .map(|root| root.path.clone())
                 .collect()
         );
         assert_eq!(
@@ -2870,7 +2870,7 @@ mod tests {
                 audited_module_specifiers(&source),
                 file.requests
                     .iter()
-                    .map(|request| request.specifier.to_owned())
+                    .map(|request| request.specifier.clone())
                     .collect(),
                 "{} static requests drifted",
                 file.path
@@ -3049,7 +3049,7 @@ mod tests {
                 &distinct.path,
                 &request.specifier,
             ),
-            Ok(request.normalized_path.to_owned())
+            Ok(request.normalized_path.clone())
         );
         assert!(
             normalize_exact_module_request(
@@ -3185,7 +3185,7 @@ mod tests {
             natural_roots,
             NAMESPACE_MODULE_ROOT_ADMISSIONS
                 .iter()
-                .map(|root| root.path.to_owned())
+                .map(|root| root.path.clone())
                 .collect()
         );
 
@@ -3200,7 +3200,7 @@ mod tests {
                 audited_module_specifiers(&source),
                 file.requests
                     .iter()
-                    .map(|request| request.specifier.to_owned())
+                    .map(|request| request.specifier.clone())
                     .collect(),
                 "{} static requests drifted",
                 file.path
@@ -3667,7 +3667,7 @@ mod tests {
                 base,
                 &request.specifier,
             ),
-            Ok(request.normalized_path.to_owned())
+            Ok(request.normalized_path.clone())
         );
         assert!(
             normalize_exact_module_request(

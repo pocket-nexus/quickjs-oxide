@@ -64,9 +64,11 @@ fn drain_jobs(runtime: &Runtime, context: &mut Context) {
         jobs += 1;
         assert!(jobs <= 64, "host GC fixture did not settle within 64 jobs");
         if let Err(error) = runtime.execute_pending_job() {
-            if error.error() == &RuntimeError::Exception {
-                panic!("host GC fixture job threw: {:?}", context.take_exception());
-            }
+            assert!(
+                error.error() != &RuntimeError::Exception,
+                "host GC fixture job threw: {:?}",
+                context.take_exception()
+            );
             panic!("host GC fixture job failed: {error}");
         }
     }

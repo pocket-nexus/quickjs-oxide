@@ -1744,21 +1744,21 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
         ),
         format!(
             "power-left-throw={}|left-calls:{left_throw_calls}|right-calls:{after_left_throw_calls}",
-            if left_throw_same { 1 } else { 0 }
+            i32::from(left_throw_same)
         ),
         format!(
             "power-right-throw={}|left-calls:{before_right_throw_calls}|right-calls:{right_throw_calls}",
-            if right_throw_same { 1 } else { 0 }
+            i32::from(right_throw_same)
         ),
         format!("power-mixed={}", mixed.join(",")),
         format!(
             "power-mixed-priority={}@{mixed_throw_order},{mixed_symbol_result}@{mixed_symbol_order}",
-            if mixed_throw_same { 1 } else { 0 }
+            i32::from(mixed_throw_same)
         ),
         format!("power-symbol-before-throw={symbol_before_throw}|right-calls:{after_symbol_calls}"),
         format!(
             "power-throw-before-symbol={}|left-calls:{before_symbol_calls}",
-            if throw_before_symbol { 1 } else { 0 }
+            i32::from(throw_before_symbol)
         ),
         format!("power-symbol-right={symbol_right}|left-calls:{converted_before_symbol_calls}"),
         format!("power-number-special={number_special}"),

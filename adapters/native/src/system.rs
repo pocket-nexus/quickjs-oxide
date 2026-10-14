@@ -87,10 +87,7 @@ fn timezone_offset_at(time_zone: &TimeZone, unix_seconds: i64) -> i32 {
     time_zone
         .find_local_time_type(unix_seconds)
         .ok()
-        .map(|local| -local.ut_offset() / 60)
-        // Retain the host-conversion failure fallback at the typed boundary;
-        // ordinary TZif/POSIX lookups do not take this path.
-        .unwrap_or(0)
+        .map_or(0, |local| -local.ut_offset() / 60)
 }
 
 fn load_host_time_zone(environment: Option<&OsStr>) -> Result<TimeZone, tz::Error> {

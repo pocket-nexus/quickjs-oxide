@@ -111,7 +111,7 @@ fn evaluate_with_engine(source: &str) -> EvalResult {
     loop {
         match runtime
             .execute_pending_job()
-            .map_err(|error| error.into_error())
+            .map_err(quickjs_oxide::engine::api::PendingJobError::into_error)
         {
             Ok(outcome) if outcome.executed() => {}
             Ok(_) => break,
