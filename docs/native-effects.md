@@ -119,6 +119,15 @@ pub(crate) enum EffectStep {
 - V8 v7 cases do not call these builtins; their instruction counts are
   unchanged and their score shifts (±3%) are code-layout effects (#119).
 
+## Second migration (Array callback loops)
+
+`forEach`/`map`/`filter`/`some`/`every`/`reduce`/`reduceRight`/`find*` moved
+with three new effect kinds (`Read` on an object, `Has`, `Species`) and a
+`Boolean` reply. `callback.rs` went from 827 to 559 lines, and its VM `TryFrom`
+(69 lines) and `Resume` arms are gone. Net −304 lines, of which +43 are the new
+shared effect kinds. Focused Test262 and the workspace tests pass unchanged.
+The PR as a whole is now +1,046 / −1,375.
+
 ## Rollout
 
 1. Pilot `array/build.rs`; measure lines, step sizes and the fixed probes.
