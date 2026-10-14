@@ -2,7 +2,7 @@
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::{
-        iterator::step::{CloseStep, NextStep, finish_close, finish_next},
+        effect::{self, Continuation, Effect, EffectStep, Reply},
         object::ObjectIteratorStep,
     },
     heap::ContextId,
@@ -13,41 +13,13 @@ use crate::engine::{
     value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
-        call::{ConstructorRef, NativeArguments, NativeInvocation},
+        call::{NativeArguments, NativeInvocation},
     },
 };
 #[derive(Clone, Copy)]
 pub(crate) enum BuildKind {
     From,
     Of,
-}
-pub(crate) enum BuildStep {
-    Complete(Completion),
-    Read {
-        resume: BuildResume,
-    },
-    Number {
-        resume: BuildResume,
-    },
-    Call {
-        resume: BuildResume,
-    },
-    Construct {
-        resume: BuildResume,
-    },
-    Parse {
-        resume: BuildResume,
-    },
-    Define {
-        resume: BuildResume,
-    },
-    Set {
-        resume: BuildResume,
-    },
-    Close {
-        iterator: ObjectRef,
-        completion: Completion,
-    },
 }
 pub(crate) struct BuildResume(Box<BuildResumeState>);
 impl std::ops::Deref for BuildResume {
@@ -64,8 +36,7 @@ impl std::ops::DerefMut for BuildResume {
 const _: () = assert!(std::mem::size_of::<BuildResume>() <= 8);
 pub(crate) struct BuildResumeState {
     runtime: Runtime,
-    pending_effect: BuildStepPending,
-    scheduler_set_key: Option<PropertyKey>,
+    pending: Option<Effect>,
     realm: ContextId,
     constructor: JsValue,
     result: Option<ObjectRef>,
@@ -124,165 +95,127 @@ impl Drop for BuildResumeState {
             }
             Mode::ArrayLike { .. } => {}
         }
-        if let Some(value) = self.pending_effect.read_receiver.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-        if let Some(value) = self.pending_effect.number_value.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-        if let Some(value) = self.pending_effect.call_receiver.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-        if let Some(value) = self.pending_effect.set_value.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-        if let Some(values) = self.pending_effect.call_arguments.take() {
-            for value in values {
-                let _ = self.runtime.release_jsvalue(value);
-            }
-        }
-        if let Some(values) = self.pending_effect.construct_arguments.take() {
-            for value in values {
-                let _ = self.runtime.release_jsvalue(value);
-            }
-        }
-        if let Some(Completion::Return(value) | Completion::Throw(value)) =
-            self.pending_effect.parse_result.take()
-        {
-            let _ = self.runtime.release_jsvalue(value);
+        if let Some(effect) = self.pending.take() {
+            effect.release(&self.runtime);
         }
     }
 }
-impl BuildStep {
-    pub(crate) fn start(
-        runtime: &Runtime,
-        realm: ContextId,
-        kind: BuildKind,
-        invocation: &NativeInvocation,
-        arguments: &NativeArguments,
-    ) -> Result<Self, RuntimeError> {
-        let NativeInvocation::Call { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Array builder did not receive a generic invocation",
-            ));
-        };
-        if matches!(kind, BuildKind::Of) {
-            let length = u32::try_from(arguments.actual_arg_count)
-                .map_err(|_| RuntimeError::Invariant("Array.of argument count exceeded Uint32"))?;
-            let mut resume = BuildResume(Box::new(BuildResumeState {
-                runtime: runtime.clone(),
-                pending_effect: BuildStepPending::default(),
-                scheduler_set_key: None,
-                realm,
-                constructor: JsValue::Undefined,
-                result: None,
-                mapfn: None,
-                map_this: JsValue::Undefined,
-                mode: Mode::Of {
-                    values: Vec::new(),
-                    length,
-                },
-                index: 0,
-                phase: Phase::Construct,
-            }));
-            resume.0.constructor = runtime.dup_jsvalue(this_value)?;
-            let Mode::Of { values, .. } = &mut resume.0.mode else {
-                unreachable!()
-            };
-            values
-                .try_reserve_exact(arguments.actual_arg_count)
-                .map_err(|_| RuntimeError::Invariant("Array.of argv allocation failed"))?;
-            for value in &arguments.readable[..arguments.actual_arg_count] {
-                values.push(runtime.dup_jsvalue(value)?);
-            }
-            return resume.construct(runtime, Some(f64::from(length)), false);
-        }
-        let items = arguments
-            .readable
-            .first()
-            .ok_or(RuntimeError::Invariant("Array.from argv was not padded"))?;
-        let mapfn = if arguments.actual_arg_count > 1
-            && !matches!(arguments.readable[1], JsValue::Undefined)
-        {
-            let callable = match &arguments.readable[1] {
-                JsValue::Object(id) => {
-                    runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
-                }
-                _ => None,
-            };
-            let Some(callable) = callable else {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.new_native_error_jsvalue(
-                        realm,
-                        NativeErrorKind::Type,
-                        "not a function",
-                    )?,
-                )));
-            };
-            Some(callable)
-        } else {
-            None
-        };
-        if matches!(items, JsValue::Null | JsValue::Undefined) {
-            let base = if matches!(items, JsValue::Null) {
-                "null"
-            } else {
-                "undefined"
-            };
-            return Ok(Self::Complete(Completion::Throw(
-                runtime.new_native_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Type,
-                    &format!("cannot read property 'Symbol.iterator' of {base}"),
-                )?,
-            )));
-        }
+pub(crate) fn start(
+    runtime: &Runtime,
+    realm: ContextId,
+    kind: BuildKind,
+    invocation: &NativeInvocation,
+    arguments: &NativeArguments,
+) -> Result<EffectStep, RuntimeError> {
+    let NativeInvocation::Call { this_value } = invocation else {
+        return Err(RuntimeError::Invariant(
+            "Array builder did not receive a generic invocation",
+        ));
+    };
+    if matches!(kind, BuildKind::Of) {
+        let length = u32::try_from(arguments.actual_arg_count)
+            .map_err(|_| RuntimeError::Invariant("Array.of argument count exceeded Uint32"))?;
         let mut resume = BuildResume(Box::new(BuildResumeState {
             runtime: runtime.clone(),
-            pending_effect: BuildStepPending::default(),
-            scheduler_set_key: None,
+            pending: None,
             realm,
             constructor: JsValue::Undefined,
             result: None,
-            mapfn,
+            mapfn: None,
             map_this: JsValue::Undefined,
-            mode: Mode::Acquire(JsValue::Undefined),
+            mode: Mode::Of {
+                values: Vec::new(),
+                length,
+            },
             index: 0,
-            phase: Phase::Method,
+            phase: Phase::Construct,
         }));
         resume.0.constructor = runtime.dup_jsvalue(this_value)?;
-        if arguments.actual_arg_count > 2 {
-            resume.0.map_this = runtime.dup_jsvalue(&arguments.readable[2])?;
+        let Mode::Of { values, .. } = &mut resume.0.mode else {
+            unreachable!()
+        };
+        values
+            .try_reserve_exact(arguments.actual_arg_count)
+            .map_err(|_| RuntimeError::Invariant("Array.of argv allocation failed"))?;
+        for value in &arguments.readable[..arguments.actual_arg_count] {
+            values.push(runtime.dup_jsvalue(value)?);
         }
-        resume.0.mode = Mode::Acquire(runtime.dup_jsvalue(items)?);
-        Ok(Self::request_read(
-            runtime.dup_jsvalue(items)?,
-            PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
-            resume,
-        ))
+        return resume.construct(runtime, Some(f64::from(length)), false);
     }
+    let items = arguments
+        .readable
+        .first()
+        .ok_or(RuntimeError::Invariant("Array.from argv was not padded"))?;
+    let mapfn = if arguments.actual_arg_count > 1
+        && !matches!(arguments.readable[1], JsValue::Undefined)
+    {
+        let callable = match &arguments.readable[1] {
+            JsValue::Object(id) => {
+                runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
+            }
+            _ => None,
+        };
+        let Some(callable) = callable else {
+            return Ok(EffectStep::Complete(Completion::Throw(
+                runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
+            )));
+        };
+        Some(callable)
+    } else {
+        None
+    };
+    if matches!(items, JsValue::Null | JsValue::Undefined) {
+        let base = if matches!(items, JsValue::Null) {
+            "null"
+        } else {
+            "undefined"
+        };
+        return Ok(EffectStep::Complete(Completion::Throw(
+            runtime.new_native_error_jsvalue(
+                realm,
+                NativeErrorKind::Type,
+                &format!("cannot read property 'Symbol.iterator' of {base}"),
+            )?,
+        )));
+    }
+    let mut resume = BuildResume(Box::new(BuildResumeState {
+        runtime: runtime.clone(),
+        pending: None,
+        realm,
+        constructor: JsValue::Undefined,
+        result: None,
+        mapfn,
+        map_this: JsValue::Undefined,
+        mode: Mode::Acquire(JsValue::Undefined),
+        index: 0,
+        phase: Phase::Method,
+    }));
+    resume.0.constructor = runtime.dup_jsvalue(this_value)?;
+    if arguments.actual_arg_count > 2 {
+        resume.0.map_this = runtime.dup_jsvalue(&arguments.readable[2])?;
+    }
+    resume.0.mode = Mode::Acquire(runtime.dup_jsvalue(items)?);
+    effect::request(
+        Effect::ReadValue {
+            receiver: runtime.dup_jsvalue(items)?,
+            key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
+        },
+        resume.0,
+    )
 }
 impl BuildResume {
-    pub(crate) fn with_scheduler_set_key(mut self, key: PropertyKey) -> Self {
-        self.0.scheduler_set_key = Some(key);
-        self
-    }
-    pub(crate) fn take_scheduler_set_key(&mut self) -> PropertyKey {
-        self.0.scheduler_set_key.take().expect("waiting Set key")
-    }
-
-    fn abrupt(mut self, _runtime: &Runtime, value: JsValue) -> Result<BuildStep, RuntimeError> {
+    fn abrupt(mut self, _runtime: &Runtime, value: JsValue) -> Result<EffectStep, RuntimeError> {
         let completion = Completion::Throw(value);
         if matches!(self.0.phase, Phase::Map | Phase::Define)
             && let Mode::Iterable { iterator, .. } = &mut self.0.mode
             && let Some(iterator) = iterator.take()
         {
-            return Ok(BuildStep::Close {
+            return Ok(EffectStep::Close {
                 iterator,
                 completion,
             });
         }
-        Ok(BuildStep::Complete(completion))
+        Ok(EffectStep::Complete(completion))
     }
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
@@ -297,7 +230,7 @@ impl BuildResume {
         runtime: &Runtime,
         length: Option<f64>,
         initialize_length: bool,
-    ) -> Result<BuildStep, RuntimeError> {
+    ) -> Result<EffectStep, RuntimeError> {
         self.0.phase = Phase::Construct;
         let is_constructor = match &self.0.constructor {
             JsValue::Object(id) => {
@@ -311,16 +244,18 @@ impl BuildResume {
                 NativeConversion::Value(target) => target,
                 NativeConversion::Throw(value) => return self.abrupt(runtime, value),
             };
-            return Ok(BuildStep::request_construct(
-                target,
-                length
-                    .into_iter()
-                    .map(|value| {
-                        crate::engine::value::number::operations::Number::compact(value).into()
-                    })
-                    .collect(),
-                self,
-            ));
+            return effect::request(
+                Effect::Construct {
+                    target,
+                    arguments: length
+                        .into_iter()
+                        .map(|value| {
+                            crate::engine::value::number::operations::Number::compact(value).into()
+                        })
+                        .collect(),
+                },
+                self.0,
+            );
         }
         // Numeric length and a new unpublished Array cannot invoke JS. Share
         // the same fallback allocation as ArraySpeciesCreate.
@@ -328,7 +263,7 @@ impl BuildResume {
             .new_array_with_length(self.0.realm, if initialize_length { length } else { None })?;
         self.resume(runtime, result)
     }
-    fn next(mut self, runtime: &Runtime) -> Result<BuildStep, RuntimeError> {
+    fn next(mut self, runtime: &Runtime) -> Result<EffectStep, RuntimeError> {
         if matches!(self.0.mode, Mode::Of { .. }) {
             loop {
                 let Mode::Of { values, .. } = &mut self.0.mode else {
@@ -371,21 +306,25 @@ impl BuildResume {
                 self.0.phase = Phase::NextCall;
                 // Array.from uses ordinary Call, not JS_IteratorNext2's raw
                 // cproto fast path; parse its actual object result afterwards.
-                Ok(BuildStep::request_call(
-                    callable,
-                    receiver,
-                    Vec::new(),
-                    self,
-                ))
+                effect::request(
+                    Effect::Call {
+                        callable,
+                        receiver,
+                        arguments: Vec::new(),
+                    },
+                    self.0,
+                )
             }
             Mode::ArrayLike { source, length } if self.0.index < *length => {
                 let receiver = JsValue::Object(source.try_clone()?.into_handle());
                 self.0.phase = Phase::Value;
-                Ok(BuildStep::request_read(
-                    receiver,
-                    runtime.property_key_for_index(self.0.index)?,
-                    self,
-                ))
+                effect::request(
+                    Effect::ReadValue {
+                        receiver,
+                        key: runtime.property_key_for_index(self.0.index)?,
+                    },
+                    self.0,
+                )
             }
             Mode::ArrayLike { .. } => self.set_length(runtime),
             _ => Err(RuntimeError::Invariant(
@@ -393,21 +332,24 @@ impl BuildResume {
             )),
         }
     }
-    fn set_length(mut self, runtime: &Runtime) -> Result<BuildStep, RuntimeError> {
+    fn set_length(mut self, runtime: &Runtime) -> Result<EffectStep, RuntimeError> {
         let length = match self.0.mode {
             Mode::Of { length, .. } => length as u64,
             Mode::ArrayLike { length, .. } => length,
             _ => self.0.index,
         };
         self.0.phase = Phase::LengthSet;
-        Ok(BuildStep::request_set(
-            self.result()?,
-            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-            runtime.into_jsvalue(Value::number(length as f64))?,
-            self,
-        ))
+        effect::request(
+            Effect::Set {
+                object: self.result()?,
+                key: runtime
+                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+                value: runtime.into_jsvalue(Value::number(length as f64))?,
+            },
+            self.0,
+        )
     }
-    fn map(mut self, runtime: &Runtime, value: JsValue) -> Result<BuildStep, RuntimeError> {
+    fn map(mut self, runtime: &Runtime, value: JsValue) -> Result<EffectStep, RuntimeError> {
         if let Some(callable) = self
             .0
             .mapfn
@@ -426,12 +368,14 @@ impl BuildResume {
             let index =
                 crate::engine::value::number::operations::Number::compact(self.0.index as f64)
                     .into();
-            return Ok(BuildStep::request_call(
-                callable,
-                receiver,
-                vec![value, index],
-                self,
-            ));
+            return effect::request(
+                Effect::Call {
+                    callable,
+                    receiver,
+                    arguments: vec![value, index],
+                },
+                self.0,
+            );
         }
         self.define(runtime, value)
     }
@@ -464,7 +408,7 @@ impl BuildResume {
             },
         ))
     }
-    fn define(mut self, runtime: &Runtime, value: JsValue) -> Result<BuildStep, RuntimeError> {
+    fn define(mut self, runtime: &Runtime, value: JsValue) -> Result<EffectStep, RuntimeError> {
         self.0.phase = Phase::Define;
         let defined = self.define_array(runtime, &value);
         match defined {
@@ -491,21 +435,23 @@ impl BuildResume {
                 return Err(error);
             }
         };
-        Ok(BuildStep::request_define(
-            result,
-            key,
-            OwnedPropertyDescriptor::data(runtime, value),
-            self,
-        ))
+        effect::request(
+            Effect::Define {
+                object: result,
+                key,
+                descriptor: OwnedPropertyDescriptor::data(runtime, value),
+            },
+            self.0,
+        )
     }
     pub(crate) fn resume(
         mut self,
         runtime: &Runtime,
         reply: Completion,
-    ) -> Result<BuildStep, RuntimeError> {
+    ) -> Result<EffectStep, RuntimeError> {
         if matches!(self.0.phase, Phase::NextCall) {
             self.0.phase = Phase::Parse;
-            return Ok(BuildStep::request_parse(reply, self));
+            return effect::request(Effect::ParseIterator { result: reply }, self.0);
         }
         let value = match reply {
             Completion::Return(value) => value,
@@ -537,12 +483,15 @@ impl BuildResume {
                         length: 0,
                     };
                     self.0.phase = Phase::Length;
-                    return Ok(BuildStep::request_read(
-                        JsValue::Object(source.into_handle()),
-                        runtime
-                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-                        self,
-                    ));
+                    return effect::request(
+                        Effect::ReadValue {
+                            receiver: JsValue::Object(source.into_handle()),
+                            key: runtime.pinned_property_key(
+                                crate::engine::atom::pinned::PinnedAtom::Length,
+                            )?,
+                        },
+                        self.0,
+                    );
                 }
                 let callable = (|| match &value {
                     JsValue::Object(id) => {
@@ -577,7 +526,7 @@ impl BuildResume {
             }
             Phase::Length => {
                 self.0.phase = Phase::Number;
-                Ok(BuildStep::request_number(value, self))
+                effect::request(Effect::Number { value }, self.0)
             }
             Phase::Construct => {
                 let JsValue::Object(result) = value else {
@@ -591,12 +540,14 @@ impl BuildResume {
                     let receiver = runtime.dup_jsvalue(items)?;
                     let callable = method.try_clone()?;
                     self.0.phase = Phase::Iterator;
-                    return Ok(BuildStep::request_call(
-                        callable,
-                        receiver,
-                        Vec::new(),
-                        self,
-                    ));
+                    return effect::request(
+                        Effect::Call {
+                            callable,
+                            receiver,
+                            arguments: Vec::new(),
+                        },
+                        self.0,
+                    );
                 }
                 self.next(runtime)
             }
@@ -619,11 +570,14 @@ impl BuildResume {
                 };
                 *target = Some(iterator.try_clone()?);
                 self.0.phase = Phase::NextMethod;
-                Ok(BuildStep::request_read(
-                    JsValue::Object(iterator.into_handle()),
-                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
-                    self,
-                ))
+                effect::request(
+                    Effect::ReadValue {
+                        receiver: JsValue::Object(iterator.into_handle()),
+                        key: runtime
+                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
+                    },
+                    self.0,
+                )
             }
             Phase::NextMethod => {
                 let callable = (|| match &value {
@@ -660,7 +614,7 @@ impl BuildResume {
         mut self,
         runtime: &Runtime,
         reply: NativeConversion<f64>,
-    ) -> Result<BuildStep, RuntimeError> {
+    ) -> Result<EffectStep, RuntimeError> {
         let number = match reply {
             NativeConversion::Value(number) => number,
             NativeConversion::Throw(value) => return self.abrupt(runtime, value),
@@ -683,7 +637,7 @@ impl BuildResume {
         self,
         runtime: &Runtime,
         reply: ObjectIteratorStep,
-    ) -> Result<BuildStep, RuntimeError> {
+    ) -> Result<EffectStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Parse) {
             return Err(RuntimeError::Invariant(
                 "Array builder next result phase mismatch",
@@ -699,7 +653,7 @@ impl BuildResume {
         mut self,
         runtime: &Runtime,
         reply: NativeConversion<InternalDefineResult>,
-    ) -> Result<BuildStep, RuntimeError> {
+    ) -> Result<EffectStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Define) {
             if let NativeConversion::Throw(value) = reply {
                 let _ = runtime.release_jsvalue(value);
@@ -723,7 +677,7 @@ impl BuildResume {
         runtime: &Runtime,
         key: PropertyKey,
         reply: NativeConversion<InternalSetResult>,
-    ) -> Result<BuildStep, RuntimeError> {
+    ) -> Result<EffectStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::LengthSet) {
             if let NativeConversion::Throw(value) = reply {
                 let _ = runtime.release_jsvalue(value);
@@ -735,290 +689,24 @@ impl BuildResume {
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, reply)? {
             return self.abrupt(runtime, value);
         }
-        Ok(BuildStep::Complete(Completion::Return(JsValue::Object(
+        Ok(EffectStep::Complete(Completion::Return(JsValue::Object(
             self.result()?.into_handle(),
         ))))
     }
 }
-pub(crate) fn finish(
-    runtime: &Runtime,
-    realm: ContextId,
-    mut step: BuildStep,
-) -> Result<Completion, RuntimeError> {
-    loop {
-        step = match step {
-            BuildStep::Complete(result) => return Ok(result),
-            BuildStep::Read { mut resume } => {
-                let receiver = resume.take_read_receiver();
-                let key = resume.take_read_key();
-                resume.resume(
-                    runtime,
-                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
-                )?
-            }
-            BuildStep::Number { mut resume } => {
-                let value = resume.take_number_value();
-                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
-            }
-            BuildStep::Call { mut resume } => {
-                let callable = resume.take_call_callable();
-                let receiver = resume.take_call_receiver();
-                let arguments = resume.take_call_arguments();
-                resume.resume(
-                    runtime,
-                    runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
-                )?
-            }
-            BuildStep::Construct { mut resume } => {
-                let target = resume.take_construct_target();
-                let new_target = target.try_clone()?;
-                let arguments = resume.take_construct_arguments();
-                resume.resume(
-                    runtime,
-                    runtime.construct_internal_jsvalue(
-                        realm,
-                        &target,
-                        crate::engine::vm::call::ConstructNewTarget::Validated(new_target),
-                        arguments,
-                    )?,
-                )?
-            }
-            BuildStep::Parse { mut resume } => {
-                let result = resume.take_parse_result();
-                resume.parsed(
-                    runtime,
-                    finish_next(
-                        runtime,
-                        realm,
-                        NextStep::parse_result(runtime, realm, result)?,
-                    )?,
-                )?
-            }
-            BuildStep::Define { mut resume } => {
-                let object = resume.take_define_object();
-                let key = resume.take_define_key();
-                let descriptor = resume.take_define_descriptor();
-                resume.defined(
-                    runtime,
-                    runtime.internal_define_owned_property(realm, &object, &key, descriptor)?,
-                )?
-            }
-            BuildStep::Set { mut resume } => {
-                let object = resume.take_set_object();
-                let key = resume.take_set_key();
-                let value = resume.take_set_value();
-                {
-                    let reply = runtime.internal_set_jsvalue(
-                        realm,
-                        &object,
-                        &key,
-                        value,
-                        JsValue::Object(object.try_clone()?.into_handle()),
-                    )?;
-                    resume.set(runtime, key, reply)?
-                }
-            }
-            BuildStep::Close {
-                iterator,
-                completion,
-            } => {
-                return finish_close(
-                    runtime,
-                    realm,
-                    CloseStep::start(runtime, realm, iterator, completion)?,
-                );
-            }
-        };
-    }
-}
 
-#[derive(Default)]
-struct BuildStepPending {
-    read_receiver: Option<JsValue>,
-    read_key: Option<PropertyKey>,
-    number_value: Option<JsValue>,
-    call_callable: Option<CallableRef>,
-    call_receiver: Option<JsValue>,
-    call_arguments: Option<Vec<JsValue>>,
-    construct_target: Option<ConstructorRef>,
-    construct_arguments: Option<Vec<JsValue>>,
-    parse_result: Option<Completion>,
-    define_object: Option<ObjectRef>,
-    define_key: Option<PropertyKey>,
-    define_descriptor: Option<OwnedPropertyDescriptor>,
-    set_object: Option<ObjectRef>,
-    set_key: Option<PropertyKey>,
-    set_value: Option<JsValue>,
-}
-impl BuildStep {
-    pub(crate) fn request_read(
-        receiver: JsValue,
-        key: PropertyKey,
-        mut resume: BuildResume,
-    ) -> Self {
-        resume.0.pending_effect.read_receiver = Some(receiver);
-        resume.0.pending_effect.read_key = Some(key);
-        Self::Read { resume }
+impl Continuation for BuildResumeState {
+    fn pending(&mut self) -> &mut Option<Effect> {
+        &mut self.pending
     }
-    pub(crate) fn request_number(value: JsValue, mut resume: BuildResume) -> Self {
-        resume.0.pending_effect.number_value = Some(value);
-        Self::Number { resume }
-    }
-    pub(crate) fn request_call(
-        callable: CallableRef,
-        receiver: JsValue,
-        arguments: Vec<JsValue>,
-        mut resume: BuildResume,
-    ) -> Self {
-        resume.0.pending_effect.call_callable = Some(callable);
-        resume.0.pending_effect.call_receiver = Some(receiver);
-        resume.0.pending_effect.call_arguments = Some(arguments);
-        Self::Call { resume }
-    }
-    pub(crate) fn request_construct(
-        target: ConstructorRef,
-        arguments: Vec<JsValue>,
-        mut resume: BuildResume,
-    ) -> Self {
-        resume.0.pending_effect.construct_target = Some(target);
-        resume.0.pending_effect.construct_arguments = Some(arguments);
-        Self::Construct { resume }
-    }
-    pub(crate) fn request_parse(result: Completion, mut resume: BuildResume) -> Self {
-        resume.0.pending_effect.parse_result = Some(result);
-        Self::Parse { resume }
-    }
-    pub(crate) fn request_define(
-        object: ObjectRef,
-        key: PropertyKey,
-        descriptor: OwnedPropertyDescriptor,
-        mut resume: BuildResume,
-    ) -> Self {
-        resume.0.pending_effect.define_object = Some(object);
-        resume.0.pending_effect.define_key = Some(key);
-        resume.0.pending_effect.define_descriptor = Some(descriptor);
-        Self::Define { resume }
-    }
-    pub(crate) fn request_set(
-        object: ObjectRef,
-        key: PropertyKey,
-        value: JsValue,
-        mut resume: BuildResume,
-    ) -> Self {
-        resume.0.pending_effect.set_object = Some(object);
-        resume.0.pending_effect.set_key = Some(key);
-        resume.0.pending_effect.set_value = Some(value);
-        Self::Set { resume }
+    fn reply(self: Box<Self>, runtime: &Runtime, reply: Reply) -> Result<EffectStep, RuntimeError> {
+        let resume = BuildResume(self);
+        match reply {
+            Reply::Completion(completion) => resume.resume(runtime, completion),
+            Reply::Number(number) => resume.number(runtime, number),
+            Reply::Parsed(step) => resume.parsed(runtime, step),
+            Reply::Defined(result) => resume.defined(runtime, result),
+            Reply::Set { key, result } => resume.set(runtime, key, result),
+        }
     }
 }
-impl BuildResume {
-    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .read_receiver
-            .take()
-            .expect("BuildStep Read receiver")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .read_key
-            .take()
-            .expect("BuildStep Read key")
-    }
-    pub(crate) fn take_number_value(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .number_value
-            .take()
-            .expect("BuildStep Number value")
-    }
-    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
-        self.0
-            .pending_effect
-            .call_callable
-            .take()
-            .expect("BuildStep Call callable")
-    }
-    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .call_receiver
-            .take()
-            .expect("BuildStep Call receiver")
-    }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
-        self.0
-            .pending_effect
-            .call_arguments
-            .take()
-            .expect("BuildStep Call arguments")
-    }
-    pub(crate) fn take_construct_target(&mut self) -> ConstructorRef {
-        self.0
-            .pending_effect
-            .construct_target
-            .take()
-            .expect("BuildStep Construct target")
-    }
-    pub(crate) fn take_construct_arguments(&mut self) -> Vec<JsValue> {
-        self.0
-            .pending_effect
-            .construct_arguments
-            .take()
-            .expect("BuildStep Construct arguments")
-    }
-    pub(crate) fn take_parse_result(&mut self) -> Completion {
-        self.0
-            .pending_effect
-            .parse_result
-            .take()
-            .expect("BuildStep Parse result")
-    }
-    pub(crate) fn take_define_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .define_object
-            .take()
-            .expect("BuildStep Define object")
-    }
-    pub(crate) fn take_define_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .define_key
-            .take()
-            .expect("BuildStep Define key")
-    }
-    pub(crate) fn take_define_descriptor(&mut self) -> OwnedPropertyDescriptor {
-        self.0
-            .pending_effect
-            .define_descriptor
-            .take()
-            .expect("BuildStep Define descriptor")
-    }
-    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .set_object
-            .take()
-            .expect("BuildStep Set object")
-    }
-    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .set_key
-            .take()
-            .expect("BuildStep Set key")
-    }
-    pub(crate) fn take_set_value(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .set_value
-            .take()
-            .expect("BuildStep Set value")
-    }
-}
-const _: () = assert!(std::mem::size_of::<BuildStep>() <= 64);
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<BuildStep>() <= 64);

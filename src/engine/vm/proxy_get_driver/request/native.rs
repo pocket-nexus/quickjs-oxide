@@ -87,7 +87,7 @@ impl TryFrom<crate::engine::builtins::continuation::NativeStep> for Step {
                 NativeStep::IteratorFrom(step) => step.try_into()?,
                 NativeStep::IteratorWrap(step) => step.try_into()?,
                 NativeStep::IteratorConcat(step) => step.try_into()?,
-                NativeStep::ArrayBuild(step) => step.try_into()?,
+                NativeStep::Effect(step) => step.try_into()?,
                 NativeStep::ArraySort(step) => step.try_into()?,
                 NativeStep::ArrayIndexed(step) => step.try_into()?,
                 NativeStep::ArrayReverse(step) => step.try_into()?,

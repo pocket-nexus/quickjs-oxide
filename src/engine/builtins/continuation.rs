@@ -251,7 +251,8 @@ pub(crate) enum NativeStep {
     IteratorFrom(super::IteratorFromStep),
     IteratorWrap(super::IteratorWrapStep),
     IteratorConcat(super::IteratorConcatStep),
-    ArrayBuild(super::ArrayBuildStep),
+    /// A builtin migrated to the shared effect transport.
+    Effect(super::effect::EffectStep),
     ArraySort(super::ArraySortStep),
     ArrayIndexed(super::ArrayIndexedStep),
     ArrayReverse(super::ArrayReverseStep),
@@ -1122,7 +1123,7 @@ impl NativeOperation {
             Self::IteratorConcat(kind) => NativeStep::IteratorConcat(
                 super::IteratorConcatStep::start(runtime, realm, kind, invocation, arguments)?,
             ),
-            Self::ArrayBuild(kind) => NativeStep::ArrayBuild(super::ArrayBuildStep::start(
+            Self::ArrayBuild(kind) => NativeStep::Effect(super::array::build::start(
                 runtime, realm, kind, invocation, arguments,
             )?),
             Self::ArraySpeciesGetter => {
@@ -1343,7 +1344,7 @@ const _: () = assert!(std::mem::size_of::<super::InstanceStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::IteratorFromStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::IteratorWrapStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::IteratorConcatStep>() <= 56);
-const _: () = assert!(std::mem::size_of::<super::ArrayBuildStep>() <= 56);
+const _: () = assert!(std::mem::size_of::<super::effect::EffectStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::ArraySortStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::ArrayIndexedStep>() <= 56);
 const _: () = assert!(std::mem::size_of::<super::ArrayReverseStep>() <= 56);

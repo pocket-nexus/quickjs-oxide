@@ -48,6 +48,7 @@ mod eval;
 pub(crate) use eval::DirectEvalPreparation;
 
 pub(crate) mod continuation;
+pub(crate) mod effect;
 
 pub(crate) use function::arguments::{ArgumentsResume, ArgumentsStep};
 
@@ -256,8 +257,6 @@ pub(crate) use iterator::create::{
 };
 
 pub(crate) use object::string::ObjectStringKind;
-
-pub(crate) use array::build::{BuildResume as ArrayBuildResume, BuildStep as ArrayBuildStep};
 
 pub(crate) use function::instance::{
     InstanceResume, InstanceStep, try_ordinary_instanceof_in_state,

@@ -633,16 +633,10 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         self.dispatch_borrowed_invocation(invocation, |invocation| {
-            build::finish(
+            super::effect::finish(
                 self,
                 realm,
-                build::BuildStep::start(
-                    self,
-                    realm,
-                    build::BuildKind::From,
-                    invocation,
-                    arguments,
-                )?,
+                build::start(self, realm, build::BuildKind::From, invocation, arguments)?,
             )
         })
     }
@@ -687,10 +681,10 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         self.dispatch_borrowed_invocation(invocation, |invocation| {
-            build::finish(
+            super::effect::finish(
                 self,
                 realm,
-                build::BuildStep::start(self, realm, build::BuildKind::Of, invocation, arguments)?,
+                build::start(self, realm, build::BuildKind::Of, invocation, arguments)?,
             )
         })
     }
