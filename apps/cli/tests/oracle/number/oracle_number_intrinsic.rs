@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::property_callable;
 use std::ffi::OsStr;
 
@@ -476,9 +477,7 @@ fn number_native_error_stacks_match_pinned_quickjs() {
 }
 
 fn rust_observations() -> Option<Vec<String>> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

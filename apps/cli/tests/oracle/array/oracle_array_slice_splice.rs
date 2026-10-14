@@ -1,4 +1,5 @@
 use super::support::*;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::object_graph_observation::int_property;
 use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
@@ -527,9 +528,7 @@ print('meta='+metadata('toSpliced'));
 
 #[test]
 fn array_slice_splice_basic_rust_smoke() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     assert_eq!(
         context
             .eval(
@@ -547,9 +546,7 @@ fn array_slice_splice_basic_rust_smoke() {
 
 #[test]
 fn array_slice_recursive_getter_stack_overflow_is_catchable_without_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     assert_eq!(
         context
             .eval(
@@ -807,9 +804,7 @@ fn array_slice_splice_results_native_errors_and_user_throws_use_pinned_realms() 
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

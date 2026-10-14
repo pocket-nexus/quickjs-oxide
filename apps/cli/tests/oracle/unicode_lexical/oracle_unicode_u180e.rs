@@ -1,5 +1,5 @@
 use crate::runtime_completion_oracle::observe_read_context_eval_completion_with_prelude;
-use quickjs_oxide::engine::api::Runtime;
+use crate::runtime_observation::host_runtime_context;
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -177,9 +177,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let actual = observe_read_context_eval_completion_with_prelude(
             &runtime,
             &mut context,

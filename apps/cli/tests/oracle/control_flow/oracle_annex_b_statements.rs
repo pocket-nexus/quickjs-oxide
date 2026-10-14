@@ -1,5 +1,6 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::runtime_completion_oracle::compare_cli;
 use quickjs_oxide::engine::api::{
@@ -288,9 +289,7 @@ fn annex_b_statement_values_match_pinned_quickjs() {
     let oracle = require_qjs_oracle!("Annex B statement differential");
 
     for &(description, source) in VALUE_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -304,9 +303,7 @@ fn annex_b_statement_errors_match_pinned_quickjs() {
     let oracle = require_qjs_oracle!("Annex B statement error differential");
 
     for &(description, source) in ERROR_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -324,9 +321,7 @@ fn program_label_annex_global_state_matches_pinned_quickjs() {
         "typeof globalThis.orderedLabelCollision",
         "orderedLabelCollision",
     ];
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let rust = sources
         .iter()
         .map(|source| observe_rust_eval(&runtime, &mut context, source, description))
@@ -346,9 +341,7 @@ fn program_label_invokes_existing_global_setter_twice() {
         "Function.labelSetterHits=0;Function.labelSetterValue=0;Object.defineProperty(globalThis,'__qjo_label_accessor',{configurable:true,get:function(){return Function.labelSetterValue},set:function(value){Function.labelSetterHits++;Function.labelSetterValue=value}});0",
         "label:function __qjo_label_accessor(){return 17};Function.labelSetterHits+'|'+typeof __qjo_label_accessor+'|'+__qjo_label_accessor()",
     ];
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(
         context
             .eval("Function.labelSetterHits=0;Function.labelSetterValue=0")
@@ -424,9 +417,7 @@ fn with_annex_boundaries_match_pinned_quickjs() {
             oracle_accepts,
             "pinned QuickJS changed its with/Annex B boundary: {quickjs}"
         );
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let rust = observe_rust_eval(&runtime, &mut context, source, description);
         assert_eq!(
             rust, quickjs,

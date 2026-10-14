@@ -1,8 +1,8 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::oracle_cases::ExpectedCase as Case;
 use crate::runtime_completion_oracle::observe_rust;
-use quickjs_oxide::engine::api::Runtime;
 
 // Pins the synchronous QuickJS 2026-06-04 FormalParameters path whose lexical
 // pre-scan leaves SKIP_HAS_ASSIGNMENT clear. This includes recursive
@@ -228,9 +228,7 @@ fn parameter_binding_pattern_oracle_vectors_self_check() {
 #[test]
 fn parameter_binding_pattern_rust_smoke_runs_without_an_oracle() {
     for case in CASES.iter().chain(ERROR_CASES) {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust(&runtime, &mut context, case.source, case.description),
             case.expected,
@@ -244,9 +242,7 @@ fn parameter_binding_pattern_rust_smoke_runs_without_an_oracle() {
 fn parameter_binding_patterns_match_pinned_quickjs() {
     let oracle = require_qjs_oracle!("parameter-BindingPattern differential");
     for case in CASES.iter().chain(ERROR_CASES) {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust(&runtime, &mut context, case.source, case.description),
             observe_oracle(&oracle, case.source, case.description),

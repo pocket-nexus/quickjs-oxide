@@ -1,5 +1,6 @@
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::object_graph_observation::{
     data_descriptor, define_named_builtin_data as define_data, define_to_primitive,
@@ -433,9 +434,7 @@ fn string_index_search_methods_are_per_realm_and_retain_then_release_their_realm
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let prototype = context.string_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let selected = [
@@ -552,9 +551,7 @@ fn oracle_graph_observations(oracle: &OsStr) -> Vec<String> {
 }
 
 fn rust_fresh_delete_observation() -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let prototype = context.string_prototype().unwrap();
     let key = runtime.intern_property_key("indexOf").unwrap();
     let removed = runtime.delete_property(&prototype, &key).unwrap();

@@ -1,8 +1,8 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::oracle_cases::ExpectedCase as Case;
 use crate::runtime_completion_oracle::observe_rust;
-use quickjs_oxide::engine::api::Runtime;
 
 // Pins the synchronous BindingIdentifier-default subset of QuickJS 2026-06-04
 // FormalParameters. Direct eval deliberately remains outside this oracle until
@@ -163,9 +163,7 @@ fn identifier_default_parameter_oracle_vectors_self_check() {
 #[test]
 fn identifier_default_parameter_rust_smoke_runs_without_an_oracle() {
     for case in CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust(&runtime, &mut context, case.source, case.description),
             case.expected,
@@ -179,9 +177,7 @@ fn identifier_default_parameter_rust_smoke_runs_without_an_oracle() {
 fn identifier_default_parameter_matches_pinned_quickjs() {
     let oracle = require_qjs_oracle!("identifier-default-parameter differential");
     for case in CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust(&runtime, &mut context, case.source, case.description),
             observe_oracle(&oracle, case.source, case.description),

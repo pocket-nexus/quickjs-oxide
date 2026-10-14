@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_value;
 use quickjs_oxide::engine::api::{
     CallableRef, Context, DebugInfoMode, JsString, Runtime, RuntimeError, Value,
@@ -1459,15 +1460,11 @@ fn syntactic_eval_replacements_take_the_complete_ordinary_call_path() {
             string_value("AB|x|7"),
         ),
     ] {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (_runtime, mut context) = host_runtime_context();
         assert_eq!(context.eval(source).unwrap(), expected, "source: {source}");
     }
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     assert_eq!(
         context
             .eval(
@@ -1485,9 +1482,7 @@ fn syntactic_eval_replacements_take_the_complete_ordinary_call_path() {
 
 #[test]
 fn primitive_string_eval_executes_indirect_and_direct_completion_values() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let eval = global_eval(&runtime, &mut context);
 
     assert_eq!(
@@ -1590,9 +1585,7 @@ fn eval_lexicals_are_ephemeral_but_returned_closures_retain_them() {
             "#,
         ),
     ] {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (_runtime, mut context) = host_runtime_context();
         assert_eq!(
             context.eval(source).unwrap(),
             string_value("42|undefined|undefined"),
@@ -1633,9 +1626,7 @@ fn returned_eval_closure_retains_caller_lexical_in_every_debug_mode() {
 
 #[test]
 fn eval_syntax_errors_are_catchable_and_direct_eval_inherits_strictness() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
 
     assert_eq!(
         context
@@ -1780,9 +1771,7 @@ fn rust_observations() -> Vec<String> {
 }
 
 fn rust_value(source: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     let Value::String(value) = context.eval(source).unwrap() else {
         panic!("eval oracle probe did not return a String");
     };

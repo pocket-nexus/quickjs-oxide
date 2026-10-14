@@ -1,5 +1,6 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text as primitive_text,
 };
@@ -380,9 +381,7 @@ fn argument_spread_oracle_inventory_is_stable() {
 fn argument_spread_matches_pinned_expectations() {
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let actual = observe_rust(&runtime, &mut context, case.source, case.description);
         if actual != case.expected {
             failures.push(format!(
@@ -425,9 +424,7 @@ fn argument_spread_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("argument-spread differential");
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
         let quickjs = observe_oracle(&oracle, case.source, case.description);
         if oxide != quickjs {
@@ -451,9 +448,7 @@ fn argument_spread_runtime_argument_limit_matches_pinned_quickjs() {
     let oracle = std::env::var_os("QJS_ORACLE");
     let mut failures = Vec::new();
     for case in BOUNDARY_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
         if oxide != case.expected {
             failures.push(format!(

@@ -1,6 +1,7 @@
 use crate::object_graph_observation::{
     bit, complete_data_descriptor as data_descriptor, function, own_key_names as key_names,
 };
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::show_exception;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
@@ -149,9 +150,7 @@ fn function_prototype_prefix_matches_quickjs_oracle() {
 
 #[test]
 fn generator_callables_do_not_receive_the_ordinary_sloppy_restricted_property_exception() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let function_prototype = context.function_prototype().unwrap();
     let restricted = ["caller", "arguments"].map(|name| {
         let key = runtime.intern_property_key(name).unwrap();
@@ -229,9 +228,7 @@ fn lazy_function_prototype_defines_match_quickjs_oracle() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let function_prototype = context.function_prototype().unwrap();
 
     let prefix = runtime
@@ -603,9 +600,7 @@ fn rust_lazy_define_observations() -> Vec<String> {
 }
 
 fn rust_call_data_define(label: &str, descriptor: OrdinaryPropertyDescriptor) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let function_prototype = context.function_prototype().unwrap();
     let call_key = runtime.intern_property_key("call").unwrap();
 
@@ -642,9 +637,7 @@ fn rust_call_data_define(label: &str, descriptor: OrdinaryPropertyDescriptor) ->
 }
 
 fn rust_call_accessor_define() -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let function_prototype = context.function_prototype().unwrap();
     let call_key = runtime.intern_property_key("call").unwrap();
     let getter = function(
@@ -693,9 +686,7 @@ fn rust_call_accessor_define() -> String {
 }
 
 fn rust_has_instance_configurable_rejection() -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let context = runtime.new_context().expect("create context");
+    let (runtime, context) = host_runtime_context();
     let function_prototype = context.function_prototype().unwrap();
     let has_instance_key = PropertyKey::from(
         runtime

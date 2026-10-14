@@ -3,6 +3,7 @@ use crate::object_graph_observation::{
     define_global_key as define_global, expect_object, global_object_value as global_value,
     named_data_flags as data_flags,
 };
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{error_text, string_units as utf16_units};
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, JsBigInt, JsString, ObjectRef,
@@ -328,9 +329,7 @@ fn symbol_intrinsic_matches_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

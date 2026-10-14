@@ -1,5 +1,6 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::primitive_value_text_with_rust_float as primitive_value_text;
 
 use crate::runtime_completion_oracle::compare_cli;
@@ -137,9 +138,7 @@ fn direct_function_body_declaration_values_match_pinned_quickjs() {
     let oracle = require_qjs_oracle!("function-body declaration differential");
 
     for &(description, source) in VALUE_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -153,9 +152,7 @@ fn direct_function_body_declaration_tdz_matches_pinned_quickjs() {
     let oracle = require_qjs_oracle!("function-body declaration TDZ differential");
 
     for &(description, source) in ERROR_OBSERVATION_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),
@@ -172,9 +169,7 @@ fn failed_body_lexical_initializer_keeps_escaped_hoist_tdz_matches_pinned_quickj
         "(function(){Function.savedBodyRead=readLater;let later=missingBodyInitializer;function readLater(){return later}})()",
         "Function.savedBodyRead()",
     ];
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let rust = sources
         .iter()
         .map(|source| observe_rust_eval(&runtime, &mut context, source, description))

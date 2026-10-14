@@ -1,9 +1,9 @@
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::common::compile_syntax_error;
 use crate::runtime_completion_oracle::compare_argv_cases as compare_cases;
 use crate::support::quickjs_object_pattern_oracle::run_cli_exact as run_cli;
-use quickjs_oxide::engine::api::Runtime;
 
 // Pins QuickJS 2026-06-04 ArrayAssignmentPattern lowering. Array binding
 // declarations are covered separately: this target keeps AssignmentExpression
@@ -617,9 +617,7 @@ fn array_assignment_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn nested_object_assignments_run_without_an_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     for source in [
         "(function(){var value;({value}={value:42});return value})()",
         "(function(){var value;[{value}]=[{value:42}];return value})()",
@@ -699,9 +697,7 @@ fn invalid_array_assignment_leaf_is_syntax_after_object_patterns() {
 
 #[test]
 fn array_assignment_smoke_runs_without_an_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         observe_rust_eval(
             &runtime,

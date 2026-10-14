@@ -1,6 +1,7 @@
 use super::quickjs_plain_eval_oracle::eval_plain_lines;
 use crate::object_graph_observation::descriptor_bits;
 use crate::runtime_observation::error_text as error_string_property;
+use crate::runtime_observation::host_runtime_context;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -353,9 +354,7 @@ fn global_this_var_ref_cycle_is_collectable_after_context_drop() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let key = runtime.intern_property_key("globalThis").unwrap();
     let tag = PropertyKey::from(

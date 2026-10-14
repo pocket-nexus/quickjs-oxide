@@ -1,4 +1,5 @@
 use super::support::*;
+use crate::runtime_observation::host_runtime_context;
 
 use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
@@ -528,9 +529,7 @@ fn array_stringification_boxing_errors_user_throws_and_overflow_use_pinned_realm
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

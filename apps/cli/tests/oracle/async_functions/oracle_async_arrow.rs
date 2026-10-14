@@ -1,12 +1,10 @@
 use crate::runtime_completion_oracle::run;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{drain, eval, integer, text};
-use quickjs_oxide::engine::api::Runtime;
 
 #[test]
 fn async_arrow_shape_source_and_await_match_pinned_quickjs() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         text(eval(
             &mut context,
@@ -61,9 +59,7 @@ try {
 
 #[test]
 fn async_arrow_keeps_lexical_this_arguments_and_new_target_across_await() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(eval(
         &mut context,
         r#"
@@ -98,9 +94,7 @@ new Outer(1).then(function (value) {
 
 #[test]
 fn async_arrow_keeps_lexical_super_and_receiver_across_await() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(eval(
         &mut context,
         r#"
@@ -133,9 +127,7 @@ new Derived().read().then(function (value) {
 
 #[test]
 fn async_arrow_parameter_abrupt_becomes_a_rejected_promise() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         text(eval(
             &mut context,

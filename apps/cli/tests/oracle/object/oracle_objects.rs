@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_units as units;
 use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString,
@@ -91,9 +92,7 @@ fn ordinary_object_core_matches_quickjs_oracle() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let mut output = Vec::new();
 
     let ordered = runtime.new_object(None).unwrap();

@@ -1,6 +1,7 @@
 use super::quickjs_string_result_oracle::observe_string_result;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::observe_oxide;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
@@ -651,9 +652,7 @@ const CASES: &[Case] = &[
 fn iterator_concat_matches_pinned_expectations() {
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (_runtime, mut context) = host_runtime_context();
         let actual = observe_oxide(&mut context, case);
         if actual != case.expected {
             failures.push(format!(
@@ -696,9 +695,7 @@ fn iterator_concat_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("Iterator.concat differential");
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (_runtime, mut context) = host_runtime_context();
         let oxide = observe_oxide(&mut context, case);
         let quickjs = observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER);
         if oxide != quickjs {

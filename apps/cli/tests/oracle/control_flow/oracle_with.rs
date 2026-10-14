@@ -1,10 +1,11 @@
 //! Differential coverage for `with` statement semantics.
 
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::primitive_value_text;
 use crate::runtime_oracle::value_type;
 
 use crate::oracle_cases::ExpectedCase as Case;
-use quickjs_oxide::engine::api::{JsString, Runtime, Value};
+use quickjs_oxide::engine::api::{JsString, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -516,9 +517,7 @@ fn with_global_reference_sees_a_const_from_an_earlier_script() {
         __qjo_with_prior_error + "|" + __qjo_with_prior_side
     "#;
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     drop(context.eval(declaration).unwrap());
     assert_eq!(
         context.eval(assignment).unwrap(),
@@ -553,9 +552,7 @@ fn with_global_reference_observes_a_lexical_declared_after_function_publication(
         __qjo_with_late_const_error + "|" + __qjo_with_late_const_side
     "#;
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     drop(context.eval(function).unwrap());
     drop(context.eval(declaration).unwrap());
     assert_eq!(
@@ -573,9 +570,7 @@ fn with_global_reference_observes_a_lexical_declared_after_function_publication(
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let value = context.eval(case.source).unwrap_or_else(|error| {
         panic!(
             "Rust rejected with probe {} ({:?}): {error}",

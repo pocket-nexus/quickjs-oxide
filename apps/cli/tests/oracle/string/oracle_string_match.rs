@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_value;
 use crate::runtime_observation::{
     string_property_with_read_context as string_property, take_exception_object,
@@ -662,9 +663,7 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
         .name("string-regexp-match-stack-proof".into())
         .stack_size(2 * 1024 * 1024)
         .spawn(|| {
-            let runtime =
-                Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-            let mut context = runtime.new_context().expect("create context");
+            let (_runtime, mut context) = host_runtime_context();
             drop(
                 context
                     .eval(
@@ -738,9 +737,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);
         if actual != expected {

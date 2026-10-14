@@ -1,4 +1,5 @@
 use crate::object_graph_observation::{get_property as property_value, property_text};
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{string_value as string, value_text};
 use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
@@ -65,9 +66,7 @@ fn update_expressions_in_function_constructor_match_quickjs_oracle() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let constructor = context.function_constructor().unwrap();
     let mut output = Vec::new();
 

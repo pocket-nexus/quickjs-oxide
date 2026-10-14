@@ -4,6 +4,7 @@ use crate::object_graph_observation::{
 };
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
@@ -216,9 +217,7 @@ fn object_enumeration_autoinit_can_be_deleted_before_materialization() {
         "Object enumeration fresh delete",
     );
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let object = global_callable(&runtime, &mut context, "Object");
     let mut values = Vec::new();
     for name in ["keys", "values", "entries"] {
@@ -379,9 +378,7 @@ fn object_enumeration_methods_are_per_realm_and_retain_then_release_their_realm(
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [

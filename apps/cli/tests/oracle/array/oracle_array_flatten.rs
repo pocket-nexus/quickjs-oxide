@@ -1,4 +1,5 @@
 use super::support::*;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::object_graph_observation::int_property;
 use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
@@ -312,9 +313,7 @@ print('meta='+meta('flatMap')+'|'+meta('flat'));
 
 #[test]
 fn array_flatten_basic_rust_smoke() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     let value = context
         .eval(r#"[[1,2],[3,[4]],,5].flat().join("|")"#)
         .expect("evaluate basic Array.flat smoke");
@@ -327,9 +326,7 @@ fn array_flatten_basic_rust_smoke() {
 
 #[test]
 fn array_flatten_recursive_mapper_stack_overflow_is_catchable_without_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     // Owned callbacks consume logical frames, so the old native-stack ceiling
     // must not reject this finite chain. Keep the legacy ceiling probe below
     // for the default VM and exercise a true infinite chain for stack-vm.
@@ -510,9 +507,7 @@ fn array_flatten_results_native_errors_and_user_throws_use_pinned_realms() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = ["copyWithin", "flatMap", "flat", "values", "keys", "entries"];

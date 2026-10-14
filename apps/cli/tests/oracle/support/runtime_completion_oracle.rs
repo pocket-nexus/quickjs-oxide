@@ -11,6 +11,7 @@ use crate::quickjs_array_completion_oracle::observe_array_completion;
 use crate::runtime_observation::array_value_text;
 use crate::runtime_observation::assert_success;
 use crate::runtime_observation::error_name;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::normalize_rust_value_text as normalize_rust_value;
 use crate::runtime_observation::primitive_value_text_with_signed_zero;
 use crate::runtime_observation::take_rust_error;
@@ -264,9 +265,7 @@ pub(crate) fn assert_runtime_completion_helper_contracts() {
         "-0"
     );
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let callable = context.eval("(function(){})").unwrap();
     let ordinary = context.eval("({})").unwrap();
     assert_eq!(checked_value_type(&runtime, &callable), "function");
@@ -321,9 +320,7 @@ pub(crate) fn observe_quickjs_completion_with_prelude(
 pub(crate) fn compare_eval_completion_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group}");
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_eval_completion(&runtime, &mut context, source, description),
             crate::quickjs_oracle::observe_completion(&oracle, source, description),
@@ -340,9 +337,7 @@ pub(crate) fn compare_eval_completion_cases_with_prelude(
 ) {
     let oracle = require_qjs_oracle!("{group}");
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let source = source_with_prelude(prelude, source);
         assert_eq!(
             observe_eval_completion_without_source_diagnostic(
@@ -367,9 +362,7 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
     let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, original_source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let source = source_with_prelude(prelude, original_source);
         let actual = observe_eval_completion_with(
             &runtime,
@@ -401,9 +394,7 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
 pub(crate) fn compare_argv_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group} differential");
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_legacy_float_eval_completion(&runtime, &mut context, source, description),
             observe_completion_argv_strip_one_lf(&oracle, source, description),
@@ -416,9 +407,7 @@ pub(crate) fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group} differential");
     for &(description, source) in cases {
         let expected = observe_completion_argv_trim_end(&oracle, source, description);
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_eval_completion_with_error_context(&runtime, &mut context, source, description),
             expected,
@@ -549,9 +538,7 @@ if (__qjo_type === "number") {
 "#;
 
 pub(crate) fn rust_error_observation(source: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     take_rust_error(&runtime, &mut context)
 }
@@ -604,9 +591,7 @@ pub(crate) fn observe_oxide(context: &mut Context, case: &Case) -> String {
 }
 
 pub(crate) fn rust_case_observation(case: &Case) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     match context.eval(case.source) {
         Ok(value) => format!(
             "return|{}|{}",
@@ -652,9 +637,7 @@ pub(crate) fn compare_array_value_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group} differential");
     for &(description, source) in cases {
         let expected = observe_array_completion(&oracle, source, description);
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_array_aware_eval(&runtime, &mut context, source, description),
             expected,
@@ -709,9 +692,7 @@ pub(crate) fn oracle_case_completion(oracle: &OsStr, case: &Case) -> String {
 pub(crate) fn compare_object_pattern_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group} differential");
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_legacy_float_eval_completion(&runtime, &mut context, source, description),
             crate::support::quickjs_object_pattern_oracle::observe_completion_strip_one_lf(
@@ -725,9 +706,7 @@ pub(crate) fn compare_object_pattern_cases(group: &str, cases: &[(&str, &str)]) 
 }
 
 pub(crate) fn rust_case_name_observation(case: &Case) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     match context.eval(case.source) {
         Ok(value) => format!(
             "return|{}|{}",
@@ -929,9 +908,7 @@ pub(crate) fn compare_cases_collecting_failures(group: &str, cases: &[(&str, &st
     let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let actual = observe_match_all_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);
         if actual != expected {
@@ -1087,9 +1064,7 @@ function __units(value){
 "#;
 
 pub(crate) fn oxide_observation(case: &ExpectedCase) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     match context.eval(case.source) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),
         Ok(value) => panic!(

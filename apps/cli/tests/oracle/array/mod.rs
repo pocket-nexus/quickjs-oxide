@@ -4,6 +4,7 @@
 use crate::quickjs_oracle;
 
 mod support {
+    use crate::runtime_observation::host_runtime_context;
     pub(super) use crate::runtime_observation::{
         error_string_property, primitive_value_text,
         property_callable_with_read_context as property_callable, take_exception_object,
@@ -18,9 +19,7 @@ mod support {
         let oracle = require_qjs_oracle!("{group} differential");
         for &(description, source) in cases {
             let expected = observe_oracle(&oracle, source, description);
-            let runtime =
-                Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = host_runtime_context();
             assert_eq!(
                 observe_rust_eval(&runtime, &mut context, source, description),
                 expected,

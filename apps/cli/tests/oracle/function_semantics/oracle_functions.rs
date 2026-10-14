@@ -1,4 +1,5 @@
 use crate::object_graph_observation::bits;
+use crate::runtime_observation::host_runtime_context;
 use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, DescriptorField, OrdinaryPropertyDescriptor, Runtime,
     RuntimeError, Value,
@@ -80,9 +81,7 @@ fn ordinary_function_object_kernel_matches_quickjs_oracle() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let Value::Object(function) = context.eval("(0, function(a, b) {})").unwrap() else {
         panic!("function expression did not produce an object");
     };

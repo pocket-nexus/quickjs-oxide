@@ -2,6 +2,7 @@ use crate::object_graph_observation::{
     define_context_data as define_data, define_global_via_data as define_global, function,
     getter_descriptor, global_value, set_global,
 };
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::show_exception;
 use quickjs_oxide::engine::api::{
     CallableRef, Context, JsString, ObjectRef, PropertyKey, Runtime, RuntimeError, Value,
@@ -617,9 +618,7 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let context = runtime.new_context().expect("create context");
+        let (runtime, context) = host_runtime_context();
         let to_primitive = PropertyKey::from(
             runtime
                 .well_known_symbol(WellKnownSymbol::ToPrimitive)

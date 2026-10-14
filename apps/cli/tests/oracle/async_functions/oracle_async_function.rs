@@ -1,4 +1,5 @@
 use crate::object_graph_observation::{define_context_global as define_global, object};
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{drain, eval, integer, text};
 use quickjs_oxide::engine::api::{CallableRef, Runtime, Value};
 use std::process::Command;
@@ -88,9 +89,7 @@ outer().then(async function(values) {
 
 #[test]
 fn ordinary_async_shape_starts_synchronously_and_returns_a_promise() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         text(eval(
             &mut context,
@@ -136,9 +135,7 @@ promise.then(function (value) {
 
 #[test]
 fn fallthrough_throw_this_and_arguments_settle_the_outer_promise() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(eval(
         &mut context,
         r#"
@@ -168,9 +165,7 @@ receiver.call({ base: 40 }, 1).then(function (value) {
 
 #[test]
 fn each_await_yields_exactly_one_fifo_resume_job() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         text(eval(
             &mut context,
@@ -218,9 +213,7 @@ order.join('|');
 
 #[test]
 fn await_rejection_uses_normal_vm_unwind_for_catch_and_finally() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         text(eval(
             &mut context,
@@ -271,9 +264,7 @@ events.join('|');
 
 #[test]
 fn await_assimilates_thenables_once_and_retains_the_graph_across_gc() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         text(eval(
             &mut context,
@@ -333,9 +324,7 @@ events.join('|');
 
 #[test]
 fn await_handles_every_thenable_abrupt_and_first_settlement_boundary() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(eval(
         &mut context,
         r#"
@@ -393,9 +382,7 @@ observe(repeated).then(function (value) { repeatedResult = value; });
 
 #[test]
 fn async_return_assimilates_promises_and_thenables_into_an_independent_outer_promise() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         eval(
             &mut context,
@@ -436,9 +423,7 @@ outer !== inner;
 
 #[test]
 fn await_uses_intrinsics_instead_of_mutable_promise_properties() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(eval(
         &mut context,
         r#"
@@ -476,9 +461,7 @@ originalThen.call(
 
 #[test]
 fn hidden_async_function_constructor_compiles_await_bodies() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         text(eval(
             &mut context,
@@ -510,9 +493,7 @@ dynamic(42).then(function (value) { answer = value; });
 
 #[test]
 fn direct_eval_keeps_async_function_variable_environments_alive() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(eval(
         &mut context,
         r#"

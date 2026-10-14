@@ -1,8 +1,8 @@
 //! Differential coverage for classic `for` lexical environments.
 
 use crate::runtime_completion_oracle::{compare_cli, rust_value_observation};
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::normalize_rust_value_text as normalize_rust_value;
-use quickjs_oxide::engine::api::Runtime;
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -235,9 +235,7 @@ fn script_for_capture_survives_a_following_eval_like_pinned_quickjs() {
     let setup = "Function.saved=undefined;for(let value=0;value<1;value++){Function.saved=function(){return value};}";
     let observation = "Function.saved()+'|'+typeof value";
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     drop(
         context
             .eval(setup)

@@ -1,4 +1,5 @@
 use crate::object_graph_observation::require_object as expect_object;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
     string_property_with_read_context as string_property, take_exception_object,
@@ -421,9 +422,7 @@ fn reflect_property_operations_match_pinned_quickjs() {
 
 #[test]
 fn reflect_exposes_all_thirteen_nonconstructable_methods() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let reflect = reflect_object(&runtime, &mut context);
     for &(name, expected_length) in METHODS {
         let callable = property_callable(&runtime, &mut context, &reflect, name);
@@ -569,9 +568,7 @@ fn reflect_cross_realm_results_native_errors_and_user_errors_use_exact_realms() 
 fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group}");
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),

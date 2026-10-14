@@ -1,5 +1,6 @@
 use crate::object_graph_observation::require_object as expect_object;
 use crate::runtime_completion_oracle::observe_read_context_eval_completion_with_prelude;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
@@ -630,9 +631,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let actual = observe_read_context_eval_completion_with_prelude(
             &runtime,
             &mut context,

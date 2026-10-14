@@ -5,6 +5,7 @@ use crate::object_graph_observation::{
     intrinsic_prototype, joined_own_key_names as own_key_names,
 };
 use crate::runtime_observation::error_text;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{property_callable, take_thrown_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     CallableRef, Context, EvalOptions, JsBigInt, JsString, PropertyKey, Runtime, RuntimeError,
@@ -316,9 +317,7 @@ fn global_numeric_predicate_native_stacks_match_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let is_nan = global_callable(&runtime, &mut context, "isNaN");
     let is_finite = global_callable(&runtime, &mut context, "isFinite");
@@ -800,9 +799,7 @@ fn plain_value(value: Value) -> String {
 }
 
 fn rust_uncaught_error(source: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         context.eval_with_options(source, &EvalOptions::new("<cmdline>")),
         Err(RuntimeError::Exception)

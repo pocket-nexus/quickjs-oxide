@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{eval, string_text as text};
 use quickjs_oxide::engine::api::Runtime;
 
@@ -7,9 +8,7 @@ const QUICKJS_2026_06_04: &str =
 
 #[test]
 fn is_html_dda_semantics_match_pinned_quickjs_transcript() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     context
         .install_test262_host()
         .expect("install Test262 host surface");

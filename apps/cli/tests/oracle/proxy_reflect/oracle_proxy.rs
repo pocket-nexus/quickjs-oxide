@@ -1,4 +1,5 @@
 use crate::object_graph_observation::define_global;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text_with_rust_float as primitive_text,
 };
@@ -1126,9 +1127,7 @@ fn proxy_oracle_vectors_self_check() {
 
 #[test]
 fn proxy_forwarding_and_generic_consumers_have_rust_only_regressions() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     for (description, expected) in [
         (
             "empty-handler forwarding retains pinned finite stack overflow behavior",
@@ -1307,9 +1306,7 @@ fn proxy_native_and_user_errors_use_their_exact_realms() {
 
 #[test]
 fn proxy_hidden_edges_survive_gc_and_revocation_is_safe_across_collection() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let record = eval_object(
         &mut context,
         r#"(function(){
@@ -1378,9 +1375,7 @@ fn compare_groups(groups: &[&str]) {
         .filter(|(group, _)| groups.contains(group))
     {
         for &(description, source) in cases {
-            let runtime =
-                Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = host_runtime_context();
             let oxide = observe_rust(&runtime, &mut context, source, description);
             let quickjs = observe_oracle(&oracle, source, description);
             if oxide != quickjs {

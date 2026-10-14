@@ -1,5 +1,6 @@
 use crate::object_graph_observation::{bit, function, get_property};
 use crate::runtime_observation::hex;
+use crate::runtime_observation::host_runtime_context;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -302,9 +303,7 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let function_prototype = context.function_prototype().unwrap();
         let bind = property_callable(&runtime, &mut context, &function_prototype, "bind");
         let to_string = property_callable(&runtime, &mut context, &function_prototype, "toString");

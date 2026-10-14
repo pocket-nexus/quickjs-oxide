@@ -6,8 +6,8 @@
 
 use crate::oracle_cases::SuccessCase;
 use crate::runtime_completion_oracle::{compare_success_cases, run};
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{eval, text};
-use quickjs_oxide::engine::api::Runtime;
 
 const SEMANTIC_CASES: &[SuccessCase] = &[
     SuccessCase {
@@ -316,9 +316,7 @@ fn async_generator_object_method_contextual_boundaries_match_pinned_quickjs() {
 
 #[test]
 fn suspended_method_retains_its_home_object_across_gc() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(eval(
         &mut context,
         r#"

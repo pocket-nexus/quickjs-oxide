@@ -4,6 +4,7 @@ use crate::object_graph_observation::{own_data_descriptor as data_descriptor, ow
 use crate::runtime_completion_oracle::{
     compare_array_value_cases as compare_value_cases, observe_array_aware_eval as observe_rust_eval,
 };
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
 };
@@ -504,9 +505,7 @@ fn object_descriptor_conversion_matches_pinned_quickjs() {
 
 #[test]
 fn object_define_properties_pins_quickjs_proxy_batch_order_without_an_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         observe_rust_eval(
             &runtime,
@@ -664,9 +663,7 @@ fn object_constructor_custom_new_target_and_cross_realm_fallback_are_pinned() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let object_prototype = context.object_prototype().unwrap();

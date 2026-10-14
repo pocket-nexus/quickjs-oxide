@@ -1,7 +1,8 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf as observe_oracle;
 use crate::runtime_completion_oracle::observe_checked_legacy_float_eval_completion as observe_rust_eval;
+use crate::runtime_observation::host_runtime_context;
 
-use quickjs_oxide::engine::api::{Runtime, Value};
+use quickjs_oxide::engine::api::Value;
 use std::process::Command;
 
 const VALUE_CASES: &[(&str, &str)] = &[
@@ -119,9 +120,7 @@ const SYNTAX_CASES: &[(&str, &str)] = &[
 fn for_in_values_match_pinned_quickjs() {
     let oracle = require_qjs_oracle!("for-in differential");
     for &(description, source) in VALUE_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),
@@ -150,9 +149,7 @@ fn for_in_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn for_in_rust_smoke_runs_without_an_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     let Value::String(value) = context
         .eval("(function(){var s='';for(var k in {b:1,a:1})s+=k;return s})()")
         .expect("execute for-in smoke")

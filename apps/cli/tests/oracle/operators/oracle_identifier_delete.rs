@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{error_text as error_property_text, value_text};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
@@ -143,9 +144,7 @@ fn identifier_delete_errors_and_function_stack_match_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let mut output = Vec::new();
 
@@ -415,9 +414,7 @@ fn eval_text(context: &mut Context, source: &str) -> String {
 }
 
 fn rust_uncaught_error(source: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         context.eval_with_filename(source, "<cmdline>"),
         Err(RuntimeError::Exception),

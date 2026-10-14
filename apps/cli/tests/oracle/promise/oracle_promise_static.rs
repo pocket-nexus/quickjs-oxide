@@ -1,5 +1,6 @@
 use crate::runtime_observation::eval;
-use quickjs_oxide::engine::api::{Runtime, Value};
+use crate::runtime_observation::host_runtime_context;
+use quickjs_oxide::engine::api::Value;
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3n_promise_static.js");
 const EXPECTED: &str =
@@ -7,9 +8,7 @@ const EXPECTED: &str =
 
 #[test]
 fn promise_try_with_resolvers_and_race_match_pinned_quickjs() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
 
     drop(eval(&mut context, FIXTURE));
     runtime.run_gc().unwrap();

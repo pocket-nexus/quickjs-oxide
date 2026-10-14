@@ -1,4 +1,5 @@
 use crate::object_graph_observation::data_property;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_text as text;
 use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 
@@ -80,9 +81,7 @@ fn drain_jobs(runtime: &Runtime, context: &mut Context) {
 
 #[test]
 fn test262_gc_reentry_preserves_execution_turn_roots_and_job_order() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     install_test262_gc(&mut context);
 
     drop(eval(&mut context, FIXTURE));
@@ -155,9 +154,7 @@ fn test262_gc_reentry_preserves_execution_turn_roots_and_job_order() {
 
 #[test]
 fn test262_gc_nested_embedding_entries_share_the_explicit_execution_turn() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     install_test262_gc(&mut context);
     runtime.with_execution_turn(|| {
         drop(eval(&mut context, "var scopeRef = new WeakRef({}); var scopeJobs = 0; Promise.resolve().then(() => scopeJobs++);"));

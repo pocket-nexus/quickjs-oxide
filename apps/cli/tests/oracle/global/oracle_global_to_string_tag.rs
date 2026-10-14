@@ -1,5 +1,6 @@
 use super::quickjs_plain_eval_oracle::eval_plain_lines;
 use crate::object_graph_observation::descriptor_bits;
+use crate::runtime_observation::host_runtime_context;
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, JsString,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value, WellKnownSymbol,
@@ -239,9 +240,7 @@ fn object_to_string_cross_realm_uses_receiver_tag_and_method_defining_realm() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let object_to_string = property_callable(&runtime, &mut context, &object_prototype, "toString");

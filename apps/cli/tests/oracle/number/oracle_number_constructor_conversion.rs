@@ -3,6 +3,7 @@ use crate::object_graph_observation::{
     eval_callable, expect_object, global_callable, global_string as string_global,
 };
 use crate::runtime_observation::error_text;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{property_callable, take_thrown_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsBigInt, JsString, ObjectRef,
@@ -515,9 +516,7 @@ fn number_wrapper_keeps_its_realm_graph_alive_until_collection() {
 }
 
 fn rust_constructor_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let number = global_callable(&runtime, &mut context, "Number");
 

@@ -7,6 +7,7 @@ use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::{
     compare_eval_completion_cases as compare_cases, observe_eval_completion as observe_rust_eval,
 };
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
 };
@@ -361,9 +362,7 @@ fn object_descriptor_exotic_surfaces_match_pinned_quickjs() {
 
 #[test]
 fn object_descriptor_pins_quickjs_proxy_same_value_omission_without_an_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         observe_rust_eval(
             &runtime,
@@ -393,9 +392,7 @@ fn object_descriptor_autoinit_can_be_deleted_before_materialization() {
         "Object descriptor fresh delete",
     );
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let object = global_callable(&runtime, &mut context, "Object");
     let mut values = Vec::new();
     for name in ["getOwnPropertyDescriptor", "getOwnPropertyDescriptors"] {
@@ -612,9 +609,7 @@ fn object_descriptor_methods_and_results_retain_then_release_their_realm() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [

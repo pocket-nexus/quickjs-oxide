@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
@@ -120,9 +121,7 @@ fn object_literal_observations_match_pinned_quickjs() {
 
 #[test]
 fn object_literal_duplicate_proto_is_an_early_error() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert!(matches!(
         context.compile("({__proto__:1,__proto__:2})"),
         Err(RuntimeError::Exception)
@@ -138,9 +137,7 @@ fn object_literal_duplicate_proto_is_an_early_error() {
 }
 
 fn rust_observation() -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     let Value::String(value) = context
         .eval(PROBE)
         .expect("Rust object-literal probe failed")

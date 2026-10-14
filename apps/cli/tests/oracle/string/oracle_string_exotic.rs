@@ -1,4 +1,5 @@
 use crate::object_graph_observation::expect_object;
+use crate::runtime_observation::host_runtime_context;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value,
@@ -133,9 +134,7 @@ fn string_wrapper_exotic_matches_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let payload = JsString::try_from_utf16([0x41, 0xd83d, 0xde00, 0xd800]).unwrap();
     let wrapper = box_string(&runtime, &mut context, payload.clone());
     let prototype = runtime

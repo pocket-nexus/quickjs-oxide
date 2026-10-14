@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use quickjs_oxide::engine::api::{CompileOptions, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
@@ -490,9 +491,7 @@ fn class_public_initialization_vectors_match_pinned_quickjs() {
 }
 
 fn rust_string_observation(source: &str, description: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     match context.eval(source) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),
         Ok(value) => {
@@ -520,9 +519,7 @@ fn rust_string_observation(source: &str, description: &str) -> String {
 }
 
 fn assert_compile_syntax_error(source: &str, description: &str) {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     match context.compile_with_options(source, &CompileOptions::default()) {
         Err(RuntimeError::Exception) => {}
         Err(error) => panic!(

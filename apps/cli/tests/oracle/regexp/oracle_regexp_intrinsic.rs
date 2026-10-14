@@ -3,6 +3,7 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude, observe_read_context_eval_completion_with_prelude,
 };
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
@@ -685,9 +686,7 @@ fn regexp_exec_reentrant_compile_matches_pinned_quickjs() {
     };
     let mut failures = Vec::new();
     for &(description, source, expected) in EXEC_REENTRANT_COMPILE_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let oxide = observe_rust_eval(&runtime, &mut context, source, description);
         let quickjs =
             observe_quickjs_completion_with_prelude(PRELUDE, &oracle, source, description);
@@ -713,9 +712,7 @@ fn regexp_test_and_abstract_exec_match_pinned_quickjs() {
 
 #[test]
 fn regexp_test_calls_callable_proxy_exec_without_an_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         observe_rust_eval(
             &runtime,

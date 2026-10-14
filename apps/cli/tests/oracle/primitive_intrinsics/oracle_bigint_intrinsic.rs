@@ -5,6 +5,7 @@ use crate::object_graph_observation::{
     object_has_prototype,
 };
 use crate::runtime_observation::error_text;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::property_callable;
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsBigInt, JsString, ObjectRef,
@@ -322,9 +323,7 @@ fn bigint_intrinsic_matches_pinned_quickjs() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

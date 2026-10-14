@@ -1,6 +1,6 @@
 use crate::runtime_completion_oracle::compare_object_pattern_cases as compare_cases;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use quickjs_oxide::engine::api::Runtime;
+use crate::runtime_observation::host_runtime_context;
 
 // Pins QuickJS 2026-06-04 ObjectBindingPattern rest lowering. The excluded-key
 // object is built before CopyDataProperties, and the rest target is a fresh
@@ -356,9 +356,7 @@ fn object_rest_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn object_rest_smoke_runs_without_an_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         observe_rust_eval(&runtime, &mut context, SMOKE_SOURCE, "object-rest smoke"),
         "return|string|1|other:40|1:2",

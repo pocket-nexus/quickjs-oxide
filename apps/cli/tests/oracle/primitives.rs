@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use std::ffi::OsStr;
 use std::io::Write;
 
@@ -1118,9 +1119,7 @@ const RUNTIME_ERROR_CASES: &[(&str, &str)] = &[
 fn future_reserved_words_match_quickjs_oracle() {
     let oracle = require_qjs_oracle!("future-reserved-word differential");
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let import_options = CompileOptions::new("future-reserved-import.js");
     for &(description, source) in FUTURE_RESERVED_IMPORT_CALL_CASES {
         context
@@ -1180,9 +1179,7 @@ fn primitive_expressions_match_quickjs_oracle() {
         return;
     };
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
 
     for &(description, source) in CASES {
         let rust_value = context.eval(source).unwrap_or_else(|error| {
@@ -1202,9 +1199,7 @@ fn primitive_expressions_match_quickjs_oracle() {
 fn implemented_errors_match_quickjs_oracle() {
     let oracle = require_qjs_oracle!("syntax-error oracle differential");
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     for &(description, source) in SHARED_ERRORS {
         assert!(
             context.eval(source).is_err(),
@@ -1240,9 +1235,7 @@ fn implemented_errors_match_quickjs_oracle() {
 fn runtime_error_kind_and_message_match_quickjs_oracle() {
     let oracle = require_qjs_oracle!("runtime-error oracle differential");
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let name_key = runtime.intern_property_key("name").unwrap();
     let message_key = runtime.intern_property_key("message").unwrap();
     for &(description, source) in RUNTIME_ERROR_CASES {
@@ -1274,9 +1267,7 @@ fn compiler_call_capacity_matches_quickjs_error_classes() {
         .join(",");
     let source = format!("(function() {{}})({arguments})");
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(context.compile(&source), Err(RuntimeError::Exception));
     let rust_observation = take_rust_error_observation(&runtime, &mut context);
     assert_eq!(rust_observation, "InternalError|stack overflow");

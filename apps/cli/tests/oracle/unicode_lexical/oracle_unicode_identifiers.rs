@@ -1,6 +1,7 @@
 use super::quickjs_syntax_diagnostic_oracle::observe_cmdline_syntax_error as oracle_diagnostic_observation;
+use crate::runtime_observation::host_runtime_context;
 use quickjs_oxide::engine::api::testing::{Lexer, TokenKind};
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -68,9 +69,7 @@ fn unicode_identifier_execution_matches_pinned_quickjs() {
         ),
     ];
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     for (description, source) in cases {
         assert_eq!(
             context.eval(&source).unwrap_or_else(|error| {
@@ -367,9 +366,7 @@ fn oracle_number_observation(oracle: &OsStr, source: &str, description: &str) ->
 }
 
 fn rust_error_observation(source: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust parser did not materialize an Error object for {source:?}");
@@ -403,9 +400,7 @@ fn oracle_error_observation(oracle: &OsStr, source: &str) -> String {
 }
 
 fn rust_diagnostic_observation(source: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust parser did not materialize an Error object for {source:?}");

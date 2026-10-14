@@ -7,6 +7,16 @@ use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, Value
 use std::fmt::Write as _;
 use std::process::Output;
 
+/// Create a runtime with the system host services and one fresh context.
+/// Destructure it as `let (runtime, mut context)` so the context still drops
+/// before its runtime.
+pub(crate) fn host_runtime_context() -> (Runtime, Context) {
+    let runtime =
+        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let context = runtime.new_context().expect("create context");
+    (runtime, context)
+}
+
 /// Classify a value for completion-vector output while retaining the explicit
 /// callable-inspection assertion used by the older oracle helpers.
 pub(crate) fn checked_value_type(runtime: &Runtime, value: &Value) -> &'static str {

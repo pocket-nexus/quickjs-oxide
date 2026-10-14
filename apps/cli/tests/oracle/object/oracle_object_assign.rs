@@ -4,6 +4,7 @@ use crate::object_graph_observation::{
 };
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
@@ -413,9 +414,7 @@ fn object_assign_autoinit_can_be_deleted_before_materialization() {
     let oracle = require_qjs_oracle!("Object.assign AutoInit delete");
     let expected = oracle_lines(&oracle, FRESH_DELETE_ORACLE, "Object.assign fresh delete");
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let object = global_callable(&runtime, &mut context, "Object");
     let key = runtime.intern_property_key("assign").unwrap();
     let deleted = runtime
@@ -629,9 +628,7 @@ fn object_assign_method_and_boxed_result_retain_then_release_their_realm() {
 
 #[test]
 fn object_assign_exotic_source_families_are_published() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     assert_eq!(
         context
             .eval("typeof Proxy+'|'+typeof ArrayBuffer+'|'+typeof Uint8Array")
@@ -642,9 +639,7 @@ fn object_assign_exotic_source_families_are_published() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [

@@ -1,5 +1,6 @@
 use crate::object_graph_observation::intrinsic_prototype;
 use crate::runtime_observation::error_string;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     Context, DescriptorField, JsString, ObjectRef, OrdinaryPropertyDescriptor, Runtime,
@@ -222,9 +223,7 @@ fn string_rope_dag_does_not_keep_its_realm_graph_alive() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let prototype = context.string_prototype().unwrap();
     let concat = property_callable(&runtime, &mut context, &prototype, "concat");

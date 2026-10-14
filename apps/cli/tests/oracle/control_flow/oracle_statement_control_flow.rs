@@ -1,9 +1,9 @@
 use super::quickjs_control_value_oracle::observe_normalized_value;
 use super::quickjs_syntax_diagnostic_oracle::observe_cmdline_syntax_error as oracle_error_observation;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::runtime_completion_oracle::{ORACLE_NORMALIZER, rust_error_observation};
 use crate::runtime_observation::normalize_rust_value_units as normalize_rust_value;
-use quickjs_oxide::engine::api::Runtime;
 
 const VALUE_CASES: &[(&str, &str)] = &[
     ("empty script", ""),
@@ -651,9 +651,7 @@ fn statement_control_flow_values_match_pinned_quickjs() {
     let oracle = require_qjs_oracle!("statement-control-flow differential");
 
     for &(description, source) in VALUE_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (_runtime, mut context) = host_runtime_context();
         let value = context
             .eval(source)
             .unwrap_or_else(|error| panic!("Rust rejected {description:?} ({source:?}): {error}"));

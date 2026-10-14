@@ -1,4 +1,5 @@
 use crate::object_graph_observation::{function, get_property};
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{show, string_value as string};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
@@ -614,9 +615,7 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
 }
 
 fn rust_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let sentinel = context.new_object().unwrap();
     define_global(
         &runtime,
@@ -1470,9 +1469,7 @@ fn oracle_observations(oracle: &OsStr) -> Vec<String> {
 }
 
 fn rust_error_observation(source: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust parser did not materialize an Error object");

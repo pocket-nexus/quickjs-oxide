@@ -2,6 +2,7 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_value;
 use crate::runtime_observation::{
     string_property_with_read_context as string_property, take_exception_object,
@@ -761,9 +762,7 @@ fn mixed_string_and_regexp_split_recursion_guard_is_catchable_and_recovers() {
         .name("string-regexp-split-stack-proof".into())
         .stack_size(2 * 1024 * 1024)
         .spawn(|| {
-            let runtime =
-                Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-            let mut context = runtime.new_context().expect("create context");
+            let (_runtime, mut context) = host_runtime_context();
             drop(
                 context
                     .eval(

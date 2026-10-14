@@ -1,6 +1,7 @@
 use crate::object_graph_observation::data_bits;
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::object_graph_observation::{
     data_descriptor, eval_object, eval_source_callable as eval_callable, global_callable,
@@ -458,9 +459,7 @@ fn object_group_by_uses_its_defining_realm_and_preserves_user_throws() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [

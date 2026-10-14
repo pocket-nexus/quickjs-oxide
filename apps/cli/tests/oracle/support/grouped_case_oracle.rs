@@ -1,14 +1,10 @@
 // Shared drivers for `GroupedCase` tables. Each topic module keeps its own
 // cases, prelude and label; these helpers only own the comparison loops.
 use crate::oracle_cases::GroupedCase as Case;
-use crate::runtime_observation::{primitive_value_text, string_property};
+use crate::runtime_observation::{host_runtime_context, primitive_value_text, string_property};
 use crate::runtime_oracle::value_type;
 use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-
-fn host_runtime() -> Runtime {
-    Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default())
-}
 
 /// Assert every case against its frozen expectation using a Rust observer.
 pub(crate) fn assert_cases_match_expectations(
@@ -65,8 +61,7 @@ pub(crate) fn assert_cases_match_quickjs(
 
 /// Evaluate a case in a fresh host runtime; the case must return normally.
 pub(crate) fn rust_return_observation(label: &str, case: &Case) -> String {
-    let runtime = host_runtime();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let value = context.eval(case.source).unwrap_or_else(|error| {
         panic!(
             "Rust rejected {label} probe {} / {} ({:?}): {error}",
@@ -111,8 +106,7 @@ pub(crate) fn compare_prelude_case_groups(
     let oracle = require_pinned_qjs_oracle!("{label} differential");
     let mut failures = Vec::new();
     for case in cases.iter().filter(|case| groups.contains(&case.group)) {
-        let runtime = host_runtime();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let actual = prelude_rust_observation(&runtime, &mut context, prelude, case);
         let expected = prelude_oracle_observation(&oracle, prelude, case);
         if actual != expected {

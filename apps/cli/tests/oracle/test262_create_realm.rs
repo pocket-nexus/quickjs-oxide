@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{eval, string_text as text};
 use quickjs_oxide::engine::api::{PendingJobOutcome, Runtime, Value};
 
@@ -7,9 +8,7 @@ const QUICKJS_2026_06_04: &str =
 
 #[test]
 fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let installed = context
         .install_test262_host()
         .expect("install Test262 host surface");
@@ -53,9 +52,7 @@ fn test262_create_realm_and_eval_script_match_pinned_quickjs_transcript() {
 
 #[test]
 fn returned_child_host_retains_and_then_releases_its_realm_cycle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let parent_262 = context
         .install_test262_host()
         .expect("install parent Test262 host surface");

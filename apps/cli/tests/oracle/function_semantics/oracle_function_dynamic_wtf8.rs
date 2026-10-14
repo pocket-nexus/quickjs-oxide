@@ -2,7 +2,7 @@
 
 use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 use crate::runtime_completion_oracle::observe_eval_completion as observe_oxide;
-use quickjs_oxide::engine::api::Runtime;
+use crate::runtime_observation::host_runtime_context;
 
 struct DynamicKind {
     label: &'static str,
@@ -218,9 +218,7 @@ fn case(kind: &DynamicKind, detail: &str, body: &str, expected: &str) -> Case {
 
 #[test]
 fn dynamic_function_wtf8_source_matches_expected_semantics() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let mut failures = Vec::new();
     for case in cases() {
         let actual = observe_oxide(&runtime, &mut context, &case.source, &case.description);
@@ -243,9 +241,7 @@ fn dynamic_function_wtf8_source_matches_expected_semantics() {
 fn dynamic_function_wtf8_source_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("dynamic Function WTF-8 differential");
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let mut failures = Vec::new();
     for case in cases() {
         let oxide = observe_oxide(&runtime, &mut context, &case.source, &case.description);

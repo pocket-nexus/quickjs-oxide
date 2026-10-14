@@ -1,7 +1,7 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 use crate::runtime_completion_oracle::compare_cli;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use quickjs_oxide::engine::api::Runtime;
+use crate::runtime_observation::host_runtime_context;
 
 // Pins QuickJS 2026-06-04's CatchParameter BindingPattern path. QuickJS
 // lowers catch patterns through the declaration destructuring machinery, but
@@ -465,9 +465,7 @@ fn catch_destructuring_iterator_close_matches_pinned_quickjs() {
 fn catch_destructuring_pinned_quirks_have_exact_results() {
     let oracle = std::env::var_os("QJS_ORACLE");
     for &(description, source, expected) in PINNED_QUIRK_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             expected,
@@ -507,9 +505,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group} differential");
 
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),

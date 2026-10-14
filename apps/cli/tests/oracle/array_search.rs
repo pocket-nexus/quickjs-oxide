@@ -1,4 +1,5 @@
 use crate::quickjs_argv_completion_oracle;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::runtime_completion_oracle::compare_value_cases;
 use crate::runtime_observation::{
@@ -339,9 +340,7 @@ fn array_search_errors_use_the_native_defining_realm() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let selected = [

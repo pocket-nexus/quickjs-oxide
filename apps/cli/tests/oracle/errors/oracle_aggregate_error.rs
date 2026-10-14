@@ -1,7 +1,7 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::observe_rust_with_engine_errors as observe_rust;
-use quickjs_oxide::engine::api::Runtime;
+use crate::runtime_observation::host_runtime_context;
 
 // Pins the complete synchronous AggregateError slice implemented by QuickJS
 // 2026-06-04. The cases deliberately observe ordering and abrupt completion,
@@ -128,9 +128,7 @@ const CASES: &[Case] = &[
 fn aggregate_error_matches_pinned_expectations() {
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let actual = observe_rust(&runtime, &mut context, case.source, case.description);
         if actual != case.expected {
             failures.push(format!(
@@ -173,9 +171,7 @@ fn aggregate_error_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("AggregateError differential");
     let mut failures = Vec::new();
     for case in CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
         let quickjs = observe_oracle(&oracle, case.source, case.description);
         if oxide != quickjs {

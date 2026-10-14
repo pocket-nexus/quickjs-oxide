@@ -1,4 +1,5 @@
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::object_graph_observation::define_global;
 use crate::runtime_completion_oracle::{compare_argv_cases as compare_value_cases, compare_cli};
@@ -593,9 +594,7 @@ fn for_of_accessor_protocol_matches_pinned_quickjs() {
     let oracle = require_qjs_oracle!("for-of accessor differential");
     let oracle_setup = oracle_accessor_setup();
     for &(description, source) in ACCESSOR_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         install_accessor_fixture(&runtime, &mut context);
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -633,9 +632,7 @@ fn for_of_full_strip_source_and_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn top_level_for_await_uses_pinned_quickjs_syntax_diagnostic() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let (source, expected) = ("for await(var value of 'a')value", "expecting '('");
     let Err(RuntimeError::Exception) = context.compile(source) else {
         panic!("top-level for-await was not rejected: {source}");

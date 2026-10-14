@@ -1,4 +1,5 @@
 use crate::runtime_completion_oracle::{compare_cli, compare_value_cases};
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_units;
 use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{
@@ -289,9 +290,7 @@ fn array_host_own_keys_and_descriptors_match_pinned_quickjs() {
     let oracle = require_qjs_oracle!("Array host descriptor differential");
     for &(description, source) in HOST_SNAPSHOT_CASES {
         let expected = oracle_snapshot(&oracle, source, description);
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         let array = eval_object(&mut context, source, description);
         assert_eq!(
             array_snapshot(&runtime, &mut context, &array),
@@ -305,9 +304,7 @@ fn array_host_own_keys_and_descriptors_match_pinned_quickjs() {
 fn array_constructor_graph_matches_pinned_quickjs() {
     let oracle = require_qjs_oracle!("Array constructor graph differential");
     let expected = oracle_constructor_graph(&oracle);
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         rust_constructor_graph(&runtime, &mut context),
         expected,
@@ -319,9 +316,7 @@ fn array_constructor_graph_matches_pinned_quickjs() {
 fn array_host_definitions_use_array_set_length_semantics() {
     let oracle = require_qjs_oracle!("Array host mutation differential");
     let expected = oracle_host_mutation(&oracle);
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         rust_host_mutation(&runtime, &mut context),
         expected,

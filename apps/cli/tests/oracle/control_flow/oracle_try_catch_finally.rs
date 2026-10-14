@@ -1,5 +1,6 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
+use crate::runtime_observation::host_runtime_context;
 
 use crate::runtime_completion_oracle::compare_cli;
 use quickjs_oxide::engine::api::{Runtime, Value};
@@ -339,9 +340,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     let oracle = require_qjs_oracle!("{group} differential");
 
     for &(description, source) in cases {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle_sequence(&oracle, &[source], description),

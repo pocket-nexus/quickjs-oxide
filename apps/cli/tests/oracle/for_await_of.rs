@@ -5,6 +5,7 @@
 //! iterators are closed, ordinary abrupt exits do not await `return()`, and
 //! next/result failures occur while the iterator unwind record is disabled.
 
+use crate::runtime_observation::host_runtime_context;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
@@ -12,7 +13,6 @@ use std::process::{Command, Output};
 
 use crate::runtime_completion_oracle::run as run_eval;
 use crate::runtime_observation::{eval, text};
-use quickjs_oxide::engine::api::Runtime;
 
 const EXPECTED: &str =
     include_str!("../fixtures/expected/r3ak_for_await_of.quickjs-2026-06-04.txt");
@@ -85,9 +85,7 @@ fn for_await_contextual_grammar_matches_pinned_quickjs() {
 
 #[test]
 fn pending_for_await_next_record_survives_repeated_gc() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(eval(
         &mut context,
         r#"

@@ -1,6 +1,7 @@
 use crate::object_graph_observation::data_bits;
 use crate::object_graph_observation::own_data_descriptor as data_descriptor;
 use crate::runtime_completion_oracle::compare_array_value_cases as compare_value_cases;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
     take_exception_object,
@@ -531,9 +532,7 @@ fn math_values_match_pinned_quickjs() {
 
 #[test]
 fn math_methods_are_not_constructable() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let math = math_object(&runtime, &mut context);
     for &(name, _) in METHODS {
         let callable = property_callable(&runtime, &mut context, &math, name);
@@ -623,9 +622,7 @@ fn math_native_errors_use_the_method_defining_realm() {
 
 #[test]
 fn math_rust_smoke_runs_without_an_oracle() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (_runtime, mut context) = host_runtime_context();
     let value = context
         .eval("Math.sumPrecise([20,22])")
         .expect("execute Math smoke");
@@ -636,9 +633,7 @@ fn math_rust_smoke_runs_without_an_oracle() {
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();

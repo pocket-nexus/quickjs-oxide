@@ -7,8 +7,8 @@
 
 use crate::oracle_cases::SuccessCase;
 use crate::runtime_completion_oracle::run;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{assert_success, eval, text};
-use quickjs_oxide::engine::api::Runtime;
 
 const SEMANTIC_CASES: &[SuccessCase] = &[
     SuccessCase {
@@ -889,9 +889,7 @@ fn async_generator_yield_star_semantics_match_pinned_quickjs() {
 
 #[test]
 fn suspended_delegation_retains_async_and_sync_iterators_across_gc() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = host_runtime_context();
     drop(eval(
         &mut context,
         r#"

@@ -1,4 +1,5 @@
 use crate::quickjs_argv_completion_oracle;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::primitive_value_text;
 use crate::runtime_oracle::value_type;
 use quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
@@ -113,9 +114,7 @@ fn array_unscopables_oracle_vectors_self_check() {
 fn array_unscopables_values_identity_and_mutation_match_pinned_quickjs() {
     let oracle = require_qjs_oracle!("Array unscopables values");
     for &(description, source) in VALUE_CASES {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = host_runtime_context();
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),
@@ -182,9 +181,7 @@ fn observe_rust_eval(
 }
 
 fn rust_graph_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let context = runtime.new_context().expect("create context");
+    let (runtime, context) = host_runtime_context();
     let prototype = context.array_prototype().unwrap();
     let iterator = PropertyKey::from(
         runtime
