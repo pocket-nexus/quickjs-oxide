@@ -39,10 +39,7 @@ fn native_error_format_uses_the_quickjs_255_byte_payload_boundary() {
 
 #[test]
 fn native_error_format_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP native-error formatter differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("native-error formatter differential");
     let cases = native_error_name_cases();
     assert_eq!(
         rust_observations(&cases),

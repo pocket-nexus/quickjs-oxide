@@ -142,10 +142,7 @@ console.log("has-instance-configurable=accepted:" + (accepted ? 1 : 0) +
 
 #[test]
 fn function_prototype_prefix_matches_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Function.prototype prefix differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Function.prototype prefix differential");
 
     assert_eq!(rust_observations(), oracle_observations(&oracle));
 }
@@ -212,12 +209,7 @@ fn generator_callables_do_not_receive_the_ordinary_sloppy_restricted_property_ex
 
 #[test]
 fn lazy_function_prototype_defines_match_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP Function.prototype lazy define differential: set QJS_ORACLE to upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_qjs_oracle!("Function.prototype lazy define differential");
 
     assert_eq!(
         rust_lazy_define_observations(),

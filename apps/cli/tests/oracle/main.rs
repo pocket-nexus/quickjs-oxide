@@ -1,6 +1,7 @@
 // One oracle test executable; topic modules own their shared helpers.
 #[path = "../common/mod.rs"]
 mod common;
+#[macro_use]
 mod support;
 use common::runtime as runtime_oracle;
 use support::{

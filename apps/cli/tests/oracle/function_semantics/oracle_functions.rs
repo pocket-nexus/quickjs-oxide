@@ -75,10 +75,7 @@ try { Reflect.construct(fp, []); } catch (e) { print("function-prototype-constru
 
 #[test]
 fn ordinary_function_object_kernel_matches_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP function-object oracle differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("function-object oracle differential");
     assert_eq!(rust_observations(), oracle_observations(&oracle));
 }
 

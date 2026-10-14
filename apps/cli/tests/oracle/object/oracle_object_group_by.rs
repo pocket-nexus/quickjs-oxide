@@ -306,10 +306,7 @@ print('name='+bits(Object.getOwnPropertyDescriptor(Object.groupBy,'name')));
 
 #[test]
 fn object_group_by_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object.groupBy oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object.groupBy oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("order", ORDER_CASES),
@@ -343,10 +340,7 @@ fn object_group_by_errors_match_pinned_quickjs() {
 
 #[test]
 fn object_group_by_graph_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object.groupBy graph: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object.groupBy graph");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

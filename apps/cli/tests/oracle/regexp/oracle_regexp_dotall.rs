@@ -167,10 +167,7 @@ const SPECIES_CASES: &[(&str, &str)] = &[(
 
 #[test]
 fn regexp_dotall_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp dotAll oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp dotAll oracle self-check");
     for (group, cases) in case_groups() {
         for &(description, source) in cases {
             let observation =

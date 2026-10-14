@@ -16,10 +16,7 @@ struct Case {
 
 #[test]
 fn regexp_compiler_and_executor_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp engine differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp engine differential");
 
     let cases = cases();
     let oracle_observations = run_oracle_batch(&oracle, &cases);

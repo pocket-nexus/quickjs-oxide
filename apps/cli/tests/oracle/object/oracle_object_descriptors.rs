@@ -321,10 +321,7 @@ print([a,b,'getOwnPropertyDescriptor' in Object,'getOwnPropertyDescriptors' in O
 
 #[test]
 fn object_descriptor_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object descriptor oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object descriptor oracle self-check");
     for &(group, cases) in &[
         ("descriptors", DESCRIPTOR_CASES),
         ("conversion", CONVERSION_CASES),
@@ -380,10 +377,7 @@ fn object_descriptor_pins_quickjs_proxy_same_value_omission_without_an_oracle() 
 
 #[test]
 fn object_descriptor_graph_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object descriptor graph: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object descriptor graph");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle)
@@ -392,10 +386,7 @@ fn object_descriptor_graph_matches_pinned_quickjs() {
 
 #[test]
 fn object_descriptor_autoinit_can_be_deleted_before_materialization() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object descriptor AutoInit delete: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object descriptor AutoInit delete");
     let expected = oracle_lines(
         &oracle,
         FRESH_DELETE_ORACLE,

@@ -260,10 +260,7 @@ print([a,b,c,d,'seal' in Object,'freeze' in Object,'isSealed' in Object,'isFroze
 
 #[test]
 fn object_integrity_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object integrity oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object integrity oracle self-check");
     for &(group, cases) in &[
         ("primitives", PRIMITIVE_CASES),
         ("descriptors", DESCRIPTOR_CASES),
@@ -312,10 +309,7 @@ fn object_integrity_exotic_surfaces_match_pinned_quickjs() {
 
 #[test]
 fn object_integrity_graph_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object integrity graph: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object integrity graph");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),
@@ -324,10 +318,7 @@ fn object_integrity_graph_matches_pinned_quickjs() {
 
 #[test]
 fn object_integrity_autoinit_can_be_deleted_before_materialization() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object integrity AutoInit delete: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object integrity AutoInit delete");
     let expected = oracle_lines(
         &oracle,
         FRESH_DELETE_ORACLE,

@@ -476,10 +476,7 @@ print((Object.getPrototypeOf(fallback)===String.prototype)+"|"+
 
 #[test]
 fn string_intrinsic_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String intrinsic oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String intrinsic oracle self-check");
     for &(group, cases) in &[
         ("graph", GRAPH_CASES),
         ("AutoInit", AUTOINIT_CASES),
@@ -572,10 +569,7 @@ fn string_intrinsic_exotic_surfaces_match_pinned_quickjs() {
 
 #[test]
 fn string_custom_new_target_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String custom new.target: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String custom new.target");
     assert_eq!(
         rust_custom_new_target_observations(),
         oracle_lines(

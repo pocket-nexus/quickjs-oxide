@@ -149,10 +149,7 @@ fn aggregate_error_matches_pinned_expectations() {
 
 #[test]
 fn aggregate_error_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP AggregateError oracle self-check: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("AggregateError oracle self-check");
     let mut failures = Vec::new();
     for case in CASES {
         let actual = observe_oracle(&oracle, case.source, case.description);
@@ -173,10 +170,7 @@ fn aggregate_error_oracle_vectors_self_check() {
 
 #[test]
 fn aggregate_error_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP AggregateError differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("AggregateError differential");
     let mut failures = Vec::new();
     for case in CASES {
         let runtime =

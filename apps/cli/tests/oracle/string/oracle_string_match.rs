@@ -452,10 +452,7 @@ const RECURSION_CASES: &[(&str, &str)] = &[(
 
 #[test]
 fn string_match_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String/RegExp match oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String/RegExp match oracle self-check");
     for &(group, cases) in &[
         ("metadata", METADATA_CASES),
         ("String dispatch", STRING_DISPATCH_CASES),
@@ -738,10 +735,7 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
 }
 
 fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
         let runtime =

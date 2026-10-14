@@ -176,10 +176,7 @@ print('meta=with:'+fn.name+':'+fn.length+':'+bits(descriptor)+':'+
 
 #[test]
 fn array_with_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.with oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.with oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("order", ORDER_CASES),
@@ -221,10 +218,7 @@ fn array_with_generic_receivers_match_pinned_quickjs() {
 
 #[test]
 fn array_with_prototype_order_and_metadata_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.with graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.with graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

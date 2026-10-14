@@ -116,10 +116,7 @@ fn string_escape_diagnostics_match_pinned_quickjs() {
         assert_eq!(rust_observation(source), expected, "Rust: {description}");
     }
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP string escape diagnostic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("string escape diagnostic differential");
     for &(description, source, expected) in CASES {
         assert_eq!(
             oracle_observation(&oracle, source),

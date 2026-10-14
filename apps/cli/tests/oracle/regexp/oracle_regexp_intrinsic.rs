@@ -570,10 +570,7 @@ const TEST_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn regexp_intrinsic_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp intrinsic oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp intrinsic oracle self-check");
     for &(group, cases) in &[
         ("graph", GRAPH_CASES),
         ("constructor", CONSTRUCTOR_CASES),

@@ -207,10 +207,7 @@ fn module_global_binding_survives_nested_and_sibling_lexical_shadowing() {
         assert_module_global_shadow_rejection("quickjs-oxide", invalid, &rejected);
     }
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP module-global shadow differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("module-global shadow differential");
     let quickjs = run_module_global_shadow_file(&oracle, &fixture, "entry.mjs");
     assert_module_global_shadow_success("pinned QuickJS", "entry.mjs", &quickjs);
     assert_eq!(

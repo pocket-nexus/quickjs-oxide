@@ -366,10 +366,7 @@ print('meta='+metadata('toSorted'));
 
 #[test]
 fn array_sort_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array sort oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array sort oracle self-check");
     for &(group, cases) in &[
         ("validation", VALIDATION_CASES),
         ("default", DEFAULT_CASES),
@@ -430,10 +427,7 @@ fn array_sort_recursive_comparator_stack_overflow_is_catchable() {
 
 #[test]
 fn array_sort_prototype_order_metadata_and_constructability_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array sort graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array sort graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

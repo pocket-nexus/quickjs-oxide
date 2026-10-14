@@ -108,10 +108,7 @@ print("invalid-receivers=" + getters.map(function (getter) {
 
 #[test]
 fn function_debug_accessors_and_strip_modes_match_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP function debug accessor differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("function debug accessor differential");
 
     for (mode, oracle_flag) in [
         (DebugInfoMode::Full, None),

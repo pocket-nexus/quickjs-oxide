@@ -7,10 +7,7 @@ use quickjs_oxide::engine::api::JsString;
 
 #[test]
 fn quickjs_byte_constructor_and_wtf8_export_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String byte-codec differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String byte-codec differential");
 
     let byte_inputs = vec![
         vec![],

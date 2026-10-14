@@ -28,10 +28,7 @@ fn for_await_of_transcript_matches_pinned_quickjs() {
         "quickjs-oxide for-await transcript drifted"
     );
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP for-await differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("for-await differential");
     let quickjs = run_file(&oracle, &fixture);
     assert_success("pinned QuickJS", &quickjs);
     assert_eq!(

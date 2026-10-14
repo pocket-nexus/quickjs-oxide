@@ -521,10 +521,7 @@ fn object_assignment_iterator_close_matches_pinned_quickjs() {
 
 #[test]
 fn object_assignment_operation_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP object-assignment stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("object-assignment stack differential");
     for &(description, source) in STACK_CASES {
         let rust = super::quickjs_object_pattern_oracle::run_cli_exact(
             env!("CARGO_BIN_EXE_qjs").as_ref(),
@@ -541,10 +538,7 @@ fn object_assignment_operation_stacks_match_pinned_quickjs() {
 
 #[test]
 fn object_assignment_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP object-assignment parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("object-assignment parser differential");
     let mut failures = Vec::new();
     for &(description, source) in PARSER_CASES {
         let rust = super::quickjs_object_pattern_oracle::run_cli_exact(

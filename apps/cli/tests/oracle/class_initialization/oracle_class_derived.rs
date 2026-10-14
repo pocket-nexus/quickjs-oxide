@@ -193,10 +193,7 @@ fn derived_class_observation_is_stable() {
 
 #[test]
 fn derived_class_observation_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP derived-class differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("derived-class differential");
     let rust = rust_observation();
     let quickjs = oracle_observation(&oracle);
     assert_eq!(quickjs, EXPECTED, "pinned QuickJS observation drifted");

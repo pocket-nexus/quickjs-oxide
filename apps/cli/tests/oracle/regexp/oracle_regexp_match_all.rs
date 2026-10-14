@@ -354,10 +354,7 @@ const ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn regexp_match_all_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp matchAll oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp matchAll oracle self-check");
     for &(group, cases) in &[
         ("metadata", METADATA_CASES),
         ("construction", CONSTRUCTION_CASES),

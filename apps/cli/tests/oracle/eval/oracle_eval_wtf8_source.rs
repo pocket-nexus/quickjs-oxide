@@ -202,10 +202,7 @@ fn eval_wtf8_source_matches_expected_semantics() {
 
 #[test]
 fn eval_wtf8_source_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP eval WTF-8 oracle self-check: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("eval WTF-8 oracle self-check");
 
     let mut failures = Vec::new();
     for case in CASES {
@@ -227,10 +224,7 @@ fn eval_wtf8_source_oracle_vectors_self_check() {
 
 #[test]
 fn eval_wtf8_source_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP eval WTF-8 differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("eval WTF-8 differential");
 
     let mut failures = Vec::new();
     for case in CASES {

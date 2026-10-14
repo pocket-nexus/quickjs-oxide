@@ -113,10 +113,7 @@ const PROBE: &str = r#"
 
 #[test]
 fn object_literal_observations_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP object-literal differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("object-literal differential");
 
     assert_eq!(rust_observation(), oracle_observation(&oracle));
 }

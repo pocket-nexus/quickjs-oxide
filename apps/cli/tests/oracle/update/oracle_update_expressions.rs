@@ -132,10 +132,7 @@ print("strict-arguments=" +
 
 #[test]
 fn update_expressions_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP update-expression differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("update-expression differential");
 
     assert_eq!(rust_observations(), oracle_observations(&oracle));
 }

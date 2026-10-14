@@ -84,10 +84,7 @@ const SYNTAX_ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn program_lexical_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program lexical differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program lexical differential");
 
     for &(description, source) in VALUE_CASES {
         let runtime =
@@ -101,10 +98,7 @@ fn program_lexical_values_match_pinned_quickjs() {
 
 #[test]
 fn program_lexical_cross_eval_state_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program lexical state differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program lexical state differential");
 
     let sequences: &[(&str, &[&str])] = &[
         (
@@ -228,10 +222,7 @@ fn program_lexical_cross_eval_state_matches_pinned_quickjs() {
 
 #[test]
 fn program_lexical_full_and_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program lexical stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program lexical stack differential");
 
     for &(description, source) in ERROR_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -241,10 +232,7 @@ fn program_lexical_full_and_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn program_lexical_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program lexical parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program lexical parser differential");
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         compare_cli(&oracle, &[], source, description);

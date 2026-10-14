@@ -15,10 +15,7 @@ mod support {
     use std::ffi::OsStr;
 
     pub(super) fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
-        let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-            eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-            return;
-        };
+        let oracle = require_qjs_oracle!("{group} differential");
         for &(description, source) in cases {
             let expected = observe_oracle(&oracle, source, description);
             let runtime =

@@ -34,10 +34,7 @@ try { Error(Symbol()); } catch (e) { print("symbol-message=" + e.name + "|" + e.
 
 #[test]
 fn error_intrinsic_slice_matches_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Error oracle differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Error oracle differential");
     assert_eq!(rust_observations(), oracle_observations(&oracle));
 }
 

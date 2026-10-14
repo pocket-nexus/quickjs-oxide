@@ -354,10 +354,7 @@ const PARSER_ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn pinned_quickjs_relational_membership_contract_is_stable() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP pinned relational-membership contract: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("pinned relational-membership contract");
 
     assert_eq!(
         oracle_observations(&oracle),
@@ -368,10 +365,7 @@ fn pinned_quickjs_relational_membership_contract_is_stable() {
 
 #[test]
 fn source_relational_membership_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP relational-membership differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("relational-membership differential");
 
     assert_eq!(
         rust_observations(),
@@ -382,10 +376,7 @@ fn source_relational_membership_matches_pinned_quickjs() {
 
 #[test]
 fn source_relational_membership_no_in_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP relational-membership NoIn differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("relational-membership NoIn differential");
 
     for &(description, source) in NO_IN_ERROR_CASES {
         assert_eq!(

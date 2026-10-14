@@ -556,10 +556,7 @@ const CASES: &[Case] = &[
 
 #[test]
 fn pinned_quickjs_json_stringify_semantics_match_expectations() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP JSON.stringify oracle: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("JSON.stringify oracle");
 
     let mut failures = Vec::new();
     for case in CASES {
@@ -580,10 +577,7 @@ fn pinned_quickjs_json_stringify_semantics_match_expectations() {
 
 #[test]
 fn json_stringify_semantics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP JSON.stringify oracle: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("JSON.stringify oracle");
 
     for case in CASES {
         let quickjs = oracle_observation(&oracle, case);

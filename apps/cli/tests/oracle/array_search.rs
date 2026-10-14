@@ -243,10 +243,7 @@ print('meta='+metadata.join('|'));
 
 #[test]
 fn array_search_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array search oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array search oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("fromIndex", FROM_INDEX_CASES),
@@ -292,10 +289,7 @@ fn array_search_errors_match_pinned_quickjs() {
 
 #[test]
 fn array_search_prototype_order_and_metadata_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array search graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array search graph differential");
     let expected = oracle_graph_observations(&oracle);
     assert_eq!(
         rust_graph_observations(),

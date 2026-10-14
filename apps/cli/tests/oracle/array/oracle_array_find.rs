@@ -204,10 +204,7 @@ print('meta='+metadata('findLastIndex'));
 
 #[test]
 fn array_find_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.find oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.find oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("order", ORDER_CASES),
@@ -247,10 +244,7 @@ fn array_find_errors_match_pinned_quickjs() {
 
 #[test]
 fn array_find_prototype_order_and_metadata_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.find graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.find graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

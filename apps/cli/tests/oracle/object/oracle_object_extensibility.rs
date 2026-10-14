@@ -214,10 +214,7 @@ print([a,b,'isExtensible' in Object,'preventExtensions' in Object,
 
 #[test]
 fn object_extensibility_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object extensibility oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object extensibility oracle self-check");
     for &(group, cases) in &[
         ("primitive", PRIMITIVE_CASES),
         ("object", OBJECT_CASES),
@@ -257,10 +254,7 @@ fn object_extensibility_exotic_surfaces_match_pinned_quickjs() {
 
 #[test]
 fn object_extensibility_graph_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object extensibility graph: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object extensibility graph");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle)
@@ -269,10 +263,7 @@ fn object_extensibility_graph_matches_pinned_quickjs() {
 
 #[test]
 fn object_extensibility_autoinit_can_be_deleted_before_materialization() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object extensibility AutoInit delete: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object extensibility AutoInit delete");
     let expected = oracle_lines(
         &oracle,
         FRESH_DELETE_ORACLE,

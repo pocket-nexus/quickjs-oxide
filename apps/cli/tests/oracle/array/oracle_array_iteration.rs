@@ -213,10 +213,7 @@ print('meta='+metadata('forEach'));
 
 #[test]
 fn array_iteration_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array iteration oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array iteration oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("order", ORDER_CASES),
@@ -256,10 +253,7 @@ fn array_iteration_errors_match_pinned_quickjs() {
 
 #[test]
 fn array_iteration_prototype_order_and_metadata_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array iteration graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array iteration graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

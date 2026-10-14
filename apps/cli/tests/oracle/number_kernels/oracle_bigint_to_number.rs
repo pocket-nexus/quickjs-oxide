@@ -4,10 +4,7 @@ use std::process::Command;
 
 #[test]
 fn bigint_to_number_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP BigInt-to-Number differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("BigInt-to-Number differential");
 
     let mut inputs = [
         "0",

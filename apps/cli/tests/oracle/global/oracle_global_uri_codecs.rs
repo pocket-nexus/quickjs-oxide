@@ -305,10 +305,7 @@ const EXPECTED_OBSERVATIONS: &[&str] = &[
 
 #[test]
 fn pinned_quickjs_uri_codec_contract_is_stable() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP pinned URI codec contract: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("pinned URI codec contract");
     assert_eq!(
         oracle_observations(&oracle),
         EXPECTED_OBSERVATIONS,
@@ -324,10 +321,7 @@ fn global_uri_codecs_match_pinned_quickjs() {
         "host-side URI codec contract changed"
     );
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP URI codec differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("URI codec differential");
     assert_eq!(
         rust,
         oracle_observations(&oracle),
@@ -464,10 +458,7 @@ fn global_uri_codec_keeps_its_defining_realm_alive_until_collection() {
 
 #[test]
 fn global_uri_codec_native_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP URI codec stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("URI codec stack differential");
 
     let cases = [
         r#"encodeURI("\ud800")"#,

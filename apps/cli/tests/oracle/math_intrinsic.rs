@@ -516,10 +516,7 @@ const VALUE_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn math_intrinsic_graph_and_descriptors_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Math graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Math graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

@@ -331,13 +331,7 @@ object.method().next().then(function (result) {
     );
     assert_eq!(String::from_utf8_lossy(&oxide.stdout), "42\n");
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP async-generator object-method smoke oracle check: \
-             set QJS_ORACLE to pinned upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("async-generator object-method smoke oracle check");
     let quickjs = run(&oracle, SOURCE);
     assert!(
         quickjs.status.success(),

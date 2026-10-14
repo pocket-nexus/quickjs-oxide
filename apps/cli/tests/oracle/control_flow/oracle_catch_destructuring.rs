@@ -409,10 +409,7 @@ const STACK_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn catch_destructuring_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP catch-destructuring oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("catch-destructuring oracle self-check");
 
     for &(group, cases) in &[
         ("direct/default", DIRECT_CASES),
@@ -488,10 +485,7 @@ fn catch_destructuring_pinned_quirks_have_exact_results() {
 
 #[test]
 fn catch_destructuring_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP catch-destructuring diagnostics: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("catch-destructuring diagnostics");
 
     for &(description, source) in DIAGNOSTIC_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -500,10 +494,7 @@ fn catch_destructuring_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn catch_destructuring_exact_cli_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP catch-destructuring stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("catch-destructuring stack differential");
 
     for &(description, source) in STACK_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -513,10 +504,7 @@ fn catch_destructuring_exact_cli_stacks_match_pinned_quickjs() {
 }
 
 fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group} differential");
 
     for &(description, source) in cases {
         let runtime =

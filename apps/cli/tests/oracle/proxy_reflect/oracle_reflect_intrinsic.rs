@@ -382,10 +382,7 @@ const PROPERTY_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn reflect_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Reflect oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Reflect oracle self-check");
     for &(group, cases) in &[
         ("graph", GRAPH_CASES),
         ("AutoInit", AUTO_INIT_CASES),
@@ -570,10 +567,7 @@ fn reflect_cross_realm_results_native_errors_and_user_errors_use_exact_realms() 
 }
 
 fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group}");
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());

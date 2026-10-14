@@ -192,10 +192,7 @@ print("custom-object-methods=" + [
 
 #[test]
 fn boolean_intrinsic_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Boolean intrinsic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Boolean intrinsic differential");
 
     assert_eq!(
         rust_observations(),

@@ -648,10 +648,7 @@ const ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn statement_control_flow_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP statement-control-flow differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("statement-control-flow differential");
 
     for &(description, source) in VALUE_CASES {
         let runtime =
@@ -670,10 +667,7 @@ fn statement_control_flow_values_match_pinned_quickjs() {
 
 #[test]
 fn statement_control_flow_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP statement diagnostic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("statement diagnostic differential");
 
     for &(description, source) in ERROR_CASES {
         assert_eq!(

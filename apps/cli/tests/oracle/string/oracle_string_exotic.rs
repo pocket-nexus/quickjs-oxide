@@ -124,10 +124,7 @@ fn string_wrapper_exotic_matches_pinned_quickjs() {
         "the String exotic differential unexpectedly changed breadth"
     );
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String exotic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String exotic differential");
     assert_eq!(
         rust,
         super::quickjs_oracle::eval_std_lines(&oracle, ORACLE_PROBE, "String exotic object"),

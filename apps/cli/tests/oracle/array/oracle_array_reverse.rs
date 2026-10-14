@@ -268,10 +268,7 @@ print('meta='+metadata('toReversed'));
 
 #[test]
 fn array_reverse_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array reverse oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array reverse oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("reverse order", REVERSE_ORDER_CASES),
@@ -317,10 +314,7 @@ fn array_reverse_errors_match_pinned_quickjs() {
 
 #[test]
 fn array_reverse_prototype_order_metadata_and_constructability_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array reverse graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array reverse graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

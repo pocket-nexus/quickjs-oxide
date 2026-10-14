@@ -774,12 +774,7 @@ fn optional_chaining_matches_pinned_expectations_without_an_oracle() {
 
 #[test]
 fn optional_chaining_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP optional-chaining oracle self-check: set QJS_ORACLE to pinned upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("optional-chaining oracle self-check");
 
     let mut failures = Vec::new();
     for case in CASES {
@@ -801,10 +796,7 @@ fn optional_chaining_oracle_vectors_self_check() {
 
 #[test]
 fn optional_chaining_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP optional-chaining differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("optional-chaining differential");
 
     let mut failures = Vec::new();
     for case in CASES {

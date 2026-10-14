@@ -6,10 +6,7 @@ use quickjs_oxide::engine::api::testing::{parse_float, parse_int};
 
 #[test]
 fn number_parse_kernel_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Number parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Number parser differential");
 
     let mut inputs = [
         "",

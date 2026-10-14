@@ -583,10 +583,7 @@ fn array_assignment_iterator_close_matches_pinned_quickjs() {
 
 #[test]
 fn array_assignment_iterator_origin_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP array-assignment stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("array-assignment stack differential");
     for &(description, source) in STACK_CASES {
         let rust = run_cli(env!("CARGO_BIN_EXE_qjs").as_ref(), source, description);
         let quickjs = run_cli(&oracle, source, description);
@@ -608,10 +605,7 @@ fn array_assignment_loop_heads_match_pinned_quickjs() {
 
 #[test]
 fn array_assignment_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP array-assignment parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("array-assignment parser differential");
     for &(description, source) in PARSER_CASES {
         let rust = run_cli(env!("CARGO_BIN_EXE_qjs").as_ref(), source, description);
         let quickjs = run_cli(&oracle, source, description);

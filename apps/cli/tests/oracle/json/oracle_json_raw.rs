@@ -441,10 +441,7 @@ const ORACLE_ONLY_CASES: &[Case] = &[Case {
 
 #[test]
 fn pinned_quickjs_json_raw_semantics_match_expectations() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP JSON.rawJSON oracle: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("JSON.rawJSON oracle");
 
     let mut failures = Vec::new();
     for case in CASES.iter().chain(ORACLE_ONLY_CASES) {
@@ -465,10 +462,7 @@ fn pinned_quickjs_json_raw_semantics_match_expectations() {
 
 #[test]
 fn json_raw_semantics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP JSON.rawJSON oracle: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("JSON.rawJSON oracle");
 
     for case in CASES {
         let quickjs = oracle_observation(&oracle, case);

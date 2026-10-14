@@ -329,10 +329,7 @@ const SYNTAX_ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn ordinary_function_body_lexical_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP function-body lexical differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("function-body lexical differential");
 
     for &(description, source) in VALUE_CASES {
         assert_eq!(
@@ -353,10 +350,7 @@ fn ordinary_function_body_lexical_values_match_pinned_quickjs() {
 
 #[test]
 fn lexical_tdz_and_readonly_cli_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP lexical Error stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("lexical Error stack differential");
 
     for &(description, source) in BODY_SCOPE_ERROR_CASES
         .iter()
@@ -372,10 +366,7 @@ fn lexical_tdz_and_readonly_cli_stacks_match_pinned_quickjs() {
 
 #[test]
 fn nested_lexical_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP nested lexical StripDebug differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("nested lexical StripDebug differential");
 
     for &(description, source) in NESTED_SCOPE_ERROR_CASES {
         let rust = run_cli_with_options(
@@ -393,10 +384,7 @@ fn nested_lexical_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn lexical_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP lexical parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("lexical parser differential");
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         let rust = run_cli(env!("CARGO_BIN_EXE_qjs").as_ref(), source, description);

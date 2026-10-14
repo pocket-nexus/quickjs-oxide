@@ -172,10 +172,7 @@ console.log("boundary-65535=" + observe(() => Reflect.apply(apply, target,
 
 #[test]
 fn function_prototype_apply_matches_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Function.prototype.apply differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Function.prototype.apply differential");
 
     let rust = [
         rust_basic_observations(),

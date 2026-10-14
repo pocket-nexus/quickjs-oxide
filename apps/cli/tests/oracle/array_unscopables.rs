@@ -98,10 +98,7 @@ print('entries='+entries.join('|'));
 
 #[test]
 fn array_unscopables_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array unscopables oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array unscopables oracle self-check");
     for &(description, source) in VALUE_CASES {
         let observation = observe_oracle(&oracle, source, description);
         assert!(
@@ -114,10 +111,7 @@ fn array_unscopables_oracle_vectors_self_check() {
 
 #[test]
 fn array_unscopables_values_identity_and_mutation_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array unscopables values: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array unscopables values");
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -132,10 +126,7 @@ fn array_unscopables_values_identity_and_mutation_match_pinned_quickjs() {
 
 #[test]
 fn array_unscopables_graph_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array unscopables graph: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array unscopables graph");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

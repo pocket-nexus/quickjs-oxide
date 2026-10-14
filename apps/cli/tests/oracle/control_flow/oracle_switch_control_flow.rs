@@ -236,10 +236,7 @@ const THROW_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn switch_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP switch value differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("switch value differential");
 
     for &(description, source) in VALUE_CASES {
         let runtime =
@@ -258,10 +255,7 @@ fn switch_values_match_pinned_quickjs() {
 
 #[test]
 fn switch_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP switch diagnostic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("switch diagnostic differential");
 
     for &(description, source) in ERROR_CASES {
         assert_eq!(
@@ -274,10 +268,7 @@ fn switch_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn switch_abrupt_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP switch abrupt differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("switch abrupt differential");
 
     for &(description, source) in THROW_CASES {
         let runtime =

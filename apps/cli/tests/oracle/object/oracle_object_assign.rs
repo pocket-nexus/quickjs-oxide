@@ -351,10 +351,7 @@ print([deleted,'assign' in Object,Object.prototype.hasOwnProperty.call(Object,'a
 
 #[test]
 fn object_assign_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object.assign oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object.assign oracle self-check");
     for &(group, cases) in &[
         ("conversions", CONVERSION_CASES),
         ("properties", PROPERTY_CASES),
@@ -404,10 +401,7 @@ fn object_assign_partial_mutation_and_errors_match_pinned_quickjs() {
 
 #[test]
 fn object_assign_graph_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object.assign graph: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object.assign graph");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),
@@ -416,10 +410,7 @@ fn object_assign_graph_matches_pinned_quickjs() {
 
 #[test]
 fn object_assign_autoinit_can_be_deleted_before_materialization() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object.assign AutoInit delete: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object.assign AutoInit delete");
     let expected = oracle_lines(&oracle, FRESH_DELETE_ORACLE, "Object.assign fresh delete");
 
     let runtime =

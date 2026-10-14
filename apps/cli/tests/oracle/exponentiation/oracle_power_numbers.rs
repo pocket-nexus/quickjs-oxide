@@ -13,10 +13,7 @@ struct PowerCase {
 
 #[test]
 fn number_power_matrix_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Number power oracle differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Number power oracle differential");
 
     let cases = power_cases();
     assert_eq!(

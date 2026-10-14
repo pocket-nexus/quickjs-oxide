@@ -569,10 +569,7 @@ fn array_slice_recursive_getter_stack_overflow_is_catchable_without_oracle() {
 
 #[test]
 fn array_slice_splice_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array slice/splice oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array slice/splice oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("order/species", ORDER_AND_SPECIES_CASES),
@@ -621,10 +618,7 @@ fn array_slice_splice_generic_limits_and_errors_match_pinned_quickjs() {
 
 #[test]
 fn array_slice_splice_prototype_order_metadata_and_constructability_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array slice/splice graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array slice/splice graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

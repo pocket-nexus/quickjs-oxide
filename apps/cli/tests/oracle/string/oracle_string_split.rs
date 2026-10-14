@@ -484,10 +484,7 @@ const RECURSION_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn string_split_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String split oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String split oracle self-check");
     for &(group, cases) in &[
         ("graph", GRAPH_CASES),
         ("AutoInit", AUTOINIT_CASES),
@@ -710,10 +707,7 @@ fn detached_string_split_and_result_retain_then_release_their_defining_realm() {
 }
 
 fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
         let runtime =

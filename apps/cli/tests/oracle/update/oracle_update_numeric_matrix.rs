@@ -18,10 +18,7 @@ struct UpdateCase {
 
 #[test]
 fn update_numeric_matrix_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP update numeric oracle differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("update numeric oracle differential");
 
     let cases = update_cases();
     assert_eq!(

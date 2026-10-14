@@ -178,10 +178,7 @@ const CONSTRUCTION_AND_FRONTIER_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn regexp_modifiers_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp modifiers oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp modifiers oracle self-check");
     for &(group, cases) in &[
         ("grammar", GRAMMAR_CASES),
         ("scoped matching", SCOPED_MATCHING_CASES),

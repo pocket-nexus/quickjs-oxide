@@ -243,10 +243,7 @@ line('sealed-state', observe(
 
 #[test]
 fn program_function_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program function differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program function differential");
 
     for &(description, source) in VALUE_CASES {
         let runtime =
@@ -260,10 +257,7 @@ fn program_function_values_match_pinned_quickjs() {
 
 #[test]
 fn program_function_cross_eval_state_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program function state differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program function state differential");
 
     let sequences: &[(&str, &[&str])] = &[
         (
@@ -339,10 +333,7 @@ fn program_function_cross_eval_state_matches_pinned_quickjs() {
 
 #[test]
 fn program_function_global_property_matrix_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program function property differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program function property differential");
 
     assert_eq!(
         rust_property_observations(),
@@ -353,10 +344,7 @@ fn program_function_global_property_matrix_matches_pinned_quickjs() {
 
 #[test]
 fn program_function_full_and_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program function stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program function stack differential");
 
     for &(description, source) in ERROR_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -366,10 +354,7 @@ fn program_function_full_and_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn program_function_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program function parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program function parser differential");
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -378,10 +363,7 @@ fn program_function_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn program_function_cross_realm_matches_pinned_c_api() {
-    let Some(_oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program function cross-realm oracle: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let _oracle = require_qjs_oracle!("Program function cross-realm oracle");
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());

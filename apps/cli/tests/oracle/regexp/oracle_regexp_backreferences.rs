@@ -15,10 +15,7 @@ struct MatchCase {
 
 #[test]
 fn regexp_backreferences_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp backreference differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp backreference differential");
 
     let cases = match_cases();
     let oracle_observations = run_match_oracle(&oracle, &cases);
@@ -50,10 +47,7 @@ fn regexp_backreferences_match_pinned_quickjs() {
 
 #[test]
 fn unicode_decimal_escape_errors_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp decimal syntax differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp decimal syntax differential");
 
     let cases = [
         (r"\1", "u"),

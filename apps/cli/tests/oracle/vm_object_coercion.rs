@@ -578,10 +578,7 @@ try {
 
 #[test]
 fn vm_object_coercion_matches_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP VM object-coercion differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("VM object-coercion differential");
 
     let rust = [
         rust_numeric_observations(),

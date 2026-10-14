@@ -268,10 +268,7 @@ fn array_runtime_errors_match_pinned_quickjs() {
 
 #[test]
 fn array_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array parser differential");
     for &(description, source) in SYNTAX_CASES {
         compare_cli(&oracle, &[], source, description);
     }
@@ -279,10 +276,7 @@ fn array_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn array_full_strip_source_and_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array stack differential");
     for &(description, source) in STACK_CASES {
         compare_cli(&oracle, &[], source, description);
         compare_cli(&oracle, &["--strip-source"], source, description);
@@ -292,10 +286,7 @@ fn array_full_strip_source_and_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn array_host_own_keys_and_descriptors_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array host descriptor differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array host descriptor differential");
     for &(description, source) in HOST_SNAPSHOT_CASES {
         let expected = oracle_snapshot(&oracle, source, description);
         let runtime =
@@ -312,10 +303,7 @@ fn array_host_own_keys_and_descriptors_match_pinned_quickjs() {
 
 #[test]
 fn array_constructor_graph_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array constructor graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array constructor graph differential");
     let expected = oracle_constructor_graph(&oracle);
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -329,10 +317,7 @@ fn array_constructor_graph_matches_pinned_quickjs() {
 
 #[test]
 fn array_host_definitions_use_array_set_length_semantics() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array host mutation differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array host mutation differential");
     let expected = oracle_host_mutation(&oracle);
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());

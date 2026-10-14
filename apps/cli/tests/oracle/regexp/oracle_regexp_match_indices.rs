@@ -194,10 +194,7 @@ const REPLACE_CASES: &[(&str, &str)] = &[(
 
 #[test]
 fn regexp_match_indices_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp match-indices oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp match-indices oracle self-check");
     for (group, cases) in case_groups() {
         for &(description, source) in cases {
             let observation = observe_oracle(&oracle, source, description);
@@ -331,10 +328,7 @@ fn case_groups() -> [(&'static str, &'static [(&'static str, &'static str)]); 5]
 }
 
 fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
         let runtime =

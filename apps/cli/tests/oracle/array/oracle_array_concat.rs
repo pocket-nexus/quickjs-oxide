@@ -331,10 +331,7 @@ print('meta='+metadata('concat'));
 
 #[test]
 fn array_concat_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.concat oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.concat oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("spreadability", SPREAD_CASES),
@@ -380,10 +377,7 @@ fn array_concat_errors_match_pinned_quickjs() {
 
 #[test]
 fn array_concat_prototype_order_and_metadata_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.concat graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.concat graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

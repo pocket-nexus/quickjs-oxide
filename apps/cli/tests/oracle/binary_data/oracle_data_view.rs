@@ -398,10 +398,7 @@ fn data_view_vectors_match_frozen_observations() {
 
 #[test]
 fn data_view_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP DataView oracle self-check: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("DataView oracle self-check");
     let observations = CASES
         .iter()
         .map(|case| oracle_observation(&oracle, case))
@@ -412,10 +409,7 @@ fn data_view_oracle_vectors_self_check() {
 
 #[test]
 fn data_view_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP DataView differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("DataView differential");
     for case in CASES {
         assert_eq!(
             oxide_observation(case),

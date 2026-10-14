@@ -319,10 +319,7 @@ fn symbol_intrinsic_matches_pinned_quickjs() {
         "the Symbol differential unexpectedly changed breadth"
     );
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Symbol intrinsic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Symbol intrinsic differential");
     assert_eq!(
         rust,
         oracle_observations(&oracle),

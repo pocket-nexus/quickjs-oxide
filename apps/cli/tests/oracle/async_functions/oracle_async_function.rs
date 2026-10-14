@@ -61,12 +61,7 @@ outer().then(async function(values) {
         );
     }
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP contextual-await oracle differential: set QJS_ORACLE to pinned upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("contextual-await oracle differential");
     let quickjs = Command::new(&oracle)
         .args(["-e", VALID])
         .output()

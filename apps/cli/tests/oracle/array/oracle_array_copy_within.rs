@@ -224,10 +224,7 @@ print('meta=copyWithin:'+fn.name+':'+fn.length+':'+bits(descriptor)+':'+
 
 #[test]
 fn array_copy_within_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.copyWithin oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.copyWithin oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("bounds", BOUND_CASES),
@@ -273,10 +270,7 @@ fn array_copy_within_errors_match_pinned_quickjs() {
 
 #[test]
 fn array_copy_within_prototype_order_and_metadata_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.copyWithin graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.copyWithin graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

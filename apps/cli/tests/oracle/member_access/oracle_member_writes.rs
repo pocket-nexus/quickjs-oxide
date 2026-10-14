@@ -406,10 +406,7 @@ print("primitive-delete=" + [show(delete "abc"[0]), show(delete "abc"[9]),
 
 #[test]
 fn source_member_assignment_and_delete_match_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP member-write differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("member-write differential");
     assert_eq!(rust_observations(), oracle_observations(&oracle));
 }
 

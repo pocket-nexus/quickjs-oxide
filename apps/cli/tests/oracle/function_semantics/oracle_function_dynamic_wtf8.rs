@@ -241,12 +241,7 @@ fn dynamic_function_wtf8_source_matches_expected_semantics() {
 
 #[test]
 fn dynamic_function_wtf8_source_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP dynamic Function WTF-8 differential: set QJS_ORACLE to pinned upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("dynamic Function WTF-8 differential");
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());

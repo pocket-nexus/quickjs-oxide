@@ -257,10 +257,7 @@ const OBSERVER_SUFFIX: &[u8] = br#"
 
 #[test]
 fn raw_script_bytes_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP raw Script byte differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("raw Script byte differential");
     assert!(
         CASES.len() >= 18,
         "raw Script differential lost its broad matrix"

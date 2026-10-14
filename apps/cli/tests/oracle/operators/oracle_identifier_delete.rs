@@ -110,10 +110,7 @@ print("Function-missing=" + Function("return delete __qjo_function_missing")());
 
 #[test]
 fn identifier_delete_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP identifier-delete differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("identifier-delete differential");
 
     assert_eq!(
         rust_observations(),
@@ -124,10 +121,7 @@ fn identifier_delete_matches_pinned_quickjs() {
 
 #[test]
 fn identifier_delete_errors_and_function_stack_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP identifier-delete Error differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("identifier-delete Error differential");
 
     for (description, source) in [
         ("strict direct identifier", "\"use strict\";\ndelete victim"),

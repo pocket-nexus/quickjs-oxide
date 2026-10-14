@@ -521,13 +521,7 @@ fn uint8array_codec_vectors_match_frozen_observations() {
 
 #[test]
 fn uint8array_codec_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP Uint8Array codec oracle self-check: \
-             set QJS_ORACLE to pinned upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("Uint8Array codec oracle self-check");
     for case in CASES {
         assert_eq!(
             oracle_observation(&oracle, case),
@@ -540,13 +534,7 @@ fn uint8array_codec_oracle_vectors_self_check() {
 
 #[test]
 fn uint8array_codecs_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP Uint8Array codec differential: \
-             set QJS_ORACLE to pinned upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("Uint8Array codec differential");
     for case in CASES {
         assert_eq!(
             oxide_observation(case),

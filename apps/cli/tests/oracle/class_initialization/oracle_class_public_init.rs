@@ -463,10 +463,7 @@ fn class_public_initialization_early_errors_are_real_syntax_errors() {
 
 #[test]
 fn class_public_initialization_vectors_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP class-public-init differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("class-public-init differential");
 
     for case in RUNTIME_CASES {
         let quickjs = oracle_observation(&oracle, case.source, case.description);

@@ -127,10 +127,7 @@ const RUST_SUCCESS_PROBE: &str = r#"
 
 #[test]
 fn string_rope_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String rope differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String rope differential");
 
     let rust = rust_observations();
     let source = format!("{ORACLE_SETUP}\nprint({PROBE});");

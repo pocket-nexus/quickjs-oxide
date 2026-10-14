@@ -166,10 +166,7 @@ print([a,b,c,'keys' in Object,'values' in Object,'entries' in Object,
 
 #[test]
 fn object_enumeration_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object enumeration oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object enumeration oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("mutation", MUTATION_CASES),
@@ -203,10 +200,7 @@ fn object_enumeration_errors_match_pinned_quickjs() {
 
 #[test]
 fn object_enumeration_graph_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object enumeration graph: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object enumeration graph");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle)
@@ -215,10 +209,7 @@ fn object_enumeration_graph_matches_pinned_quickjs() {
 
 #[test]
 fn object_enumeration_autoinit_can_be_deleted_before_materialization() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object enumeration AutoInit delete: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object enumeration AutoInit delete");
     let expected = oracle_lines(
         &oracle,
         FRESH_DELETE_ORACLE,

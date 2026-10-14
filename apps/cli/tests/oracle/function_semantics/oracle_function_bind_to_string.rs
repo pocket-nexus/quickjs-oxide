@@ -278,12 +278,7 @@ print("cross-realm-prototype=" +
 
 #[test]
 fn function_bind_and_to_string_match_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP Function.prototype bind/toString differential: set QJS_ORACLE to upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_qjs_oracle!("Function.prototype bind/toString differential");
 
     assert_eq!(rust_observations(), oracle_observations(&oracle));
 }

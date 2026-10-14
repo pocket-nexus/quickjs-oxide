@@ -55,10 +55,7 @@ print("strict-caller=" + (function () {
 
 #[test]
 fn update_expressions_in_function_constructor_match_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP update Function constructor differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("update Function constructor differential");
 
     assert_eq!(
         rust_observations(),

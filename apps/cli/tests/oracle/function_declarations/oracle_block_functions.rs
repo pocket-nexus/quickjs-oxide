@@ -138,10 +138,7 @@ const SYNTAX_ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn block_function_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP block-function differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("block-function differential");
 
     for &(description, source) in VALUE_CASES {
         let runtime =
@@ -157,10 +154,7 @@ fn block_function_values_match_pinned_quickjs() {
 
 #[test]
 fn block_function_errors_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP block-function error differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("block-function error differential");
 
     for &(description, source) in ERROR_CASES {
         let runtime =
@@ -176,12 +170,7 @@ fn block_function_errors_match_pinned_quickjs() {
 
 #[test]
 fn escaped_block_lexical_after_failed_initializer_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP block-function failed-initializer differential: set QJS_ORACLE to upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_qjs_oracle!("block-function failed-initializer differential");
     let description = "failed block lexical initializer preserves the escaped function cell";
     let sources = [
         "(function(){{function escapedBlock(){return later}Function.savedBlock=escapedBlock;let later=missingBlockInitializer}})()",
@@ -204,10 +193,7 @@ fn escaped_block_lexical_after_failed_initializer_matches_pinned_quickjs() {
 
 #[test]
 fn program_annex_then_lexical_state_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP block-function global-state differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("block-function global-state differential");
     let description = "Annex global var precedes a later global lexical";
     let sources = [
         "{function orderedGlobalCollision(){}}let orderedGlobalCollision;",
@@ -231,10 +217,7 @@ fn program_annex_then_lexical_state_matches_pinned_quickjs() {
 
 #[test]
 fn block_function_full_and_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP block-function stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("block-function stack differential");
 
     for &(description, source) in STACK_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -244,10 +227,7 @@ fn block_function_full_and_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn block_function_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP block-function parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("block-function parser differential");
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         compare_cli(&oracle, &[], source, description);

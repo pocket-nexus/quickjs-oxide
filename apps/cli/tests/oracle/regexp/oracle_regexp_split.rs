@@ -509,10 +509,7 @@ const RECURSION_CASES: &[(&str, &str)] = &[(
 
 #[test]
 fn regexp_split_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String/RegExp split oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String/RegExp split oracle self-check");
     for &(group, cases) in &[
         ("metadata", METADATA_CASES),
         ("String integration", STRING_INTEGRATION_CASES),

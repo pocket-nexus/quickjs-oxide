@@ -237,10 +237,7 @@ print([deleted,'hasOwn' in Object,Object.prototype.hasOwnProperty.call(Object,'h
 
 #[test]
 fn object_has_own_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object.hasOwn oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object.hasOwn oracle self-check");
     for &(group, cases) in &[
         ("own values", OWN_CASES),
         ("conversion order", ORDER_CASES),
@@ -284,10 +281,7 @@ fn object_has_own_exotic_surfaces_match_pinned_quickjs() {
 
 #[test]
 fn object_has_own_graph_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object.hasOwn graph: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object.hasOwn graph");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),
@@ -297,10 +291,7 @@ fn object_has_own_graph_matches_pinned_quickjs() {
 
 #[test]
 fn object_has_own_autoinit_can_be_deleted_before_materialization() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object.hasOwn AutoInit delete: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object.hasOwn AutoInit delete");
     let expected = oracle_lines(&oracle, FRESH_DELETE_ORACLE, "Object.hasOwn fresh delete");
 
     let runtime =

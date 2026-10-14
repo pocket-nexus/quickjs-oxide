@@ -31,10 +31,7 @@ const EXPRESSIONS: &[&str] = &[
 
 #[test]
 fn global_number_parsers_match_pinned_quickjs_through_source_execution() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP global numeric parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("global numeric parser differential");
 
     let expression = format!("'' + {}", EXPRESSIONS.join(" + '|' + "));
     let runtime =
@@ -70,10 +67,7 @@ fn oracle_observation(oracle: &OsStr, expression: &str) -> String {
 
 #[test]
 fn parser_function_names_are_stable_in_native_error_stacks() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP numeric parser stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("numeric parser stack differential");
     let source = "parseInt('10', 1n)";
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());

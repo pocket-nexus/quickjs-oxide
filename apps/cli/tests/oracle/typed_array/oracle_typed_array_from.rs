@@ -543,10 +543,7 @@ fn typed_array_from_vectors_match_frozen_quickjs_observations() {
 
 #[test]
 fn typed_array_from_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP TypedArray.from oracle self-check: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("TypedArray.from oracle self-check");
     for case in CASES {
         assert_eq!(
             observe_string_value(&oracle, case.source, case.description),
@@ -559,10 +556,7 @@ fn typed_array_from_oracle_vectors_self_check() {
 
 #[test]
 fn typed_array_from_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP TypedArray.from differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("TypedArray.from differential");
     for case in CASES {
         assert_eq!(
             oxide_observation(case),

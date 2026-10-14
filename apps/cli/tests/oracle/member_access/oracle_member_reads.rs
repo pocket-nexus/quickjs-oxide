@@ -4,10 +4,7 @@ use std::process::Command;
 
 #[test]
 fn source_member_reads_and_intrinsic_method_calls_match_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP member-read differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("member-read differential");
 
     let cases = [
         ("fixed global field", "Function.name"),

@@ -4,10 +4,7 @@ use std::process::Command;
 
 #[test]
 fn implemented_error_backtraces_match_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Error stack oracle differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Error stack oracle differential");
 
     let cases = [
         (

@@ -123,10 +123,7 @@ const ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn untagged_template_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP template differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("template differential");
 
     for &(description, source) in VALUE_CASES {
         let runtime =
@@ -146,10 +143,7 @@ fn untagged_template_values_match_pinned_quickjs() {
 
 #[test]
 fn untagged_template_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP template diagnostic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("template diagnostic differential");
 
     for &(description, source) in ERROR_CASES {
         assert_eq!(
@@ -162,10 +156,7 @@ fn untagged_template_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn template_concat_lookup_order_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP template getter differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("template getter differential");
 
     for (description, source) in [
         (
@@ -194,10 +185,7 @@ fn template_concat_lookup_order_matches_pinned_quickjs() {
 
 #[test]
 fn template_concat_getter_fault_sites_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP template getter stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("template getter stack differential");
 
     for (description, source) in [
         (
@@ -251,10 +239,7 @@ fn template_concat_getter_fault_sites_match_pinned_quickjs() {
 
 #[test]
 fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP template stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("template stack differential");
 
     let accepted_boundary = format!("`{}`", "${0}".repeat(65_532));
     Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default())

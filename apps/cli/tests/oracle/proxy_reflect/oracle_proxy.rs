@@ -1112,10 +1112,7 @@ const REENTRANCY_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn proxy_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Proxy oracle self-check: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("Proxy oracle self-check");
     for &(group, cases) in case_groups() {
         for &(description, source) in cases {
             let observation = observe_oracle(&oracle, source, description);
@@ -1374,13 +1371,7 @@ fn case_groups() -> &'static [(&'static str, &'static [(&'static str, &'static s
 }
 
 fn compare_groups(groups: &[&str]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP Proxy differential for {}: set QJS_ORACLE to pinned upstream qjs",
-            groups.join(", "),
-        );
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("Proxy differential for {}", groups.join(", "));
     let mut failures = Vec::new();
     for &(group, cases) in case_groups()
         .iter()

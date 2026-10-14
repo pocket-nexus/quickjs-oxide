@@ -1116,10 +1116,7 @@ const RUNTIME_ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn future_reserved_words_match_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP future-reserved-word differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("future-reserved-word differential");
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -1203,10 +1200,7 @@ fn primitive_expressions_match_quickjs_oracle() {
 
 #[test]
 fn implemented_errors_match_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP syntax-error oracle differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("syntax-error oracle differential");
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -1244,10 +1238,7 @@ fn implemented_errors_match_quickjs_oracle() {
 
 #[test]
 fn runtime_error_kind_and_message_match_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP runtime-error oracle differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("runtime-error oracle differential");
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -1276,10 +1267,7 @@ fn runtime_error_kind_and_message_match_quickjs_oracle() {
 
 #[test]
 fn compiler_call_capacity_matches_quickjs_error_classes() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP compiler-capacity oracle differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("compiler-capacity oracle differential");
 
     let arguments = std::iter::repeat_n("0", usize::from(u16::MAX))
         .collect::<Vec<_>>()

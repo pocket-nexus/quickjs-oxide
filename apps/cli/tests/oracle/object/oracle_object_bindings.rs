@@ -393,10 +393,7 @@ fn for_of_object_binding_fault_cleanup_matches_pinned_quickjs() {
 
 #[test]
 fn object_binding_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP object-binding parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("object-binding parser differential");
     for &(description, source) in PARSER_CASES {
         let rust = super::quickjs_object_pattern_oracle::run_cli_exact(
             env!("CARGO_BIN_EXE_qjs").as_ref(),

@@ -482,10 +482,7 @@ fn with_semantics_match_pinned_expectations() {
 
 #[test]
 fn with_semantics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP with differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("with differential");
 
     for case in CASES {
         let quickjs = oracle_observation(&oracle, case);

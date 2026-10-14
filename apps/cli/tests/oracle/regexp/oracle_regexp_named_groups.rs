@@ -283,10 +283,7 @@ const CONSTRUCTION_AND_COMPILE_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn regexp_named_groups_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp named-groups oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp named-groups oracle self-check");
     for (group, cases) in case_groups() {
         for (index, &(description, source)) in cases.iter().enumerate() {
             let observation =

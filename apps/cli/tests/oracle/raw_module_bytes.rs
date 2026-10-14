@@ -258,10 +258,7 @@ const OBSERVER_SUFFIX: &[u8] = br#"
 
 #[test]
 fn raw_module_bytes_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP raw Module byte differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("raw Module byte differential");
     assert!(
         CASES.len() >= 18,
         "raw Module differential lost its broad matrix"

@@ -6,10 +6,7 @@ use std::process::Command;
 
 #[test]
 fn unicode_identifier_execution_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Unicode identifier differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Unicode identifier differential");
 
     let newest_unicode_17_start = char::from_u32(0x33479).unwrap();
     let cases = vec![
@@ -92,10 +89,7 @@ fn unicode_identifier_execution_matches_pinned_quickjs() {
 
 #[test]
 fn unicode_17_identifier_classification_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Unicode table differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Unicode table differential");
 
     let rust = rust_classification_observation();
     let source = r#"
@@ -144,10 +138,7 @@ print(startCount + "|" + continueCount + "|" + hash + "|" + planes.join(";"));
 
 #[test]
 fn escaped_new_target_pseudo_keyword_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP escaped new.target differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("escaped new.target differential");
 
     for source in [
         r"(function(){ return new.\u0074arget; })()",
@@ -166,10 +157,7 @@ fn escaped_new_target_pseudo_keyword_matches_pinned_quickjs() {
 
 #[test]
 fn identifier_diagnostic_priority_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP identifier diagnostic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("identifier diagnostic differential");
 
     let cases = [
         (

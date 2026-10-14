@@ -590,10 +590,7 @@ fn flat_array_binding_patterns_match_pinned_quickjs() {
 
 #[test]
 fn for_of_accessor_protocol_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP for-of accessor differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("for-of accessor differential");
     let oracle_setup = oracle_accessor_setup();
     for &(description, source) in ACCESSOR_CASES {
         let runtime =
@@ -610,10 +607,7 @@ fn for_of_accessor_protocol_matches_pinned_quickjs() {
 
 #[test]
 fn for_of_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP for-of parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("for-of parser differential");
     for &(description, source) in SYNTAX_CASES {
         compare_cli(&oracle, &[], source, description);
     }
@@ -621,10 +615,7 @@ fn for_of_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn flat_array_binding_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP array binding parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("array binding parser differential");
     for &(description, source) in ARRAY_BINDING_SYNTAX_CASES {
         compare_cli(&oracle, &[], source, description);
     }
@@ -632,10 +623,7 @@ fn flat_array_binding_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn for_of_full_strip_source_and_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP for-of stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("for-of stack differential");
     for &(description, source) in STACK_CASES {
         compare_cli(&oracle, &[], source, description);
         compare_cli(&oracle, &["--strip-source"], source, description);

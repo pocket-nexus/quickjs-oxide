@@ -367,10 +367,7 @@ fn array_flatten_recursive_mapper_stack_overflow_is_catchable_without_oracle() {
 
 #[test]
 fn array_flatten_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array flatten oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array flatten oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("order", ORDER_CASES),
@@ -412,10 +409,7 @@ fn array_flatten_recursion_guard_matches_pinned_completion_class() {
 
 #[test]
 fn array_flatten_prototype_order_and_metadata_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array flatten graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array flatten graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

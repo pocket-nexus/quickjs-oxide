@@ -672,13 +672,7 @@ fn iterator_concat_matches_pinned_expectations() {
 
 #[test]
 fn iterator_concat_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP Iterator.concat oracle self-check: \
-             set QJS_ORACLE to pinned upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("Iterator.concat oracle self-check");
     let mut failures = Vec::new();
     for case in CASES {
         let actual = observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER);
@@ -699,13 +693,7 @@ fn iterator_concat_oracle_vectors_self_check() {
 
 #[test]
 fn iterator_concat_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP Iterator.concat differential: \
-             set QJS_ORACLE to pinned upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("Iterator.concat differential");
     let mut failures = Vec::new();
     for case in CASES {
         let runtime =

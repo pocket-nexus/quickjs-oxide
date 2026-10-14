@@ -234,10 +234,7 @@ outer().then(function (middle) {
         );
     }
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP async-arrow token differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("async-arrow token differential");
     for source in VALID {
         let quickjs = run(&oracle, source);
         assert!(

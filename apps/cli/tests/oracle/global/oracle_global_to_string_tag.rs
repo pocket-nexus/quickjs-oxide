@@ -134,10 +134,7 @@ fn global_to_string_tag_matches_pinned_quickjs() {
         "host-side global @@toStringTag contract changed"
     );
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP global @@toStringTag differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("global @@toStringTag differential");
     assert_eq!(
         eval_plain_lines(&oracle, ORACLE_PROBE),
         EXPECTED_OBSERVATIONS,

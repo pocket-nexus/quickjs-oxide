@@ -134,10 +134,7 @@ const SYNTAX_ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn direct_function_body_declaration_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP function-body declaration differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("function-body declaration differential");
 
     for &(description, source) in VALUE_CASES {
         let runtime =
@@ -153,12 +150,7 @@ fn direct_function_body_declaration_values_match_pinned_quickjs() {
 
 #[test]
 fn direct_function_body_declaration_tdz_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP function-body declaration TDZ differential: set QJS_ORACLE to upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_qjs_oracle!("function-body declaration TDZ differential");
 
     for &(description, source) in ERROR_OBSERVATION_CASES {
         let runtime =
@@ -174,12 +166,7 @@ fn direct_function_body_declaration_tdz_matches_pinned_quickjs() {
 
 #[test]
 fn failed_body_lexical_initializer_keeps_escaped_hoist_tdz_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP function-body failed-initializer differential: set QJS_ORACLE to upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_qjs_oracle!("function-body failed-initializer differential");
     let description = "failed body lexical initializer preserves its escaped hoist cell";
     let sources = [
         "(function(){Function.savedBodyRead=readLater;let later=missingBodyInitializer;function readLater(){return later}})()",
@@ -202,12 +189,7 @@ fn failed_body_lexical_initializer_keeps_escaped_hoist_tdz_matches_pinned_quickj
 
 #[test]
 fn function_body_declaration_full_and_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP function-body declaration stack differential: set QJS_ORACLE to upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_qjs_oracle!("function-body declaration stack differential");
 
     for &(description, source) in STACK_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -217,12 +199,7 @@ fn function_body_declaration_full_and_strip_debug_stacks_match_pinned_quickjs() 
 
 #[test]
 fn function_body_declaration_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP function-body declaration parser differential: set QJS_ORACLE to upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_qjs_oracle!("function-body declaration parser differential");
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         compare_cli(&oracle, &[], source, description);

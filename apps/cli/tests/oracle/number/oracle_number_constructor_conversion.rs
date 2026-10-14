@@ -79,10 +79,7 @@ fn number_call_conversion_matches_the_pinned_quickjs_probe() {
         "host-side Number conversion contract changed"
     );
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Number constructor differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Number constructor differential");
     assert_eq!(
         rust,
         oracle_observations(&oracle),

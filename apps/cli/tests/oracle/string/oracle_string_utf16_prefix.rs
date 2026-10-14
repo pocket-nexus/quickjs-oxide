@@ -134,10 +134,7 @@ print("errors=" + [
 
 #[test]
 fn string_utf16_prefix_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String UTF-16 prefix differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String UTF-16 prefix differential");
     let rust = rust_observations();
     let upstream =
         super::quickjs_oracle::eval_std_lines(&oracle, ORACLE_PROBE, "String UTF-16 prefix");

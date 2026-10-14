@@ -285,10 +285,7 @@ const RECURSION_CASES: &[(&str, &str)] = &[(
 
 #[test]
 fn regexp_compile_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp compile oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp compile oracle self-check");
     for &(group, cases) in &[
         ("metadata", METADATA_CASES),
         ("brand and copy", BRAND_AND_COPY_CASES),

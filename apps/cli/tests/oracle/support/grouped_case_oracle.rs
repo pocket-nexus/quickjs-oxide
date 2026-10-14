@@ -36,10 +36,7 @@ pub(crate) fn assert_cases_match_quickjs(
     oracle_observation: impl Fn(&OsStr, &Case) -> String,
     rust_observation: impl Fn(&Case) -> String,
 ) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {skip}: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("{skip}");
 
     // Check every pinned QuickJS result before entering the Rust comparison so
     // an oracle drift is distinguishable from a parser/runtime gap.
@@ -85,10 +82,7 @@ pub(crate) fn rust_return_observation(label: &str, case: &Case) -> String {
 
 /// Assert that pinned QuickJS still produces each frozen prelude-case vector.
 pub(crate) fn self_check_prelude_cases(label: &str, prelude: &str, cases: &[Case]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {label} oracle self-check: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("{label} oracle self-check");
     let mut failures = Vec::new();
     for case in cases {
         let actual = prelude_oracle_observation(&oracle, prelude, case);
@@ -114,10 +108,7 @@ pub(crate) fn compare_prelude_case_groups(
     cases: &[Case],
     groups: &[&str],
 ) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {label} differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("{label} differential");
     let mut failures = Vec::new();
     for case in cases.iter().filter(|case| groups.contains(&case.group)) {
         let runtime = host_runtime();

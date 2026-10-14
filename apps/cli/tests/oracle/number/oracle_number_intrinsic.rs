@@ -429,10 +429,7 @@ print("alias-capture=" + [
 
 #[test]
 fn number_intrinsic_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Number intrinsic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Number intrinsic differential");
 
     let Some(rust) = rust_observations() else {
         eprintln!("SKIP Number intrinsic differential: Number is not published yet");
@@ -447,10 +444,7 @@ fn number_intrinsic_matches_pinned_quickjs() {
 
 #[test]
 fn number_native_error_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Number native stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Number native stack differential");
 
     for (description, source) in [
         (

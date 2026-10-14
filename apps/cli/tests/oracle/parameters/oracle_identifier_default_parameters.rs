@@ -149,12 +149,7 @@ fn identifier_default_parameter_vectors_exclude_direct_eval() {
 
 #[test]
 fn identifier_default_parameter_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP identifier-default-parameter oracle self-check: set QJS_ORACLE to upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_qjs_oracle!("identifier-default-parameter oracle self-check");
     for case in CASES {
         assert_eq!(
             observe_oracle(&oracle, case.source, case.description),
@@ -182,10 +177,7 @@ fn identifier_default_parameter_rust_smoke_runs_without_an_oracle() {
 
 #[test]
 fn identifier_default_parameter_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP identifier-default-parameter differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("identifier-default-parameter differential");
     for case in CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());

@@ -114,10 +114,7 @@ print("tag-throw=" + [tagThrow, hex(vo.call(tagThis)),
 
 #[test]
 fn string_conversion_core_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String conversion-core differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String conversion-core differential");
     assert_eq!(
         rust_observations(),
         super::quickjs_oracle::eval_std_lines(&oracle, ORACLE_PROBE, "String conversion-core",),

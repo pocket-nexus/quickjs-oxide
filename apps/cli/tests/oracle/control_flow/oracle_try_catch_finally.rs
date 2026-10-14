@@ -259,10 +259,7 @@ fn abrupt_finally_override_cell_reuse_matches_pinned_quickjs() {
 
 #[test]
 fn try_catch_finally_full_strip_source_and_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP try/catch/finally stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("try/catch/finally stack differential");
 
     for &(description, source) in STACK_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -273,10 +270,7 @@ fn try_catch_finally_full_strip_source_and_strip_debug_stacks_match_pinned_quick
 
 #[test]
 fn try_catch_finally_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP try/catch/finally parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("try/catch/finally parser differential");
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -288,10 +282,7 @@ fn try_catch_cross_realm_regression() {
     // Pinned with the QuickJS C API compile-in-A/execute-in-B path. The Rust
     // API exposes that operation directly; QJS_ORACLE keeps this test grouped
     // with the same checksum-pinned release as the process differentials.
-    let Some(_oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP try/catch cross-realm oracle: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let _oracle = require_qjs_oracle!("try/catch cross-realm oracle");
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -345,10 +336,7 @@ fn try_catch_cross_realm_regression() {
 }
 
 fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group} differential");
 
     for &(description, source) in cases {
         let runtime =

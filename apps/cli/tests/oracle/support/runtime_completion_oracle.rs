@@ -319,10 +319,7 @@ pub(crate) fn observe_quickjs_completion_with_prelude(
 
 /// Compare source/completion vectors against the pinned QuickJS oracle.
 pub(crate) fn compare_eval_completion_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group}");
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -341,10 +338,7 @@ pub(crate) fn compare_eval_completion_cases_with_prelude(
     group: &str,
     cases: &[(&str, &str)],
 ) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group}");
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -370,10 +364,7 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
     group: &str,
     cases: &[(&str, &str)],
 ) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, original_source) in cases {
         let runtime =
@@ -408,10 +399,7 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
 // Helpers shared verbatim by several oracle modules.
 
 pub(crate) fn compare_argv_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group} differential");
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -425,10 +413,7 @@ pub(crate) fn compare_argv_cases(group: &str, cases: &[(&str, &str)]) {
 }
 
 pub(crate) fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group} differential");
     for &(description, source) in cases {
         let expected = observe_completion_argv_trim_end(&oracle, source, description);
         let runtime =
@@ -664,10 +649,7 @@ pub(crate) fn rust_case_observation(case: &Case) -> String {
 }
 
 pub(crate) fn compare_array_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group} differential");
     for &(description, source) in cases {
         let expected = observe_array_completion(&oracle, source, description);
         let runtime =
@@ -725,10 +707,7 @@ pub(crate) fn oracle_case_completion(oracle: &OsStr, case: &Case) -> String {
 }
 
 pub(crate) fn compare_object_pattern_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group} differential");
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -947,10 +926,7 @@ function __step(iterator){
 "#;
 
 pub(crate) fn compare_cases_collecting_failures(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
         let runtime =

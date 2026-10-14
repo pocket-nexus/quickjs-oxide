@@ -401,10 +401,7 @@ fn argument_spread_matches_pinned_expectations() {
 
 #[test]
 fn argument_spread_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP argument-spread oracle self-check: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("argument-spread oracle self-check");
     let mut failures = Vec::new();
     for case in CASES.iter().chain(BOUNDARY_CASES) {
         let actual = observe_oracle(&oracle, case.source, case.description);
@@ -425,10 +422,7 @@ fn argument_spread_oracle_vectors_self_check() {
 
 #[test]
 fn argument_spread_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP argument-spread differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("argument-spread differential");
     let mut failures = Vec::new();
     for case in CASES {
         let runtime =

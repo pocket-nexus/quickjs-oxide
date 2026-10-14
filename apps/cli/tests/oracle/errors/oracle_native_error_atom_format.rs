@@ -37,10 +37,7 @@ fn atom_error_format_preserves_ascii_fast_path_and_non_ascii_scratch_boundary() 
 
 #[test]
 fn atom_error_format_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP native atom-error differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("native atom-error differential");
     let cases = atom_cases();
     assert_eq!(
         rust_observations(&cases),

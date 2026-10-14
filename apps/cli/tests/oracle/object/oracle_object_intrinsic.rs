@@ -477,10 +477,7 @@ print("proto-accessor=__proto__:" + bits(protoDescriptor) + ":" +
 
 #[test]
 fn object_intrinsic_graph_and_descriptors_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle)
@@ -534,10 +531,7 @@ fn complete_object_prototype_suffix_matches_pinned_quickjs() {
 
 #[test]
 fn object_oracle_vectors_execute_on_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Object oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Object oracle self-check");
     for &(group, cases) in &[
         ("constructor", CONSTRUCTOR_CASES),
         ("create/prototype", CREATE_AND_PROTOTYPE_CASES),

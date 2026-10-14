@@ -151,10 +151,7 @@ fn global_numeric_predicates_match_pinned_quickjs() {
         "host-side predicate contract changed"
     );
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP global numeric predicate differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("global numeric predicate differential");
     assert_eq!(
         rust,
         oracle_observations(&oracle),
@@ -307,12 +304,7 @@ fn global_numeric_predicate_keeps_its_defining_realm_alive_until_collection() {
 
 #[test]
 fn global_numeric_predicate_native_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP global numeric predicate stack differential: set QJS_ORACLE to upstream qjs"
-        );
-        return;
-    };
+    let oracle = require_qjs_oracle!("global numeric predicate stack differential");
 
     for source in ["isNaN(1n)", "isFinite(1n)", "new isNaN()", "new isFinite()"] {
         assert_eq!(

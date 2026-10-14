@@ -285,10 +285,7 @@ const WITH_BOUNDARY_CASES: &[(&str, &str, bool)] = &[
 
 #[test]
 fn annex_b_statement_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Annex B statement differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Annex B statement differential");
 
     for &(description, source) in VALUE_CASES {
         let runtime =
@@ -304,10 +301,7 @@ fn annex_b_statement_values_match_pinned_quickjs() {
 
 #[test]
 fn annex_b_statement_errors_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Annex B statement error differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Annex B statement error differential");
 
     for &(description, source) in ERROR_CASES {
         let runtime =
@@ -323,10 +317,7 @@ fn annex_b_statement_errors_match_pinned_quickjs() {
 
 #[test]
 fn program_label_annex_global_state_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program label global-state differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program label global-state differential");
     let description = "Program labelled Annex precedes a later global lexical";
     let sources = [
         "label:function orderedLabelCollision(){};let orderedLabelCollision;",
@@ -349,10 +340,7 @@ fn program_label_annex_global_state_matches_pinned_quickjs() {
 
 #[test]
 fn program_label_invokes_existing_global_setter_twice() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program label accessor differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program label accessor differential");
     let description = "Program labelled function performs both QuickJS global writes";
     let sources = [
         "Function.labelSetterHits=0;Function.labelSetterValue=0;Object.defineProperty(globalThis,'__qjo_label_accessor',{configurable:true,get:function(){return Function.labelSetterValue},set:function(value){Function.labelSetterHits++;Function.labelSetterValue=value}});0",
@@ -408,10 +396,7 @@ fn program_label_invokes_existing_global_setter_twice() {
 
 #[test]
 fn annex_b_statement_full_and_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Annex B statement stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Annex B statement stack differential");
 
     for &(description, source) in STACK_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -421,10 +406,7 @@ fn annex_b_statement_full_and_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn annex_b_statement_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Annex B statement parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Annex B statement parser differential");
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -433,10 +415,7 @@ fn annex_b_statement_parser_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn with_annex_boundaries_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP with/Annex B boundaries: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("with/Annex B boundaries");
 
     for &(description, source, oracle_accepts) in WITH_BOUNDARY_CASES {
         let quickjs = observe_oracle_sequence(&oracle, &[source], description);

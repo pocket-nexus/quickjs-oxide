@@ -357,10 +357,7 @@ const STACK_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn string_case_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String case oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String case oracle self-check");
     for &(group, cases) in &[
         ("graph", GRAPH_CASES),
         ("properties", PROPERTY_CASES),

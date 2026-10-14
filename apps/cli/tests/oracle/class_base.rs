@@ -187,10 +187,7 @@ fn base_class_observation_is_stable() {
 
 #[test]
 fn base_class_observation_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP base-class differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("base-class differential");
     assert_eq!(rust_observation(), oracle_observation(&oracle));
 }
 

@@ -117,10 +117,7 @@ const SYNTAX_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn for_in_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP for-in differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("for-in differential");
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -135,10 +132,7 @@ fn for_in_values_match_pinned_quickjs() {
 
 #[test]
 fn for_in_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP for-in parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("for-in parser differential");
     for &(description, source) in SYNTAX_CASES {
         let rust = Command::new(env!("CARGO_BIN_EXE_qjs"))
             .args(["-e", source])

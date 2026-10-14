@@ -313,10 +313,7 @@ fn bigint_intrinsic_matches_pinned_quickjs() {
         "the BigInt differential unexpectedly changed breadth"
     );
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP BigInt intrinsic differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("BigInt intrinsic differential");
     assert_eq!(
         rust,
         oracle_observations(&oracle),

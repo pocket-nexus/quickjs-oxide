@@ -148,10 +148,7 @@ const ERROR_CASES: &[Case] = &[
 
 #[test]
 fn identifier_rest_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP identifier-rest oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("identifier-rest oracle self-check");
     for case in CASES.iter().chain(ERROR_CASES) {
         assert_eq!(
             observe_oracle(&oracle, case.source, case.description),
@@ -179,10 +176,7 @@ fn identifier_rest_rust_smoke_runs_without_an_oracle() {
 
 #[test]
 fn identifier_rest_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP identifier-rest differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("identifier-rest differential");
     for case in CASES.iter().chain(ERROR_CASES) {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());

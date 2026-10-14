@@ -180,10 +180,7 @@ line('sealed-existing', observe('var __qjo_var_sealed_existing=8') + '|' +
 
 #[test]
 fn program_var_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program var differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program var differential");
 
     for &(description, source) in VALUE_CASES {
         let runtime =
@@ -197,10 +194,7 @@ fn program_var_values_match_pinned_quickjs() {
 
 #[test]
 fn program_var_cross_eval_state_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program var state differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program var state differential");
 
     let sequences: &[(&str, &[&str])] = &[
         (
@@ -279,10 +273,7 @@ fn program_var_cross_eval_state_matches_pinned_quickjs() {
 
 #[test]
 fn program_var_global_property_and_preflight_matrix_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program var property differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program var property differential");
 
     assert_eq!(
         rust_property_observations(),
@@ -293,10 +284,7 @@ fn program_var_global_property_and_preflight_matrix_matches_pinned_quickjs() {
 
 #[test]
 fn program_var_full_and_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program var stack differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program var stack differential");
 
     for &(description, source) in ERROR_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -306,10 +294,7 @@ fn program_var_full_and_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn program_var_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Program var parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Program var parser differential");
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         compare_cli(&oracle, &[], source, description);

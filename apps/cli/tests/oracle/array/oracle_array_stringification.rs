@@ -376,10 +376,7 @@ print('meta='+metadata('toLocaleString'));
 
 #[test]
 fn array_stringification_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array stringification oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array stringification oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("order/generic", ORDER_AND_GENERIC_CASES),
@@ -431,10 +428,7 @@ fn array_stringification_cycles_match_pinned_quickjs() {
 
 #[test]
 fn array_stringification_prototype_order_and_metadata_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array stringification graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array stringification graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

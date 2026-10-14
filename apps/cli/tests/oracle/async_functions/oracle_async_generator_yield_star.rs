@@ -846,13 +846,8 @@ Promise.all([
 
 #[test]
 fn pinned_quickjs_expectations_are_authenticated() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!(
-            "SKIP async-generator yield-star expectation authentication: \
-             set QJS_ORACLE to pinned upstream qjs"
-        );
-        return;
-    };
+    let oracle =
+        require_pinned_qjs_oracle!("async-generator yield-star expectation authentication");
 
     for case in SEMANTIC_CASES {
         let quickjs = run(&oracle, case.source);

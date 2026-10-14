@@ -208,10 +208,7 @@ print('meta=fill:'+fn.name+':'+fn.length+':'+bits(descriptor)+':'+
 
 #[test]
 fn array_fill_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.fill oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.fill oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("bounds", BOUND_CASES),
@@ -257,10 +254,7 @@ fn array_fill_errors_match_pinned_quickjs() {
 
 #[test]
 fn array_fill_prototype_order_and_metadata_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Array.fill graph differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Array.fill graph differential");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),

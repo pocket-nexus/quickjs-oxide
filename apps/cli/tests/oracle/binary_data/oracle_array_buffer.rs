@@ -221,10 +221,7 @@ fn array_buffer_vectors_match_frozen_observations() {
 
 #[test]
 fn array_buffer_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP ArrayBuffer oracle self-check: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("ArrayBuffer oracle self-check");
     for case in CASES {
         assert_eq!(
             oracle_observation(&oracle, case),
@@ -237,10 +234,7 @@ fn array_buffer_oracle_vectors_self_check() {
 
 #[test]
 fn array_buffer_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP ArrayBuffer differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("ArrayBuffer differential");
     for case in CASES {
         assert_eq!(
             oxide_observation(case),

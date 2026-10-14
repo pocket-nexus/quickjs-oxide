@@ -502,10 +502,7 @@ fn tagged_template_site_identity_survives_gc_in_strip_debug_mode() {
 
 #[test]
 fn pinned_quickjs_tagged_template_semantics_match_expectations() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP tagged-template oracle: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("tagged-template oracle");
 
     for case in CASES {
         assert_eq!(
@@ -521,10 +518,7 @@ fn pinned_quickjs_tagged_template_semantics_match_expectations() {
 
 #[test]
 fn tagged_template_semantics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP tagged-template oracle: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
+    let oracle = require_pinned_qjs_oracle!("tagged-template oracle");
 
     for case in CASES {
         let quickjs = oracle_observation(&oracle, case);

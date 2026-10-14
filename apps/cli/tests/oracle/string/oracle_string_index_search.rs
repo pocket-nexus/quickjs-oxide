@@ -233,10 +233,7 @@ print(removed+'|'+('indexOf' in String.prototype)+'|'+String.prototype.indexOf);
 
 #[test]
 fn string_index_search_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String index search oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String index search oracle self-check");
     for &(group, cases) in &[
         ("values", VALUE_CASES),
         ("order", ORDER_CASES),
@@ -270,10 +267,7 @@ fn string_index_search_errors_match_pinned_quickjs() {
 
 #[test]
 fn string_index_search_graph_and_auto_init_identity_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String index search graph: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String index search graph");
     assert_eq!(
         rust_graph_observations(),
         oracle_graph_observations(&oracle),
@@ -283,10 +277,7 @@ fn string_index_search_graph_and_auto_init_identity_match_pinned_quickjs() {
 
 #[test]
 fn string_index_search_auto_init_can_be_deleted_before_first_get() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String index search fresh delete: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String index search fresh delete");
     assert_eq!(
         rust_fresh_delete_observation(),
         oracle_script_lines(&oracle, FRESH_DELETE_ORACLE, "fresh indexOf delete")

@@ -83,10 +83,7 @@ print("symbols=" + String(Symbol.keyFor(Symbol.iterator)) + "," +
 
 #[test]
 fn ordinary_object_core_matches_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP object oracle differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("object oracle differential");
     assert_eq!(
         rust_observations(),
         super::quickjs_oracle::eval_std_lines(&oracle, ORACLE_PROBE, "ordinary object core",)

@@ -215,10 +215,7 @@ fn global_this_matches_pinned_quickjs() {
         "Rust globalThis state-machine observations changed"
     );
 
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP globalThis differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("globalThis differential");
     let oracle = eval_plain_lines(&oracle, ORACLE_PROBE);
     assert_eq!(
         oracle, EXPECTED_OBSERVATIONS,

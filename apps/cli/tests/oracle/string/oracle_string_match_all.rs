@@ -321,10 +321,7 @@ const ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn string_match_all_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP String matchAll oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("String matchAll oracle self-check");
     for &(group, cases) in &[
         ("metadata", METADATA_CASES),
         ("dispatch", DISPATCH_CASES),

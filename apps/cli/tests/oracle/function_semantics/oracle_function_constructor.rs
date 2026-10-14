@@ -181,10 +181,7 @@ try {
 
 #[test]
 fn function_constructor_matches_quickjs_oracle() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Function constructor differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Function constructor differential");
 
     for (mode, oracle_flag) in [
         (DebugInfoMode::Full, None),

@@ -427,10 +427,7 @@ const PRIMITIVE_JSON_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn date_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Date oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Date oracle self-check");
     for &(group, cases) in &[
         ("graph", GRAPH_CASES),
         ("constructor", CONSTRUCTOR_CASES),
@@ -630,10 +627,7 @@ fn detached_date_and_native_method_keep_their_defining_realm_collectable() {
 }
 
 fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP {group}: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
         let runtime =

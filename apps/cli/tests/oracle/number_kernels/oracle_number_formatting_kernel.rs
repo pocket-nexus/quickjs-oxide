@@ -5,10 +5,7 @@ use std::process::Command;
 
 #[test]
 fn number_formatting_kernel_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Number formatting differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("Number formatting differential");
 
     let mut bits = vec![
         0_u64,

@@ -67,10 +67,7 @@ const COMPILE_CASES: &[CompileCase] = &[
 
 #[test]
 fn regexp_lookahead_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp lookahead oracle self-check: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp lookahead oracle self-check");
 
     let cases = match_cases();
     let observations = run_match_oracle(&oracle, &cases);
@@ -96,10 +93,7 @@ fn regexp_lookahead_oracle_vectors_self_check() {
 
 #[test]
 fn regexp_lookahead_matches_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP RegExp lookahead differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("RegExp lookahead differential");
 
     let cases = match_cases();
     let oracle_observations = run_match_oracle(&oracle, &cases);

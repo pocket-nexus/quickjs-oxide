@@ -210,10 +210,7 @@ const SYNTAX_ERROR_CASES: &[(&str, &str)] = &[
 
 #[test]
 fn classic_for_lexical_values_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP lexical-for differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("lexical-for differential");
 
     for &(description, source) in VALUE_CASES {
         assert_eq!(
@@ -234,10 +231,7 @@ fn classic_for_lexical_values_match_pinned_quickjs() {
 
 #[test]
 fn script_for_capture_survives_a_following_eval_like_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP lexical-for cross-eval differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("lexical-for cross-eval differential");
     let setup = "Function.saved=undefined;for(let value=0;value<1;value++){Function.saved=function(){return value};}";
     let observation = "Function.saved()+'|'+typeof value";
 
@@ -260,10 +254,7 @@ fn script_for_capture_survives_a_following_eval_like_pinned_quickjs() {
 
 #[test]
 fn classic_for_lexical_error_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP lexical-for Error differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("lexical-for Error differential");
 
     for &(description, source) in ERROR_CASES {
         compare_cli(&oracle, &[], source, description);
@@ -272,10 +263,7 @@ fn classic_for_lexical_error_stacks_match_pinned_quickjs() {
 
 #[test]
 fn classic_for_lexical_strip_debug_stacks_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP lexical-for StripDebug differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("lexical-for StripDebug differential");
 
     for &(description, source) in ERROR_CASES {
         compare_cli(&oracle, &["-s"], source, description);
@@ -284,10 +272,7 @@ fn classic_for_lexical_strip_debug_stacks_match_pinned_quickjs() {
 
 #[test]
 fn classic_for_lexical_parser_diagnostics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP lexical-for parser differential: set QJS_ORACLE to upstream qjs");
-        return;
-    };
+    let oracle = require_qjs_oracle!("lexical-for parser differential");
 
     for &(description, source) in SYNTAX_ERROR_CASES {
         compare_cli(&oracle, &[], source, description);
