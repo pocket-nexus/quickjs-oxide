@@ -18,6 +18,7 @@ use super::{
     NativeConversion, ObjectRef, OrdinaryRead, PropertyKey, ProxyBooleanResume, ProxyBooleanStep,
     ProxyGetResume, ProxyGetStep, ProxyOwnResume, ProxyOwnStep, Runtime, Value,
 };
+use crate::engine::builtins::effect::{Continuation, Reply};
 use crate::engine::object::operations::{
     InternalDefineResult, InternalSetResult, PropertySetAction,
 };
@@ -176,7 +177,7 @@ pub(super) enum Resume {
     IteratorWrap(crate::engine::builtins::IteratorWrapResume),
     IteratorConcat(crate::engine::builtins::IteratorConcatResume),
     /// A builtin on the shared effect transport.
-    Native(Box<dyn crate::engine::builtins::effect::Continuation>),
+    Native(Box<dyn Continuation>),
     /// [`Self::Native`] waiting on a Set, which replies with its key.
     NativeSet(Box<NativeSetWait>),
 
@@ -272,7 +273,7 @@ pub(super) enum Resume {
 }
 
 pub(super) struct NativeSetWait {
-    pub(super) then: Box<dyn crate::engine::builtins::effect::Continuation>,
+    pub(super) then: Box<dyn Continuation>,
     pub(super) key: PropertyKey,
 }
 
@@ -1553,11 +1554,7 @@ impl Resume {
             Self::NativeSet(wait) => {
                 let NativeSetWait { then, key } = *wait;
                 let result = set_result(action)?;
-                then.reply(
-                    runtime,
-                    crate::engine::builtins::effect::Reply::Set { key, result },
-                )
-                .and_then(Step::try_from)
+                effect::reply_native(then, runtime, Reply::Set { key, result })
             }
             Self::RegExpReplace(resume) => resume
                 .set(runtime, set_result(action)?)
@@ -1645,12 +1642,7 @@ impl Resume {
             Self::IteratorTag(resume) => resume.defined(runtime, result).and_then(Step::try_from),
             Self::ArrayConcat(resume) => resume.defined(runtime, result).and_then(Step::try_from),
             Self::ArrayFlatten(resume) => resume.defined(runtime, result).and_then(Step::try_from),
-            Self::Native(then) => then
-                .reply(
-                    runtime,
-                    crate::engine::builtins::effect::Reply::Defined(result),
-                )
-                .and_then(Step::try_from),
+            Self::Native(then) => effect::reply_native(then, runtime, Reply::Defined(result)),
             Self::ArrayCallback(resume) => resume.defined(runtime, result).and_then(Step::try_from),
             Self::ObjectIteration(resume) => {
                 resume.defined(runtime, result).and_then(Step::try_from)
@@ -1994,12 +1986,9 @@ impl Resume {
             Self::IteratorConcat(resume) => {
                 resume.resume(runtime, completion).and_then(Step::try_from)
             }
-            Self::Native(then) => then
-                .reply(
-                    runtime,
-                    crate::engine::builtins::effect::Reply::Completion(completion),
-                )
-                .and_then(Step::try_from),
+            Self::Native(then) => {
+                effect::reply_native(then, runtime, Reply::Completion(completion))
+            }
             Self::ArraySort(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::ArrayIndexed(resume) => {
                 resume.resume(runtime, completion).and_then(Step::try_from)
@@ -2400,12 +2389,7 @@ impl Resume {
             Self::ArraySlice(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::ArrayConcat(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::ArrayFlatten(resume) => resume.number(runtime, result).and_then(Step::try_from),
-            Self::Native(then) => then
-                .reply(
-                    runtime,
-                    crate::engine::builtins::effect::Reply::Number(result),
-                )
-                .and_then(Step::try_from),
+            Self::Native(then) => effect::reply_native(then, runtime, Reply::Number(result)),
             Self::ArraySort(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::ArrayIndexed(resume) => resume.number(runtime, result).and_then(Step::try_from),
             Self::ArrayReverse(resume) => resume.number(runtime, result).and_then(Step::try_from),
@@ -2499,12 +2483,7 @@ impl Resume {
             Self::Collection(resume) => resume.next(runtime, result).and_then(Step::try_from),
             Self::IteratorWrap(resume) => resume.next(runtime, result).and_then(Step::try_from),
             Self::IteratorConcat(resume) => resume.next(runtime, result).and_then(Step::try_from),
-            Self::Native(then) => then
-                .reply(
-                    runtime,
-                    crate::engine::builtins::effect::Reply::Parsed(result),
-                )
-                .and_then(Step::try_from),
+            Self::Native(then) => effect::reply_native(then, runtime, Reply::Parsed(result)),
             Self::IteratorConsume(resume) => resume.next(runtime, result).and_then(Step::try_from),
             Self::IteratorHelper(resume) => resume.next(runtime, result).and_then(Step::try_from),
             Self::ObjectIteration(resume) => resume.next(runtime, result).and_then(Step::try_from),

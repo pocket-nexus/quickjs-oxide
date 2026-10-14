@@ -199,7 +199,7 @@ impl ArrayStringResume {
                 self.element_string(runtime, value)
             }
             Phase::LocaleMethod => {
-                let callable = callable(runtime, &value)?;
+                let callable = runtime.as_callable_jsvalue(&value)?;
                 runtime.release_jsvalue(value)?;
                 let Some(callable) = callable else {
                     return Ok(ArrayStringStep::Complete(Completion::Throw(
@@ -228,7 +228,7 @@ impl ArrayStringResume {
                 self.element_string(runtime, value)
             }
             Phase::JoinMethod => {
-                let callable = callable(runtime, &value)?;
+                let callable = runtime.as_callable_jsvalue(&value)?;
                 runtime.release_jsvalue(value)?;
                 if let Some(callable) = callable {
                     self.0.phase = Phase::JoinResult;
@@ -355,14 +355,6 @@ impl ArrayStringResume {
             )
         })
     }
-}
-fn callable(runtime: &Runtime, value: &JsValue) -> Result<Option<CallableRef>, RuntimeError> {
-    Ok(match value {
-        JsValue::Object(id) => {
-            runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
-        }
-        _ => None,
-    })
 }
 
 pub(crate) fn finish(

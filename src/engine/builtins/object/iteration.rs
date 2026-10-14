@@ -169,12 +169,7 @@ impl IterationStep {
             let value = arguments.readable.get(1).ok_or(RuntimeError::Invariant(
                 "groupBy callback argv was not padded",
             ))?;
-            let callback = match value {
-                JsValue::Object(id) => {
-                    runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
-                }
-                _ => None,
-            };
+            let callback = runtime.as_callable_jsvalue(value)?;
             let Some(callback) = callback else {
                 return Ok(Self::Complete(Completion::Throw(
                     runtime.new_native_error_jsvalue(

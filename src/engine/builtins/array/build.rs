@@ -1,6 +1,7 @@
 //! Array.from/of own constructor, iterator and definition replies in source order.
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
+    atom::pinned::PinnedAtom,
     builtins::{
         effect::{self, Continuation, Effect, EffectStep, Reply},
         object::ObjectIteratorStep,
@@ -10,7 +11,7 @@ use crate::engine::{
         CallableRef, ObjectRef, OwnedPropertyDescriptor, PropertyKey, WellKnownSymbol,
         operations::{InternalDefineResult, InternalSetResult, PropertyDefineOutcome},
     },
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, Value, conversion::NativeConversion, number::operations::Number},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -21,20 +22,8 @@ pub(crate) enum BuildKind {
     From,
     Of,
 }
-pub(crate) struct BuildResume(Box<BuildResumeState>);
-impl std::ops::Deref for BuildResume {
-    type Target = BuildResumeState;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl std::ops::DerefMut for BuildResume {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-const _: () = assert!(std::mem::size_of::<BuildResume>() <= 8);
-pub(crate) struct BuildResumeState {
+/// The boxed state of one in-flight `Array.from`/`Array.of`.
+pub(crate) struct Build {
     runtime: Runtime,
     pending: Option<Effect>,
     realm: ContextId,
@@ -77,7 +66,7 @@ enum Phase {
     Define,
     LengthSet,
 }
-impl Drop for BuildResumeState {
+impl Drop for Build {
     fn drop(&mut self) {
         let constructor = std::mem::replace(&mut self.constructor, JsValue::Undefined);
         let _ = self.runtime.release_jsvalue(constructor);
@@ -115,7 +104,7 @@ pub(crate) fn start(
     if matches!(kind, BuildKind::Of) {
         let length = u32::try_from(arguments.actual_arg_count)
             .map_err(|_| RuntimeError::Invariant("Array.of argument count exceeded Uint32"))?;
-        let mut resume = BuildResume(Box::new(BuildResumeState {
+        let mut build = Box::new(Build {
             runtime: runtime.clone(),
             pending: None,
             realm,
@@ -129,9 +118,9 @@ pub(crate) fn start(
             },
             index: 0,
             phase: Phase::Construct,
-        }));
-        resume.0.constructor = runtime.dup_jsvalue(this_value)?;
-        let Mode::Of { values, .. } = &mut resume.0.mode else {
+        });
+        build.constructor = runtime.dup_jsvalue(this_value)?;
+        let Mode::Of { values, .. } = &mut build.mode else {
             unreachable!()
         };
         values
@@ -140,7 +129,7 @@ pub(crate) fn start(
         for value in &arguments.readable[..arguments.actual_arg_count] {
             values.push(runtime.dup_jsvalue(value)?);
         }
-        return resume.construct(runtime, Some(f64::from(length)), false);
+        return build.construct(runtime, Some(f64::from(length)), false);
     }
     let items = arguments
         .readable
@@ -149,13 +138,7 @@ pub(crate) fn start(
     let mapfn = if arguments.actual_arg_count > 1
         && !matches!(arguments.readable[1], JsValue::Undefined)
     {
-        let callable = match &arguments.readable[1] {
-            JsValue::Object(id) => {
-                runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
-            }
-            _ => None,
-        };
-        let Some(callable) = callable else {
+        let Some(callable) = runtime.as_callable_jsvalue(&arguments.readable[1])? else {
             return Ok(EffectStep::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
             )));
@@ -178,7 +161,7 @@ pub(crate) fn start(
             )?,
         )));
     }
-    let mut resume = BuildResume(Box::new(BuildResumeState {
+    let mut build = Box::new(Build {
         runtime: runtime.clone(),
         pending: None,
         realm,
@@ -189,25 +172,29 @@ pub(crate) fn start(
         mode: Mode::Acquire(JsValue::Undefined),
         index: 0,
         phase: Phase::Method,
-    }));
-    resume.0.constructor = runtime.dup_jsvalue(this_value)?;
+    });
+    build.constructor = runtime.dup_jsvalue(this_value)?;
     if arguments.actual_arg_count > 2 {
-        resume.0.map_this = runtime.dup_jsvalue(&arguments.readable[2])?;
+        build.map_this = runtime.dup_jsvalue(&arguments.readable[2])?;
     }
-    resume.0.mode = Mode::Acquire(runtime.dup_jsvalue(items)?);
+    build.mode = Mode::Acquire(runtime.dup_jsvalue(items)?);
     effect::request(
         Effect::ReadValue {
             receiver: runtime.dup_jsvalue(items)?,
             key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?),
         },
-        resume.0,
+        build,
     )
 }
-impl BuildResume {
-    fn abrupt(mut self, _runtime: &Runtime, value: JsValue) -> Result<EffectStep, RuntimeError> {
+impl Build {
+    fn abrupt(
+        mut self: Box<Self>,
+        _runtime: &Runtime,
+        value: JsValue,
+    ) -> Result<EffectStep, RuntimeError> {
         let completion = Completion::Throw(value);
-        if matches!(self.0.phase, Phase::Map | Phase::Define)
-            && let Mode::Iterable { iterator, .. } = &mut self.0.mode
+        if matches!(self.phase, Phase::Map | Phase::Define)
+            && let Mode::Iterable { iterator, .. } = &mut self.mode
             && let Some(iterator) = iterator.take()
         {
             return Ok(EffectStep::Close {
@@ -218,29 +205,28 @@ impl BuildResume {
         Ok(EffectStep::Complete(completion))
     }
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
-        self.0
-            .result
+        self.result
             .as_ref()
             .map(|value| value.try_clone())
             .transpose()?
             .ok_or(RuntimeError::Invariant("Array builder result missing"))
     }
     fn construct(
-        mut self,
+        mut self: Box<Self>,
         runtime: &Runtime,
         length: Option<f64>,
         initialize_length: bool,
     ) -> Result<EffectStep, RuntimeError> {
-        self.0.phase = Phase::Construct;
-        let is_constructor = match &self.0.constructor {
+        self.phase = Phase::Construct;
+        let is_constructor = match &self.constructor {
             JsValue::Object(id) => {
                 runtime.is_constructor(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
             }
             _ => false,
         };
         if is_constructor {
-            let constructor = std::mem::replace(&mut self.0.constructor, JsValue::Undefined);
-            let target = match runtime.constructor_from_jsvalue(self.0.realm, constructor)? {
+            let constructor = std::mem::replace(&mut self.constructor, JsValue::Undefined);
+            let target = match runtime.constructor_from_jsvalue(self.realm, constructor)? {
                 NativeConversion::Value(target) => target,
                 NativeConversion::Throw(value) => return self.abrupt(runtime, value),
             };
@@ -249,27 +235,25 @@ impl BuildResume {
                     target,
                     arguments: length
                         .into_iter()
-                        .map(|value| {
-                            crate::engine::value::number::operations::Number::compact(value).into()
-                        })
+                        .map(|value| Number::compact(value).into())
                         .collect(),
                 },
-                self.0,
+                self,
             );
         }
         // Numeric length and a new unpublished Array cannot invoke JS. Share
         // the same fallback allocation as ArraySpeciesCreate.
         let result = runtime
-            .new_array_with_length(self.0.realm, if initialize_length { length } else { None })?;
+            .new_array_with_length(self.realm, if initialize_length { length } else { None })?;
         self.resume(runtime, result)
     }
-    fn next(mut self, runtime: &Runtime) -> Result<EffectStep, RuntimeError> {
-        if matches!(self.0.mode, Mode::Of { .. }) {
+    fn next(mut self: Box<Self>, runtime: &Runtime) -> Result<EffectStep, RuntimeError> {
+        if matches!(self.mode, Mode::Of { .. }) {
             loop {
-                let Mode::Of { values, .. } = &mut self.0.mode else {
+                let Mode::Of { values, .. } = &mut self.mode else {
                     unreachable!()
                 };
-                let Some(value) = values.get_mut(self.0.index as usize) else {
+                let Some(value) = values.get_mut(self.index as usize) else {
                     return self.set_length(runtime);
                 };
                 let value = std::mem::replace(value, JsValue::Undefined);
@@ -285,17 +269,15 @@ impl BuildResume {
                         return Err(error);
                     }
                 };
-                if let Some(error) = runtime.finish_create_indexed_data_property(
-                    self.0.realm,
-                    self.0.index,
-                    reply,
-                )? {
+                if let Some(error) =
+                    runtime.finish_create_indexed_data_property(self.realm, self.index, reply)?
+                {
                     return self.abrupt(runtime, error);
                 }
-                self.0.index += 1;
+                self.index += 1;
             }
         }
-        match &mut self.0.mode {
+        match &mut self.mode {
             Mode::Iterable {
                 iterator: Some(iterator),
                 next: Some(next),
@@ -303,7 +285,7 @@ impl BuildResume {
             } => {
                 let callable = next.try_clone()?;
                 let receiver = JsValue::Object(iterator.try_clone()?.into_handle());
-                self.0.phase = Phase::NextCall;
+                self.phase = Phase::NextCall;
                 // Array.from uses ordinary Call, not JS_IteratorNext2's raw
                 // cproto fast path; parse its actual object result afterwards.
                 effect::request(
@@ -312,18 +294,18 @@ impl BuildResume {
                         receiver,
                         arguments: Vec::new(),
                     },
-                    self.0,
+                    self,
                 )
             }
-            Mode::ArrayLike { source, length } if self.0.index < *length => {
+            Mode::ArrayLike { source, length } if self.index < *length => {
                 let receiver = JsValue::Object(source.try_clone()?.into_handle());
-                self.0.phase = Phase::Value;
+                self.phase = Phase::Value;
                 effect::request(
                     Effect::ReadValue {
                         receiver,
-                        key: runtime.property_key_for_index(self.0.index)?,
+                        key: runtime.property_key_for_index(self.index)?,
                     },
-                    self.0,
+                    self,
                 )
             }
             Mode::ArrayLike { .. } => self.set_length(runtime),
@@ -332,49 +314,49 @@ impl BuildResume {
             )),
         }
     }
-    fn set_length(mut self, runtime: &Runtime) -> Result<EffectStep, RuntimeError> {
-        let length = match self.0.mode {
+    fn set_length(mut self: Box<Self>, runtime: &Runtime) -> Result<EffectStep, RuntimeError> {
+        let length = match self.mode {
             Mode::Of { length, .. } => length as u64,
             Mode::ArrayLike { length, .. } => length,
-            _ => self.0.index,
+            _ => self.index,
         };
-        self.0.phase = Phase::LengthSet;
+        self.phase = Phase::LengthSet;
         effect::request(
             Effect::Set {
                 object: self.result()?,
-                key: runtime
-                    .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
+                key: runtime.pinned_property_key(PinnedAtom::Length)?,
                 value: runtime.into_jsvalue(Value::number(length as f64))?,
             },
-            self.0,
+            self,
         )
     }
-    fn map(mut self, runtime: &Runtime, value: JsValue) -> Result<EffectStep, RuntimeError> {
+    fn map(
+        mut self: Box<Self>,
+        runtime: &Runtime,
+        value: JsValue,
+    ) -> Result<EffectStep, RuntimeError> {
         if let Some(callable) = self
-            .0
             .mapfn
             .as_ref()
             .map(|value| value.try_clone())
             .transpose()?
         {
-            self.0.phase = Phase::Map;
-            let receiver = match runtime.dup_jsvalue(&self.0.map_this) {
+            self.phase = Phase::Map;
+            let receiver = match runtime.dup_jsvalue(&self.map_this) {
                 Ok(receiver) => receiver,
                 Err(error) => {
                     let _ = runtime.release_jsvalue(value);
                     return Err(error);
                 }
             };
-            let index =
-                crate::engine::value::number::operations::Number::compact(self.0.index as f64)
-                    .into();
+            let index = Number::compact(self.index as f64).into();
             return effect::request(
                 Effect::Call {
                     callable,
                     receiver,
                     arguments: vec![value, index],
                 },
-                self.0,
+                self,
             );
         }
         self.define(runtime, value)
@@ -395,7 +377,7 @@ impl BuildResume {
         if !genuine_array {
             return Ok(None);
         }
-        let key = runtime.property_key_for_index(self.0.index)?;
+        let key = runtime.property_key_for_index(self.index)?;
         Ok(Some(
             match runtime.define_selected_set_data(&result, &key, value, false)? {
                 PropertyDefineOutcome::Defined(true) => {
@@ -408,8 +390,12 @@ impl BuildResume {
             },
         ))
     }
-    fn define(mut self, runtime: &Runtime, value: JsValue) -> Result<EffectStep, RuntimeError> {
-        self.0.phase = Phase::Define;
+    fn define(
+        mut self: Box<Self>,
+        runtime: &Runtime,
+        value: JsValue,
+    ) -> Result<EffectStep, RuntimeError> {
+        self.phase = Phase::Define;
         let defined = self.define_array(runtime, &value);
         match defined {
             Ok(Some(reply)) => {
@@ -423,10 +409,7 @@ impl BuildResume {
             Ok(None) => {}
         }
         let target = (|| {
-            Ok::<_, RuntimeError>((
-                self.result()?,
-                runtime.property_key_for_index(self.0.index)?,
-            ))
+            Ok::<_, RuntimeError>((self.result()?, runtime.property_key_for_index(self.index)?))
         })();
         let (result, key) = match target {
             Ok(target) => target,
@@ -441,64 +424,51 @@ impl BuildResume {
                 key,
                 descriptor: OwnedPropertyDescriptor::data(runtime, value),
             },
-            self.0,
+            self,
         )
     }
-    pub(crate) fn resume(
-        mut self,
+    fn resume(
+        mut self: Box<Self>,
         runtime: &Runtime,
         reply: Completion,
     ) -> Result<EffectStep, RuntimeError> {
-        if matches!(self.0.phase, Phase::NextCall) {
-            self.0.phase = Phase::Parse;
-            return effect::request(Effect::ParseIterator { result: reply }, self.0);
+        if matches!(self.phase, Phase::NextCall) {
+            self.phase = Phase::Parse;
+            return effect::request(Effect::ParseIterator { result: reply }, self);
         }
         let value = match reply {
             Completion::Return(value) => value,
-            Completion::Throw(value) => {
-                return self.abrupt(runtime, value);
-            }
+            Completion::Throw(value) => return self.abrupt(runtime, value),
         };
-        if matches!(self.0.phase, Phase::Value) {
-            return self.map(runtime, value);
-        }
-        if matches!(self.0.phase, Phase::Map) {
-            return self.define(runtime, value);
-        }
-        match self.0.phase {
+        match self.phase {
+            Phase::Value => self.map(runtime, value),
+            Phase::Map => self.define(runtime, value),
             Phase::Method => {
                 let Mode::Acquire(items) =
-                    std::mem::replace(&mut self.0.mode, Mode::Acquire(JsValue::Undefined))
+                    std::mem::replace(&mut self.mode, Mode::Acquire(JsValue::Undefined))
                 else {
                     runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant("Array.from items missing"));
                 };
                 if matches!(value, JsValue::Undefined | JsValue::Null) {
-                    let source = match runtime.native_to_object_jsvalue(self.0.realm, items)? {
+                    let source = match runtime.native_to_object_jsvalue(self.realm, items)? {
                         NativeConversion::Value(source) => source,
                         NativeConversion::Throw(value) => return self.abrupt(runtime, value),
                     };
-                    self.0.mode = Mode::ArrayLike {
+                    self.mode = Mode::ArrayLike {
                         source: source.try_clone()?,
                         length: 0,
                     };
-                    self.0.phase = Phase::Length;
+                    self.phase = Phase::Length;
                     return effect::request(
                         Effect::ReadValue {
                             receiver: JsValue::Object(source.into_handle()),
-                            key: runtime.pinned_property_key(
-                                crate::engine::atom::pinned::PinnedAtom::Length,
-                            )?,
+                            key: runtime.pinned_property_key(PinnedAtom::Length)?,
                         },
-                        self.0,
+                        self,
                     );
                 }
-                let callable = (|| match &value {
-                    JsValue::Object(id) => {
-                        runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)
-                    }
-                    _ => Ok(None),
-                })();
+                let callable = runtime.as_callable_jsvalue(&value);
                 runtime.release_jsvalue(value)?;
                 let callable = match callable {
                     Ok(callable) => callable,
@@ -510,13 +480,13 @@ impl BuildResume {
                 let Some(method) = callable else {
                     runtime.release_jsvalue(items)?;
                     let error = runtime.new_native_error_jsvalue(
-                        self.0.realm,
+                        self.realm,
                         NativeErrorKind::Type,
                         "value is not iterable",
                     )?;
                     return self.abrupt(runtime, error);
                 };
-                self.0.mode = Mode::Iterable {
+                self.mode = Mode::Iterable {
                     items,
                     method,
                     iterator: None,
@@ -525,8 +495,8 @@ impl BuildResume {
                 self.construct(runtime, None, false)
             }
             Phase::Length => {
-                self.0.phase = Phase::Number;
-                effect::request(Effect::Number { value }, self.0)
+                self.phase = Phase::Number;
+                effect::request(Effect::Number { value }, self)
             }
             Phase::Construct => {
                 let JsValue::Object(result) = value else {
@@ -535,18 +505,18 @@ impl BuildResume {
                         "Array result constructor returned a primitive",
                     ));
                 };
-                self.0.result = Some(ObjectRef::from_owned_handle(runtime.clone(), result));
-                if let Mode::Iterable { items, method, .. } = &self.0.mode {
+                self.result = Some(ObjectRef::from_owned_handle(runtime.clone(), result));
+                if let Mode::Iterable { items, method, .. } = &self.mode {
                     let receiver = runtime.dup_jsvalue(items)?;
                     let callable = method.try_clone()?;
-                    self.0.phase = Phase::Iterator;
+                    self.phase = Phase::Iterator;
                     return effect::request(
                         Effect::Call {
                             callable,
                             receiver,
                             arguments: Vec::new(),
                         },
-                        self.0,
+                        self,
                     );
                 }
                 self.next(runtime)
@@ -555,7 +525,7 @@ impl BuildResume {
                 let JsValue::Object(iterator) = value else {
                     runtime.release_jsvalue(value)?;
                     let error = runtime.new_native_error_jsvalue(
-                        self.0.realm,
+                        self.realm,
                         NativeErrorKind::Type,
                         "not an object",
                     )?;
@@ -564,39 +534,33 @@ impl BuildResume {
                 let iterator = ObjectRef::from_owned_handle(runtime.clone(), iterator);
                 let Mode::Iterable {
                     iterator: target, ..
-                } = &mut self.0.mode
+                } = &mut self.mode
                 else {
                     return Err(RuntimeError::Invariant("Array.from iterator mode missing"));
                 };
                 *target = Some(iterator.try_clone()?);
-                self.0.phase = Phase::NextMethod;
+                self.phase = Phase::NextMethod;
                 effect::request(
                     Effect::ReadValue {
                         receiver: JsValue::Object(iterator.into_handle()),
-                        key: runtime
-                            .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Next)?,
+                        key: runtime.pinned_property_key(PinnedAtom::Next)?,
                     },
-                    self.0,
+                    self,
                 )
             }
             Phase::NextMethod => {
-                let callable = (|| match &value {
-                    JsValue::Object(id) => {
-                        runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)
-                    }
-                    _ => Ok(None),
-                })();
+                let callable = runtime.as_callable_jsvalue(&value);
                 runtime.release_jsvalue(value)?;
                 let callable = callable?;
                 let Some(callable) = callable else {
                     let error = runtime.new_native_error_jsvalue(
-                        self.0.realm,
+                        self.realm,
                         NativeErrorKind::Type,
                         "not a function",
                     )?;
                     return self.abrupt(runtime, error);
                 };
-                let Mode::Iterable { next, .. } = &mut self.0.mode else {
+                let Mode::Iterable { next, .. } = &mut self.mode else {
                     return Err(RuntimeError::Invariant("Array.from iterator mode missing"));
                 };
                 *next = Some(callable);
@@ -610,8 +574,8 @@ impl BuildResume {
             }
         }
     }
-    pub(crate) fn number(
-        mut self,
+    fn number(
+        mut self: Box<Self>,
         runtime: &Runtime,
         reply: NativeConversion<f64>,
     ) -> Result<EffectStep, RuntimeError> {
@@ -619,12 +583,12 @@ impl BuildResume {
             NativeConversion::Value(number) => number,
             NativeConversion::Throw(value) => return self.abrupt(runtime, value),
         };
-        if !matches!(self.0.phase, Phase::Number) {
+        if !matches!(self.phase, Phase::Number) {
             return Err(RuntimeError::Invariant(
                 "Array builder number phase mismatch",
             ));
         }
-        let Mode::ArrayLike { length, .. } = &mut self.0.mode else {
+        let Mode::ArrayLike { length, .. } = &mut self.mode else {
             return Err(RuntimeError::Invariant(
                 "Array builder length mode mismatch",
             ));
@@ -633,12 +597,12 @@ impl BuildResume {
         let value = *length as f64;
         self.construct(runtime, Some(value), true)
     }
-    pub(crate) fn parsed(
-        self,
+    fn parsed(
+        self: Box<Self>,
         runtime: &Runtime,
         reply: ObjectIteratorStep,
     ) -> Result<EffectStep, RuntimeError> {
-        if !matches!(self.0.phase, Phase::Parse) {
+        if !matches!(self.phase, Phase::Parse) {
             return Err(RuntimeError::Invariant(
                 "Array builder next result phase mismatch",
             ));
@@ -649,12 +613,12 @@ impl BuildResume {
             ObjectIteratorStep::Yield(value) => self.map(runtime, value),
         }
     }
-    pub(crate) fn defined(
-        mut self,
+    fn defined(
+        mut self: Box<Self>,
         runtime: &Runtime,
         reply: NativeConversion<InternalDefineResult>,
     ) -> Result<EffectStep, RuntimeError> {
-        if !matches!(self.0.phase, Phase::Define) {
+        if !matches!(self.phase, Phase::Define) {
             if let NativeConversion::Throw(value) = reply {
                 let _ = runtime.release_jsvalue(value);
             }
@@ -663,22 +627,22 @@ impl BuildResume {
             ));
         }
         if let Some(value) =
-            runtime.finish_create_indexed_data_property(self.0.realm, self.0.index, reply)?
+            runtime.finish_create_indexed_data_property(self.realm, self.index, reply)?
         {
             return self.abrupt(runtime, value);
         }
-        self.0.index = self.0.index.checked_add(1).ok_or(RuntimeError::Invariant(
+        self.index = self.index.checked_add(1).ok_or(RuntimeError::Invariant(
             "Array.from iterator index overflowed u64",
         ))?;
         self.next(runtime)
     }
-    pub(crate) fn set(
-        self,
+    fn set(
+        self: Box<Self>,
         runtime: &Runtime,
         key: PropertyKey,
         reply: NativeConversion<InternalSetResult>,
     ) -> Result<EffectStep, RuntimeError> {
-        if !matches!(self.0.phase, Phase::LengthSet) {
+        if !matches!(self.phase, Phase::LengthSet) {
             if let NativeConversion::Throw(value) = reply {
                 let _ = runtime.release_jsvalue(value);
             }
@@ -686,7 +650,7 @@ impl BuildResume {
                 "Array builder length-set phase mismatch",
             ));
         }
-        if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, reply)? {
+        if let Some(value) = runtime.finish_set_property_or_throw(self.realm, &key, reply)? {
             return self.abrupt(runtime, value);
         }
         Ok(EffectStep::Complete(Completion::Return(JsValue::Object(
@@ -695,18 +659,17 @@ impl BuildResume {
     }
 }
 
-impl Continuation for BuildResumeState {
+impl Continuation for Build {
     fn pending(&mut self) -> &mut Option<Effect> {
         &mut self.pending
     }
     fn reply(self: Box<Self>, runtime: &Runtime, reply: Reply) -> Result<EffectStep, RuntimeError> {
-        let resume = BuildResume(self);
         match reply {
-            Reply::Completion(completion) => resume.resume(runtime, completion),
-            Reply::Number(number) => resume.number(runtime, number),
-            Reply::Parsed(step) => resume.parsed(runtime, step),
-            Reply::Defined(result) => resume.defined(runtime, result),
-            Reply::Set { key, result } => resume.set(runtime, key, result),
+            Reply::Completion(completion) => self.resume(runtime, completion),
+            Reply::Number(number) => self.number(runtime, number),
+            Reply::Parsed(step) => self.parsed(runtime, step),
+            Reply::Defined(result) => self.defined(runtime, result),
+            Reply::Set { key, result } => self.set(runtime, key, result),
         }
     }
 }

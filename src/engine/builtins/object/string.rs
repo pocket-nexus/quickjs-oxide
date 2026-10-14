@@ -4,7 +4,7 @@ use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
-    object::{ObjectRef, PropertyKey, WellKnownSymbol},
+    object::{PropertyKey, WellKnownSymbol},
     value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
@@ -182,12 +182,7 @@ impl ObjectStringResume {
             }
             Phase::LocaleResult => Ok(ObjectStringStep::Complete(Completion::Return(value))),
             Phase::LocaleMethod => {
-                let callable = (|| match &value {
-                    JsValue::Object(id) => {
-                        runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)
-                    }
-                    _ => Ok(None),
-                })();
+                let callable = runtime.as_callable_jsvalue(&value);
                 runtime.release_jsvalue(value)?;
                 let callable = callable?;
                 let Some(callable) = callable else {

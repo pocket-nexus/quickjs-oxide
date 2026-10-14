@@ -107,6 +107,13 @@ pub(crate) trait Continuation {
     /// The effect this continuation is waiting on, parked until a driver takes it.
     fn pending(&mut self) -> &mut Option<Effect>;
     fn reply(self: Box<Self>, runtime: &Runtime, reply: Reply) -> Result<EffectStep, RuntimeError>;
+
+    /// Move the parked effect out so the driver owns it while performing it.
+    fn take_pending(&mut self) -> Result<Effect, RuntimeError> {
+        self.pending()
+            .take()
+            .ok_or(RuntimeError::Invariant("effect step has no pending effect"))
+    }
 }
 
 /// Park `effect` on `continuation` and hand both to the driver.
@@ -126,16 +133,6 @@ pub(crate) enum EffectStep {
         iterator: ObjectRef,
         completion: Completion,
     },
-}
-
-impl EffectStep {
-    /// The parked effect, moved out so the driver owns it while performing it.
-    pub(crate) fn take_effect(continuation: &mut dyn Continuation) -> Result<Effect, RuntimeError> {
-        continuation
-            .pending()
-            .take()
-            .ok_or(RuntimeError::Invariant("effect step has no pending effect"))
-    }
 }
 
 /// Perform effects synchronously until the builtin completes.
@@ -159,7 +156,7 @@ pub(crate) fn finish(
             }
             EffectStep::Effect(continuation) => continuation,
         };
-        let reply = perform(runtime, realm, EffectStep::take_effect(&mut *continuation)?)?;
+        let reply = perform(runtime, realm, continuation.take_pending()?)?;
         step = continuation.reply(runtime, reply)?;
     }
 }

@@ -1,7 +1,8 @@
 //! The one adapter from the shared builtin effect transport to scheduler steps.
 use super::{DirectCallTarget, JsValue, NativeSetWait, Resume, Step};
 use crate::engine::api::RuntimeError;
-use crate::engine::builtins::effect::{Effect, EffectStep};
+use crate::engine::api::runtime::Runtime;
+use crate::engine::builtins::effect::{Continuation, Effect, EffectStep, Reply};
 use crate::engine::vm::call::ConstructNewTarget;
 
 impl TryFrom<EffectStep> for Step {
@@ -20,7 +21,7 @@ impl TryFrom<EffectStep> for Step {
             }
             EffectStep::Effect(then) => then,
         };
-        Ok(match EffectStep::take_effect(&mut *then)? {
+        Ok(match then.take_pending()? {
             Effect::ReadValue { receiver, key } => Self::ReadValue {
                 receiver: Some(receiver),
                 key: Some(key),
@@ -84,4 +85,13 @@ impl TryFrom<EffectStep> for Step {
             }
         })
     }
+}
+
+/// Hand a VM reply to a builtin on the shared transport and schedule its next step.
+pub(super) fn reply_native(
+    then: Box<dyn Continuation>,
+    runtime: &Runtime,
+    reply: Reply,
+) -> Result<Step, RuntimeError> {
+    then.reply(runtime, reply).and_then(Step::try_from)
 }

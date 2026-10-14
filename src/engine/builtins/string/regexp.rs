@@ -224,12 +224,7 @@ impl StringProtocolResume {
         self.call_selected(runtime)
     }
     fn call_selected(mut self, runtime: &Runtime) -> Result<StringProtocolStep, RuntimeError> {
-        let callable = match &self.0.method {
-            JsValue::Object(id) => {
-                runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
-            }
-            _ => None,
-        };
+        let callable = runtime.as_callable_jsvalue(&self.0.method)?;
         let Some(callable) = callable else {
             return Ok(StringProtocolStep::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(

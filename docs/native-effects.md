@@ -52,21 +52,25 @@ pub(crate) enum Reply {
 }
 
 pub(crate) trait Continuation {
+    /// Where the next effect waits until a driver takes it.
+    fn pending(&mut self) -> &mut Option<Effect>;
     fn reply(self: Box<Self>, runtime: &Runtime, reply: Reply) -> Result<EffectStep, RuntimeError>;
 }
 
 pub(crate) enum EffectStep {
     Complete(Completion),
-    Effect(Effect, Box<dyn Continuation>),
+    Effect(Box<dyn Continuation>), // effect parked in `pending()`
     Close { iterator: ObjectRef, completion: Completion }, // terminal
 }
 ```
 
 - A builtin's resume state implements `Continuation`: one `match` from `Reply`
   to the handler it already has (`resume`, `number`, `set`, …). It returns
-  `EffectStep::Effect(Effect::ReadValue { .. }, self)` where it used to call
-  `request_read`. Its `*Step` enum, pending struct, `request_*`, `take_*` and
-  pending-field `Drop` code go away.
+  `effect::request(Effect::ReadValue { .. }, self)` where it used to call
+  `request_read`. The effect is parked inside the boxed state rather than
+  carried next to it, so a step stays within the 56-byte `NativeStep` budget.
+  Its `*Step` enum, pending struct, `request_*`, `take_*` and pending-field
+  `Drop` code go away.
 - `effect::finish(runtime, realm, step)` is the one synchronous driver: it
   performs each `Effect` exactly as the per-builtin loops do today and feeds the
   `Reply` back.

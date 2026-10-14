@@ -761,6 +761,17 @@ impl Runtime {
         self.as_callable_object_after_operation(object)
     }
 
+    /// [`Runtime::as_callable_object`] for any value; primitives are not callable.
+    pub(crate) fn as_callable_jsvalue(
+        &self,
+        value: &JsValue,
+    ) -> Result<Option<CallableRef>, RuntimeError> {
+        match value {
+            JsValue::Object(object) => self.as_callable_object(*object),
+            _ => Ok(None),
+        }
+    }
+
     fn as_callable_object_after_operation(
         &self,
         object: crate::engine::heap::ObjectId,
