@@ -1,7 +1,6 @@
 use crate::object_graph_observation::error_string_property as error_string_property_2;
 use crate::object_graph_observation::string_property_value;
 use crate::oracle_cases::CompileCase;
-use crate::oracle_cases::ExpectedCase;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::oracle_cases::StartMatchCase as MatchCase;
 use crate::oracle_cases::SuccessCase;
@@ -1057,19 +1056,3 @@ function __units(value){
     return output;
 }
 "#;
-
-pub(crate) fn oxide_observation(case: &ExpectedCase) -> String {
-    let (_runtime, mut context) = host_runtime_context();
-    match context.eval(case.source) {
-        Ok(Value::String(value)) => value.to_utf8_lossy(),
-        Ok(value) => panic!(
-            "Oxide returned a non-string for {}: {value:?}",
-            case.description,
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context.take_exception().unwrap();
-            panic!("Oxide threw for {}: {exception:?}", case.description);
-        }
-        Err(error) => panic!("Oxide failed for {}: {error}", case.description),
-    }
-}

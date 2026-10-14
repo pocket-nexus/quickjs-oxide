@@ -49,3 +49,4 @@ pub(crate) mod quickjs_syntax_diagnostic_oracle;
 pub(crate) mod quickjs_typed_array_oracle;
 pub(crate) mod runtime_completion_oracle;
 pub(crate) mod runtime_observation;
+pub(crate) mod string_value_cases;

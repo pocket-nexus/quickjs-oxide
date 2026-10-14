@@ -1,11 +1,13 @@
-use super::quickjs_typed_array_oracle::observe_string_value;
 use crate::runtime_observation::take_exception_object;
+use crate::string_value_cases::{
+    assert_quickjs_string_cases_match_frozen, assert_string_cases_match_frozen,
+    assert_string_cases_match_quickjs,
+};
 
 use crate::object_graph_observation::{
     define_global_with_message as define_global, eval_string_with_global,
 };
 use crate::oracle_cases::ExpectedCase as Case;
-use crate::runtime_completion_oracle::oxide_observation;
 use crate::runtime_oracle::{eval_callable, eval_object};
 use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
@@ -389,40 +391,19 @@ const CASES: &[Case] = &[
 
 #[test]
 fn typed_array_of_vectors_match_frozen_quickjs_observations() {
-    for case in CASES {
-        assert_eq!(
-            oxide_observation(case),
-            case.expected,
-            "{}",
-            case.description
-        );
-    }
+    assert_string_cases_match_frozen(None, CASES);
 }
 
 #[test]
 fn typed_array_of_oracle_vectors_self_check() {
     let oracle = require_pinned_qjs_oracle!("TypedArray.of oracle self-check");
-    for case in CASES {
-        assert_eq!(
-            observe_string_value(&oracle, case.source, case.description),
-            case.expected,
-            "{}",
-            case.description,
-        );
-    }
+    assert_quickjs_string_cases_match_frozen(&oracle, None, CASES);
 }
 
 #[test]
 fn typed_array_of_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("TypedArray.of differential");
-    for case in CASES {
-        assert_eq!(
-            oxide_observation(case),
-            observe_string_value(&oracle, case.source, case.description),
-            "{}",
-            case.description,
-        );
-    }
+    assert_string_cases_match_quickjs(&oracle, None, CASES);
 }
 
 #[test]

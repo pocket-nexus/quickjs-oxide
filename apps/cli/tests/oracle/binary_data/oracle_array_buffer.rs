@@ -1,8 +1,10 @@
 use crate::oracle_cases::ExpectedCase as Case;
 use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::{RuntimeError, Value};
-use std::ffi::OsStr;
-use std::process::Command;
+use crate::string_value_cases::{
+    assert_quickjs_string_cases_match_frozen, assert_string_cases_match_frozen,
+    assert_string_cases_match_quickjs,
+};
+use quickjs_oxide::engine::api::Value;
 
 const PRELUDE: &str = r#"
 function __bit(value){return value?"1":"0"}
@@ -210,40 +212,19 @@ const CASES: &[Case] = &[
 
 #[test]
 fn array_buffer_vectors_match_frozen_observations() {
-    for case in CASES {
-        assert_eq!(
-            oxide_observation(case),
-            case.expected,
-            "{}",
-            case.description
-        );
-    }
+    assert_string_cases_match_frozen(Some(PRELUDE), CASES);
 }
 
 #[test]
 fn array_buffer_oracle_vectors_self_check() {
     let oracle = require_pinned_qjs_oracle!("ArrayBuffer oracle self-check");
-    for case in CASES {
-        assert_eq!(
-            oracle_observation(&oracle, case),
-            case.expected,
-            "{}",
-            case.description,
-        );
-    }
+    assert_quickjs_string_cases_match_frozen(&oracle, Some(PRELUDE), CASES);
 }
 
 #[test]
 fn array_buffer_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("ArrayBuffer differential");
-    for case in CASES {
-        assert_eq!(
-            oxide_observation(case),
-            oracle_observation(&oracle, case),
-            "{}",
-            case.description,
-        );
-    }
+    assert_string_cases_match_quickjs(&oracle, Some(PRELUDE), CASES);
 }
 
 #[test]
@@ -267,50 +248,4 @@ fn context_detach_array_buffer_uses_the_same_idempotent_core() {
         panic!("detach observation was not a string");
     };
     assert_eq!(observation.to_utf8_lossy(), "0|8|true|true");
-}
-
-fn observed_source(source: &str) -> String {
-    format!("{PRELUDE}\n{source}")
-}
-
-fn oxide_observation(case: &Case) -> String {
-    let (_runtime, mut context) = host_runtime_context();
-    match context.eval(&observed_source(case.source)) {
-        Ok(Value::String(value)) => value.to_utf8_lossy(),
-        Ok(value) => panic!(
-            "Oxide returned a non-string for {}: {value:?}",
-            case.description,
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context.take_exception().unwrap();
-            panic!("Oxide threw for {}: {exception:?}", case.description,);
-        }
-        Err(error) => panic!("Oxide failed for {}: {error}", case.description),
-    }
-}
-
-fn oracle_observation(oracle: &OsStr, case: &Case) -> String {
-    let wrapper = r#"
-try {
-  var value = std.evalScript(scriptArgs[0]);
-  print(String(value));
-} catch (error) {
-  print("UNEXPECTED THROW: " + error.name + ": " + error.message);
-}
-"#;
-    let source = observed_source(case.source);
-    let output = Command::new(oracle)
-        .args(["--std", "-e", wrapper, &source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run QuickJS for {}: {error}", case.description));
-    assert!(
-        output.status.success(),
-        "QuickJS failed for {}: {}",
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-    );
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .trim_end()
-        .to_owned()
 }
