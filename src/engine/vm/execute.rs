@@ -1912,14 +1912,13 @@ fn execute_admitted_in_state(
                         let index = published_u16(operand);
                         let value =
                             if cursor.with_slots(|slots| Ok(slots.has_operand_capacity(1)))? {
-                                let root = owners
+                                let cell = owners
                                     .function
-                                    .closures()
-                                    .get(runtime, usize::from(index))
+                                    .closure_cell(usize::from(index))
                                     .ok_or_else(|| {
                                         Error::internal("closure variable index is out of bounds")
                                     })?;
-                                super::bindings::try_read_captured_in_state(state, root.id())
+                                super::bindings::try_read_captured_in_state(state, cell)
                             } else {
                                 None
                             };

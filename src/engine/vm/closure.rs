@@ -168,6 +168,15 @@ impl FrameFunction {
     pub(in crate::engine::vm) fn closures(&self) -> &ClosureSlots {
         &self.slots
     }
+    /// The cell behind closure slot `index`. A frame's environment is always
+    /// resident (`new` converts it, `shared` builds it resident), so this is
+    /// the two-way resident lookup: the general four-way environment match
+    /// on the bytecode dispatch path compiled to a jump table whose
+    /// prediction depended on code placement.
+    #[inline]
+    pub(in crate::engine::vm) fn closure_cell(&self, index: usize) -> Option<VarRefId> {
+        self.slots.resident_cell(index)
+    }
     pub(in crate::engine::vm) fn object_id(&self) -> ObjectId {
         self.owner.expect("resident frame owns its callee")
     }
