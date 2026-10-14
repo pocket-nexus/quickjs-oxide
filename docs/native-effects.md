@@ -95,20 +95,29 @@ pub(crate) enum EffectStep {
 
 ## Pilot results (`Array.from`/`Array.of`)
 
-- `build.rs` shrank from 1,024 to 652 lines; its VM `TryFrom` (105 lines) and
-  its VM reply arms are gone. The shared `effect.rs` (~200 lines) and the VM
-  adapter (~90 lines) are a one-time cost, so the pilot is line-neutral and
-  every later builtin only removes code.
-- The boxed resume state of one in-flight `Array.from` went from 632 to 312
-  bytes: one 120-byte `Option<Effect>` replaces a 408-byte pending struct.
+- `build.rs` shrank from 1,024 to 675 lines; its VM `TryFrom` (105 lines) and
+  its VM reply arms are gone. The shared `effect.rs` (~210 lines) and the VM
+  adapter (~100 lines) are a one-time cost, so the pilot is line-neutral
+  (+748/−784) and every later builtin only removes code.
+- The boxed resume state of one in-flight `Array.from` went from 632 to 256
+  bytes: one 64-byte `Option<Effect>` replaces a 408-byte pending struct.
+  `Effect::Define` boxes its 80-byte descriptor so every effect fits one cache
+  line; only non-Array results take that allocation.
 - VM `Resume` stays within its 32-byte budget; a Set waiting in the VM boxes
   its key and continuation (`NativeSetWait`), as `DefineTyped` already does.
 - Focused Test262 passes 6,844/6,844 and the workspace tests pass unchanged.
-- A loop of 16,000 `Array.from`/`Array.of` calls retires 0.45% more
-  instructions (17.90G → 17.98G, M1, median of 5): effects are 120-byte values
-  moved through the continuation, plus one dynamic call per reply. Boxing the
-  80-byte descriptor of `Effect::Define` would roughly halve the move size if
-  this matters once more builtins migrate.
+- Cost, x86 (Ryzen 7840HS, Rust 1.99, against v0.2.0): fixed loops of
+  `Array.from` over an array, a Set, a generator, an array-like with a mapping
+  function, a plain constructor, and `Array.of`, retire 0.1–1.1% more
+  instructions; cycles are within +0.4…+1.9% (median of 3). Allocation counts
+  per element are unchanged (one extra `NativeSetWait` per call). Before the
+  descriptor was boxed, 120-byte effects cost up to +4.9% cycles.
+- Most of `Array.from`'s time is outside the transport: about a third goes to
+  allocating a `{value, done}` result object per element (re-interning the
+  keys and re-creating its shape transition each time), another third to the
+  element definition.
+- V8 v7 cases do not call these builtins; their instruction counts are
+  unchanged and their score shifts (±3%) are code-layout effects (#119).
 
 ## Rollout
 

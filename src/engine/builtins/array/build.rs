@@ -422,7 +422,7 @@ impl Build {
             Effect::Define {
                 object: result,
                 key,
-                descriptor: OwnedPropertyDescriptor::data(runtime, value),
+                descriptor: Box::new(OwnedPropertyDescriptor::data(runtime, value)),
             },
             self,
         )

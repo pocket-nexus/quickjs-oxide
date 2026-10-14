@@ -48,7 +48,8 @@ pub(crate) enum Effect {
     Define {
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OwnedPropertyDescriptor,
+        /// Boxed: the descriptor would double the size of every effect.
+        descriptor: Box<OwnedPropertyDescriptor>,
     },
     Set {
         object: ObjectRef,
@@ -90,6 +91,9 @@ impl Effect {
         }
     }
 }
+
+// One cache line: effects are parked in and moved out of the boxed builtin state.
+const _: () = assert!(std::mem::size_of::<Effect>() <= 64);
 
 pub(crate) enum Reply {
     /// Reply to [`Effect::ReadValue`], [`Effect::Call`] and [`Effect::Construct`].
@@ -192,9 +196,12 @@ fn perform(runtime: &Runtime, realm: ContextId, effect: Effect) -> Result<Reply,
             object,
             key,
             descriptor,
-        } => Reply::Defined(
-            runtime.internal_define_owned_property(realm, &object, &key, descriptor)?,
-        ),
+        } => Reply::Defined(runtime.internal_define_owned_property(
+            realm,
+            &object,
+            &key,
+            *descriptor,
+        )?),
         Effect::Set { object, key, value } => {
             let receiver = JsValue::Object(object.try_clone()?.into_handle());
             let result = runtime.internal_set_jsvalue(realm, &object, &key, value, receiver)?;

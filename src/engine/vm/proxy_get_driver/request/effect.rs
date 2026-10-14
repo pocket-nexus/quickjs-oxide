@@ -61,7 +61,7 @@ impl TryFrom<EffectStep> for Step {
             } => Self::Define {
                 object: Some(object),
                 key: Some(key),
-                descriptor: Some(descriptor.into()),
+                descriptor: Some((*descriptor).into()),
                 resume: Some(Resume::Native(then)),
             },
             Effect::Set { object, key, value } => {
