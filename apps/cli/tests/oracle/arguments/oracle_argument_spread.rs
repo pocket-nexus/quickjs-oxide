@@ -1,4 +1,5 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
+use crate::grouped_case_oracle::assert_grouped_cases_agree;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
@@ -379,66 +380,42 @@ fn argument_spread_oracle_inventory_is_stable() {
 
 #[test]
 fn argument_spread_matches_pinned_expectations() {
-    let mut failures = Vec::new();
-    for case in CASES {
-        let (runtime, mut context) = host_runtime_context();
-        let actual = observe_rust(&runtime, &mut context, case.source, case.description);
-        if actual != case.expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\noxide: {:?}\nexpected: {:?}",
-                case.group, case.description, case.source, actual, case.expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "argument-spread pinned expectations failed in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "argument-spread pinned expectations failed",
+        ["oxide", "expected"],
+        |case| {
+            let (runtime, mut context) = host_runtime_context();
+            observe_rust(&runtime, &mut context, case.source, case.description)
+        },
+        |case| case.expected.to_owned(),
     );
 }
 
 #[test]
 fn argument_spread_oracle_vectors_self_check() {
     let oracle = require_pinned_qjs_oracle!("argument-spread oracle self-check");
-    let mut failures = Vec::new();
-    for case in CASES.iter().chain(BOUNDARY_CASES) {
-        let actual = observe_oracle(&oracle, case.source, case.description);
-        if actual != case.expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\nactual: {:?}\nexpected: {:?}",
-                case.group, case.description, case.source, actual, case.expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "pinned QuickJS argument-spread vectors drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES.iter().chain(BOUNDARY_CASES),
+        "pinned QuickJS argument-spread vectors drifted",
+        ["actual", "expected"],
+        |case| observe_oracle(&oracle, case.source, case.description),
+        |case| case.expected.to_owned(),
     );
 }
 
 #[test]
 fn argument_spread_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("argument-spread differential");
-    let mut failures = Vec::new();
-    for case in CASES {
-        let (runtime, mut context) = host_runtime_context();
-        let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
-        let quickjs = observe_oracle(&oracle, case.source, case.description);
-        if oxide != quickjs {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\noxide: {:?}\nquickjs: {:?}",
-                case.group, case.description, case.source, oxide, quickjs,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "argument-spread semantics drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "argument-spread semantics drifted",
+        ["oxide", "quickjs"],
+        |case| {
+            let (runtime, mut context) = host_runtime_context();
+            observe_rust(&runtime, &mut context, case.source, case.description)
+        },
+        |case| observe_oracle(&oracle, case.source, case.description),
     );
 }
 

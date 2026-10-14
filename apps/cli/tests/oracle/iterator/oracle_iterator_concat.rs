@@ -1,4 +1,5 @@
 use super::quickjs_string_result_oracle::observe_string_result;
+use crate::grouped_case_oracle::assert_grouped_cases_agree;
 use crate::object_graph_observation::checked_property_value as object_property;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::observe_oxide;
@@ -651,66 +652,42 @@ const CASES: &[Case] = &[
 
 #[test]
 fn iterator_concat_matches_pinned_expectations() {
-    let mut failures = Vec::new();
-    for case in CASES {
-        let (_runtime, mut context) = host_runtime_context();
-        let actual = observe_oxide(&mut context, case);
-        if actual != case.expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\nactual: {:?}\nexpected: {:?}",
-                case.group, case.description, case.source, actual, case.expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "Iterator.concat pinned expectations failed in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "Iterator.concat pinned expectations failed",
+        ["actual", "expected"],
+        |case| {
+            let (_runtime, mut context) = host_runtime_context();
+            observe_oxide(&mut context, case)
+        },
+        |case| case.expected.to_owned(),
     );
 }
 
 #[test]
 fn iterator_concat_oracle_vectors_self_check() {
     let oracle = require_pinned_qjs_oracle!("Iterator.concat oracle self-check");
-    let mut failures = Vec::new();
-    for case in CASES {
-        let actual = observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER);
-        if actual != case.expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\nactual: {:?}\nexpected: {:?}",
-                case.group, case.description, case.source, actual, case.expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "pinned QuickJS Iterator.concat vectors drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "pinned QuickJS Iterator.concat vectors drifted",
+        ["actual", "expected"],
+        |case| observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER),
+        |case| case.expected.to_owned(),
     );
 }
 
 #[test]
 fn iterator_concat_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("Iterator.concat differential");
-    let mut failures = Vec::new();
-    for case in CASES {
-        let (_runtime, mut context) = host_runtime_context();
-        let oxide = observe_oxide(&mut context, case);
-        let quickjs = observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER);
-        if oxide != quickjs {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\noxide: {:?}\nquickjs: {:?}",
-                case.group, case.description, case.source, oxide, quickjs,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "Iterator.concat semantics drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "Iterator.concat semantics drifted",
+        ["oxide", "quickjs"],
+        |case| {
+            let (_runtime, mut context) = host_runtime_context();
+            observe_oxide(&mut context, case)
+        },
+        |case| observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER),
     );
 }
 

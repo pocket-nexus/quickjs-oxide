@@ -1,4 +1,5 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
+use crate::grouped_case_oracle::assert_grouped_cases_agree;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::observe_rust_with_engine_errors as observe_rust;
 use crate::runtime_observation::host_runtime_context;
@@ -284,65 +285,41 @@ fn parameter_direct_eval_oracle_inventory_is_stable() {
 
 #[test]
 fn parameter_direct_eval_matches_pinned_expectations() {
-    let mut failures = Vec::new();
-    for case in CASES {
-        let (runtime, mut context) = host_runtime_context();
-        let actual = observe_rust(&runtime, &mut context, case.source, case.description);
-        if actual != case.expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\noxide: {:?}\nexpected: {:?}",
-                case.group, case.description, case.source, actual, case.expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "parameter-direct-eval pinned expectations failed in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "parameter-direct-eval pinned expectations failed",
+        ["oxide", "expected"],
+        |case| {
+            let (runtime, mut context) = host_runtime_context();
+            observe_rust(&runtime, &mut context, case.source, case.description)
+        },
+        |case| case.expected.to_owned(),
     );
 }
 
 #[test]
 fn parameter_direct_eval_oracle_vectors_self_check() {
     let oracle = require_pinned_qjs_oracle!("parameter-direct-eval oracle self-check");
-    let mut failures = Vec::new();
-    for case in CASES {
-        let actual = observe_oracle(&oracle, case.source, case.description);
-        if actual != case.expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\nactual: {:?}\nexpected: {:?}",
-                case.group, case.description, case.source, actual, case.expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "pinned QuickJS parameter-direct-eval vectors drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "pinned QuickJS parameter-direct-eval vectors drifted",
+        ["actual", "expected"],
+        |case| observe_oracle(&oracle, case.source, case.description),
+        |case| case.expected.to_owned(),
     );
 }
 
 #[test]
 fn parameter_direct_eval_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("parameter-direct-eval differential");
-    let mut failures = Vec::new();
-    for case in CASES {
-        let (runtime, mut context) = host_runtime_context();
-        let oxide = observe_rust(&runtime, &mut context, case.source, case.description);
-        let quickjs = observe_oracle(&oracle, case.source, case.description);
-        if oxide != quickjs {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\noxide: {:?}\nquickjs: {:?}",
-                case.group, case.description, case.source, oxide, quickjs,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "parameter-direct-eval semantics drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "parameter-direct-eval semantics drifted",
+        ["oxide", "quickjs"],
+        |case| {
+            let (runtime, mut context) = host_runtime_context();
+            observe_rust(&runtime, &mut context, case.source, case.description)
+        },
+        |case| observe_oracle(&oracle, case.source, case.description),
     );
 }

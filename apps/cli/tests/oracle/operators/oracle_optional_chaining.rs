@@ -1,3 +1,4 @@
+use crate::grouped_case_oracle::assert_grouped_cases_agree;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::oracle_script_case_name_observation as oracle_observation;
 use crate::runtime_observation::host_runtime_context;
@@ -754,21 +755,12 @@ fn optional_chaining_case_table_is_reviewed() {
 
 #[test]
 fn optional_chaining_matches_pinned_expectations_without_an_oracle() {
-    let mut failures = Vec::new();
-    for case in CASES {
-        let actual = rust_observation(case);
-        if actual != case.expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\noxide: {:?}\nexpected: {:?}",
-                case.group, case.description, case.source, actual, case.expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "optional-chaining pinned expectations failed in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "optional-chaining pinned expectations failed",
+        ["oxide", "expected"],
+        rust_observation,
+        |case| case.expected.to_owned(),
     );
 }
 
@@ -776,21 +768,12 @@ fn optional_chaining_matches_pinned_expectations_without_an_oracle() {
 fn optional_chaining_oracle_vectors_self_check() {
     let oracle = require_pinned_qjs_oracle!("optional-chaining oracle self-check");
 
-    let mut failures = Vec::new();
-    for case in CASES {
-        let actual = oracle_observation(&oracle, case);
-        if actual != case.expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\nactual: {:?}\nexpected: {:?}",
-                case.group, case.description, case.source, actual, case.expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "pinned QuickJS optional-chaining vectors drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "pinned QuickJS optional-chaining vectors drifted",
+        ["actual", "expected"],
+        |case| oracle_observation(&oracle, case),
+        |case| case.expected.to_owned(),
     );
 }
 
@@ -798,22 +781,12 @@ fn optional_chaining_oracle_vectors_self_check() {
 fn optional_chaining_matches_pinned_quickjs() {
     let oracle = require_pinned_qjs_oracle!("optional-chaining differential");
 
-    let mut failures = Vec::new();
-    for case in CASES {
-        let oxide = rust_observation(case);
-        let quickjs = oracle_observation(&oracle, case);
-        if oxide != quickjs {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\noxide: {:?}\nquickjs: {:?}",
-                case.group, case.description, case.source, oxide, quickjs,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "optional-chaining semantics drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    assert_grouped_cases_agree(
+        CASES,
+        "optional-chaining semantics drifted",
+        ["oxide", "quickjs"],
+        rust_observation,
+        |case| oracle_observation(&oracle, case),
     );
 }
 
