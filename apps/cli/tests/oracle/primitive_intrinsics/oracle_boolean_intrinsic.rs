@@ -3,12 +3,11 @@ use crate::object_graph_observation::{
     define_data_with_flags as define_data, define_global_key as define_global, eval_callable,
     expect_object, global_object_value as global_value, object_has_prototype, own_key_names,
 };
-use crate::runtime_observation::error_text;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::property_callable;
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, JsBigInt, JsString, ObjectRef,
-    PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
+    PropertyKey, Runtime, Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
 
@@ -826,13 +825,7 @@ fn data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
 }
 
 fn observe_eval(runtime: &Runtime, context: &mut Context, source: &str) -> String {
-    match context.eval(source) {
-        Ok(value) => plain_value(value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => {
-            panic!("Rust source failed outside JavaScript completion: {source:?}: {error}")
-        }
-    }
+    crate::primitive_probe::observe_eval(runtime, context, source, plain_value)
 }
 
 fn observe_call(
@@ -841,29 +834,11 @@ fn observe_call(
     callable: &CallableRef,
     this_value: Value,
 ) -> String {
-    match context.call(callable, this_value, &[]) {
-        Ok(value) => plain_value(value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => panic!("Rust call failed outside JavaScript completion: {error}"),
-    }
-}
-
-fn take_error(runtime: &Runtime, context: &mut Context) -> String {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("Boolean operation did not throw an Error object");
-    };
-    let name = error_text(runtime, context, &error, "name");
-    let message = error_text(runtime, context, &error, "message");
-    format!("throw:{name}:{message}")
+    crate::primitive_probe::observe_call(runtime, context, callable, this_value, &[], plain_value)
 }
 
 fn join_values(values: &[Value]) -> String {
-    values
-        .iter()
-        .map(|value| value.try_clone().expect("duplicate root"))
-        .map(plain_value)
-        .collect::<Vec<_>>()
-        .join("|")
+    crate::primitive_probe::join_values(values, plain_value)
 }
 
 fn plain_value(value: Value) -> String {

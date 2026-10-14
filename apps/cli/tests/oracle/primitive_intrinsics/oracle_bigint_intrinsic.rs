@@ -1,16 +1,20 @@
+use crate::object_graph_observation::define_accessor;
 use crate::object_graph_observation::{
     data_flags_key, define_data_key_with_flags as define_data_key,
     define_data_with_flags as define_data, define_global_key as define_global, expect_object,
     global_object_value as global_value, intrinsic_prototype, named_data_flags as data_flags,
     object_has_prototype,
 };
-use crate::runtime_observation::error_text;
+use crate::primitive_probe::conversion_object;
+use crate::primitive_probe::eval_callable;
+use crate::primitive_probe::install_primitive_accessors;
+use crate::primitive_probe::take_error;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::property_callable;
 use crate::runtime_observation::take_error_object as take_exception_object;
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, Context, DescriptorField, JsBigInt, JsString, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
+    CallableRef, Context, JsBigInt, JsString, ObjectRef, PropertyKey, Runtime, RuntimeError, Value,
+    WellKnownSymbol,
 };
 use std::ffi::OsStr;
 
@@ -1400,75 +1404,6 @@ fn bigint_wrapper_keeps_its_realm_graph_alive_until_collection() {
     );
 }
 
-fn define_accessor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    name: &str,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    let key = runtime.intern_property_key(name).unwrap();
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(
-                        get.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    set: DescriptorField::Present(
-                        set.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host accessor-property definition was rejected"
-    );
-}
-
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let value = match context.eval(source) {
-        Ok(value) => value,
-        Err(RuntimeError::Exception) => {
-            panic!(
-                "callable source threw: {source:?}: {}",
-                take_error(runtime, context)
-            )
-        }
-        Err(error) => panic!("callable source failed: {source:?}: {error}"),
-    };
-    let Value::Object(object) = value else {
-        panic!("callable source did not produce an object: {source:?}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("source did not produce a callable: {source:?}"))
-}
-
-fn conversion_object(runtime: &Runtime, context: &mut Context, source: &str) -> ObjectRef {
-    let object = context.new_object().unwrap();
-    let conversion = eval_callable(runtime, context, source);
-    define_data_key(
-        runtime,
-        &object,
-        &PropertyKey::from(
-            runtime
-                .well_known_symbol(WellKnownSymbol::ToPrimitive)
-                .expect("well-known symbol"),
-        ),
-        Value::Object(conversion.as_object().try_clone().expect("duplicate root")),
-        true,
-        false,
-        true,
-    );
-    object
-}
-
 fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
     let to_string_tag = PropertyKey::from(
         runtime
@@ -1541,50 +1476,8 @@ fn object_tags(
     .collect()
 }
 
-fn install_primitive_accessors(
-    runtime: &Runtime,
-    context: &mut Context,
-    global: &ObjectRef,
-    prototype: &ObjectRef,
-) {
-    for name in [
-        "strictGetThis",
-        "sloppyGetThis",
-        "strictSetThis",
-        "sloppySetThis",
-    ] {
-        define_global(runtime, global, name, Value::Undefined);
-    }
-    let strict_get = eval_callable(
-        runtime,
-        context,
-        r#"(function() { "use strict"; strictGetThis = this; return this; })"#,
-    );
-    let sloppy_get = eval_callable(
-        runtime,
-        context,
-        "(function() { sloppyGetThis = this; return this.valueOf(); })",
-    );
-    let strict_set = eval_callable(
-        runtime,
-        context,
-        r#"(function() { "use strict"; strictSetThis = this; })"#,
-    );
-    let sloppy_set = eval_callable(runtime, context, "(function() { sloppySetThis = this; })");
-    define_accessor(runtime, prototype, "__strictGet", Some(strict_get), None);
-    define_accessor(runtime, prototype, "__sloppyGet", Some(sloppy_get), None);
-    define_accessor(runtime, prototype, "__strictSet", None, Some(strict_set));
-    define_accessor(runtime, prototype, "__sloppySet", None, Some(sloppy_set));
-}
-
 fn observe_eval(runtime: &Runtime, context: &mut Context, source: &str) -> String {
-    match context.eval(source) {
-        Ok(value) => plain_value(value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => {
-            panic!("Rust source failed outside JavaScript completion: {source:?}: {error}")
-        }
-    }
+    crate::primitive_probe::observe_eval(runtime, context, source, plain_value)
 }
 
 fn observe_call_args(
@@ -1594,11 +1487,14 @@ fn observe_call_args(
     this_value: Value,
     arguments: &[Value],
 ) -> String {
-    match context.call(callable, this_value, arguments) {
-        Ok(value) => plain_value(value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => panic!("Rust call failed outside JavaScript completion: {error}"),
-    }
+    crate::primitive_probe::observe_call(
+        runtime,
+        context,
+        callable,
+        this_value,
+        arguments,
+        plain_value,
+    )
 }
 
 fn observe_construct_args(
@@ -1607,11 +1503,7 @@ fn observe_construct_args(
     callable: &CallableRef,
     arguments: &[Value],
 ) -> String {
-    match context.construct(callable, arguments) {
-        Ok(value) => plain_value(value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => panic!("Rust construct failed outside JavaScript completion: {error}"),
-    }
+    crate::primitive_probe::observe_construct(runtime, context, callable, arguments, plain_value)
 }
 
 fn observe_construct_with_new_target(
@@ -1621,11 +1513,14 @@ fn observe_construct_with_new_target(
     new_target: &CallableRef,
     arguments: &[Value],
 ) -> String {
-    match context.construct_with_new_target(callable, new_target, arguments) {
-        Ok(value) => plain_value(value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => panic!("Rust construct failed outside JavaScript completion: {error}"),
-    }
+    crate::primitive_probe::observe_construct_with_new_target(
+        runtime,
+        context,
+        callable,
+        new_target,
+        arguments,
+        plain_value,
+    )
 }
 
 fn observe_bigint_radix_length(
@@ -1647,20 +1542,8 @@ fn observe_bigint_radix_length(
     }
 }
 
-fn take_error(runtime: &Runtime, context: &mut Context) -> String {
-    let error = take_exception_object(context);
-    let name = error_text(runtime, context, &error, "name");
-    let message = error_text(runtime, context, &error, "message");
-    format!("throw:{name}:{message}")
-}
-
 fn join_values(values: &[Value]) -> String {
-    values
-        .iter()
-        .map(|value| value.try_clone().expect("duplicate root"))
-        .map(plain_value)
-        .collect::<Vec<_>>()
-        .join("|")
+    crate::primitive_probe::join_values(values, plain_value)
 }
 
 fn plain_value(value: Value) -> String {

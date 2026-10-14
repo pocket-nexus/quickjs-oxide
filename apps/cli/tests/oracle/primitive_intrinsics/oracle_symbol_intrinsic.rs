@@ -1,11 +1,16 @@
+use crate::object_graph_observation::define_accessor;
 use crate::object_graph_observation::{
     data_flags_key, define_accessor_key, define_data_key_with_flags as define_data_key,
     define_global_key as define_global, expect_object, global_object_value as global_value,
     named_data_flags as data_flags,
 };
+use crate::primitive_probe::conversion_object;
+use crate::primitive_probe::eval_callable;
+use crate::primitive_probe::install_primitive_accessors;
+use crate::primitive_probe::take_error;
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::string_units as utf16_units;
 use crate::runtime_observation::take_error_object as take_exception_object;
-use crate::runtime_observation::{error_text, string_units as utf16_units};
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, JsBigInt, JsString, ObjectRef,
     PropertyKey, Runtime, RuntimeError, SymbolRef, Value, WellKnownSymbol,
@@ -1669,42 +1674,6 @@ fn define_data(
     );
 }
 
-fn define_accessor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    name: &str,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    define_accessor_key(
-        runtime,
-        object,
-        &runtime.intern_property_key(name).unwrap(),
-        get,
-        set,
-    );
-}
-
-fn eval_callable(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
-    let value = match context.eval(source) {
-        Ok(value) => value,
-        Err(RuntimeError::Exception) => {
-            panic!(
-                "callable source threw: {source:?}: {}",
-                take_error(runtime, context)
-            )
-        }
-        Err(error) => panic!("callable source failed: {source:?}: {error}"),
-    };
-    let Value::Object(object) = value else {
-        panic!("callable source did not produce an object: {source:?}");
-    };
-    runtime
-        .as_callable(&object)
-        .unwrap()
-        .unwrap_or_else(|| panic!("source did not produce a callable: {source:?}"))
-}
-
 fn property_callable(
     runtime: &Runtime,
     context: &mut Context,
@@ -1745,25 +1714,6 @@ fn accessor_getter(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey) -> 
         panic!("property was not a getter accessor");
     };
     get
-}
-
-fn conversion_object(runtime: &Runtime, context: &mut Context, source: &str) -> ObjectRef {
-    let object = context.new_object().unwrap();
-    let conversion = eval_callable(runtime, context, source);
-    define_data_key(
-        runtime,
-        &object,
-        &PropertyKey::from(
-            runtime
-                .well_known_symbol(WellKnownSymbol::ToPrimitive)
-                .expect("well-known symbol"),
-        ),
-        Value::Object(conversion.as_object().try_clone().expect("duplicate root")),
-        true,
-        false,
-        true,
-    );
-    object
 }
 
 fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
@@ -1904,11 +1854,14 @@ fn observe_call(
     this_value: Value,
     arguments: &[Value],
 ) -> String {
-    match context.call(callable, this_value, arguments) {
-        Ok(value) => render_value(runtime, value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => panic!("Rust call failed outside JavaScript completion: {error}"),
-    }
+    crate::primitive_probe::observe_call(
+        runtime,
+        context,
+        callable,
+        this_value,
+        arguments,
+        |value| render_value(runtime, value),
+    )
 }
 
 fn observe_construct(
@@ -1917,11 +1870,9 @@ fn observe_construct(
     callable: &CallableRef,
     arguments: &[Value],
 ) -> String {
-    match context.construct(callable, arguments) {
-        Ok(value) => render_value(runtime, value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => panic!("Rust construct failed outside JavaScript completion: {error}"),
-    }
+    crate::primitive_probe::observe_construct(runtime, context, callable, arguments, |value| {
+        render_value(runtime, value)
+    })
 }
 
 fn observe_construct_with_new_target(
@@ -1931,21 +1882,20 @@ fn observe_construct_with_new_target(
     new_target: &CallableRef,
     arguments: &[Value],
 ) -> String {
-    match context.construct_with_new_target(callable, new_target, arguments) {
-        Ok(value) => render_value(runtime, value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => panic!("Rust construct failed outside JavaScript completion: {error}"),
-    }
+    crate::primitive_probe::observe_construct_with_new_target(
+        runtime,
+        context,
+        callable,
+        new_target,
+        arguments,
+        |value| render_value(runtime, value),
+    )
 }
 
 fn observe_eval(runtime: &Runtime, context: &mut Context, source: &str) -> String {
-    match context.eval(source) {
-        Ok(value) => render_value(runtime, value),
-        Err(RuntimeError::Exception) => take_error(runtime, context),
-        Err(error) => {
-            panic!("Rust source failed outside JavaScript completion: {source:?}: {error}")
-        }
-    }
+    crate::primitive_probe::observe_eval(runtime, context, source, |value| {
+        render_value(runtime, value)
+    })
 }
 
 fn symbol_record(runtime: &Runtime, symbol: &SymbolRef) -> String {
@@ -2008,42 +1958,6 @@ fn symbol_tags(
     .collect()
 }
 
-fn install_primitive_accessors(
-    runtime: &Runtime,
-    context: &mut Context,
-    global: &ObjectRef,
-    prototype: &ObjectRef,
-) {
-    for name in [
-        "strictGetThis",
-        "sloppyGetThis",
-        "strictSetThis",
-        "sloppySetThis",
-    ] {
-        define_global(runtime, global, name, Value::Undefined);
-    }
-    let strict_get = eval_callable(
-        runtime,
-        context,
-        r#"(function() { "use strict"; strictGetThis = this; return this; })"#,
-    );
-    let sloppy_get = eval_callable(
-        runtime,
-        context,
-        "(function() { sloppyGetThis = this; return this.valueOf(); })",
-    );
-    let strict_set = eval_callable(
-        runtime,
-        context,
-        r#"(function() { "use strict"; strictSetThis = this; })"#,
-    );
-    let sloppy_set = eval_callable(runtime, context, "(function() { sloppySetThis = this; })");
-    define_accessor(runtime, prototype, "__strictGet", Some(strict_get), None);
-    define_accessor(runtime, prototype, "__sloppyGet", Some(sloppy_get), None);
-    define_accessor(runtime, prototype, "__strictSet", None, Some(strict_set));
-    define_accessor(runtime, prototype, "__sloppySet", None, Some(sloppy_set));
-}
-
 fn object_has_prototype(runtime: &Runtime, value: &Value, prototype: &ObjectRef) -> bool {
     let Value::Object(object) = value else {
         return false;
@@ -2075,13 +1989,6 @@ fn render_value(runtime: &Runtime, value: Value) -> String {
             .expect("ordinary Symbol observation must stringify")
             .to_utf8_lossy(),
     }
-}
-
-fn take_error(runtime: &Runtime, context: &mut Context) -> String {
-    let error = take_exception_object(context);
-    let name = error_text(runtime, context, &error, "name");
-    let message = error_text(runtime, context, &error, "message");
-    format!("throw:{name}:{message}")
 }
 
 fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {

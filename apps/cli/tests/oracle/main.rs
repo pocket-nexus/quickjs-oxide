@@ -5,10 +5,10 @@ mod common;
 mod support;
 use common::runtime as runtime_oracle;
 use support::{
-    grouped_case_oracle, object_graph_observation, oracle_cases, quickjs_argv_completion_oracle,
-    quickjs_array_completion_oracle, quickjs_oracle, quickjs_raw_source_oracle,
-    quickjs_syntax_diagnostic_oracle, runtime_completion_oracle, runtime_observation,
-    string_value_cases,
+    grouped_case_oracle, object_graph_observation, oracle_cases, primitive_probe,
+    quickjs_argv_completion_oracle, quickjs_array_completion_oracle, quickjs_oracle,
+    quickjs_raw_source_oracle, quickjs_syntax_diagnostic_oracle, runtime_completion_oracle,
+    runtime_observation, string_value_cases,
 };
 
 mod raw_json_module_bytes;
