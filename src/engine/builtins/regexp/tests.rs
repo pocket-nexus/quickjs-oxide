@@ -1,12 +1,12 @@
-use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 use crate::engine::value::{Value, fail_next_replacement_reservation_for_test};
 
 #[test]
 fn regexp_escape_is_strict_static_generic_and_non_constructible() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let Value::String(transcript) = context
         .eval(
             r#"
@@ -54,8 +54,7 @@ fn regexp_escape_is_strict_static_generic_and_non_constructible() {
 
 #[test]
 fn direct_replace_uses_a_second_buffer_while_generic_replace_keeps_the_outer_error() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(
         context
             .eval("RegExp.prototype.exec")
@@ -95,12 +94,10 @@ fn direct_replace_uses_a_second_buffer_while_generic_replace_keeps_the_outer_err
 
 #[test]
 fn regexp_last_index_fast_paths_keep_set_semantics() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(
-        context
-            .eval(
-                r#"
+    let (_, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"
             (function () {
                 var out = [];
                 var g = /a/g;
@@ -126,21 +123,16 @@ fn regexp_last_index_fast_paths_keep_set_semantics() {
                 out.push(held.exec("a") !== null && held.lastIndex === 1);
                 return out.every(function (x) { return x; });
             })()
-        "#
-            )
-            .unwrap(),
-        Value::Bool(true)
+        "#,
     );
 }
 
 #[test]
 fn regexp_plain_exec_converts_immediate_last_index_like_to_length() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(
-        context
-            .eval(
-                r#"
+    let (_, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"
             (function () {
                 var out = [];
                 function at(lastIndex) {
@@ -161,9 +153,6 @@ fn regexp_plain_exec_converts_immediate_last_index_like_to_length() {
                 out.push(boxed.index === 1 && boxed.input === "xa");
                 return out.every(function (x) { return x; });
             })()
-        "#
-            )
-            .unwrap(),
-        Value::Bool(true)
+        "#,
     );
 }

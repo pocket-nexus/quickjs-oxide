@@ -124,6 +124,7 @@ impl Drop for StepScope<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::{
         api::Value,
         vm::{
@@ -135,8 +136,7 @@ mod tests {
 
     #[test]
     fn rejected_pending_publication_releases_the_new_owner_only() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context.eval("({})").unwrap() else {
             panic!("object")
         };
@@ -165,8 +165,7 @@ mod tests {
 
     #[test]
     fn local_query_unwind_poisons_before_cleanup_with_a_state_borrow() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context.eval("({})").unwrap() else {
             panic!("object")
         };

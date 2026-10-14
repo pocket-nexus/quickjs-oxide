@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn ordinary_function_body_lexicals_execute_local_capture_and_constructor_paths() {
@@ -196,8 +197,7 @@ fn nested_block_and_switch_lexicals_lower_scope_lifetimes() {
         Value::Int(42)
     );
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert!(matches!(
         context.eval("(function(){{let value=40;throw function(){return ++value};}})()"),
         Err(RuntimeError::Exception)
@@ -270,8 +270,7 @@ fn nested_lexical_cleanup_shadowing_and_quickjs_var_quirks_execute() {
 
 #[test]
 fn lexical_tdz_and_readonly_errors_follow_checked_local_and_capture_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     for source in [
         "(function(){return x;let x=1})()",
         "(function(){return typeof x;let x=1})()",

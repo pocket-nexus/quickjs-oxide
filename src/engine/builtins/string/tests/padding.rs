@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn string_pad_preserves_pinned_values_conversion_order_and_early_returns() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         context
@@ -81,8 +81,7 @@ fn string_pad_preserves_pinned_values_conversion_order_and_early_returns() {
 
 #[test]
 fn string_pad_small_limit_preserves_filler_order_and_range_error_kind() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let filler = context
         .eval(
             r#"(function(){

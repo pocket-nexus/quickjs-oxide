@@ -496,6 +496,7 @@ mod tests {
     use super::*;
     use crate::engine::atom::Atom;
     use crate::engine::heap::HeapNodeKind;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsString;
 
     #[test]
@@ -665,8 +666,7 @@ mod tests {
 
     #[test]
     fn string_payloads_allocate_one_node_per_conversion() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let value = context.eval("'hello arena'").unwrap();
         let Value::String(string) = &value else {
             panic!("eval must produce a string");
@@ -693,8 +693,7 @@ mod tests {
 
     #[test]
     fn bigint_payloads_allocate_one_node_per_conversion() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let value = context.eval("123456789012345678901234567890n").unwrap();
         let Value::BigInt(bigint) = &value else {
             panic!("eval must produce a bigint");

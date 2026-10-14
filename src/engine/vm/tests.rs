@@ -5,14 +5,15 @@ use crate::engine::code::bytecode::{DetachedBytecode, Instruction};
 use crate::engine::code::function::{
     UnlinkedConstant, UnlinkedFunction, metadata::FunctionMetadata,
 };
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 use crate::engine::value::{JsString, Value};
 
 struct PublishedFixture;
 impl PublishedFixture {
     fn execute(&self, function: &DetachedBytecode<Value>) -> Result<Value, Error> {
         function.verify()?;
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let constants = function
             .constants
             .iter()
@@ -760,32 +761,22 @@ fn string_addition_builds_ropes_and_reports_the_quickjs_length_error() {
 
 #[test]
 fn await_fulfilment_and_rejection_use_the_same_published_core() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(context.eval("var fulfilled=0,rejected=0; async function f(){return 2+await 5;} async function g(){try{await Promise.reject(7);}catch(e){return e+3;}} f().then(x=>fulfilled=x);g().then(x=>rejected=x);").unwrap());
     while runtime.is_job_pending().expect("runtime state") {
         runtime.execute_pending_job().unwrap();
     }
-    assert_eq!(
-        context.eval("fulfilled===7&&rejected===10").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "fulfilled===7&&rejected===10");
 }
 
 #[test]
 fn dynamic_import_preserves_argument_evaluation_before_async_conversion() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(context.eval("var importTrace='';function spec(){importTrace+='s';return {toString(){importTrace+='t';throw 7;}};}function opts(){importTrace+='o';return {};}var importError;import(spec(),opts()).catch(e=>importError=e);").unwrap());
     while runtime.is_job_pending().expect("runtime state") {
         runtime.execute_pending_job().unwrap();
     }
-    assert_eq!(
-        context
-            .eval("importTrace==='sot'&&importError===7")
-            .unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "importTrace==='sot'&&importError===7");
 }
 
 #[test]

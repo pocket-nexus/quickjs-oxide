@@ -85,6 +85,8 @@ impl RuntimeState {
 mod tests {
     use super::*;
     use crate::engine::heap::RawId;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn borrowed_descriptor_publication_preserves_aliases_and_canonical_layouts() {
@@ -181,9 +183,10 @@ mod tests {
 
     #[test]
     fn state_descriptor_admission_preserves_lazy_and_exotic_definition_rules() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
-        assert_eq!(context.eval(r#"(function(){
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(function(){
             function F(){};
             if (Reflect.defineProperty(F, 'prototype', {get(){return 1}})) return false;
             if (!Reflect.defineProperty(F, 'name', {get(){return 'changed'}})) return false;
@@ -199,6 +202,7 @@ mod tests {
             let count=0; const p=new Proxy({}, {defineProperty(t,k,d){count++; return Reflect.defineProperty(t,k,d)}});
             Object.defineProperty(p, 'x', {value:o});
             return p.x===o && count===1;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 }

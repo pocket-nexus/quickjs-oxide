@@ -937,11 +937,11 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn table_backed_symbol_atoms_return_after_set_mutations() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(function) = context
             .eval(
                 r#"(function(){

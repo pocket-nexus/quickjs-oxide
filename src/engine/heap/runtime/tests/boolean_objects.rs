@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn boolean_wrappers_lookup_and_new_target_use_the_required_realms() {
@@ -201,8 +203,7 @@ fn boolean_wrappers_lookup_and_new_target_use_the_required_realms() {
 
 #[test]
 fn boolean_primitive_accessors_writes_and_delete_preserve_raw_receiver_semantics() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let prototype = context.boolean_prototype().unwrap();
     let value_of = property_callable(&runtime, &mut context, &prototype, "valueOf");
     let strict_getter = bytecode_callable(
@@ -359,10 +360,7 @@ fn boolean_primitive_accessors_writes_and_delete_preserve_raw_receiver_semantics
         take_error_message(&runtime, &mut context),
         JsString::from_static("'readOnlyPrimitive' is read-only")
     );
-    assert_eq!(
-        context.eval("delete false.writablePrimitive").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "delete false.writablePrimitive");
     assert_eq!(
         context.eval("false.writablePrimitive").unwrap(),
         Value::Int(1)
@@ -371,8 +369,7 @@ fn boolean_primitive_accessors_writes_and_delete_preserve_raw_receiver_semantics
 
 #[test]
 fn object_prototype_boolean_methods_box_only_the_quickjs_paths() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let object_prototype = context.object_prototype().unwrap();
     let boolean_prototype = context.boolean_prototype().unwrap();
     let object_to_string = property_callable(&runtime, &mut context, &object_prototype, "toString");

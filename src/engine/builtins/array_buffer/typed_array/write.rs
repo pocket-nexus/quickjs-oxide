@@ -234,15 +234,15 @@ const _: () = assert!(std::mem::size_of::<TypedWriteStep>() <= 64);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn primitive_set_keeps_invalid_index_conversion_and_receiver_rules() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let a=new Uint8Array(1), errors=0;
             a[0]=257;
             try { a['-0']=Symbol(); } catch(e) { if(e instanceof TypeError)errors++; }
@@ -255,18 +255,14 @@ mod tests {
             try { b[1]=1; } catch(e) { if(e instanceof TypeError)errors++; }
             return errors===3 && a[0]===1 && a['01']===marker && b[0]===7n
                 && valid && receiver[0]===19 && invalid && !('-0' in receiver);
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 
     #[test]
     fn small_primitive_selection_matches_owned_wrapper_for_receiver_and_key_rules() {
         for wrapper in [false, true] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             for (key, input, same_receiver, expected) in [
                 ("0", "257", true, "stored"),
                 ("-0", "Symbol()", true, "throw"),
@@ -330,8 +326,7 @@ mod tests {
 
     #[test]
     fn small_primitive_result_keeps_detached_conversion_and_rejects_object_inputs() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(buffer) = context.eval("globalThis.b=new ArrayBuffer(1); b").unwrap()
         else {
             panic!("expected buffer");

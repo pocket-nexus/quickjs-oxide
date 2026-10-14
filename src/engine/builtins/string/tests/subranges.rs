@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn string_subrange_preserves_pinned_clamps_utf16_and_rope_copying() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     for (source, expected) in [
         (r#""abcdef".substring(4,1)"#, "bcd"),

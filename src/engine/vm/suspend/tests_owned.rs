@@ -1,12 +1,12 @@
 //! S06 coverage exercises complete callback chains, not only opcode execution.
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{profiling::CostProfile, runtime::Runtime},
     value::{JsValue, Value},
 };
 
 fn assert_owned(source: &str, assertion: &str) {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let profile = CostProfile::start();
     drop(context.eval(source).unwrap());
     let mut jobs = 0;
@@ -143,8 +143,7 @@ fn abandoned_async_generator_resume_completes_detached_activation_and_releases_r
 #[test]
 fn original_argument_roots_survive_parameter_replacement_and_repeated_suspension() {
     use crate::engine::heap::{GeneratorFrameBinding, RawValue};
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(generator) = context.eval("var saved=(function*(x){'use strict';x=7;yield 1;x=8;yield 2;return 3})({original:42});saved.next();saved").unwrap() else {panic!("expected generator")};
     let snapshot = || {
         runtime
@@ -184,8 +183,7 @@ fn original_argument_roots_survive_parameter_replacement_and_repeated_suspension
 
 #[test]
 fn suspension_survives_a_remaining_module_opcode_handoff() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(function) = context
         .eval_with_filename(
             r#"

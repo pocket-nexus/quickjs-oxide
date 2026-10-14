@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn error_constructors_to_string_is_error_and_cause_follow_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let error = global_callable(&runtime, &mut context, "Error");
     let type_error = global_callable(&runtime, &mut context, "TypeError");
     let prototype_key = runtime.intern_property_key("prototype").unwrap();
@@ -238,8 +238,7 @@ fn error_constructors_to_string_is_error_and_cause_follow_quickjs() {
 
 #[test]
 fn error_stack_eager_capture_matches_quickjs_frames_sites_and_descriptor() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source =
         "(function outer(){ return (function inner(){ return new Error(\"boom\"); })(); })()";
     let Value::Object(error) = context.eval_with_filename(source, "<cmdline>").unwrap() else {
@@ -279,8 +278,7 @@ fn error_stack_eager_capture_matches_quickjs_frames_sites_and_descriptor() {
 
 #[test]
 fn error_constructor_skips_only_itself_and_preserves_other_native_frames() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let probe = runtime
         .new_bound_native_function(
@@ -334,8 +332,7 @@ fn error_constructor_skips_only_itself_and_preserves_other_native_frames() {
 
 #[test]
 fn native_rethrow_pops_its_frame_before_bytecode_captures_missing_stack() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let error_constructor = global_callable(&runtime, &mut context, "Error");
     let Value::Object(error) = context
         .call(&error_constructor, Value::Undefined, &[])
@@ -418,8 +415,7 @@ fn native_rethrow_pops_its_frame_before_bytecode_captures_missing_stack() {
 
 #[test]
 fn vm_error_stack_uses_fault_tail_call_and_root_call_sites() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = "(function outer(){ return (function inner(){ return 1n + 1; })(); })()";
     assert!(matches!(
         context.eval_with_filename(source, "<cmdline>"),
@@ -439,8 +435,7 @@ fn vm_error_stack_uses_fault_tail_call_and_root_call_sites() {
 
 #[test]
 fn syntax_error_stack_prepends_parse_location_and_metadata_in_quickjs_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert!(matches!(
         context.eval_with_filename("1 +", "parse.js"),
         Err(RuntimeError::Exception)
@@ -472,8 +467,7 @@ fn syntax_error_stack_prepends_parse_location_and_metadata_in_quickjs_order() {
 
 #[test]
 fn eval_backtrace_barrier_marks_only_the_preexisting_caller_frame() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let caller = runtime
         .new_bound_native_function(
@@ -548,8 +542,7 @@ fn eval_backtrace_barrier_marks_only_the_preexisting_caller_frame() {
 
 #[test]
 fn active_script_or_module_name_walks_scripts_modules_and_eval_roots() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert_eq!(runtime.active_script_or_module_name().unwrap(), None);
 
     let outer = push_named_script_active_frame(&runtime, &mut context, "outer.js");
@@ -593,8 +586,7 @@ fn active_script_or_module_name_walks_scripts_modules_and_eval_roots() {
 
 #[test]
 fn active_script_or_module_name_skips_hidden_native_frames_but_stops_at_visible_native() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let outer = push_named_script_active_frame(&runtime, &mut context, "caller.js");
     let barrier = runtime.install_backtrace_barrier(true).unwrap();
     assert_eq!(
@@ -654,8 +646,7 @@ fn active_script_or_module_name_skips_hidden_native_frames_but_stops_at_visible_
 
 #[test]
 fn active_script_or_module_name_observes_strip_source_and_strip_debug() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     runtime
         .set_debug_info_mode(DebugInfoMode::StripSource)
@@ -692,8 +683,7 @@ fn active_script_or_module_name_observes_strip_source_and_strip_debug() {
 
 #[test]
 fn backtrace_capture_respects_own_stack_and_real_error_class() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let error_constructor = global_callable(&runtime, &mut context, "Error");
     let Value::Object(error) = context
         .call(&error_constructor, Value::Undefined, &[])
@@ -791,8 +781,7 @@ fn backtrace_capture_respects_own_stack_and_real_error_class() {
 
 #[test]
 fn backtrace_function_name_lookup_is_raw_and_only_one_prototype_deep() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = "(function leaf(){ return 1n + 1; })";
     let Value::Object(leaf_object) = context.eval_with_filename(source, "name.js").unwrap() else {
         panic!("leaf function was not an object");
@@ -928,8 +917,7 @@ fn cross_realm_backtrace_uses_each_bytecode_filename_and_throwing_realm_error() 
 /// `at <eval> (<cmdline>:1:23)` for this source.
 #[test]
 fn promise_resolving_frames_are_hidden_from_error_stacks() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = "var e; Promise.resolve({ get then() { e = new Error(\"gt\"); throw e; } });";
     drop(context.eval_with_filename(source, "<cmdline>").unwrap());
     let Value::Object(error) = context.eval("e").unwrap() else {

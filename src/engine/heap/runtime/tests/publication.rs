@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn bytecode_is_rooted_and_calls_separate_caller_from_callee_realm() {
@@ -82,8 +83,7 @@ fn bytecode_is_rooted_and_calls_separate_caller_from_callee_realm() {
 
 #[test]
 fn publication_accepts_duplicate_program_var_declaration_descriptors() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let descriptor = ClosureVariable {
         source: ClosureSource::GlobalDeclaration,
         name: ClosureVariableName::Constant(0),
@@ -124,8 +124,7 @@ fn publication_accepts_duplicate_program_var_declaration_descriptors() {
 
 #[test]
 fn publication_accepts_annex_masked_mixed_global_declaration_descriptors() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let ordinary = ClosureVariable {
         source: ClosureSource::GlobalDeclaration,
         name: ClosureVariableName::Constant(0),

@@ -1,6 +1,8 @@
 use super::deferred::DeferredOperations;
 use super::runtime::DeferredRefOp;
 use crate::engine::api::Runtime;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 use crate::engine::value::Value;
 
 #[test]
@@ -146,8 +148,7 @@ fn failed_deferred_operation_quarantines_remaining_work() {
 
 #[test]
 fn cascading_zero_reference_destruction_finishes_before_release_returns() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     // Warm the ordinary object path before recording the persistent baseline.
     drop(context.eval("({ next: null })").unwrap());
     let before = runtime.0.state.borrow().heap.counts().object_nodes;
@@ -249,8 +250,7 @@ fn nonzero_release_still_drains_previously_queued_nodes() {
 #[test]
 fn arguments_prefix_declines_pending_zero_cleanup_without_draining() {
     use super::RawId;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(carrier) = context.eval("(function(){return arguments})(1,2)").unwrap()
     else {
         panic!("carrier")
@@ -285,8 +285,7 @@ fn arguments_prefix_declines_carrier_saturation_and_preserves_old_clone() {
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     for count in [u32::MAX - 3, u32::MAX - 2, u32::MAX - 1, u32::MAX] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(carrier) = context.eval("(function(){return arguments})(1)").unwrap()
         else {
             panic!("carrier");
@@ -345,8 +344,7 @@ fn arguments_prefix_reserves_headroom_for_self_aliases_and_pinned_length() {
     use crate::engine::atom::pinned::PinnedAtom;
     use crate::engine::heap::RawId;
     use crate::engine::value::{JsValue, conversion::NativeConversion};
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(carrier) = context
         .eval("(function(a){arguments[0]=arguments;return arguments})(1)")
         .unwrap()
@@ -428,8 +426,7 @@ fn arguments_prefix_reserves_headroom_for_self_aliases_and_pinned_length() {
 #[test]
 fn ordinary_object_finalization_releases_slot_atoms_edges_and_brands() {
     use crate::engine::value::JsValue;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     drop(
         context
             .eval(
@@ -478,10 +475,9 @@ fn ordinary_object_finalization_releases_slot_atoms_edges_and_brands() {
     assert!(!runtime.0.state.borrow().atoms.is_live_index(index));
     // Acyclic ordinary objects, including private-brand homes and objects
     // whose last slot holds a symbol, finalize through the zero queue.
-    assert_eq!(
-        context
-            .eval(
-                r#"(() => {
+    assert_script_true(
+        &mut context,
+        r#"(() => {
                     let ok = true;
                     for (let i = 0; i < 200; i++) {
                         const b = new Branded();
@@ -489,10 +485,7 @@ fn ordinary_object_finalization_releases_slot_atoms_edges_and_brands() {
                         ok = ok && Branded.has(b) && plain.o.i === i;
                     }
                     return ok;
-                })()"#
-            )
-            .unwrap(),
-        Value::Bool(true)
+                })()"#,
     );
     // An acyclic holder finalizes through the zero queue when its last owner
     // goes away, releasing its symbol atom without a collection.
@@ -521,8 +514,7 @@ fn ordinary_object_finalization_releases_slot_atoms_edges_and_brands() {
 
 #[test]
 fn final_release_of_a_long_ordinary_chain_drains_iteratively() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let before = runtime.0.state.borrow().heap.counts().object_nodes;
     assert_eq!(
         context

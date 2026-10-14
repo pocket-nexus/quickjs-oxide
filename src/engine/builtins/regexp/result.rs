@@ -357,10 +357,11 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     fn assert_eval_true(source: &str) {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context.eval(source).expect("RegExp result probe threw"),
             Value::Bool(true),
@@ -411,12 +412,10 @@ mod tests {
 
     #[test]
     fn named_shape_cache_is_bounded_and_eviction_preserves_results() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"
             var saved;
             for (var i = 0; i < 100; i++) {
                 var result = new RegExp("(?<g" + i + ">a)", "d").exec("a");
@@ -424,10 +423,7 @@ mod tests {
                 if (result.groups["g" + i] !== "a") throw "group lost";
             }
             saved.groups.g0 === "a" && saved.indices.groups.g0 === saved.indices[1]
-        "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        "#,
         );
         // Every live realm cache is bounded independently of user-held results.
         // The runtime GC oracle also verifies their shape ownership edges.

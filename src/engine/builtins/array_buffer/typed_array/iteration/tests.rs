@@ -1,10 +1,9 @@
-use super::*;
 use crate::engine::test_support::assert_script;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn callback_iteration_matches_quickjs_callback_and_descriptor_contracts() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -231,8 +230,7 @@ fn callback_iteration_matches_quickjs_callback_and_descriptor_contracts() {
 
 #[test]
 fn callback_iteration_keeps_snapshot_range_but_reads_each_value_live() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,

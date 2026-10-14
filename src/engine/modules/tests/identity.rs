@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn module_loader_error_keeps_eq_with_representation_exact_exceptions() {
@@ -20,8 +21,7 @@ fn module_loader_error_keeps_eq_with_representation_exact_exceptions() {
 
 #[test]
 fn module_bytecode_and_compiled_load_results_compare_by_module_identity() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let first = context
         .compile_module_with_filename("export const value = 1;", "same.js")
         .unwrap();

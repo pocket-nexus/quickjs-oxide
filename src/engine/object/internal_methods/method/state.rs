@@ -549,12 +549,12 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::{api::Value, heap::RawId};
 
     #[test]
     fn synchronous_proxy_handler_read_does_not_publish_method_or_get_resume() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(proxy) = context
             .eval("new Proxy({x:1},new Proxy(new Proxy({set:undefined},{}),{}))")
             .unwrap()
@@ -593,8 +593,7 @@ mod tests {
 
     #[test]
     fn synchronous_method_prefix_has_no_runtime_owner_or_wait_record() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(proxy) = context.eval("new Proxy(new Proxy({x:1},{}),{})").unwrap()
         else {
             panic!()
@@ -630,8 +629,7 @@ mod tests {
 
     #[test]
     fn selected_method_getter_survives_reconfiguration_without_relookup() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(proxy) = context.eval("globalThis.methodTrace='';globalThis.oldTrap=function(){};globalThis.methodHandler={get get(){methodTrace+='old';return oldTrap}};new Proxy({},methodHandler)").unwrap() else { panic!() };
         let step = StateMethodStep::start(
             &runtime,
@@ -677,8 +675,7 @@ mod tests {
 
     #[test]
     fn method_cancellation_and_failed_retain_restore_edges_and_depth() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(proxy) = context
             .eval("new Proxy({}, {get get(){return undefined}})")
             .unwrap()

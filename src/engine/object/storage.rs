@@ -871,11 +871,11 @@ mod global_state_tests;
 mod selected_append_tests {
     use super::*;
     use crate::engine::heap::HeapError;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn canonical_append_preserves_symbols_accessors_self_edges_and_cache_updates() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context
             .eval(
                 r#"(function () {
@@ -910,8 +910,7 @@ mod selected_append_tests {
 
     #[test]
     fn canonical_append_rolls_back_new_symbol_owner_on_bad_successor() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let crate::engine::value::Value::Object(owner) =
             context.eval("({old: Symbol('owned')})").unwrap()
         else {
@@ -1118,11 +1117,11 @@ mod state_descriptor_tests {
     use super::*;
     use crate::engine::heap::RawId;
     use crate::engine::object::property::{PropertyDefinitionError, PropertyDescriptor};
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn state_descriptor_tracks_aliased_accessors_and_self_edges() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(function) = context.eval("(function(v){return v})").unwrap() else {
             panic!("callable")
         };
@@ -1215,8 +1214,7 @@ mod state_descriptor_tests {
 
     #[test]
     fn state_descriptor_rolls_back_first_accessor_when_second_retain_overflows() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(getter) = context.eval("(function(){return 1})").unwrap() else {
             panic!("getter")
         };

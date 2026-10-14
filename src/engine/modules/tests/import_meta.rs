@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn import_meta_is_cached_per_defining_module() {
@@ -46,8 +47,7 @@ fn import_meta_is_cached_per_defining_module() {
 
 #[test]
 fn host_gets_the_canonical_import_meta_before_linking() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let module = context
         .compile_module_with_filename(
             r#"

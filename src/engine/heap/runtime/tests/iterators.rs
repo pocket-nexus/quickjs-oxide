@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn iterator_to_string_tag_accessor_matches_quickjs_metadata_and_setter_semantics() {
@@ -303,8 +305,7 @@ fn iterator_to_string_tag_accessor_matches_quickjs_metadata_and_setter_semantics
 
 #[test]
 fn string_iterator_inherits_iterator_tag_after_own_tag_is_deleted() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let string_prototype = context.string_prototype().unwrap();
     let string_iterator_prototype = context.string_iterator_prototype().unwrap();
     let iterator_prototype = context.iterator_prototype().unwrap();
@@ -380,8 +381,7 @@ fn string_iterator_inherits_iterator_tag_after_own_tag_is_deleted() {
 
 #[test]
 fn iterator_from_wraps_a_string_when_its_iterator_method_is_missing() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let result = context
         .eval(
             r#"
@@ -448,9 +448,10 @@ fn iterator_from_wraps_a_string_when_its_iterator_method_is_missing() {
 
 #[test]
 fn iterator_close_preserves_pending_throw_and_checks_normal_result_brand() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(context.eval(r#"
+    let (_, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"
         (function() {
             let calls=0, marker={};
             function iterable(ret) {
@@ -467,13 +468,13 @@ fn iterator_close_preserves_pending_throw_and_checks_normal_result_brand() {
             catch(e) { if(e !== marker) return false; }
             return calls === 2;
         })()
-    "#).unwrap(), Value::Bool(true));
+    "#,
+    );
 }
 
 #[test]
 fn native_iterator_next_wraps_public_calls_but_for_of_consumes_raw_outcomes() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let iterator_key = PropertyKey::from(
         runtime
             .well_known_symbol(WellKnownSymbol::Iterator)

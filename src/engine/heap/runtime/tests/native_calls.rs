@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 fn returned(runtime: &Runtime, completion: Completion) -> Value {
     match completion {
@@ -156,8 +157,7 @@ fn native_call_preserves_actual_argc_padding_and_restores_active_frame() {
 
 #[test]
 fn native_constructor_bit_is_independent_from_generic_cproto() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let probe = runtime
         .new_bound_native_function(
@@ -189,8 +189,7 @@ fn native_constructor_bit_is_independent_from_generic_cproto() {
 
 #[test]
 fn native_float_cproto_construct_adapter_uses_the_call_kernel() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let math_key = runtime.intern_property_key("Math").unwrap();
     let Value::Object(math) = context.get_property(&global, &math_key).unwrap() else {

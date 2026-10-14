@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn dependency_free_module_links_then_evaluates_with_module_semantics() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let module = context
         .compile_module(
             r#"
@@ -37,8 +37,7 @@ fn dependency_free_module_links_then_evaluates_with_module_semantics() {
 
 #[test]
 fn module_identity_evaluates_once_and_caches_abrupt_completion() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(context.eval("globalThis.__moduleRuns = 0").unwrap());
     let once = context
         .compile_module("globalThis.__moduleRuns += 1")
@@ -133,8 +132,7 @@ fn module_evaluation_cache_owns_symbol_atoms_until_the_cache_dies() {
 
 #[test]
 fn direct_eval_uses_module_live_cells_without_leaking_eval_var() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let module = context
         .compile_module(
             r#"
@@ -161,8 +159,7 @@ fn direct_eval_uses_module_live_cells_without_leaking_eval_var() {
 
 #[test]
 fn nested_var_preserves_quickjs_module_function_redeclaration_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let module = context
         .compile_module(
             r#"

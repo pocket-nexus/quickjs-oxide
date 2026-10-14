@@ -193,12 +193,12 @@ mod tests {
     use super::*;
     use crate::engine::heap::RawId;
     use crate::engine::object::CallableRef;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
 
     #[test]
     fn descriptor_transfer_removes_runtime_owners_and_cleans_aliases_in_state() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(function) = context.eval("(function(){})").unwrap() else {
             panic!()
         };

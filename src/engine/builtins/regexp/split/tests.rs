@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 fn assert_consumed(resume: &RegExpSplitResume, address: &mut Option<usize>) {
     let current = &*resume.0 as *const RegExpSplitResumeState as usize;
@@ -100,8 +102,7 @@ fn drive_observing(
 
 #[test]
 fn regexp_split_resident_all_requests_share_one_box_and_consume_their_fields() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let invocation = NativeInvocation::Call {
         this_value: runtime
             .into_jsvalue(
@@ -172,8 +173,7 @@ fn count(runtime: &Runtime, object: &ObjectRef) -> u32 {
 
 #[test]
 fn regexp_split_resident_abandonment_releases_duplicate_request_and_state_owners() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let token = context.new_object().unwrap();
     let constructor = match runtime
         .constructor_from_value(context.realm, context.eval("(function(){})").unwrap())
@@ -256,12 +256,10 @@ fn regexp_split_resident_abandonment_releases_duplicate_request_and_state_owners
 
 #[test]
 fn regexp_split_resident_preserves_selected_exec_proxy_and_capture_boundaries() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(
-        context
-            .eval(
-                r#"(()=>{
+    let (runtime, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"(()=>{
         let trace='', token={}, target={lastIndex:0};
         const matched={
             get length(){trace+='G;';return {valueOf(){trace+='g;';return 3;}};},
@@ -297,22 +295,17 @@ fn regexp_split_resident_preserves_selected_exec_proxy_and_capture_boundaries() 
         return result.length===3 && result[0]==='a' && result[1]===token
             && result[2]===undefined
             && trace==='I;C;S;F;f;N:y;L;W0;X0;E0;W1;X1;E1;R;D;G;g;A;B;';
-    })()"#
-            )
-            .unwrap(),
-        Value::Bool(true)
+    })()"#,
     );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 }
 
 #[test]
 fn regexp_split_resident_keeps_empty_unicode_limit_and_abrupt_unwind_behavior() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(
-        context
-            .eval(
-                r#"(()=>{
+    let (runtime, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"(()=>{
         const boundary='😀x'.split(/(?:)/u);
         const units='😀x'.split(/(?:)/);
         let calls=0;
@@ -330,10 +323,7 @@ fn regexp_split_resident_keeps_empty_unicode_limit_and_abrupt_unwind_behavior() 
             && units.length===3 && ''.split(/x/).length===1
             && ''.split(/(?:)/).length===0 && zero.length===0
             && calls===1 && caught && captureCaught;
-    })()"#
-            )
-            .unwrap(),
-        Value::Bool(true)
+    })()"#,
     );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
     assert_eq!(context.eval("6*7").unwrap(), Value::Int(42));
@@ -391,8 +381,7 @@ fn regexp_split_resident_results_and_late_set_errors_keep_the_defining_realm() {
 
 #[test]
 fn regexp_split_on_a_fresh_realm_observes_a_replaced_exec() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     assert_eq!(
         context
             .eval(
@@ -409,8 +398,7 @@ fn regexp_split_on_a_fresh_realm_observes_a_replaced_exec() {
 #[test]
 fn regexp_split_standard_receiver_completes_without_a_resident_box() {
     use crate::engine::api::profiling::CostProfile;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let profile = CostProfile::start();
     assert_eq!(
         context.eval(r#"'a-b-c'.split(/(-)/).join('|')"#).unwrap(),
@@ -427,8 +415,7 @@ fn regexp_split_standard_receiver_completes_without_a_resident_box() {
 #[test]
 fn regexp_split_resident_production_loop_allocates_one_box_per_split() {
     use crate::engine::api::profiling::CostProfile;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let profile = CostProfile::start();
     // A String limit fails the standard predicate (only an immediate limit
     // observes nothing), so this split keeps the resident continuation.

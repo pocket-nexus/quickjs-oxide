@@ -1211,16 +1211,18 @@ pub(super) fn install_waiting(query: &mut Query, call: PreparedNativeCall, resum
 }
 #[cfg(test)]
 mod tests {
-    use crate::engine::api::{Runtime, Value};
+    use crate::engine::api::Runtime;
+    #[cfg(feature = "profiling")]
+    use crate::engine::api::Value;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn classified_native_calls_preserve_bound_tail_receiver_and_waiting_reentry() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let map=new Map(), trace='', errors=0;
             const set=Map.prototype.set.bind(map,'key');
             function tail(v){return set(v);}
@@ -1234,10 +1236,7 @@ mod tests {
                 if(Math.max.bind(null,1).bind(null,2)(3,4)!==4)return false;
             }
             return trace==='VTVTVTVTVTVTVTVT' && errors===16 && tailMin(2)===2;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -1256,14 +1255,17 @@ mod tests {
                 .unwrap();
         }
         drop(defining);
-        assert_eq!(caller.eval(r#"(()=>{
+        assert_script_true(
+            &mut caller,
+            r#"(()=>{
             let errors=0;
             for(let i=0;i<8;i++) {
                 if(foreignMin(7,2)!==2)return false;
                 try{foreignMin(Symbol());}catch(e){if(Object.getPrototypeOf(e)===foreignTypeError)errors++;}
             }
             return errors===8;
-        })()"#).unwrap(),Value::Bool(true));
+        })()"#,
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -1271,13 +1273,11 @@ mod tests {
     #[test]
     fn classified_native_calls_use_direct_completion_and_install_wait_only_once() {
         use crate::engine::api::profiling::CostProfile;
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let profile = CostProfile::start();
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let calls=0,sum=0,map=new Map();
             for(let i=0;i<12;i++) {
                 sum+=Math.min(2,4);
@@ -1285,10 +1285,7 @@ mod tests {
                 sum+=Math.max({valueOf(){calls++;return Math.min(3,5);}},1);
             }
             return calls===12 && sum===60 && map.size===12;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         let costs = profile.snapshot();
         assert!(
@@ -1328,12 +1325,10 @@ mod tests {
 
     #[test]
     fn direct_array_next_keeps_getter_conversion_and_reentry_progress() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let trace='', nested=0;
             let source={get length(){trace+='L';return {valueOf(){trace+='N';return 2;}};},
                 get 0(){trace+='A';for(let v of [3,4])nested+=v;return 1;},
@@ -1341,19 +1336,17 @@ mod tests {
             let iterator=Array.prototype.values.call(source),sum=0;
             for(let v of iterator)sum+=v;
             return sum===3 && nested===7 && trace==='LNALNBLN';
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
     #[test]
     fn direct_array_next_keeps_proxy_holes_and_abrupt_record_disabling() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let trace='', values=[];
             let source=new Proxy([1,,3],{get(o,k,r){if(k==='length')trace+='L';if(k==='0'||k==='1'||k==='2')trace+=k;return Reflect.get(o,k,r);}});
             for(let v of source)values.push(v);
@@ -1363,15 +1356,17 @@ mod tests {
             try{for(let v of bad){}}catch(e){caught=e===42;}
             return trace==='L0L1L2L' && values.length===3 && values[1]===undefined
                 && caught && reads===2 && closed===0;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
     #[test]
     fn direct_array_next_keeps_conversion_throw_and_normal_early_close() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let calls=0,caught=false,closed=0;
             let bad=Array.prototype.values.call({get length(){return {valueOf(){calls++;throw 99;}};}});
             try{for(let v of bad){}}catch(e){caught=e===99;}
@@ -1380,15 +1375,15 @@ mod tests {
             let bound=[3].values();bound.next=bound.next.bind(bound);
             let sum=0;for(let v of bound)sum+=v;
             return calls===1 && caught && closed===1 && sum===3;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
     #[test]
     #[cfg(feature = "profiling")]
     fn direct_array_next_reports_completion_without_query_and_preserved_waits() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context
@@ -1422,12 +1417,10 @@ mod tests {
 
     #[test]
     fn immediate_native_errors_and_raw_iterator_results_preserve_activation_lifetimes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let caught=0;
             for (let i=0;i<20;i++) {
                 try { [1].map(()=>Promise.resolve.call(null,1)); }
@@ -1440,10 +1433,7 @@ mod tests {
             let sum=0;for(let value of [3,4])sum+=value;
             return caught===40 && first.value===3 && !first.done && second.value===4
                 && !second.done && done.done && sum===7 && Math.min(4,2,3)===2;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -1451,13 +1441,11 @@ mod tests {
     #[test]
     fn immediate_and_waiting_native_outputs_keep_nested_coercion_and_error_order() {
         use crate::engine::api::profiling::CostProfile;
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let profile = CostProfile::start();
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let reads=0;let errors=0;let result=0;
             for(let i=0;i<10;i++) {
                 result+=Math.min(1,{valueOf(){reads++;return Math.max(2,3);}},4);
@@ -1467,10 +1455,7 @@ mod tests {
                 let entry=[7].values().next();if(entry.value!==7)return false;
             }
             return result===40 && reads===30 && errors===20 && Math.min(4,2)===2;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         let costs = profile.snapshot();
         let count = |name| costs.owned_execution_events.get(name).copied().unwrap_or(0);
@@ -1501,18 +1486,18 @@ mod tests {
 
 #[cfg(test)]
 mod array_next_small_entry_tests {
-    use crate::engine::api::{Runtime, Value};
+
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn array_next_small_entry_preserves_cached_loop_and_ordinary_native_calls() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
-        assert_eq!(
-            context
-                .eval(
-                    r#"(function () {
+        assert_script_true(
+            &mut context,
+            r#"(function () {
             var total = 0;
             for (var round = 0; round < 8; round++) {
                 for (var v of [1, 2, 3]) total += v;
@@ -1525,10 +1510,7 @@ mod array_next_small_entry_tests {
                     return false;
             }
             return total === 48;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         #[cfg(feature = "profiling")]
         {
@@ -1553,12 +1535,10 @@ mod array_next_small_entry_tests {
 
     #[test]
     fn array_next_small_entry_preserves_selected_waits_and_error_recovery() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(function () {
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(function () {
             // Warm native query storage before the for-of Proxy wait.
             for (var warm of [1, 2]) {}
             var trace = '', proxy = new Proxy([9], {get: function(t, k, r) {
@@ -1583,10 +1563,7 @@ mod array_next_small_entry_tests {
             var next = [].values().next, bad = false;
             try { next.call({}); } catch(e) { bad = e instanceof TypeError; }
             return bad && [6].values().next().value === 6 && it.next().done;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -1594,16 +1571,16 @@ mod array_next_small_entry_tests {
 
 #[cfg(test)]
 mod native_continuation_publication_tests {
-    use crate::engine::api::{Runtime, Value};
+
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn native_continuation_publication_keeps_waits_nested_calls_and_throw_recovery() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(function () {
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(function () {
             var map = new Map(), reads = 0, errors = 0;
             for (var i = 0; i < 8; i++) {
                 var result = map.getOrInsertComputed(i, function(key) {
@@ -1623,10 +1600,7 @@ mod native_continuation_publication_tests {
                 if (it.next().value !== 3 || !it.next().done) return false;
             }
             return reads === 24 && errors === 16 && map.get(7) === 3;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -1635,6 +1609,8 @@ mod native_continuation_publication_tests {
 #[cfg(test)]
 mod cached_native_inplace_tests {
     use crate::engine::api::{Runtime, Value};
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
     use std::{
         cell::{Cell, RefCell},
         rc::Rc,
@@ -1642,8 +1618,7 @@ mod cached_native_inplace_tests {
 
     #[test]
     fn cached_native_inplace_handles_cold_warm_wait_throw_and_actual_host_reentry() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let host_context = RefCell::new(context.try_clone().expect("duplicate root"));
         let calls = Rc::new(Cell::new(0));
         let observed = calls.clone();
@@ -1675,10 +1650,9 @@ mod cached_native_inplace_tests {
                 );
             })
             .expect("configure test runtime");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(function () {
+        assert_script_true(
+            &mut context,
+            r#"(function () {
             var reads = 0, failures = 0, map = new Map();
             for (var i = 0; i < 8; i++) {
                 if (Math.min(8, 2) !== 2) return false;
@@ -1690,10 +1664,7 @@ mod cached_native_inplace_tests {
                 if (Math.max(1, 4) !== 4) return false;
             }
             return reads === 8 && failures === 8 && map.get(7) === 3;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert_eq!(calls.get(), 8);
         drop(guard);
@@ -1704,13 +1675,16 @@ mod cached_native_inplace_tests {
 #[cfg(test)]
 mod selected_replace_local_tests {
     use super::*;
-    use crate::engine::api::{Runtime, Value};
+    use crate::engine::api::Value;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn selected_replace_keeps_method_getter_custom_exec_groups_and_callbacks_once() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(() => {
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             const replace = RegExp.prototype[Symbol.replace];
             let methods = 0, flags = 0, execGets = 0, execCalls = 0, groups = 0, names = 0;
             const result = {0:'a', length:1, index:0,
@@ -1743,14 +1717,14 @@ mod selected_replace_local_tests {
             let stringCallbacks=0;
             return 'aba'.replaceAll('a', function(m,p){stringCallbacks++;return p})==='0b2'
                 && stringCallbacks===2 && 'aa'.replace(/a/g,'x')==='xx';
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
     #[test]
     fn selected_replace_inner_budget_rejects_in_parent_realm_before_input_conversion() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let input = context
             .eval("globalThis.conversions=0;({toString(){conversions++;return 'a'}})")
             .unwrap();
@@ -1822,8 +1796,7 @@ mod selected_replace_local_tests {
 
     #[test]
     fn selected_replace_inner_error_uses_defining_realm_and_both_diagnostic_activations() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let mut foreign = runtime.new_context().expect("create context");
         let global = context.global_object().unwrap();
         for (name, value) in [
@@ -1840,20 +1813,16 @@ mod selected_replace_local_tests {
                 .set_property(&global, &runtime.intern_property_key(name).unwrap(), value)
                 .unwrap();
         }
-        assert_eq!(
-            context
-                .eval(
-                    r#"(() => {
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             const search = {[Symbol.replace]:foreignReplace};
             try { 'a'.replace(search,'b'); return false; }
             catch(e) {
                 return Object.getPrototypeOf(e)===foreignTypeError
                     && e.stack.split('replace').length>=3;
             }
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }

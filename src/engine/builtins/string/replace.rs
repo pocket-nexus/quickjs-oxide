@@ -945,16 +945,16 @@ mod tests {
 
 #[cfg(test)]
 mod local_replace_tests {
-    use super::*;
+
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn selected_replace_getter_is_consumed_once_with_reentry() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let reads=0,calls=0,seen='';
             const search={get [Symbol.replace](){
                 reads++;seen+='g';Object.defineProperty(this,Symbol.replace,{value(){throw 99}});
@@ -966,10 +966,7 @@ mod local_replace_tests {
             if('a'.replace(re,'b')!=='a'||trace!=='e')return false;
             return 'ab'.replace(/a/,'$&$&')==='aab' && 'aa'.replace(/a/g,()=> 'b')==='bb'
                 && 'ab'.replace(/(?<x>a)/,'$<x>$<x>')==='aab';
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 }

@@ -1,4 +1,5 @@
 //! Owned legacy Date invocation retirement at the actual Runtime boundary.
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{Context, Runtime, RuntimeError},
     builtins::native::NativeFunctionId,
@@ -40,8 +41,7 @@ fn owned_legacy_date_dispatch_retires_receivers_after_return_and_throw() {
         ("Date.prototype.setTime", "new Date(0)", false),
         ("Date.prototype.setTime", "({})", true),
     ] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let (callable, realm, target, minimum) = native_fixture(&runtime, &mut context, source);
         let receiver = runtime
             .into_jsvalue(context.eval(receiver).unwrap())
@@ -80,8 +80,7 @@ fn owned_legacy_date_dispatch_retires_receivers_after_return_and_throw() {
 
 #[test]
 fn owned_date_entry_retires_invocation_on_handler_invariant_error() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let (_callable, realm, target, _minimum) = native_fixture(&runtime, &mut context, "Date.parse");
     let NativeFunctionId::Date(kind) = target else {
         panic!("Date selector");
@@ -110,8 +109,7 @@ fn owned_date_entry_retires_invocation_on_handler_invariant_error() {
 
 #[test]
 fn owned_date_constructor_retires_original_new_target_after_success() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let (callable, realm, target, minimum) = native_fixture(&runtime, &mut context, "Date");
     let function = callable.as_object().object_id();
     let original_count = runtime
@@ -149,8 +147,7 @@ fn owned_date_constructor_retires_original_new_target_after_success() {
 
 #[test]
 fn owned_date_constructor_retires_new_target_after_prototype_throw() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let (callable, realm, target, minimum) = native_fixture(&runtime, &mut context, "Date");
     let new_target = runtime
         .into_jsvalue(context.eval("new Proxy(Date, {get(t,k,r){if(k==='prototype')throw 7;return Reflect.get(t,k,r)}})").unwrap())
@@ -186,8 +183,7 @@ fn owned_date_constructor_retires_new_target_after_prototype_throw() {
 )]
 fn owned_date_release_failure_quarantines_before_remaining_native_owners() {
     use crate::engine::heap::RawId;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let (callable, realm, target, minimum) = native_fixture(&runtime, &mut context, "Date.parse");
     let function = callable.as_object().object_id();
     let function_count = runtime

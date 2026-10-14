@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn compiles_precedence_directly_to_stack_bytecode() {
@@ -86,8 +88,7 @@ fn exponentiation_follows_quickjs_precedence_associativity_and_unary_rules() {
 
 #[test]
 fn update_expressions_follow_quickjs_lvalue_and_power_shapes() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     assert_eq!(
         context
@@ -252,8 +253,7 @@ fn nullish_coalescing_uses_one_quickjs_short_circuit_join() {
     assert_eq!(evaluate("(null ?? 0) || 7"), Value::Int(7));
     assert_eq!(evaluate("false || (null ?? 8)"), Value::Int(8));
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let call = context
         .compile(
             "Function.coalesce = function(){ return this === Function; }; \
@@ -358,8 +358,7 @@ fn relational_membership_uses_runtime_object_protocols() {
         Value::Bool(true)
     );
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     drop(context
         .eval(
             "Function.membershipTrace=''; Function[Symbol.toPrimitive]=function(hint){ Function.membershipTrace+=hint; return 'prototype'; };",
@@ -374,10 +373,7 @@ fn relational_membership_uses_runtime_object_protocols() {
         context.eval("Function.membershipTrace").unwrap(),
         Value::String(JsString::from_static("R"))
     );
-    assert_eq!(
-        context.eval("Function in Function").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "Function in Function");
     assert_eq!(
         context.eval("Function.membershipTrace").unwrap(),
         Value::String(JsString::from_static("Rstring"))
@@ -438,8 +434,7 @@ fn untagged_templates_follow_quickjs_concat_lowering() {
         "tagged template objects require runtime publication; use Context::compile or Context::eval"
     );
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     context
         .compile("(function tag(strings) { return strings[0]; })`x`")
         .expect("runtime publication should materialize tagged-template objects");

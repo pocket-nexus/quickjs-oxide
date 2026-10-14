@@ -163,11 +163,12 @@ impl RuntimeState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn dense_pop_moves_the_only_heap_edge_under_existing_state_access() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(array) = context.eval("[{}]").unwrap() else {
             panic!("Array")
         };
@@ -194,8 +195,7 @@ mod tests {
 
     #[test]
     fn dense_endpoint_guards_decline_before_observable_effects() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in [
             "Object.freeze([1])",
             "Object.seal([1])",
@@ -218,20 +218,16 @@ mod tests {
                 "{source}"
             );
         }
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        assert_script_true(
+            &mut context,
+            r#"
             var log=[];
             var prototype=Object.create(Array.prototype);
             Object.defineProperty(prototype,'0',{set(v){log.push(v)}, configurable:true});
             var a=[]; Object.setPrototypeOf(a,prototype);
             var n=a.push(7);
             n===1 && a.length===1 && !Object.hasOwn(a,'0') && log.join() === '7'
-        "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        "#,
         );
     }
 
@@ -290,12 +286,10 @@ mod tests {
 
     #[test]
     fn dense_endpoint_keeps_scalar_representation_and_reference_roots() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"
             var a=[];
             a.push(-0); var z=a.pop();
             a.push(NaN); var n=a.pop();
@@ -303,23 +297,16 @@ mod tests {
             a.push(object); a.push(symbol);
             var s=a.pop(), o=a.pop();
             Object.is(z,-0) && Number.isNaN(n) && s===symbol && o===object && a.length===0
-        "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        "#,
         );
         runtime.run_gc().unwrap();
-        assert_eq!(
-            context.eval("o.x === 42 && s === symbol").unwrap(),
-            Value::Bool(true)
-        );
+        assert_script_true(&mut context, "o.x === 42 && s === symbol");
     }
 
     #[test]
     fn standard_regexp_and_array_sets_complete_without_waiting_owners() {
         use crate::engine::object::{SetStep, operations::PropertySetAction};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for (source, name) in [("/a/g", "lastIndex"), ("[]", "length"), ("[]", "name")] {
             let Value::Object(object) = context.eval(source).unwrap() else {
                 panic!("object")
@@ -340,9 +327,10 @@ mod tests {
 
     #[test]
     fn ordinary_named_slots_keep_exotic_index_and_length_rules() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"
             var a=[]; a.name=1; a['01']=2; a['4294967295']=3;
             var r=/a/g; r.lastIndex=2; r.extra=4;
             Object.defineProperty(r,'lastIndex',{writable:false});
@@ -350,6 +338,7 @@ mod tests {
             var target={}; Reflect.set(r,'extra',9,target);
             a.length===0 && a.name===1 && a['01']===2 && a['4294967295']===3 &&
             r.lastIndex===2 && r.extra===4 && target.extra===9 && rejected
-        "#).unwrap(), Value::Bool(true));
+        "#,
+        );
     }
 }

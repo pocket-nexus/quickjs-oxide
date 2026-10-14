@@ -2475,13 +2475,13 @@ fn overflow(runtime: &Runtime, realm: crate::engine::heap::ContextId) -> Result<
 mod native_scope_tests {
     use super::*;
     use crate::engine::api::{Context, ErrorKind};
+    use crate::engine::test_support::test_context;
 
     #[cfg(feature = "profiling")]
     #[test]
     fn narrow_native_completion_keeps_pc_tail_waiting_and_cleanup_order() {
         use crate::engine::api::profiling::CostProfile;
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let profile = CostProfile::start();
         let value = context.eval(r#"(function(){
             var total=0, gets=0, values=0, traps=0, errors=0, map=new Map();
@@ -2550,8 +2550,7 @@ mod native_scope_tests {
             frame::{ReturnTarget, ReturnValue},
         };
         for cached in [false, true] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let parent_callable = runtime
                 .callable_from_value(context.eval("(function(){return 1+2})").unwrap())
                 .unwrap();
@@ -2679,8 +2678,7 @@ mod native_scope_tests {
                 ],
             ),
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let receiver = context.eval(receiver).unwrap();
             if name == "RegExp.prototype[Symbol.replace]" || name == "String.prototype.replace" {
                 // The unchanged standard matcher predicate requires a Data
@@ -3939,16 +3937,16 @@ pub(super) fn start_import(
 
 #[cfg(test)]
 mod write_completion_tests {
-    use super::*;
+
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn write_completion_runs_following_opcode_once_across_local_waiting_and_throw() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"
             (() => {
                 let trace = '', calls = 0;
                 const target = {x: 0}, marker = {};
@@ -3965,10 +3963,7 @@ mod write_completion_tests {
                 }
                 return trace === 'abcdabcdabcd' && calls === 6 && target.x === 3;
             })()
-        "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        "#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }

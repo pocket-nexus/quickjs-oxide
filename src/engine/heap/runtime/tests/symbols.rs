@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn symbol_intrinsic_graph_registry_brand_and_wrapper_match_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let constructor = global_callable(&runtime, &mut context, "Symbol");
     let prototype = context.symbol_prototype().unwrap();
 

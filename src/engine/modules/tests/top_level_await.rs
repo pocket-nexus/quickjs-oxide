@@ -1,11 +1,11 @@
+use crate::engine::test_support::test_context;
 use std::cell::{Cell, RefCell};
 
 use super::*;
 
 #[test]
 fn dependency_free_top_level_await_fulfills_the_evaluation_promise() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(context.eval("globalThis.__tlaLog = []").unwrap());
     let module = context
         .compile_module(
@@ -47,8 +47,7 @@ fn dependency_free_top_level_await_fulfills_the_evaluation_promise() {
 
 #[test]
 fn async_dependency_does_not_block_a_sibling_but_delays_its_parent() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(context.eval("globalThis.__tlaOrder = []").unwrap());
     let (loader, _, _) = MapModuleLoader::new([
         (
@@ -106,8 +105,7 @@ fn async_dependency_does_not_block_a_sibling_but_delays_its_parent() {
 
 #[test]
 fn async_dependency_rejection_preserves_identity_and_skips_the_parent_body() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let reason = context
         .eval("globalThis.__tlaReason = {}; globalThis.__tlaReason")
         .unwrap();
@@ -159,8 +157,7 @@ fn async_dependency_rejection_preserves_identity_and_skips_the_parent_body() {
 
 #[test]
 fn shared_async_dependency_rejects_evaluation_promises_in_forward_parent_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let reason = context
         .eval(
             r#"
@@ -401,8 +398,7 @@ fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
 
 #[test]
 fn late_tla_fulfillment_does_not_overwrite_a_cached_sibling_rejection() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let reason = context
         .eval(
             r#"
@@ -503,8 +499,7 @@ fn late_tla_fulfillment_does_not_overwrite_a_cached_sibling_rejection() {
 
 #[test]
 fn top_level_await_inside_a_cycle_unblocks_the_cycle_before_its_outer_parent() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(context.eval("globalThis.__tlaCycleOrder = []").unwrap());
     let (loader, _, _) = MapModuleLoader::new([
         (

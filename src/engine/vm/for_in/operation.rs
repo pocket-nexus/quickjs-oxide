@@ -591,11 +591,8 @@ fn enter_prototypes(
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
-    use crate::engine::{
-        api::{profiling::CostProfile, runtime::Runtime},
-        value::Value,
-        vm::Completion,
-    };
+    use crate::engine::test_support::test_context;
+    use crate::engine::{api::profiling::CostProfile, value::Value, vm::Completion};
 
     #[test]
     fn for_in_local_steps_keep_order_shadowing_deletion_and_accessor_silence() {
@@ -604,8 +601,7 @@ mod tests {
             "(function(){var o=[1,2,3];Object.setPrototypeOf(o,{p:4});return function(){var names='';for(var k in o){names+=k;if(k==='0')delete o[1]}return names==='02p'?42:0}})()",
             "(function(){var o=Object.create(null);o.a=1;o.b=2;return function(){var names='';for(var k in o){names+=k;if(k==='a'){delete o.b;o.c=3}}return names==='a'?42:0}})()",
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();
@@ -646,8 +642,7 @@ mod tests {
     #[test]
     fn for_in_local_progress_leaves_proxy_admission_and_trap_untouched() {
         use super::ForInStep;
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let value = context.eval("globalThis.forInTrapCalls=0;new Proxy({a:1},{ownKeys(){forInTrapCalls++;throw 42}})").unwrap();
         let ForInStep::Keys { object, resume } = ForInStep::start(
             &runtime,
@@ -680,8 +675,7 @@ mod tests {
             "(function(){var marker={},calls=0,proto=new Proxy({p:2},{ownKeys(){calls++;throw marker}}),base=Object.create(proto);base.a=1;return function(){try{for(var key in base){}}catch(e){return calls===1&&e===marker?42:0}return 0}})()",
             "(function(){var base=[1,2],proto={p:3};Object.setPrototypeOf(base,proto);return function(){var names='';for(var key in base){names+=key;if(key==='0')delete base[1]}return names==='0p'?42:0}})()",
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();
@@ -707,16 +701,16 @@ const _: () = assert!(std::mem::size_of::<ForInStep>() <= 64);
 
 #[cfg(test)]
 mod resident_tests {
-    use crate::engine::api::{Runtime, Value};
+
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn dense_for_in_rechecks_descriptor_conversion_shrink_and_append() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let calls=0, names='';const a=[1,2,3];
             for(const k in a){
                 names+=k;
@@ -729,18 +723,16 @@ mod resident_tests {
             names='';const b=[1,2,3];
             for(const k in b){names+=k;if(k==='0')b.length=1;}
             return names==='0';
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 
     #[test]
     fn resident_for_in_keeps_snapshot_shadowing_and_live_own_checks() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let gets=0;const proto={p:1,hidden:2},a=[3,4,5];
             Object.setPrototypeOf(a,proto);
             Object.defineProperty(a,'hidden',{value:3,enumerable:false});
@@ -750,6 +742,7 @@ mod resident_tests {
             let n=0;const proxy=new Proxy({a:1},{ownKeys(){return ['a'];},getOwnPropertyDescriptor(){n++;return {value:1,writable:true,enumerable:n===1,configurable:true};},getPrototypeOf(){return null;}});
             names='';for(const k in proxy)names+=k;
             return names==='a' && n===2;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn dynamic_source_builder_latches_utf16_length_failure() {
@@ -32,8 +33,7 @@ fn dynamic_source_builder_latches_utf16_length_failure() {
 
 #[test]
 fn function_constructor_intrinsic_and_dynamic_source_match_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let constructor = context.function_constructor().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let global = context.global_object().unwrap();
@@ -286,8 +286,7 @@ fn function_constructor_intrinsic_and_dynamic_source_match_quickjs() {
 
 #[test]
 fn function_constructor_html_comment_boundaries_match_quickjs_wrapper() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         context
@@ -465,8 +464,7 @@ fn function_constructor_uses_defining_realm_and_new_target_prototype() {
 
 #[test]
 fn function_constructor_samples_strip_mode_and_keeps_parse_locations() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let constructor = context.function_constructor().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let to_string_key = runtime.intern_property_key("toString").unwrap();
@@ -695,8 +693,7 @@ fn function_constructor_samples_strip_mode_and_keeps_parse_locations() {
 
 #[test]
 fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let constructor = context.function_constructor().unwrap();
     let global = context.global_object().unwrap();
     runtime
@@ -1019,8 +1016,7 @@ fn dynamic_function_keeps_its_defining_realm_alive() {
 
 #[test]
 fn function_constructor_failure_paths_release_temporary_graphs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let constructor = context.function_constructor().unwrap();
     let live_counts = || {
         let counts = runtime.heap_counts().expect("runtime state");

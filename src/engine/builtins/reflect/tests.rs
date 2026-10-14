@@ -1,6 +1,7 @@
 use crate::engine::api::Context;
 use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native::NativeCProto;
+use crate::engine::test_support::test_context;
 
 use super::*;
 
@@ -138,8 +139,7 @@ fn global_reflect_is_realm_aware_lazy_and_complete() {
 
 #[test]
 fn reflect_call_construct_and_argument_validation_follow_pinned_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         eval_string(
@@ -199,8 +199,7 @@ fn reflect_call_construct_and_argument_validation_follow_pinned_order() {
 
 #[test]
 fn reflect_property_and_prototype_operations_return_booleans() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     assert_eq!(
         eval_string(
             &mut context,
@@ -234,8 +233,7 @@ fn reflect_property_and_prototype_operations_return_booleans() {
 
 #[test]
 fn reflect_callback_reentry_stack_overflow_is_catchable_and_recovers() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         eval_string(

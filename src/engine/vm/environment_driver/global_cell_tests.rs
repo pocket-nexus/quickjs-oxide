@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 use crate::engine::{
     code::{
         function::metadata::{
@@ -41,8 +42,7 @@ fn try_read_global_cell(
 
 #[test]
 fn global_cell_reads_current_value_and_keeps_output_alive_after_overwrite() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let roots = ClosureSlots::from(vec![runtime.new_uninitialized_var_ref().unwrap()]);
@@ -88,8 +88,7 @@ fn global_cell_reads_current_value_and_keeps_output_alive_after_overwrite() {
 
 #[test]
 fn global_cell_read_preserves_uninitialized_cells_and_external_cleanup_queue() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let roots = ClosureSlots::from(vec![runtime.new_uninitialized_var_ref().unwrap()]);
@@ -138,8 +137,7 @@ fn global_cell_read_preserves_uninitialized_cells_and_external_cleanup_queue() {
 
 #[test]
 fn global_cell_checked_retain_preserves_overflow_and_immortal_transition() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let object = context.new_object().unwrap();
@@ -233,8 +231,7 @@ fn global_cell_rejects_foreign_closure_roots() {
 
 #[test]
 fn global_cell_read_preserves_pending_zero_cleanup() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let roots = ClosureSlots::from(vec![

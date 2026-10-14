@@ -4,8 +4,10 @@ use super::{JsValue, Runtime};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
     use crate::engine::vm::stack::{FrameStorage, FrameWindow, SlotStore};
-    use crate::engine::{code::runtime::PublishedFunctionSnapshot, heap::RawId, value::Value};
+    use crate::engine::{code::runtime::PublishedFunctionSnapshot, heap::RawId};
 
     fn frame(runtime: &Runtime, values: Vec<JsValue>) -> (SlotStore, FrameWindow) {
         let context = runtime.new_context().expect("create context");
@@ -144,9 +146,10 @@ mod tests {
 
     #[test]
     fn nullish_value_branch_proxy_and_conversion_paths_agree() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(() => {
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             let calls = 0;
             let obj = {valueOf() { calls++; return 1; }};
             let proxy = new Proxy(obj, {get() { calls++; throw 42; }});
@@ -160,6 +163,7 @@ mod tests {
             if (!(obj == 1) || calls !== 1) return false;
             try { proxy == 1; } catch(e) { return e === 42 && calls === 2; }
             return false;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 }

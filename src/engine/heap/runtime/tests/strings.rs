@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn string_wrapper_exotic_indices_length_define_delete_and_order_match_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let string_prototype_id = runtime
         .0
         .state
@@ -264,8 +264,7 @@ fn string_wrapper_exotic_indices_length_define_delete_and_order_match_quickjs() 
 
 #[test]
 fn string_method_slice_matches_quickjs_table_and_code_unit_rules() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let prototype = context.string_prototype().unwrap();
 
     assert_eq!(
@@ -649,8 +648,7 @@ fn string_rope_vm_and_native_concat_overflow_use_the_defining_realms() {
 
 #[test]
 fn string_conversion_core_brand_lookup_object_routes_and_overrides_match_quickjs_slice() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let prototype = context.string_prototype().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let to_string = property_callable(&runtime, &mut context, &prototype, "toString");

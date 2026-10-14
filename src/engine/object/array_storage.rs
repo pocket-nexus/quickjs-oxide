@@ -241,12 +241,13 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::{JsString, Value};
 
     #[test]
     fn dense_recovery_preserves_dictionary_key_order_and_named_descriptors() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(array) = context.eval(r#"(() => {
             const a=[], s=Symbol('key');
             a.before=1; a[3]=3; a.middle=2; a[s]=8; a.after=4;
@@ -264,8 +265,7 @@ mod tests {
 
     #[test]
     fn dense_recovery_define_property_keeps_readonly_length_and_default_indices() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(array) = context
             .eval(
                 r#"(() => {
@@ -290,8 +290,7 @@ mod tests {
 
     #[test]
     fn dense_recovery_declines_holes_huge_lengths_and_nondefault_indices() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in [
             "const a=[];a[3]=3;a[0]=0;return a",
             "const a=[];a[4294967294]=3;a[0]=0;return a",
@@ -311,12 +310,10 @@ mod tests {
 
     #[test]
     fn dense_recovery_obeys_prototypes_extensibility_and_invalidates_cached_layouts() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(() => {
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             const a=[]; a[2]=2; a[1]=1;
             const log=[], p=Object.create(Array.prototype);
             Object.defineProperty(p,'0',{set(v){log.push(v)}, configurable:true});
@@ -336,10 +333,7 @@ mod tests {
             delete b[1];
             if(Object.hasOwn(b,'1') || b.length!==3 || child[0]!==8) return false;
             return true;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 
@@ -386,8 +380,7 @@ mod tests {
 
     #[test]
     fn sparse_truncation_preserves_dictionary_insertion_order_after_deletion() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -408,8 +401,7 @@ mod tests {
 
     #[test]
     fn sparse_truncation_preserves_highest_blocker_named_order_and_accessor_silence() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context.eval(r#"(() => {
         const a = [];
         a.first = 1;

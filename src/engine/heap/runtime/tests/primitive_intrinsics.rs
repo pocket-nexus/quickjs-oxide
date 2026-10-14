@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn number_intrinsic_graph_payload_constants_and_aliases_match_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let constructor = global_callable(&runtime, &mut context, "Number");
     let prototype = context.number_prototype().unwrap();
@@ -144,8 +144,7 @@ fn number_intrinsic_graph_payload_constants_and_aliases_match_quickjs() {
 
 #[test]
 fn boolean_intrinsic_graph_payload_and_brand_methods_match_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let constructor = global_callable(&runtime, &mut context, "Boolean");
     let prototype = context.boolean_prototype().unwrap();
 
@@ -270,8 +269,7 @@ fn boolean_intrinsic_graph_payload_and_brand_methods_match_quickjs() {
 
 #[test]
 fn bigint_intrinsic_graph_conversion_truncation_and_wrappers_match_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let constructor = global_callable(&runtime, &mut context, "BigInt");
     let prototype = context.bigint_prototype().unwrap();
 
@@ -429,8 +427,7 @@ fn bigint_intrinsic_graph_conversion_truncation_and_wrappers_match_quickjs() {
 
 #[test]
 fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let parse_int = global_callable(&runtime, &mut context, "parseInt");
     let parse_float = global_callable(&runtime, &mut context, "parseFloat");
@@ -776,8 +773,7 @@ fn global_numeric_parsers_match_quickjs_graph_conversion_order_and_results() {
 
 #[test]
 fn global_numeric_predicates_match_quickjs_graph_and_coercion_split() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     for name in ["isNaN", "isFinite"] {
         let key = runtime.intern_property_key(name).unwrap();

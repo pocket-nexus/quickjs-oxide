@@ -1020,6 +1020,8 @@ fn read_pending(
 #[cfg(test)]
 pub(in crate::engine::vm) mod read_completion_tests {
     use crate::engine::api::{Runtime, Value};
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     use super::*;
     use crate::engine::{
@@ -1101,8 +1103,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
             ("(function(o,k){return o[k]})", Opcode::GetArrayElDense),
             ("(function(o,k){return o[k]()})", Opcode::GetArrayEl2Dense),
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().unwrap();
+            let (runtime, mut context) = test_context();
             let key = runtime.into_jsvalue(context.eval(
                 "globalThis.keyConversions=0; ({[Symbol.toPrimitive](){keyConversions++;throw 99}})"
             ).unwrap()).unwrap();
@@ -1164,8 +1165,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn unselected_static_read_uses_state_consumer_and_keeps_last_owner_result() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context.eval("({x:{tag:42}})").unwrap() else {
             panic!("object")
         };
@@ -1239,8 +1239,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn unselected_static_getter_enters_child_before_completing_the_parent_read() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context.eval("({get x(){return 7}})").unwrap() else {
             panic!("object")
         };
@@ -1292,8 +1291,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn unselected_static_read_rejects_bad_key_and_stale_input_without_consumption() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let (mut execution, id) = read_fixture(
             &runtime,
             &mut context,
@@ -1356,8 +1354,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn getterless_named_read_finishes_in_the_active_frame_scope() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context
             .eval("globalThis.localRead = {}; Object.defineProperty(localRead, 'x', {get: undefined}); localRead")
             .unwrap()
@@ -1385,8 +1382,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn selected_named_getter_runs_in_the_current_state_segment() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context
             .eval("globalThis.pendingRead = {get x(){ return 7 }}; pendingRead")
             .unwrap()
@@ -1431,8 +1427,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn bound_named_getter_preserves_its_selected_effect_boundary() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context
             .eval("Object.defineProperty({}, 'x', {get:(function(){return this.x}).bind({x:7})})")
             .unwrap()
@@ -1462,8 +1457,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn unresolved_named_read_carries_the_selected_proxy_holder() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context
             .eval("globalThis.generalRead = new Proxy({x:7}, {get(t,k,r){return Reflect.get(t,k,r)}}); generalRead")
             .unwrap()
@@ -1496,8 +1490,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn synchronous_proxy_named_read_completes_without_transport() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context
             .eval("({__proto__:new Proxy(new Proxy({x:42},{}),{})})")
             .unwrap()
@@ -1579,16 +1572,14 @@ pub(in crate::engine::vm) mod read_completion_tests {
                 772,
             ),
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (_, mut context) = test_context();
             assert_eq!(context.eval(source).unwrap(), Value::Int(expected));
         }
     }
 
     #[test]
     fn property_actions_complete_at_carried_boundary_without_recovery() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for (
             source,
             object_source,
@@ -1688,8 +1679,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn retained_receiver_partial_output_keeps_property_publication_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context.eval("({x:7})").unwrap() else {
             panic!("object");
         };
@@ -1737,8 +1727,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn resident_general_read_keeps_only_output_owner_and_never_clones_runtime() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         // A real namespace live-cell slot is excluded from ordinary IC
         // selection. Its final receiver owns the cell and the result child.
         let object = runtime.new_module_namespace_object().unwrap();
@@ -1821,8 +1810,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
     #[test]
     fn full_named_window_preserves_nullish_exception_and_fault_pc() {
         for opcode in [Opcode::GetFieldCached, Opcode::GetField2Cached] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().unwrap();
+            let (runtime, mut context) = test_context();
             let source = if opcode == Opcode::GetFieldCached {
                 "(function(o){return o.x})"
             } else {
@@ -1873,8 +1861,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
     fn computed_read_profiles_carried_completion_and_warm_field_hit_stays_inline() {
         use crate::engine::api::profiling::CostProfile;
 
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let profile = CostProfile::start();
         assert_eq!(
             context
@@ -1922,8 +1909,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn direct_and_deferred_reads_keep_originating_source_location() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let direct = "function fail(){\n return null.x;\n}\ntry{fail()}catch(e){e instanceof TypeError && e.stack.includes('at fail (c2-direct.js:2:')}";
         assert_eq!(
             context.eval_with_filename(direct, "c2-direct.js").unwrap(),
@@ -1941,12 +1927,10 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn linked_owning_read_transaction_preserves_method_receiver_and_selected_errors() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let log='', marker={}, old;
             let o={tag:42,method(){return this.tag},get x(){log+='g';return marker}};
             old=o.x;
@@ -1958,10 +1942,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
             let inherited=Object.create({get x(){log+='h';return this.tag}});inherited.tag=42;
             if(inherited.x!==42)return false;
             return log==='gtfph' && ({x:{tag:42}}).x.tag===42;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().active_frames.is_empty());
@@ -2004,12 +1985,10 @@ pub(in crate::engine::vm) mod read_completion_tests {
 
     #[test]
     fn completed_and_pending_reads_keep_keys_receivers_and_terminal_typed_indices() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let trace='', key={toString(){trace+='k';return 'x'}};
             try { null[key] } catch(e) { if(e instanceof TypeError)trace+='n'; }
             let o={get x(){trace+='g';return {tag:7}}};
@@ -2027,10 +2006,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
             buffer.resize(0);
             if(t[0]!==undefined || t[NaN]!==undefined)throw 'typed terminal';
             return trace==='nkgh';
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }

@@ -849,13 +849,14 @@ fn invoke(
 
 #[cfg(all(test, feature = "profiling"))]
 mod primitive_store_tests {
+    use crate::engine::api::Value;
     use crate::engine::api::profiling::CostProfile;
-    use crate::engine::api::{Runtime, Value};
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn conversion_task_resides_across_both_operands_and_skips_primitive_property_keys() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         drop(
             context
                 .eval("var residentLeft={valueOf(){return 1}},residentRight={valueOf(){return 2}}")
@@ -894,12 +895,10 @@ mod primitive_store_tests {
 
     #[test]
     fn primitive_store_keeps_conversion_capture_and_throw_observations() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let s='', b=1n;
             for(let i=0;i<20;i++){ s+='x'; b+=2n; }
             let capture=()=>s;
@@ -913,10 +912,7 @@ mod primitive_store_tests {
             try { const x='a'; x+='b'; } catch(e) { if(e instanceof TypeError)read+='!'; }
             return s===old && capture()===old && s.length===21 && b===41n
                 && trace==='throwfinally' && a==='leftright' && read==='a!';
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 }

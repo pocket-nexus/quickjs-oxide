@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug)]
@@ -6,10 +8,6 @@ enum RawModuleApi {
     Default,
     Filename,
     Options,
-}
-
-fn assert_script_true(context: &mut Context, source: &str) {
-    assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
 }
 
 fn error_property(
@@ -24,8 +22,7 @@ fn error_property(
 
 #[test]
 fn raw_module_context_apis_preserve_authored_bytes_and_execute() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let cases: &[(RawModuleApi, &[u8])] = &[
         (
             RawModuleApi::Default,
@@ -66,8 +63,7 @@ fn raw_module_context_apis_preserve_authored_bytes_and_execute() {
 
 #[test]
 fn raw_module_syntax_error_uses_byte_exact_filename_line_and_column() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     assert!(matches!(
         context.compile_module_bytes_with_filename(b"/*\x80*/@", "raw-parse.mjs"),

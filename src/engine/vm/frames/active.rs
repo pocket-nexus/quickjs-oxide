@@ -159,15 +159,15 @@ impl ActiveFrames {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::{
-        api::{Runtime, Value},
+        api::Value,
         builtins::native::{NativeFunctionId as N, RegExpNativeKind as R},
         vm::frames::ActiveFrameFlags,
     };
     #[test]
     fn native_budget_matches_scan_across_mark_pop_and_exception_suffixes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let Value::Object(function) = context.eval("function f(){}; f").unwrap() else {
             panic!()
         };

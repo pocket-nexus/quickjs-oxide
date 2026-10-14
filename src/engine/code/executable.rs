@@ -506,6 +506,7 @@ mod tests {
     use super::*;
     use crate::engine::code::bytecode::Instruction;
     use crate::engine::code::function::{UnlinkedFunction, UnlinkedVariableDefinition};
+    use crate::engine::test_support::test_context;
 
     fn publish(runtime: &Runtime, realm: ContextId) -> FunctionBytecodeRef {
         runtime
@@ -525,8 +526,7 @@ mod tests {
 
     #[test]
     fn direct_state_authentication_preserves_shared_publication_without_roots() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let crate::engine::value::Value::Object(function) = context
             .eval(
                 "(function(a){let lexical=a.x;function inner(){return lexical};return arguments})",
@@ -668,8 +668,7 @@ mod tests {
 
     #[test]
     fn direct_state_authentication_declines_nonordinary_function_kinds() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in ["(async function(){return 42})", "(function*(){return 42})"] {
             let crate::engine::value::Value::Object(function) = context.eval(source).unwrap()
             else {

@@ -277,6 +277,7 @@ impl CallStorage {
 mod tests {
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::api::{Runtime, Value};
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsValue;
 
     #[test]
@@ -331,8 +332,7 @@ mod tests {
 
     #[test]
     fn repeated_calls_reuse_empty_buffers_at_stable_depth() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         drop(
             context
                 .eval(
@@ -385,8 +385,7 @@ mod tests {
     }
     #[test]
     fn repeated_deep_calls_reuse_the_peak_cold_capacity() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         drop(
             context
                 .eval("function descend(n){var marker=n;if(n)return descend(n-1);return marker}")
@@ -406,8 +405,7 @@ mod tests {
     }
     #[test]
     fn repeated_try_finally_calls_reuse_unwind_region_capacity() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         drop(context.eval("function guarded(n){try {if(n%2)throw n;return n;}catch(e){return e;}finally{n++;}}").unwrap());
         let profile = CostProfile::start();
         assert_eq!(
@@ -519,6 +517,8 @@ impl CallStorage {
 mod lazy_tests {
     use super::*;
     use crate::engine::api::Runtime;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::{JsValue, Value};
     use crate::engine::vm::CallInput;
 
@@ -580,9 +580,11 @@ mod lazy_tests {
 
     #[test]
     fn lazy_this_preserves_strict_sloppy_eval_and_captured_scope_behavior() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval("function sloppy(){return this === globalThis} function strict(){'use strict';return this===undefined} function direct(){return eval('this===globalThis')} sloppy() && strict() && direct()").unwrap(), Value::Bool(true));
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            "function sloppy(){return this === globalThis} function strict(){'use strict';return this===undefined} function direct(){return eval('this===globalThis')} sloppy() && strict() && direct()",
+        );
         assert_eq!(context.eval("function scoped(){let a=[];for(let i=0;i<3;i++){let x=i;a.push(()=>x)}return a[0]()+a[1]()+a[2]()} scoped()+scoped()").unwrap(), Value::Int(6));
         assert_eq!(context.eval("function plain(){let sum=0;for(let i=0;i<3;i++){let x=i;sum+=x}return sum} plain()+plain()").unwrap(), Value::Int(6));
     }

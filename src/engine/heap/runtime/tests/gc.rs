@@ -1,6 +1,7 @@
 use super::*;
 use crate::engine::heap::{GcPolicy, ObjectData, RawId, Shape, WeakCollectionKey};
 use crate::engine::object::shape::ShapeEntry;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn gc_weak_atom_cleanup_failure_preserves_error_and_stops_the_sweep() {
@@ -328,8 +329,7 @@ fn shape_prototype_property_cycle_keeps_external_root_then_collects() {
 
 #[test]
 fn named_function_self_capture_cycle_is_collected() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let baseline = runtime.heap_counts().expect("runtime state");
     let closure = context
         .eval(

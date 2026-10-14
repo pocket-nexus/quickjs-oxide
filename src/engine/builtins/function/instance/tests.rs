@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 use crate::engine::value::Value;
 
 #[test]
@@ -59,8 +61,7 @@ fn ordinary_instanceof_misses_preserve_selection_order_and_error_identity() {
 #[test]
 fn ordinary_instanceof_declines_cleanup_saturation_and_stale_inputs() {
     use crate::engine::heap::RawId;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(target) = context.eval("globalThis.C=function C(){};C").unwrap() else {
         panic!("constructor");
     };
@@ -155,8 +156,7 @@ fn ordinary_instanceof_declines_cleanup_saturation_and_stale_inputs() {
 #[cfg(any(debug_assertions, feature = "checked-handles"))]
 #[should_panic(expected = "trusted handle")]
 fn ordinary_instanceof_rejects_stale_inputs_in_checked_builds() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(target) = context.eval("globalThis.C=function C(){};C").unwrap() else {
         panic!("constructor");
     };
@@ -195,8 +195,7 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
         ),
     ];
     for (setup, expected) in cases {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         assert_eq!(context.eval(setup).unwrap(), Value::Bool(expected));
         let Value::Object(target) = context.eval("C").unwrap() else {
             panic!("target");
@@ -272,8 +271,7 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
         );
     }
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(target) = context
         .eval("globalThis.C=function C(){};C[Symbol.hasInstance];C")
         .unwrap()
@@ -308,10 +306,7 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
         Completion::Return(JsValue::Bool(true))
     ));
     assert!(runtime.0.state.borrow().heap.object(candidate_id).is_err());
-    assert_eq!(
-        context.eval("new C() instanceof C").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "new C() instanceof C");
 
     let Value::Object(target) = context.eval("(function(){})").unwrap() else {
         panic!("final target");
@@ -388,11 +383,9 @@ fn ordinary_instanceof_preserves_intrinsic_budget_and_cross_realm_selection() {
         .expect("set runtime configuration");
     // The current script occupies the only execution frame. The intrinsic
     // still throws through its original driver and can be caught in JS.
-    assert_eq!(
-        local
-            .eval("try { pair instanceof C; false } catch(e) { e.message==='stack overflow' }")
-            .unwrap(),
-        Value::Bool(true)
+    assert_script_true(
+        &mut local,
+        "try { pair instanceof C; false } catch(e) { e.message==='stack overflow' }",
     );
 }
 
@@ -400,8 +393,7 @@ fn ordinary_instanceof_preserves_intrinsic_budget_and_cross_realm_selection() {
 #[test]
 fn ordinary_instanceof_real_opcode_finishes_without_native_activation() {
     use crate::engine::api::profiling::CostProfile;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     drop(
         context
             .eval("globalThis.C=function C(){};globalThis.pair=new C();pair instanceof C")
@@ -682,8 +674,7 @@ fn instanceof_chain_self_edge_preserves_two_temporary_retains() {
 fn instanceof_chain_saturated_replies_transfer_without_a_new_retain() {
     use crate::engine::heap::RawId;
     for proxy in [false, true] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context
             .eval(if proxy { "new Proxy({}, {})" } else { "({})" })
             .unwrap()
@@ -744,8 +735,7 @@ fn instanceof_chain_saturated_replies_transfer_without_a_new_retain() {
 #[test]
 fn ordinary_instanceof_answers_heap_primitive_candidates_and_keeps_saturation() {
     use crate::engine::heap::RawId;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let result = context
         .eval(
             "function C(){} var s='a'+'b'; var custom={[Symbol.hasInstance](v){return typeof v==='string'}};\

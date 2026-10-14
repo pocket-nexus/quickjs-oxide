@@ -501,14 +501,15 @@ impl Runtime {
 mod tests {
     use crate::engine::heap::PropertySlot;
     use crate::engine::object::shape::PropertyFlags;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsString;
 
     use super::*;
 
     #[test]
     fn generator_activation_is_dormant_between_start_yield_and_completion() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(generator) = context
             .eval(
                 "globalThis.__generator = (function* () { \
@@ -532,11 +533,9 @@ mod tests {
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
 
-        assert_eq!(
-            context
-                .eval("let r1 = __generator.next(99); r1.value === 1 && r1.done === false")
-                .unwrap(),
-            Value::Bool(true)
+        assert_script_true(
+            &mut context,
+            "let r1 = __generator.next(99); r1.value === 1 && r1.done === false",
         );
         assert_eq!(
             runtime
@@ -551,11 +550,9 @@ mod tests {
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
 
-        assert_eq!(
-            context
-                .eval("let r2 = __generator.next(41); r2.value === 42 && r2.done === true")
-                .unwrap(),
-            Value::Bool(true)
+        assert_script_true(
+            &mut context,
+            "let r2 = __generator.next(41); r2.value === 42 && r2.done === true",
         );
         assert_eq!(
             runtime
@@ -573,8 +570,7 @@ mod tests {
 
     #[test]
     fn generator_abrupt_resume_and_reentry_match_quickjs_states() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -602,8 +598,7 @@ mod tests {
 
     #[test]
     fn generator_nan_argument_does_not_fake_an_activation_change() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -617,8 +612,7 @@ mod tests {
 
     #[test]
     fn sloppy_generator_mapped_arguments_keep_extra_actuals_across_yields() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -641,8 +635,7 @@ mod tests {
 
     #[test]
     fn sloppy_generator_mapped_arguments_split_formal_and_extra_cells() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -666,8 +659,7 @@ mod tests {
 
     #[test]
     fn thrown_resume_backtrace_stays_on_the_suspended_yield() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval_with_filename(
@@ -699,8 +691,7 @@ mod tests {
 
     #[test]
     fn yield_star_preserves_delegate_result_identity() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -722,8 +713,7 @@ mod tests {
 
     #[test]
     fn generator_snapshot_roots_captures_private_bindings_and_prototype_choice() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -757,8 +747,7 @@ mod tests {
     }
 
     fn assert_dormant_generator_survives_gc(expression: &str) {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let source = format!("globalThis.__gcGenerator = {expression}; __gcGenerator");
         let Value::Object(generator) = context.eval(&source).unwrap() else {
             panic!("GC probe did not return a generator");
@@ -934,8 +923,7 @@ mod tests {
 
     #[test]
     fn prototype_getter_runs_after_parameters_and_its_throw_aborts_creation() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(function) = context
             .eval(
                 "globalThis.__order = 0; globalThis.__marker = {}; \
@@ -987,8 +975,7 @@ mod tests {
 
     #[test]
     fn generator_intrinsic_reciprocal_descriptors_match_quickjs() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(

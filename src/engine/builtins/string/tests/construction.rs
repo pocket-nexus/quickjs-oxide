@@ -2,13 +2,13 @@ use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::ErrorKind;
 use crate::engine::heap::{AutoInitProperty, PropertySlot};
 use crate::engine::object::shape::PropertyFlags;
+use crate::engine::test_support::test_context;
 
 use super::*;
 
 #[test]
 fn string_constructor_statics_remain_typed_autoinit_entries() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let string_key = runtime.intern_property_key("String").unwrap();
     let Value::Object(string_constructor) = context.get_property(&global, &string_key).unwrap()
@@ -48,8 +48,7 @@ fn string_constructor_statics_remain_typed_autoinit_entries() {
 
 #[test]
 fn string_raw_latched_overflow_preserves_pinned_observable_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(cooked) = context
         .eval(
             r#"(function(){

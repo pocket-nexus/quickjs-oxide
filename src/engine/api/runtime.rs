@@ -274,7 +274,8 @@ impl Default for Runtime {
 
 #[cfg(test)]
 mod recursion_limit_tests {
-    use super::*;
+
+    use crate::engine::test_support::test_context;
     use crate::engine::value::{JsString, Value};
 
     // Deep enough to exceed a small configured limit but not the default one.
@@ -282,8 +283,7 @@ mod recursion_limit_tests {
 
     #[test]
     fn runtime_recursion_limit_is_configurable_and_default_is_unchanged() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         assert_eq!(
             runtime.recursion_limit().expect("runtime configuration"),
             u16::MAX as usize
@@ -326,6 +326,7 @@ mod poison_tests {
     use super::*;
     use crate::engine::api::error::ErrorKind;
     use crate::engine::object::{PropertyKey, WellKnownSymbol};
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -412,8 +413,7 @@ mod poison_tests {
 
     #[test]
     fn normal_errors_preserve_cleanup_and_runtime_reuse() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         assert_eq!(
             context.eval("throw new Error('normal throw')").unwrap_err(),
             RuntimeError::Exception

@@ -1,11 +1,12 @@
-use crate::engine::api::Runtime;
-use crate::engine::value::Value;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn numeric_object_conversion_preserves_hints_order_and_abrupt_completion() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(context.eval(r#"
+    let (_, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"
         (() => {
             function check(expression, hint, expected) {
                 let events = [];
@@ -39,14 +40,16 @@ fn numeric_object_conversion_preserves_hints_order_and_abrupt_completion() {
                    toString() { ordinary.push('toString'); return '4'; } }) - 1 !== 3) return false;
             return ordinary.join(',') === 'valueOf,toString';
         })()
-    "#).unwrap(), Value::Bool(true));
+    "#,
+    );
 }
 
 #[test]
 fn numeric_preparation_keeps_string_bigint_and_number_semantics() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(context.eval(r#"
+    let (_, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"
         (() => {
             if ('1' + 2 !== '12' || '10' < '2' !== true || 1n + 2n !== 3n) return false;
             if ('6' - true !== 5 || null * 3 !== 0 || !Number.isNaN(undefined - 1)) return false;
@@ -62,5 +65,6 @@ fn numeric_preparation_keeps_string_bigint_and_number_semantics() {
             }
             return true;
         })()
-    "#).unwrap(), Value::Bool(true));
+    "#,
+    );
 }

@@ -649,6 +649,7 @@ mod tests {
     use super::*;
     use crate::engine::api::Context;
     use crate::engine::heap::GeneratorState;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
 
     fn dormant(context: &mut Context) -> (ObjectRef, GeneratorActivationData) {
@@ -671,8 +672,7 @@ mod tests {
 
     #[test]
     fn suspended_generator_preserves_primitive_call_input_across_yields() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context.eval(r#"(()=>{
                 function* values() { yield 1; yield 2; }
@@ -689,8 +689,7 @@ mod tests {
 
     #[test]
     fn failed_thaw_releases_partial_roots_without_detaching_heap_state() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (generator, data) = dormant(&mut context);
         let GeneratorFrameBinding::Direct(RawValue::Object(argument)) = data.arguments[0] else {
             panic!("expected an object argument");

@@ -422,6 +422,7 @@ const _: () = assert!(std::mem::size_of::<NextStep>() <= 64);
 #[cfg(test)]
 mod raw_completion_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn raw_completion_checks_phase_and_releases_ignored_done_value() {
@@ -535,8 +536,7 @@ mod raw_completion_tests {
     #[test]
     fn raw_completion_ordinary_results_reuse_done_value_parsing_once() {
         for wrapper in [false, true] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let result = context.eval("globalThis.trace='';globalThis.marker={};({get done(){trace+='d';return false},get value(){trace+='v';return marker}})").unwrap();
             let marker = context.eval("marker").unwrap();
             let resume = NextResume(Box::new(NextResumeState {

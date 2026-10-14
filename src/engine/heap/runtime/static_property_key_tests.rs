@@ -2,6 +2,8 @@ use super::Runtime;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::function::metadata::FunctionMetadata;
 use crate::engine::code::function::{UnlinkedConstant, UnlinkedFunction};
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 use crate::engine::value::{JsString, Value};
 
 fn repeated_static_name_draft() -> UnlinkedFunction {
@@ -36,8 +38,7 @@ fn repeated_static_name_draft() -> UnlinkedFunction {
 
 #[test]
 fn static_property_keys_reuse_one_owned_atom_and_release_with_bytecode() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let baseline_atoms = runtime.test_atom_count().expect("atom count");
     let bytecode = runtime
         .publish_unlinked_function(context.realm, repeated_static_name_draft())
@@ -150,8 +151,7 @@ fn static_property_keys_are_runtime_local_and_failed_publication_rolls_back() {
 
 #[test]
 fn static_property_keys_preserve_numeric_spellings_and_exact_utf16() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let mut names = ["0", "01", "2147483647", "2147483648", "属性"]
         .map(JsString::from_static)
         .to_vec();
@@ -200,12 +200,10 @@ fn static_property_keys_preserve_numeric_spellings_and_exact_utf16() {
 
 #[test]
 fn static_property_keys_keep_getters_proxies_and_resumed_frames_observable() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(
-        context
-            .eval(
-                r#"
+    let (_, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"
         (() => {
             let gets = 0;
             const parent = { get observed() { gets++; return this.value; } };
@@ -227,9 +225,6 @@ fn static_property_keys_keep_getters_proxies_and_resumed_frames_observable() {
             const third = proxy.observed;
             return first === 2 && second === 9 && third === 20 && gets === 2 && traps === 5;
         })()
-    "#
-            )
-            .unwrap(),
-        Value::Bool(true)
+    "#,
     );
 }

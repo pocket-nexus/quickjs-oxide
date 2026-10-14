@@ -142,6 +142,7 @@ impl FrameExecution<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::{
         api::Value,
         code::exec_opcode::Opcode,
@@ -150,8 +151,7 @@ mod tests {
 
     #[test]
     fn named_getter_install_failure_leaves_inputs_and_effect_owned() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context
             .eval("globalThis.getterCalls=0; ({get x(){getterCalls++;return 7}})")
             .unwrap()
@@ -197,8 +197,7 @@ mod tests {
 
     #[test]
     fn named_getter_preserves_receiver_and_last_owner_through_return_and_throw() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         for source in [
             "(function(){let o={v:7,get x(){return function(){return this.v}}}; return o.x()===7})()",
             "(function(){let child={v:7};let o={child,get x(){return this.child}};let r=o.x;o=null;child=null;return r.v===7})()",

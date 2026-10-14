@@ -15,6 +15,7 @@ use crate::engine::compiler::parser::context::InMode;
 use crate::engine::compiler::parser::context::ModuleDeclarationExport;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::lex_error;
+use crate::engine::test_support::test_context;
 
 use crate::engine::code::bytecode::{
     ApplyKind, ArgumentsKind, DefineMethodKind, DynamicEnvironmentSource, EvalVariableSource,
@@ -96,8 +97,7 @@ fn evaluate_error(runtime: &Runtime, context: &mut Context, source: &str) -> (Js
 }
 
 fn evaluate_function_name(source: &str) -> (JsString, bool, bool, bool) {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(function) = context.eval(source).unwrap() else {
         panic!("source did not evaluate to a function object");
     };

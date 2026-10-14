@@ -162,11 +162,11 @@ impl RuntimeState {
 mod tests {
     use super::*;
     use crate::engine::heap::RawId;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn synchronous_own_snapshot_borrows_aliased_accessors_without_retains() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context
             .eval("({get x(){throw 42}, set x(v){throw 43}})")
             .unwrap()
@@ -196,8 +196,7 @@ mod tests {
 
     #[test]
     fn virtual_and_dense_snapshots_preserve_flags_and_owner_responsibility() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(string) = context.eval("new String('xy')").unwrap() else {
             panic!()
         };

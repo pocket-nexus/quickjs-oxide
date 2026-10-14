@@ -2,6 +2,7 @@
 use crate::engine::builtins::native::NativeCProto;
 #[cfg(feature = "test262-host")]
 use crate::engine::object::CompleteOrdinaryPropertyDescriptor;
+use crate::engine::test_support::test_context;
 
 #[cfg(feature = "test262-host")]
 use super::*;
@@ -9,8 +10,7 @@ use super::*;
 #[cfg(feature = "test262-host")]
 #[test]
 fn code_point_range_context_api_preserves_quickjs_native_contract() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let helper = context.new_code_point_range_function().unwrap();
 
     assert_eq!(

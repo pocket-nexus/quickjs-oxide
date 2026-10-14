@@ -1,5 +1,7 @@
 //! sumPrecise retains the exact accumulator across iterator replies.
 use super::SumPrecise;
+#[cfg(test)]
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::{
@@ -335,8 +337,7 @@ pub(crate) fn finish(
 #[cfg(test)]
 #[test]
 fn sum_resume_keeps_one_resident_owner_across_iterator_transitions() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let callable = context.eval("(function(){})").unwrap();
     let object = runtime.new_object(None).unwrap();
     let invocation = NativeInvocation::Call {

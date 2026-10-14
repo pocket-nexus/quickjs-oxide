@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn array_class_roots_length_layout_values_and_realm_prototype() {
@@ -80,8 +81,7 @@ fn array_class_roots_length_layout_values_and_realm_prototype() {
 
 #[test]
 fn array_dense_tail_delete_and_interior_delete_match_quickjs_conversion() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let array = context
         .new_array_from_values(vec![Value::Int(10), Value::Int(20), Value::Int(30)])
         .unwrap();
@@ -118,8 +118,7 @@ fn array_dense_tail_delete_and_interior_delete_match_quickjs_conversion() {
 
 #[test]
 fn array_indices_grow_length_and_obey_readonly_and_extensible_state() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let array = context.new_array().unwrap();
     let length = runtime.intern_property_key("length").unwrap();
     let five = runtime.intern_property_key("5").unwrap();
@@ -198,8 +197,7 @@ fn array_indices_grow_length_and_obey_readonly_and_extensible_state() {
 
 #[test]
 fn array_length_shrink_deletes_descending_and_rolls_back_at_fixed_index() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let array = context
         .new_array_from_values((0..5).map(Value::Int).collect())
         .unwrap();
@@ -251,8 +249,7 @@ fn array_length_shrink_deletes_descending_and_rolls_back_at_fixed_index() {
 
 #[test]
 fn array_assignment_rejections_keep_quickjs_length_diagnostics() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let length = runtime.intern_property_key("length").unwrap();
 
@@ -326,8 +323,7 @@ fn array_assignment_rejections_keep_quickjs_length_diagnostics() {
 
 #[test]
 fn array_join_separator_overflow_still_gets_nullish_slots_and_later_throw_wins() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(source) = context
         .eval(
             r#"(function(){
@@ -374,8 +370,7 @@ fn array_join_separator_overflow_still_gets_nullish_slots_and_later_throw_wins()
 
 #[test]
 fn array_locale_separator_overflow_invokes_method_but_skips_result_to_string() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(source) = context
         .eval(
             r#"(function(){
@@ -421,8 +416,7 @@ fn array_locale_separator_overflow_invokes_method_but_skips_result_to_string() {
 
 #[test]
 fn array_locale_method_throw_replaces_pending_separator_overflow() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(source) = context
         .eval(
             r#"(function(){
@@ -614,8 +608,7 @@ fn array_dense_self_cycle_is_visible_to_cycle_collection() {
 
 #[test]
 fn array_of_uses_set_for_a_custom_result_length() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let result = context.new_object().unwrap();
     let length = runtime.intern_property_key("length").unwrap();
     let setter = eval_callable(
@@ -686,8 +679,7 @@ fn array_of_uses_set_for_a_custom_result_length() {
 
 #[test]
 fn array_of_create_data_property_reports_the_quickjs_rejection() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let array = global_callable(&runtime, &mut context, "Array");
     let of = property_callable(&runtime, &mut context, array.as_object(), "of");
@@ -777,8 +769,7 @@ fn array_of_create_data_property_reports_the_quickjs_rejection() {
 
 #[test]
 fn array_constructor_sets_through_inherited_indices_like_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let prototype = context.array_prototype().unwrap();
     let zero = runtime.intern_property_key("0").unwrap();
     let setter = eval_callable(

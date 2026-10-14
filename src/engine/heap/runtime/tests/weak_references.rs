@@ -1,9 +1,10 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn pending_promise_reaction_does_not_retain_the_species_result_object() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(result) = context
         .eval(
             r#"
@@ -36,8 +37,7 @@ pendingSource.then();
 
 #[test]
 fn weak_ref_and_finalization_registry_globals_match_intrinsic_descriptors() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         context
@@ -125,8 +125,7 @@ fn weak_ref_and_finalization_registry_globals_match_intrinsic_descriptors() {
 
 #[test]
 fn weak_ref_and_finalization_registry_reject_invalid_calls_brands_and_registered_symbols() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         context
@@ -172,8 +171,7 @@ fn weak_ref_and_finalization_registry_reject_invalid_calls_brands_and_registered
 
 #[test]
 fn weak_ref_dereferences_object_local_and_well_known_symbol_targets() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     assert_eq!(
         context
@@ -218,8 +216,7 @@ var weakWellKnownReference = new WeakRef(Symbol.iterator);
 
 #[test]
 fn weak_ref_temporaries_survive_the_current_execution_turn() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         context
@@ -236,8 +233,7 @@ fn weak_ref_temporaries_survive_the_current_execution_turn() {
 
 #[test]
 fn finalization_registry_register_unregister_and_same_value_are_observable_from_js() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     assert_eq!(
         context
@@ -305,8 +301,7 @@ weakRegistrationResult;
 
 #[test]
 fn explicit_turn_keeps_objects_and_symbols_across_calls_and_gc() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     runtime
         .with_execution_turn(|| {
             let _ = context
@@ -329,18 +324,15 @@ fn explicit_turn_keeps_objects_and_symbols_across_calls_and_gc() {
     assert!(runtime.0.state.borrow().kept_objects.is_empty());
     runtime.run_gc().unwrap();
     // Deterministic collection is an implementation check, not a JS timing guarantee.
-    assert_eq!(
-        context
-            .eval("wo.deref() === undefined && ws.deref() === undefined")
-            .unwrap(),
-        Value::Bool(true)
+    assert_script_true(
+        &mut context,
+        "wo.deref() === undefined && ws.deref() === undefined",
     );
 }
 
 #[test]
 fn successful_deref_in_a_later_turn_reestablishes_keep_alive() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let _ = context
         .eval("var target={}; var weak=new WeakRef(target)")
         .unwrap();
@@ -361,8 +353,7 @@ fn successful_deref_in_a_later_turn_reestablishes_keep_alive() {
 
 #[test]
 fn execution_turn_releases_kept_roots_on_error_and_host_panic() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let result =
         runtime.with_execution_turn(|| context.eval("var weakError = new WeakRef({}); throw 42"));
     assert!(matches!(result, Err(RuntimeError::Exception)));
@@ -382,8 +373,7 @@ fn execution_turn_releases_kept_roots_on_error_and_host_panic() {
 
 #[test]
 fn pending_jobs_cannot_interrupt_a_turn_or_lose_fifo_entries() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let _ = context
         .eval("var turnLog=''; Promise.resolve().then(()=>turnLog+='p');")
         .unwrap();
@@ -429,8 +419,7 @@ fn kept_targets_delay_finalization_across_realms_and_nested_execution() {
 
 #[test]
 fn finalization_jobs_share_the_promise_fifo() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     drop(
         context
@@ -482,10 +471,7 @@ weakFifoTarget = null;
         context.eval("weakFifoLog").unwrap(),
         Value::String(JsString::from_static("promise-before,finalizer-held,"))
     );
-    assert_eq!(
-        context.eval("weakFifoThis === undefined").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "weakFifoThis === undefined");
     assert_eq!(
         runtime.execute_pending_job().unwrap().context(),
         Some(context.realm)
@@ -578,8 +564,7 @@ twoPassTarget = null;
 
 #[test]
 fn throwing_finalization_callback_does_not_discard_the_next_job() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(
         context
             .eval(
@@ -623,8 +608,7 @@ weakThrowSecond = null;
 
 #[test]
 fn unregister_cannot_cancel_an_already_queued_finalization_job() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(
         context
             .eval(

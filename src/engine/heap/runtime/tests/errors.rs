@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn native_error_message_preserves_raw_printf_and_js_new_string_boundaries() {
@@ -54,8 +55,7 @@ fn native_error_sidecar_survives_atom_and_parser_materializers() {
         message.utf16_units().collect()
     }
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let spelling = JsString::try_from_utf16(
         vec![u16::from(b'A'); 55]
             .into_iter()
@@ -146,8 +146,7 @@ fn atom_named_vm_and_global_errors_use_the_runtime_atom_table() {
             .unwrap()
     }
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let name = JsString::try_from_utf16(
         vec![u16::from(b'A'); 55]
             .into_iter()

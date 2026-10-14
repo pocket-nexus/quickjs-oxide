@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{Context, GcPolicy},
     heap::RawId,
@@ -113,8 +115,7 @@ fn public_field_local_completion_preserves_alias_owners_pc_and_identity() {
 
 #[test]
 fn public_field_identity_exhaustion_precedes_definition_and_releases_inputs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let caller = runtime.new_context().expect("create context");
     let (mut execution, id) = fixture(&runtime, &mut context, &caller, 1);
     execution
@@ -158,8 +159,7 @@ fn public_field_identity_exhaustion_precedes_definition_and_releases_inputs() {
 
 #[test]
 fn public_field_proxy_budget_still_precedes_getter_trap_and_mutation() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let caller = runtime.new_context().expect("create context");
     let Value::Object(proxy) = context
         .eval("globalThis.fieldCalls=0;globalThis.fieldTarget={};new Proxy(fieldTarget,{get defineProperty(){fieldCalls++;return function(){fieldCalls++;return true}}})")
@@ -205,20 +205,16 @@ fn public_field_proxy_budget_still_precedes_getter_trap_and_mutation() {
         assert!(!events.contains_key("public_field_completed_without_query"));
     }
     drop(execution);
-    assert_eq!(
-        context
-            .eval("fieldCalls===0&&!('x' in fieldTarget)")
-            .unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "fieldCalls===0&&!('x' in fieldTarget)");
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 }
 
 #[test]
 fn public_fields_keep_own_definition_and_observable_special_fallback_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(context.eval(r#"(function(){
+    let (runtime, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"(function(){
         let trace='',sets=0,marker={answer:42};
         Object.defineProperty(Object.prototype,'field',{configurable:true,set(){sets++;throw 99}});
         try {
@@ -244,7 +240,8 @@ fn public_fields_keep_own_definition_and_observable_special_fallback_order() {
             return ordinary.field===marker&&target.field===marker&&array.length===3&&typed[0]===42&&sets===0&&
                 trace==='key;proxy;length;length;typed;throw;finally;';
         } finally {delete Object.prototype.field;}
-    })()"#).unwrap(), Value::Bool(true));
+    })()"#,
+    );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 }
 

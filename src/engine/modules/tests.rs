@@ -1,3 +1,4 @@
+use crate::engine::test_support::assert_script_true;
 use std::cell::{Cell, RefCell};
 
 use super::*;
@@ -800,10 +801,6 @@ impl Drop for RuntimeHoldingLoader {
     fn drop(&mut self) {
         self.drops.update(|value| value + 1);
     }
-}
-
-fn assert_script_true(context: &mut Context, source: &str) {
-    assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
 }
 
 #[track_caller]

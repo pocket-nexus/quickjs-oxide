@@ -91,12 +91,12 @@ impl RuntimeState {
 #[cfg(test)]
 mod tests {
     use crate::engine::api::runtime::Runtime;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
 
     #[test]
     fn empty_receivers_follow_prototypes_beyond_the_cached_ways() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -131,8 +131,7 @@ mod tests {
 
     #[test]
     fn collected_or_mutated_empty_shapes_are_not_reused() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         drop(
             context
                 .eval("globalThis.P = {}; globalThis.F = function () {}; F.prototype = P;")

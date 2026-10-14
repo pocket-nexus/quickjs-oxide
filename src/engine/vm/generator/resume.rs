@@ -77,13 +77,13 @@ impl Drop for GeneratorResume {
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
     use crate::engine::api::profiling::CostProfile;
-    use crate::engine::{api::runtime::Runtime, value::Value};
+    use crate::engine::test_support::test_context;
+    use crate::engine::value::Value;
 
     #[test]
     fn recursive_delegation_and_finally_use_one_owned_driver() {
         std::thread::Builder::new().stack_size(2 * 1024 * 1024).spawn(|| {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let Value::Object(function) = context.eval("(function(){function* g(n){try{if(n) return yield* g(n-1); yield 42;}finally{if(!n)yield [1,2].map(x=>x+1)[1];}} var i=g(1000); var a=i.next();var b=i.return(9);var c=i.next();return a.value===42&&!a.done&&b.value===3&&!b.done&&c.value===9&&c.done;})").unwrap() else {panic!("expected function")};
             let callable = runtime.as_callable(&function).unwrap().unwrap();
             let profile = CostProfile::start();
@@ -100,6 +100,7 @@ const _: () = assert!(std::mem::size_of::<GeneratorStep>() <= 64);
 mod quarantine_tests {
     use super::*;
     use crate::engine::heap::GeneratorState;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -120,8 +121,7 @@ mod quarantine_tests {
             }
             return;
         };
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(generator) = context.eval("(function*(){yield 1;})()").unwrap() else {
             panic!("expected generator")
         };

@@ -629,6 +629,7 @@ const _: () = assert!(std::mem::size_of::<EvaluationStep>() <= 64);
 mod quarantine_tests {
     use super::*;
     use crate::engine::heap::ModuleId;
+    use crate::engine::test_support::test_context;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     #[test]
@@ -649,8 +650,7 @@ mod quarantine_tests {
             }
             return;
         };
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let module = context.compile_module("export let value = 1;").unwrap();
         runtime
             .link_module_graph(module.raw, context.realm)

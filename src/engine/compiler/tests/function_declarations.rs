@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn direct_function_body_declarations_hoist_into_argument_and_local_bindings() {
@@ -231,8 +232,7 @@ fn scoped_function_conflicts_and_global_annex_order_match_quickjs() {
         );
     }
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert_eq!(
         context.eval("{function lateGlobalLexical(){}}let lateGlobalLexical;"),
         Err(RuntimeError::Exception)

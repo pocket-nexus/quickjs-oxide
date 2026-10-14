@@ -447,12 +447,12 @@ pub(crate) fn record_owned_storage(event: OwnedStorageEvent) {
 #[cfg(test)]
 mod tests {
     use super::CostProfile;
-    use crate::engine::api::{Runtime, Value};
+    use crate::engine::api::Value;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn real_compile_and_execution_are_counted_and_nested_scopes_are_isolated() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let outer = CostProfile::start();
         assert_eq!(
             context.eval("(function(x){return x+1;})(41)").unwrap(),
@@ -483,8 +483,7 @@ mod tests {
 
     #[test]
     fn parse_failure_and_unwinding_release_the_collection_scope() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let outer = CostProfile::start();
         assert!(context.eval("let = ;").is_err());
         let failed = outer.snapshot();
@@ -502,8 +501,7 @@ mod tests {
 
     #[test]
     fn call_preparation_distinguishes_padding_copies_and_owned_storage() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(function) = context.eval("(function(a,b){return a})").unwrap() else {
             panic!("expected function")
         };
@@ -546,8 +544,7 @@ mod tests {
 
     #[test]
     fn throwing_body_still_counts_a_prepared_frame() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(function) = context.eval("(function f(){if(f)throw 42})").unwrap() else {
             panic!("expected function")
         };
@@ -567,12 +564,12 @@ mod tests {
 #[cfg(test)]
 mod disassembly_tests {
     use super::CostProfile;
-    use crate::engine::api::{Runtime, Value};
+    use crate::engine::api::Value;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn optional_disassembly_captures_only_subsequent_final_code() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let profile = CostProfile::start();
         drop(context.eval("0").unwrap());
         let before = profile.snapshot();

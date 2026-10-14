@@ -19,12 +19,13 @@
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
-    use crate::engine::api::{Runtime, Value, profiling::CostProfile};
+    use crate::engine::api::{Value, profiling::CostProfile};
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn ordinary_number_calls_do_not_materialize_and_authenticate_once() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(context.eval("function lazyLeaf(x) { return x; }").unwrap());
         let profile = CostProfile::start();
         // S13 enters the evaluated script through the same authenticated
@@ -70,8 +71,7 @@ mod tests {
 
     #[test]
     fn numeric_error_in_a_lazy_frame_keeps_every_ancestor_in_its_stack() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         // Primitive numeric exits no longer materialize up front; the error
         // path must still publish the lazy callee and caller before throwing.
         let value = context
@@ -90,12 +90,14 @@ mod tests {
 
     #[test]
     fn native_error_observes_lazy_ancestors_and_unwind_cleans_registry() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let value = context.eval("function lazyOuter(){return lazyInner()} function lazyInner(){return new Error('observed').stack} var s=lazyOuter(); s.includes('lazyOuter') && s.includes('lazyInner')").unwrap();
         assert_eq!(value, Value::Bool(true));
         assert!(runtime.0.state.borrow().active_frames.is_empty());
-        assert_eq!(context.eval("function a(){return b()} function b(){return Symbol()-1} try{a()}catch(e){e instanceof TypeError && e.stack.includes('a') && e.stack.includes('b')}").unwrap(), Value::Bool(true));
+        assert_script_true(
+            &mut context,
+            "function a(){return b()} function b(){return Symbol()-1} try{a()}catch(e){e instanceof TypeError && e.stack.includes('a') && e.stack.includes('b')}",
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 }

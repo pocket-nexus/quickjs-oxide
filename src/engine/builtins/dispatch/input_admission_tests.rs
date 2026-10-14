@@ -1,5 +1,6 @@
 //! The canonical call boundary owns inputs before checking its callee edge.
 use super::*;
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::Context,
     heap::{HeapError, RawId},
@@ -13,8 +14,7 @@ fn callable(runtime: &Runtime, context: &mut Context) -> CallableRef {
 
 #[test]
 fn checked_callee_rejection_retires_receiver_and_aliased_arguments() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let callable = callable(&runtime, &mut context);
     let function = callable.as_object().object_id();
     let receiver = runtime.new_object(None).unwrap().into_execution_handle();
@@ -53,8 +53,7 @@ fn checked_callee_rejection_retires_receiver_and_aliased_arguments() {
 
 #[test]
 fn checked_callee_borrow_rejection_coordinates_owned_inputs_without_poison() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let callable = callable(&runtime, &mut context);
     let receiver = runtime.new_object(None).unwrap().into_execution_handle();
     let argument = runtime.new_object(None).unwrap().into_execution_handle();
@@ -84,8 +83,7 @@ fn checked_callee_borrow_rejection_coordinates_owned_inputs_without_poison() {
 
 #[test]
 fn checked_callee_rejection_stops_after_destructive_receiver_cleanup() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let callable = callable(&runtime, &mut context);
     let function = callable.as_object().object_id();
     let receiver = runtime.new_object(None).unwrap().into_execution_handle();

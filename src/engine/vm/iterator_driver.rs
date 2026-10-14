@@ -8,6 +8,8 @@ use super::{
     execution::RunningExecution,
     frame::{FrameId, OperationTarget, ReturnTarget},
 };
+#[cfg(all(test, feature = "profiling"))]
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{Error, ErrorKind, error::NativeErrorKind, runtime::Runtime},
     builtins::native::{ArrayIteratorKind, NativeFunctionId},
@@ -1146,8 +1148,7 @@ fn callable(runtime: &Runtime, value: JsValue, message: &str) -> Result<Callable
 fn one_resident_owner_per_iterator_operation_and_none_for_disabled_close() {
     use crate::engine::api::profiling::CostProfile;
     for count in [0, 4] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(context.eval("function collect(n){let i=0;let it={ [Symbol.iterator](){return this},next(){return {get value(){return i},get done(){return i++>=n}}}}; let total=0;for(let x of it)total+=x;return total}").unwrap());
         let profile = CostProfile::start();
         assert_eq!(
@@ -1169,16 +1170,16 @@ fn one_resident_owner_per_iterator_operation_and_none_for_disabled_close() {
 
 #[cfg(test)]
 mod resident_next_tests {
-    use crate::engine::api::{Runtime, Value};
+
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn synchronous_array_next_keeps_live_cursor_and_captured_method() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             const a=[1,2,3], it=a.values(); let nested=0;
             Object.defineProperty(a,'0',{get(){nested=it.next().value;return 1;}});
             const iterable={[Symbol.iterator](){return it;}};
@@ -1187,18 +1188,16 @@ mod resident_next_tests {
             const b=[4], seen=[];
             for(const x of b){seen.push(x);if(x===4)b.push(5);}
             return result==='13' && nested===2 && seen.join(',')==='4,5';
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 
     #[test]
     fn selected_array_next_getter_is_not_replayed_and_close_policy_is_kept() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let reads=0, closes=0; const marker={}, a=[1], it=a.values();
             Object.defineProperty(a,'0',{get(){reads++;throw marker;}});
             it.return=()=>{closes++;return {};};
@@ -1210,17 +1209,16 @@ mod resident_next_tests {
             const bad={next:Object.getPrototypeOf([].values()).next,return(){closes++;return {};},[Symbol.iterator](){return this;}};
             let brand=false;try{for(const x of bad){}}catch(e){brand=e instanceof TypeError;}
             return closes===1 && brand;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 
     #[test]
     fn resident_non_array_iterator_preserves_getters_close_and_nested_calls() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let log='', n=0;
             const it={
                 [Symbol.iterator](){return this;},
@@ -1238,18 +1236,16 @@ mod resident_next_tests {
             const marker={};it.next=()=>({get done(){throw marker;}});
             try{[first]=it;}catch(e){return e===marker && log==='d1v1d2v2d3';}
             return false;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 
     #[test]
     fn array_destructuring_keeps_elision_rest_and_early_close() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let count=0, closed=0;
             function make(){let n=0;return {[Symbol.iterator](){return this;},next(){count++;return {value:++n,done:n>4};},return(){closed++;return {};}};}
             let a,rest; [a,,...rest]=make();
@@ -1257,6 +1253,7 @@ mod resident_next_tests {
             [a]=make();
             let x,y,tail;[x,,y,...tail]=[7];
             return a===1 && closed===1 && x===7 && y===undefined && tail.length===0;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 }

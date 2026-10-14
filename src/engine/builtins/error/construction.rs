@@ -302,6 +302,7 @@ mod state_factory_tests {
     use super::*;
     use crate::engine::atom::{AtomIdx, pinned::PinnedAtom};
     use crate::engine::heap::{HeapError, PropertySlot, RawId};
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn native_error_state_factory_owns_message_and_preserves_realm_class_and_utf16() {
@@ -489,8 +490,7 @@ mod state_factory_tests {
 
     #[test]
     fn native_error_state_consumer_defers_capture_for_existing_bytecode_frame() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let bytecode = context
             .compile_with_filename("void 0;", "deferred.js")
             .unwrap();

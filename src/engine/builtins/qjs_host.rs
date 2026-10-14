@@ -208,6 +208,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
 
     #[test]
     fn script_args_distinguishes_non_cli_helpers_from_an_empty_cli_tail() {
@@ -222,10 +223,9 @@ mod tests {
 
         let mut cli = runtime.new_context().expect("create context");
         cli.install_qjs_helpers_with_script_args(&[]).unwrap();
-        assert_eq!(
-            cli.eval("Array.isArray(scriptArgs) && scriptArgs.length === 0")
-                .unwrap(),
-            Value::Bool(true)
+        assert_script_true(
+            &mut cli,
+            "Array.isArray(scriptArgs) && scriptArgs.length === 0",
         );
     }
 }

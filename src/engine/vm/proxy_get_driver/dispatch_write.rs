@@ -644,13 +644,14 @@ mod local_set_tests {
     use super::super::Parents;
     use super::*;
     use crate::engine::api::Value;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsValue;
     use crate::engine::vm::execution::ExecutionLimits;
 
     #[test]
     fn local_set_dispatch_budget_failure_precedes_array_write() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(array) = context.eval("[]").unwrap() else {
             panic!("expected array");
         };
@@ -712,12 +713,10 @@ mod local_set_tests {
 
     #[test]
     fn local_set_dispatch_keeps_setters_proxy_and_array_length_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(function () {
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(function () {
             var setterCalls = 0, setterLength = -1, stored;
             var proto = Object.create(Array.prototype);
             Object.defineProperty(proto, '0', { set: function (value) {
@@ -746,10 +745,7 @@ mod local_set_tests {
             var failure;
             try { Array.prototype.push.call(receiver, 1, 2); } catch(e) { failure = e; }
             return failure === 23 && order === 'gab' && length === 0;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }

@@ -701,11 +701,11 @@ impl Runtime {
 #[cfg(test)]
 mod argument_preparation_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn array_argument_preflight_keeps_getters_out_of_the_fast_path() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in [
             "({get length(){throw 99}})",
             "Object.defineProperty([1],'0',{get(){throw 99}})",
@@ -748,6 +748,8 @@ mod argument_preparation_tests {
 #[cfg(test)]
 mod arguments_prefix_tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     fn carrier(context: &mut crate::engine::api::Context, source: &str) -> ObjectRef {
         let Value::Object(object) = context.eval(source).unwrap() else {
@@ -770,8 +772,7 @@ mod arguments_prefix_tests {
 
     #[test]
     fn arguments_prefix_reads_mapped_unmapped_defaults_duplicates_and_live_aliases() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for (source, expected) in [
             (
                 "(function(a,b){a=4;return arguments})(1,2)",
@@ -815,8 +816,7 @@ mod arguments_prefix_tests {
 
     #[test]
     fn arguments_prefix_declines_modified_length_holes_and_proxy_without_effects() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let _ = context.eval("globalThis.prefixHits=0").unwrap();
         for setup in [
             "a.length=1",
@@ -859,12 +859,10 @@ mod arguments_prefix_tests {
 
     #[test]
     fn arguments_prefix_serves_apply_reflect_apply_and_construct() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(() => {
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             function sum(a,b) { return this.bias+a*10+b; }
             function C(a,b) { this.value=a*10+b; }
             function mapped(a,b) {
@@ -880,18 +878,16 @@ mod arguments_prefix_tests {
                        Reflect.construct(C,arguments).value === 12;
             }
             return mapped(1,2) && unmapped(1,2);
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 
     #[test]
     fn arguments_prefix_fallback_preserves_length_conversion_index_order_and_throw() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(() => {
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             let log='',called=0,marker={};
             function target(a,b){called++;this.result=a*10+b;return a*10+b;}
             const consumers=[a=>target.apply({},a),a=>Reflect.apply(target,{},a),a=>Reflect.construct(target,a).result];
@@ -916,13 +912,13 @@ mod arguments_prefix_tests {
                 try{consume(a);return false}catch(e){if(!(e instanceof RangeError)||log!==''||called!==0)return false}
             }
             return true;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 
     #[test]
     fn arguments_prefix_snapshot_owns_values_after_carrier_drop() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let object = carrier(&mut context, "(function(a){return arguments})({value:42})");
         let carrier_id = object.object_id();
         let Some(NativeConversion::Value(values)) = runtime
@@ -948,8 +944,7 @@ mod arguments_prefix_tests {
 
     #[test]
     fn arguments_prefix_declines_pending_deferred_cleanup_without_draining() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let object = carrier(&mut context, "(function(){return arguments})(1,2)");
         let pending = runtime.new_object(None).unwrap();
         let pending_id = pending.object_id();

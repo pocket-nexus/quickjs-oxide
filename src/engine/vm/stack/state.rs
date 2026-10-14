@@ -763,6 +763,7 @@ fn immediate_or_object_edge(value: &JsValue) -> Option<Option<crate::engine::hea
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::{
         api::Runtime,
         code::{
@@ -783,8 +784,7 @@ mod tests {
             "(()=>{let a=[];a[0]=a;return a})()",
         ] {
             for (keep_receiver, keep_key) in [(false, false), (true, false), (true, true)] {
-                let runtime = Runtime::new();
-                let mut context = runtime.new_context().unwrap();
+                let (runtime, mut context) = test_context();
                 let base = runtime
                     .into_jsvalue(context.eval(expression).unwrap())
                     .unwrap();
@@ -870,8 +870,7 @@ mod tests {
     #[cfg(feature = "profiling")]
     #[test]
     fn dense_heap_reads_finish_without_property_driver_handoff() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (_, mut context) = test_context();
         let _ = context
             .eval("var denseReceiver=[{}];function readDenseValue(){return denseReceiver[0]}")
             .unwrap();
@@ -898,8 +897,7 @@ mod tests {
         // Heap handles copy through the trusted saturating retain, so the
         // retain failure is injected on a symbol element's checked atom count.
         for capacity_failure in [false, true] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().unwrap();
+            let (runtime, mut context) = test_context();
             let base = runtime
                 .into_jsvalue(context.eval("[Symbol('element')]").unwrap())
                 .unwrap();
@@ -1035,8 +1033,7 @@ mod tests {
 
     #[test]
     fn duplicate_failure_leaves_every_committed_prefix_owner_in_slots() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
         layout.metadata.max_stack = 4;
         // Objects copy through the trusted saturating retain; the symbol's

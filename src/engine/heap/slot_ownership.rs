@@ -316,6 +316,7 @@ mod leaf_readiness_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::{JsString, bigint::JsBigInt};
 
     #[test]
@@ -445,8 +446,7 @@ mod tests {
     #[test]
     fn resident_field_leaves_preserve_zero_queue_and_ordinary_slot() {
         use crate::engine::code::bytecode::Instruction;
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let base = runtime
             .into_jsvalue(context.eval("globalThis.fieldProbe={x:7}").unwrap())
             .unwrap();

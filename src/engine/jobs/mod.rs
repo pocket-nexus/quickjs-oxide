@@ -671,6 +671,7 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::test_support::test_context;
     #[cfg(all(not(target_family = "wasm"), panic = "unwind"))]
     mod cleanup;
     use crate::engine::api::Context;
@@ -752,8 +753,7 @@ mod tests {
 
     #[test]
     fn pending_job_reports_null_context_after_its_last_realm_root_on_success_and_throw() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
 
         let success = eval_callable(&mut context, "(function () { return 42; })");
         let success_realm = allocate_job_only_realm(&runtime, context.realm_id());

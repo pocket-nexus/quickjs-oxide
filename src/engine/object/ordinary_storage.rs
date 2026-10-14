@@ -792,11 +792,11 @@ impl Runtime {
 mod tests {
     use super::*;
     use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn ordinary_read_duplicates_existing_string_node_without_materialization() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context.eval("({value:'payload'})").unwrap() else {
             unreachable!()
         };
@@ -818,8 +818,7 @@ mod tests {
 
     #[test]
     fn ordinary_property_replacement_preserves_roots_and_rejects_foreign_values() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let object = runtime.new_object(None).unwrap();
         let old = runtime.new_object(None).unwrap();
         let key = runtime.intern_property_key("x").unwrap();
@@ -867,8 +866,7 @@ mod tests {
 
     #[test]
     fn ordinary_property_own_write_stops_before_revoked_proxy_prototype() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -990,13 +988,15 @@ mod dense_set_tests {
     use super::*;
     use crate::engine::object::operations::PropertySetAction;
     use crate::engine::object::ordinary::SetStep;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn materialized_index_set_preserves_descriptors_receivers_and_array_length() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
                 let a=[1,,3], trace='';
                 const proto=new Proxy(Array.prototype,{getOwnPropertyDescriptor(){throw 99},
                     set(){throw 98}});
@@ -1026,15 +1026,13 @@ mod dense_set_tests {
                 large[2147483648]=2;
                 if(large[2147483648]!==2 || large.length!==2147483649) return false;
                 return true;
-            })()"#).unwrap(),
-            Value::Bool(true)
+            })()"#,
         );
     }
 
     #[test]
     fn materialized_index_set_selects_without_owning_a_descriptor() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(array) = context.eval("[1,,3]").unwrap() else {
             panic!("expected array")
         };
@@ -1055,12 +1053,10 @@ mod dense_set_tests {
 
     #[test]
     fn existing_dense_set_preserves_hole_prototype_descriptor_and_receiver_rules() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let calls=0, seen, a=[1,2];
             const proto=Object.create(Array.prototype);
             Object.defineProperty(proto,'0',{set(v){calls++;seen=[this,v]},configurable:true});
@@ -1080,10 +1076,7 @@ mod dense_set_tests {
             let proxy=new Proxy({}, {getOwnPropertyDescriptor(){trace+='d';throw marker}});
             try{Reflect.set(d,'0',13,proxy);return false}catch(e){if(e!==marker)return false}
             return trace==='d' && d[0]===5;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 
@@ -1479,6 +1472,8 @@ fn materialized_number_miss_in_state(
 #[cfg(test)]
 mod dense_array_read_tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     fn receiver(runtime: &Runtime, expression: &str) -> Value {
         let mut context = runtime.new_context().expect("create context");
@@ -1598,8 +1593,7 @@ mod dense_array_read_tests {
 
     #[test]
     fn materialized_array_read_checks_each_own_descriptor_and_hole() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let base = runtime
             .into_jsvalue(
                 context
@@ -1629,10 +1623,7 @@ mod dense_array_read_tests {
             Some(JsValue::Int(4))
         ));
         assert_eq!(context.eval("readEffects").unwrap(), Value::Int(0));
-        assert_eq!(
-            context.eval("delete readArray[1]").unwrap(),
-            Value::Bool(true)
-        );
+        assert_script_true(&mut context, "delete readArray[1]");
         assert!(
             runtime
                 .0
@@ -1948,8 +1939,7 @@ mod dense_array_read_tests {
 
     #[test]
     fn dense_number_write_uses_own_element_before_prototype_setter() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let base = runtime
             .into_jsvalue(
                 context
@@ -2137,8 +2127,7 @@ mod dense_array_read_tests {
 
     #[test]
     fn array_read_leaf_reads_frozen_materialized_data_without_relaxing_writes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let base = runtime
             .into_jsvalue(
                 context
@@ -2166,11 +2155,9 @@ mod dense_array_read_tests {
                 .borrow_mut()
                 .try_write_dense_number(&base, 0, Number::Int(9))
         );
-        assert_eq!(
-            context
-                .eval("frozenRead[0] === 7 && 1 / frozenRead[1] === -Infinity")
-                .unwrap(),
-            Value::Bool(true)
+        assert_script_true(
+            &mut context,
+            "frozenRead[0] === 7 && 1 / frozenRead[1] === -Infinity",
         );
         runtime.release_jsvalue(base).unwrap();
     }
@@ -2181,6 +2168,7 @@ mod ordinary_field_leaf_tests {
     use super::*;
     use crate::engine::code::{bytecode::Instruction, runtime::PublishedFunctionSnapshot};
     use crate::engine::object::OrdinaryRead;
+    use crate::engine::test_support::test_context;
 
     fn executable(runtime: &Runtime, field: &str) -> (PublishedFunctionSnapshot, u32) {
         let mut context = runtime.new_context().expect("create context");
@@ -2211,8 +2199,7 @@ mod ordinary_field_leaf_tests {
 
     #[test]
     fn ordinary_field_leaf_preserves_scalar_values_flags_and_declines_nonlocal_rules() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (executable, index) = executable(&runtime, "x");
         for source in [
             "({x:undefined})",
@@ -2408,8 +2395,7 @@ mod ordinary_field_leaf_tests {
     }
     #[test]
     fn recovery_length_leaf_preserves_utf16_brand_and_final_owner_boundaries() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (code, index) = executable(&runtime, "length");
         for (source, expected) in [("[1,,3]", 3), ("'a\\ud83d\\ude00'", 3)] {
             let base = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
@@ -2454,8 +2440,7 @@ mod ordinary_field_leaf_tests {
 
     #[test]
     fn recovery_arguments_leaf_reads_current_cell_and_declines_redefinitions() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let base = runtime
             .into_jsvalue(
                 context
@@ -2514,8 +2499,7 @@ mod ordinary_field_leaf_tests {
     #[test]
     fn linked_native_fact_is_bound_to_the_selected_callee_not_a_property_cache() {
         use crate::engine::builtins::native::{MathMinMaxKind, NativeFunctionId};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (code, index) = executable(&runtime, "x");
         let base = runtime
             .into_jsvalue(
@@ -2581,8 +2565,7 @@ mod ordinary_field_leaf_tests {
 
     #[test]
     fn borrowed_fallback_read_preserves_inherited_getter_and_receiver_owner() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let base = runtime
             .into_jsvalue(
                 context
@@ -2607,8 +2590,7 @@ mod ordinary_field_leaf_tests {
 
     #[test]
     fn recovery_linked_read_keeps_the_selected_getter_and_return_owner() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (code, index) = executable(&runtime, "x");
         let base = context
             .eval("globalThis.readLog=0;globalThis.o={get x(){readLog++;return 7}};o")

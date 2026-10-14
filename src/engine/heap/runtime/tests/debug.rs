@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn function_debug_accessors_match_quickjs_descriptors_realms_and_receivers() {
@@ -174,8 +175,7 @@ fn function_debug_accessors_match_quickjs_descriptors_realms_and_receivers() {
 
 #[test]
 fn runtime_debug_info_mode_matches_quickjs_strip_source_and_strip_debug() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let keys = ["fileName", "lineNumber", "columnNumber"]
         .map(|name| runtime.intern_property_key(name).unwrap());
@@ -268,8 +268,7 @@ fn runtime_debug_info_mode_matches_quickjs_strip_source_and_strip_debug() {
 
 #[test]
 fn function_debug_position_distinguishes_missing_debug_from_missing_pc_table() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let keys = ["fileName", "lineNumber", "columnNumber"]
         .map(|name| runtime.intern_property_key(name).unwrap());
 
@@ -325,8 +324,7 @@ fn function_debug_position_distinguishes_missing_debug_from_missing_pc_table() {
 
 #[test]
 fn publication_accepts_arbitrary_debug_source_bytes() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source =
         b"function f(){/*\x80Q*/\0\xef\xbb\xbf\xed\xa0\xbd\xed\xb8\x80\xed\xa0\x80\xff}".to_vec();
     let function = runtime

@@ -742,12 +742,15 @@ pub(crate) fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn local_mutation_keeps_selected_setter_and_proxy_once() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let trace='', stored;
             const proto={set 0(value){trace+='s';stored=value;}};
             const target=Object.create(proto);target.length=0;
@@ -759,14 +762,16 @@ mod tests {
             trace=''; const pop=Object.create({get 1(){trace+='r';return 9;}});
             Object.defineProperty(pop,'length',{get(){trace+='g';return 2;},set(v){trace+='l'+v;}});
             return Array.prototype.pop.call(pop)===9 && trace==='grl1';
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 
     #[test]
     fn local_mutation_keeps_partial_effects_on_rejected_length_or_delete() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             const a=[1,2];Object.defineProperty(a,'1',{configurable:false});
             let rejected=false;try{a.pop();}catch(e){rejected=e instanceof TypeError;}
             if(!rejected || a.length!==2 || a[1]!==2)return false;
@@ -776,7 +781,8 @@ mod tests {
             const b=[1];Object.defineProperty(b,'length',{writable:false});
             rejected=false;try{b.push(4);}catch(e){rejected=e instanceof TypeError;}
             return rejected && b.length===1 && !(1 in b);
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 
     #[test]
@@ -862,8 +868,7 @@ mod tests {
 
     #[test]
     fn push_inline_argument_preserves_observable_mutation_steps() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let value = context.eval(r#"(function () {
             var trace = '', stored;
             var target = {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn module_loader_cache_cycles_and_live_cells_follow_quickjs_order() {
@@ -110,8 +111,7 @@ fn default_import_clauses_share_the_exporters_live_cell() {
 
 #[test]
 fn default_function_declarations_are_hoisted_named_and_live_through_self_imports() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let anonymous = context
         .compile_module_with_filename(
             r#"
@@ -158,8 +158,7 @@ fn default_function_declarations_are_hoisted_named_and_live_through_self_imports
 
 #[test]
 fn anonymous_default_generator_and_async_declarations_receive_the_default_name() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let generator = context
         .compile_module_with_filename(
             r#"
@@ -209,8 +208,7 @@ fn anonymous_default_generator_and_async_declarations_receive_the_default_name()
 
 #[test]
 fn default_class_declarations_keep_tdz_and_name_before_static_initializers() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let anonymous = context
         .compile_module_with_filename(
             r#"

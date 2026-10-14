@@ -1,11 +1,11 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn dynamic_import_load_and_finish_are_distinct_fifo_jobs_with_gc_roots() {
     #[cfg(feature = "profiling")]
     let profile = crate::engine::api::profiling::CostProfile::start();
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let (loader, loads, _) = MapModuleLoader::new([(
         "pkg/dependency.js",
         "export const answer = 42; globalThis.__dynamicImportBodyRan = true;",
@@ -57,8 +57,7 @@ fn dynamic_import_load_and_finish_are_distinct_fifo_jobs_with_gc_roots() {
 fn dynamic_import_waits_for_a_pending_tla_evaluation_and_reuses_it() {
     #[cfg(feature = "profiling")]
     let profile = crate::engine::api::profiling::CostProfile::start();
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(
         context
             .eval(
@@ -164,8 +163,7 @@ fn dynamic_import_waits_for_a_pending_tla_evaluation_and_reuses_it() {
 
 #[test]
 fn dynamic_import_assimilates_a_namespace_then_export() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let (loader, _, _) = MapModuleLoader::new([(
         "thenable.js",
         "export function then(resolve) { resolve(42); }",
@@ -194,8 +192,7 @@ fn dynamic_import_assimilates_a_namespace_then_export() {
 
 #[test]
 fn dynamic_import_internal_then_observes_species_and_ignored_capability() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let (loader, _, _) = MapModuleLoader::new([("species.js", "export const ok = true;")]);
     let _registration = runtime.set_module_loader(loader);
     drop(
@@ -246,8 +243,7 @@ get: function () {
 
 #[test]
 fn dynamic_import_discards_internal_then_species_abrupt_completion() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let (loader, _, _) = MapModuleLoader::new([("species-throw.js", "export const ok = true;")]);
     let _registration = runtime.set_module_loader(loader);
     drop(

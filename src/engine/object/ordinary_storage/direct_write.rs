@@ -481,6 +481,8 @@ impl RuntimeState {
 mod tests {
     use super::*;
     use crate::engine::api::Runtime;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     fn object(value: &JsValue) -> ObjectId {
         let JsValue::Object(id) = value else {
@@ -491,8 +493,7 @@ mod tests {
 
     #[test]
     fn computed_key_stores_match_ordinary_set_semantics() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -556,8 +557,7 @@ mod tests {
 
     #[test]
     fn computed_string_key_stores_release_their_interned_atoms() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let count = |runtime: &Runtime| runtime.0.state.borrow().atoms.len();
         drop(
             context
@@ -584,8 +584,7 @@ mod tests {
 
     #[test]
     fn dense_hole_fill_moves_owner_and_keeps_length() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let array = runtime
             .into_jsvalue(context.eval("new Array(3)").unwrap())
             .unwrap();
@@ -622,8 +621,7 @@ mod tests {
 
     #[test]
     fn dense_hole_fill_matches_ordinary_set_semantics() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -677,8 +675,7 @@ mod tests {
 
     #[test]
     fn owned_append_transfers_heap_and_atom_edges_and_reuses_canonical_shapes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let key = runtime.intern_property_key("x").unwrap();
         for source in [
             "({marker:1})",
@@ -773,8 +770,7 @@ mod tests {
 
     #[test]
     fn owned_append_declines_observable_prototypes_before_consuming_input() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let key = runtime.intern_property_key("x").unwrap();
         for source in [
             "Object.preventExtensions({})",
@@ -820,8 +816,7 @@ mod tests {
 
     #[test]
     fn rejected_owned_successor_restores_the_input_and_shape_owner() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let receiver = runtime
             .into_jsvalue(context.eval("({x:1})").unwrap())
             .unwrap();
@@ -910,10 +905,11 @@ mod tests {
     #[cfg(feature = "profiling")]
     #[test]
     fn constructors_append_in_state_and_keep_getter_and_proxy_semantics() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let profile = crate::engine::api::profiling::CostProfile::start();
-        assert_eq!(context.eval(r#"(() => {
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             function C(v) {this.a=v;this.b=this;this.c=Symbol('field');}
             const value={};const first=new C(value);const second=new C(value);
             if(first.a!==value || first.b!==first || second.b!==second || typeof first.c!=='symbol')return false;
@@ -921,7 +917,8 @@ mod tests {
             const o=Object.create(proto);o.x=value;
             const p=new Proxy({}, {set(t,k,v,r){calls++;return Reflect.set(t,k,v,r)}});p.x=value;
             return calls===2 && !Object.hasOwn(o,'x') && p.x===value;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
         // The second construction may consume its sites' append facts; both
         // paths complete in State.
         let events = profile.snapshot().owned_execution_events;
@@ -936,12 +933,10 @@ mod tests {
 
     #[test]
     fn vm_field_exchange_preserves_aliases_all_value_kinds_and_throw_recovery() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
-        assert_eq!(
-            context
-                .eval(
-                    r#"(() => {
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             let o = {x: {previous:true}};
             let other = {marker:true};
             let values = [undefined,null,false,0,-0,1.5,3n,2n**90n,
@@ -960,10 +955,7 @@ mod tests {
             try {(function(){'use strict';frozen.x=o})();return false}
             catch(e){if(!(e instanceof TypeError))return false}
             return calls===1 && frozen.x===other;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
         assert!(!runtime.0.deferred_references.has_pending());
@@ -972,13 +964,15 @@ mod tests {
     #[cfg(feature = "profiling")]
     #[test]
     fn heap_field_values_complete_in_the_same_execute_segment() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (_, mut context) = test_context();
         let _ = context
             .eval("globalThis.exchangeTarget={x:null};globalThis.exchangeInput={};")
             .unwrap();
         let profile = crate::engine::api::profiling::CostProfile::start();
-        assert_eq!(context.eval("for(let i=0;i<16;i++)exchangeTarget.x=exchangeInput;exchangeTarget.x===exchangeInput").unwrap(), Value::Bool(true));
+        assert_script_true(
+            &mut context,
+            "for(let i=0;i<16;i++)exchangeTarget.x=exchangeInput;exchangeTarget.x===exchangeInput",
+        );
         assert_eq!(
             profile
                 .snapshot()
@@ -991,9 +985,10 @@ mod tests {
 
     #[test]
     fn vm_dense_writes_keep_append_replacement_and_observable_fallbacks() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
-        assert_eq!(context.eval(r#"(() => {
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             const a=[]; const o={};
             const values=[undefined,null,false,-0,1.5,3n,2n**90n,'owner',Symbol('v'),o,a];
             for(let i=0;i<values.length;i++)
@@ -1018,7 +1013,8 @@ mod tests {
             p[0]=o; if(calls!==2 || a[0]!==o)return false;
             const t=new Float64Array(2); t[0]=2.5; t[1]={valueOf(){calls++;return 3.5}};
             return t[0]===2.5 && t[1]===3.5 && calls===3;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
         assert!(!runtime.0.deferred_references.has_pending());
     }
@@ -1026,8 +1022,7 @@ mod tests {
     #[cfg(feature = "profiling")]
     #[test]
     fn heap_dense_append_and_replace_complete_without_a_write_request() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (_, mut context) = test_context();
         let _ = context
             .eval("globalThis.directDense=[];globalThis.denseInput={};")
             .unwrap();
@@ -1045,8 +1040,7 @@ mod tests {
 
     #[test]
     fn exchange_moves_heap_edges_and_retires_old_value_after_commit() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let base = runtime
             .into_jsvalue(context.eval("({x:{old:true}})").unwrap())
             .unwrap();
@@ -1085,8 +1079,7 @@ mod tests {
 
     #[test]
     fn rejected_selection_preserves_both_owners_and_never_invokes_getter() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let key = runtime.intern_property_key("x").unwrap();
         for source in [
             "Object.freeze({x:1})",
@@ -1125,8 +1118,7 @@ mod tests {
 
     #[test]
     fn dense_replace_and_append_move_every_public_value_kind() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         for source in [
             "undefined",
             "null",
@@ -1166,8 +1158,7 @@ mod tests {
 
     #[test]
     fn dense_append_declines_holes_fixed_length_and_observable_prototypes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         for source in [
             "Object.freeze([])",
             "Object.seal([])",
@@ -1208,8 +1199,7 @@ mod tests {
 
     #[test]
     fn constructor_append_sites_follow_prototype_receiver_and_getter_changes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         assert_eq!(context.eval(r#"(() => {
             function P(x, y) { this.a = x; this.b = y; }
             const made = [];
@@ -1269,8 +1259,7 @@ mod tests {
 
     #[test]
     fn constructor_append_sites_keep_values_alive_across_collection() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         assert_eq!(context.eval(r#"
             function N(v) { this.self = this; this.value = v; this.tag = Symbol('t'); }
             globalThis.kept = [];
@@ -1278,15 +1267,11 @@ mod tests {
             kept.length
         "#).unwrap(), Value::Int(20));
         runtime.run_gc().unwrap();
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        assert_script_true(
+            &mut context,
+            r#"
             kept.every((n, k) => n.self === n && n.value.i === k * 100 && typeof n.tag === 'symbol')
-        "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        "#,
         );
         drop(context.eval("kept = null").unwrap());
         runtime.run_gc().unwrap();
@@ -1296,8 +1281,7 @@ mod tests {
     #[cfg(feature = "profiling")]
     #[test]
     fn warm_constructor_appends_hit_their_sites() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (_, mut context) = test_context();
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context
@@ -1320,8 +1304,7 @@ mod tests {
     #[test]
     fn literal_and_class_field_definitions_keep_define_semantics() {
         // Expected output was checked against Node.js 24.
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let result = context.eval(r#"(() => {
 var out = [];
 function lit(i){ return {a:i, b:i, a:i+1}; }
@@ -1362,8 +1345,7 @@ return out.join('|');
 
     #[test]
     fn literal_definitions_keep_values_alive_across_collection() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -1381,15 +1363,11 @@ return out.join('|');
             Value::Int(20)
         );
         runtime.run_gc().unwrap();
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        assert_script_true(
+            &mut context,
+            r#"
             kept.every((o, k) => o.self === o && o.value.i === k * 100 && typeof o.tag === 'symbol')
-        "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        "#,
         );
         drop(context.eval("kept = null").unwrap());
         runtime.run_gc().unwrap();
@@ -1399,8 +1377,7 @@ return out.join('|');
     #[cfg(feature = "profiling")]
     #[test]
     fn warm_literal_fields_define_in_the_loop_and_hit_their_sites() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (_, mut context) = test_context();
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context

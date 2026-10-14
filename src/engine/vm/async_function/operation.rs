@@ -242,15 +242,13 @@ impl AsyncStep {
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
-    use crate::engine::{
-        api::{profiling::CostProfile, runtime::Runtime},
-        value::Value,
-    };
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
+    use crate::engine::{api::profiling::CostProfile, value::Value};
 
     #[test]
     fn await_thenable_jobs_and_finally_stay_owned_across_gc() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let profile = CostProfile::start();
         assert_eq!(context.eval("var asyncResult=0, asyncReads=0, asyncFinally=0; async function f(){try {return 2+await {get then(){asyncReads++;return resolve=>resolve(40)}};} finally {asyncFinally=[1,2].map(x=>x+1)[1]}} f().then(x=>asyncResult=x); asyncResult").unwrap(), Value::Int(0));
         let mut jobs = 0;
@@ -260,11 +258,9 @@ mod tests {
             jobs += 1;
         }
         assert!(jobs >= 3);
-        assert_eq!(
-            context
-                .eval("asyncResult===42 && asyncReads===1 && asyncFinally===3")
-                .unwrap(),
-            Value::Bool(true)
+        assert_script_true(
+            &mut context,
+            "asyncResult===42 && asyncReads===1 && asyncFinally===3",
         );
         let _cost = profile.snapshot();
     }
@@ -380,6 +376,7 @@ const _: () = assert!(std::mem::size_of::<AsyncStep>() <= 64);
 #[cfg(all(test, not(target_family = "wasm"), panic = "unwind"))]
 mod quarantine_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     #[test]
@@ -400,8 +397,7 @@ mod quarantine_tests {
             }
             return;
         };
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let mut resume = AsyncResume::start(&runtime, context.realm).unwrap();
         let driver = resume.state.try_clone().unwrap();
         let JsValue::Object(output) = resume.output else {

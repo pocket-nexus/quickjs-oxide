@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn call_frame_loads_arguments_and_moves_values_through_locals() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function = UnlinkedFunction::fixture(
         vec![
             Instruction::GetArg(0),
@@ -43,8 +43,7 @@ fn call_frame_loads_arguments_and_moves_values_through_locals() {
 
 #[test]
 fn runtime_typeof_distinguishes_callable_and_ordinary_objects() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function = UnlinkedFunction::fixture(
         vec![
             Instruction::GetArg(0),
@@ -111,8 +110,7 @@ fn runtime_typeof_distinguishes_callable_and_ordinary_objects() {
 
 #[test]
 fn fclosure_call_and_call_method_follow_quickjs_stack_layout() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let add_one = UnlinkedFunction::fixture(
         vec![
             Instruction::GetArg(0),
@@ -198,8 +196,7 @@ fn fclosure_call_and_call_method_follow_quickjs_stack_layout() {
 
 #[test]
 fn nested_call_propagates_throw_without_publishing_it_early() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let throwing = UnlinkedFunction::fixture(
         vec![Instruction::PushI32(9), Instruction::Throw],
         Vec::new(),
@@ -238,8 +235,7 @@ fn nested_call_propagates_throw_without_publishing_it_early() {
 
 #[test]
 fn published_tail_call_uses_backtrace_and_current_activation_catch_semantics() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     let wrapper = UnlinkedFunction::fixture(
         vec![Instruction::GetArg(0), Instruction::TailCall(0)],
@@ -326,8 +322,7 @@ fn published_tail_call_uses_backtrace_and_current_activation_catch_semantics() {
 
 #[test]
 fn push_this_applies_strict_and_sloppy_callee_realm_rules() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let code = vec![Instruction::PushThis, Instruction::Return];
 

@@ -646,10 +646,10 @@ pub(super) fn finish(
 
 #[cfg(test)]
 mod layout_tests {
+    use crate::engine::test_support::test_context;
     #[test]
     fn unhinted_native_callee_is_selected_once_and_keeps_its_slot_owner() {
         use crate::engine::{
-            api::Runtime,
             value::JsValue,
             vm::{
                 call::CallableExecution,
@@ -657,8 +657,7 @@ mod layout_tests {
                 execution::{ExecutionLimits, RunningExecution},
             },
         };
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let callable = runtime
             .callable_from_value(
                 context
@@ -773,9 +772,8 @@ mod layout_tests {
     #[cfg(feature = "profiling")]
     #[test]
     fn outer_native_hint_survives_ordinary_argument_calls() {
-        use crate::engine::api::{Runtime, Value, profiling::CostProfile};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        use crate::engine::api::{Value, profiling::CostProfile};
+        let (runtime, mut context) = test_context();
         drop(context.eval("Math.min;Math.max").unwrap());
         let profile = CostProfile::start();
         assert_eq!(
@@ -803,9 +801,8 @@ mod layout_tests {
 
     #[test]
     fn nonmethod_zero_argument_call_keeps_ordinary_native_and_general_entries() {
-        use crate::engine::api::{Runtime, Value};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        use crate::engine::api::Value;
+        let (runtime, mut context) = test_context();
         let source = "(()=>{function invoke(f){return f()}let calls=0;function ordinary(){calls++;return 42}let first=invoke(ordinary);let second=invoke(Math.max);let error=false;try{invoke(7)}catch(e){error=e instanceof TypeError}return first===42&&second===-Infinity&&error&&calls===1})()";
         assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
         assert_eq!(runtime.0.active_frame_depth.get(), 0);
@@ -814,9 +811,8 @@ mod layout_tests {
 
     #[test]
     fn ordinary_operand_proof_preserves_method_receiver_and_proxy_fallback() {
-        use crate::engine::api::{Runtime, Value};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        use crate::engine::api::Value;
+        let (runtime, mut context) = test_context();
         let source = "(()=>{let calls=0;let holder={base:40,f(x){calls++;return this.base+x}};let first=holder.f(2);let original=holder.f;holder.f=new Proxy(original,{apply(target,receiver,args){calls++;return Reflect.apply(target,receiver,args)}});let second=holder.f(2);return first===42&&second===42&&calls===3})()";
         assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
         assert_eq!(runtime.0.active_frame_depth.get(), 0);
@@ -825,9 +821,8 @@ mod layout_tests {
 
     #[test]
     fn literal_method_and_native_ready_keep_receivers_errors_and_argument_order() {
-        use crate::engine::api::{Runtime, Value};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        use crate::engine::api::Value;
+        let (runtime, mut context) = test_context();
         for source in [
             "Math.min(3, 2, 1) === 1 && Math.max() === -Infinity",
             "(()=>{let i=7;let r=Math.min(i,500);return r===7})()",
@@ -857,9 +852,8 @@ mod layout_tests {
     #[cfg(feature = "profiling")]
     #[test]
     fn variable_method_argument_preserves_native_call_result() {
-        use crate::engine::api::{Runtime, Value, profiling::CostProfile};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        use crate::engine::api::{Value, profiling::CostProfile};
+        let (_, mut context) = test_context();
         // Resolve the lazy builtin before observing an ordinary method call.
         drop(context.eval("Math.min").unwrap());
         let profile = CostProfile::start();
@@ -875,9 +869,8 @@ mod layout_tests {
 
     #[test]
     fn transferred_native_call_keeps_coercion_reentry_throw_and_actual_arity() {
-        use crate::engine::api::{Runtime, Value};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        use crate::engine::api::Value;
+        let (runtime, mut context) = test_context();
         for source in [
             "(()=>{let log='',marker={};let a={valueOf(){log+='a';return 3}},b={valueOf(){log+='b';throw marker}},c={valueOf(){log+='c';return 1}};try{Math.min(a,b,c)}catch(e){return e===marker&&log==='ab'}return false})()",
             "(()=>{let map=new Map(),key={},value={};map.set(key,value);let f=Math.min;let n=0;let a={valueOf(){n++;map.set(key,{x:42});return map.get(key).x}};return f(a,50)===42&&n===1&&map.get(key).x===42})()",
@@ -894,9 +887,8 @@ mod layout_tests {
     #[cfg(feature = "profiling")]
     #[test]
     fn native_direct_entry_records_owner_transfer_and_validation_reuse() {
-        use crate::engine::api::{Runtime, Value, profiling::CostProfile};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        use crate::engine::api::{Value, profiling::CostProfile};
+        let (_, mut context) = test_context();
         drop(
             context
                 .eval("Math.min; Map.prototype.set; Map.prototype.get")
@@ -936,6 +928,7 @@ mod layout_tests {
 #[cfg(test)]
 mod held_state_call_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::{
         code::exec_opcode::Opcode,
         heap::ObjectId,
@@ -1028,8 +1021,7 @@ mod held_state_call_tests {
 
     #[test]
     fn method_call_and_return_hold_one_state_access_and_move_owners() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let callee = context.eval("(function child(arg){return arg})").unwrap();
         let (mut execution, parent, next) = caller(&runtime, &mut context, true);
         let callee = runtime.into_jsvalue(callee).unwrap();
@@ -1095,8 +1087,7 @@ mod held_state_call_tests {
     #[test]
     fn native_and_proxy_decline_before_owner_or_resume_changes() {
         for source in ["Math.max", "new Proxy(function(arg){return arg},{})"] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().unwrap();
+            let (runtime, mut context) = test_context();
             let callee = context.eval(source).unwrap();
             let (mut execution, parent, next) = caller(&runtime, &mut context, true);
             let callee = runtime.into_jsvalue(callee).unwrap();
@@ -1142,8 +1133,7 @@ mod held_state_call_tests {
 
     #[test]
     fn failed_direct_return_keeps_result_registered_for_abandonment() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let callee = context.eval("(function child(arg){return arg})").unwrap();
         let (mut execution, parent, next) = caller(&runtime, &mut context, false);
         let callee = runtime.into_jsvalue(callee).unwrap();
@@ -1192,8 +1182,7 @@ mod held_state_call_tests {
     #[test]
     fn base_constructor_selects_primitive_object_and_alias_returns_under_state() {
         for result_kind in 0..3 {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().unwrap();
+            let (runtime, mut context) = test_context();
             let callee = context.eval("(function Base(arg){return arg})").unwrap();
             let (mut execution, parent, next) = caller(&runtime, &mut context, true);
             let callee = runtime.into_jsvalue(callee).unwrap();
@@ -1263,8 +1252,7 @@ mod held_state_call_tests {
 
     #[test]
     fn ordinary_tail_chain_retires_under_one_state_access() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let callees = [
             "(function outer(fn,arg){return fn(arg)})",
             "(function middle(fn,arg){return fn(arg)})",
@@ -1348,8 +1336,7 @@ mod held_state_call_tests {
     #[test]
     fn tail_result_stays_registered_at_root_and_derived_boundaries() {
         for derived in [false, true] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().unwrap();
+            let (runtime, mut context) = test_context();
             let outer = if derived {
                 Some(
                     runtime
@@ -1435,8 +1422,7 @@ mod held_state_call_tests {
 
     #[test]
     fn base_constructor_selects_receiver_after_tail_result_propagation() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let outer = runtime
             .into_jsvalue(
                 context

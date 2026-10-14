@@ -1,5 +1,6 @@
 //! A recoverable observation failure must not orphan transferred native inputs.
 use super::enter_selected;
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{Runtime, Value},
     builtins::native::NativeFunctionId,
@@ -95,8 +96,7 @@ fn push(runtime: &Runtime, execution: &mut RunningExecution, id: FrameId, value:
 #[test]
 fn native_materialization_failure_releases_inputs_and_preserves_lower_slots() {
     for (method, aliased) in [(false, false), (true, false), (true, true)] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
         let (id, fallthrough) = install(&runtime, &mut execution, context.realm, method);
         let prototype = context.function_prototype().unwrap();

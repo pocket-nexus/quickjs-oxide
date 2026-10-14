@@ -792,6 +792,7 @@ const _: () = assert!(std::mem::size_of::<AsyncGeneratorStep>() <= 64);
 #[cfg(all(test, not(target_family = "wasm"), panic = "unwind"))]
 mod quarantine_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -820,8 +821,7 @@ mod quarantine_tests {
             }
             return;
         };
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(generator) = context.eval("(async function*(){yield 1;})()").unwrap()
         else {
             panic!("expected async generator")

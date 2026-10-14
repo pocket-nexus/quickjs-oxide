@@ -1,17 +1,20 @@
-use crate::engine::api::{Runtime, Value, profiling::CostProfile};
+use crate::engine::api::{Value, profiling::CostProfile};
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn recycled_callback_frames_do_not_reuse_another_functions_static_key() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(context.eval("(()=>{let p=new Proxy({},{get(t,k){return k}});function first(){return p.first}function second(){return p.second}for(let i=0;i<10;i++){if(first()!=='first'||second()!=='second')return false}return true})()").unwrap(), Value::Bool(true));
+    let (runtime, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        "(()=>{let p=new Proxy({},{get(t,k){return k}});function first(){return p.first}function second(){return p.second}for(let i=0;i<10;i++){if(first()!=='first'||second()!=='second')return false}return true})()",
+    );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 }
 
 #[test]
 fn lazy_getters_and_proxy_traps_reuse_storage_and_return_directly() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(context
         .eval(
             "var getterObject={get x(){return 1}};var trapObject=new Proxy({},{get(){return 1}});",
@@ -56,8 +59,7 @@ fn lazy_getters_and_proxy_traps_reuse_storage_and_return_directly() {
 #[test]
 fn lazy_property_callbacks_preserve_observer_stacks_trap_invariants_and_reentry() {
     let weak = {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in [
             "(()=>{function caller(){return ({get x(){return new Error().stack}}).x}let s=caller();return s.includes('caller')&&s.includes('get x')})()",
             "(()=>{function trap(){throw new Error('trap')}function caller(){return new Proxy({},{get:trap}).x}try{caller()}catch(e){return e.stack.includes('trap')&&e.stack.includes('caller')}return false})()",
@@ -79,8 +81,7 @@ fn lazy_property_callbacks_preserve_observer_stacks_trap_invariants_and_reentry(
 
 #[test]
 fn proxy_get_trap_selection_cache_reports_hits_and_preserves_invariants() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(context
         .eval(
             "var hitTrap=new Proxy({},{get(){return 7}});\
@@ -126,8 +127,7 @@ fn proxy_get_trap_selection_cache_reports_hits_and_preserves_invariants() {
 
 #[test]
 fn proxy_trap_cache_keeps_semantics_across_revoke_gc_and_reentry() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     for source in [
         // Chain descent: an empty outer handler forwards through a cached inner.
         "(()=>{let calls=0;let inner=new Proxy({},{get(){calls++;return 5}});let outer=new Proxy(inner,{});let a=outer.x;let b=outer.y;return a===5&&b===5&&calls===2})()",
@@ -157,8 +157,7 @@ fn proxy_trap_cache_keeps_semantics_across_revoke_gc_and_reentry() {
 #[test]
 fn trap_cache_does_not_retain_the_runtime() {
     let weak = {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(
             context
                 .eval(
@@ -180,8 +179,7 @@ fn trap_cache_does_not_retain_the_runtime() {
 
 #[test]
 fn native_leaf_proofs_skip_materialization_but_errors_and_objects_observe() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     drop(context.eval("function mathLeaf(x){return Math.min(x,7)}; function mathOuter(x){return mathLeaf(x)};").unwrap());
     let profile = CostProfile::start();
     assert_eq!(

@@ -808,11 +808,8 @@ fn equality(
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
-    use crate::engine::{
-        api::{profiling::CostProfile, runtime::Runtime},
-        value::Value,
-        vm::Completion,
-    };
+    use crate::engine::test_support::test_context;
+    use crate::engine::{api::profiling::CostProfile, value::Value, vm::Completion};
 
     #[test]
     fn numeric_callbacks_preserve_order_abrupt_completion_and_postfix_values_without_bridges() {
@@ -826,8 +823,7 @@ mod tests {
             "(function(){var n=0,a={[Symbol.toPrimitive](h){if(h!=='default')throw 99;n++;return '42'}};return function(){return a==42&&n===1?42:0}})()",
             "(function(){var a={valueOf(){return 40n}},b={valueOf(){return 2n}};return function(){return a|b}})()",
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();
@@ -999,12 +995,12 @@ mod borrowed_bigint_tests {
 #[cfg(test)]
 mod nullish_equality_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
 
     #[test]
     fn nullish_equality_preserves_proxy_identity_and_conversion_effects() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context.eval(r#"(() => {
             let calls = 0;
             const object = { [Symbol.toPrimitive]() { calls++; return null; } };
@@ -1085,8 +1081,7 @@ mod nullish_equality_tests {
         use crate::engine::heap::RawId;
         for source in ["({})", "'heap string'", "123456789012345678901234567890n"] {
             for count in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
-                let runtime = Runtime::new();
-                let mut context = runtime.new_context().expect("create context");
+                let (runtime, mut context) = test_context();
                 let value = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
                 let id = match value {
                     JsValue::Object(id) => RawId::Object(id),
@@ -1132,8 +1127,7 @@ mod nullish_equality_tests {
     #[test]
     fn nullish_equality_preserves_symbol_checked_count_without_immortality() {
         for count in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let value = runtime
                 .into_jsvalue(context.eval("Symbol('nullish')").unwrap())
                 .unwrap();

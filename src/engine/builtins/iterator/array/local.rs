@@ -145,6 +145,7 @@ impl ArrayNextStep {
 mod dense_immediate_tests {
     use super::*;
     use crate::engine::heap::ObjectId;
+    use crate::engine::test_support::test_context;
 
     fn iterator(runtime: &Runtime, source: &str) -> (ObjectRef, ObjectId, ArrayIteratorKind) {
         let mut context = runtime.new_context().expect("create context");
@@ -166,8 +167,7 @@ mod dense_immediate_tests {
 
     #[test]
     fn callback_requests_keep_the_same_array_next_resume_allocation() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let iterator = context.eval("Array.prototype.values.call({get length(){return {valueOf(){return 1}}},get 0(){return 7}})").unwrap();
         let invocation = NativeInvocation::Call {
             this_value: runtime.into_jsvalue(iterator).unwrap(),

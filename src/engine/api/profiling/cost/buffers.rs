@@ -168,11 +168,11 @@ pub(crate) fn record_call_raw_buffer_copies(name: &'static str, values: &[RawVal
 mod tests {
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::api::{Runtime, Value};
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn bound_and_apply_producers_separate_edges_roots_and_moves() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let profile = CostProfile::start();
         assert_eq!(context.eval("function f(x,y){return x.value+y;}var marker={value:4};var bound=f.bind(null,marker);bound(3)+f.apply(null,{length:2,0:marker,1:5})+f(...[marker,6])").unwrap(), Value::Int(26));
         let costs = profile.snapshot();

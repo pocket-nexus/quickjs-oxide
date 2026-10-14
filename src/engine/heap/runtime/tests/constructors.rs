@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn base_construct_uses_explicit_new_target_prototype_and_realm_fallback() {
@@ -75,8 +76,7 @@ fn base_construct_uses_explicit_new_target_prototype_and_realm_fallback() {
 
 #[test]
 fn new_target_prototype_getter_throw_short_circuits_constructor_body() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(constructor_object) = context
         .eval("(0, function(){ return function(){}; })")
         .unwrap()
@@ -122,8 +122,7 @@ fn new_target_prototype_getter_throw_short_circuits_constructor_body() {
 
 #[test]
 fn construct_rejects_non_constructor_callable_with_caller_realm_type_error() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let callable = runtime.as_callable(&function_prototype).unwrap().unwrap();
 

@@ -185,14 +185,14 @@ fn boolean(
 
 #[cfg(all(test, feature = "profiling", feature = "test262-host"))]
 mod tests {
+    use crate::engine::api::Value;
     use crate::engine::api::profiling::CostProfile;
-    use crate::engine::api::{Runtime, Value};
     use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn context_property_roots_keep_typed_descriptors_across_proxy_callbacks_and_gc() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         context.install_test262_host().unwrap();
         let Value::Object(proxy) = context
             .eval(
@@ -242,8 +242,7 @@ mod tests {
 
     #[test]
     fn context_native_call_and_proxy_construct_share_owned_callback_execution() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         context.install_test262_host().unwrap();
         let Value::Object(map) = context.eval("Array.prototype.map").unwrap() else {
             panic!("expected map")
@@ -280,8 +279,7 @@ mod tests {
     }
     #[test]
     fn template_value_constants_keep_identity_and_roots_through_owned_entry_and_gc() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         context.install_test262_host().unwrap();
         let site = {
             let Value::Object(site) = context.eval("(function(){function tag(t){$262.gc();return t}return function(){return tag`alive${42}raw`}})()").unwrap() else {

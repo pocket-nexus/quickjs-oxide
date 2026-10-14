@@ -1,9 +1,10 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn global_uri_codecs_match_quickjs_graph_and_utf16_kernel() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let names = [
         "decodeURI",
@@ -116,8 +117,7 @@ fn global_uri_codecs_match_quickjs_graph_and_utf16_kernel() {
 
 #[test]
 fn global_primitive_constants_match_quickjs_frozen_descriptors() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let supported_global_prefix = own_key_names(&runtime, &global)
         .into_iter()
@@ -191,8 +191,7 @@ fn global_primitive_constants_match_quickjs_frozen_descriptors() {
 
 #[test]
 fn global_to_string_tag_matches_quickjs_descriptor_and_class_tag() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let tag = PropertyKey::from(
         runtime
@@ -236,8 +235,7 @@ fn global_to_string_tag_matches_quickjs_descriptor_and_class_tag() {
 
 #[test]
 fn global_this_matches_quickjs_identity_descriptor_and_mutation() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let key = runtime.intern_property_key("globalThis").unwrap();
     assert!(matches!(
@@ -249,12 +247,7 @@ fn global_this_matches_quickjs_identity_descriptor_and_mutation() {
             configurable: true,
         }) if value == global
     ));
-    assert_eq!(
-        context
-            .eval("globalThis === globalThis.globalThis")
-            .unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "globalThis === globalThis.globalThis");
 
     assert!(context.set_property(&global, &key, Value::Int(17)).unwrap());
     assert_eq!(context.eval("globalThis").unwrap(), Value::Int(17));

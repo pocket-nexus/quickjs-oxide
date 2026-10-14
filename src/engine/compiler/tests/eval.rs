@@ -1,9 +1,10 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn compiler_marks_only_syntactic_eval_identifier_calls() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     for source in ["eval(0)", "(eval)(0)", "((eval))(0)", r"\u0065val(0)"] {
         let root = context.compile(source).unwrap();
@@ -361,8 +362,7 @@ fn direct_eval_super_capability_is_explicit_and_independent_from_imports() {
 
 #[test]
 fn nested_eval_in_derived_constructor_accepts_inner_private_fields() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let source = r#"
         var testStr = `
             class C extends Object {
@@ -459,8 +459,7 @@ fn compiler_preserves_authenticated_with_environment_relays() {
 
 #[test]
 fn with_statements_execute_ordered_environment_and_reference_paths() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         context
@@ -500,13 +499,9 @@ fn with_statements_execute_ordered_environment_and_reference_paths() {
             .unwrap(),
         Value::String(JsString::from_static("TypeError")),
     );
-    assert_eq!(
-        context
-            .eval(
-                "var withDelete = { value: 1 }; var deleted; with (withDelete) deleted = delete value; deleted && !('value' in withDelete)",
-            )
-            .unwrap(),
-        Value::Bool(true),
+    assert_script_true(
+        &mut context,
+        "var withDelete = { value: 1 }; var deleted; with (withDelete) deleted = delete value; deleted && !('value' in withDelete)",
     );
     assert_eq!(
         context

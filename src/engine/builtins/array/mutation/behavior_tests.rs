@@ -1,9 +1,9 @@
 //! Observable Array mutation witnesses retained from the retired migration.
-use crate::engine::api::{Runtime, Value};
+use crate::engine::api::Value;
+use crate::engine::test_support::test_context;
 
 fn eval(source: &str) {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (_, mut context) = test_context();
     assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
 }
 #[test]
@@ -124,8 +124,7 @@ fn getter_throw_catch_preserves_fault_owner_and_aborts_delete_length() {
 #[test]
 fn diagnostics_distinguish_local_mutation_and_actual_getter_calls() {
     use crate::engine::api::profiling::CostProfile;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (_, mut context) = test_context();
     let profile = CostProfile::start();
     assert_eq!(
         context.eval("const a=[];a.push(7);a.pop()").unwrap(),

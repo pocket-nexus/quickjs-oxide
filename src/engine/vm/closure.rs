@@ -201,6 +201,7 @@ impl FrameFunction {
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::test_support::test_context;
     use crate::engine::{
         api::{Runtime, Value},
         object::CallableRef,
@@ -209,8 +210,7 @@ mod tests {
     };
     #[test]
     fn shared_environment_does_not_retain_each_cell_and_outlives_external_callee() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(function) = context
             .eval("(()=>{let a=1,b=2;return ()=>a+b})()")
             .unwrap()

@@ -368,11 +368,11 @@ const _: () = assert!(std::mem::size_of::<CopyStep>() <= 64);
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn recovery_copy_start_is_validation_only_and_local_advance_keeps_selected_getter() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let target = runtime.new_object(None).unwrap();
         let source = context
             .eval("globalThis.copyTrace=0;({a:1,get b(){copyTrace++;return 2}})")
@@ -428,8 +428,7 @@ mod recovery_tests {
 
     #[test]
     fn recovery_copy_keeps_snapshot_live_reads_and_one_getter_execution() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context
             .eval(
                 r#"(()=>{
@@ -447,8 +446,7 @@ mod recovery_tests {
 
     #[test]
     fn recovery_copy_retains_proxy_order_and_partial_exception_identity() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context.eval(r#"(()=>{
             let log=[], token={}, source=new Proxy({a:1,b:2},{
                 ownKeys(o){log.push('keys');return ['a','b']},

@@ -1,4 +1,5 @@
 //! Integration witnesses for the actual single-dispatch execution consumer.
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{Runtime, Value},
     value::JsValue,
@@ -54,8 +55,7 @@ fn constructor_execution(
 
 #[test]
 fn ordinary_child_and_parent_execute_under_one_state_access() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let callable = runtime
         .callable_from_value(
             context
@@ -117,8 +117,7 @@ fn ordinary_child_and_parent_execute_under_one_state_access() {
 
 #[test]
 fn constructor_gc_services_published_inputs_inside_the_execution_segment() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(marker) = context
         .eval("(()=>{let marker={};marker.self=marker;return marker})()")
         .unwrap()
@@ -173,8 +172,7 @@ fn constructor_gc_services_published_inputs_inside_the_execution_segment() {
 #[test]
 fn constructor_publication_failure_quarantines_before_execution_cleanup() {
     use crate::engine::heap::RawId;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let marker = runtime.new_object(None).unwrap().into_handle();
     let (mut execution, parent) =
         constructor_execution(&runtime, &mut context, JsValue::Object(marker));

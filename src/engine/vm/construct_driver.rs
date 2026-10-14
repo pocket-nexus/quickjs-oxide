@@ -757,6 +757,8 @@ pub(super) fn define_property(
 
 #[cfg(test)]
 mod ordinary_constructor_tests {
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
     use crate::engine::{
         api::{Context, Runtime, Value},
         heap::RawId,
@@ -829,8 +831,7 @@ mod ordinary_constructor_tests {
 
     #[test]
     fn ordinary_constructor_preserves_inputs_new_target_and_return_contracts() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         for source in [
@@ -866,8 +867,7 @@ mod ordinary_constructor_tests {
 
     #[test]
     fn constructor_misses_preserve_bound_proxy_prototype_and_exception_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in [
             "(()=>{function C(x){this.x=x;this.target=new.target}let Bound=C.bind(null,42);let o=new Bound();return o.x===42&&o.target===C&&o instanceof C})()",
             "(()=>{let trace='';function C(x){trace+='body';this.x=x}let P=new Proxy(C,{get(t,k,r){if(k==='prototype')trace+='prototype:';return Reflect.get(t,k,r)}});let o=new P(42);return trace==='prototype:body'&&o.x===42})()",
@@ -891,8 +891,7 @@ mod ordinary_constructor_tests {
 
     #[test]
     fn lazy_constructor_materializes_its_call_pc_for_an_observed_error() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         assert_eq!(context.eval_with_filename(
             "function C(){\n this.stack = new Error('observed').stack;\n}\nfunction outer(){\n return new C();\n}\nvoid C.prototype;\nvar object=outer();\nobject.stack.includes('at C (constructor-observe.js:2:') && object.stack.includes('at outer (constructor-observe.js:5:') && object.stack.split('at C (').length===2",
             "constructor-observe.js",
@@ -920,7 +919,10 @@ mod ordinary_constructor_tests {
                     .unwrap()
             );
         }
-        assert_eq!(caller.eval("let first=new Foreign();let second=new Foreign();first.captured===ExpectedCapture&&second.captured===ExpectedCapture&&first.array===ExpectedArray&&first.target===Foreign&&second.target===Foreign&&ExpectedArray!==Array").unwrap(), Value::Bool(true));
+        assert_script_true(
+            &mut caller,
+            "let first=new Foreign();let second=new Foreign();first.captured===ExpectedCapture&&second.captured===ExpectedCapture&&first.array===ExpectedArray&&first.target===Foreign&&second.target===Foreign&&ExpectedArray!==Array",
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
@@ -930,8 +932,7 @@ mod ordinary_constructor_tests {
             "(function(){function C(){}C.prototype=C;return C})()",
             "(function(){class D extends Object{};void D.prototype;return D})()",
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let Value::Object(target) = context.eval(source).unwrap() else {
                 panic!("constructor")
             };
@@ -1004,8 +1005,7 @@ mod ordinary_constructor_tests {
 
     #[test]
     fn constructor_admission_preserves_depth_misses() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(target) = context
             .eval("(function(){function C(){}void C.prototype;return C})()")
             .unwrap()
@@ -1039,8 +1039,7 @@ mod ordinary_constructor_tests {
 
     #[test]
     fn constructor_current_state_admission_leaves_external_cleanup_to_boundary() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(target) = context
             .eval("(function(){function C(a){this.a=a}void C.prototype;return C})()")
             .unwrap()
@@ -1092,8 +1091,7 @@ mod ordinary_constructor_tests {
 
     #[test]
     fn generic_constructor_retain_failure_releases_earlier_argument_and_new_target_edges() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(target) = context.eval("Object").unwrap() else {
             panic!("native constructor")
         };
@@ -1159,8 +1157,7 @@ mod ordinary_constructor_tests {
 
     #[test]
     fn constructor_slot_limit_failure_releases_unpublished_child_inputs() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(target) = context.eval("(function(){function C(a,b,c){let local=a;this.result=b;return local}void C.prototype;return C})()").unwrap() else {
             panic!("constructor")
         };
@@ -1229,8 +1226,7 @@ mod ordinary_constructor_tests {
 
     #[test]
     fn constructor_allocation_preserves_inputs_until_ready_collection() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(target) = context
             .eval("(function(){function C(a){return a}void C.prototype;return C})()")
             .unwrap()
@@ -1275,11 +1271,8 @@ mod ordinary_constructor_tests {
 
 #[cfg(all(test, feature = "profiling"))]
 mod owned_definition_tests {
-    use crate::engine::{
-        api::{profiling::CostProfile, runtime::Runtime},
-        value::Value,
-        vm::Completion,
-    };
+    use crate::engine::test_support::test_context;
+    use crate::engine::{api::profiling::CostProfile, value::Value, vm::Completion};
 
     #[test]
     fn rejected_calls_and_default_super_stay_owned() {
@@ -1294,8 +1287,7 @@ mod owned_definition_tests {
             "(function(){var n=0,p=new Proxy({}, {get apply(){n++;return undefined}});try{p()}catch(e){return e instanceof TypeError&&n===1?42:0}})",
             "(function(){var marker={},p=new Proxy({}, {get apply(){throw marker}});try{p()}catch(e){return e===marker?42:0}})",
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();
@@ -1323,8 +1315,7 @@ mod owned_definition_tests {
             "(function(){var calls=0,target=new Uint8Array(1);class Base{constructor(){return target}}return function(){class C extends Base{0={valueOf(){calls++;return 42}}}new C;return calls===1&&target[0]===42?42:0}})()",
             "(function(){var marker={},calls=0,proxy=new Proxy({}, {defineProperty(){calls++;throw marker}});class Base{constructor(){return proxy}}return function(){try{class C extends Base{x=42}new C}catch(e){return e===marker&&calls===1?42:0}return 0}})()",
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();

@@ -2,6 +2,8 @@ use super::*;
 use crate::engine::heap::{Heap, HeapError, ObjectData, RawId, Slots};
 use crate::engine::object::property::{PropertyDefinitionError, PropertyDescriptor};
 use crate::engine::object::shape::Shape;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 fn fixture() -> (Runtime, ObjectRef, ObjectRef, ObjectRef) {
     let runtime = Runtime::new();
@@ -849,9 +851,10 @@ fn global_state_accessor_reset_drains_older_queue_before_detached_symbol() {
 
 #[test]
 fn global_descriptor_binding_eval_alias_and_delete_reconnect_remain_live() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
-    assert_eq!(context.eval(r#"
+    let (_, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"
         globalThis.stageCell = 1;
         function stageRead() { return stageCell; }
         Object.defineProperty(globalThis, 'stageCell', {value: 2, configurable: true});
@@ -868,7 +871,8 @@ fn global_descriptor_binding_eval_alias_and_delete_reconnect_remain_live() {
         globalThis.stageLexical = 19;
         Object.defineProperty(globalThis, 'stageLexical', {value: 23});
         stageLexical === 5 && globalThis.stageLexical === 23 && eval('stageCell') === 44
-    "#).unwrap(), Value::Bool(true));
+    "#,
+    );
 }
 
 #[test]

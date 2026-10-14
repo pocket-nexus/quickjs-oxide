@@ -1,13 +1,13 @@
 use crate::engine::atom::AtomIdx;
 use crate::engine::heap::{AutoInitProperty, PropertySlot};
 use crate::engine::object::shape::PropertyFlags;
+use crate::engine::test_support::test_context;
 
 use super::*;
 
 #[test]
 fn string_case_family_is_ordered_autoinit_and_has_distinct_stable_functions() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let prototype = context.string_prototype().unwrap();
     let keys = STRING_CASE_ENTRIES.map(|(name, selector)| {
         (
@@ -113,8 +113,7 @@ fn string_case_family_is_ordered_autoinit_and_has_distinct_stable_functions() {
 
 #[test]
 fn string_case_methods_coerce_only_the_receiver_and_ignore_every_argument() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         context
@@ -162,8 +161,7 @@ fn string_case_methods_coerce_only_the_receiver_and_ignore_every_argument() {
 
 #[test]
 fn string_case_expansion_limit_uses_internal_error_and_accepts_exact_boundary() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(error) = thrown(
         &runtime,
         runtime

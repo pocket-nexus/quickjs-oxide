@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn context_invokes_getters_and_setters_with_the_original_receiver() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let prototype = runtime.new_object(None).unwrap();
     let child = runtime.new_object(Some(&prototype)).unwrap();
     let explicit_receiver = runtime.new_object(None).unwrap();
@@ -154,8 +154,7 @@ fn context_invokes_getters_and_setters_with_the_original_receiver() {
 
 #[test]
 fn prepared_getter_action_keeps_callable_alive_after_property_deletion() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let object = runtime.new_object(None).unwrap();
     let key = runtime.intern_property_key("x").unwrap();
     let getter = bytecode_callable(
@@ -199,8 +198,7 @@ fn prepared_getter_action_keeps_callable_alive_after_property_deletion() {
 
 #[test]
 fn prepared_setter_action_roots_callable_receiver_and_argument() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let object = runtime.new_object(None).unwrap();
     let argument = runtime.new_object(None).unwrap();
     let key = runtime.intern_property_key("x").unwrap();

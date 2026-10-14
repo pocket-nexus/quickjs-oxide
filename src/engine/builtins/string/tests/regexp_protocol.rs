@@ -2,6 +2,7 @@ use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native::{NativeCProto, RegExpNativeKind};
 use crate::engine::heap::{AutoInitProperty, PropertySlot};
 use crate::engine::object::shape::PropertyFlags;
+use crate::engine::test_support::test_context;
 
 use super::*;
 
@@ -33,8 +34,7 @@ fn match_match_all_search_and_split_entries_preserve_pinned_cproto_and_order() {
     assert_eq!(regexp_split_descriptor.cproto, NativeCProto::Generic);
     assert!(!regexp_split_descriptor.cproto.default_is_constructor());
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let string_prototype = context.string_prototype().unwrap();
     let Value::Object(regexp_prototype) = context.eval("RegExp.prototype").unwrap() else {
         panic!("RegExp.prototype was not an object");
@@ -396,8 +396,7 @@ fn replace_entries_preserve_pinned_cproto_autoinit_and_table_order() {
     assert_eq!(regexp_descriptor.cproto, NativeCProto::Generic);
     assert!(!regexp_descriptor.cproto.default_is_constructor());
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let string_prototype = context.string_prototype().unwrap();
     let Value::Object(regexp_prototype) = context.eval("RegExp.prototype").unwrap() else {
         panic!("RegExp.prototype was not an object");

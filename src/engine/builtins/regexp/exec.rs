@@ -790,11 +790,12 @@ const _: () = assert!(std::mem::size_of::<RegExpExecStep>() <= 64);
 #[cfg(test)]
 mod local_exec_tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn primitive_regexp_exec_completes_inside_its_domain() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let this_value = runtime
             .unroot_value(&context.eval("/a/g").unwrap())
             .unwrap();
@@ -828,9 +829,10 @@ mod local_exec_tests {
 
     #[test]
     fn regexp_local_conversion_preserves_reentry_and_live_program() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let trace='', re=/a/g;
             const input={toString(){trace+='i';re.lastIndex={valueOf(){trace+='l';return 0}};return 'a'}};
             if(re.exec(input)[0]!=='a'||trace!=='il'||re.lastIndex!==1)return false;
@@ -839,6 +841,7 @@ mod local_exec_tests {
             const frozen=/a/g;Object.defineProperty(frozen,'lastIndex',{writable:false});
             try{frozen.exec('a');return false}catch(e){if(!(e instanceof TypeError))return false}
             return /é/.exec('é')[0]==='é' && /a/.test('a');
-        })()"#).unwrap(),Value::Bool(true));
+        })()"#,
+        );
     }
 }

@@ -1,10 +1,9 @@
-use super::*;
 use crate::engine::test_support::assert_script;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn copy_within_fill_and_reverse_mutate_live_words_in_place() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -90,8 +89,7 @@ fn copy_within_fill_and_reverse_mutate_live_words_in_place() {
 
 #[test]
 fn mutation_coercion_revalidates_detach_and_resizable_bounds_like_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,

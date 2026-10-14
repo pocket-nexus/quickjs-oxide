@@ -1076,11 +1076,11 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn settlement_retains_original_string_node_without_materialization() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(promise) = context.eval("new Promise(() => {})").unwrap() else {
             panic!("expected promise");
         };
@@ -1134,8 +1134,7 @@ mod tests {
 
     #[test]
     fn promise_snapshot_roots_an_object_result_across_gc() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(promise) = context
             .eval(
                 r#"

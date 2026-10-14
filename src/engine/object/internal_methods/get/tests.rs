@@ -1,10 +1,10 @@
 use super::*;
 use crate::engine::api::Value;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn get_invariant_consumes_empty_own_proxy_prefix_without_descriptor_request() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(proxy) = context
         .eval("new Proxy(new Proxy(Object.freeze({x:7}),{}),{get(){return 7}})")
         .unwrap()
@@ -54,8 +54,7 @@ fn get_invariant_consumes_empty_own_proxy_prefix_without_descriptor_request() {
 
 #[test]
 fn abandoned_get_invariant_releases_exact_selected_own_getter() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(proxy) = context.eval(
         "new Proxy(new Proxy({x:7},{get getOwnPropertyDescriptor(){throw 42}}),{get(){return 7}})",
     ).unwrap() else { panic!() };
@@ -90,8 +89,7 @@ fn abandoned_get_invariant_releases_exact_selected_own_getter() {
 
 #[test]
 fn synchronous_forwarding_owns_no_runtime_or_resume() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(proxy) = context.eval("new Proxy(new Proxy({x:42},{}),{})").unwrap() else {
         panic!()
     };
@@ -160,8 +158,7 @@ fn abandoned_proxy_method_releases_roots_and_depth_guard() {
 
 #[test]
 fn mismatched_proxy_reply_releases_selected_request_and_method_depth() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(proxy) = context
         .eval("new Proxy({}, {get get(){return undefined}})")
         .unwrap()
@@ -192,8 +189,7 @@ fn mismatched_proxy_reply_releases_selected_request_and_method_depth() {
 
 #[test]
 fn receiver_retain_failure_releases_selected_method_request() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(proxy) = context
         .eval("new Proxy({}, {get get(){return undefined}})")
         .unwrap()

@@ -1,10 +1,11 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn numeric_array_accumulate_is_selected_from_local_value_uses() {
     use crate::engine::code::exec_opcode::Opcode;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let root = context
         .compile(
             "(function(array, i, scale) { var sum = 0; sum += array[i] * scale; return sum; })",
@@ -38,8 +39,7 @@ fn numeric_array_accumulate_is_selected_from_local_value_uses() {
 
 #[test]
 fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let data = |value| OrdinaryPropertyDescriptor {
         value: DescriptorField::Present(value),
@@ -108,13 +108,10 @@ fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() 
     assert_eq!(context.eval("base.default").unwrap(), Value::Int(8));
     assert_eq!(context.eval("base\n.x").unwrap(), Value::Int(7));
     assert_eq!(context.eval("base\n['x']").unwrap(), Value::Int(7));
-    assert_eq!(
-        context.eval("base.receiver === base").unwrap(),
-        Value::Bool(true)
-    );
-    assert_eq!(context.eval("base.m()").unwrap(), Value::Bool(true));
-    assert_eq!(context.eval("base['m']()").unwrap(), Value::Bool(true));
-    assert_eq!(context.eval("((base.m))()").unwrap(), Value::Bool(true));
+    assert_script_true(&mut context, "base.receiver === base");
+    assert_script_true(&mut context, "base.m()");
+    assert_script_true(&mut context, "base['m']()");
+    assert_script_true(&mut context, "((base.m))()");
     assert_eq!(context.eval("(0, base.m)()").unwrap(), Value::Bool(false));
     assert_eq!(
         context.eval("(true ? base.m : base.m)()").unwrap(),
@@ -190,8 +187,7 @@ fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() 
 
 #[test]
 fn member_assignment_and_delete_lower_through_quickjs_lvalue_shapes() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     let fixed = context.compile("Function.fixed = 1").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -302,13 +298,9 @@ fn member_assignment_and_delete_lower_through_quickjs_lvalue_shapes() {
 
 #[test]
 fn direct_identifier_delete_uses_quickjs_scope_resolution() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
-    assert_eq!(
-        context.eval("delete __qjo_missing_delete").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "delete __qjo_missing_delete");
     assert_eq!(
         context
             .eval("(function(){ var value = 1; return delete value; })()")
@@ -345,18 +337,14 @@ fn direct_identifier_delete_uses_quickjs_scope_resolution() {
             .unwrap(),
         Value::Bool(false)
     );
-    assert_eq!(
-        context
-            .eval("(function(){ var value = 1; return delete (0, value); })()")
-            .unwrap(),
-        Value::Bool(true)
+    assert_script_true(
+        &mut context,
+        "(function(){ var value = 1; return delete (0, value); })()",
     );
 
-    assert_eq!(
-        context
-            .eval("__qjo_delete_global = 1; delete __qjo_delete_global")
-            .unwrap(),
-        Value::Bool(true)
+    assert_script_true(
+        &mut context,
+        "__qjo_delete_global = 1; delete __qjo_delete_global",
     );
     assert_eq!(
         context.eval("typeof __qjo_delete_global").unwrap(),
@@ -378,10 +366,7 @@ fn direct_identifier_delete_uses_quickjs_scope_resolution() {
         context.call(&reader, Value::Undefined, &[]).unwrap(),
         Value::Int(1)
     );
-    assert_eq!(
-        context.eval("delete __qjo_delete_reconnect").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "delete __qjo_delete_reconnect");
     assert!(matches!(
         context.call(&reader, Value::Undefined, &[]),
         Err(RuntimeError::Exception)
@@ -485,8 +470,7 @@ fn direct_identifier_delete_uses_quickjs_scope_resolution() {
 
 #[test]
 fn bitwise_compound_assignment_reuses_quickjs_lvalue_shapes() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     let fixed = context.compile("Function.bits &= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -661,8 +645,7 @@ fn bitwise_compound_assignment_reuses_quickjs_lvalue_shapes() {
 
 #[test]
 fn shift_compound_assignment_reuses_quickjs_lvalue_shapes() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     let fixed = context.compile("Function.shift <<= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -767,8 +750,7 @@ fn shift_compound_assignment_reuses_quickjs_lvalue_shapes() {
 
 #[test]
 fn exponent_compound_assignment_reuses_quickjs_lvalue_shapes() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     let fixed = context.compile("Function.power **= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -893,8 +875,7 @@ fn exponent_compound_assignment_reuses_quickjs_lvalue_shapes() {
 
 #[test]
 fn logical_member_assignment_uses_quickjs_branch_cleanup_shapes() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     let fixed = context.compile("Function.fixed &&= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -1061,8 +1042,7 @@ fn logical_member_assignment_uses_quickjs_branch_cleanup_shapes() {
 
 #[test]
 fn identifier_compound_assignment_uses_resolved_get_set_paths() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     let argument_root = context
         .compile("(function(value){ value += 2; return value; })")
@@ -1339,8 +1319,7 @@ fn identifier_compound_assignment_uses_resolved_get_set_paths() {
 
 #[test]
 fn discarded_field_assignments_lower_to_a_single_put_field() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let code = |context: &mut crate::engine::api::Context, source: &str| {
         let callable = runtime
             .callable_from_value(context.eval(source).unwrap())
@@ -1392,8 +1371,7 @@ fn discarded_field_assignments_lower_to_a_single_put_field() {
 
 #[test]
 fn discarded_binding_assignments_lower_to_a_single_put() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let mut code = |source: &str, child: Option<usize>| {
         let root = context.compile(source).unwrap();
         let mut function = runtime.test_child_function_bytecode(&root, 0).unwrap();
@@ -1508,8 +1486,7 @@ fn discarded_binding_assignments_lower_to_a_single_put() {
 
 #[test]
 fn discarded_binding_assignments_keep_their_semantics() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let source = r#"
         (function () {
             var out = [];

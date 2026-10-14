@@ -1,12 +1,12 @@
 //! Exercise the named property cache producer and its native call consumer.
 use crate::engine::api::{
-    Runtime, Value,
+    Value,
     profiling::{CostProfile, CostSnapshot},
 };
+use crate::engine::test_support::test_context;
 
 fn observe(source: &str) -> CostSnapshot {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     // Resolve the lazy intrinsic before observing the repeated cache site.
     drop(context.eval("Math.min").unwrap());
     let profile = CostProfile::start();

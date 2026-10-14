@@ -1,10 +1,10 @@
 use super::*;
+use crate::engine::test_support::test_context;
 use crate::engine::test_support::{assert_script, eval_object, take_exception_object};
 
 #[test]
 fn map_and_filter_match_quickjs_species_and_callback_contracts() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -272,8 +272,7 @@ fn map_and_filter_match_quickjs_species_and_callback_contracts() {
 
 #[test]
 fn map_and_filter_keep_snapshot_ranges_and_live_source_and_target_effects() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,

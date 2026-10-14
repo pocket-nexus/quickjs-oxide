@@ -1144,11 +1144,11 @@ impl Runtime {
 
 #[cfg(test)]
 mod dense_slice_tests {
-    use crate::engine::{api::runtime::Runtime, value::Value};
+    use crate::engine::test_support::test_context;
+    use crate::engine::value::Value;
     #[test]
     fn dense_slice_preserves_species_holes_descriptors_and_owned_cells() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context.eval(r#"(() => {
             let x = {}, sym = Symbol();
             let dense = [x, sym, 3].slice(0, 2);

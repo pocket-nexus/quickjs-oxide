@@ -291,10 +291,10 @@ const _: () = assert!(std::mem::size_of::<PrimitiveStep>() <= 64);
 #[cfg(test)]
 mod resident_request_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     #[test]
     fn property_and_call_requests_reuse_the_primitive_resume_allocation() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let value = context.eval("({valueOf(){return 7}})").unwrap();
         let value = runtime.unroot_value(&value).unwrap();
         let PrimitiveStep::Get { mut resume } =

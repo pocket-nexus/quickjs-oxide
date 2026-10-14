@@ -401,6 +401,8 @@ const _: () = assert!(std::mem::size_of::<ScalarTextStep>() <= 64);
 #[cfg(test)]
 mod local_completion_tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn scalar_text_primitives_complete_without_conversion_requests() {
@@ -490,9 +492,10 @@ mod local_completion_tests {
 
     #[test]
     fn scalar_text_local_and_object_paths_keep_coercion_order_and_errors() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(() => {
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             let trace = '';
             const receiver = { [Symbol.toPrimitive](hint) { trace += 'r:' + hint + ';'; return 'A\ud83d\ude00'; } };
             const index = { [Symbol.toPrimitive](hint) { trace += 'i:' + hint + ';'; return 1; } };
@@ -516,6 +519,7 @@ mod local_completion_tests {
                 && 'a'.concat(null, undefined, true, 2n) === 'anullundefinedtrue2'
                 && !'\ud800'.isWellFormed() && '\ud800'.toWellFormed() === '\ufffd'
                 && Array.from('A\ud83d\ude00').join('|') === 'A|\ud83d\ude00';
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 }

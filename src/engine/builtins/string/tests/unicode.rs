@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn string_normalize_matches_quickjs_forms_and_coercion_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     for (source, expected) in [
         (
@@ -64,8 +64,7 @@ fn string_normalize_matches_quickjs_forms_and_coercion_order() {
 
 #[test]
 fn string_locale_compare_matches_quickjs_normalized_code_point_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     for (source, expected) in [
         (r#""a".localeCompare("c")"#, -2),
@@ -95,8 +94,7 @@ fn string_locale_compare_matches_quickjs_normalized_code_point_order() {
 
 #[test]
 fn string_locale_compare_coerces_only_receiver_then_that() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         context
@@ -241,8 +239,7 @@ fn string_locale_compare_errors_preserve_quickjs_realm_boundaries() {
 
 #[test]
 fn string_locale_compare_and_normalize_share_native_stack_budget() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_eq!(
         context

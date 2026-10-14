@@ -1,3 +1,4 @@
+use crate::engine::test_support::test_context;
 use std::cell::{Cell, RefCell};
 
 use super::*;
@@ -298,8 +299,7 @@ fn module_callbacks_receive_the_exact_initiating_context() {
 
 #[test]
 fn loader_accepts_a_compiled_module_from_the_initiating_context() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let dependency = context
         .compile_module_with_filename("export const answer = 42;", "pkg/compiled-dependency.js")
         .unwrap();

@@ -240,6 +240,7 @@ pub(crate) use cost::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use quickjs_oxide_host::SystemHostServices;
 
     fn category<'a>(snapshot: &'a MemorySnapshot, name: &str) -> &'a MemoryCategory {
@@ -248,8 +249,7 @@ mod tests {
 
     #[test]
     fn profiling_snapshot_is_read_only_and_counts_owned_storage_once() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(context.eval("globalThis.buffer = new ArrayBuffer(4096); globalThis.alias = buffer; globalThis.view = new Uint8Array(buffer); globalThis.array = [1, 2, 3]; globalThis.ran = 0; Object.defineProperty(globalThis, 'trap', {get() { throw 42; }}); Promise.resolve().then(() => ran++);").unwrap());
         let first = runtime.memory_snapshot().expect("runtime state");
         let second = runtime.memory_snapshot().expect("runtime state");
@@ -278,8 +278,7 @@ mod tests {
 
     #[test]
     fn profiling_accounts_for_cell_shape_arenas_and_collection_scratch() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(context.eval("globalThis.captured = (() => { let value = 1; return () => value; })(); globalThis.object = { a: 1, b: 2 };").unwrap());
         let snapshot = runtime.memory_snapshot().expect("runtime state");
         assert!(

@@ -8,17 +8,16 @@
 //! correct result is the whole contract; coverage of the fast set itself is
 //! established by the opcode inventory and the container probe.
 
-use crate::engine::api::{Runtime, Value};
+use crate::engine::api::Value;
+use crate::engine::test_support::test_context;
 
 fn eval_bool(source: &str) -> bool {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     matches!(context.eval(source).unwrap(), Value::Bool(true))
 }
 
 fn eval_number(source: &str) -> f64 {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     match context.eval(source).unwrap() {
         Value::Int(value) => f64::from(value),
         Value::Float(value) => value,

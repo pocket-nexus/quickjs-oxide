@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn unified_active_frames_preserve_order_caller_pc_and_defining_realms() {
@@ -148,8 +149,7 @@ fn unified_active_frames_preserve_order_caller_pc_and_defining_realms() {
 
 #[test]
 fn unified_active_frames_restore_after_return_throw_and_engine_error() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let probe = runtime
         .new_bound_native_function(

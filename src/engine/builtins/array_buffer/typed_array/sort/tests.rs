@@ -1,10 +1,10 @@
 use super::*;
+use crate::engine::test_support::test_context;
 use crate::engine::test_support::{assert_script, eval_object, take_exception_object};
 
 #[test]
 fn sort_and_to_sorted_publish_the_quickjs_surface() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -93,8 +93,7 @@ fn sort_and_to_sorted_publish_the_quickjs_surface() {
 
 #[test]
 fn sort_and_to_sorted_keep_their_distinct_validation_order() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -186,8 +185,7 @@ fn sort_and_to_sorted_keep_their_distinct_validation_order() {
 
 #[test]
 fn default_sort_preserves_float_words_and_quickjs_equal_choreography() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -296,8 +294,7 @@ fn default_sort_preserves_float_words_and_quickjs_equal_choreography() {
 
 #[test]
 fn custom_sort_uses_a_raw_snapshot_exact_rqsort_and_stable_indices() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let layout_source = eval_object(
         &mut context,
         "new Uint8Array([10,9,8,7])",
@@ -411,8 +408,7 @@ fn custom_sort_uses_a_raw_snapshot_exact_rqsort_and_stable_indices() {
 
 #[test]
 fn custom_sort_propagates_user_and_conversion_throws_without_sort_writeback() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -481,8 +477,7 @@ fn custom_sort_propagates_user_and_conversion_throws_without_sort_writeback() {
 
 #[test]
 fn custom_sort_matches_quickjs_final_rab_state_writeback() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -584,8 +579,7 @@ fn custom_sort_matches_quickjs_final_rab_state_writeback() {
 
 #[test]
 fn to_sorted_ignores_species_and_returns_fixed_defining_class_storage() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,

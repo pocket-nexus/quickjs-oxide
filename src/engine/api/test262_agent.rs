@@ -771,6 +771,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
 
     fn eval_string(context: &mut Context, source: &str) -> String {
         match context.eval(source).unwrap() {
@@ -800,8 +801,7 @@ mod tests {
 
     #[test]
     fn opt_in_agent_surface_matches_pinned_quickjs_shape_and_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         context.install_test262_host().unwrap();
         assert_eq!(eval_string(&mut context, "typeof $262.agent"), "undefined");
 
@@ -850,8 +850,7 @@ mod tests {
 
     #[test]
     fn report_queue_sleep_clock_and_main_role_are_quickjs_shaped() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
 
@@ -921,8 +920,7 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn worker_has_fresh_blocking_runtime_and_quickjs_role_checks() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -959,8 +957,7 @@ mod tests {
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn create_realm_inherits_session_with_quickjs_main_role() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -974,8 +971,7 @@ child262.agent.start("$262.agent.report('main-child')");"#,
         session.join_workers().unwrap();
         assert_eq!(take_reports(&session), ["main-child"]);
 
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1013,8 +1009,7 @@ child262.agent.start("$262.agent.report('main-child')");"#,
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn broadcast_handles_zero_and_invocation_time_worker_cohorts() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
 
@@ -1066,8 +1061,7 @@ var cohortBuffer = new SharedArrayBuffer(4);"#,
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn receiver_can_wait_before_broadcast_and_ack_precedes_callback_completion() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1111,8 +1105,7 @@ $262.agent.start(`
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn callback_replacement_role_checks_and_conversion_order_are_pinned() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
 
@@ -1203,8 +1196,7 @@ $262.agent.start(`
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn fixed_shared_backing_preserves_int32_and_bigint_across_runtimes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1248,8 +1240,7 @@ $262.agent.start(`
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn callback_jobs_can_register_the_next_broadcast_generation() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1290,8 +1281,7 @@ $262.agent.start(`
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn synchronous_callback_replacement_is_discarded_after_the_current_call() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1326,8 +1316,7 @@ $262.agent.start(`
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn worker_and_callback_exceptions_still_drain_jobs_and_clean_up_join() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1365,8 +1354,7 @@ $262.agent.start(`
     #[cfg(not(target_family = "wasm"))]
     #[test]
     fn join_surfaces_worker_failures() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let session = Test262AgentSession::new(Runtime::new);
         context.install_test262_host_with_agent(&session).unwrap();
         drop(
@@ -1386,8 +1374,7 @@ $262.agent.start(`
             "eval(\"import('./fixture.js')\")",
             "Function(\"return import('./fixture.js')\")",
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (_, mut context) = test_context();
             let session = Test262AgentSession::new(Runtime::new);
             context.install_test262_host_with_agent(&session).unwrap();
             drop(
@@ -1428,8 +1415,7 @@ $262.agent.start(`
                 0,
             ),
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let shared = context
                 .import_shared_array_buffer(SharedBufferHandle::new(4, None).unwrap())
                 .unwrap();
@@ -1451,8 +1437,7 @@ $262.agent.start(`
             drop(context);
             runtime.run_gc().unwrap();
         }
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let shared = context
             .import_shared_array_buffer(SharedBufferHandle::new(4, None).unwrap())
             .unwrap();

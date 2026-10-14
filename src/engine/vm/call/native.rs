@@ -606,6 +606,7 @@ impl NativeActivation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::{
         api::{Context, Error, ErrorKind},
         vm::call::CallableExecution,
@@ -645,8 +646,7 @@ mod tests {
     #[test]
     fn borrowed_callable_retain_failure_retires_published_frame_and_prepared_argv() {
         use crate::engine::heap::{HeapError, RawId};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -705,8 +705,7 @@ mod tests {
     #[test]
     fn borrowed_native_adaptation_shares_validation_and_preserves_input_owners() {
         use super::super::NativeInvocationAdaptation;
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for (fixture, construct) in [
             ("Reflect.get", false),
             ("Math.min", true),
@@ -935,8 +934,7 @@ mod tests {
     #[test]
     #[cfg(feature = "profiling")]
     fn owned_readable_arguments_keep_buffer_identity_arity_and_padding() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -1035,8 +1033,7 @@ mod tests {
     #[test]
 
     fn owning_preparation_keeps_rejection_order_and_argument_domain_errors() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -1130,8 +1127,7 @@ mod tests {
     #[test]
     #[cfg(feature = "profiling")]
     fn readable_buffer_ledger_separates_padding_from_copied_roots() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let marker = runtime.new_object(None).unwrap();
         let profile = crate::engine::api::profiling::CostProfile::start();
         let native = prepare(
@@ -1191,8 +1187,7 @@ mod tests {
 
     #[test]
     fn prepared_native_padding_and_unwind_restore_the_frame() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let native = prepare(&runtime, &mut context, &[]);
         assert_eq!(native.activation.arguments.actual_arg_count, 0);
         assert!(!native.activation.arguments.readable.is_empty());
@@ -1265,8 +1260,7 @@ mod tests {
 
     #[test]
     fn native_activation_rejects_foreign_and_changed_metadata_before_registration() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -1316,12 +1310,12 @@ mod tests {
 #[cfg(test)]
 mod continuation_publication_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::vm::call::CallableExecution;
 
     #[test]
     fn native_continuation_publication_preserves_abi_hidden_flags_and_single_registration() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for (source, mode) in [
             ("Map.prototype.set", NativeInvokeMode::Ordinary),
             ("[].values().next", NativeInvokeMode::IteratorNextRaw),
@@ -1388,8 +1382,7 @@ mod continuation_publication_tests {
 
     #[test]
     fn promise_resolving_publication_hides_backtrace_frames() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in [
             "Promise.withResolvers().resolve",
             "Promise.withResolvers().reject",
@@ -1439,8 +1432,7 @@ mod continuation_publication_tests {
 
     #[test]
     fn native_continuation_publication_rejects_stale_metadata_before_publishing() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let callable = runtime
             .callable_from_value(context.eval("Math.min").unwrap())
             .unwrap();
@@ -1514,13 +1506,13 @@ mod continuation_publication_tests {
 #[cfg(test)]
 mod publication_witness_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::vm::call::CallableExecution;
     use crate::engine::vm::frames::{ActiveFrameKind, NativePublicationWitness};
 
     #[test]
     fn publication_witness_matches_checked_registration_and_keeps_count_guard() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in [
             "Map.prototype.set",
             "Math.min",
@@ -1591,8 +1583,7 @@ mod publication_witness_tests {
 
     #[test]
     fn publication_witness_preserves_foreign_realm_metadata_and_token_error_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let other_context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
@@ -1663,8 +1654,7 @@ mod publication_witness_tests {
 
     #[test]
     fn publication_witness_keeps_native_reentry_throw_and_following_result() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in [
             "(function(){var m=new Map(),n=0,o={valueOf(){n++;m.set('x',41);return m.get('x')}};return Math.min(o,99)+n})()",
             "(function(){var marker={},m=new Map(),n=0;try{Math.min({valueOf(){n++;m.set('x',41);throw marker}},0);return 0}catch(e){return e===marker&&n===1?m.get('x')+1:0}})()",
@@ -1679,12 +1669,12 @@ mod publication_witness_tests {
 #[cfg(test)]
 mod classified_preparation_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::vm::{call::CallableExecution, frames::NativeClassification};
 
     #[test]
     fn selected_native_payload_is_bound_to_its_call_owner() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let callable = runtime
             .callable_from_value(context.eval("Math.min").unwrap())
             .unwrap();

@@ -24,6 +24,8 @@ use crate::engine::object::{
     ProxyDefineResume, ProxyDefineStep, ProxySetResume, ProxySetStep, SetResume, SetStep,
     set_completion,
 };
+#[cfg(test)]
+use crate::engine::test_support::test_context;
 use crate::engine::vm::ToPrimitiveHint;
 
 use crate::engine::object::operations::ArrayLengthConversion;
@@ -2781,8 +2783,7 @@ fn selected_own_carrier_cancellation_releases_exact_method_and_key() {
         api::Value,
         object::internal_methods::{StateMethodStep, StateOwnPrefix},
     };
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(proxy) = context
         .eval("new Proxy({}, {get getOwnPropertyDescriptor(){throw 42}})")
         .unwrap()

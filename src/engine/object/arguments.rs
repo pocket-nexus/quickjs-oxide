@@ -610,14 +610,14 @@ impl Runtime {
 mod tests {
     use crate::engine::code::function::metadata::ClosureVariableKind;
     use crate::engine::object::DescriptorField;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
 
     use super::*;
 
     #[test]
     fn frame_built_arguments_keep_mapping_semantics_and_share_shapes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         // Formals alias their index both ways; extra actual arguments are
         // plain data, and every count shares one cached shape per kind.
         let source = r#"
@@ -670,8 +670,7 @@ mod tests {
 
     #[test]
     fn unmapped_arguments_use_exact_values_realm_roots_and_quickjs_descriptors() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let array_prototype = context.array_prototype().unwrap();
         let values_key = runtime.intern_property_key("values").unwrap();
         let original_values = context.get_property(&array_prototype, &values_key).unwrap();
@@ -819,8 +818,7 @@ mod tests {
 
     #[test]
     fn mapped_arguments_keep_aliases_until_delete_accessor_or_read_only_transition() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let callee = context.function_prototype().unwrap();
         let root = runtime
             .new_var_ref(JsValue::Int(1), false, false, ClosureVariableKind::Normal)
@@ -901,8 +899,7 @@ mod tests {
 
     #[test]
     fn arguments_delete_updates_fast_state_and_never_reconnects_a_mapping() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let callee = context.function_prototype().unwrap();
         let first = runtime
             .new_var_ref(JsValue::Int(1), false, false, ClosureVariableKind::Normal)

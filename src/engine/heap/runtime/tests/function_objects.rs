@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn ordinary_function_object_properties_match_quickjs_descriptors() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(function) = context.eval("(function(a, b) {})").unwrap() else {
         panic!("function expression did not produce an object");
     };
@@ -73,8 +73,7 @@ fn ordinary_function_object_properties_match_quickjs_descriptors() {
 
 #[test]
 fn function_prototype_autoinit_preserves_keys_without_eager_object_cycle() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
     let Value::Object(unread) = context.eval("(0, function(){})").unwrap() else {
         panic!("function expression did not produce an object");
@@ -167,8 +166,7 @@ fn function_prototype_autoinit_preserves_keys_without_eager_object_cycle() {
 
 #[test]
 fn compatible_define_materializes_function_prototype_but_value_override_releases_it() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
     let prototype_key = runtime.intern_property_key("prototype").unwrap();
 
@@ -365,8 +363,7 @@ fn autoinit_define_checks_lazy_flags_before_materializing_and_retries() {
 
 #[test]
 fn failed_autoinit_commits_undefined_and_releases_initializer_realm() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let object = context.new_object().unwrap();
     let key = runtime.intern_property_key("failureProbe").unwrap();
     let before = runtime
@@ -494,8 +491,7 @@ fn function_prototype_autoinit_owns_and_uses_closure_creation_realm() {
 
 #[test]
 fn function_prototype_is_callable_non_constructable_and_has_no_prototype_property() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let callable = runtime
         .callable_from_value(Value::Object(

@@ -328,6 +328,7 @@ mod tests {
     use crate::engine::code::function::UnlinkedFunction;
     use crate::engine::code::function::metadata::FunctionMetadata;
     use crate::engine::object::AccessorValue;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsString;
 
     use super::*;
@@ -376,8 +377,7 @@ mod tests {
 
     #[test]
     fn computed_field_defines_cwe_own_data_without_calling_inherited_setter() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let define = computed_field_callable(&runtime, &context);
         let throwing_setter = bytecode_callable(
             &runtime,
@@ -468,8 +468,7 @@ mod tests {
 
     #[test]
     fn computed_field_rejection_becomes_a_javascript_throw() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let define = computed_field_callable(&runtime, &context);
         let object = runtime.new_object(None).unwrap();
         runtime.prevent_extensions(&object).unwrap();
@@ -503,8 +502,7 @@ mod tests {
 
     #[test]
     fn computed_field_never_repeats_observable_property_key_conversion() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let define = computed_field_callable(&runtime, &context);
         let throwing_conversion = bytecode_callable(
             &runtime,

@@ -1,10 +1,10 @@
 use super::*;
+use crate::engine::test_support::test_context;
 use crate::engine::test_support::{assert_script, eval_object};
 
 #[test]
 fn with_and_to_reversed_publish_quickjs_copying_surface() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -71,8 +71,7 @@ fn with_and_to_reversed_publish_quickjs_copying_surface() {
 
 #[test]
 fn with_matches_quickjs_coercion_resize_and_raw_copy_contracts() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -207,8 +206,7 @@ fn with_matches_quickjs_coercion_resize_and_raw_copy_contracts() {
 
 #[test]
 fn to_reversed_preserves_raw_words_and_rejects_invalid_views() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,

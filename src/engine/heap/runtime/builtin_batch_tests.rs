@@ -4,6 +4,8 @@ use crate::engine::heap::{AutoInitProperty, PropertySlot, RawId, ShapeId, Slots}
 use crate::engine::object::ObjectRef;
 use crate::engine::object::builtin_properties::NativeBuiltinProperty;
 use crate::engine::object::shape::PropertyFlags;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 use crate::engine::value::Value;
 
 fn method(name: &'static str) -> NativeBuiltinProperty {
@@ -29,8 +31,7 @@ fn layout_summary(layout: &(ShapeId, Slots)) -> (ShapeId, String) {
 
 #[test]
 fn builtin_batch_preserves_order_flags_metadata_and_lazy_identity() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let object = runtime.new_object(None).unwrap();
     let mut second = method("batch_second");
     second.flags = PropertyFlags::data(false, true, false);
@@ -222,12 +223,10 @@ fn builtin_batch_rolls_back_shape_and_realm_edges_on_retain_overflow() {
 
 #[test]
 fn builtin_batch_date_keeps_aliases_descriptors_and_realm_functions() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(
-        context
-            .eval(
-                r#"(() => {
+    let (_, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"(() => {
         const p = Date.prototype;
         const iso = p.toISOString;
         const d = Object.getOwnPropertyDescriptor(p, 'setFullYear');
@@ -235,10 +234,7 @@ fn builtin_batch_date_keeps_aliases_descriptors_and_realm_functions() {
             && iso === p.toISOString && iso.name === 'toISOString' && iso.length === 0
             && d.writable && !d.enumerable && d.configurable && d.value.length === 3
             && new Date(0).toISOString() === '1970-01-01T00:00:00.000Z';
-    })()"#
-            )
-            .unwrap(),
-        Value::Bool(true)
+    })()"#,
     );
 }
 
@@ -291,8 +287,7 @@ fn builtin_batch_keeps_context_functions_separate_on_a_shared_shape() {
 
 #[test]
 fn builtin_batch_rejects_exotic_receivers_without_observable_traps() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     for source in [
         "new Date(0)",
         "new Uint8Array(2)",
@@ -322,12 +317,10 @@ fn builtin_batch_rejects_exotic_receivers_without_observable_traps() {
 
 #[test]
 fn builtin_batch_array_and_typed_array_keep_order_aliases_and_calls() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
-    assert_eq!(
-        context
-            .eval(
-                r#"(() => {
+    let (_, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"(() => {
         const p = Array.prototype;
         const t = Object.getPrototypeOf(Uint8Array.prototype);
         const keys = Object.getOwnPropertyNames(t);
@@ -340,9 +333,6 @@ fn builtin_batch_array_and_typed_array_keep_order_aliases_and_calls() {
             && [3, 1, 2].toSorted().join() === '1,2,3'
             && new Uint8Array([3, 1, 2]).toSorted().join() === '1,2,3'
             && Uint8Array.fromHex('0aff').toHex() === '0aff';
-    })()"#
-            )
-            .unwrap(),
-        Value::Bool(true)
+    })()"#,
     );
 }

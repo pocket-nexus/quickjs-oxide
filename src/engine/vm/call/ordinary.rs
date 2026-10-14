@@ -422,11 +422,11 @@ impl OrdinarySelection {
 #[cfg(test)]
 mod direct_selection_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn captured_reads_and_writes_keep_binding_semantics() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let source = r#"
             function outer(param){
               var box = {n:1}, total = 0;
@@ -453,8 +453,7 @@ mod direct_selection_tests {
 
     #[test]
     fn apply_on_an_ordinary_target_keeps_call_semantics() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let source = r#"
             function sum(a,b,c){ 'use strict'; return [typeof this, this===undefined ? 'u' : String(this), a, b, c, arguments.length].join(); }
             function loose(){ return this === globalThis; }
@@ -497,8 +496,7 @@ mod direct_selection_tests {
 
     #[test]
     fn call_site_cache_follows_the_actual_callee() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         // One site sees alternating callees, closures over different cells,
         // a non-function and a native function.
         let source = "function make(k){return function(x){return x+k}}\n\
@@ -527,8 +525,7 @@ mod direct_selection_tests {
 
     #[test]
     fn call_site_cache_misses_a_collected_callee_and_its_reused_slot() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(
             context
                 .eval("function site(f){return f()} function make(v){return function(){return v}}")
@@ -550,8 +547,7 @@ mod direct_selection_tests {
     #[test]
     fn call_site_cache_does_not_keep_a_recursive_function_alive() {
         let weak = {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             assert_eq!(
                 context
                     .eval("function r(n){return n?r(n-1)+1:0} r(5)+r(5)")
@@ -573,8 +569,7 @@ mod direct_selection_tests {
 
     #[test]
     fn method_receiver_survives_nested_return_and_caught_throw() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let result = context
             .eval("(function(){var token={};var receiver={mark:41,m:function(arg){var saved=this;try{arg.fail()}catch(error){if(error!==token)return -1}return saved===receiver?this.mark+arg.bump():-2}};var arg={fail:function(){throw token},bump:function(){return 1}};return receiver.m(arg)})()")
             .unwrap();
@@ -584,8 +579,7 @@ mod direct_selection_tests {
 
     #[test]
     fn method_receiver_general_and_native_fallback_stay_callable() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for source in [
             "(function(){var o={m:Math.max};return o.m(41,42)===42?42:0})()",
             "(function(){var o={x:42,m:new Proxy(function(){return this.x},{})};return o.m()})()",
@@ -597,8 +591,7 @@ mod direct_selection_tests {
 
     #[test]
     fn authentication_cache_is_rootless_and_rejects_a_different_publication() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let first = context.eval("(function(){ return 11 })").unwrap();
         let second = context.eval("(function(){ return 22 })").unwrap();
         let selected = OrdinaryCall::authenticate(&runtime, &first)
@@ -671,8 +664,7 @@ mod direct_selection_tests {
     #[test]
     fn heap_authentication_cache_does_not_retain_runtime() {
         let weak = {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let value = context.eval("(function(){ return 1 })").unwrap();
             drop(OrdinaryCall::authenticate(&runtime, &value).unwrap());
             std::rc::Rc::downgrade(&runtime.0)
@@ -682,8 +674,7 @@ mod direct_selection_tests {
 
     #[test]
     fn direct_selection_borrows_owners_and_preserves_general_fallback() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for (source, kind) in [
             ("(function(x){return x})", 0),
             ("Math.min", 1),

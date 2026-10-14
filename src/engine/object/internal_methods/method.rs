@@ -167,6 +167,7 @@ const _: () = assert!(std::mem::size_of::<MethodStep>() <= 64);
 #[cfg(test)]
 mod trap_cache_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
 
     fn object(value: Value) -> ObjectRef {
@@ -195,8 +196,7 @@ mod trap_cache_tests {
 
     #[test]
     fn trap_cache_skips_the_dynamic_read_and_follows_same_shape_overwrite() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(
             context
                 .eval(
@@ -237,8 +237,7 @@ mod trap_cache_tests {
 
     #[test]
     fn accessor_proxy_handler_trap_always_uses_the_dynamic_read() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(context
             .eval(
                 "var accessorReads=0;var accessorHandler={};\
@@ -260,8 +259,7 @@ mod trap_cache_tests {
 
     #[test]
     fn proxy_handler_trap_declines_the_cache() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(
             context
                 .eval(
@@ -295,8 +293,7 @@ mod trap_cache_tests {
 
     #[test]
     fn deleted_trap_location_falls_back_to_the_dynamic_read() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(context
             .eval(
                 "var delHandler={get:function(){return 1}};var delProxy=new Proxy({},delHandler);",
@@ -323,8 +320,7 @@ mod trap_cache_tests {
 
     #[test]
     fn revoked_proxy_is_rejected_before_the_cache_is_consulted() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(context
             .eval("var revocable=Proxy.revocable({},{get:function(){return 1}});var revoked=revocable.proxy;")
             .unwrap());
@@ -345,8 +341,7 @@ mod trap_cache_tests {
 
     #[test]
     fn proxy_method_chain_limit_still_bounds_cached_descent() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         // Empty handlers forward by returning a non-method, so an end-to-end
         // lookup descends the whole chain and trips the closed logical budget.
         assert_eq!(

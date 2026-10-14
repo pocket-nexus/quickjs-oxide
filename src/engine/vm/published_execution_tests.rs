@@ -1,7 +1,7 @@
 //! Published execution must retain dynamic binding transitions after static
 //! access-mode checks move to publication. These tests use the real compiler,
 //! publisher and runtime host, not synthetic instruction fixtures.
-use crate::engine::api::runtime::Runtime;
+use crate::engine::test_support::test_context;
 use crate::engine::value::{JsValue, Value};
 
 #[test]
@@ -24,8 +24,7 @@ fn published_bindings_keep_capture_eval_and_argument_aliases_live() {
             4,
         ),
     ] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert!(
             matches!(context.eval(source).unwrap(), Value::Int(n) if n == expected),
             "{source}"
@@ -35,8 +34,7 @@ fn published_bindings_keep_capture_eval_and_argument_aliases_live() {
 
 #[test]
 fn published_lexical_reads_preserve_tdz_then_observe_initialization() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let value = context
         .eval(
             "(function(){
@@ -51,8 +49,7 @@ fn published_lexical_reads_preserve_tdz_then_observe_initialization() {
 
 #[test]
 fn published_resume_keeps_captured_cells_live_through_finally() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let value = context
         .eval(
             "(function(){
@@ -78,8 +75,7 @@ fn published_lexical_writes_preserve_tdz_const_and_iteration_lifetimes() {
         "(function(){let fs=[]; for(let i=0;i<3;i++){let x=i; fs.push(()=>++x)} return fs[0]()===1&&fs[1]()===2&&fs[2]()===3&&fs[0]()===2;})()",
         "(function(){let x=1; eval('x=4'); return x===4;})()",
     ] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert!(
             matches!(context.eval(source).unwrap(), Value::Bool(true)),
             "{source}"
@@ -97,8 +93,7 @@ fn published_eval_reuses_topology_but_observes_live_scope_and_super() {
         "(function(){class A{constructor(){this.n=3}} class B extends A{constructor(){eval('super()')}} return new B().n===3;})()",
         "(function(){let x=1; eval(\"eval('x=4')\"); return x===4;})()",
     ] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert!(
             matches!(context.eval(source).unwrap(), Value::Bool(true)),
             "{source}"
@@ -114,8 +109,7 @@ fn repeated_closure_creation_reuses_cells_without_erasing_their_metadata() {
         "(function named(){let a=()=>named; let b=eval('()=>named'); named=1; return a()===b()&&typeof a()==='function';})()",
         "(function(){class A{#x=3; read(){return [()=>this.#x,()=>this.#x]}} let fs=new A().read(); return fs[0]()===3&&fs[1]()===3;})()",
     ] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert!(
             matches!(context.eval(source).unwrap(), Value::Bool(true)),
             "{source}"
@@ -130,8 +124,7 @@ fn published_static_branches_preserve_resume_finally_and_loop_targets() {
         "(function(){let n=0; for(let i=0;i<5;i++){try{if(i%2)continue; n+=i;}finally{++n;}}return n===11;})()",
         "(function(){function* g(){let n=0;try{while(n<3){yield n++;}}finally{n=9;}return n;}let it=g();return it.next().value===0&&it.next().value===1&&it.return(7).value===7;})()",
     ] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert!(
             matches!(context.eval(source).unwrap(), Value::Bool(true)),
             "{source}"
@@ -143,8 +136,7 @@ fn published_static_branches_preserve_resume_finally_and_loop_targets() {
 fn stack_reads_cover_full_depth_range_and_preserve_root_ownership() {
     use super::stack::{FrameStorage, SlotStore};
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     for length in [0usize, 1, 255, 256, 257] {
         let mut code = PublishedFunctionSnapshot::empty_for_test(context.realm);
         code.metadata.max_stack = length as u16;

@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn object_prototype_prefix_methods_are_lazy_and_report_core_tags() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let object_prototype = context.object_prototype().unwrap();
     let to_string_key = runtime.intern_property_key("toString").unwrap();
     let to_locale_string_key = runtime.intern_property_key("toLocaleString").unwrap();
@@ -98,8 +98,7 @@ fn object_prototype_prefix_methods_are_lazy_and_report_core_tags() {
 
 #[test]
 fn object_define_properties_filters_lazy_entries_without_materializing_them() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let object_prototype = context.object_prototype().unwrap();
     let lazy_keys = [
         "toString",

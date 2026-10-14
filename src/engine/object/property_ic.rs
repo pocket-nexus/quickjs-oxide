@@ -779,6 +779,7 @@ fn event(name: &'static str) {
 mod tests {
     use super::*;
     use crate::engine::api::runtime::Runtime;
+    use crate::engine::test_support::test_context;
     #[cfg(test)]
     use crate::engine::value::Value;
 
@@ -813,8 +814,7 @@ mod tests {
     }
     #[test]
     fn cooldown_selection_keeps_exotic_and_callback_boundaries() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         for (source, name, expected) in [
             ("({x:17})", "x", "data"),
             ("Object.create({x:17})", "x", "data"),
@@ -904,8 +904,7 @@ mod tests {
 
     #[test]
     fn four_shapes_alternate_and_fifth_shape_eventually_revives() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let first = object(context.eval("({x:1})").unwrap());
         let second = object(context.eval("({y:0,x:2})").unwrap());
         let third = object(context.eval("({z:0,y:0,x:3})").unwrap());
@@ -940,8 +939,7 @@ mod tests {
 
     #[test]
     fn exotic_named_storage_is_cached_but_typed_numeric_keys_are_not() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let key = runtime.intern_property_key("x").unwrap();
         for expression in ["new Map()", "new Date()", "new Uint8Array(2)"] {
             let receiver = object(
@@ -964,8 +962,7 @@ mod tests {
 
     #[test]
     fn cached_location_reads_replaced_value_and_unsupported_miss_cools_down() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let obj = object(context.eval("var o = {x:1}; o").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
@@ -983,8 +980,7 @@ mod tests {
     }
     #[test]
     fn attributes_and_prototype_replacement_invalidate_before_accessor_execution() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let key = runtime.intern_property_key("x").unwrap();
         for mutation in [
             "Object.defineProperty(o,'x',{get(){throw 7}})",
@@ -1000,8 +996,7 @@ mod tests {
     }
     #[test]
     fn prototype_holder_mutation_and_shadowing_invalidate_without_caching_values() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let key = runtime.intern_property_key("x").unwrap();
         for mutation in [
             "delete p.x",
@@ -1025,8 +1020,7 @@ mod tests {
     }
     #[test]
     fn dictionary_slot_swap_and_new_key_invalidate() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let obj = object(
             context
                 .eval("var o={x:1}; for(var i=0;i<100;i++)o['p'+i]=i; delete o.p0; o")
@@ -1067,8 +1061,7 @@ mod tests {
         // Entries carry no realm: the receiver's shape names its prototype,
         // which differs per realm, so a location learned in one realm never
         // matches the same literal created in another.
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let mut other = context.runtime().new_context().expect("create context");
         let obj = object(context.eval("({x:1})").unwrap());
         let foreign = object(other.eval("({x:2})").unwrap());
@@ -1090,8 +1083,7 @@ mod tests {
     }
     #[test]
     fn named_array_cache_survives_value_write_and_invalidates_holey_materialization() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let obj = object(context.eval("var o=[1,2,3]; o.x=4; o").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
@@ -1104,8 +1096,7 @@ mod tests {
     }
     #[test]
     fn entering_dictionary_storage_invalidates_an_existing_own_fact() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let obj = object(context.eval("var o={x:1}; o").unwrap());
         let key = runtime.intern_property_key("x").unwrap();
         let cache = PropertyReadCache::default();
@@ -1120,8 +1111,7 @@ mod tests {
     }
     #[test]
     fn prototype_attribute_changes_invalidate_epoch_with_unchanged_receiver_layout() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let key = runtime.intern_property_key("x").unwrap();
         for dictionary in [false, true] {
             for mutation in [

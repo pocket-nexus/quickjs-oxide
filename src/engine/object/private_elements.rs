@@ -973,6 +973,7 @@ impl Runtime {
 mod tests {
     use crate::engine::code::function::metadata::FunctionMetadata;
     use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsValue;
 
     use super::*;
@@ -1500,8 +1501,7 @@ mod tests {
 
     #[test]
     fn compiled_private_fields_cover_instance_static_and_reference_operations() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context
             .eval(
                 r#"
@@ -1538,8 +1538,7 @@ mod tests {
 
     #[test]
     fn compiled_private_names_relay_through_nested_functions_eval_and_fresh_classes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context
             .eval(
                 r#"
@@ -1579,8 +1578,7 @@ mod tests {
 
     #[test]
     fn compiled_forward_private_name_reads_match_quickjs_initialization_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context
             .eval(
                 r#"
@@ -1618,8 +1616,7 @@ mod tests {
 
     #[test]
     fn abrupt_class_scope_reentry_reuses_captured_private_method_cell() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context
             .eval(
                 r#"
@@ -1664,8 +1661,7 @@ mod tests {
 
     #[test]
     fn private_method_get_checks_brand_home_before_primitive_receiver() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context
             .eval(
                 r#"
@@ -1691,8 +1687,7 @@ mod tests {
 
     #[test]
     fn uninitialized_private_in_preserves_quickjs_internal_tag_atom() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context
             .eval(
                 r#"
@@ -1716,8 +1711,7 @@ mod tests {
 
     #[test]
     fn private_accessor_cells_survive_direct_eval_and_closure_capture() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let result = context
             .eval(
                 r##"

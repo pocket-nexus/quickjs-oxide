@@ -1747,12 +1747,12 @@ impl Drop for SlotStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn owned_property_ic_capacity_preflight_and_receiver_forms_preserve_owners() {
         use crate::engine::code::bytecode::Instruction;
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let callable = runtime
             .callable_from_value(context.eval("(function(o){return o.x})").unwrap())
             .unwrap();
@@ -1990,8 +1990,7 @@ mod tests {
 
     #[test]
     fn native_argument_transaction_preserves_order_and_surviving_owners() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 6;
         let mut slots = SlotStore::new(6);
@@ -2040,8 +2039,7 @@ mod tests {
 
     #[test]
     fn validated_native_transfer_moves_callee_owner_and_keeps_deferred_drain() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 4;
         let mut slots = SlotStore::new(4);
@@ -2132,8 +2130,7 @@ mod tests {
     #[test]
     fn ordinary_field_leaf_declines_without_consuming_stack_inputs() {
         use crate::engine::code::bytecode::Instruction;
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let callable = runtime
             .callable_from_value(context.eval("(function(o,v){o.x=v;return o.x})").unwrap())
             .unwrap();
@@ -2329,8 +2326,7 @@ mod tests {
             ("4294967295", true, false),
             ("1e0", true, false),
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let base = context.eval("[42]").unwrap();
             let keep_base = base.try_clone().expect("duplicate root");
             let key = crate::engine::value::JsString::try_from_utf8(text).unwrap();
@@ -2396,8 +2392,7 @@ mod tests {
             ),
             ("[,]", Value::Int(0), false),
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let base = context.eval(source).unwrap();
             let _retained = (!single_root).then(|| base.try_clone().expect("duplicate root"));
             let Value::Object(root) = &base else {
@@ -2444,8 +2439,7 @@ mod tests {
             }
             slots.clear_frame(&runtime, window).unwrap();
         }
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let base = context.eval("[42]").unwrap();
         let retained = base.try_clone().expect("duplicate root");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
@@ -2503,8 +2497,7 @@ mod tests {
             ("new Uint8Array(new SharedArrayBuffer(1))", false),
             ("new BigInt64Array([42n])", false),
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let base = context.eval(source).unwrap();
             let _retained = (!single_root).then(|| base.try_clone().expect("duplicate root"));
             let Value::Object(root) = &base else {
@@ -2545,8 +2538,7 @@ mod tests {
             }
             slots.clear_frame(&runtime, window).unwrap();
         }
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let base = context.eval("new Int32Array([42])").unwrap();
         let _retained = base.try_clone().expect("duplicate root");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);

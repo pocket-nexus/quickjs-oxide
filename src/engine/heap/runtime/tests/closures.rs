@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn function_closures_share_runtime_rooted_var_ref_cells() {
@@ -92,8 +93,7 @@ fn function_closures_share_runtime_rooted_var_ref_cells() {
 
 #[test]
 fn fclosure_captures_parent_local_and_isolates_each_invocation() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let baseline_var_refs = runtime.heap_counts().expect("runtime state").var_ref_nodes;
     let parent = UnlinkedFunction::fixture(
         vec![
@@ -150,8 +150,7 @@ fn fclosure_captures_parent_local_and_isolates_each_invocation() {
 
 #[test]
 fn parent_local_writes_after_fclosure_update_the_shared_cell() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let child = UnlinkedFunction::fixture_with_closure_variables(
         vec![Instruction::GetVarRef(0), Instruction::Return],
         Vec::new(),
@@ -205,8 +204,7 @@ fn parent_local_writes_after_fclosure_update_the_shared_cell() {
 
 #[test]
 fn repeated_fclosure_in_one_frame_reuses_the_parent_cell() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let parent = UnlinkedFunction::fixture(
         vec![
             Instruction::PushI32(0),
@@ -246,8 +244,7 @@ fn repeated_fclosure_in_one_frame_reuses_the_parent_cell() {
 
 #[test]
 fn parent_argument_and_transitive_parent_closure_capture_share_identity() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let inner = incrementing_closure(ClosureSource::ParentClosure(0));
     let middle = UnlinkedFunction::fixture_with_closure_variables(
         vec![Instruction::FClosure(0), Instruction::Return],

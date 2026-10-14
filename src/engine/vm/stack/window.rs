@@ -1246,6 +1246,7 @@ mod primitive_transaction_tests {
     use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
     use crate::engine::code::region::{DirectSource, NumberSource, PublishedNumericRegion};
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
     use crate::engine::vm::stack::FrameStorage;
 
@@ -1424,8 +1425,7 @@ mod primitive_transaction_tests {
                 execute::FallthroughPc,
             },
         };
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let child = runtime
             .into_jsvalue(context.eval("(function(){return 42})").unwrap())
             .unwrap();
@@ -1492,8 +1492,7 @@ mod primitive_transaction_tests {
             code::bytecode::Instruction,
             vm::{call::ordinary::DirectSelection, execute::FallthroughPc},
         };
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let child = runtime
             .into_jsvalue(context.eval("(function(){return 42})").unwrap())
             .unwrap();
@@ -1548,8 +1547,7 @@ mod primitive_transaction_tests {
     #[test]
     fn frame_execution_failed_install_preserves_current_frame_and_callee_owner() {
         use crate::engine::{code::bytecode::Instruction, vm::execute::FallthroughPc};
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let child = runtime
             .into_jsvalue(
                 context
@@ -1602,8 +1600,7 @@ mod primitive_transaction_tests {
 
     #[test]
     fn frame_transaction_keeps_owners_across_gc_and_partial_output_failure() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
         layout.metadata.max_stack = 1;
         let mut store = SlotStore::new(8);

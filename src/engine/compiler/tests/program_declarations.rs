@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn program_lexicals_lower_to_source_ordered_global_declarations() {
@@ -191,8 +193,7 @@ fn program_function_then_lexical_remains_a_source_ordered_syntax_error() {
 
 #[test]
 fn program_vars_instantiate_persist_and_preserve_existing_properties() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert_eq!(
         context
             .eval("var value;var value=2;if(false){var dormant=3}for(var loop=0;loop<2;loop++){};value+'|'+typeof dormant+'|'+loop")
@@ -240,11 +241,9 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
             configurable: true,
         })
     );
-    assert_eq!(
-        context
-            .eval("Function.hostRead=function(){return hostValue};var hostValue=8;delete hostValue")
-            .unwrap(),
-        Value::Bool(true)
+    assert_script_true(
+        &mut context,
+        "Function.hostRead=function(){return hostValue};var hostValue=8;delete hostValue",
     );
     assert!(matches!(
         context.eval("Function.hostRead()"),
@@ -421,8 +420,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
 
 #[test]
 fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert_eq!(
         context.eval("let existingLexical=1").unwrap(),
         Value::Undefined
@@ -742,11 +740,9 @@ fn program_var_function_cell_cycle_is_collectable_after_context_drop() {
     let runtime = Runtime::new();
     {
         let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval("var cycle=function(){return cycle};cycle()===cycle")
-                .unwrap(),
-            Value::Bool(true)
+        assert_script_true(
+            &mut context,
+            "var cycle=function(){return cycle};cycle()===cycle",
         );
         let counts = runtime.heap_counts().expect("runtime state");
         assert_eq!(counts.context_nodes, 1);
@@ -773,11 +769,9 @@ fn program_function_declaration_cycle_is_collectable_after_context_drop() {
     let runtime = Runtime::new();
     {
         let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval("function declarationCycle(){return declarationCycle};declarationCycle()===declarationCycle")
-                .unwrap(),
-            Value::Bool(true)
+        assert_script_true(
+            &mut context,
+            "function declarationCycle(){return declarationCycle};declarationCycle()===declarationCycle",
         );
         let counts = runtime.heap_counts().expect("runtime state");
         assert_eq!(counts.context_nodes, 1);
@@ -801,8 +795,7 @@ fn program_function_declaration_cycle_is_collectable_after_context_drop() {
 
 #[test]
 fn program_global_lexicals_persist_shadow_and_reject_redeclaration() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert_eq!(
         context
             .eval("let mutable=1,named=function(){};const fixed=3;mutable+'|'+named.name+'|'+fixed")
@@ -880,10 +873,7 @@ fn program_global_lexicals_persist_shadow_and_reject_redeclaration() {
         context.eval("globalThis.shadowedGlobal").unwrap(),
         Value::Int(1)
     );
-    assert_eq!(
-        context.eval("delete globalThis.shadowedGlobal").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "delete globalThis.shadowedGlobal");
     assert_eq!(context.eval("shadowedGlobal").unwrap(), Value::Int(2));
 
     let mut sealed = runtime.new_context().expect("create context");
@@ -899,8 +889,7 @@ fn program_global_lexicals_persist_shadow_and_reject_redeclaration() {
 
 #[test]
 fn program_global_lexical_preflight_and_failed_initializers_match_quickjs() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let name = runtime.intern_property_key("name").unwrap();
     let message = runtime.intern_property_key("message").unwrap();
 

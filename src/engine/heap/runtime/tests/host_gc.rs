@@ -1,11 +1,11 @@
 #[cfg(feature = "test262-host")]
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[cfg(feature = "test262-host")]
 #[test]
 fn test262_gc_host_is_quickjs_shaped_reentrant_and_preserves_active_roots() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let gc = context.new_test262_gc_function().unwrap();
 
     assert_eq!(

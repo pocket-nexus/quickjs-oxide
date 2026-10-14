@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let bind_key = runtime.intern_property_key("bind").unwrap();
     let to_string_key = runtime.intern_property_key("toString").unwrap();
@@ -393,8 +393,7 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
 
 #[test]
 fn bound_function_payload_owns_symbols_and_cycles_across_layout_changes() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let bind_key = runtime.intern_property_key("bind").unwrap();
     let Value::Object(bind_object) = context
@@ -580,8 +579,7 @@ fn bound_function_uses_bind_realm_but_delegates_function_realm_and_has_instance(
 
 #[test]
 fn deep_standard_bound_has_instance_delegation_is_host_stack_safe() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let has_instance_key = PropertyKey::from(
         runtime
@@ -628,8 +626,7 @@ fn deep_standard_bound_has_instance_delegation_is_host_stack_safe() {
 
 #[test]
 fn error_intrinsic_graph_and_lazy_methods_match_quickjs_descriptors() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let error = global_callable(&runtime, &mut context, "Error");
     let type_error = global_callable(&runtime, &mut context, "TypeError");
     let aggregate_error = global_callable(&runtime, &mut context, "AggregateError");

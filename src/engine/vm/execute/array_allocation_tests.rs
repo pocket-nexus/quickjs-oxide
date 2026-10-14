@@ -1,4 +1,5 @@
 //! Resident ArrayFrom publishes dense inputs and one result owner before GC.
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{Runtime, Value},
     atom::AtomIdx,
@@ -90,8 +91,7 @@ fn clean(runtime: &Runtime) {
 
 #[test]
 fn resident_array_from_publishes_aliases_symbols_and_fault_metadata_before_pressure_collection() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(garbage) = context
         .eval("(()=>{let g={};g.self=g;return g})()")
         .unwrap()
@@ -353,8 +353,7 @@ fn resident_array_from_materialization_failure_leaves_inputs_and_fault_in_frame(
 
 #[test]
 fn resident_array_literals_keep_holes_spreads_evaluation_order_and_nested_backtrace() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     assert_eq!(context.eval_with_filename(
         "function outer(){return inner()}\nfunction inner(){let log=[];function item(v){log.push(v);return v} let a=[item(1),item(2),...[,item(3)]];let b=[,];if(a.join(',')!=='1,2,,3'||log.join(',')!=='1,2,3'||0 in b)throw Error('literal');return fail(a)}\nfunction fail(a){throw new Error(a.length)}\nlet ok=false;try{outer()}catch(e){ok=e.message==='4'&&e.stack.includes('at outer (resident-array.js:1:')&&e.stack.includes('at inner (resident-array.js:2:')&&e.stack.includes('at fail (resident-array.js:3:')&&e.stack.split('at outer (').length===2&&e.stack.split('at inner (').length===2}ok",
         "resident-array.js").unwrap(), Value::Bool(true));

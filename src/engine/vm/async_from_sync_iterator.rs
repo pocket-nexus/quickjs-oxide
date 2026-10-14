@@ -320,6 +320,7 @@ impl Runtime {
 mod tests {
     use crate::engine::api::Context;
     use crate::engine::heap::ObjectPayload;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsString;
 
     use super::*;
@@ -391,8 +392,7 @@ mod tests {
 
     #[test]
     fn get_async_iterator_uses_nullish_fallback_and_branded_wrapper() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (iterator, _next) = acquire(
             &runtime,
             &mut context,
@@ -437,8 +437,7 @@ mod tests {
 
     #[test]
     fn async_from_sync_distinguishes_argument_count_and_reads_done_then_value() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (iterator, next) = acquire(
             &runtime,
             &mut context,
@@ -515,8 +514,7 @@ mod tests {
 
     #[test]
     fn missing_return_resolves_directly_without_assimilating_argument() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (iterator, _next) = acquire(
             &runtime,
             &mut context,
@@ -559,8 +557,7 @@ mod tests {
 
     #[test]
     fn receiver_and_synchronous_failures_return_rejected_promises() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (iterator, next) = acquire(
             &runtime,
             &mut context,
@@ -585,8 +582,7 @@ mod tests {
 
     #[test]
     fn rejected_value_closes_non_return_and_preserves_original_reason_across_gc() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (iterator, next) = acquire(
             &runtime,
             &mut context,
@@ -632,8 +628,7 @@ mod tests {
 
     #[test]
     fn return_mode_and_completed_steps_do_not_close_rejected_values() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (iterator, next) = acquire(
             &runtime,
             &mut context,
@@ -693,8 +688,7 @@ mod tests {
 
     #[test]
     fn missing_throw_closes_normally_before_rejecting() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (iterator, _next) = acquire(
             &runtime,
             &mut context,

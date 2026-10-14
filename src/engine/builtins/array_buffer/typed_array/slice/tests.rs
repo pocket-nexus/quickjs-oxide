@@ -1,10 +1,10 @@
 use super::*;
+use crate::engine::test_support::test_context;
 use crate::engine::test_support::{assert_script, eval_object};
 
 #[test]
 fn slice_and_subarray_publish_the_quickjs_surface_and_basic_results() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -64,8 +64,7 @@ fn slice_and_subarray_publish_the_quickjs_surface_and_basic_results() {
 
 #[test]
 fn slice_matches_quickjs_species_reentrancy_and_raw_copy_contracts() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,
@@ -227,8 +226,7 @@ fn slice_matches_quickjs_species_reentrancy_and_raw_copy_contracts() {
 
 #[test]
 fn subarray_matches_quickjs_view_species_and_detached_contracts() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     assert_script(
         &mut context,

@@ -1,4 +1,5 @@
 //! Original receiver/newTarget owners at the legacy binary-buffer boundary.
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{Context, Runtime, RuntimeError},
     builtins::native::{
@@ -100,8 +101,7 @@ fn owned_binary_buffer_methods_retire_receivers_after_return_and_brand_throw() {
         ),
     ] {
         for throwing in [false, true] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().unwrap();
+            let (runtime, mut context) = test_context();
             let (callable, realm, target, minimum) = native_fixture(&runtime, &mut context, source);
             let receiver = object_input(
                 &runtime,
@@ -143,8 +143,7 @@ fn owned_binary_buffer_species_keeps_one_independent_return_owner() {
         "Object.getOwnPropertyDescriptor(ArrayBuffer,Symbol.species).get",
         "Object.getOwnPropertyDescriptor(SharedArrayBuffer,Symbol.species).get",
     ] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let (callable, realm, target, minimum) = native_fixture(&runtime, &mut context, source);
         let receiver = runtime.new_object(None).unwrap().into_execution_handle();
         let result = completion(
@@ -178,8 +177,7 @@ fn owned_binary_buffer_species_keeps_one_independent_return_owner() {
 
 #[test]
 fn owned_data_view_buffer_getter_retires_view_but_preserves_backing_return() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let (callable, realm, target, minimum) = native_fixture(
         &runtime,
         &mut context,
@@ -217,8 +215,7 @@ fn owned_data_view_buffer_getter_retires_view_but_preserves_backing_return() {
 #[test]
 fn owned_binary_buffer_constructors_retire_original_new_target() {
     for source in ["ArrayBuffer", "SharedArrayBuffer", "DataView"] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let (callable, realm, target, minimum) = native_fixture(&runtime, &mut context, source);
         let function = callable.as_object().object_id();
         let original_count = runtime
@@ -267,8 +264,7 @@ fn owned_binary_buffer_constructors_retire_original_new_target() {
 #[test]
 fn owned_binary_buffer_constructors_retire_new_target_after_prototype_throw() {
     for source in ["ArrayBuffer", "SharedArrayBuffer", "DataView"] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let (callable, realm, target, minimum) = native_fixture(&runtime, &mut context, source);
         let proxy_source = format!(
             "new Proxy({source}, {{get(t,k,r){{if(k==='prototype')throw 7;return Reflect.get(t,k,r)}}}})"
@@ -312,8 +308,7 @@ fn owned_binary_buffer_constructors_retire_new_target_after_prototype_throw() {
 
 #[test]
 fn owned_binary_buffer_handler_error_keeps_priority_and_retires_input() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let (_, realm, _, _) = native_fixture(&runtime, &mut context, "ArrayBuffer");
     let arguments = NativeArguments {
         actual_arg_count: 0,
@@ -361,8 +356,7 @@ fn owned_binary_buffer_handler_error_keeps_priority_and_retires_input() {
     ignore = "relies on the debug assertion that stops an invalid root release"
 )]
 fn owned_binary_buffer_release_failure_quarantines_before_later_native_owners() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let (callable, realm, target, minimum) =
         native_fixture(&runtime, &mut context, "ArrayBuffer.isView");
     let function = callable.as_object().object_id();

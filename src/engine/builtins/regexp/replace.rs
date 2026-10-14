@@ -1676,11 +1676,11 @@ fn finish_replace(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     #[cfg(feature = "profiling")]
     #[test]
     fn standard_string_replace_completes_before_resident_allocation() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         drop(context.eval("RegExp.prototype.exec").unwrap());
         let regexp = context.eval("/a/g").unwrap();
         let invocation = NativeInvocation::Call {
@@ -1724,8 +1724,7 @@ mod tests {
 
     #[test]
     fn fresh_lazy_exec_preserves_the_selected_flags_getter() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(regexp) = context
             .eval("globalThis.coldReplace = /a/g; coldReplace")
             .unwrap()

@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn eval_uses_the_compiler_and_vm_path() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     assert_eq!(context.eval("6 * 7").unwrap(), Value::Int(42));
     assert_eq!(
         context.eval("this").unwrap(),
@@ -13,8 +13,7 @@ fn eval_uses_the_compiler_and_vm_path() {
 
 #[test]
 fn raw_script_context_apis_compile_and_evaluate() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
 
     for function in [
         context.compile_bytes(b"6 * 7").unwrap(),
@@ -45,8 +44,7 @@ fn raw_script_context_apis_compile_and_evaluate() {
 
 #[test]
 fn raw_script_syntax_error_uses_authored_bytes_and_filename() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert!(matches!(
         context.eval_bytes_with_filename(b"/*\x80*/@", "raw-parse.js"),
         Err(RuntimeError::Exception)
@@ -74,8 +72,7 @@ fn raw_script_syntax_error_uses_authored_bytes_and_filename() {
 
 #[test]
 fn raw_script_function_source_respects_debug_info_mode() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function_prototype = context.function_prototype().unwrap();
     let to_string = property_callable(&runtime, &mut context, &function_prototype, "toString");
     let raw = b"(function raw(){/*\x80X*/return 42;})";

@@ -222,11 +222,11 @@ impl Runtime {
 mod tests {
     use super::*;
     use crate::engine::api::Value;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn cycle_budget_requests_without_collecting_and_explicit_gc_rearms() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         runtime
             .set_gc_policy(GcPolicy::Manual)
             .expect("set GC policy");
@@ -289,11 +289,11 @@ mod tests {
 #[cfg(test)]
 mod credit_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn rc_churn_returns_budget_without_clearing_a_latched_request() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         runtime
             .set_gc_policy(GcPolicy::Manual)
             .expect("set GC policy");
@@ -330,6 +330,7 @@ mod credit_tests {
 #[cfg(test)]
 mod net_budget_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
 
     fn cycle_nodes(runtime: &Runtime) -> usize {
         let n = runtime.heap_counts().expect("runtime state");
@@ -342,8 +343,7 @@ mod net_budget_tests {
 
     #[test]
     fn net_budget_matches_published_growth_across_object_shape_and_capture_lifetimes() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         runtime
             .set_gc_policy(GcPolicy::Manual)
             .expect("set GC policy");
@@ -367,12 +367,12 @@ mod net_budget_tests {
 mod direct_state_tests {
     use super::*;
     use crate::engine::heap::{RawId, Shape};
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsValue;
 
     #[test]
     fn direct_state_requested_gc_collects_cycles_and_preserves_owned_values() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         runtime.set_gc_policy(GcPolicy::Manual).unwrap();
         let live = runtime
             .into_jsvalue(

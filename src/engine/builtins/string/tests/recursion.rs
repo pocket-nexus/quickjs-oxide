@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 use crate::engine::api::context::Context;
 
@@ -308,8 +310,7 @@ fn assert_owned_infinite_recursion_recovers(context: &mut Context, call: &str) {
 
 fn owned_string_conversion_families_fit_small_stack_and_enforce_logical_limit() {
     on_owned_string_stack(|| {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         for source in [
             SOURCE_STRING_SUBRANGE_RECURSE,
             SOURCE_MIXED_STRING_SEARCH_RECURSE,
@@ -350,10 +351,7 @@ fn owned_string_conversion_families_fit_small_stack_and_enforce_logical_limit() 
                 );
             }
         }
-        assert_eq!(
-            context.eval("mixedStringSearchRecurse(0,256)").unwrap(),
-            Value::Bool(true)
-        );
+        assert_script_true(&mut context, "mixedStringSearchRecurse(0,256)");
         assert_eq!(
             context.eval("mixedStringSearchRecurse(1,256)").unwrap(),
             Value::String(JsString::from_static("x"))
@@ -365,8 +363,7 @@ fn owned_string_conversion_families_fit_small_stack_and_enforce_logical_limit() 
 
 fn owned_string_constructor_families_fit_small_stack_and_enforce_logical_limit() {
     on_owned_string_stack(|| {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         drop(context.eval(SOURCE_STRING_CONSTRUCTOR_RECURSE).unwrap());
         for (function, expected) in [
             ("stringConstructorRecurse", "x"),
@@ -386,8 +383,7 @@ fn owned_string_constructor_families_fit_small_stack_and_enforce_logical_limit()
 
 fn owned_string_match_getters_fit_small_stack_and_enforce_logical_limit() {
     on_owned_string_stack(|| {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         drop(context.eval(SOURCE_STRING_INCLUDES_FAMILY_RECURSE).unwrap());
         for kind in 0..3 {
             assert_eq!(
@@ -404,8 +400,7 @@ fn owned_string_match_getters_fit_small_stack_and_enforce_logical_limit() {
 
 fn owned_string_regexp_search_fits_small_stack_and_enforces_logical_limit() {
     on_owned_string_stack(|| {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         drop(context.eval(SOURCE_MIXED_SEARCH_RECURSE).unwrap());
         for kind in 0..2 {
             assert_eq!(

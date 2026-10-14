@@ -1,7 +1,14 @@
 //! Evaluation helpers shared by the engine's unit tests.
 
-use crate::engine::api::{Context, Value};
+use crate::engine::api::{Context, Runtime, Value};
 use crate::engine::object::ObjectRef;
+
+/// A fresh runtime and one context in it.
+pub(crate) fn test_context() -> (Runtime, Context) {
+    let runtime = Runtime::new();
+    let context = runtime.new_context().unwrap();
+    (runtime, context)
+}
 
 /// Evaluate a script that must complete with a String.
 pub(crate) fn eval_string(context: &mut Context, source: &str) -> String {
@@ -9,6 +16,12 @@ pub(crate) fn eval_string(context: &mut Context, source: &str) -> String {
         panic!("script did not return a String: {source}");
     };
     value.to_utf8_lossy()
+}
+
+/// Evaluate a self-checking script that returns `true` on success.
+#[track_caller]
+pub(crate) fn assert_script_true(context: &mut Context, source: &str) {
+    assert_eq!(context.eval(source).unwrap(), Value::Bool(true), "{source}");
 }
 
 /// Evaluate a self-checking script that returns `"ok"` on success.

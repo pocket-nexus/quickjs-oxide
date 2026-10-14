@@ -319,6 +319,7 @@ mod tests {
     use crate::engine::code::function::metadata::FunctionMetadata;
     use crate::engine::object::CompleteOrdinaryPropertyDescriptor;
     use crate::engine::test_support::eval_string;
+    use crate::engine::test_support::test_context;
 
     use super::*;
     use crate::engine::code::bytecode::Instruction;
@@ -452,8 +453,7 @@ mod tests {
 
     #[test]
     fn derived_class_publication_roots_both_sides_in_the_validated_parent() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let derived = eval_object(
             &mut context,
             r#"
@@ -490,8 +490,7 @@ mod tests {
 
     #[test]
     fn explicit_super_initializes_one_tdz_cell_across_lexical_execution_paths() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -529,8 +528,7 @@ mod tests {
 
     #[test]
     fn extends_null_uses_null_instance_parent_and_function_prototype_constructor_parent() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let derived = eval_object(
             &mut context,
             r#"
@@ -560,8 +558,7 @@ mod tests {
 
     #[test]
     fn heritage_validation_precedes_prototype_access_and_does_not_mutate_the_candidate() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
 
         assert_eq!(
             eval_string(

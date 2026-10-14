@@ -648,18 +648,18 @@ fn record_segment_boundary(result: &Result<VmAction, Error>) {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::api::{Runtime, Value};
+    use crate::engine::api::Value;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn synchronous_leaves_resume_and_throw_without_losing_the_current_frame() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        assert_script_true(
+            &mut context,
+            r#"
                 function same(a,b) { return a === b; }
                 const object = new Proxy({}, { get() { throw 'unexpected conversion'; } });
                 let count = 0;
@@ -672,10 +672,7 @@ mod tests {
                 catch (error) { trace += error instanceof TypeError ? 'caught' : 'wrong'; }
                 finally { trace += ':finally'; }
                 count === 32 && trace === 'caught:finally' && same(object,object);
-            "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+            "#,
         );
         #[cfg(feature = "profiling")]
         {
@@ -700,14 +697,12 @@ mod tests {
 
     #[test]
     fn global_cell_writes_keep_binding_semantics() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        assert_script_true(
+            &mut context,
+            r#"
                 var v = 0; let l = 0; const c = 1;
                 var held = { n: 0 };
                 function writes(i) { v = i; l = i + 1; held = { n: i }; }
@@ -733,10 +728,7 @@ mod tests {
                 writeRo();
                 out.push(ro === 1);
                 out.every(x => x);
-            "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+            "#,
         );
         #[cfg(feature = "profiling")]
         assert!(
@@ -753,8 +745,7 @@ mod tests {
 
     #[test]
     fn strict_equality_settles_operand_owners_on_every_path() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(held) = context.eval("var held = {}; held").expect("held object") else {
             panic!("object");
         };
@@ -766,10 +757,9 @@ mod tests {
             .heap
             .object_strong_count(id)
             .unwrap();
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        assert_script_true(
+            &mut context,
+            r#"
                 function same(a, b) { return a === b; }
                 let out = [];
                 for (let i = 0; i < 64; i++) {
@@ -779,10 +769,7 @@ mod tests {
                         same('a' + i, 'a' + i), !same({}, {}), same(undefined, undefined));
                 }
                 out.every(x => x)
-            "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+            "#,
         );
         assert_eq!(
             runtime.0.state.borrow().heap.object_strong_count(id),

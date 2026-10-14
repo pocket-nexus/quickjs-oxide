@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn default_module_normalizer_matches_quickjs_leading_dot_rules() {
@@ -47,8 +48,7 @@ fn import_attribute_states_preserve_syntax_and_fold_empty_for_hosts() {
 
 #[test]
 fn loader2_observes_effective_attributes_only_on_cache_miss() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     context
         .compile_module_with_filename("export const value = 39;", "pkg/cached.js")
         .unwrap();

@@ -1,11 +1,11 @@
 #[cfg(feature = "test262-host")]
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[cfg(feature = "test262-host")]
 #[test]
 fn dynamic_import_policy_rejects_precompiled_trees_before_instantiation() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let function = context
         .compile("function hidden() { return import('fixture'); }")
         .unwrap();
@@ -33,8 +33,7 @@ fn dynamic_import_policy_rejects_precompiled_trees_before_instantiation() {
 #[cfg(feature = "test262-host")]
 #[test]
 fn dynamic_import_policy_vm_guard_precedes_specifier_conversion() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(context
         .eval(
             "var policyConversionCount = 0;\n\

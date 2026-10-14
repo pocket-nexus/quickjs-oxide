@@ -335,6 +335,8 @@ pub(crate) fn finish(
 #[cfg(test)]
 mod local_completion_tests {
     use super::*;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn primitive_constructor_finishes_without_a_conversion_request() {
@@ -364,9 +366,10 @@ mod local_completion_tests {
 
     #[test]
     fn local_constructor_conversion_keeps_symbol_and_new_target_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let trace='', symbol=Symbol('x'), caught=false;
             const value={toString(){trace+='v';return 'x';}};
             const target=new Proxy(function(){},{get(t,k,r){if(k==='prototype')trace+='p';return Reflect.get(t,k,r);}});
@@ -375,7 +378,8 @@ mod local_completion_tests {
             return String(42)==='42'&&String() === '' && String(undefined)==='undefined'
                 && String(symbol)==='Symbol(x)'&&caught&&trace==='vp'
                 && String.prototype.valueOf.call(object)==='x'&&Number(42n)===42&&BigInt('42')===42n;
-        })()"#).unwrap(),Value::Bool(true));
+        })()"#,
+        );
     }
 }
 

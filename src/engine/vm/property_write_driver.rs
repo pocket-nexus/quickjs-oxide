@@ -204,17 +204,16 @@ fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::engine::value::Value;
+
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn borrowed_set_vm_keeps_selected_callbacks_and_strict_rejection() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"
             (() => {
                 let trace = '';
                 const target = Object.create({set x(v) { trace += 's' + v; }});
@@ -232,22 +231,17 @@ mod tests {
                 catch (e) { trace += e instanceof TypeError ? 't' : '?'; }
                 return trace === 'ks7p9t' && proxy.x === 9 && frozen.x === 1;
             })()
-        "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        "#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
     #[test]
     fn borrowed_set_vm_preserves_typed_conversion_reentry_and_throw() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"
             (() => {
                 const target = new Uint8Array(1), marker = {};
                 let calls = 0;
@@ -256,10 +250,7 @@ mod tests {
                 catch (e) { if (e !== marker) return false; }
                 return calls === 2 && target[0] === 1;
             })()
-        "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        "#,
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }

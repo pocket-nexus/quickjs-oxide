@@ -184,11 +184,11 @@ const _: () = assert!(std::mem::size_of::<LiteralDefinitionStep>() <= 64);
 #[cfg(test)]
 mod resident_tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
     #[test]
     fn literal_conversion_and_definition_reuse_one_owner() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context.eval("new Proxy({}, {})").unwrap() else {
             panic!("object")
         };

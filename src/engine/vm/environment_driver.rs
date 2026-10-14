@@ -951,11 +951,8 @@ mod factory_publication_cleanup_tests {
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
-    use crate::engine::{
-        api::{profiling::CostProfile, runtime::Runtime},
-        value::Value,
-        vm::Completion,
-    };
+    use crate::engine::test_support::test_context;
+    use crate::engine::{api::profiling::CostProfile, value::Value, vm::Completion};
 
     #[test]
     fn environment_queries_keep_native_getters_proxy_presence_and_receivers_owned() {
@@ -965,8 +962,7 @@ mod tests {
             "(function(){var h=0,s=0,t={x:1},o=new Proxy(t,{has(t,k){if(k==='x')h++;return k in t},get(t,k){if(k===Symbol.unscopables)return {x:false};return t[k]},set(t,k,v,r){s++;if(r!==o)throw 99;t[k]=v;return true}});return function(){with(o){x=42}return t.x===42&&h===2&&s===1?42:0}})()",
             "(function(){var calls=0,o={x:0};Object.defineProperty(o,Symbol.unscopables,{get:new Proxy(function(){calls++;throw 42},{apply(t,r,a){return Reflect.apply(t,r,a)}})});return function(){try{with(o){return x}}catch(e){return calls===1?e:0}}})()",
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let function = context.eval(source).unwrap();
             let callable = runtime.callable_from_value(function).unwrap();
             let profile = CostProfile::start();

@@ -1,3 +1,4 @@
+use crate::engine::test_support::test_context;
 use std::cell::{Cell, RefCell};
 
 use super::*;
@@ -703,8 +704,7 @@ fn parse_time_request_prefix_resolution_matches_the_quickjs_latch() {
 
 #[test]
 fn link_preflight_classifies_reentrant_construction_states_as_incomplete() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     let parsing = runtime
         .publish_parsing_module_record(context.realm, JsString::from_static("still-parsing.js"))

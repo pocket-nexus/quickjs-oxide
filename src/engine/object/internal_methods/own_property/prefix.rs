@@ -1,5 +1,7 @@
 //! Shared effect-free Proxy own-property selection.
 use super::*;
+#[cfg(test)]
+use crate::engine::test_support::test_context;
 use crate::engine::{
     heap::{ObjectId, ObjectPayload, runtime::RuntimeState},
     object::{StateOwnPropertySnapshot, StateOwnedCompleteDescriptor},
@@ -95,11 +97,11 @@ pub(super) fn own_descriptor_in_state(
 mod tests {
     use super::*;
     use crate::engine::api::Value;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn own_prefix_forwards_empty_handlers_under_current_state_without_runtime_or_resume() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(proxy) = context
             .eval("new Proxy(new Proxy({x:1},{}),new Proxy({},{}))")
             .unwrap()
@@ -151,8 +153,7 @@ mod tests {
     }
     #[test]
     fn selected_own_getter_cancellation_restores_depth_and_has_no_runtime_owner() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let Value::Object(proxy) = context
             .eval("new Proxy({}, {get getOwnPropertyDescriptor(){throw 42}})")
             .unwrap()
@@ -180,8 +181,7 @@ mod tests {
 #[test]
 fn shared_own_snapshot_hands_backing_service_outside_state_without_query() {
     use crate::engine::{api::Value, heap::RawValue};
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(proxy)=context.eval("var ownShared=new Int32Array(new SharedArrayBuffer(4));ownShared[0]=37;new Proxy(ownShared,{})").unwrap() else{panic!()};
     let key = runtime.property_key_for_index(0).unwrap();
     #[cfg(feature = "profiling")]
@@ -251,8 +251,7 @@ fn shared_own_snapshot_hands_backing_service_outside_state_without_query() {
 #[test]
 fn selected_own_trap_argument_failure_releases_prior_owners() {
     use crate::engine::api::Value;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(proxy) = context
         .eval("new Proxy({}, {getOwnPropertyDescriptor(){return undefined}})")
         .unwrap()

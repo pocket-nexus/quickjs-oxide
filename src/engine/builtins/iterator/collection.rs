@@ -594,8 +594,9 @@ pub(crate) fn finish(
 
 #[cfg(all(test, feature = "profiling"))]
 mod owned_tests {
-    use super::*;
+
     use crate::engine::api::profiling::CostProfile;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
 
     #[test]
@@ -633,8 +634,7 @@ mod owned_tests {
             "Math.sumPrecise({[Symbol.iterator](){let n=0;return {next(){return n++?{done:true}:{done:false,value:42}}}}})",
             "(function(){let target={...{get x(){return 42}}};let {x,...rest}=target;return x})()",
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let profile = CostProfile::start();
             if source.contains("get 0(){") {
                 profile.capture_disassembly();

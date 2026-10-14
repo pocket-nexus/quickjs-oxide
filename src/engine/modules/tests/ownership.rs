@@ -1,10 +1,10 @@
 use super::*;
 use crate::engine::heap::HeapError;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn module_handle_rejects_another_runtime() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (_, mut context) = test_context();
     let module = context.compile_module("").unwrap();
     let mut other = Runtime::new().new_context().expect("create context");
     assert_eq!(
@@ -154,8 +154,7 @@ fn cross_linked_module_caches_do_not_leak_a_context_cycle() {
 
 #[test]
 fn loaded_module_validator_rejects_internal_sentinels_and_cache_self_edges_atomically() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let module = context.compile_module("export const answer = 42").unwrap();
     let raw = module.raw;
 
@@ -249,8 +248,7 @@ fn json_module_handle_roots_its_parse_realm_across_context_gc() {
 
 #[test]
 fn module_root_stack_frame_is_anonymous_and_retains_filename() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let module = context
         .compile_module_with_filename("throw new Error(\"x\")", "module-stack.mjs")
         .unwrap();

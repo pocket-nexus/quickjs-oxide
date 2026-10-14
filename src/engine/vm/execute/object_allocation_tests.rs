@@ -1,4 +1,5 @@
 //! Resident OP_object publishes ownership and observation before GC service.
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{Runtime, Value},
     code::{
@@ -78,8 +79,7 @@ fn clean(runtime: &Runtime) {
 
 #[test]
 fn resident_object_publishes_one_owner_and_fault_metadata_before_pressure_collection() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(garbage) = context
         .eval("(()=>{let garbage={};garbage.self=garbage;return garbage})()")
         .unwrap()
@@ -355,8 +355,7 @@ fn resident_object_with_headroom_completes_without_publishing_frames() {
 
 #[test]
 fn resident_object_allocations_preserve_nested_backtrace_and_restore_after_throw() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     assert_eq!(
         context.eval_with_filename(
             "function outer(){return inner()}\nfunction inner(){let first={};let second={};return fail()}\nfunction fail(){throw new Error('resident')}\nlet correct=false;try{outer()}catch(e){correct=e.stack.includes('at outer (resident-object.js:1:') && e.stack.includes('at inner (resident-object.js:2:') && e.stack.includes('at fail (resident-object.js:3:') && e.stack.split('at outer (').length===2 && e.stack.split('at inner (').length===2} correct",

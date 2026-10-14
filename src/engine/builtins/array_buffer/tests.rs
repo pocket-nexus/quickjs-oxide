@@ -1,10 +1,10 @@
 use super::*;
+use crate::engine::test_support::test_context;
 use crate::engine::value::JsString;
 
 #[test]
 fn transfer_copies_prefix_zero_fills_growth_and_detaches_source() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = eval_object(
         &mut context,
         "globalThis.__source=new ArrayBuffer(4);__source",
@@ -21,8 +21,7 @@ fn transfer_copies_prefix_zero_fills_growth_and_detaches_source() {
 
 #[test]
 fn same_length_transfer_moves_the_owned_backing_allocation() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = eval_object(
         &mut context,
         "globalThis.__source=new ArrayBuffer(4096);__source",
@@ -41,8 +40,7 @@ fn same_length_transfer_moves_the_owned_backing_allocation() {
 
 #[test]
 fn resizable_transfer_truncates_and_preserves_maximum() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = eval_object(
         &mut context,
         "globalThis.__source=new ArrayBuffer(4,{maxByteLength:8});__source",
@@ -59,8 +57,7 @@ fn shrinking_resize_releases_the_oversized_backing_allocation() {
     const INITIAL_LENGTH: usize = 64 * 1024;
     const SHRUNK_LENGTH: usize = 37;
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = eval_object(
         &mut context,
         "globalThis.__source=new ArrayBuffer(65536,{maxByteLength:131072});__source",
@@ -87,8 +84,7 @@ fn shrinking_transfer_releases_capacity_and_preserves_the_prefix() {
     const INITIAL_LENGTH: usize = 64 * 1024;
     const TRANSFERRED_LENGTH: usize = 41;
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = eval_object(
         &mut context,
         "globalThis.__source=new ArrayBuffer(65536,{maxByteLength:131072});__source",
@@ -116,8 +112,7 @@ fn shrinking_transfer_releases_capacity_and_preserves_the_prefix() {
 
 #[test]
 fn failed_transfer_keeps_the_source_backing_store_attached() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = eval_object(
         &mut context,
         "globalThis.__source=new ArrayBuffer(4,{maxByteLength:4});__source",
@@ -137,8 +132,7 @@ fn failed_transfer_keeps_the_source_backing_store_attached() {
 
 #[test]
 fn slice_copies_only_the_selected_backing_store_range() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = eval_object(
         &mut context,
         "globalThis.__source=new ArrayBuffer(12288);__source",
@@ -160,8 +154,7 @@ fn slice_copies_only_the_selected_backing_store_range() {
 fn ordinary_layout_changes_preserve_large_backing_store_in_place() {
     const BYTE_LENGTH: usize = 64 * 1024;
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let source = eval_object(
         &mut context,
         "globalThis.__source=new ArrayBuffer(65536,{maxByteLength:131072});__source",

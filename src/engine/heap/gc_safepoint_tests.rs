@@ -1,4 +1,6 @@
 use crate::engine::api::{GcPolicy, Runtime, RuntimeError, Value};
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 fn pressure(runtime: &Runtime) {
     runtime.0.gc_pressure.remaining.set(1);
@@ -6,8 +8,7 @@ fn pressure(runtime: &Runtime) {
 
 #[test]
 fn automatic_cycle_gc_bounds_unreachable_loops_and_keeps_active_roots() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert_eq!(
         runtime.gc_policy().expect("runtime state"),
         GcPolicy::Automatic
@@ -34,8 +35,7 @@ fn automatic_cycle_gc_bounds_unreachable_loops_and_keeps_active_roots() {
 
 #[test]
 fn automatic_cycle_gc_keeps_weak_targets_until_outer_turn_and_queues_cleanup() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     runtime
         .with_execution_turn(|| {
             pressure(&runtime);
@@ -66,11 +66,9 @@ fn automatic_cycle_gc_keeps_weak_targets_until_outer_turn_and_queues_cleanup() {
         })
         .unwrap();
     runtime.run_gc().unwrap();
-    assert_eq!(
-        context
-            .eval("weakRef.deref()===undefined && symbolRef.deref()===undefined && finalizers===0")
-            .unwrap(),
-        Value::Bool(true)
+    assert_script_true(
+        &mut context,
+        "weakRef.deref()===undefined && symbolRef.deref()===undefined && finalizers===0",
     );
     // The existing collector removes dead weak registrations before trial
     // deletion. A target first killed by trial deletion is delivered on the
@@ -88,8 +86,7 @@ fn automatic_cycle_gc_keeps_weak_targets_until_outer_turn_and_queues_cleanup() {
 
 #[test]
 fn automatic_cycle_gc_keeps_suspended_and_pending_reaction_roots() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(
         context
             .eval(
@@ -107,10 +104,7 @@ fn automatic_cycle_gc_keeps_suspended_and_pending_reaction_roots() {
             .eval("for(let i=0;i<10000;i++){let x={};x.self=x;}")
             .unwrap(),
     );
-    assert_eq!(
-        context.eval("answer===0 && it.next().value===21").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "answer===0 && it.next().value===21");
     runtime.execute_pending_job().unwrap();
     assert_eq!(context.eval("answer").unwrap(), Value::Int(21));
     pressure(&runtime);
@@ -167,8 +161,7 @@ fn automatic_cycle_gc_defers_unwinding_without_repeating_vm_checkpoints() {
         }
     }
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let progressed = Cell::new(false);
     runtime.0.gc_pressure.remaining.set(0);
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -192,8 +185,7 @@ fn automatic_cycle_gc_defers_unwinding_without_repeating_vm_checkpoints() {
 
 #[test]
 fn automatic_cycle_gc_traces_ephemeron_chains_and_preserves_owned_value_edges() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     drop(
         context
             .eval(
@@ -214,18 +206,14 @@ fn automatic_cycle_gc_traces_ephemeron_chains_and_preserves_owned_value_edges() 
             .unwrap(),
     );
     pressure(&runtime);
-    assert_eq!(
-        context
-            .eval(
-                r#"
+    assert_script_true(
+        &mut context,
+        r#"
         for (let i=0;i<10000;i++) { let x={}; x.self=x; }
         second.get(first.get(liveKey)).answer === 42 &&
         payloadRef.deref() !== undefined && deadKeyRef.deref() === undefined &&
         deadValueRef.deref() === undefined && cycleKeyRef.deref() !== undefined
-    "#
-            )
-            .unwrap(),
-        Value::Bool(true)
+    "#,
     );
     // Existing QuickJS-compatible tracing treats WeakMap values as ordinary
     // owned edges. A value -> key backreference remains live while its map is
@@ -233,18 +221,14 @@ fn automatic_cycle_gc_traces_ephemeron_chains_and_preserves_owned_value_edges() 
     // the maps releases it. The preceding derefs keep targets only through
     // that completed turn.
     pressure(&runtime);
-    assert_eq!(
-        context
-            .eval(
-                r#"
+    assert_script_true(
+        &mut context,
+        r#"
         liveKey = first = second = null;
         for (let i=0;i<10000;i++) { let x={}; x.self=x; }
         liveKeyRef.deref() === undefined && payloadRef.deref() === undefined &&
         cycleKeyRef.deref() === undefined
-    "#
-            )
-            .unwrap(),
-        Value::Bool(true)
+    "#,
     );
 }
 
@@ -261,8 +245,7 @@ fn automatic_cycle_gc_runs_inside_long_allocating_turns() {
         "for(let i=0;i<20000;i++){let x=[];x.push(x)}",
     ];
     for source in sources {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         runtime
             .with_execution_turn(|| {
                 drop(context.eval(source)?);

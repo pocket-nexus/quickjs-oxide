@@ -214,6 +214,8 @@ mod tests {
     #[cfg(feature = "profiling")]
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::heap::RawId;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[cfg(feature = "profiling")]
     #[test]
@@ -221,19 +223,15 @@ mod tests {
         let runtime = Runtime::new();
         let profile = CostProfile::start();
         let mut context = runtime.new_context().unwrap();
-        assert_eq!(
-            context
-                .eval(
-                    r#"(function(){
+        assert_script_true(
+            &mut context,
+            r#"(function(){
             var a=new Array(), b=Array(4), o={};
             a.push(o); a.push('s'); a.push(123456789012345678901234567890n);
             a.push(Symbol.for('move')); var s=a.pop(), n=a.pop(), t=a.pop(), p=a.pop();
             return b.length===4 && a.length===0 && s===Symbol.for('move') &&
                 n===123456789012345678901234567890n && t==='s' && p===o;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
         let costs = profile.snapshot();
         assert_eq!(
@@ -265,9 +263,10 @@ mod tests {
 
     #[test]
     fn array_prefix_preserves_prototype_and_indexed_set_effect_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
-        assert_eq!(context.eval(r#"(function(){
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(function(){
             var log=[], marker={}, proto=Object.create(Array.prototype);
             Object.defineProperty(proto,'0',{set(v){log.push(v);throw marker},configurable:true});
             function C(){}; Object.defineProperty(C,'prototype',{value:proto});
@@ -279,14 +278,14 @@ mod tests {
             var zero=new Array(-0);
             try {new Array(-1);return false}
             catch(e){return e instanceof RangeError && Object.is(zero.length,0)}
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
     #[test]
     fn failed_checked_prototype_retain_retires_native_frame_and_inputs() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let prototype = runtime
             .0
             .state
@@ -380,8 +379,7 @@ mod tests {
 
     #[test]
     fn foreign_native_rejection_retires_only_local_inputs() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().unwrap();
+        let (runtime, mut context) = test_context();
         let foreign = Runtime::new();
         let mut other = foreign.new_context().unwrap();
         let mut callable = Some(

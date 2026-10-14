@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
 
 #[test]
 fn direct_eval_identity_is_realm_local_and_independent_of_the_global_property() {
@@ -44,10 +45,7 @@ fn direct_eval_identity_is_realm_local_and_independent_of_the_global_property() 
         Err(RuntimeError::WrongRuntime("eval function"))
     );
 
-    assert_eq!(
-        second.eval("delete globalThis.eval").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut second, "delete globalThis.eval");
     assert!(
         runtime
             .is_original_eval(second.realm, &second_value)

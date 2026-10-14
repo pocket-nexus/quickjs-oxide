@@ -1,10 +1,10 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn debug_metadata_tracks_operator_tail_call_and_root_call_sites() {
     let source = "(function outer(){ return (function inner(){ return 1n + 1; })(); })()";
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let root = context.compile_with_filename(source, "<cmdline>").unwrap();
     let outer = runtime.test_child_function_bytecode(&root, 0).unwrap();
     let inner = runtime.test_child_function_bytecode(&outer, 0).unwrap();
@@ -65,8 +65,7 @@ fn debug_metadata_tracks_operator_tail_call_and_root_call_sites() {
 
 #[test]
 fn ordinary_assignment_inherits_last_rhs_marker_and_var_initializer_marks_equal() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let assignment_source = "\"use strict\"; missing = 1";
     let root = context
         .compile_with_filename(assignment_source, "globals.js")
@@ -164,8 +163,7 @@ fn ordinary_assignment_inherits_last_rhs_marker_and_var_initializer_marks_equal(
 
 #[test]
 fn call_and_construct_debug_sites_follow_quickjs_tokens() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
 
     let call_source = "Error()";
     let call_root = context
@@ -235,8 +233,7 @@ fn call_and_construct_debug_sites_follow_quickjs_tokens() {
 
 #[test]
 fn primitive_and_function_primaries_do_not_emit_source_markers() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     for source in [
         "(1)",
         "('x')",
@@ -269,8 +266,7 @@ fn primitive_and_function_primaries_do_not_emit_source_markers() {
 
 #[test]
 fn root_and_ordinary_function_names_stay_distinct() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let root = context.compile("(function(){ return 1; })").unwrap();
     let child = runtime.test_child_function_bytecode(&root, 0).unwrap();
 
@@ -290,8 +286,7 @@ fn root_and_ordinary_function_names_stay_distinct() {
 
 #[test]
 fn filename_atom_ownership_counts_every_function_and_same_atom_use() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let baseline_atoms = runtime.test_atom_count().expect("atom count");
     let root = context
         .compile_with_filename("(function(){ return same; })", "same")
@@ -334,8 +329,7 @@ fn filename_atom_ownership_counts_every_function_and_same_atom_use() {
 
 #[test]
 fn runtime_strip_mode_controls_debug_payload_and_filename_atom_ownership() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let baseline_atoms = runtime.test_atom_count().expect("atom count");
 
     runtime

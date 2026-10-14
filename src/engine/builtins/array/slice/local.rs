@@ -104,16 +104,18 @@ pub(super) fn direct_indexed_target(
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::api::{Runtime, Value};
+
+    #[cfg(feature = "profiling")]
+    use crate::engine::api::Value;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn slice_local_progress_preserves_holes_getters_and_reentry() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let log='', source=[1,,3];
             let proto=Object.create(Array.prototype);
             Object.defineProperty(proto,'1',{get(){log+='g';source[2]=4;return 2;}});
@@ -123,18 +125,16 @@ mod tests {
             let nested={length:1,get 0(){return [7,8].slice()[1];}};
             return log==='g' && result.join(',')==='1,2,4' && !(1 in sparse)
                 && sparse.length===3 && Array.prototype.slice.call(nested)[0]===8;
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 
     #[test]
     fn slice_local_progress_preserves_species_proxy_order_and_throws() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let source=[1,,3], trace=[], target;
             function Species(){target={};return new Proxy(target,{defineProperty(o,k,d){trace.push('d'+k);if(k==='0')source[2]=9;return Reflect.defineProperty(o,k,d);}});}
             source.constructor={[Symbol.species]:Species};
@@ -147,46 +147,43 @@ mod tests {
             let getterCalls=0, getterCaught=false;
             try{Array.prototype.slice.call({length:2,get 0(){getterCalls++;throw 42;}});}catch(e){getterCaught=e===42;}
             return caught && calls===1 && getterCaught && getterCalls===1;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 
     #[test]
     fn slice_prepared_has_keeps_selected_proxy_and_refreshes_following_read() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let calls='', source;
             let proto=new Proxy({}, {has(o,k){calls+='h';Object.setPrototypeOf(source,null);return true;},get(){calls+='g';return 9;}});
             source=Object.create(proto);source.length=1;
             let result=Array.prototype.slice.call(source);
             return calls==='h' && result.length===1 && 0 in result && result[0]===undefined;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 
     #[test]
     fn slice_local_progress_keeps_splice_mutations_and_to_spliced_values() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let source=[1,2,3,4], removed=source.splice(1,2,8,9,10);
             let copied=source.toSpliced(1,2,7);
             return removed.join(',')==='2,3' && source.join(',')==='1,8,9,10,4'
                 && copied.join(',')==='1,7,10,4';
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        })()"#,
         );
     }
 
     #[test]
     #[cfg(feature = "profiling")]
     fn slice_local_progress_reports_shared_read_has_define_hits() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context.eval("[1,2,3].slice().length").unwrap(),

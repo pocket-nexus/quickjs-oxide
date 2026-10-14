@@ -1287,11 +1287,12 @@ const _: () = assert!(std::mem::size_of::<SetStep>() <= 64);
 mod tests {
     use super::*;
     use crate::engine::object::CompleteOrdinaryPropertyDescriptor;
+    use crate::engine::test_support::assert_script_true;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn set_preserves_string_handle_for_ordinary_dense_and_sparse_storage() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let value = runtime
             .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
                 "same arena node",
@@ -1356,8 +1357,7 @@ mod tests {
     #[test]
     fn initial_actions_bypass_waiting_transport_and_match_owned_wrapper() {
         for entry in 0..3 {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             for (source, key, value, expected) in [
                 ("({x:1})", "x", "42", "stored"),
                 ("Object.freeze({x:1})", "x", "42", "rejected"),
@@ -1427,8 +1427,7 @@ mod tests {
     #[test]
     fn initial_waiting_transport_preserves_conversion_throw_and_roots() {
         for entry in 0..3 {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let Value::Object(object) = context.eval("globalThis.trace=''; globalThis.marker={}; globalThis.target=new Uint8Array(1); target").unwrap() else {
                 panic!("expected target");
             };
@@ -1494,18 +1493,14 @@ mod tests {
                     pending => step = pending.finish_sync(&runtime).unwrap(),
                 }
             }
-            assert_eq!(
-                context.eval("trace==='v' && target[0]===0").unwrap(),
-                Value::Bool(true)
-            );
+            assert_script_true(&mut context, "trace==='v' && target[0]===0");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
     }
 
     #[test]
     fn outlined_waiting_delivery_drains_initial_operation_before_advancing() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context.eval("new Proxy({}, {})").unwrap() else {
             panic!("expected proxy");
         };
@@ -1558,8 +1553,7 @@ mod tests {
 
     #[test]
     fn outlined_start_keeps_immediate_throw_root_until_its_action_is_released() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let Value::Object(object) = context.eval("new Uint8Array(1)").unwrap() else {
             panic!("expected typed array");
         };
@@ -1620,8 +1614,7 @@ mod tests {
     #[test]
     fn resident_set_array_length_primitive_completion_uses_original_conversion() {
         for (source, expected) in [("2", 2), ("' 2 '", 2), ("true", 1), ("null", 0), ("-0", 0)] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let Value::Object(array) = context.eval("[1,2,3]").unwrap() else {
                 panic!("array");
             };
@@ -1644,9 +1637,10 @@ mod tests {
 
     #[test]
     fn resident_set_array_length_keeps_callbacks_partial_shrink_and_readonly_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(()=>{
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(()=>{
             let a=[0,1,2,3], trace='', value={valueOf(){trace+='v';return 2}};
             a.length=value;
             if(trace!=='vv'||a.length!==2)return false;
@@ -1661,15 +1655,17 @@ mod tests {
             let marker={};trace='';
             try{a.length={valueOf(){trace+='t';throw marker}}}catch(e){if(e!==marker)return false}
             return trace==='t' && a.length===3;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
     #[test]
     fn selected_missing_set_preserves_prototype_and_distinct_receiver_semantics() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(() => {
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             const symbol = Symbol('slot'), marker = {};
             let trace = '';
             const proto = { writable: 1, set setter(v) { trace += 's'; this.seen = v; } };
@@ -1699,14 +1695,16 @@ mod tests {
             const afterBoundary = Object.create(mutating);
             if (Reflect.set(afterBoundary,'key',marker) || afterBoundary.key !== 7) return false;
             return true;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 
     #[test]
     fn selected_missing_append_keeps_unique_dictionary_and_shared_shape_isolation() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(() => {
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             const a = {}, b = {};
             for (let i=0; i<12; i++) { a['k'+i]=i; b['k'+i]=i; }
             a.onlyA=12;
@@ -1717,14 +1715,16 @@ mod tests {
             if (Object.keys(a).join(',') !== 'k0,k2,k3,k4,k5,k6,k7,k8,k9,k10,k11,onlyA,afterDelete,k1') return false;
             Object.preventExtensions(a);
             return !Reflect.set(a,'rejected',1) && a.k1 === 14 && b.k1 === 1;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 
     #[test]
     fn selected_dense_append_preserves_array_permissions_holes_and_special_keys() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        assert_eq!(context.eval(r#"(() => {
+        let (_, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
             const a = [], marker = {}, symbol = Symbol();
             a[0] = marker; a[1] = 2;
             if (a.length !== 2 || a[0] !== marker) return false;
@@ -1745,7 +1745,8 @@ mod tests {
             const receiver = []; Object.setPrototypeOf(receiver, prototype);
             if (!Reflect.set({0: 1}, '0', marker, receiver) || seen !== 1 || receiver[0] !== marker || receiver.length !== 1) return false;
             return true;
-        })()"#).unwrap(), Value::Bool(true));
+        })()"#,
+        );
     }
 
     #[test]
@@ -1756,8 +1757,7 @@ mod tests {
             ("Object.create(null)", "__proto__", false),
             ("Object.preventExtensions({})", "x", true),
         ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             let Value::Object(target) = context.eval(source).unwrap() else {
                 panic!("target")
             };
@@ -1860,14 +1860,12 @@ mod tests {
 
     #[test]
     fn local_new_property_definition_preserves_prototype_callbacks_and_key_order() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
-        assert_eq!(
-            context
-                .eval(
-                    r#"
+        assert_script_true(
+            &mut context,
+            r#"
             (() => {
                 let calls = 0;
                 const inherited = Object.create({set x(value) { calls++; this.y = value; }});
@@ -1885,10 +1883,7 @@ mod tests {
                     && keys.length === 5 && keys[0] === '1' && keys[1] === '3'
                     && keys[2] === 'b' && keys[3] === 'a' && keys[4] === symbol;
             })()
-        "#
-                )
-                .unwrap(),
-            Value::Bool(true)
+        "#,
         );
         #[cfg(feature = "profiling")]
         assert!(

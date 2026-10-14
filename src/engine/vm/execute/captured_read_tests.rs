@@ -1,4 +1,6 @@
 //! Captured scalar and object reads keep the frame's cell owner and ordinary miss boundary.
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 use crate::engine::{
     api::{Runtime, Value},
     heap::{RawId, VarRefId, roots::VarRefView},
@@ -61,8 +63,7 @@ fn captured_frame(
 #[test]
 fn captured_scalar_reads_complete_without_an_activation_or_cell_owner_copy() {
     for checked in [false, true] {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let (mut execution, id, _, cell) = captured_frame(&runtime, &mut context, checked);
         let count = runtime
             .0
@@ -107,8 +108,7 @@ fn captured_scalar_reads_complete_without_an_activation_or_cell_owner_copy() {
 
 #[test]
 fn captured_string_reads_keep_the_original_driver_and_result_owner() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let JsValue::String(string) = runtime
         .into_jsvalue(context.eval("'captured' + 'string'").unwrap())
         .unwrap()
@@ -170,8 +170,7 @@ fn captured_string_reads_keep_the_original_driver_and_result_owner() {
 
 #[test]
 fn captured_scalar_reads_use_current_state_without_draining_external_cleanup() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let (mut execution, id, _pc, cell) = captured_frame(&runtime, &mut context, false);
     let count = runtime
         .0
@@ -275,8 +274,7 @@ fn captured_scalar_admission_preserves_storage_permission_saturation_and_sentine
 #[test]
 fn captured_object_read_takes_one_edge_and_declines_saturation() {
     use crate::engine::code::function::metadata::ClosureVariableKind;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().unwrap();
+    let (runtime, mut context) = test_context();
     let Value::Object(object) = context.eval("({})").unwrap() else {
         panic!("object");
     };
@@ -316,10 +314,9 @@ fn captured_object_read_takes_one_edge_and_declines_saturation() {
         .borrow_mut()
         .heap
         .set_strong_count_for_test(RawId::Object(id), before);
-    assert_eq!(
-        context
-            .eval(
-                r#"
+    assert_script_true(
+        &mut context,
+        r#"
             (() => {
                 const shared = [1, 2, 3];
                 const read = () => shared;
@@ -327,9 +324,6 @@ fn captured_object_read_takes_one_edge_and_declines_saturation() {
                 for (let i = 0; i < 32; i++) total += read()[i % 3];
                 return total === 63 && read() === shared;
             })()
-        "#
-            )
-            .unwrap(),
-        Value::Bool(true)
+        "#,
     );
 }

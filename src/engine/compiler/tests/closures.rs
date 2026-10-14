@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn named_function_expression_has_intrinsic_name_and_private_recursive_binding() {
@@ -128,8 +129,7 @@ fn named_function_self_assignment_matches_quickjs_strict_and_sloppy_rules() {
         Value::Bool(true)
     );
 
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert_eq!(
         context.eval("(function named() { 'use strict'; named = 1; })()"),
         Err(RuntimeError::Exception)

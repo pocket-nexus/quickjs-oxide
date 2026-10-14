@@ -654,12 +654,12 @@ fn shared_memory_runtime_error(error: SharedMemoryError) -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsString;
 
     #[test]
     fn constructor_descriptors_and_key_order_match_pinned_quickjs() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -691,8 +691,7 @@ mod tests {
 
     #[test]
     fn constructor_and_grow_preserve_quickjs_observable_order_and_errors() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         assert_eq!(
             context
                 .eval(
@@ -737,8 +736,7 @@ mod tests {
 
     #[test]
     fn slice_species_branding_and_detach_isolation_match_quickjs() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let source = eval_object(
             &mut context,
             "globalThis.__shared=new SharedArrayBuffer(4,{maxByteLength:8});__shared",

@@ -353,6 +353,7 @@ pub(super) fn native_stack_family(target: NativeFunctionId) -> Option<(usize, us
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::test_support::test_context;
     use crate::engine::value::JsString;
     use crate::engine::value::Value;
 
@@ -398,8 +399,7 @@ mod tests {
     #[test]
     fn thirty_two_nested_bytecode_calls_fit_on_two_mib_stack() {
         on_two_mib_stack(|| {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (_, mut context) = test_context();
             // Keep the parser nesting shallow so this isolates the execution
             // stack. The pinned Test262 Sputnik case separately covers the
             // equivalent 32 nested IIFE calls end to end.
@@ -415,8 +415,7 @@ mod tests {
     #[test]
     fn generator_delegation_reaches_the_portable_floor_and_recovers_after_overflow() {
         on_two_mib_stack(|| {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (runtime, mut context) = test_context();
             assert_eq!(
                 context
                     .eval(
@@ -469,8 +468,7 @@ mod tests {
     #[test]
     fn infinite_bytecode_calls_and_constructors_throw_and_recover() {
         on_two_mib_stack(|| {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (_, mut context) = test_context();
             let value = context
                 .eval(
                     r#"(function(){
@@ -505,8 +503,7 @@ mod tests {
     #[test]
     fn finite_array_stringification_and_recursive_cycle_fit_on_two_mib_stack() {
         on_two_mib_stack(|| {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (_, mut context) = test_context();
             assert_eq!(
                 context
                     .eval(
@@ -560,8 +557,7 @@ mod tests {
     #[test]
     fn finite_typed_array_stringification_and_recursive_cycle_fit_on_two_mib_stack() {
         on_two_mib_stack(|| {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (_, mut context) = test_context();
             assert_eq!(
                 context
                     .eval(
@@ -622,8 +618,7 @@ mod tests {
     #[test]
     fn typed_and_array_sort_share_a_catchable_two_mib_stack_budget() {
         on_two_mib_stack(|| {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context().expect("create context");
+            let (_, mut context) = test_context();
             assert_eq!(
                 context
                     .eval(

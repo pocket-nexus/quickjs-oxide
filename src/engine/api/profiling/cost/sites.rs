@@ -442,12 +442,12 @@ pub(crate) fn record_callsite_callee(
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
     use super::super::CostProfile;
-    use crate::engine::api::{Runtime, Value};
+    use crate::engine::api::Value;
+    use crate::engine::test_support::test_context;
 
     #[test]
     fn execution_word_outcomes_separate_dense_hits_and_generic_reads() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (_, mut context) = test_context();
         let _ = context
             .eval("function read(a,i){return a[i]}; let array=[11]")
             .unwrap();
@@ -504,8 +504,7 @@ mod tests {
 
     #[test]
     fn callsite_callee_history_is_bounded_without_owning_functions() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let profile = CostProfile::start();
         assert_eq!(
             context

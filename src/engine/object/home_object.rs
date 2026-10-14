@@ -111,6 +111,7 @@ mod tests {
     use crate::engine::code::function::metadata::FunctionMetadata;
     use crate::engine::heap::ContextId;
     use crate::engine::object::operations::PropertyDefineOutcome;
+    use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
 
     use super::*;
@@ -147,8 +148,7 @@ mod tests {
 
     #[test]
     fn object_literal_methods_install_home_object_only_when_metadata_requests_it() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
+        let (runtime, mut context) = test_context();
         let literal = context.new_object().unwrap();
 
         for (name, kind) in [

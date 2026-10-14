@@ -1,9 +1,10 @@
 use super::*;
+use crate::engine::test_support::assert_script_true;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn global_cell_execution_observes_updates_and_property_fallback_once() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     assert_eq!(
         context
             .eval("var changingCell=1; function readChanging(){return changingCell} readChanging()")
@@ -28,16 +29,21 @@ fn global_cell_execution_observes_updates_and_property_fallback_once() {
         Value::String(JsString::from_static("undefined"))
     );
     assert_eq!(context.eval("Object.defineProperty(Object.getPrototypeOf(globalThis),'propertyOnly',{configurable:true,get:function(){reads++;return 23}}); readProperty()+reads").unwrap(), Value::Int(25));
-    assert_eq!(context.eval("delete Object.getPrototypeOf(globalThis).propertyOnly; try { readProperty(); } catch(e) { e instanceof ReferenceError }").unwrap(), Value::Bool(true));
-    assert_eq!(context.eval("try { eval('typeof tdzCell; let tdzCell=1'); } catch(e) { e instanceof ReferenceError }").unwrap(), Value::Bool(true));
+    assert_script_true(
+        &mut context,
+        "delete Object.getPrototypeOf(globalThis).propertyOnly; try { readProperty(); } catch(e) { e instanceof ReferenceError }",
+    );
+    assert_script_true(
+        &mut context,
+        "try { eval('typeof tdzCell; let tdzCell=1'); } catch(e) { e instanceof ReferenceError }",
+    );
     assert!(runtime.0.state.borrow().active_frames.is_empty());
 }
 
 #[test]
 fn global_cell_failed_retain_unwinds_and_allows_later_execution() {
     use crate::engine::heap::RawId;
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let Value::Object(object) = context
         .eval("var saturatedCell={}; function readSaturated(){return saturatedCell} saturatedCell")
         .unwrap()
@@ -80,10 +86,7 @@ fn global_cell_failed_retain_unwinds_and_allows_later_execution() {
     );
     assert_eq!(count, u32::MAX);
     assert!(runtime.0.state.borrow().active_frames.is_empty());
-    assert_eq!(
-        context.eval("readSaturated() === saturatedCell").unwrap(),
-        Value::Bool(true)
-    );
+    assert_script_true(&mut context, "readSaturated() === saturatedCell");
 }
 
 #[test]
@@ -185,8 +188,7 @@ fn runtime_global_get_and_direct_typeof_use_the_bytecode_realm() {
 
 #[test]
 fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let descriptor = |value, writable| OrdinaryPropertyDescriptor {
         value: DescriptorField::Present(value),
@@ -416,8 +418,7 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
 
 #[test]
 fn global_lexical_tdz_const_shadow_and_initialization_share_the_resolved_cell() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
     let shadowed = runtime.intern_property_key("shadowed").unwrap();
     assert!(

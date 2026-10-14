@@ -1,9 +1,9 @@
 use super::*;
+use crate::engine::test_support::test_context;
 
 #[test]
 fn object_to_primitive_string_drives_error_message_and_to_string_values() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let error = global_callable(&runtime, &mut context, "Error");
     let prototype_key = runtime.intern_property_key("prototype").unwrap();
     let message_key = runtime.intern_property_key("message").unwrap();
@@ -165,8 +165,7 @@ fn object_to_primitive_string_drives_error_message_and_to_string_values() {
 
 #[test]
 fn to_primitive_string_rejects_exotic_failures_and_skips_noncallable_ordinary_methods() {
-    let runtime = Runtime::new();
-    let mut context = runtime.new_context().expect("create context");
+    let (runtime, mut context) = test_context();
     let error = global_callable(&runtime, &mut context, "Error");
     let message_key = runtime.intern_property_key("message").unwrap();
     let to_string_key = runtime.intern_property_key("toString").unwrap();
