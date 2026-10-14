@@ -1,3 +1,4 @@
+use crate::grouped_case_oracle::assert_cases_match_quickjs;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::rust_case_name_observation as rust_observation;
 
@@ -251,37 +252,18 @@ const CASES: &[Case] = &[
 
 #[test]
 fn object_super_arrow_semantics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP object-super-arrow oracle: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
-
-    let quickjs = CASES
-        .iter()
-        .map(|case| {
+    assert_cases_match_quickjs(
+        "object-super-arrow",
+        "object-super-arrow oracle",
+        CASES,
+        |oracle, case| {
             super::quickjs_object_super_oracle::observe_completion_name_only(
-                &oracle,
+                oracle,
                 case.source,
                 case.group,
                 case.description,
             )
-        })
-        .collect::<Vec<_>>();
-    for (case, observation) in CASES.iter().zip(&quickjs) {
-        assert_eq!(
-            observation, case.expected,
-            "pinned QuickJS object-super-arrow vector drifted for {} / {}: {:?}",
-            case.group, case.description, case.source,
-        );
-    }
-    for (case, observation) in CASES.iter().zip(&quickjs) {
-        assert_eq!(
-            rust_observation(case),
-            *observation,
-            "object-super-arrow behavior differed from pinned QuickJS for {} / {}: {:?}",
-            case.group,
-            case.description,
-            case.source,
-        );
-    }
+        },
+        rust_observation,
+    );
 }

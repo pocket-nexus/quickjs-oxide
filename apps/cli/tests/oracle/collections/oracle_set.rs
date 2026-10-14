@@ -1,11 +1,9 @@
+use crate::grouped_case_oracle::{compare_prelude_case_groups, self_check_prelude_cases};
 use crate::object_graph_observation::{expect_object, global_callable};
 use crate::oracle_cases::GroupedCase as Case;
-use crate::runtime_observation::{
-    primitive_value_text, property_callable, string_property, take_exception_object,
-};
-use crate::runtime_oracle::{eval_callable, eval_object, value_type};
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
-use std::ffi::OsStr;
+use crate::runtime_observation::{property_callable, take_exception_object};
+use crate::runtime_oracle::{eval_callable, eval_object};
+use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
 
 // Differential lock for the complete strong Set surface exposed by pinned
 // QuickJS 2026-06-04. The vectors intentionally stay inside quickjs-oxide's
@@ -559,46 +557,27 @@ const CASES: &[Case] = &[
 
 #[test]
 fn set_oracle_vectors_self_check() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Set oracle self-check: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
-    let mut failures = Vec::new();
-    for case in CASES {
-        let actual = oracle_observation(&oracle, case);
-        if actual != case.expected {
-            failures.push(format!(
-                "{} / {}\nactual: {:?}\nexpected: {:?}",
-                case.group, case.description, actual, case.expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "pinned QuickJS Set vectors drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
-    );
+    self_check_prelude_cases("Set", PRELUDE, CASES);
 }
 
 #[test]
 fn set_graph_core_and_constructor_match_pinned_quickjs() {
-    compare_groups(&["graph", "core", "constructor"]);
+    compare_prelude_case_groups("Set", PRELUDE, CASES, &["graph", "core", "constructor"]);
 }
 
 #[test]
 fn set_live_iteration_and_for_each_match_pinned_quickjs() {
-    compare_groups(&["iteration"]);
+    compare_prelude_case_groups("Set", PRELUDE, CASES, &["iteration"]);
 }
 
 #[test]
 fn set_methods_and_set_like_protocol_match_pinned_quickjs() {
-    compare_groups(&["methods", "protocol"]);
+    compare_prelude_case_groups("Set", PRELUDE, CASES, &["methods", "protocol"]);
 }
 
 #[test]
 fn set_group_by_and_brand_errors_match_pinned_quickjs() {
-    compare_groups(&["groupBy", "brands"]);
+    compare_prelude_case_groups("Set", PRELUDE, CASES, &["groupBy", "brands"]);
 }
 
 #[test]
@@ -670,84 +649,4 @@ fn set_constructor_and_native_errors_use_exact_realms() {
         Some(defining_type_error),
         "Set branded native error used the calling realm",
     );
-}
-
-fn compare_groups(groups: &[&str]) {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP Set differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
-    let mut failures = Vec::new();
-    for case in CASES.iter().filter(|case| groups.contains(&case.group)) {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
-        let actual = rust_observation(&runtime, &mut context, case);
-        let expected = oracle_observation(&oracle, case);
-        if actual != expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\noxide: {:?}\noracle: {:?}",
-                case.group, case.description, case.source, actual, expected,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "Set semantics drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
-    );
-}
-
-fn observed_source(source: &str) -> String {
-    format!("{PRELUDE}\n{source}")
-}
-
-fn rust_observation(runtime: &Runtime, context: &mut Context, case: &Case) -> String {
-    let source = observed_source(case.source);
-    match context.eval(&source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            value_type(runtime, &value),
-            primitive_value_text(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "take Rust exception for {} / {}: {error}",
-                        case.group, case.description,
-                    )
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Rust exception was missing for {} / {}",
-                        case.group, case.description,
-                    )
-                });
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    string_property(runtime, context, &error, "name"),
-                    string_property(runtime, context, &error, "message"),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(runtime, &value),
-                    primitive_value_text(value),
-                ),
-            }
-        }
-        Err(error) => panic!(
-            "Rust engine failure for {} / {} ({:?}): {error}",
-            case.group, case.description, case.source,
-        ),
-    }
-}
-
-fn oracle_observation(oracle: &OsStr, case: &Case) -> String {
-    let source = observed_source(case.source);
-    let description = format!("{} / {}", case.group, case.description);
-    super::quickjs_oracle::observe_completion(oracle, &source, &description)
 }

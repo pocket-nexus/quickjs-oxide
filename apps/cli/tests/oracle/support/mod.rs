@@ -1,3 +1,4 @@
+pub(crate) mod grouped_case_oracle;
 pub(crate) mod object_graph_observation;
 pub(crate) mod oracle_cases;
 pub(crate) mod quickjs_argv_completion_oracle;

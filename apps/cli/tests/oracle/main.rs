@@ -4,7 +4,7 @@ mod common;
 mod support;
 use common::runtime as runtime_oracle;
 use support::{
-    object_graph_observation, oracle_cases, quickjs_argv_completion_oracle,
+    grouped_case_oracle, object_graph_observation, oracle_cases, quickjs_argv_completion_oracle,
     quickjs_array_completion_oracle, quickjs_oracle, quickjs_raw_source_oracle,
     quickjs_syntax_diagnostic_oracle, runtime_completion_oracle, runtime_observation,
 };

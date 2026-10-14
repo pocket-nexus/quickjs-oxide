@@ -1,7 +1,8 @@
+use crate::grouped_case_oracle::{
+    assert_cases_match_expectations, assert_cases_match_quickjs, rust_return_observation,
+};
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::oracle_script_case_observation as oracle_observation;
-use crate::runtime_observation::{checked_value_type as value_type, primitive_value_text};
-use quickjs_oxide::engine::api::Runtime;
 
 // Pins the synchronous, simple-parameter ArrowFunction slice from QuickJS
 // 2026-06-04. Identifier rest parameters have their own oracle; defaults,
@@ -435,64 +436,20 @@ const CASES: &[Case] = &[
 
 #[test]
 fn arrow_function_semantics_match_pinned_expectations() {
-    for case in CASES {
-        assert_eq!(
-            rust_observation(case),
-            case.expected,
-            "Rust ArrowFunction behavior drifted for {} / {}: {:?}",
-            case.group,
-            case.description,
-            case.source,
-        );
-    }
+    assert_cases_match_expectations("ArrowFunction", CASES, rust_observation);
 }
 
 #[test]
 fn arrow_function_semantics_match_pinned_quickjs() {
-    let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
-        eprintln!("SKIP ArrowFunction differential: set QJS_ORACLE to pinned upstream qjs");
-        return;
-    };
-
-    // Check every pinned QuickJS result before entering the intentionally red
-    // Rust comparison. This makes an oracle drift distinguishable from the
-    // expected parser/runtime gap while ArrowFunction is being implemented.
-    let quickjs = CASES
-        .iter()
-        .map(|case| oracle_observation(&oracle, case))
-        .collect::<Vec<_>>();
-    for (case, observation) in CASES.iter().zip(&quickjs) {
-        assert_eq!(
-            observation, case.expected,
-            "pinned QuickJS ArrowFunction vector drifted for {} / {}: {:?}",
-            case.group, case.description, case.source,
-        );
-    }
-    for (case, observation) in CASES.iter().zip(&quickjs) {
-        assert_eq!(
-            rust_observation(case),
-            *observation,
-            "ArrowFunction behavior differed from pinned QuickJS for {} / {}: {:?}",
-            case.group,
-            case.description,
-            case.source,
-        );
-    }
+    assert_cases_match_quickjs(
+        "ArrowFunction",
+        "ArrowFunction differential",
+        CASES,
+        oracle_observation,
+        rust_observation,
+    );
 }
 
 fn rust_observation(case: &Case) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context().expect("create context");
-    let value = context.eval(case.source).unwrap_or_else(|error| {
-        panic!(
-            "Rust rejected ArrowFunction probe {} / {} ({:?}): {error}",
-            case.group, case.description, case.source,
-        )
-    });
-    format!(
-        "return|{}|{}",
-        value_type(&runtime, &value),
-        primitive_value_text(value),
-    )
+    rust_return_observation("ArrowFunction", case)
 }
