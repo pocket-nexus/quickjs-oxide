@@ -32,8 +32,9 @@ use std::process::Command;
 use std::process::Output;
 
 #[derive(Clone, Copy)]
-enum ErrorPropertyStyle {
+pub(crate) enum ErrorPropertyStyle {
     Compact,
+    CheckedValue,
     ReadContext,
     CaseContext,
     RuntimeCaseContext,
@@ -234,6 +235,7 @@ fn observed_error_string_property(
 ) -> String {
     match style {
         ErrorPropertyStyle::Compact => string_property(runtime, context, error, name),
+        ErrorPropertyStyle::CheckedValue => string_property_value(runtime, context, error, name),
         ErrorPropertyStyle::ReadContext => {
             string_property_with_read_context(runtime, context, error, name)
         }
@@ -905,12 +907,40 @@ function __step(iterator){
 "#;
 
 pub(crate) fn compare_cases_collecting_failures(group: &str, cases: &[(&str, &str)]) {
+    compare_prelude_cases_collecting_failures(
+        REGEXP_MATCH_ALL_PRELUDE,
+        group,
+        cases,
+        primitive_value_text_with_signed_zero,
+        ErrorPropertyStyle::CheckedValue,
+    );
+}
+
+/// Compare prelude-prefixed completion vectors, collecting every drift before
+/// failing. The caller owns the prelude, value spelling and Error reader.
+pub(crate) fn compare_prelude_cases_collecting_failures(
+    prelude: &str,
+    group: &str,
+    cases: &[(&str, &str)],
+    value_text: fn(Value) -> String,
+    error_property_style: ErrorPropertyStyle,
+) {
     let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
     for &(description, source) in cases {
         let (runtime, mut context) = host_runtime_context();
-        let actual = observe_match_all_eval(&runtime, &mut context, source, description);
-        let expected = observe_oracle(&oracle, source, description);
+        let prefixed = source_with_prelude(prelude, source);
+        let actual = observe_eval_completion_with(
+            &runtime,
+            &mut context,
+            &prefixed,
+            description,
+            value_type,
+            value_text,
+            error_property_style,
+            EngineFailureStyle::Source,
+        );
+        let expected = crate::quickjs_oracle::observe_completion(&oracle, &prefixed, description);
         if actual != expected {
             failures.push(format!(
                 "{description}\nsource: {source:?}\noxide: {actual:?}\noracle: {expected:?}",
@@ -927,41 +957,6 @@ pub(crate) fn compare_cases_collecting_failures(group: &str, cases: &[(&str, &st
 
 pub(crate) fn observed_source(source: &str) -> String {
     format!("{REGEXP_MATCH_ALL_PRELUDE}\n{source}")
-}
-
-pub(crate) fn observe_match_all_eval(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> String {
-    let source = observed_source(source);
-    match context.eval(&source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            value_type(runtime, &value),
-            primitive_value_text_with_signed_zero(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
-                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    string_property_value(runtime, context, &error, "name"),
-                    string_property_value(runtime, context, &error, "message"),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(runtime, &value),
-                    primitive_value_text_with_signed_zero(value),
-                ),
-            }
-        }
-        Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
-    }
 }
 
 pub(crate) fn observe_oracle(oracle: &OsStr, source: &str, description: &str) -> String {
