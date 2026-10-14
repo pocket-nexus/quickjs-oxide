@@ -12,7 +12,6 @@ use quickjs_oxide::engine::api::{
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
-use std::process::Command;
 
 // The pinned probe deliberately uses Object/Reflect/Symbol to inspect QuickJS.
 // quickjs-oxide does not publish those source globals yet, so the Rust side
@@ -1682,18 +1681,5 @@ fn plain_value(value: Value) -> String {
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .expect("run QuickJS BigInt intrinsic oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS BigInt intrinsic oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS BigInt intrinsic oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "BigInt intrinsic")
 }

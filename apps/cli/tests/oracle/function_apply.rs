@@ -9,7 +9,6 @@ use quickjs_oxide::engine::api::{
     WellKnownSymbol,
 };
 use std::ffi::OsStr;
-use std::process::Command;
 
 const ORACLE_HELPERS: &str = r#"
 function bit(value) { return value ? 1 : 0; }
@@ -743,18 +742,5 @@ fn show_value(value: Value) -> String {
 
 fn oracle_observations(oracle: &OsStr, probe: &str, description: &str) -> Vec<String> {
     let source = format!("{ORACLE_HELPERS}\n{probe}");
-    let output = Command::new(oracle)
-        .args(["-e", &source])
-        .output()
-        .unwrap_or_else(|error| panic!("run QuickJS {description} oracle: {error}"));
-    assert!(
-        output.status.success(),
-        "QuickJS {description} oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| panic!("QuickJS {description} emitted non-UTF-8 output: {error}"))
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, &source, description)
 }

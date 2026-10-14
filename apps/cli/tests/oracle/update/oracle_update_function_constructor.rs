@@ -3,7 +3,6 @@ use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{string_value as string, value_text};
 use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-use std::process::Command;
 
 const ORACLE_PROBE: &str = r#"
 function frames(stack, count) {
@@ -208,18 +207,5 @@ fn stack_frames(
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "QuickJS update Function constructor oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "update Function constructor")
 }

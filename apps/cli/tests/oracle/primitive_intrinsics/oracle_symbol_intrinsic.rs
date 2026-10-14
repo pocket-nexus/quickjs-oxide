@@ -10,7 +10,6 @@ use quickjs_oxide::engine::api::{
     PropertyKey, Runtime, RuntimeError, SymbolRef, Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
-use std::process::Command;
 
 // The pinned probe uses Object and Reflect to inspect QuickJS. quickjs-oxide
 // intentionally exposes the same graph through its public host API while the
@@ -2107,18 +2106,5 @@ fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> 
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .expect("run QuickJS Symbol intrinsic oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS Symbol intrinsic oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS Symbol intrinsic oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "Symbol intrinsic")
 }

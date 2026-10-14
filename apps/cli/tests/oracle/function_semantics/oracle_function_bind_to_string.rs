@@ -7,7 +7,6 @@ use quickjs_oxide::engine::api::{
     WellKnownSymbol,
 };
 use std::ffi::OsStr;
-use std::process::Command;
 
 const ORACLE_PROBE: &str = r#"
 function bit(value) { return value ? 1 : 0; }
@@ -1427,18 +1426,5 @@ fn value_type(runtime: &Runtime, value: &Value) -> &'static str {
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .expect("run QuickJS Function.prototype bind/toString oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS Function.prototype bind/toString oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS Function.prototype bind/toString oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "Function.prototype bind/toString")
 }

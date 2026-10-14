@@ -105,3 +105,24 @@ pub(crate) fn run_stdin_utf8(
     String::from_utf8(output.stdout)
         .unwrap_or_else(|error| panic!("QuickJS output was not UTF-8 for {description}: {error}"))
 }
+
+/// Run a self-printing `-e` probe through QuickJS and return its stdout lines.
+/// `label` names the probe in failure messages ("QuickJS {label} oracle").
+pub(crate) fn probe_lines(oracle: &OsStr, probe: &str, label: &str) -> Vec<String> {
+    let output = Command::new(oracle)
+        .args(["-e", probe])
+        .output()
+        .unwrap_or_else(|error| panic!("run QuickJS {label} oracle: {error:?}"));
+    assert!(
+        output.status.success(),
+        "QuickJS {label} oracle failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .unwrap_or_else(|error| {
+            panic!("QuickJS {label} oracle emitted non-UTF-8 output: {error:?}")
+        })
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}

@@ -11,7 +11,6 @@ use quickjs_oxide::engine::api::{
     PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
-use std::process::Command;
 
 // Deliberate current-slice boundary: the oracle can use Object/Reflect and
 // literals to describe the result compactly, while the Rust side constructs
@@ -884,18 +883,5 @@ fn plain_value(value: Value) -> String {
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .expect("run QuickJS Boolean intrinsic oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS Boolean intrinsic oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS Boolean intrinsic oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "Boolean intrinsic")
 }

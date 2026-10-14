@@ -782,20 +782,7 @@ fn show_value(value: Value) -> String {
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .expect("run QuickJS Function.prototype prefix oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS Function.prototype prefix oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS Function.prototype prefix oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "Function.prototype prefix")
 }
 
 fn oracle_observation(oracle: &OsStr, probe: &str, description: &str) -> String {

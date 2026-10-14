@@ -2,8 +2,6 @@ use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::property_callable;
 use std::ffi::OsStr;
 
-use std::process::Command;
-
 use crate::object_graph_observation::{
     define_accessor, define_accessor_key, define_data_key_with_flags as define_data_key,
     define_data_with_flags as define_data, define_global_key as define_global, eval_callable,
@@ -2319,18 +2317,5 @@ fn plain_value(value: Value) -> String {
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .expect("run QuickJS Number intrinsic oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS Number intrinsic oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS Number intrinsic oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "Number intrinsic")
 }

@@ -1264,20 +1264,7 @@ fn native_stack_prefix(stderr: &str, function_name: &str) -> String {
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .expect("run QuickJS URI codec oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS URI codec oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS URI codec oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "URI codec")
 }
 
 fn oracle_uncaught_error(oracle: &OsStr, source: &str) -> String {

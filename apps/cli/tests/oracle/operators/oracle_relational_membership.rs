@@ -1452,20 +1452,7 @@ fn string_global(runtime: &Runtime, context: &mut Context, name: &str) -> String
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .expect("run QuickJS relational-membership oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS relational-membership oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS relational-membership oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "relational-membership")
 }
 
 fn rust_error_observation(source: &str) -> String {

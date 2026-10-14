@@ -9,7 +9,6 @@ use quickjs_oxide::engine::api::{
     AccessorValue, Context, JsString, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
 };
 use std::ffi::OsStr;
-use std::process::Command;
 
 const PROBE: &str = r#"
 function show(value) {
@@ -534,18 +533,5 @@ fn observe(runtime: &Runtime, context: &mut Context, source: &str) -> String {
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", PROBE])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run QuickJS update-expression oracle: {error}"));
-    assert!(
-        output.status.success(),
-        "QuickJS update-expression oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| panic!("QuickJS emitted non-UTF-8 stdout: {error}"))
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, PROBE, "update-expression")
 }

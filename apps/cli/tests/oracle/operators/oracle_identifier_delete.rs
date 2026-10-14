@@ -433,20 +433,7 @@ fn rust_uncaught_error(source: &str) -> String {
 }
 
 fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["-e", ORACLE_PROBE])
-        .output()
-        .expect("run QuickJS identifier-delete oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS identifier-delete oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS identifier-delete oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect()
+    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "identifier-delete")
 }
 
 fn oracle_uncaught_error(oracle: &OsStr, source: &str, description: &str) -> String {
