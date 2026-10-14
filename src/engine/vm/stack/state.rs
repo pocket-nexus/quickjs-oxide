@@ -677,7 +677,7 @@ impl FrameSlots<'_> {
         // The input now owns the replaced value or nothing.
         for _ in 0..3 {
             state
-                .release_owned_jsvalue(poisoned, self.pop()?)
+                .release_owned_jsvalue(poisoned, self.pop_inlined()?)
                 .map_err(runtime_error_to_vm_error)?;
         }
         if stored == crate::engine::object::FieldStore::LayoutPublished {

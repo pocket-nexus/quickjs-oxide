@@ -1109,6 +1109,15 @@ impl FrameSlots<'_> {
         self.store.pop_current(self.window)
     }
 
+    /// `pop`, always inlined. Called out of line, the `Result<JsValue>` comes
+    /// back through memory and is copied with overlapping stores that stall
+    /// store-to-load forwarding; Rust 1.99 stopped inlining `pop` in the
+    /// computed-key write's operand release.
+    #[inline(always)]
+    pub(in crate::engine::vm) fn pop_inlined(&mut self) -> Result<JsValue, Error> {
+        self.store.pop_current_inlined(self.window)
+    }
+
     #[inline(always)]
     pub(in crate::engine::vm) fn local(&self, index: u16) -> Result<&FrameBinding, Error> {
         self.store.local_current(self.window, index)

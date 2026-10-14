@@ -1268,6 +1268,25 @@ impl SlotStore {
         Ok(value)
     }
 
+    /// `pop_current`, always inlined, for a caller that must not depend on the
+    /// inliner. Kept separate so `pop_current`'s own inlining is unchanged.
+    #[inline(always)]
+    fn pop_current_inlined(&mut self, window: &mut FrameWindow) -> Result<JsValue, Error> {
+        self.peek_current(window, 0)?;
+        window.depth -= 1;
+        #[cfg(feature = "profiling")]
+        {
+            self.live_slots -= 1;
+            record_owned_storage(Cost::Move(1));
+        }
+        let Some(FrameBinding::Direct(value)) =
+            self.slots[window.operands().start + window.depth].take()
+        else {
+            unreachable!("peek authenticated this slot before the move")
+        };
+        Ok(value)
+    }
+
     /// Replace an authenticated live operand without changing its depth or neighbors.
     /// The displaced owner is returned; the caller releases or moves it.
     pub(in crate::engine::vm) fn replace_operand(
