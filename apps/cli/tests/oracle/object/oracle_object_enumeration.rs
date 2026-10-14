@@ -5,7 +5,7 @@ use crate::object_graph_observation::{
 };
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
 use crate::runtime_observation::{
     property_callable, string_property, take_pending_exception_object as take_exception_object,
@@ -227,8 +227,7 @@ fn object_enumeration_autoinit_can_be_deleted_before_materialization() {
 
 #[test]
 fn object_enumeration_cross_realm_results_and_error_realms_are_exact() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_object = global_callable(&runtime, &mut defining, "Object");
@@ -311,8 +310,7 @@ fn object_enumeration_cross_realm_results_and_error_realms_are_exact() {
 
 #[test]
 fn object_enumeration_methods_are_per_realm_and_retain_then_release_their_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let (keys, values, entries) = {
         let mut first = runtime.new_context().expect("create context");
         let mut second = runtime.new_context().expect("create context");

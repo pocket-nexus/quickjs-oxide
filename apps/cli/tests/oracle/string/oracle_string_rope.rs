@@ -1,6 +1,6 @@
 use crate::object_graph_observation::intrinsic_prototype;
 use crate::runtime_observation::error_string;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     Context, DescriptorField, JsString, ObjectRef, OrdinaryPropertyDescriptor, Runtime,
@@ -147,8 +147,7 @@ fn string_rope_matches_pinned_quickjs() {
 
 #[test]
 fn string_rope_overflow_uses_vm_and_native_defining_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_string = first.string_prototype().unwrap();
@@ -194,8 +193,7 @@ fn string_rope_overflow_uses_vm_and_native_defining_realms() {
 
 #[test]
 fn string_rope_dag_does_not_keep_its_realm_graph_alive() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let rope = near_limit_rope();
     let method = {
         let mut context = runtime.new_context().expect("create context");

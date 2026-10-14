@@ -4,10 +4,11 @@ use crate::object_graph_observation::{
 use crate::runtime_completion_oracle::{
     compare_cases_collecting_failures as compare_cases, observe_oracle,
 };
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::string_value;
 use crate::runtime_observation::take_exception_object;
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04
 // `js_regexp_Symbol_matchAll` (`quickjs.c` 48419-48482) and the RegExp String
@@ -393,8 +394,7 @@ fn regexp_match_all_iterator_errors_match_pinned_quickjs() {
 
 #[test]
 fn regexp_match_all_iterator_and_match_results_use_their_defining_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

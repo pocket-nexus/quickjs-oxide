@@ -1,6 +1,6 @@
 use crate::quickjs_argv_completion_oracle;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::primitive_value_text;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::value_type;
 use quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 
@@ -135,8 +135,7 @@ fn array_unscopables_graph_matches_pinned_quickjs() {
 
 #[test]
 fn array_unscopables_are_distinct_null_prototype_objects_per_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let key = PropertyKey::from(

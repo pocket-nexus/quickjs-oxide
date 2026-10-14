@@ -1,7 +1,7 @@
 use crate::object_graph_observation::data_bits;
 use crate::object_graph_observation::own_data_descriptor as data_descriptor;
 use crate::runtime_completion_oracle::compare_array_value_cases as compare_value_cases;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
     take_exception_object,
@@ -555,8 +555,7 @@ fn math_methods_are_not_constructable() {
 
 #[test]
 fn math_native_errors_use_the_method_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_type_error = eval_object(

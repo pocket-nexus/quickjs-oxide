@@ -1,8 +1,8 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
 use super::quickjs_program_property_oracle::observe_program_property_lines;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::take_exception_object as take_object_exception;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
 use crate::object_graph_observation::{define_global_data, function_setup as function};
 use crate::runtime_completion_oracle::compare_cli;
@@ -363,8 +363,7 @@ fn program_function_parser_diagnostics_match_pinned_quickjs() {
 fn program_function_cross_realm_matches_pinned_c_api() {
     let _oracle = require_qjs_oracle!("Program function cross-realm oracle");
 
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     drop(defining.eval("globalThis.realmTag='A'").unwrap());

@@ -1,5 +1,5 @@
-use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
+use crate::runtime_observation::{host_runtime, host_runtime_context};
+use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -187,8 +187,7 @@ fn probe_expected_shape_is_stable_without_an_oracle() {
 
 #[test]
 fn object_literal_result_uses_the_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let function = defining

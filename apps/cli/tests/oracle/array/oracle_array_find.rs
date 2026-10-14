@@ -1,7 +1,7 @@
 use super::support::*;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 use std::ffi::OsStr;
 
 // This target pins QuickJS 2026-06-04's shared `js_array_find` kernel. Unlike
@@ -255,8 +255,7 @@ fn array_find_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_find_native_errors_and_user_throws_use_pinned_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();

@@ -1,5 +1,5 @@
 use crate::quickjs_argv_completion_oracle;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
 use crate::runtime_completion_oracle::compare_value_cases;
 use crate::runtime_observation::{
@@ -301,8 +301,7 @@ fn array_search_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_search_errors_use_the_native_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     drop(

@@ -1,11 +1,11 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::primitive_value_text_with_rust_float as primitive_value_text;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
 use crate::runtime_completion_oracle::compare_cli;
 use crate::runtime_oracle::error_string_property;
-use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
 
 const VALUE_CASES: &[(&str, &str)] = &[
     (
@@ -206,8 +206,7 @@ fn function_body_declaration_cross_realm_regression() {
     // These expectations are pinned from the QuickJS C API's compile-in-A,
     // execute-in-B path; the Rust API exposes the same two-context operation
     // directly, so keep it in the unconditional product regression suite.
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     drop(defining.eval("globalThis.realmTag='A'").unwrap());

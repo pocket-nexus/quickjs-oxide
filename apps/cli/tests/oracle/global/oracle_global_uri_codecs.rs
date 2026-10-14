@@ -5,8 +5,8 @@ use crate::object_graph_observation::{
     joined_own_key_names as own_key_names,
 };
 use crate::runtime_observation::error_text;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::take_thrown_object as take_exception_object;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use quickjs_oxide::engine::api::{
     CallableRef, Context, EvalOptions, JsBigInt, JsString, ObjectRef, PropertyKey, Runtime,
     RuntimeError, Value, WellKnownSymbol,
@@ -332,8 +332,7 @@ fn global_uri_codecs_match_pinned_quickjs() {
 
 #[test]
 fn global_uri_codec_errors_use_the_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_encode = global_callable(&runtime, &mut first, "encodeURI");
@@ -440,8 +439,7 @@ fn global_uri_codec_errors_use_the_defining_realm() {
 
 #[test]
 fn global_uri_codec_keeps_its_defining_realm_alive_until_collection() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let codec = {
         let mut context = runtime.new_context().expect("create context");
         global_callable(&runtime, &mut context, "encodeURIComponent")

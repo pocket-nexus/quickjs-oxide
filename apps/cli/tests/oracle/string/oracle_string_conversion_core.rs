@@ -5,8 +5,8 @@ use crate::object_graph_observation::{
 };
 use crate::object_graph_observation::{define_accessor, define_accessor_key};
 use crate::runtime_observation::hex;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::take_hex_error as take_error;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     CallableRef, Context, JsString, ObjectRef, PropertyKey, Runtime, RuntimeError, Value,
@@ -338,8 +338,7 @@ fn rust_observations() -> Vec<String> {
 
 #[test]
 fn string_conversion_core_cross_realm_and_error_realm_match_quickjs() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_string = first.string_prototype().unwrap();
@@ -406,8 +405,7 @@ fn string_conversion_core_cross_realm_and_error_realm_match_quickjs() {
 
 #[test]
 fn string_conversion_core_wrapper_realm_graph_is_collectable() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let wrapper = {
         let mut context = runtime.new_context().expect("create context");
         let object = context.object_prototype().unwrap();

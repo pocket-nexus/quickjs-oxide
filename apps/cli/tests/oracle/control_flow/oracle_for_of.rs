@@ -1,5 +1,5 @@
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
 use crate::object_graph_observation::define_global;
 use crate::runtime_completion_oracle::{compare_argv_cases as compare_value_cases, compare_cli};
@@ -653,8 +653,7 @@ fn top_level_for_await_uses_pinned_quickjs_syntax_diagnostic() {
 
 #[test]
 fn for_of_cross_realm_regression() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let bytecode = defining

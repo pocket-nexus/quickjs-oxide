@@ -1,14 +1,14 @@
 use crate::object_graph_observation::data_bits;
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
 use crate::object_graph_observation::{
     data_descriptor, eval_object, eval_source_callable as eval_callable, global_callable,
     int_property, object_property, own_key_names,
 };
 use crate::runtime_observation::{property_callable, string_property};
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 use std::ffi::OsStr;
 
 // Pins the QuickJS 2026-06-04 `Object.groupBy` table entry and the shared
@@ -351,8 +351,7 @@ fn object_group_by_graph_matches_pinned_quickjs() {
 
 #[test]
 fn object_group_by_uses_its_defining_realm_and_preserves_user_throws() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let object = global_callable(&runtime, &mut defining, "Object");

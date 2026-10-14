@@ -1,8 +1,8 @@
 use crate::object_graph_observation::define_global;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text_with_rust_float as primitive_text,
 };
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
@@ -1199,8 +1199,7 @@ fn proxy_reentrancy_matches_pinned_quickjs() {
 
 #[test]
 fn proxy_native_and_user_errors_use_their_exact_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_type_error = eval_object(

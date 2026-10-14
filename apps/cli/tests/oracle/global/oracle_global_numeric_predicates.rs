@@ -5,7 +5,7 @@ use crate::object_graph_observation::{
     intrinsic_prototype, joined_own_key_names as own_key_names,
 };
 use crate::runtime_observation::error_text;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{property_callable, take_thrown_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     CallableRef, Context, EvalOptions, JsBigInt, JsString, PropertyKey, Runtime, RuntimeError,
@@ -162,8 +162,7 @@ fn global_numeric_predicates_match_pinned_quickjs() {
 
 #[test]
 fn global_numeric_predicate_errors_use_the_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_nan = global_callable(&runtime, &mut first, "isNaN");
@@ -286,8 +285,7 @@ fn global_numeric_predicate_errors_use_the_defining_realm() {
 
 #[test]
 fn global_numeric_predicate_keeps_its_defining_realm_alive_until_collection() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let predicate = {
         let mut context = runtime.new_context().expect("create context");
         global_callable(&runtime, &mut context, "isNaN")

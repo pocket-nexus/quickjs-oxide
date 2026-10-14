@@ -1,5 +1,6 @@
 use crate::object_graph_observation::data_property as data_descriptor;
 use crate::oracle_cases::ExpectedCase as Case;
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
@@ -198,8 +199,7 @@ fn typed_array_iterators_match_pinned_quickjs() {
 
 #[test]
 fn typed_array_entries_pair_and_errors_use_the_builtin_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();

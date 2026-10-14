@@ -1,5 +1,5 @@
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_value;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use quickjs_oxide::engine::api::{
     CallableRef, Context, DebugInfoMode, JsString, Runtime, RuntimeError, Value,
 };
@@ -1362,8 +1362,7 @@ fn eval_labelled_functions_keep_lexical_and_annex_b_closures_distinct() {
 
 #[test]
 fn foreign_realm_eval_callable_preserves_non_string_identity() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let eval = global_eval(&runtime, &mut defining);
@@ -1601,8 +1600,7 @@ fn returned_eval_closure_retains_caller_lexical_in_every_debug_mode() {
         DebugInfoMode::StripSource,
         DebugInfoMode::StripDebug,
     ] {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+        let runtime = host_runtime();
         runtime
             .set_debug_info_mode(debug_info)
             .expect("set runtime configuration");
@@ -1700,8 +1698,7 @@ fn nested_direct_eval_environment_relay_matches_pinned_quickjs() {
 
 #[test]
 fn foreign_realm_primitive_string_eval_uses_its_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     drop(defining.eval("globalThis.evalRealmMarker = 42").unwrap());

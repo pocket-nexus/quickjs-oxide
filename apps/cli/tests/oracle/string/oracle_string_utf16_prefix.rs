@@ -4,8 +4,8 @@ use crate::object_graph_observation::{
     own_key_names,
 };
 use crate::runtime_observation::hex;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::take_hex_error as take_error;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
 use quickjs_oxide::engine::api::{
     CallableRef, Context, JsBigInt, JsString, ObjectRef, Runtime, RuntimeError, Value,
@@ -555,8 +555,7 @@ fn rust_observations() -> Vec<String> {
 
 #[test]
 fn string_utf16_prefix_cross_realm_and_error_realms_match_quickjs() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_prototype = first.string_prototype().unwrap();
@@ -612,8 +611,7 @@ fn string_utf16_prefix_cross_realm_and_error_realms_match_quickjs() {
 
 #[test]
 fn string_utf16_prefix_method_retains_then_releases_its_realm_graph() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let method = {
         let mut context = runtime.new_context().expect("create context");
         let prototype = context.string_prototype().unwrap();

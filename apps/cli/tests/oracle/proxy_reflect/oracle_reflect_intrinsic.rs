@@ -1,6 +1,6 @@
 use crate::object_graph_observation::require_object as expect_object;
 use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
     string_property_with_read_context as string_property, take_exception_object,
@@ -449,8 +449,7 @@ fn reflect_exposes_all_thirteen_nonconstructable_methods() {
 
 #[test]
 fn reflect_cross_realm_results_native_errors_and_user_errors_use_exact_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let reflect = reflect_object(&runtime, &mut defining);

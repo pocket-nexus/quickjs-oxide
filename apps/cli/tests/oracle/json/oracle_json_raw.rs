@@ -2,11 +2,12 @@ use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::{
     oracle_script_case_observation as oracle_observation, rust_case_observation as rust_observation,
 };
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04's `js_json_rawJSON`, `js_json_isRawJSON`, and the
 // `JS_CLASS_RAWJSON` branch in `js_json_to_str`. Every observer returns an
@@ -482,8 +483,7 @@ fn json_raw_brand_and_native_errors_cross_realms() {
     // The qjs CLI has no same-runtime multi-context bridge. Exercise the
     // runtime-wide brand directly and pin native SyntaxError allocation to the
     // intrinsic method's defining realm.
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_syntax_error = eval_object(

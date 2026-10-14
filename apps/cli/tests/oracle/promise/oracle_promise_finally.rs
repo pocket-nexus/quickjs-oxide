@@ -1,6 +1,6 @@
 use crate::runtime_observation::eval;
-use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use crate::runtime_observation::{host_runtime, host_runtime_context};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3o_promise_finally.js");
 const EXPECTED: &str =
@@ -26,8 +26,7 @@ fn promise_finally_matches_pinned_quickjs() {
 
 #[test]
 fn promise_finally_cfunction_data_handler_uses_calling_context() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

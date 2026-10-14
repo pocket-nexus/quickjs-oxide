@@ -1,7 +1,7 @@
 use crate::object_graph_observation::context_global_value as global_value;
 use crate::runtime_observation::eval;
-use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use crate::runtime_observation::{host_runtime, host_runtime_context};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3p_promise_all.js");
 const EXPECTED: &str =
@@ -27,8 +27,7 @@ fn promise_all_matches_pinned_quickjs() {
 
 #[test]
 fn promise_all_values_and_element_callback_use_quickjs_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

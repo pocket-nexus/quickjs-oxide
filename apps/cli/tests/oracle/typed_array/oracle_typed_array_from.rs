@@ -1,3 +1,4 @@
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::take_exception_object;
 use crate::string_value_cases::{
     assert_quickjs_string_cases_match_frozen, assert_string_cases_match_frozen,
@@ -9,7 +10,7 @@ use crate::object_graph_observation::{
 };
 use crate::oracle_cases::ExpectedCase as Case;
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 // These observations pin QuickJS 2026-06-04's `js_typed_array_from`,
 // `js_typed_array_create`, and `js_array_from_iterator` paths. The upstream
@@ -550,8 +551,7 @@ fn typed_array_from_matches_pinned_quickjs() {
 
 #[test]
 fn typed_array_from_cross_realm_result_map_errors_and_abrupt_values() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let mut custom = runtime.new_context().expect("create context");

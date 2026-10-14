@@ -2,9 +2,10 @@ use crate::object_graph_observation::{int_property, intrinsic_prototype};
 use crate::runtime_completion_oracle::{
     ErrorPropertyStyle, compare_prelude_cases_collecting_failures,
 };
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{property_callable, string_property};
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, RuntimeError, Value};
 use std::ffi::OsStr;
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_split`
@@ -551,8 +552,7 @@ fn string_split_recursion_is_catchable_and_runtime_recovers() {
 
 #[test]
 fn string_split_cross_realm_results_errors_and_user_throws_are_exact() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_string_prototype = defining.string_prototype().unwrap();
@@ -665,8 +665,7 @@ fn string_split_cross_realm_results_errors_and_user_throws_are_exact() {
 
 #[test]
 fn detached_string_split_and_result_retain_then_release_their_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let split = {
         let mut defining = runtime.new_context().expect("create context");
         let prototype = defining.string_prototype().unwrap();

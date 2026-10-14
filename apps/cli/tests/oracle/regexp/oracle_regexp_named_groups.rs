@@ -6,6 +6,7 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::string_property_with_read_context as string_property;
 use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, Value};
 
@@ -351,8 +352,7 @@ fn regexp_named_group_construction_and_compile_match_pinned_quickjs() {
 
 #[test]
 fn regexp_named_group_results_use_the_exec_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype =

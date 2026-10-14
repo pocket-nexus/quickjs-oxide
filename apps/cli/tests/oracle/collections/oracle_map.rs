@@ -1,9 +1,10 @@
 use crate::grouped_case_oracle::{compare_prelude_case_groups, self_check_prelude_cases};
 use crate::object_graph_observation::{expect_object, global_callable};
 use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{property_callable, take_exception_object};
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 // Differential lock for the complete strong Map surface exposed by pinned
 // QuickJS 2026-06-04. The vectors intentionally stay inside quickjs-oxide's
@@ -497,8 +498,7 @@ fn map_brand_errors_match_pinned_quickjs() {
 
 #[test]
 fn map_constructor_and_native_errors_use_exact_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

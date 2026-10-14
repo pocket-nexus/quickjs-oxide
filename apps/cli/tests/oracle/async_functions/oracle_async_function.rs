@@ -1,7 +1,7 @@
 use crate::object_graph_observation::{define_context_global as define_global, object};
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{drain, eval, integer, text};
-use quickjs_oxide::engine::api::{CallableRef, Runtime, Value};
+use crate::runtime_observation::{host_runtime, host_runtime_context};
+use quickjs_oxide::engine::api::{CallableRef, Value};
 use std::process::Command;
 
 #[test]
@@ -530,8 +530,7 @@ parameterEval().then(function (value) { parameterResult = value; });
 
 #[test]
 fn cross_realm_call_uses_caller_promise_and_jobs_but_callee_body_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut callee = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let caller_realm = caller.realm_id();
@@ -595,8 +594,7 @@ crossPromise.then(undefined, function (error) {
 
 #[test]
 fn stack_preflight_returns_a_caller_promise_rejected_with_a_caller_error() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut callee = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

@@ -9,9 +9,9 @@ use crate::primitive_probe::conversion_object;
 use crate::primitive_probe::eval_callable;
 use crate::primitive_probe::install_primitive_accessors;
 use crate::primitive_probe::take_error;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::property_callable;
 use crate::runtime_observation::take_error_object as take_exception_object;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use quickjs_oxide::engine::api::{
     CallableRef, Context, JsBigInt, JsString, ObjectRef, PropertyKey, Runtime, RuntimeError, Value,
     WellKnownSymbol,
@@ -1166,8 +1166,7 @@ fn rust_observations() -> Vec<String> {
 
 #[test]
 fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
@@ -1374,8 +1373,7 @@ fn bigint_cross_realm_routes_boxing_lookups_and_native_errors_to_the_defining_re
 
 #[test]
 fn bigint_wrapper_keeps_its_realm_graph_alive_until_collection() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let wrapper = {
         let mut context = runtime.new_context().expect("create context");
         let object_prototype = context.object_prototype().unwrap();

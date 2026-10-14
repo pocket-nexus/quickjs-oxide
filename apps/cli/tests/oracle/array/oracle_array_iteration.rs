@@ -1,7 +1,7 @@
 use super::support::*;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
-use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
 use std::ffi::OsStr;
 
 // This target pins the non-allocating modes of QuickJS 2026-06-04's shared
@@ -264,8 +264,7 @@ fn array_iteration_prototype_order_and_metadata_match_pinned_quickjs() {
 
 #[test]
 fn array_iteration_boxing_native_errors_and_user_throws_use_pinned_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();

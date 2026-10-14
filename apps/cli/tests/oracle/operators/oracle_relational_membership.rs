@@ -1,7 +1,7 @@
 use crate::object_graph_observation::object as expect_object;
 use crate::object_graph_observation::{function, get_property};
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::take_error_object as take_exception_object;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{show, string_value as string};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
@@ -399,8 +399,7 @@ fn source_relational_membership_no_in_diagnostics_match_pinned_quickjs() {
 
 #[test]
 fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_type_error = intrinsic_prototype(&runtime, &mut first, "TypeError");

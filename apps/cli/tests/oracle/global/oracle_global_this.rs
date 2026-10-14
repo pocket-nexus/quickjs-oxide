@@ -1,8 +1,8 @@
 use super::quickjs_plain_eval_oracle::eval_plain_lines;
 use crate::object_graph_observation::descriptor_bits;
 use crate::runtime_observation::error_text as error_string_property;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::value_text;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -231,8 +231,7 @@ fn global_this_matches_pinned_quickjs() {
 
 #[test]
 fn captured_global_this_tracks_the_defining_realm_across_property_transitions() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_global = defining.global_object().unwrap();
@@ -318,8 +317,7 @@ fn captured_global_this_tracks_the_defining_realm_across_property_transitions() 
 
 #[test]
 fn global_this_var_ref_cycle_is_collectable_after_context_drop() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     {
         let mut context = runtime.new_context().expect("create context");
         let global = context.global_object().unwrap();

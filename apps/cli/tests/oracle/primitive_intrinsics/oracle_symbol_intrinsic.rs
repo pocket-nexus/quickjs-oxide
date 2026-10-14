@@ -8,9 +8,9 @@ use crate::primitive_probe::conversion_object;
 use crate::primitive_probe::eval_callable;
 use crate::primitive_probe::install_primitive_accessors;
 use crate::primitive_probe::take_error;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_units as utf16_units;
 use crate::runtime_observation::take_error_object as take_exception_object;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, JsBigInt, JsString, ObjectRef,
     PropertyKey, Runtime, RuntimeError, SymbolRef, Value, WellKnownSymbol,
@@ -1276,8 +1276,7 @@ fn rust_observations() -> Vec<String> {
 
 #[test]
 fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
@@ -1577,8 +1576,7 @@ fn symbol_cross_realm_routes_registry_boxing_lookup_and_errors() {
 
 #[test]
 fn symbol_primitives_do_not_retain_realms_but_wrappers_do_and_atoms_survive() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let primitive = {
         let mut context = runtime.new_context().expect("create context");
         let global = context.global_object().unwrap();

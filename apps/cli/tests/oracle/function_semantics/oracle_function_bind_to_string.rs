@@ -1,7 +1,7 @@
 use crate::object_graph_observation::{bit, function, get_property};
 use crate::runtime_observation::hex;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::text as plain_string;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DescriptorField,
     JsString, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value,
@@ -1080,8 +1080,7 @@ fn rust_bound_execution_observations() -> Vec<String> {
         )
         .unwrap();
 
-    let cross_runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let cross_runtime = host_runtime();
     let mut target_realm = cross_runtime.new_context().expect("create context");
     let mut bind_realm = cross_runtime.new_context().expect("create context");
     let cross_target = function(

@@ -8,8 +8,9 @@
 use crate::object_graph_observation::{define_context_global as define_global, object};
 use crate::oracle_cases::SuccessCase;
 use crate::runtime_completion_oracle::{compare_success_cases, run};
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{eval, text};
-use quickjs_oxide::engine::api::{Runtime, Value};
+use quickjs_oxide::engine::api::Value;
 
 const CORE_CASES: &[SuccessCase] = &[
     SuccessCase {
@@ -559,8 +560,7 @@ repeated().next().then(function (result) {
 
 #[test]
 fn cross_realm_settlement_resumes_in_the_job_realm_and_executes_in_the_body_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut body = runtime.new_context().expect("create context");
     let mut settler = runtime.new_context().expect("create context");
     let settler_realm = settler.realm_id();

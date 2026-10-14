@@ -1,6 +1,6 @@
 use crate::quickjs_oracle::observe_completion as observe_oracle;
 use crate::runtime_completion_oracle::compare_eval_completion_cases as compare_cases;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
 use crate::object_graph_observation::{
     data_descriptor, define_named_builtin_data as define_data, define_to_primitive,
@@ -291,8 +291,7 @@ fn string_index_search_auto_init_can_be_deleted_before_first_get() {
 
 #[test]
 fn string_index_search_cross_realm_errors_and_user_throws_are_exact() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_string = defining.string_prototype().unwrap();
@@ -381,8 +380,7 @@ fn string_index_search_cross_realm_errors_and_user_throws_are_exact() {
 
 #[test]
 fn string_index_search_methods_are_per_realm_and_retain_then_release_their_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let (index_of, last_index_of) = {
         let mut first = runtime.new_context().expect("create context");
         let mut second = runtime.new_context().expect("create context");

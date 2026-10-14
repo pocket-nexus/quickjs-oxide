@@ -1,6 +1,7 @@
+use crate::runtime_observation::host_runtime;
 use quickjs_oxide::engine::api::{
     Context, ContextId, JsString, ModuleImportAttributes, ModuleLoadResult, ModuleLoader,
-    ModuleLoaderError, PromiseState, Runtime, Value,
+    ModuleLoaderError, PromiseState, Value,
 };
 use std::cell::{Cell, RefCell};
 use std::ffi::OsStr;
@@ -100,8 +101,7 @@ impl ModuleLoader for DynamicReentryLoader {
 
 #[test]
 fn dynamic_import_accepts_reentrant_compiled_modules_from_the_initiating_context() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let depth = Rc::new(Cell::new(0));
     let events = Rc::new(RefCell::new(Vec::new()));
     let _registration = runtime.set_module_loader(DynamicReentryLoader {

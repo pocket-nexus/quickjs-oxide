@@ -1,5 +1,6 @@
 use crate::object_graph_observation::int_property;
 use crate::oracle_cases::ExpectedCase as Case;
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
@@ -8,7 +9,7 @@ use crate::string_value_cases::{
     assert_quickjs_string_cases_match_frozen, assert_string_cases_match_frozen,
     assert_string_cases_match_quickjs,
 };
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 // These vectors freeze the complete Uint8Array base64/hex codec surface in
 // QuickJS 2026-06-04. In particular, they preserve the upstream decoder's
@@ -528,8 +529,7 @@ fn uint8array_codecs_match_pinned_quickjs() {
 
 #[test]
 fn uint8array_codec_results_and_errors_use_the_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

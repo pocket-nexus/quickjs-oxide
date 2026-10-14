@@ -1,10 +1,10 @@
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::oracle_script_case_observation as oracle_observation;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
     checked_value_type as value_type, primitive_value_text,
     property_callable_with_read_context as property_callable, take_exception_object,
 };
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
 
@@ -638,8 +638,7 @@ fn json_parse_allocations_and_native_errors_use_the_method_defining_realm() {
     // pins the C path directly: QuickJS stores a realm on every intrinsic C
     // function (`JS_NewCFunction3`) and switches to it before `js_json_parse`
     // allocates the parse graph, reviver contexts, wrapper, or SyntaxError.
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_object_prototype = defining.object_prototype().unwrap();

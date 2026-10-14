@@ -5,7 +5,7 @@ use crate::object_graph_observation::{own_data_descriptor as data_descriptor, ow
 use crate::runtime_completion_oracle::{
     compare_array_value_cases as compare_value_cases, observe_array_aware_eval as observe_rust_eval,
 };
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{
     primitive_value_text, property_callable_with_read_context as property_callable,
 };
@@ -552,8 +552,7 @@ fn object_oracle_vectors_execute_on_pinned_quickjs() {
 
 #[test]
 fn object_constructor_custom_new_target_and_cross_realm_fallback_are_pinned() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let constructor = global_callable(&runtime, &mut defining, "Object");

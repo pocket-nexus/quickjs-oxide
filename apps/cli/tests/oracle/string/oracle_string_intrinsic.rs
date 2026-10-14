@@ -6,6 +6,7 @@ use crate::object_graph_observation::{
 use crate::runtime_completion_oracle::{
     compare_eval_completion_cases_with_prelude, observe_quickjs_completion_with_prelude,
 };
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
 };
@@ -582,8 +583,7 @@ fn string_custom_new_target_matches_pinned_quickjs() {
 
 #[test]
 fn string_cross_realm_results_errors_and_user_throws_are_exact() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_global = defining.global_object().unwrap();
@@ -681,8 +681,7 @@ fn string_cross_realm_results_errors_and_user_throws_are_exact() {
 
 #[test]
 fn string_constructor_and_statics_are_per_realm_and_collectable() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let retained = {
         let mut first = runtime.new_context().expect("create context");
         let mut second = runtime.new_context().expect("create context");
@@ -719,8 +718,7 @@ fn string_constructor_and_statics_are_per_realm_and_collectable() {
 
 #[test]
 fn string_wrapper_retains_then_releases_its_realm_graph() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let wrapper = {
         let mut context = runtime.new_context().expect("create context");
         let global = context.global_object().unwrap();
@@ -747,8 +745,7 @@ fn string_wrapper_retains_then_releases_its_realm_graph() {
 }
 
 fn rust_custom_new_target_observations() -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_global = defining.global_object().unwrap();

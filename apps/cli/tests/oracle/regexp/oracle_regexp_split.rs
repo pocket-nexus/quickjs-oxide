@@ -1,12 +1,12 @@
 use crate::runtime_completion_oracle::compare_read_context_eval_completion_cases_with_prelude;
 use crate::runtime_completion_oracle::self_check_prelude_vectors;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_value;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{
     string_property_with_read_context as string_property, take_exception_object,
 };
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04
 // `js_regexp_Symbol_split` (`quickjs.c` 48875-48990), including
@@ -600,8 +600,7 @@ fn regexp_split_recursion_is_catchable_and_recovers_like_pinned_quickjs() {
 
 #[test]
 fn regexp_split_intrinsics_use_defining_realms_and_foreign_species() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

@@ -1,13 +1,13 @@
 use crate::runtime_completion_oracle::{
     ErrorPropertyStyle, compare_prelude_cases_collecting_failures,
 };
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_value;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{
     string_property_with_read_context as string_property, take_exception_object,
 };
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 use std::ffi::OsStr;
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_match`'s
@@ -519,8 +519,7 @@ fn match_protocol_recursion_is_catchable_and_recovers_like_pinned_quickjs() {
 
 #[test]
 fn match_intrinsics_use_defining_realms_and_accept_foreign_regexp_brands() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

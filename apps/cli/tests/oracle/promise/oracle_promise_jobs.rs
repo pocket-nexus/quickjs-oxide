@@ -1,8 +1,8 @@
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::integer;
 use crate::runtime_observation::text;
 use crate::runtime_observation::{drain, eval};
-use quickjs_oxide::engine::api::{Runtime, RuntimeError};
+use crate::runtime_observation::{host_runtime, host_runtime_context};
+use quickjs_oxide::engine::api::RuntimeError;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -241,8 +241,7 @@ rejectEarly('early');
 
 #[test]
 fn pending_job_reports_its_originating_context_on_success_and_throw() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     drop(eval(

@@ -1,7 +1,7 @@
 use crate::object_graph_observation::context_global_value as global_value;
 use crate::runtime_observation::eval;
-use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::{Context, Runtime, Value};
+use crate::runtime_observation::{host_runtime, host_runtime_context};
+use quickjs_oxide::engine::api::{Context, Value};
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3q_promise_aggregates.js");
 const EXPECTED: &str =
@@ -34,8 +34,7 @@ fn promise_all_settled_and_any_match_pinned_quickjs() {
 
 #[test]
 fn promise_aggregate_internal_values_follow_quickjs_context_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

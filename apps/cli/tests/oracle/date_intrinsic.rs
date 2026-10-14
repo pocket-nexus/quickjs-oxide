@@ -3,6 +3,7 @@ use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end;
 use crate::runtime_completion_oracle::{
     ErrorPropertyStyle, compare_prelude_cases_collecting_failures,
 };
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::primitive_value_text;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
@@ -481,8 +482,7 @@ fn date_to_primitive_and_to_json_match_pinned_quickjs() {
 
 #[test]
 fn date_cross_realm_prototypes_fallback_and_errors_use_exact_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 
@@ -580,8 +580,7 @@ fn date_cross_realm_prototypes_fallback_and_errors_use_exact_realms() {
 
 #[test]
 fn detached_date_and_native_method_keep_their_defining_realm_collectable() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let (date, value_of) = {
         let mut defining = runtime.new_context().expect("create context");
         let date = eval_object(&mut defining, "new Date(42)", "detached Date");

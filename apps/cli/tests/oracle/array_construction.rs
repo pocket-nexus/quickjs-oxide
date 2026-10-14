@@ -1,6 +1,6 @@
 use crate::runtime_completion_oracle::{compare_cli, compare_value_cases};
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_units;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{
     CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString, ObjectRef,
@@ -326,8 +326,7 @@ fn array_host_definitions_use_array_set_length_semantics() {
 
 #[test]
 fn array_literal_iterator_and_errors_use_the_bytecode_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     drop(

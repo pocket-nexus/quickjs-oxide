@@ -1,6 +1,6 @@
 use super::quickjs_plain_eval_oracle::eval_plain_lines;
 use crate::object_graph_observation::descriptor_bits;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, JsString,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value, WellKnownSymbol,
@@ -150,8 +150,7 @@ fn global_to_string_tag_matches_pinned_quickjs() {
 
 #[test]
 fn object_to_string_cross_realm_uses_receiver_tag_and_method_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();

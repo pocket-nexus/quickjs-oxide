@@ -3,10 +3,11 @@ use crate::runtime_completion_oracle::STRING_CAPTURE_PRELUDE as CASE_PRELUDE;
 use crate::runtime_completion_oracle::compare_eval_completion_cases_with_prelude;
 use crate::runtime_completion_oracle::self_check_prelude_vectors;
 use crate::runtime_observation::assert_native_error;
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
 };
-use quickjs_oxide::engine::api::{JsString, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04 `js_string_toLowerCase`, its Unicode 17 case
 // conversion/property tables, and the four GenericMagic String prototype
@@ -427,8 +428,7 @@ fn string_case_recursion_is_catchable_shared_and_recovers() {
 
 #[test]
 fn string_case_defining_realms_user_throw_identity_and_caller_construct_error_are_exact() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
@@ -505,8 +505,7 @@ fn string_case_defining_realms_user_throw_identity_and_caller_construct_error_ar
 
 #[test]
 fn string_case_callables_are_per_realm_distinct_and_collectable() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let retained = {
         let mut first = runtime.new_context().expect("create context");
         let mut second = runtime.new_context().expect("create context");
@@ -552,8 +551,7 @@ fn string_case_callables_are_per_realm_distinct_and_collectable() {
 
 #[test]
 fn string_case_stack_overflow_uses_the_caller_realm_and_recovers() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();

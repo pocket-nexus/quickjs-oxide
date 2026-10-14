@@ -1,6 +1,7 @@
 use crate::runtime_completion_oracle::{
     ErrorPropertyStyle, compare_prelude_cases_collecting_failures,
 };
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::primitive_value_text;
 
 use crate::object_graph_observation::{
@@ -238,8 +239,7 @@ fn regexp_match_indices_replace_callbacks_match_pinned_quickjs() {
 
 #[test]
 fn regexp_match_indices_nested_arrays_use_the_exec_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype =

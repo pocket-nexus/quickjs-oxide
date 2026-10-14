@@ -10,7 +10,6 @@ use crate::quickjs_array_completion_oracle::observe_array_completion;
 use crate::runtime_observation::array_value_text;
 use crate::runtime_observation::assert_success;
 use crate::runtime_observation::error_name;
-use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::normalize_rust_value_text as normalize_rust_value;
 use crate::runtime_observation::primitive_value_text_with_signed_zero;
 use crate::runtime_observation::take_rust_error;
@@ -18,6 +17,7 @@ use crate::runtime_observation::{
     checked_value_type, error_string_property, plain_value_type, primitive_value_text,
     primitive_value_text_with_rust_float, string_property, string_property_with_read_context,
 };
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::run_cli;
 use crate::runtime_oracle::{error_string_property as runtime_error_string_property, value_type};
 use quickjs_oxide::engine::api::JsString;
@@ -550,8 +550,7 @@ pub(crate) fn compare_success_cases(group: &str, cases: &[SuccessCase]) {
 }
 
 pub(crate) fn rust_value_observation(source: &str, description: &str) -> String {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let value = runtime
         .new_context()
         .expect("create context")

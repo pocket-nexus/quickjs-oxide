@@ -1,7 +1,7 @@
 use crate::object_graph_observation::data_descriptor;
 use crate::object_graph_observation::eval_callable;
 use crate::object_graph_observation::expect_object;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, Value,
@@ -423,8 +423,7 @@ fn rust_observations() -> Vec<String> {
 
 #[test]
 fn sloppy_string_boxing_uses_the_bytecode_functions_defining_realm() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut first = runtime.new_context().expect("create context");
     let mut second = runtime.new_context().expect("create context");
     let first_boxer = eval_callable(&runtime, &mut first, "(function () { return this; })");
@@ -471,8 +470,7 @@ fn sloppy_string_boxing_uses_the_bytecode_functions_defining_realm() {
 
 #[test]
 fn rooted_string_wrapper_preserves_payload_and_final_release_collects_the_graph() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let wrapper = {
         let mut context = runtime.new_context().expect("create context");
         box_string(

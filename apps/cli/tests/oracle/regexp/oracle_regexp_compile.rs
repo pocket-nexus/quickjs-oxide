@@ -3,6 +3,7 @@ use crate::runtime_completion_oracle::{
     compare_read_context_eval_completion_cases_with_prelude,
     observe_quickjs_completion_with_prelude,
 };
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::string_value;
 use crate::runtime_observation::{
     string_property_with_read_context as string_property, take_exception_object,
@@ -344,8 +345,7 @@ fn regexp_compile_mutation_order_matches_pinned_quickjs() {
 
 #[test]
 fn regexp_compile_intrinsic_uses_defining_realm_and_accepts_foreign_brands() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

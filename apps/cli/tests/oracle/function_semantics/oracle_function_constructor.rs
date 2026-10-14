@@ -1,4 +1,5 @@
 use crate::object_graph_observation::{bit, get_property as property_value, property_text};
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{string_value as string, value_text};
 use quickjs_oxide::engine::api::{
     AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, Context, DebugInfoMode,
@@ -197,8 +198,7 @@ fn function_constructor_matches_quickjs_oracle() {
 }
 
 fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     runtime
         .set_debug_info_mode(mode)
         .expect("set runtime configuration");

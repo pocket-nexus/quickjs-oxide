@@ -3,12 +3,12 @@ use crate::grouped_case_oracle::assert_grouped_cases_agree;
 use crate::object_graph_observation::checked_property_value as object_property;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::observe_oxide;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 const ORACLE_WRAPPER: &str = r#"
 var value = std.evalScript(scriptArgs[0]);
@@ -700,8 +700,7 @@ fn iterator_concat_cross_realm_graph_and_native_next_use_the_current_realm() {
     // current context rather than switching to the inner method's realm. A
     // same-runtime, two-context probe against the pinned libquickjs reports:
     // `sequence-prototype=1:0|step-prototype=1|value-identity=1|native-error=1:0`.
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

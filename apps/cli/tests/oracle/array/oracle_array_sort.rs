@@ -1,8 +1,8 @@
 use super::support::*;
-use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::{host_runtime, host_runtime_context};
 
 use crate::object_graph_observation::int_property;
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 use std::ffi::OsStr;
 
 // This target pins QuickJS 2026-06-04's ordinary Array sort kernel and its
@@ -438,8 +438,7 @@ fn array_sort_prototype_order_metadata_and_constructability_match_pinned_quickjs
 
 #[test]
 fn array_sort_cross_realm_results_boxing_native_and_user_errors_match_quickjs() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
@@ -577,8 +576,7 @@ fn array_sort_cross_realm_results_boxing_native_and_user_errors_match_quickjs() 
 
 #[test]
 fn array_sort_atom_literal_identity_survives_publication_and_context_boundaries() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     assert_eq!(

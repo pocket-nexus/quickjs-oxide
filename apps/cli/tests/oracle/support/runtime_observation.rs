@@ -11,10 +11,14 @@ use std::process::Output;
 /// Destructure it as `let (runtime, mut context)` so the context still drops
 /// before its runtime.
 pub(crate) fn host_runtime_context() -> (Runtime, Context) {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let context = runtime.new_context().expect("create context");
     (runtime, context)
+}
+
+/// Create a runtime with the system host services.
+pub(crate) fn host_runtime() -> Runtime {
+    Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default())
 }
 
 /// Classify a value for completion-vector output while retaining the explicit

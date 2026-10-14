@@ -1,6 +1,7 @@
 use crate::grouped_case_oracle::{compare_prelude_case_groups, self_check_prelude_cases};
 use crate::object_graph_observation::{expect_object, global_callable};
 use crate::oracle_cases::GroupedCase as Case;
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{property_callable, take_exception_object};
 use crate::runtime_oracle::{eval_callable, eval_object};
 use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
@@ -412,8 +413,7 @@ fn weak_map_upsert_and_weak_collection_brands_match_pinned_quickjs() {
 
 #[test]
 fn weak_collection_new_target_fallback_and_native_errors_use_exact_realms() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
 

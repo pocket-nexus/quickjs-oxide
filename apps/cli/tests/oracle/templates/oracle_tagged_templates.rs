@@ -1,7 +1,8 @@
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::oracle_script_case_name_observation as oracle_observation;
 use crate::runtime_completion_oracle::rust_case_name_observation as rust_observation;
-use quickjs_oxide::engine::api::{DebugInfoMode, Runtime, Value};
+use crate::runtime_observation::host_runtime;
+use quickjs_oxide::engine::api::{DebugInfoMode, Value};
 
 // Pins the first tagged-template slice against QuickJS 2026-06-04. The
 // observer sources return primitive strings so object identity, descriptors,
@@ -444,8 +445,7 @@ fn tagged_template_rust_smoke_matches_pinned_expectation() {
 
 #[test]
 fn tagged_template_site_identity_survives_gc_in_strip_debug_mode() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     runtime
         .set_debug_info_mode(DebugInfoMode::StripDebug)
         .expect("set runtime configuration");

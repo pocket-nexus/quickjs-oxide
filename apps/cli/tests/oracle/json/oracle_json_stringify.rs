@@ -2,11 +2,12 @@ use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_completion_oracle::{
     oracle_script_case_observation as oracle_observation, rust_case_observation as rust_observation,
 };
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04's `JS_JSONStringify`, `js_json_to_str`, and
 // `JS_ToQuotedString` paths. Each observer returns an ASCII primitive string,
@@ -619,8 +620,7 @@ fn json_stringify_wrapper_and_native_errors_use_the_method_defining_realm() {
     // The qjs CLI has no same-runtime multi-context bridge. This regression
     // pins the C path directly: intrinsic C functions carry their defining
     // realm, which supplies the root wrapper and native TypeError objects.
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
     let mut caller = runtime.new_context().expect("create context");
     let defining_object_prototype = defining.object_prototype().unwrap();
