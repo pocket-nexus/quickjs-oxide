@@ -717,6 +717,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
         cases,
         primitive_value_text,
         ErrorPropertyStyle::Compact,
+        crate::quickjs_oracle::observe_completion,
     );
 }
 

@@ -1,13 +1,15 @@
 use crate::object_graph_observation::require_object as expect_object;
-use crate::runtime_completion_oracle::observe_read_context_eval_completion_with_prelude;
-use crate::runtime_observation::host_runtime_context;
+use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end;
+use crate::runtime_completion_oracle::{
+    ErrorPropertyStyle, compare_prelude_cases_collecting_failures,
+};
+use crate::runtime_observation::primitive_value_text;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::{eval_callable, eval_object};
 use quickjs_oxide::engine::api::{CallableRef, Context, Runtime, RuntimeError, Value};
 use std::ffi::OsStr;
-use std::process::Command;
 
 // Differential lock for the complete observable Date slice in pinned QuickJS
 // 2026-06-04. Every JavaScript vector stays inside quickjs-oxide's currently
@@ -628,29 +630,13 @@ fn detached_date_and_native_method_keep_their_defining_realm_collectable() {
 }
 
 fn compare_cases(group: &str, cases: &[(&str, &str)]) {
-    let oracle = require_qjs_oracle!("{group}");
-    let mut failures = Vec::new();
-    for &(description, source) in cases {
-        let (runtime, mut context) = host_runtime_context();
-        let actual = observe_read_context_eval_completion_with_prelude(
-            &runtime,
-            &mut context,
-            PRELUDE,
-            source,
-            description,
-        );
-        let expected = observe_oracle(&oracle, source, description);
-        if actual != expected {
-            failures.push(format!(
-                "{description}\nsource: {source:?}\noxide: {actual:?}\noracle: {expected:?}",
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "{group} drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
+    compare_prelude_cases_collecting_failures(
+        PRELUDE,
+        group,
+        cases,
+        primitive_value_text,
+        ErrorPropertyStyle::ReadContext,
+        observe_completion_argv_trim_end,
     );
 }
 
@@ -659,29 +645,7 @@ fn observed_source(source: &str) -> String {
 }
 
 fn observe_oracle(oracle: &OsStr, source: &str, description: &str) -> String {
-    let source = observed_source(source);
-    let wrapper = r#"
-try {
-  var value=std.evalScript(scriptArgs[0]);
-  print('return|'+typeof value+'|'+String(value));
-} catch(error) {
-  if(error!==null&&typeof error==='object')print('throw|object|'+error.name+'|'+error.message);
-  else print('throw|'+typeof error+'|'+String(error));
-}
-"#;
-    let output = Command::new(oracle)
-        .args(["--std", "-e", wrapper, &source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run QuickJS for {description}: {error}"));
-    assert!(
-        output.status.success(),
-        "QuickJS observer failed for {description}: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| panic!("QuickJS output was not UTF-8 for {description}: {error}"))
-        .trim_end()
-        .to_owned()
+    observe_completion_argv_trim_end(oracle, &observed_source(source), description)
 }
 
 fn date_constructor(runtime: &Runtime, context: &mut Context) -> CallableRef {

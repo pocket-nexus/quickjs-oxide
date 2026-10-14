@@ -935,6 +935,7 @@ pub(crate) fn compare_cases_collecting_failures(group: &str, cases: &[(&str, &st
         cases,
         primitive_value_text_with_signed_zero,
         ErrorPropertyStyle::CheckedValue,
+        crate::quickjs_oracle::observe_completion,
     );
 }
 
@@ -946,6 +947,7 @@ pub(crate) fn compare_prelude_cases_collecting_failures(
     cases: &[(&str, &str)],
     value_text: fn(Value) -> String,
     error_property_style: ErrorPropertyStyle,
+    oracle_completion: fn(&OsStr, &str, &str) -> String,
 ) {
     let oracle = require_qjs_oracle!("{group}");
     let mut failures = Vec::new();
@@ -962,7 +964,7 @@ pub(crate) fn compare_prelude_cases_collecting_failures(
             error_property_style,
             EngineFailureStyle::Source,
         );
-        let expected = crate::quickjs_oracle::observe_completion(&oracle, &prefixed, description);
+        let expected = oracle_completion(&oracle, &prefixed, description);
         if actual != expected {
             failures.push(format!(
                 "{description}\nsource: {source:?}\noxide: {actual:?}\noracle: {expected:?}",
