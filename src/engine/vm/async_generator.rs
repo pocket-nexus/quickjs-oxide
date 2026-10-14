@@ -102,10 +102,10 @@ impl Runtime {
                 1,
             )?;
         }
-        self.define_generator_to_string_tag(&async_generator_prototype, "AsyncGenerator")?;
+        self.define_to_string_tag(&async_generator_prototype, "AsyncGenerator")?;
 
         let async_generator_function_prototype = self.new_object(Some(function_prototype))?;
-        self.define_generator_to_string_tag(
+        self.define_to_string_tag(
             &async_generator_function_prototype,
             "AsyncGeneratorFunction",
         )?;

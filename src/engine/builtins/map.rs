@@ -19,7 +19,7 @@ use crate::engine::object::{
     WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation, NativeInvokeOutcome};
 #[cfg(test)]
@@ -203,30 +203,6 @@ impl Runtime {
         Ok(())
     }
 
-    fn define_to_string_tag(
-        &self,
-        object: &ObjectRef,
-        value: &'static str,
-    ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(value))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Map intrinsic toStringTag definition was rejected",
-            ));
-        }
-        Ok(())
-    }
-
     pub(in crate::engine::builtins) fn map_realm_data(
         &self,
         realm: ContextId,
@@ -296,7 +272,7 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         match kind {
             MapNativeKind::Constructor => self.call_map_constructor(realm, invocation, arguments),
-            MapNativeKind::Species => self.call_map_species(invocation),
+            MapNativeKind::Species => self.call_species_getter(invocation),
             MapNativeKind::GroupBy => self.call_map_group_by(realm, invocation, arguments),
             MapNativeKind::Set => self.call_map_set(realm, invocation, arguments),
             MapNativeKind::Get => self.call_map_get(realm, invocation, arguments),
@@ -315,15 +291,6 @@ impl Runtime {
                 self.call_map_iterator_factory(realm, invocation, kind)
             }
         }
-    }
-
-    fn call_map_species(&self, invocation: &NativeInvocation) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Getter { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Map species did not receive a getter invocation",
-            ));
-        };
-        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     fn call_map_constructor(

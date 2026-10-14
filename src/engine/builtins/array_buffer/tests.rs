@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::value::JsString;
 
 #[test]
 fn transfer_copies_prefix_zero_fills_growth_and_detaches_source() {

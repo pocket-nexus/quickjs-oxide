@@ -298,7 +298,7 @@ impl PromiseStep {
                 })
             }
             NativeFunctionId::Promise(PromiseNativeKind::Species) => {
-                runtime.call_promise_species(invocation).map(Self::Complete)
+                runtime.call_species_getter(invocation).map(Self::Complete)
             }
             NativeFunctionId::PromiseCapabilityExecutor => runtime
                 .call_promise_capability_executor(realm, invocation.dup(runtime)?, arguments)

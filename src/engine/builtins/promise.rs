@@ -279,22 +279,7 @@ impl Runtime {
     }
 
     fn define_promise_to_string_tag(&self, object: &ObjectRef) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static("Promise"))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Promise toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(object, "Promise")?;
         Ok(())
     }
 
@@ -607,7 +592,7 @@ impl Runtime {
             }
             PromiseNativeKind::Species => self
                 .dispatch_borrowed_invocation(invocation, |invocation| {
-                    self.call_promise_species(invocation)
+                    self.call_species_getter(invocation)
                 }),
             PromiseNativeKind::Then => self.call_promise_then(realm, invocation, arguments),
             PromiseNativeKind::Catch => self.call_promise_catch(realm, invocation, arguments),
@@ -622,18 +607,6 @@ impl Runtime {
             PromiseNativeKind::Race => self.call_promise_race(realm, invocation, arguments),
             PromiseNativeKind::WithResolvers => self.call_promise_with_resolvers(realm, invocation),
         }
-    }
-
-    fn call_promise_species(
-        &self,
-        invocation: &NativeInvocation,
-    ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Getter { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Promise species did not receive a getter invocation",
-            ));
-        };
-        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     fn call_promise_constructor(

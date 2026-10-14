@@ -15,12 +15,9 @@ use crate::engine::builtins::native::{
 use crate::engine::heap::{
     ContextId, HeapError, ObjectId, ObjectPayload, RawValue, WeakCollectionKey, WeakRefRealmData,
 };
-use crate::engine::object::{
-    CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    WellKnownSymbol,
-};
+use crate::engine::object::{CallableRef, ObjectRef};
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -58,7 +55,7 @@ impl Runtime {
             0,
             0,
         )?;
-        self.define_weak_intrinsic_to_string_tag(&weak_ref_prototype, "WeakRef")?;
+        self.define_to_string_tag(&weak_ref_prototype, "WeakRef")?;
         let weak_ref_constructor = self.new_native_builtin(
             function_prototype,
             realm,
@@ -93,10 +90,7 @@ impl Runtime {
             1,
             1,
         )?;
-        self.define_weak_intrinsic_to_string_tag(
-            &finalization_registry_prototype,
-            "FinalizationRegistry",
-        )?;
+        self.define_to_string_tag(&finalization_registry_prototype, "FinalizationRegistry")?;
         let finalization_registry_constructor = self.new_native_builtin(
             function_prototype,
             realm,
@@ -124,30 +118,6 @@ impl Runtime {
                 finalization_registry_prototype: finalization_registry_prototype.object_id(),
             },
         )?;
-        Ok(())
-    }
-
-    fn define_weak_intrinsic_to_string_tag(
-        &self,
-        object: &ObjectRef,
-        value: &'static str,
-    ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(value))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "weak intrinsic toStringTag definition was rejected",
-            ));
-        }
         Ok(())
     }
 

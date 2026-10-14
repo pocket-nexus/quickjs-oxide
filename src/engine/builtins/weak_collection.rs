@@ -15,11 +15,9 @@ use crate::engine::heap::{
     ContextId, HeapError, ObjectData, ObjectId, ObjectPayload, RawValue, WeakCollectionKey,
     WeakMapRealmData, WeakSetRealmData,
 };
-use crate::engine::object::{
-    DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
-};
+use crate::engine::object::ObjectRef;
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -101,7 +99,7 @@ impl Runtime {
                 readable,
             )?;
         }
-        self.define_weak_collection_to_string_tag(&prototype, "WeakMap")?;
+        self.define_to_string_tag(&prototype, "WeakMap")?;
 
         let constructor = self.new_native_builtin(
             function_prototype,
@@ -150,7 +148,7 @@ impl Runtime {
                 readable,
             )?;
         }
-        self.define_weak_collection_to_string_tag(&prototype, "WeakSet")?;
+        self.define_to_string_tag(&prototype, "WeakSet")?;
 
         let constructor = self.new_native_builtin(
             function_prototype,
@@ -174,30 +172,6 @@ impl Runtime {
                 prototype: prototype.object_id(),
             },
         )?;
-        Ok(())
-    }
-
-    fn define_weak_collection_to_string_tag(
-        &self,
-        object: &ObjectRef,
-        value: &'static str,
-    ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(value))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "weak collection toStringTag definition was rejected",
-            ));
-        }
         Ok(())
     }
 

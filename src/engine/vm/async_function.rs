@@ -16,10 +16,8 @@ use crate::engine::heap::{
     AsyncFunctionPhase, AsyncFunctionRealmData, AsyncFunctionResumeKind, ContextId,
     InternalCallableData, ObjectData,
 };
-use crate::engine::object::{
-    DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
-};
-use crate::engine::value::{JsString, Value};
+use crate::engine::object::ObjectRef;
+use crate::engine::value::Value;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 use crate::engine::vm::suspend::{self, EncodedVmActivation, VmActivationResume};
 use crate::engine::vm::{Completion, VmSuspendKind};
@@ -58,24 +56,7 @@ impl Runtime {
         function_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
         let async_function_prototype = self.new_object(Some(function_prototype))?;
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            &async_function_prototype,
-            &tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(
-                    "AsyncFunction",
-                ))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "AsyncFunction intrinsic toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(&async_function_prototype, "AsyncFunction")?;
 
         let function_constructor = self
             .0

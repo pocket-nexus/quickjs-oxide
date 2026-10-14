@@ -15,10 +15,8 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::NativeFunctionId,
     heap::{ContextId, ObjectId},
-    object::{
-        DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
-    },
-    value::{JsString, JsValue, Value, conversion::NativeConversion},
+    object::ObjectRef,
+    value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{
@@ -110,25 +108,7 @@ impl Runtime {
             )?;
         }
 
-        let to_string_tag = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::ToStringTag)
-                .expect("well-known symbol"),
-        );
-        if !self.define_own_property(
-            &prototype,
-            &to_string_tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static("DataView"))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "DataView toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(&prototype, "DataView")?;
 
         let constructor = self.new_native_builtin(
             function_prototype,

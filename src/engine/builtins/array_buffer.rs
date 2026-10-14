@@ -23,7 +23,7 @@ use crate::engine::object::{
     WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -123,27 +123,7 @@ impl Runtime {
             )?;
         }
 
-        let to_string_tag = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::ToStringTag)
-                .expect("well-known symbol"),
-        );
-        if !self.define_own_property(
-            &prototype,
-            &to_string_tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(
-                    "ArrayBuffer",
-                ))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "ArrayBuffer toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(&prototype, "ArrayBuffer")?;
 
         let constructor = self.new_native_builtin(
             function_prototype,
@@ -223,7 +203,7 @@ impl Runtime {
                 self.call_array_buffer_constructor(realm, invocation, arguments)
             }
             ArrayBufferNativeKind::IsView => self.call_array_buffer_is_view(invocation, arguments),
-            ArrayBufferNativeKind::Species => self.call_array_buffer_species(invocation),
+            ArrayBufferNativeKind::Species => self.call_species_getter(invocation),
             ArrayBufferNativeKind::ByteLength
             | ArrayBufferNativeKind::MaxByteLength
             | ArrayBufferNativeKind::Resizable
@@ -326,18 +306,6 @@ impl Runtime {
         };
         // Proxies intentionally do not forward this internal-slot brand test.
         Ok(Completion::Return(JsValue::Bool(is_view)))
-    }
-
-    pub(in crate::engine::builtins) fn call_array_buffer_species(
-        &self,
-        invocation: &NativeInvocation,
-    ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Getter { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "ArrayBuffer species did not receive a getter invocation",
-            ));
-        };
-        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     pub(in crate::engine::builtins) fn call_array_buffer_getter(

@@ -59,7 +59,7 @@ use crate::engine::{
         WellKnownSymbol,
         shape::{PropertyFlags, ShapeEntry},
     },
-    value::{JsString, Value},
+    value::Value,
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -91,27 +91,7 @@ impl Runtime {
             0,
             0,
         )?;
-        let iterator_tag = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::ToStringTag)
-                .expect("well-known symbol"),
-        );
-        if !self.define_own_property(
-            &regexp_string_iterator_prototype,
-            &iterator_tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(
-                    "RegExp String Iterator",
-                ))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "RegExp String Iterator toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(&regexp_string_iterator_prototype, "RegExp String Iterator")?;
         // Preserve pinned source-table order.  OrdinaryOwnPropertyKeys later
         // performs its own integer/String/Symbol grouping.
         for (kind, property_name, getter_name) in [
@@ -378,7 +358,7 @@ impl Runtime {
                 self.call_regexp_constructor(realm, invocation, arguments)
             }
             RegExpNativeKind::Escape => self.call_regexp_escape(realm, &invocation, arguments),
-            RegExpNativeKind::Species => self.call_regexp_species(&invocation),
+            RegExpNativeKind::Species => self.call_species_getter(&invocation),
             RegExpNativeKind::Source | RegExpNativeKind::Flags | RegExpNativeKind::Flag(_) => {
                 self.call_regexp_accessor(realm, kind, invocation)
             }

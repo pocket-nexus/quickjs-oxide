@@ -15,10 +15,8 @@ use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::heap::{
     ContextId, GeneratorRealmData, GeneratorState, ObjectData, ObjectPayload,
 };
-use crate::engine::object::{
-    DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
-};
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::object::ObjectRef;
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::call::{NativeArguments, NativeInvocation, NativeInvokeOutcome};
 use crate::engine::vm::suspend::{self, EncodedVmActivation, VmActivationResume, VmRunOutcome};
 use crate::engine::vm::{Completion, VmResume, VmSuspendKind};
@@ -48,10 +46,10 @@ impl Runtime {
                 1,
             )?;
         }
-        self.define_generator_to_string_tag(&generator_prototype, "Generator")?;
+        self.define_to_string_tag(&generator_prototype, "Generator")?;
 
         let generator_function_prototype = self.new_object(Some(function_prototype))?;
-        self.define_generator_to_string_tag(&generator_function_prototype, "GeneratorFunction")?;
+        self.define_to_string_tag(&generator_function_prototype, "GeneratorFunction")?;
 
         let function_constructor = self
             .0
@@ -117,30 +115,6 @@ impl Runtime {
                 function_prototype: generator_function_prototype.object_id(),
             },
         )?;
-        Ok(())
-    }
-
-    pub(crate) fn define_generator_to_string_tag(
-        &self,
-        object: &ObjectRef,
-        value: &'static str,
-    ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(value))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Generator intrinsic toStringTag definition was rejected",
-            ));
-        }
         Ok(())
     }
 
@@ -527,6 +501,7 @@ impl Runtime {
 mod tests {
     use crate::engine::heap::PropertySlot;
     use crate::engine::object::shape::PropertyFlags;
+    use crate::engine::value::JsString;
 
     use super::*;
 

@@ -549,7 +549,7 @@ impl Runtime {
             }
             TypedArrayNativeKind::From => self.call_typed_array_from(realm, invocation, arguments),
             TypedArrayNativeKind::Of => self.call_typed_array_of(realm, invocation, arguments),
-            TypedArrayNativeKind::Species => self.call_typed_array_species(&invocation),
+            TypedArrayNativeKind::Species => self.call_species_getter(&invocation),
             TypedArrayNativeKind::Length
             | TypedArrayNativeKind::Buffer
             | TypedArrayNativeKind::ByteLength
@@ -699,18 +699,6 @@ impl Runtime {
             fixed_byte_length,
             element,
         )?))
-    }
-
-    pub(in crate::engine::builtins) fn call_typed_array_species(
-        &self,
-        invocation: &NativeInvocation,
-    ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Getter { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "TypedArray species did not receive a getter invocation",
-            ));
-        };
-        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     pub(in crate::engine::builtins) fn call_typed_array_getter(

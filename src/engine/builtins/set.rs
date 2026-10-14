@@ -19,7 +19,7 @@ use crate::engine::object::{
     WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation, NativeInvokeOutcome};
 
@@ -127,7 +127,7 @@ impl Runtime {
             0,
             0,
         )?;
-        self.define_set_to_string_tag(&set_prototype, "Set")?;
+        self.define_to_string_tag(&set_prototype, "Set")?;
 
         self.define_native_builtin_auto_init(
             &set_iterator_prototype,
@@ -137,7 +137,7 @@ impl Runtime {
             0,
             0,
         )?;
-        self.define_set_to_string_tag(&set_iterator_prototype, "Set Iterator")?;
+        self.define_to_string_tag(&set_iterator_prototype, "Set Iterator")?;
 
         let constructor = self.new_native_builtin(
             function_prototype,
@@ -222,30 +222,6 @@ impl Runtime {
         Ok(())
     }
 
-    fn define_set_to_string_tag(
-        &self,
-        object: &ObjectRef,
-        value: &'static str,
-    ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(value))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Set intrinsic toStringTag definition was rejected",
-            ));
-        }
-        Ok(())
-    }
-
     pub(in crate::engine::builtins) fn set_realm_data(
         &self,
         realm: ContextId,
@@ -312,7 +288,7 @@ impl Runtime {
     ) -> Result<Completion, RuntimeError> {
         match kind {
             SetNativeKind::Constructor => self.call_set_constructor(realm, invocation, arguments),
-            SetNativeKind::Species => self.call_set_species(invocation),
+            SetNativeKind::Species => self.call_species_getter(invocation),
             SetNativeKind::GroupBy => {
                 self.call_map_native_borrowed(realm, MapNativeKind::GroupBy, invocation, arguments)
             }
@@ -339,15 +315,6 @@ impl Runtime {
                 self.call_set_iterator_factory(realm, invocation, kind)
             }
         }
-    }
-
-    fn call_set_species(&self, invocation: &NativeInvocation) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Getter { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Set species did not receive a getter invocation",
-            ));
-        };
-        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     fn call_set_constructor(

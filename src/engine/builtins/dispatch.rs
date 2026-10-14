@@ -36,6 +36,19 @@ fn native_invocation_input(invocation: NativeInvocation) -> crate::engine::value
 mod input_admission_tests;
 
 impl Runtime {
+    /// The shared `get [Symbol.species]` accessor: it returns its receiver.
+    pub(in crate::engine::builtins) fn call_species_getter(
+        &self,
+        invocation: &NativeInvocation,
+    ) -> Result<Completion, RuntimeError> {
+        let NativeInvocation::Getter { this_value } = invocation else {
+            return Err(RuntimeError::Invariant(
+                "species did not receive a getter invocation",
+            ));
+        };
+        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
+    }
+
     /// Move bound and caller argument edges into one internal buffer without
     /// materializing payloads or retaining transferred values.
     pub(crate) fn concatenate_bound_arguments_jsvalue(
@@ -650,14 +663,12 @@ impl Runtime {
             NativeFunctionId::ArrayBuffer(Ab::IsView) => {
                 self.call_array_buffer_is_view(invocation, arguments)
             }
-            NativeFunctionId::ArrayBuffer(Ab::Species) => {
-                self.call_array_buffer_species(invocation)
-            }
+            NativeFunctionId::ArrayBuffer(Ab::Species) => self.call_species_getter(invocation),
             NativeFunctionId::ArrayBuffer(
                 kind @ (Ab::ByteLength | Ab::MaxByteLength | Ab::Resizable | Ab::Detached),
             ) => self.call_array_buffer_getter(realm, kind, invocation),
             NativeFunctionId::SharedArrayBuffer(Sb::Species) => {
-                self.call_shared_array_buffer_species(invocation)
+                self.call_species_getter(invocation)
             }
             NativeFunctionId::SharedArrayBuffer(
                 kind @ (Sb::ByteLength | Sb::MaxByteLength | Sb::Growable),
@@ -670,7 +681,7 @@ impl Runtime {
                     "cannot be called",
                 )?))
             }
-            NativeFunctionId::TypedArray(Ta::Species) => self.call_typed_array_species(invocation),
+            NativeFunctionId::TypedArray(Ta::Species) => self.call_species_getter(invocation),
             NativeFunctionId::TypedArray(Ta::Iterator(kind)) => {
                 self.call_typed_array_iterator(realm, kind, invocation)
             }
@@ -687,7 +698,7 @@ impl Runtime {
             NativeFunctionId::RegExp(Re::Escape) => {
                 self.call_regexp_escape(realm, invocation, arguments)
             }
-            NativeFunctionId::RegExp(Re::Species) => self.call_regexp_species(invocation),
+            NativeFunctionId::RegExp(Re::Species) => self.call_species_getter(invocation),
             NativeFunctionId::ThrowTypeError => {
                 self.call_throw_type_error(realm, invocation, arguments)
             }

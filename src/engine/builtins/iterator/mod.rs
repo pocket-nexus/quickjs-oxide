@@ -24,7 +24,7 @@ use crate::engine::object::{
     PropertyKey, WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -227,7 +227,7 @@ impl Runtime {
             0,
             0,
         )?;
-        self.define_iterator_data_tag(&concat_prototype, "Iterator Concat")?;
+        self.define_to_string_tag(&concat_prototype, "Iterator Concat")?;
 
         for (kind, name) in [
             (IteratorResumeKind::Next, "next"),
@@ -242,7 +242,7 @@ impl Runtime {
                 0,
             )?;
         }
-        self.define_iterator_data_tag(&helper_prototype, "Iterator Helper")?;
+        self.define_to_string_tag(&helper_prototype, "Iterator Helper")?;
 
         for (kind, name) in [
             (IteratorResumeKind::Next, "next"),
@@ -274,30 +274,6 @@ impl Runtime {
                 wrap_prototype: wrap_prototype.object_id(),
             },
         )?;
-        Ok(())
-    }
-
-    fn define_iterator_data_tag(
-        &self,
-        object: &ObjectRef,
-        value: &'static str,
-    ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(value))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Iterator helper toStringTag definition was rejected",
-            ));
-        }
         Ok(())
     }
 

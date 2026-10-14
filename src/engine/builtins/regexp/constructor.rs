@@ -89,18 +89,6 @@ impl Runtime {
         }
     }
 
-    pub(crate) fn call_regexp_species(
-        &self,
-        invocation: &NativeInvocation,
-    ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Getter { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "RegExp species did not receive a getter invocation",
-            ));
-        };
-        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
-    }
-
     pub(crate) fn genuine_regexp_jsvalue(
         &self,
         value: &JsValue,

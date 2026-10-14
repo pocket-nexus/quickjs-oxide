@@ -21,7 +21,7 @@ use crate::engine::object::{
     WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -83,25 +83,7 @@ impl Runtime {
             )?;
         }
 
-        let to_string_tag =
-            PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            &prototype,
-            &to_string_tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(
-                    "SharedArrayBuffer",
-                ))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "SharedArrayBuffer toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(&prototype, "SharedArrayBuffer")?;
 
         // Two readable arguments preserve QuickJS's padded argv[0]/argv[1]
         // contract while the public constructor length remains one.
@@ -171,9 +153,7 @@ impl Runtime {
             SharedArrayBufferNativeKind::Constructor => {
                 self.call_shared_array_buffer_constructor(realm, invocation, arguments)
             }
-            SharedArrayBufferNativeKind::Species => {
-                self.call_shared_array_buffer_species(invocation)
-            }
+            SharedArrayBufferNativeKind::Species => self.call_species_getter(invocation),
             SharedArrayBufferNativeKind::ByteLength
             | SharedArrayBufferNativeKind::MaxByteLength
             | SharedArrayBufferNativeKind::Growable => {
@@ -248,18 +228,6 @@ impl Runtime {
         };
         let object = self.new_shared_array_buffer_from_handle(&prototype, handle)?;
         Ok(Completion::Return(JsValue::Object(object.into_handle())))
-    }
-
-    pub(in crate::engine::builtins) fn call_shared_array_buffer_species(
-        &self,
-        invocation: &NativeInvocation,
-    ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Getter { this_value } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "SharedArrayBuffer species did not receive a getter invocation",
-            ));
-        };
-        Ok(Completion::Return(self.dup_jsvalue(this_value)?))
     }
 
     pub(in crate::engine::builtins) fn call_shared_array_buffer_getter(
@@ -686,6 +654,7 @@ fn shared_memory_runtime_error(error: SharedMemoryError) -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::value::JsString;
 
     #[test]
     fn constructor_descriptors_and_key_order_match_pinned_quickjs() {

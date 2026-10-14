@@ -362,24 +362,7 @@ impl Runtime {
             0,
             0,
         )?;
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            array_iterator_prototype,
-            &tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(
-                    "Array Iterator",
-                ))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Array Iterator toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(array_iterator_prototype, "Array Iterator")?;
 
         let constructor = self.new_native_builtin(
             function_prototype,

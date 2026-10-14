@@ -169,7 +169,7 @@ impl Runtime {
         // before @@toStringTag; the complete table precedes Number and Boolean.
         // Preserve the implemented entries' relative bootstrap order here.
         self.initialize_global_primitive_constants(&global_object)?;
-        self.initialize_global_to_string_tag(&global_object)?;
+        self.define_to_string_tag(&global_object, "global")?;
         self.initialize_eval_intrinsic(realm, &function_prototype, &global_object)?;
         self.initialize_number_intrinsic(
             realm,

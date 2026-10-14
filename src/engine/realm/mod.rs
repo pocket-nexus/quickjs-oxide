@@ -21,6 +21,34 @@ use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 
 impl Runtime {
+    /// Define `@@toStringTag` as a non-writable, non-enumerable, configurable
+    /// string, the shape every intrinsic tag uses.
+    pub(crate) fn define_to_string_tag(
+        &self,
+        object: &ObjectRef,
+        value: &'static str,
+    ) -> Result<(), RuntimeError> {
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
+        let defined = self.define_own_property(
+            object,
+            &key,
+            &OrdinaryPropertyDescriptor {
+                value: DescriptorField::Present(Value::String(JsString::from_static(value))),
+                writable: DescriptorField::Present(false),
+                enumerable: DescriptorField::Present(false),
+                configurable: DescriptorField::Present(true),
+                ..OrdinaryPropertyDescriptor::new()
+            },
+        )?;
+        if defined {
+            Ok(())
+        } else {
+            Err(RuntimeError::Invariant(
+                "intrinsic toStringTag definition was rejected",
+            ))
+        }
+    }
+
     pub(crate) fn initialize_function_constructor(
         &self,
         realm: ContextId,
@@ -298,24 +326,7 @@ impl Runtime {
             0,
         )?;
 
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            string_iterator_prototype,
-            &tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static(
-                    "String Iterator",
-                ))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "String Iterator toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(string_iterator_prototype, "String Iterator")?;
         Ok(())
     }
 
@@ -357,23 +368,7 @@ impl Runtime {
             // but a symbol-named method is installed non-writable.
             PropertyFlags::data(false, false, true),
         )?;
-        let to_string_tag =
-            PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            symbol_prototype,
-            &to_string_tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static("Symbol"))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Symbol.prototype toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(symbol_prototype, "Symbol")?;
         self.define_native_builtin_getter_on(
             symbol_prototype,
             function_prototype,
@@ -473,22 +468,7 @@ impl Runtime {
             0,
             0,
         )?;
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            bigint_prototype,
-            &tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static("BigInt"))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "BigInt.prototype toStringTag definition was rejected",
-            ));
-        }
+        self.define_to_string_tag(bigint_prototype, "BigInt")?;
 
         let constructor = self.new_native_builtin(
             function_prototype,
@@ -595,30 +575,6 @@ impl Runtime {
             ("undefined", Value::Undefined),
         ] {
             self.define_function_data_property(global_object, name, value, false, false)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn initialize_global_to_string_tag(
-        &self,
-        global_object: &ObjectRef,
-    ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        let defined = self.define_own_property(
-            global_object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static("global"))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )?;
-        if !defined {
-            return Err(RuntimeError::Invariant(
-                "global toStringTag definition was rejected",
-            ));
         }
         Ok(())
     }
