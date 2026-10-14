@@ -866,11 +866,8 @@ impl JsBigInt {
         // of JS_LIMB_BITS. If that limb's top bit is set, normalization observes
         // a negative result even for asUintN. Preserve that release behavior.
         let interpret_as_signed = signed || bits & (BIGINT_LIMB_BITS - 1) == 0;
-        if interpret_as_signed {
-            let sign_threshold = &modulus >> 1usize;
-            if truncated >= sign_threshold {
-                truncated -= modulus;
-            }
+        if interpret_as_signed && truncated.bit(bits - 1) {
+            truncated -= modulus;
         }
         Ok(Self::normalize(truncated))
     }
@@ -942,7 +939,16 @@ impl Ord for JsBigInt {
     fn cmp(&self, other: &Self) -> Ordering {
         match (&self.0, &other.0) {
             (BigIntRepr::Short(left), BigIntRepr::Short(right)) => left.cmp(right),
-            _ => self.as_bigint().cmp(&other.as_bigint()),
+            (BigIntRepr::Heap(left), BigIntRepr::Heap(right)) => left.cmp(right),
+            // A normalized heap value lies outside i64, so its sign decides.
+            (BigIntRepr::Short(_), BigIntRepr::Heap(heap)) => match heap.sign() {
+                Sign::Minus => Ordering::Greater,
+                _ => Ordering::Less,
+            },
+            (BigIntRepr::Heap(heap), BigIntRepr::Short(_)) => match heap.sign() {
+                Sign::Minus => Ordering::Less,
+                _ => Ordering::Greater,
+            },
         }
     }
 }
@@ -1101,6 +1107,8 @@ mod tests {
         let below_min = min.sub(&JsBigInt::one()).unwrap();
         assert!(!above_max.is_short());
         assert!(!below_min.is_short());
+        assert!(max < above_max && min < above_max && below_min < min && below_min < max);
+        assert!(above_max > max && below_min < above_max && max > below_min);
         assert_eq!(above_max.to_string(), "9223372036854775808");
         assert_eq!(below_min.to_string(), "-9223372036854775809");
 
