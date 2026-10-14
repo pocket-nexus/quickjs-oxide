@@ -9,7 +9,7 @@ impl SlotStore {
     /// and allocation has succeeded. The separate return receiver stays guarded
     /// until the complete child frame is installed.
     #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn push_constructor_frame_in_state(
         &mut self,
         runtime: &Runtime,
@@ -52,7 +52,7 @@ impl SlotStore {
     /// The private frame transaction supplies unchanged preflighted inputs.
     /// The shared initializer completes all fallible work before their edges
     /// move into the newly published window.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn push_current_constructor_frame_in_state(
         &mut self,
         runtime: &Runtime,

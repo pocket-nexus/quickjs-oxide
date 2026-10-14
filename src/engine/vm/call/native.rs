@@ -82,7 +82,7 @@ impl Drop for PendingNativeOwners<'_> {
 }
 
 impl Runtime {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn prepare_native_invocation(
         &self,
         callable: &CallableRef,
@@ -106,7 +106,7 @@ impl Runtime {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[cfg(test)]
     pub(in crate::engine::vm) fn prepare_native_invocation_owned(
         &self,
@@ -131,7 +131,7 @@ impl Runtime {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn prepare_native_invocation_jsvalue(
         &self,
         callable: &CallableRef,
@@ -155,7 +155,7 @@ impl Runtime {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[cfg(test)]
     pub(in crate::engine::vm) fn prepare_native_continuation_owned(
         &self,
@@ -234,7 +234,7 @@ impl Runtime {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn prepare_native_continuation_selected(
         &self,
         callable: CallableRef,
@@ -259,7 +259,7 @@ impl Runtime {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn prepare_native_arguments(
         &self,
         callable_input: NativeCallableInput<'_>,

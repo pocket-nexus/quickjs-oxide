@@ -1332,7 +1332,7 @@ impl RuntimeState {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new_native_builtin(
         &mut self,
         poisoned: &Cell<bool>,

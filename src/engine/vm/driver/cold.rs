@@ -40,7 +40,7 @@ impl Context<'_> {
 
 #[inline(never)]
 // Pass the exit and its publication/conversion facts separately without constructing another dispatch payload.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn dispatch(
     runtime: &Runtime,
     execution: &mut RunningExecution,

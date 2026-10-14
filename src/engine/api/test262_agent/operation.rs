@@ -155,7 +155,7 @@ impl AgentStep {
             .map(Self::Complete),
             Test262AgentKind::MonotonicNow => {
                 let milliseconds = session.inner.clock_origin.elapsed().as_millis();
-                #[allow(clippy::cast_precision_loss)]
+                #[expect(clippy::cast_precision_loss)]
                 Ok(Completion::Return(JsValue::Float(milliseconds as f64)))
             }
             .map(Self::Complete),

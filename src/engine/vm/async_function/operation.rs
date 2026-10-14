@@ -193,7 +193,7 @@ impl AsyncResume {
         }
     }
     // Consume the suspended resume box here, keeping its payload out of the step transport.
-    #[allow(clippy::boxed_local)]
+    #[expect(clippy::boxed_local)]
     fn finish(mut self: Box<Self>) -> Result<AsyncStep, RuntimeError> {
         let output = std::mem::replace(&mut self.output, JsValue::Undefined);
         Ok(AsyncStep::Complete(Completion::Return(output)))

@@ -305,7 +305,7 @@ impl Runtime {
     /// Returns [`RuntimeError::WrongRuntime`] for a foreign object/symbol
     /// root, or a heap/atom error when a node cannot be allocated.
     // `into_` names the consumed `Value` argument; the receiver is the runtime.
-    #[allow(clippy::wrong_self_convention)]
+    #[expect(clippy::wrong_self_convention)]
     pub(crate) fn into_jsvalue(&self, value: Value) -> Result<JsValue, RuntimeError> {
         Ok(match value {
             Value::Undefined => JsValue::Undefined,

@@ -926,7 +926,7 @@ fn emit_dynamic_identifier_operation(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn emit_dynamic_identifier_reference(
     name: u32,
     access: IdentifierReferenceAccess,

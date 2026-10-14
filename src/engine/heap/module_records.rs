@@ -423,7 +423,7 @@ impl LoadedModuleCache {
     ) -> Result<HashMap<JsString, ModuleId>, HeapError> {
         // `JsString` mutates only transparent rope caches; its UTF-16
         // equality/hash identity is stable while used as a module-name key.
-        #[allow(clippy::mutable_key_type)]
+        #[expect(clippy::mutable_key_type)]
         let mut rebuilt = HashMap::new();
         rebuilt
             .try_reserve(self.first_by_name.len())

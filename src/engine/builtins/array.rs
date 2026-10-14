@@ -901,7 +901,7 @@ impl Runtime {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[cfg(test)]
     fn flatten_into_array_with_limits(
         &self,

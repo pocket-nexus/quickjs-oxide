@@ -240,7 +240,6 @@ impl SetStep {
     /// The sink receives exactly one pending state after the initial operation
     /// guard is released, so it may advance shared waiting phases immediately.
     /// Validation, storage probes and typed conversion stay in this kernel.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_into(
         runtime: &Runtime,
         realm: Option<ContextId>,
@@ -585,7 +584,7 @@ impl SetStep {
 // branch. The operation guard leaves before handing a pending state to its
 // caller, matching the original start-return/advance boundary.
 #[inline(never)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn start_waiting(
     runtime: &Runtime,
     realm: Option<ContextId>,
@@ -933,7 +932,7 @@ impl State {
     fn advance_selected(
         &mut self,
         runtime: &Runtime,
-        #[allow(unused_mut)] mut selected: SelectedSet,
+        mut selected: SelectedSet,
     ) -> Result<SelectedSet, RuntimeError> {
         loop {
             selected = match selected {

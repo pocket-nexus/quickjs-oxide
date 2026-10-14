@@ -303,7 +303,7 @@ impl ContextData {
     /// cannot publish a realm whose `%IteratorPrototype%` silently aliases
     /// `%Object.prototype%`.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         object_prototype: ObjectId,
         function_prototype: ObjectId,

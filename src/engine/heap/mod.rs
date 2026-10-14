@@ -208,7 +208,7 @@ impl RawId {
 
 // Objects stay inline in the shared arena. Boxed realm and bytecode payloads
 // do not force an extra allocation onto ordinary object creation.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 enum NodeData {
     Object(ObjectData),
     Context(Box<ContextData>),
@@ -248,7 +248,7 @@ struct Node {
 
 // Keep ordinary objects inline: boxing would add one allocation and pointer
 // indirection to every object. The sole wide variant is dropped in place.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 enum SlotState {
     Initializing { kind: HeapNodeKind, strong: u32 },
     // Zero count means queued; changing it never moves the wide payload.

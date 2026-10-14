@@ -47,7 +47,6 @@ impl Value {
         })
     }
 
-    #[allow(clippy::cast_possible_truncation, clippy::float_cmp)]
     pub fn number(value: f64) -> Self {
         number::operations::Number::compact(value).into()
     }
@@ -183,7 +182,7 @@ impl Value {
     }
 
     #[must_use]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp)]
     pub fn strict_equal(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Undefined, Self::Undefined) | (Self::Null, Self::Null) => true,
@@ -201,7 +200,7 @@ impl Value {
     }
 
     #[must_use]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp)]
     pub fn same_value(&self, other: &Self) -> bool {
         match (self.as_number(), other.as_number()) {
             (Some(left), Some(right)) if left.is_nan() && right.is_nan() => true,
@@ -214,7 +213,7 @@ impl Value {
     }
 
     #[must_use]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp)]
     pub fn same_value_zero(&self, other: &Self) -> bool {
         match (self.as_number(), other.as_number()) {
             (Some(left), Some(right)) if left.is_nan() && right.is_nan() => true,

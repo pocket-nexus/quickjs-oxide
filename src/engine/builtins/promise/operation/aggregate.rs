@@ -430,7 +430,7 @@ impl Loop {
         })
     }
     // Consume the existing suspended-loop box here, keeping its payload out of the reply transport.
-    #[allow(clippy::boxed_local)]
+    #[expect(clippy::boxed_local)]
     fn close(
         self: Box<Self>,
         realm: ContextId,

@@ -35,7 +35,7 @@ pub(crate) enum ProxyGetEffect {
 }
 pub(crate) struct ProxyGetResume(super::reuse::PooledBox<GetState>);
 thread_local! {
-    #[allow(clippy::vec_box)]
+    #[expect(clippy::vec_box)]
     static EMPTY: std::cell::RefCell<Vec<Box<Option<GetState>>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 impl super::reuse::Reusable for GetState {

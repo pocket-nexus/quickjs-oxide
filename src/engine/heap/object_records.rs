@@ -292,7 +292,6 @@ pub(crate) enum InternalCallableData {
 // captures are deliberately crate-authenticated and cannot be forged by an
 // embedder. Public callers may still inspect that a payload is native with
 // `internal: _` without naming the hidden capture type.
-#[allow(private_interfaces)]
 #[derive(Clone, Debug)]
 pub enum ObjectPayload {
     Ordinary,

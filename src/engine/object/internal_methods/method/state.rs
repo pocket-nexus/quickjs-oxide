@@ -198,7 +198,7 @@ impl StateMethodStep {
 
 pub(crate) struct StateMethodResume(super::super::reuse::PooledBox<Search>);
 thread_local! {
-    #[allow(clippy::vec_box)]
+    #[expect(clippy::vec_box)]
     static EMPTY_CONTINUATIONS: std::cell::RefCell<Vec<Box<Option<Search>>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 impl super::super::reuse::Reusable for Search {

@@ -1666,7 +1666,7 @@ fn typed_array_decode_number(
     }
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn typed_array_to_uint8_clamp(number: f64) -> u8 {
     if number.is_nan() || number <= 0.0 {
         return 0;

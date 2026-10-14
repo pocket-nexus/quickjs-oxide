@@ -461,7 +461,6 @@ struct HostOptions {
     dump_unhandled_promise_rejection: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn evaluate(
     source: EvaluationSource<'_>,
     filename: &str,

@@ -381,7 +381,7 @@ impl Runtime {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn finish_promise_aggregate_element(
         &self,
         realm: ContextId,

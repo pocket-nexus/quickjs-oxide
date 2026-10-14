@@ -108,7 +108,6 @@ impl<'a> FrameExecution<'a> {
         self.execution.frames.materialize_in_state(state)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn enter_ordinary(
         &mut self,
         runtime: &Runtime,
@@ -218,7 +217,6 @@ impl<'a> FrameExecution<'a> {
     /// The legacy call driver supplies a detached checked operand witness.
     /// Recheck its identity/depth within this admitted lease before invoking
     /// the same installer used by uninterrupted internal calls.
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn install_ordinary(
         &mut self,
         runtime: &Runtime,
@@ -243,7 +241,7 @@ impl<'a> FrameExecution<'a> {
 
     /// Install `f.apply(thisArg, array)` as an ordinary call of `f`. The
     /// caller selected `f` and read `values` from the array in this lease.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn install_apply(
         &mut self,
         runtime: &Runtime,
@@ -283,7 +281,6 @@ impl<'a> FrameExecution<'a> {
 
     /// Sole ordinary slot installer. This method cannot be called through a
     /// raw RunningExecution or a caller-supplied current-frame identity.
-    #[allow(clippy::too_many_arguments)]
     fn install_current_ordinary(
         &mut self,
         runtime: &Runtime,
@@ -340,7 +337,6 @@ impl<'a> FrameExecution<'a> {
     /// Sole Base constructor installer under the same exclusive lease that
     /// selected its actual callee/newTarget/arguments. Receiver edges remain
     /// guarded until the common slot initializer and frame publication succeed.
-    #[allow(clippy::too_many_arguments)]
     fn install_current_constructor(
         &mut self,
         runtime: &Runtime,
@@ -648,7 +644,7 @@ impl FrameTransaction<'_> {
 
     /// Consume the selected caller lease to publish a Base constructor. No
     /// caller-supplied detached window or mutable slot access can intervene.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn install_constructor_window(
         self,
         runtime: &Runtime,
@@ -670,7 +666,7 @@ impl FrameTransaction<'_> {
             receiver,
         )
     }
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn install_apply_window(
         self,
         runtime: &Runtime,
@@ -694,7 +690,6 @@ impl FrameTransaction<'_> {
     }
     /// Consume the actual caller window before publishing its child. Only the
     /// private execution producer combines this lease with preflighted operands.
-    #[allow(clippy::too_many_arguments)]
     fn install_ordinary_window(
         self,
         runtime: &Runtime,

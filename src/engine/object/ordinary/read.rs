@@ -165,7 +165,7 @@ impl RuntimeState {
 
     /// Primitive receivers keep their value representation. Their realm owns
     /// the prototype; only an indexed string's new code-unit value allocates.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn select_value_read_in_state(
         &mut self,
         poisoned: &std::cell::Cell<bool>,

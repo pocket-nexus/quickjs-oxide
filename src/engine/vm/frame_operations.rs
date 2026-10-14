@@ -376,7 +376,7 @@ pub(super) fn throw(
 
 #[inline(never)]
 // Binding opcode flags travel with the existing execution borrow instead of creating a second operation representation.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn binding(
     runtime: &Runtime,
     execution: &mut RunningExecution,

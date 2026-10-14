@@ -97,7 +97,7 @@ pub(super) fn enter(
 /// Preflight one ordinary call through an already admitted slot transaction.
 /// Selection and authentication read metadata and execute no JavaScript; every
 /// source edge stays in its caller slot until the lease's installer consumes it.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(in crate::engine::vm) fn prepare_ordinary_in_state(
     runtime: &Runtime,
     state: &crate::engine::heap::runtime::RuntimeState,
@@ -191,7 +191,7 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
 
 /// Test legacy entry still authenticates its supplied frame and window once.
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(in crate::engine::vm) fn enter_selected_in_state(
     runtime: &Runtime,
     state: &mut crate::engine::heap::runtime::RuntimeState,
@@ -290,7 +290,7 @@ pub(super) fn enter_apply(
 
 // These explicit drops end the authenticated slot lease before installing a
 // child or entering native code; keep the boundary visible to reviewers.
-#[allow(clippy::drop_non_drop, clippy::too_many_arguments)]
+#[expect(clippy::drop_non_drop, clippy::too_many_arguments)]
 pub(super) fn enter_selected(
     runtime: &Runtime,
     execution: &mut RunningExecution,

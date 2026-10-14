@@ -38,7 +38,7 @@ pub(in crate::engine::vm) struct QueryStorage {
     free: Vec<Buffers>,
     native_waits: Vec<Vec<super::native::NativeWaitRecord>>,
     // Reuse the pending allocations themselves; all cached query fields are empty.
-    #[allow(clippy::vec_box)]
+    #[expect(clippy::vec_box)]
     pending: Vec<Box<super::PendingProxyGet>>,
 }
 

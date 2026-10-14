@@ -108,7 +108,6 @@ pub(super) fn start(
     }
 }
 // The pending predicate conversion transfers its existing box directly to this consuming handler.
-#[allow(clippy::boxed_local)]
 pub(super) fn converted(
     runtime: &Runtime,
     execution: &mut RunningExecution,

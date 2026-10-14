@@ -149,7 +149,7 @@ impl FlattenStep {
             resume,
         ))
     }
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     #[cfg(test)]
     pub(super) fn start_into(
         runtime: &Runtime,

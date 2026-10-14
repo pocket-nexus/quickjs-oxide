@@ -811,7 +811,6 @@ impl Heap {
     }
 
     /// Atomically publish the twelve concrete TypedArray class prototypes.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn attach_typed_array_intrinsics(
         &mut self,
         realm: ContextId,

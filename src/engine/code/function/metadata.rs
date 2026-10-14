@@ -10,7 +10,7 @@ use crate::engine::atom::Atom;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ParameterBodyStorage {
     Argument(u16),
-    #[expect(
+    #[allow(
         dead_code,
         reason = "Recognized by validation; current producers do not emit this form."
     )]

@@ -98,7 +98,7 @@ pub(super) fn write_progress(
 }
 
 // Keep the conversion operand bundle boxed until its consuming write handler, rather than copying it through dispatch.
-#[allow(clippy::boxed_local)]
+#[expect(clippy::boxed_local)]
 pub(super) fn converted(
     runtime: &Runtime,
     execution: &mut RunningExecution,

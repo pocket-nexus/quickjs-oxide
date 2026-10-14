@@ -813,7 +813,7 @@ impl Runtime {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn invoke_native_function(
         &self,
         callable: &CallableRef,
@@ -842,7 +842,7 @@ impl Runtime {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn invoke_native_function_jsvalue(
         &self,
         callable: &CallableRef,

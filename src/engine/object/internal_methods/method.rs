@@ -49,7 +49,7 @@ impl std::ops::DerefMut for MethodResume {
     }
 }
 thread_local! {
-    #[allow(clippy::vec_box)]
+    #[expect(clippy::vec_box)]
     static EMPTY_CONTINUATIONS: std::cell::RefCell<Vec<Box<Option<MethodResumeState>>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 impl super::reuse::Reusable for MethodResumeState {

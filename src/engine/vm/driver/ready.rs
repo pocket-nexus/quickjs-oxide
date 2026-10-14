@@ -527,7 +527,7 @@ fn property_boundary(
 }
 
 // Keep the decoded call facts explicit across the ordinary/native boundary.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn enter_call(
     runtime: &Runtime,
     execution: &mut RunningExecution,

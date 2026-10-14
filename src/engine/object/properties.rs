@@ -1796,7 +1796,7 @@ impl Runtime {
         )))
     }
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub(crate) fn to_uint32_number(value: f64) -> u32 {
         if !value.is_finite() || value == 0.0 {
             return 0;

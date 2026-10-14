@@ -42,7 +42,7 @@ pub(crate) struct GeneratorResume {
 
 impl GeneratorResume {
     // The waiting continuation already owns this guard in a Box; retain that ownership until resume finishes.
-    #[allow(clippy::boxed_local)]
+    #[expect(clippy::boxed_local)]
     pub(crate) fn resume(
         mut self: Box<Self>,
         outcome: VmRunOutcome,

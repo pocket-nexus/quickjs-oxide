@@ -492,7 +492,7 @@ pub(super) fn read_progress_selected(
 }
 
 // The conversion reply already owns this boxed operand bundle; avoid moving it through the driver stack.
-#[allow(clippy::boxed_local)]
+#[expect(clippy::boxed_local)]
 pub(super) fn read_converted(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -551,7 +551,7 @@ pub(super) fn read_converted(
     .map(PropertyProgress::into_call_step)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn finish_read(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -585,7 +585,7 @@ fn finish_read(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn read_prepared(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -613,7 +613,7 @@ pub(super) fn read_prepared(
     .map(PropertyProgress::into_call_step)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn read_prepared_progress(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -656,7 +656,7 @@ fn read_prepared_progress(
 }
 
 // Keep the no-callback path out of the callback dispatcher's large native frame.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn complete_read(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -755,7 +755,7 @@ fn complete_read(
 
 // Converted and super-property replies have not yet transported the decoded
 // position. Keep reconstruction explicit at this unmigrated entry point.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn complete_read_recovering(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -791,7 +791,6 @@ fn complete_read_recovering(
 }
 
 #[inline]
-#[allow(clippy::too_many_arguments)]
 fn publish_read_result(
     slots: &mut super::stack::FrameSlots<'_>,
     resume_pc: &mut usize,
@@ -823,7 +822,7 @@ fn record_read_completion(_depth: usize) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn read_pending(
     runtime: &Runtime,
     execution: &mut RunningExecution,

@@ -235,7 +235,7 @@ impl Runtime {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn define_native_builtin_auto_init_with_key(
         &self,
         object: &ObjectRef,
@@ -451,7 +451,7 @@ impl RuntimeState {
         state.replace_layout_with_poison(poisoned, object_id, prototype, &entries, slots)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn define_native_builtin_auto_init_with_key(
         &mut self,
         poisoned: &Cell<bool>,
@@ -531,7 +531,7 @@ impl RuntimeState {
         state.replace_layout_with_poison(poisoned, object_id, prototype, &entries, slots)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn define_native_builtin_auto_init(
         &mut self,
         poisoned: &Cell<bool>,
@@ -563,7 +563,6 @@ impl RuntimeState {
         defined
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn define_fresh_function_string_property(
         &mut self,
         poisoned: &Cell<bool>,
@@ -583,7 +582,6 @@ impl RuntimeState {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn define_fresh_function_integer_property(
         &mut self,
         poisoned: &Cell<bool>,
@@ -605,7 +603,6 @@ impl RuntimeState {
 
     /// Consume one owned object producer; a required checked duplicate is
     /// performed by the caller before entering this field sequence.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn define_fresh_function_object_property(
         &mut self,
         poisoned: &Cell<bool>,
@@ -625,7 +622,6 @@ impl RuntimeState {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn define_fresh_function_property(
         &mut self,
         poisoned: &Cell<bool>,

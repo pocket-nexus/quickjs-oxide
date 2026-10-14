@@ -290,7 +290,6 @@ impl<'a> NativePublicationWitness<'a> {
 
 /// Publish the same native descriptor through the executing State. The
 /// callable owner remains in the surrounding state guard for its lifetime.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::engine::vm) fn publish_native_in_state(
     state: &mut crate::engine::heap::runtime::RuntimeState,
     function: ObjectId,
@@ -431,7 +430,7 @@ impl Runtime {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn push_active_frame_with_continuation(
         &self,
         function_root: ObjectRef,
@@ -512,7 +511,6 @@ impl Runtime {
 
     // Only the checked entry above and a consumed native witness reach this
     // publication kernel. All token, ownership and accounting order stays shared.
-    #[allow(clippy::too_many_arguments)]
     fn publish_validated_active_frame(
         &self,
         function_root: ObjectRef,
@@ -813,7 +811,6 @@ impl ActiveFrameToken {
 /// heap object. Raw IteratorNext dispatch keeps a rooted validation frame but
 /// hides it from JavaScript backtraces because QuickJS calls that native
 /// function pointer without pushing a visible `JSStackFrame`.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ActiveFrameFlags {
     pub(crate) strict: bool,

@@ -451,7 +451,7 @@ impl FrameSlots<'_> {
         Ok(true)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn try_owned_field_write_in_state(
         &mut self,
         state: &mut RuntimeState,

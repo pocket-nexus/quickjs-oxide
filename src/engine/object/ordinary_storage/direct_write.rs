@@ -27,7 +27,7 @@ impl RuntimeState {
     /// For a missing key, the store site's append fact replaces the prototype
     /// walk and successor selection; a miss teaches the site after publication.
     #[inline]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn try_store_owned_linked_field(
         &mut self,
         poisoned: &std::cell::Cell<bool>,
@@ -142,7 +142,7 @@ impl RuntimeState {
     }
 
     #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn append_missing_owned_data(
         &mut self,
         poisoned: &std::cell::Cell<bool>,
@@ -256,7 +256,7 @@ impl RuntimeState {
     /// data property exchanges its value. Every other case declines with the
     /// input untouched so the definition driver reports or redefines it.
     #[inline]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn try_define_owned_linked_field(
         &mut self,
         poisoned: &std::cell::Cell<bool>,

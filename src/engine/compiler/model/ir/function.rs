@@ -675,7 +675,7 @@ impl FunctionIr {
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct FunctionTree {
     // Boxed elements keep wide IR records stationary while the arena grows.
-    #[allow(clippy::vec_box)]
+    #[expect(clippy::vec_box)]
     pub(in crate::engine::compiler) functions: Vec<Box<FunctionIr>>,
     pub(in crate::engine::compiler) names: NameTable,
     pub(in crate::engine::compiler) source: SourceText,

@@ -72,7 +72,7 @@ impl Drop for NativeStateGuard<'_> {
 /// Existing ABI inputs stay with the caller on decline. Only the cold,
 /// unmigrated effect boundary reconstructs a public callable root. The direct
 /// consumer transfers its callee into this guard and retires it using State.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn try_array(
     runtime: &Runtime,
     slots: &mut super::super::stack::SlotStore,

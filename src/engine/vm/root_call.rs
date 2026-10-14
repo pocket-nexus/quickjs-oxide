@@ -11,7 +11,7 @@ use crate::engine::heap::ContextId;
 use crate::engine::object::CallableRef;
 use crate::engine::value::JsValue;
 impl Runtime {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn execute_bytecode_callable_jsvalue(
         &self,
         caller_realm: ContextId,
@@ -95,7 +95,7 @@ impl Runtime {
 /// calls. The public borrowed argv needs an independent snapshot, but no
 /// parameter/local binding vectors are built.
 #[inline(never)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(in crate::engine::vm) fn prepare_call(
     runtime: &Runtime,
     caller_realm: crate::engine::heap::ContextId,

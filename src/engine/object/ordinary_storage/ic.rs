@@ -43,7 +43,7 @@ impl RuntimeState {
     /// domain) and immediates leave without the general promotion. Every other
     /// case continues in the cold selection, which does not probe again.
     #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn select_linked_data_into(
         &self,
         domain_id: u64,
@@ -95,7 +95,7 @@ impl RuntimeState {
     /// count a cooldown step twice.
     #[cold]
     #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn select_linked_data_cold(
         &self,
         domain_id: u64,
@@ -199,7 +199,6 @@ impl RuntimeState {
     /// same state borrow before it can escape.
     #[cold]
     #[inline(never)]
-    #[allow(clippy::too_many_arguments)]
     fn select_linked_miss(
         &self,
         domain_id: u64,
@@ -377,7 +376,7 @@ mod tests {
     use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn select(
         state: &RuntimeState,
         domain: u64,
@@ -409,7 +408,7 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn read(
         state: &RuntimeState,
         domain: u64,

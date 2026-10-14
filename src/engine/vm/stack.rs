@@ -535,7 +535,7 @@ impl SlotStore {
     /// Reserve and copy the writable parameter snapshot before consuming any
     /// caller owner. Originals then move straight from the outgoing operand
     /// tail into the callee snapshot; the caller prefix never moves.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn push_call_frame(
         &mut self,
         runtime: &Runtime,
@@ -568,7 +568,6 @@ impl SlotStore {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn push_frame_storage(
         &mut self,
         runtime: &Runtime,

@@ -145,7 +145,7 @@ impl Drop for NativeInvocationUnwindGuard<'_> {
 /// Registered synchronous families need no Query identity or waiting buffers.
 /// The caller checked budgets before reaching any body; preparation still owns
 /// padding, metadata validation and the observable native diagnostic frame.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn begin_synchronous(
     runtime: &Runtime,
     slots: &mut SlotStore,
@@ -466,7 +466,7 @@ fn capture_waiting_step(
 // This selects a body; it must not introduce another call frame and copy the
 // native arguments before either body begins. The bodies remain outlined.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn begin_local(
     runtime: &Runtime,
     slots: &mut SlotStore,
@@ -526,7 +526,7 @@ pub(super) fn begin_local(
 }
 
 #[inline(never)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn begin_array_local(
     runtime: &Runtime,
     slots: &mut SlotStore,
@@ -583,7 +583,7 @@ fn begin_array_local(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn begin_unmigrated(
     runtime: &Runtime,
     slots: &mut SlotStore,
@@ -757,7 +757,7 @@ fn take_immediate(output: &mut Step) -> Option<NativeInvokeOutcome> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn start_into(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -789,7 +789,7 @@ pub(super) fn start_into(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn start_selected_into(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -927,7 +927,7 @@ pub(super) fn start_selected_into(
 
 /// Shared first native step. Caller reserves continuation capacity and checks
 /// logical/native stack budgets before any invocation effect can occur.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn begin_into(
     runtime: &Runtime,
     slots: &mut SlotStore,
@@ -961,7 +961,7 @@ pub(super) fn begin_into(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn begin_selected_into(
     runtime: &Runtime,
     slots: &mut SlotStore,
@@ -1093,7 +1093,7 @@ pub(super) fn begin_selected_into(
 /// Already selected Array-next, before a PendingIterator/Query is installed.
 /// The caller performs logical/host budget checks before entering this function.
 /// Only a real selected wait transfers the native activation to its output.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn compact_array_next_into(
     runtime: &Runtime,
     slots: &mut SlotStore,

@@ -48,7 +48,7 @@ impl SlotStore {
     }
 
     #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn push_ordinary_frame_in_state(
         &mut self,
         runtime: &Runtime,
@@ -78,7 +78,7 @@ impl SlotStore {
 
     /// Called only by a checked legacy adapter or by the current transaction
     /// producer, which holds the exclusive store and caller window together.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn push_current_ordinary_frame_in_state(
         &mut self,
         runtime: &Runtime,
@@ -139,7 +139,7 @@ impl SlotStore {
     /// are copies of `values`, read from that array. All fallible work ends
     /// before any caller operand moves; `f` and `thisArg` move into the child
     /// and the apply function and the array return for release afterwards.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn push_current_apply_frame_in_state(
         &mut self,
         runtime: &Runtime,
@@ -217,7 +217,7 @@ impl SlotStore {
     /// Prepare the unpublished parameter/local suffix while the caller owns
     /// all operands. Ordinary calls and Base constructors share this initializer;
     /// their distinct input owners move only after all fallible work succeeds.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(super) fn prepare_ordinary_window_in_state(
         &mut self,
         runtime: &Runtime,

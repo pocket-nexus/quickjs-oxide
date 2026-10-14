@@ -55,7 +55,7 @@ impl Drop for ConstructorBoundary {
 }
 
 // Keep the return owner, reply identity and original constructor operands explicit at this suspension boundary.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn start(
     runtime: &Runtime,
     owner: ReturnOwner,
@@ -252,7 +252,6 @@ pub(super) fn prototype(
 }
 // The selected Step already owns this boxed request; consume it in place instead of
 // moving its payload through the driver stack.
-#[allow(clippy::boxed_local)]
 pub(super) fn ready(
     runtime: &Runtime,
     execution: &mut RunningExecution,

@@ -218,7 +218,6 @@ fn splitmix64(state: &mut u64) -> u64 {
     value ^ (value >> 31)
 }
 
-#[allow(clippy::float_cmp)]
 fn number_literal(value: f64) -> String {
     if value.is_nan() {
         "(0 / 0)".to_owned()

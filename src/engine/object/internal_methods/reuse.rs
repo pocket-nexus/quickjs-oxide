@@ -6,7 +6,6 @@ use std::{
 };
 
 // Boxes are the allocations being reused, not indirection around live owners.
-#[allow(clippy::vec_box)]
 pub(super) type EmptyPool<T> = LocalKey<RefCell<Vec<Box<Option<T>>>>>;
 
 pub(super) trait Reusable: Sized + 'static {

@@ -25,7 +25,6 @@ impl DerefMut for FrameBody {
 impl FrameBody {
     /// Publish a vacant pooled body. The pool keeps every owner below empty,
     /// so the writes need no drop of a previous owner.
-    #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     pub(in crate::engine::vm) fn occupy(
         &mut self,
@@ -87,9 +86,9 @@ pub(in crate::engine::vm) struct CallStorage {
     // Cache the Box allocations themselves, not newly allocated frame values.
     // Bodies that kept a `FrameRare` (constructors, unwind regions) pool
     // apart, so ordinary calls do not pay its checks on install and return.
-    #[allow(clippy::vec_box)]
+    #[expect(clippy::vec_box)]
     empty_frames: Vec<Box<FrameBody>>,
-    #[allow(clippy::vec_box)]
+    #[expect(clippy::vec_box)]
     rare_frames: Vec<Box<FrameBody>>,
     capture_flags: Vec<Vec<bool>>,
     regions: Vec<Vec<crate::engine::vm::VmUnwindRegion>>,

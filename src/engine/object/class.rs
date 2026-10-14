@@ -154,7 +154,6 @@ impl Runtime {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn finish_class_pair(
         &self,
         realm: ContextId,

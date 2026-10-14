@@ -131,7 +131,7 @@ fn release_abandoned_operands(
 }
 
 // The pending super-property conversion transfers its existing box directly to this consuming handler.
-#[allow(clippy::boxed_local)]
+#[expect(clippy::boxed_local)]
 pub(super) fn converted(
     runtime: &Runtime,
     execution: &mut RunningExecution,

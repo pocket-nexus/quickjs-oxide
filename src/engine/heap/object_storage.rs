@@ -1247,7 +1247,7 @@ impl Heap {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn append_unique_object_property_at_index(
         &mut self,
         id: ObjectId,

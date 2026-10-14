@@ -692,7 +692,6 @@ impl Drop for ConversionInvocation {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn invoke(
     runtime: &Runtime,
     execution: &mut RunningExecution,

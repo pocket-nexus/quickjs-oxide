@@ -2485,7 +2485,7 @@ impl Runtime {
     /// behavior for a diamond containing a circular branch. Local exports
     /// retain their `(module, closure)` identity here; imported-local aliases
     /// are followed only when a caller asks for the live VarRef.
-    #[allow(clippy::mutable_key_type)] // JsString hashes immutable contents; only its rope cache mutates.
+    #[expect(clippy::mutable_key_type)] // JsString hashes immutable contents; only its rope cache mutates.
     fn resolve_module_export(
         &self,
         module: RawModuleRef,

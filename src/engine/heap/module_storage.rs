@@ -1071,7 +1071,7 @@ impl Heap {
             }
         }
 
-        #[allow(clippy::mutable_key_type)]
+        #[expect(clippy::mutable_key_type)]
         let rebuilt_first_by_name = context
             .loaded_modules
             .rebuild_first_by_name_excluding(|candidate| unique.contains(&candidate))?;

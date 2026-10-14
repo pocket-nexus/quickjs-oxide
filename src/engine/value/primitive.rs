@@ -1989,7 +1989,6 @@ pub enum PrimitiveValue {
 
 impl PrimitiveValue {
     #[must_use]
-    #[allow(clippy::cast_possible_truncation, clippy::float_cmp)]
     pub fn number(value: f64) -> Self {
         match super::number::operations::Number::compact(value) {
             super::number::operations::Number::Int(value) => Self::Int(value),
@@ -2095,7 +2094,7 @@ impl PrimitiveValue {
     }
 
     #[must_use]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp)]
     pub fn strict_equal(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Undefined, Self::Undefined) | (Self::Null, Self::Null) => true,
@@ -2111,7 +2110,7 @@ impl PrimitiveValue {
     }
 
     #[must_use]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp)]
     pub fn same_value(&self, other: &Self) -> bool {
         match (self.as_number(), other.as_number()) {
             (Some(left), Some(right)) if left.is_nan() && right.is_nan() => true,
@@ -2124,7 +2123,7 @@ impl PrimitiveValue {
     }
 
     #[must_use]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp)]
     pub fn same_value_zero(&self, other: &Self) -> bool {
         match (self.as_number(), other.as_number()) {
             (Some(left), Some(right)) if left.is_nan() && right.is_nan() => true,
@@ -2298,7 +2297,6 @@ pub(super) const fn is_ecmascript_whitespace(unit: u16) -> bool {
     )
 }
 
-#[allow(clippy::float_cmp)]
 pub fn is_negative_zero(value: f64) -> bool {
     value == 0.0 && value.is_sign_negative()
 }
