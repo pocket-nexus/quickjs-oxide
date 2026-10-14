@@ -239,8 +239,7 @@ impl SourceText {
     #[must_use]
     pub fn invalid_byte_at(&self, byte_offset: usize) -> bool {
         u32::try_from(byte_offset)
-            .ok()
-            .is_some_and(|offset| self.invalid_bytes.binary_search(&offset).is_ok())
+            .is_ok_and(|offset| self.invalid_bytes.binary_search(&offset).is_ok())
     }
 
     /// Select a half-open carrier byte range aligned to UTF-8 boundaries.

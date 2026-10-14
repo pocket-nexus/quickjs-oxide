@@ -89,8 +89,10 @@ impl EvalCompileContext {
                     )
                 })
                 .and_then(|index| u16::try_from(index).ok())
-                .map(EvalCallerVariableTarget::ExternalBinding)
-                .unwrap_or(EvalCallerVariableTarget::Global)
+                .map_or(
+                    EvalCallerVariableTarget::Global,
+                    EvalCallerVariableTarget::ExternalBinding,
+                )
         };
         Self::direct_with_profile(
             caller_strict,

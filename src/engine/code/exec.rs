@@ -493,9 +493,7 @@ impl ExecCode {
     }
 
     pub(crate) fn is_boundary(&self, exec_pc: usize) -> bool {
-        u32::try_from(exec_pc)
-            .ok()
-            .is_some_and(|pc| self.boundaries.binary_search(&pc).is_ok())
+        u32::try_from(exec_pc).is_ok_and(|pc| self.boundaries.binary_search(&pc).is_ok())
     }
 
     #[cfg(test)]

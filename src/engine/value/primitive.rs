@@ -976,12 +976,12 @@ impl JsString {
     pub(crate) fn hash_code_units<H: Hasher>(&self, state: &mut H) {
         match self.0.data() {
             StringData::Latin1(units) => {
-                for &unit in units.iter() {
+                for &unit in units {
                     state.write_u16(u16::from(unit));
                 }
             }
             StringData::Utf16(units) => {
-                for &unit in units.iter() {
+                for &unit in units {
                     state.write_u16(unit);
                 }
             }

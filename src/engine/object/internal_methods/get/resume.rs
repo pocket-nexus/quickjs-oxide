@@ -105,7 +105,9 @@ impl ProxyGetResume {
         >,
     ) -> Result<ProxyGetStep, RuntimeError> {
         let descriptor = match descriptor {
-            NativeConversion::Value(v) => NativeConversion::Value(v.map(|d| d.into_state_owned())),
+            NativeConversion::Value(v) => {
+                NativeConversion::Value(v.map(|value| value.into_state_owned()))
+            }
             NativeConversion::Throw(v) => NativeConversion::Throw(v),
         };
         let mut state = runtime.0.state.borrow_mut();

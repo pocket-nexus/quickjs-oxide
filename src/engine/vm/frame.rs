@@ -386,7 +386,7 @@ impl FrameStore {
                             .cold
                             .entry_guard
                             .as_ref()
-                            .map(|guard| guard.registry_depth()),
+                            .map(|value| value.registry_depth()),
                         super::BytecodePc::new(frame.fault_pc),
                     )
                     .map_err(runtime_error_to_vm_error)?;

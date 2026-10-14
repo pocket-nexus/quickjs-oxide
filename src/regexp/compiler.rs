@@ -817,8 +817,8 @@ impl<'a> Parser<'a> {
     fn parse_decimal_escape(&mut self, position: usize, first: u16) -> Result<Atom, CompileError> {
         let (reference, digit_end) = self.scan_decimal_escape(first);
         if reference
-            .filter(|reference| *reference < self.total_capture_count)
-            .is_some()
+            .as_ref()
+            .is_some_and(|reference| *reference < self.total_capture_count)
         {
             self.position = digit_end;
             let capture = u8::try_from(reference.expect("checked decimal reference range"))
@@ -1329,11 +1329,7 @@ impl<'a> Parser<'a> {
                 (
                     UnicodeSet {
                         ranges: class.ranges,
-                        strings: class
-                            .strings
-                            .into_iter()
-                            .map(|string| string.into_vec())
-                            .collect(),
+                        strings: class.strings.into_iter().map(<[u32]>::into_vec).collect(),
                     },
                     None,
                 )
@@ -1463,11 +1459,7 @@ impl<'a> Parser<'a> {
             let class = self.parse_unicode_set_class(position)?;
             return Ok(UnicodeSet {
                 ranges: class.ranges,
-                strings: class
-                    .strings
-                    .into_iter()
-                    .map(|string| string.into_vec())
-                    .collect(),
+                strings: class.strings.into_iter().map(<[u32]>::into_vec).collect(),
             });
         }
         let atom = self.parse_unicode_set_atom(true, true)?;

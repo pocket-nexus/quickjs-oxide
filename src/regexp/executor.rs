@@ -290,7 +290,7 @@ pub(super) fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError
                 return Err(ProgramError::InvalidCharacter { pc, value: *value }.into());
             }
             Instruction::Range { ranges, .. } => {
-                for range in ranges.iter() {
+                for range in ranges {
                     if range.start > range.end || range.end > 0x10_ffff {
                         return Err(ProgramError::InvalidCharacterRange {
                             pc,
@@ -978,9 +978,7 @@ fn normalize_start<T: Copy + Into<u16>>(input: &[T], start: usize, unicode: bool
 }
 
 fn advance_string_index<T: Copy + Into<u16>>(input: &[T], position: usize, unicode: bool) -> usize {
-    read_character(input, position, unicode)
-        .map(|(_, next)| next)
-        .unwrap_or(input.len())
+    read_character(input, position, unicode).map_or(input.len(), |(_, next)| next)
 }
 
 fn read_character<T: Copy + Into<u16>>(

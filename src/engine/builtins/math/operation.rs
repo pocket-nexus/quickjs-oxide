@@ -229,9 +229,8 @@ impl MathResumeState {
                     return Ok(Some(Completion::Return(JsValue::Int(i32::from_ne_bytes(
                         product.to_ne_bytes(),
                     )))));
-                } else {
-                    value
                 }
+                value
             }
             MathKind::MinMax(kind) => {
                 if let Some(left) = self.result {

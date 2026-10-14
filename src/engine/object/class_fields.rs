@@ -118,7 +118,7 @@ impl Runtime {
             writable: false,
             enumerable: false,
             configurable: false,
-        }) = descriptor.as_ref().map(|descriptor| descriptor.record())
+        }) = descriptor.as_ref().map(|value| value.record())
         else {
             return Err(RuntimeError::Invariant(
                 "class initializer owner has no authenticated prototype",
@@ -141,7 +141,7 @@ impl Runtime {
         let constructor_key =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
         let descriptor = self.get_own_property_owned(prototype, &constructor_key)?;
-        if !matches!(descriptor.as_ref().map(|descriptor| descriptor.record()),
+        if !matches!(descriptor.as_ref().map(|value| value.record()),
             Some(crate::engine::object::property::CompletePropertyDescriptor::Data {
                 value: crate::engine::heap::RawValue::Object(owner), writable: true, enumerable: false, configurable: true,
             }) if *owner == constructor.object_id())

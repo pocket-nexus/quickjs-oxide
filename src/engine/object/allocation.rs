@@ -455,9 +455,8 @@ impl Runtime {
         let object = ObjectRef::from_owned_handle(self.clone(), object);
         cleanup?;
         if let Some(length) = string_length {
-            let length = i32::try_from(length)
-                .map(Value::Int)
-                .unwrap_or_else(|_| Value::number(length as f64));
+            let length =
+                i32::try_from(length).map_or_else(|_| Value::number(length as f64), Value::Int);
             let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
             let defined = self.define_own_property(
                 &object,

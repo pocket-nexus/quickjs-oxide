@@ -48,8 +48,8 @@ impl OwnedPropertyDescriptor {
         runtime.validate_descriptor_domains(source)?;
         let mut result = Self::new(runtime);
         result.writable = source.writable;
-        result.get = source.get.try_map(|value| value.try_clone())?;
-        result.set = source.set.try_map(|value| value.try_clone())?;
+        result.get = source.get.try_map(super::AccessorValue::try_clone)?;
+        result.set = source.set.try_map(super::AccessorValue::try_clone)?;
         result.enumerable = source.enumerable;
         result.configurable = source.configurable;
         if let DescriptorField::Present(value) = &source.value {
@@ -80,8 +80,8 @@ impl OwnedPropertyDescriptor {
             OrdinaryPropertyDescriptor {
                 value: DescriptorField::Absent,
                 writable: self.writable,
-                get: self.get.try_map(|value| value.try_clone())?,
-                set: self.set.try_map(|value| value.try_clone())?,
+                get: self.get.try_map(super::AccessorValue::try_clone)?,
+                set: self.set.try_map(super::AccessorValue::try_clone)?,
                 enumerable: self.enumerable,
                 configurable: self.configurable,
             }
@@ -388,9 +388,12 @@ impl Runtime {
         use crate::engine::value::conversion::NativeConversion;
         Ok(match value {
             NativeConversion::Throw(value) => NativeConversion::Throw(value),
-            NativeConversion::Value(value) => {
-                NativeConversion::Value(value.as_ref().map(|v| v.to_public()).transpose()?)
-            }
+            NativeConversion::Value(value) => NativeConversion::Value(
+                value
+                    .as_ref()
+                    .map(OwnedCompletePropertyDescriptor::to_public)
+                    .transpose()?,
+            ),
         })
     }
 }

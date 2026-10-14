@@ -320,7 +320,7 @@ impl EvaluationResume {
                 let frame = frames.last_mut().ok_or(RuntimeError::Invariant(
                     "module evaluation call stack unexpectedly became empty",
                 ))?;
-                let dependency = frame.dependencies.get(frame.next_dependency).cloned();
+                let dependency = frame.dependencies.get(frame.next_dependency).copied();
                 if dependency.is_some() {
                     frame.next_dependency += 1;
                 }

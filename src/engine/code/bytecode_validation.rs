@@ -1083,11 +1083,7 @@ pub fn validate_parameter_bytecode_layout(
             | Instruction::Gosub(target) => Some(*target),
             _ => None,
         };
-        target.is_some_and(|target| {
-            usize::try_from(target)
-                .ok()
-                .is_some_and(|target| target < body_pc)
-        })
+        target.is_some_and(|target| usize::try_from(target).is_ok_and(|target| target < body_pc))
     }) {
         return Err("function body jumps back into parameter initialization");
     }
@@ -1196,7 +1192,7 @@ fn validate_explicit_parameter_environment_layout(
         return Err("parameter default sources disagree with function length");
     }
     let mut body_targets = vec![false; usize::from(metadata.local_count)];
-    for cell in layout.argument_cells.iter() {
+    for cell in &layout.argument_cells {
         let local = usize::from(cell.parameter_local);
         let argument = usize::from(cell.argument);
         if local >= cell_roles.len()
@@ -1216,7 +1212,7 @@ fn validate_explicit_parameter_environment_layout(
             }
         }
     }
-    for copy in layout.pattern_copies.iter() {
+    for copy in &layout.pattern_copies {
         let source = usize::from(copy.parameter_local);
         if source >= cell_roles.len() || std::mem::replace(&mut cell_roles[source], true) {
             return Err("parameter pattern copy source overlaps or is out of bounds");
@@ -1435,7 +1431,7 @@ fn validate_explicit_parameter_environment_layout(
         return Err("parameter pattern copy phase overlaps the TDZ prologue");
     }
 
-    for cell in layout.argument_cells.iter() {
+    for cell in &layout.argument_cells {
         let argument = cell.argument;
         let argument_index = usize::from(argument);
         let parameter_local = usize::from(cell.parameter_local);

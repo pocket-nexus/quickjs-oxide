@@ -713,8 +713,7 @@ impl Heap {
             unreachable!("validated fresh Array length slot")
         };
         *length = i32::try_from(next_len)
-            .map(RawValue::Int)
-            .unwrap_or_else(|_| RawValue::Float(f64::from(next_len)));
+            .map_or_else(|_| RawValue::Float(f64::from(next_len)), RawValue::Int);
         Ok(())
     }
 
@@ -754,8 +753,7 @@ impl Heap {
             unreachable!("validated fresh Array length slot")
         };
         *length = i32::try_from(next_len)
-            .map(RawValue::Int)
-            .unwrap_or_else(|_| RawValue::Float(f64::from(next_len)));
+            .map_or_else(|_| RawValue::Float(f64::from(next_len)), RawValue::Int);
         Ok(())
     }
 

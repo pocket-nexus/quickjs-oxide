@@ -928,9 +928,7 @@ fn verify_parts_with_visits<V: VerificationVisits>(
             | Instruction::GetRefValue(index)
             | Instruction::GetRefValueUndef(index)
             | Instruction::PutRefValue(index) => {
-                let is_valid = usize::try_from(*index)
-                    .ok()
-                    .is_some_and(|index| index < constant_count);
+                let is_valid = usize::try_from(*index).is_ok_and(|index| index < constant_count);
                 if !is_valid {
                     return Err(Error::internal("constant index is out of bounds"));
                 }

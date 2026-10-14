@@ -86,7 +86,7 @@ fn lock_coordinator() -> MutexGuard<'static, AtomicCoordinator> {
     // operations in the process.
     ATOMIC_COORDINATOR
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Run one non-blocking atomic byte leaf in the process-wide SC order.
@@ -125,7 +125,7 @@ pub(crate) fn wait<E>(
             while coordinator.contains(id) {
                 coordinator = signal
                     .wait(coordinator)
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
             }
             Ok(WaitOutcome::Ok)
         }
@@ -135,7 +135,7 @@ pub(crate) fn wait<E>(
             loop {
                 let (next, timeout_result) = signal
                     .wait_timeout(coordinator, remaining)
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 coordinator = next;
                 if !coordinator.contains(id) {
                     // `notify` removed this registration first, even if the

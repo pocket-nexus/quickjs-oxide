@@ -107,7 +107,7 @@ impl SharedBackingStore {
         // slices have no structural invariant beyond their immutable length.
         self.bytes
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Maximum number of bytes committed in this backing store.

@@ -789,7 +789,7 @@ impl PropertyResume {
             descriptor.configurable = crate::engine::object::DescriptorField::Present(false);
             if kind == ObjectIntegrityKind::Freeze
                 && matches!(
-                    current.as_ref().map(|descriptor| descriptor.record()),
+                    current.as_ref().map(|value| value.record()),
                     Some(
                         crate::engine::object::property::CompletePropertyDescriptor::Data {
                             writable: true,

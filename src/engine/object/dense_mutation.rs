@@ -122,11 +122,10 @@ impl RuntimeState {
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("array_mutation_dense_push");
-        Ok(Some(
-            i32::try_from(length + 1)
-                .map(JsValue::Int)
-                .unwrap_or_else(|_| JsValue::Float(f64::from(length + 1))),
-        ))
+        Ok(Some(i32::try_from(length + 1).map_or_else(
+            |_| JsValue::Float(f64::from(length + 1)),
+            JsValue::Int,
+        )))
     }
 
     /// Transfer the removed edge from dense storage to the consumer. No retain,

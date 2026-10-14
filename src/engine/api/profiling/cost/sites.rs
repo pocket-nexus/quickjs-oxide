@@ -133,7 +133,9 @@ impl CallsiteCost {
 fn function_key(runtime: &Runtime, executable: &PublishedFunctionSnapshot) -> FunctionSiteKey {
     FunctionSiteKey {
         runtime_id: runtime.domain_id(),
-        bytecode_id: executable.bytecode_id().map(|id| id.publish_generation()),
+        bytecode_id: executable
+            .bytecode_id()
+            .map(|value| value.publish_generation()),
     }
 }
 
@@ -156,7 +158,10 @@ fn source_identity_in_state(
     let Ok(bytecode) = state.heap.function_bytecode(id) else {
         return (None, None, None, None);
     };
-    let name = bytecode.func_name.as_ref().map(|name| name.to_utf8_lossy());
+    let name = bytecode
+        .func_name
+        .as_ref()
+        .map(|value| value.to_utf8_lossy());
     let filename = bytecode.debug.as_ref().and_then(|debug| {
         state
             .atoms

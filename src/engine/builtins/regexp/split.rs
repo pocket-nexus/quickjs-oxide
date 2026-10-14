@@ -276,7 +276,7 @@ impl Runtime {
                 return Ok(StandardSplitOutcome::Complete);
             }
             p = e;
-            for range in matched.captures()[1..].iter() {
+            for range in &matched.captures()[1..] {
                 self.push_standard_split_piece(
                     array,
                     input,

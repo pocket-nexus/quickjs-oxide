@@ -699,7 +699,7 @@ fn complete_read(
             preserved_receiver = discarded[consume - 1].take();
         }
         if immediate_key {
-            for slot in discarded.iter_mut() {
+            for slot in &mut discarded {
                 if let Some(taken) = slot.take() {
                     runtime
                         .release_jsvalue(taken)

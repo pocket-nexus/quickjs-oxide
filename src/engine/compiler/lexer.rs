@@ -1911,7 +1911,7 @@ impl<'a> Lexer<'a> {
                 let lone_surrogate = self.surrogate_at(self.offset);
                 self.bump_char();
                 Ok(EscapeValue::code_point(
-                    lone_surrogate.map(u32::from).unwrap_or(ch as u32),
+                    lone_surrogate.map_or(ch as u32, u32::from),
                 ))
             }
         }

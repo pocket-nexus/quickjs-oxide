@@ -64,9 +64,8 @@ impl RuntimeState {
                                     }
                                 }
                             }
-                        } else {
-                            self.select_special_storage_read(object, atom)?
                         }
+                        self.select_special_storage_read(object, atom)?
                     }
                     SpecialKind::ModuleNamespace | SpecialKind::Other => {
                         self.select_special_storage_read(object, atom)?
@@ -198,11 +197,10 @@ impl RuntimeState {
                         .pinned_atoms
                         .get(crate::engine::atom::pinned::PinnedAtom::Length)
                 {
-                    return Ok(Some(
-                        i32::try_from(string.len())
-                            .map(JsValue::Int)
-                            .unwrap_or_else(|_| JsValue::Float(string.len() as f64)),
-                    ));
+                    return Ok(Some(i32::try_from(string.len()).map_or_else(
+                        |_| JsValue::Float(string.len() as f64),
+                        JsValue::Int,
+                    )));
                 }
                 PrimitiveKind::String
             }

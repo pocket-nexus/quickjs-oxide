@@ -506,9 +506,9 @@ impl Runtime {
         Ok(
             match self.internal_get_own_property_owned(realm, object, key)? {
                 NativeConversion::Throw(value) => NativeConversion::Throw(value),
-                NativeConversion::Value(value) => {
-                    NativeConversion::Value(value.as_ref().map(|v| v.to_public()).transpose()?)
-                }
+                NativeConversion::Value(value) => NativeConversion::Value(
+                    value.as_ref().map(|value| value.to_public()).transpose()?,
+                ),
             },
         )
     }

@@ -654,7 +654,7 @@ impl Heap {
                 }
             }
             let mut mapped_arguments = vec![false; bytecode.argument_definitions.len()];
-            for cell in layout.argument_cells.iter() {
+            for cell in &layout.argument_cells {
                 mapped_arguments[usize::from(cell.argument)] = true;
                 let argument = &bytecode.argument_definitions[usize::from(cell.argument)];
                 let local = &bytecode.local_definitions[usize::from(cell.parameter_local)];
@@ -674,7 +674,7 @@ impl Heap {
                     "parameter argument-cell map is not one-to-one with named arguments",
                 ));
             }
-            for copy in layout.pattern_copies.iter() {
+            for copy in &layout.pattern_copies {
                 let source = &bytecode.local_definitions[usize::from(copy.parameter_local)];
                 let target = &bytecode.local_definitions[usize::from(copy.body_local)];
                 if target.kind != ClosureVariableKind::Normal
@@ -1287,7 +1287,7 @@ impl Heap {
                     ));
                 }
             }
-            for scope in environment.scopes.iter() {
+            for scope in &environment.scopes {
                 if scope.kind == EvalScopeKind::With && scope.bindings.len() != 1 {
                     return Err(HeapError::Invariant(
                         "eval with scope does not contain exactly one object binding",

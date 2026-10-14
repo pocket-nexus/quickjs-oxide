@@ -584,7 +584,7 @@ fn drain_agent_jobs(
         }
         match runtime
             .execute_pending_job()
-            .map_err(|error| error.into_error())
+            .map_err(|value| value.into_error())
         {
             Ok(outcome) if outcome.executed() => {}
             Ok(_) => {
