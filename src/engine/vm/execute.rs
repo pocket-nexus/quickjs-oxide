@@ -139,10 +139,11 @@ impl<'a> FrameCursor<'a> {
         }
     }
 
-    /// The borrowed-field hit path pays this commit on every iteration; the
-    /// measurement after item 5e-2 shows the dispatch function's size is
-    /// neutral, so the accepted push completes inline at those two sites
-    /// while every other consumer keeps the shared out-of-line call.
+    /// Borrowed-field, global-cell and captured reads pay this commit on
+    /// every hit. The accepted push completes inline at those sites so the
+    /// value goes from registers into the slot; passing it to the shared
+    /// out-of-line call would move it through a caller temporary whose
+    /// piecewise stores the callee's full-width load cannot forward.
     #[inline(always)]
     fn commit_owned_hot(&mut self, state: &mut RuntimeState, value: JsValue) -> Result<(), Error> {
         match self.transaction.slots().try_push(value) {
@@ -1402,11 +1403,8 @@ fn execute_admitted_in_state(
                             });
                             continue;
                         }
-                        let completed = cursor.with_slots(|slots| {
-                            slots.binary_number(|left, right| {
-                                binary_number_result(comparison, left, right)
-                            })
-                        })?;
+                        let completed =
+                            cursor.with_slots(|slots| binary_number_in_place(slots, comparison))?;
                         if !completed {
                             if matches!(comparison, Opcode::StrictEq | Opcode::StrictNeq) {
                                 let decision = cursor.strict_comparison(state, active_frame)?
@@ -1581,7 +1579,7 @@ fn execute_admitted_in_state(
                             if value.is_some() { None } else { Some("guard") },
                         );
                         if let Some(value) = value {
-                            cursor.commit_owned(state, value)?;
+                            cursor.commit_owned_hot(state, value)?;
                         } else {
                             break 'dispatch Ok(VmAction::Binding {
                                 source: BindingSource::Closure,
@@ -1607,7 +1605,7 @@ fn execute_admitted_in_state(
                                     index,
                                 )?
                         {
-                            cursor.commit_owned(state, value)?;
+                            cursor.commit_owned_hot(state, value)?;
                             #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_owned_execution_event(
                                 "global_cell.local_complete",
@@ -1946,11 +1944,8 @@ fn execute_admitted_in_state(
                     | Opcode::Gte
                     | Opcode::StrictEq
                     | Opcode::StrictNeq => {
-                        let completed = cursor.with_slots(|slots| {
-                            slots.binary_number(|left, right| {
-                                binary_number_result(decoded.opcode, left, right)
-                            })
-                        })?;
+                        let completed = cursor
+                            .with_slots(|slots| binary_number_in_place(slots, decoded.opcode))?;
                         if !completed {
                             if matches!(decoded.opcode, Opcode::Eq | Opcode::Neq)
                                 && let Some(equal) = cursor.with_slots(|slots| {
@@ -2902,6 +2897,12 @@ fn read_local<const CHECKED: bool>(
     if cursor.with_slots(|slots| slots.push_direct_immediate(DirectSlot::Local(index)))? {
         return Ok(None);
     }
+    let poisoned = cursor.poisoned;
+    if cursor.with_slots(|slots| {
+        slots.push_direct_heap_copy_in_state(state, poisoned, DirectSlot::Local(index))
+    })? {
+        return Ok(None);
+    }
     let (copied, uninitialized) = cursor.with_slots(|slots| match slots.local(index)? {
         FrameBinding::Direct(value) => {
             copy_value_in_state(state, value).map(|value| (Some(value), false))
@@ -2936,6 +2937,12 @@ fn read_arg(
     index: u16,
 ) -> Result<Option<VmAction>, Error> {
     if cursor.with_slots(|slots| slots.push_direct_immediate(DirectSlot::Argument(index)))? {
+        return Ok(None);
+    }
+    let poisoned = cursor.poisoned;
+    if cursor.with_slots(|slots| {
+        slots.push_direct_heap_copy_in_state(state, poisoned, DirectSlot::Argument(index))
+    })? {
         return Ok(None);
     }
     let copied = cursor.with_slots(|slots| match slots.parameter(index)? {
@@ -3455,7 +3462,21 @@ fn compare_direct_numbers(opcode: u16, left: Number, right: Number) -> bool {
     }
 }
 
+/// Number-only binary operators read both operand slots, compute, and write
+/// the result slot in one out-of-line body. The result goes from registers
+/// into the slot; returning it through a caller temporary would leave
+/// piecewise stores that the following full-width move cannot forward.
+#[inline(never)]
+fn binary_number_in_place(slots: &mut FrameSlots<'_>, opcode: Opcode) -> Result<bool, Error> {
+    slots.binary_number(|left, right| binary_number_value(opcode, left, right))
+}
+
 fn binary_number_result(opcode: Opcode, left: Number, right: Number) -> JsValue {
+    binary_number_value(opcode, left, right)
+}
+
+#[inline(always)]
+fn binary_number_value(opcode: Opcode, left: Number, right: Number) -> JsValue {
     match opcode {
         Opcode::Add => number_value(left.add(right)),
         Opcode::Sub => number_value(left.sub(right)),
