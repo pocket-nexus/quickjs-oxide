@@ -247,54 +247,6 @@ impl Drop for FrameStorageGuard<'_> {
     }
 }
 
-/// Temporary frame storage inside a state-held execution segment. Reborrowing
-/// parts() permits computation without relinquishing the cleanup capability.
-#[must_use]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::engine::vm) struct StateFrameStorageGuard<'a> {
-    state: &'a mut crate::engine::heap::runtime::RuntimeState,
-    poisoned: &'a std::cell::Cell<bool>,
-    storage: Option<FrameStorage>,
-}
-#[cfg_attr(not(test), allow(dead_code))]
-impl<'a> StateFrameStorageGuard<'a> {
-    pub(in crate::engine::vm) fn new(
-        state: &'a mut crate::engine::heap::runtime::RuntimeState,
-        poisoned: &'a std::cell::Cell<bool>,
-        storage: FrameStorage,
-    ) -> Self {
-        Self {
-            state,
-            poisoned,
-            storage: Some(storage),
-        }
-    }
-    pub(in crate::engine::vm) fn parts(
-        &mut self,
-    ) -> (
-        &mut crate::engine::heap::runtime::RuntimeState,
-        &mut Option<FrameStorage>,
-    ) {
-        (self.state, &mut self.storage)
-    }
-}
-impl Drop for StateFrameStorageGuard<'_> {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            self.poisoned.set(true);
-        }
-        if self.poisoned.get() {
-            return;
-        }
-        let _unwind = crate::engine::api::runtime::RuntimeUnwindGuard::from_flag(self.poisoned);
-        if let Some(storage) = self.storage.take()
-            && release_frame_storage_in_state(self.state, storage).is_err()
-        {
-            self.poisoned.set(true);
-        }
-    }
-}
-
 #[cfg(test)]
 mod nullish;
 mod number;
@@ -3470,39 +3422,5 @@ mod tests {
             .unwrap();
         assert_eq!(slots.depth(&reused), 0);
         assert!(slots.slots.iter().all(Option::is_none));
-    }
-}
-
-#[cfg(test)]
-mod state_storage_ownership_tests {
-    use super::{FrameStorage, StateFrameStorageGuard};
-    use crate::engine::{api::Runtime, value::JsValue, vm::bindings::FrameBinding};
-
-    #[test]
-    fn state_storage_guard_releases_aliases_without_reborrowing_runtime() {
-        let runtime = Runtime::new();
-        let id = runtime.new_object(None).unwrap().into_handle();
-        runtime.retain_object_handle(id).unwrap();
-        runtime.retain_object_handle(id).unwrap();
-        let before = std::rc::Rc::strong_count(&runtime.0);
-        let mut state = runtime.0.state.borrow_mut();
-        {
-            let mut guard = StateFrameStorageGuard::new(
-                &mut state,
-                &runtime.0.poisoned,
-                FrameStorage {
-                    original_arguments: vec![JsValue::Object(id)],
-                    parameters: vec![FrameBinding::Direct(JsValue::Object(id))],
-                    locals: Vec::new(),
-                    operands: vec![JsValue::Object(id)],
-                },
-            );
-            let (state, storage) = guard.parts();
-            assert_eq!(state.heap.object_strong_count(id), Ok(3));
-            assert_eq!(storage.as_ref().unwrap().operands.len(), 1);
-            assert_eq!(std::rc::Rc::strong_count(&runtime.0), before);
-        }
-        assert!(state.heap.object(id).is_err());
-        assert!(!runtime.0.poisoned.get());
     }
 }

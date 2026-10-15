@@ -467,7 +467,7 @@ impl NativeActivation {
         self.callable.as_ref().expect("native callable present")
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(in crate::engine::vm) fn own_continuation(&mut self) -> Result<(), RuntimeError> {
         self.active_frame
             .as_mut()

@@ -630,50 +630,6 @@ pub(super) fn start_prototype(
     }
 }
 
-/// The lookup and its receiver selection are already complete. Only the
-/// selected callback/service is scheduled; no property lookup is replayed.
-#[allow(dead_code)] // Used by the parallel conversion consumer batch.
-pub(super) fn start_conversion_state_read(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    frame: FrameId,
-    effect: crate::engine::object::StateReadEffect,
-    atom: crate::engine::atom::Atom,
-    wait: super::conversion_driver::ConversionWait,
-) -> Result<Progress, Error> {
-    let mut step = Step::StateRead {
-        effect: Some(effect),
-        atom: Some(atom),
-        resume: Some(Resume::Identity),
-    };
-    let prepared = (|| {
-        let parent = execution.frames.current_mut(frame)?;
-        let identity = parent
-            .property_generation
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-        parent.property_generation = identity;
-        Ok((identity, parent.executable.realm))
-    })();
-    let (identity, realm) = match prepared {
-        Ok(value) => value,
-        Err(error) => {
-            step.release_owned(runtime);
-            return Err(error);
-        }
-    };
-    let result = advance(
-        runtime,
-        execution,
-        frame,
-        identity,
-        Vec::new(),
-        step,
-        Finish::Conversion(wait),
-    );
-    finish_error(runtime, realm, result)
-}
-
 pub(super) fn start_conversion(
     runtime: &Runtime,
     execution: &mut RunningExecution,

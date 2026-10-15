@@ -612,7 +612,6 @@ impl Runtime {
     /// internal hidden native frames are absent from the observable stack and
     /// are skipped. Backtrace barriers deliberately do not participate in
     /// this lookup.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn active_script_or_module_name(&self) -> Result<Option<JsString>, RuntimeError> {
         let state = self.0.state.borrow();
         for frame in state.active_frames.iter().rev() {
@@ -925,7 +924,7 @@ impl ActiveFrameGuard {
                 .map(FunctionBytecodeRef::into_execution_handle),
         }
     }
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(super) fn mark_native_continuation(&mut self) -> Result<(), RuntimeError> {
         let mut state = self.runtime.0.state.borrow_mut();
         let frame = state
