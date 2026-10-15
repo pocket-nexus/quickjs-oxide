@@ -45,7 +45,6 @@ mod iterator;
 mod json;
 mod lexical;
 mod math_intrinsic;
-mod member_access;
 mod module_reentry;
 mod number;
 mod number_kernels;

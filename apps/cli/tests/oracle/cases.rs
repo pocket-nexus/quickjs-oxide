@@ -11,6 +11,7 @@ const DIRECTORIES: &[&str] = &[
     "function_semantics",
     "global",
     "json",
+    "member_access",
     "number",
     "object",
     "operators",
@@ -63,6 +64,11 @@ fn global() {
 #[test]
 fn json() {
     run_case_directory("json");
+}
+
+#[test]
+fn member_access() {
+    run_case_directory("member_access");
 }
 
 #[test]
