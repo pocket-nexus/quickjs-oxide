@@ -11,14 +11,17 @@ use crate::engine::builtins::native::{
     PrimitiveKind, SymbolRegistryKind,
 };
 use crate::engine::heap::ContextId;
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, BuiltinKey, BuiltinValue, METHOD_FLAGS, builtin_getter, method, symbol_method,
+    to_string_tag,
+};
 use crate::engine::object::shape::PropertyFlags;
 
 use crate::engine::object::{
     AccessorValue, CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey, WellKnownSymbol,
 };
-use crate::engine::value::{JsString, JsValue, Value};
-use crate::engine::vm::Completion;
+use crate::engine::value::{JsString, Value};
 
 impl Runtime {
     /// Define `@@toStringTag` as a non-writable, non-enumerable, configurable
@@ -90,53 +93,65 @@ impl Runtime {
         number_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let kind = PrimitiveKind::Number;
-        for (target, name, arity) in [
-            (
-                NativeFunctionId::NumberPrototypeFormat(NumberFormatKind::Exponential),
+        use NativeFunctionId as F;
+        use NumberFormatKind as Format;
+        use NumberPredicateKind as Predicate;
+        const KIND: PrimitiveKind = PrimitiveKind::Number;
+        const fn constant(name: &'static str, value: f64) -> BuiltinEntry {
+            BuiltinEntry::Value {
+                name,
+                value: BuiltinValue::Float(value),
+                writable: false,
+                configurable: false,
+            }
+        }
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(
+                F::NumberPrototypeFormat(Format::Exponential),
                 "toExponential",
                 1,
-            ),
-            (
-                NativeFunctionId::NumberPrototypeFormat(NumberFormatKind::Fixed),
-                "toFixed",
                 1,
             ),
-            (
-                NativeFunctionId::NumberPrototypeFormat(NumberFormatKind::Precision),
+            method(F::NumberPrototypeFormat(Format::Fixed), "toFixed", 1, 1),
+            method(
+                F::NumberPrototypeFormat(Format::Precision),
                 "toPrecision",
                 1,
-            ),
-            (
-                NativeFunctionId::PrimitivePrototypeToString(kind),
-                "toString",
                 1,
             ),
-            (
-                NativeFunctionId::NumberPrototypeFormat(NumberFormatKind::LocaleString),
+            method(F::PrimitivePrototypeToString(KIND), "toString", 1, 1),
+            method(
+                F::NumberPrototypeFormat(Format::LocaleString),
                 "toLocaleString",
                 0,
-            ),
-            (
-                NativeFunctionId::PrimitivePrototypeValueOf(kind),
-                "valueOf",
                 0,
             ),
-        ] {
-            self.define_native_builtin_auto_init(
-                number_prototype,
-                realm,
-                target,
-                name,
-                arity,
-                arity,
-            )?;
-        }
-
+            method(F::PrimitivePrototypeValueOf(KIND), "valueOf", 0, 0),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F::NumberPredicate(Predicate::IsNaN), "isNaN", 1, 1),
+            method(F::NumberPredicate(Predicate::IsFinite), "isFinite", 1, 1),
+            method(F::NumberPredicate(Predicate::IsInteger), "isInteger", 1, 1),
+            method(
+                F::NumberPredicate(Predicate::IsSafeInteger),
+                "isSafeInteger",
+                1,
+                1,
+            ),
+            constant("MAX_VALUE", f64::MAX),
+            constant("MIN_VALUE", f64::from_bits(1)),
+            constant("NaN", f64::NAN),
+            constant("NEGATIVE_INFINITY", f64::NEG_INFINITY),
+            constant("POSITIVE_INFINITY", f64::INFINITY),
+            constant("EPSILON", f64::EPSILON),
+            constant("MAX_SAFE_INTEGER", 9_007_199_254_740_991.0),
+            constant("MIN_SAFE_INTEGER", -9_007_199_254_740_991.0),
+        ];
+        self.define_builtin_entries(number_prototype, realm, PROTOTYPE)?;
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::PrimitiveConstructor(kind),
+            F::PrimitiveConstructor(KIND),
             1,
             "Number",
             1,
@@ -145,80 +160,16 @@ impl Runtime {
         // identity before adding the remaining Number statics.
         for name in ["parseInt", "parseFloat"] {
             let key = self.intern_property_key(name)?;
-            let value = match self.get_property_in_realm(realm, global_object, &key)? {
-                Completion::Return(value @ JsValue::Object(_)) => value,
-                Completion::Return(value) => {
-                    self.release_jsvalue(value)?;
-                    return Err(RuntimeError::Invariant(
-                        "global numeric parser was not an object during Number bootstrap",
-                    ));
-                }
-                Completion::Throw(value) => {
-                    self.release_jsvalue(value)?;
-                    return Err(RuntimeError::Invariant(
-                        "global numeric parser lookup threw during Number bootstrap",
-                    ));
-                }
-            };
-            let mut descriptor = crate::engine::object::OwnedPropertyDescriptor::new(self);
-            descriptor.value = DescriptorField::Present(value);
-            descriptor.writable = DescriptorField::Present(true);
-            descriptor.enumerable = DescriptorField::Present(false);
-            descriptor.configurable = DescriptorField::Present(true);
-            match self.define_owned_property_in_realm(
-                None,
-                constructor.as_object(),
-                &key,
-                &descriptor,
-            )? {
-                crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {}
-                crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
-                    return Err(RuntimeError::Invariant(
-                        "function intrinsic property definition was rejected",
-                    ));
-                }
-                crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
-                    self.release_jsvalue(value)?;
-                    return Err(RuntimeError::Invariant(
-                        "Number parser alias definition threw during bootstrap",
-                    ));
-                }
-            }
-        }
-        for (predicate, name) in [
-            (NumberPredicateKind::IsNaN, "isNaN"),
-            (NumberPredicateKind::IsFinite, "isFinite"),
-            (NumberPredicateKind::IsInteger, "isInteger"),
-            (NumberPredicateKind::IsSafeInteger, "isSafeInteger"),
-        ] {
-            self.define_native_builtin_auto_init(
+            self.define_builtin_alias(
                 constructor.as_object(),
                 realm,
-                NativeFunctionId::NumberPredicate(predicate),
-                name,
-                1,
-                1,
+                global_object,
+                &key,
+                BuiltinKey::Name(name),
             )?;
         }
-        for (name, value) in [
-            ("MAX_VALUE", Value::Float(f64::MAX)),
-            ("MIN_VALUE", Value::Float(f64::from_bits(1))),
-            ("NaN", Value::Float(f64::NAN)),
-            ("NEGATIVE_INFINITY", Value::Float(f64::NEG_INFINITY)),
-            ("POSITIVE_INFINITY", Value::Float(f64::INFINITY)),
-            ("EPSILON", Value::Float(f64::EPSILON)),
-            ("MAX_SAFE_INTEGER", Value::Float(9_007_199_254_740_991.0)),
-            ("MIN_SAFE_INTEGER", Value::Float(-9_007_199_254_740_991.0)),
-        ] {
-            self.define_function_data_property(constructor.as_object(), name, value, false, false)?;
-        }
-        self.define_function_data_property(
-            global_object,
-            "Number",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "Number", &constructor)?;
         self.define_constructor_relationship(&constructor, number_prototype)
     }
 
@@ -229,41 +180,34 @@ impl Runtime {
         boolean_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let kind = PrimitiveKind::Boolean;
+        const KIND: PrimitiveKind = PrimitiveKind::Boolean;
         // QuickJS installs the complete Boolean prototype table before the
         // constructor back-reference, which fixes own-key order as
         // `toString,valueOf,constructor`.
-        self.define_native_builtin_auto_init(
-            boolean_prototype,
-            realm,
-            NativeFunctionId::PrimitivePrototypeToString(kind),
-            "toString",
-            0,
-            0,
-        )?;
-        self.define_native_builtin_auto_init(
-            boolean_prototype,
-            realm,
-            NativeFunctionId::PrimitivePrototypeValueOf(kind),
-            "valueOf",
-            0,
-            0,
-        )?;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(
+                NativeFunctionId::PrimitivePrototypeToString(KIND),
+                "toString",
+                0,
+                0,
+            ),
+            method(
+                NativeFunctionId::PrimitivePrototypeValueOf(KIND),
+                "valueOf",
+                0,
+                0,
+            ),
+        ];
+        self.define_builtin_entries(boolean_prototype, realm, PROTOTYPE)?;
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::PrimitiveConstructor(kind),
+            NativeFunctionId::PrimitiveConstructor(KIND),
             1,
             "Boolean",
             1,
         )?;
-        self.define_function_data_property(
-            global_object,
-            "Boolean",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_global_function(global_object, "Boolean", &constructor)?;
         self.define_constructor_relationship(&constructor, boolean_prototype)
     }
 
@@ -280,22 +224,22 @@ impl Runtime {
         realm: ContextId,
         string_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::PrimitivePrototypeToString(PrimitiveKind::String),
-            "toString",
-            0,
-            0,
-        )?;
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::PrimitivePrototypeValueOf(PrimitiveKind::String),
-            "valueOf",
-            0,
-            0,
-        )
+        const KIND: PrimitiveKind = PrimitiveKind::String;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(
+                NativeFunctionId::PrimitivePrototypeToString(KIND),
+                "toString",
+                0,
+                0,
+            ),
+            method(
+                NativeFunctionId::PrimitivePrototypeValueOf(KIND),
+                "valueOf",
+                0,
+                0,
+            ),
+        ];
+        self.define_builtin_entries(string_prototype, realm, PROTOTYPE)
     }
 
     /// Complete the String iterator class slice: the generic String method,
@@ -306,28 +250,19 @@ impl Runtime {
         string_prototype: &ObjectRef,
         string_iterator_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
-        self.define_native_builtin_auto_init_with_key(
-            string_prototype,
-            realm,
-            &iterator,
+        const PROTOTYPE: &[BuiltinEntry] = &[symbol_method(
+            WellKnownSymbol::Iterator,
             NativeFunctionId::StringPrototypeIterator,
             "[Symbol.iterator]",
             0,
-            0,
-            PropertyFlags::data(true, false, true),
-        )?;
-        self.define_native_builtin_auto_init(
-            string_iterator_prototype,
-            realm,
-            NativeFunctionId::StringIteratorNext,
-            "next",
-            0,
-            0,
-        )?;
-
-        self.define_to_string_tag(string_iterator_prototype, "String Iterator")?;
-        Ok(())
+            METHOD_FLAGS,
+        )];
+        const ITERATOR_PROTOTYPE: &[BuiltinEntry] = &[
+            method(NativeFunctionId::StringIteratorNext, "next", 0, 0),
+            to_string_tag("String Iterator"),
+        ];
+        self.define_builtin_entries(string_prototype, realm, PROTOTYPE)?;
+        self.define_builtin_entries(string_iterator_prototype, realm, ITERATOR_PROTOTYPE)
     }
 
     pub(crate) fn initialize_symbol_intrinsic(
@@ -337,107 +272,65 @@ impl Runtime {
         symbol_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let kind = PrimitiveKind::Symbol;
-        self.define_native_builtin_auto_init(
-            symbol_prototype,
-            realm,
-            NativeFunctionId::PrimitivePrototypeToString(kind),
-            "toString",
-            0,
-            0,
-        )?;
-        self.define_native_builtin_auto_init(
-            symbol_prototype,
-            realm,
-            NativeFunctionId::PrimitivePrototypeValueOf(kind),
-            "valueOf",
-            0,
-            0,
-        )?;
-
-        let to_primitive = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToPrimitive)?);
-        self.define_native_builtin_auto_init_with_key(
-            symbol_prototype,
-            realm,
-            &to_primitive,
-            NativeFunctionId::PrimitivePrototypeValueOf(kind),
-            "[Symbol.toPrimitive]",
-            1,
-            1,
+        use NativeFunctionId as F;
+        use WellKnownSymbol as S;
+        const KIND: PrimitiveKind = PrimitiveKind::Symbol;
+        const fn symbol(name: &'static str, symbol: S) -> BuiltinEntry {
+            BuiltinEntry::Value {
+                name,
+                value: BuiltinValue::Symbol(symbol),
+                writable: false,
+                configurable: false,
+            }
+        }
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::PrimitivePrototypeToString(KIND), "toString", 0, 0),
+            method(F::PrimitivePrototypeValueOf(KIND), "valueOf", 0, 0),
             // This is a pinned QuickJS quirk: the table entry is a C function,
             // but a symbol-named method is installed non-writable.
-            PropertyFlags::data(false, false, true),
-        )?;
-        self.define_to_string_tag(symbol_prototype, "Symbol")?;
-        self.define_native_builtin_getter_on(
-            symbol_prototype,
-            function_prototype,
-            realm,
-            NativeFunctionId::SymbolPrototypeDescription,
-            "description",
-            "get description",
-        )?;
-
+            symbol_method(
+                S::ToPrimitive,
+                F::PrimitivePrototypeValueOf(KIND),
+                "[Symbol.toPrimitive]",
+                1,
+                PropertyFlags::data(false, false, true),
+            ),
+            to_string_tag("Symbol"),
+            builtin_getter!(F::SymbolPrototypeDescription, "description"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F::SymbolRegistry(SymbolRegistryKind::For), "for", 1, 1),
+            method(
+                F::SymbolRegistry(SymbolRegistryKind::KeyFor),
+                "keyFor",
+                1,
+                1,
+            ),
+            symbol("toPrimitive", S::ToPrimitive),
+            symbol("iterator", S::Iterator),
+            symbol("match", S::Match),
+            symbol("matchAll", S::MatchAll),
+            symbol("replace", S::Replace),
+            symbol("search", S::Search),
+            symbol("split", S::Split),
+            symbol("toStringTag", S::ToStringTag),
+            symbol("isConcatSpreadable", S::IsConcatSpreadable),
+            symbol("hasInstance", S::HasInstance),
+            symbol("species", S::Species),
+            symbol("unscopables", S::Unscopables),
+            symbol("asyncIterator", S::AsyncIterator),
+        ];
+        self.define_builtin_entries(symbol_prototype, realm, PROTOTYPE)?;
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::PrimitiveConstructor(kind),
+            F::PrimitiveConstructor(KIND),
             1,
             "Symbol",
             0,
         )?;
-        for (selector, name) in [
-            (SymbolRegistryKind::For, "for"),
-            (SymbolRegistryKind::KeyFor, "keyFor"),
-        ] {
-            self.define_native_builtin_auto_init(
-                constructor.as_object(),
-                realm,
-                NativeFunctionId::SymbolRegistry(selector),
-                name,
-                1,
-                1,
-            )?;
-        }
-        for (name, symbol) in [
-            ("toPrimitive", WellKnownSymbol::ToPrimitive),
-            ("iterator", WellKnownSymbol::Iterator),
-            ("match", WellKnownSymbol::Match),
-            ("matchAll", WellKnownSymbol::MatchAll),
-            ("replace", WellKnownSymbol::Replace),
-            ("search", WellKnownSymbol::Search),
-            ("split", WellKnownSymbol::Split),
-            ("toStringTag", WellKnownSymbol::ToStringTag),
-            ("isConcatSpreadable", WellKnownSymbol::IsConcatSpreadable),
-            ("hasInstance", WellKnownSymbol::HasInstance),
-            ("species", WellKnownSymbol::Species),
-            ("unscopables", WellKnownSymbol::Unscopables),
-            ("asyncIterator", WellKnownSymbol::AsyncIterator),
-        ] {
-            let key = self.intern_property_key(name)?;
-            if !self.define_own_property(
-                constructor.as_object(),
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Value::Symbol(self.well_known_symbol(symbol)?)),
-                    writable: DescriptorField::Present(false),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(false),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )? {
-                return Err(RuntimeError::Invariant(
-                    "Symbol well-known property definition was rejected",
-                ));
-            }
-        }
-        self.define_function_data_property(
-            global_object,
-            "Symbol",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "Symbol", &constructor)?;
         self.define_constructor_relationship(&constructor, symbol_prototype)
     }
 
@@ -448,56 +341,31 @@ impl Runtime {
         bigint_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let kind = PrimitiveKind::BigInt;
+        use NativeFunctionId as F;
+        const KIND: PrimitiveKind = PrimitiveKind::BigInt;
         // `js_bigint_proto_funcs` is installed before the constructor
         // back-reference. toString has observable length zero even though its
         // C handler reads one optional, padded radix argument.
-        self.define_native_builtin_auto_init(
-            bigint_prototype,
-            realm,
-            NativeFunctionId::PrimitivePrototypeToString(kind),
-            "toString",
-            0,
-            1,
-        )?;
-        self.define_native_builtin_auto_init(
-            bigint_prototype,
-            realm,
-            NativeFunctionId::PrimitivePrototypeValueOf(kind),
-            "valueOf",
-            0,
-            0,
-        )?;
-        self.define_to_string_tag(bigint_prototype, "BigInt")?;
-
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::PrimitivePrototypeToString(KIND), "toString", 0, 1),
+            method(F::PrimitivePrototypeValueOf(KIND), "valueOf", 0, 0),
+            to_string_tag("BigInt"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F::BigIntAsN(BigIntAsNKind::AsUintN), "asUintN", 2, 2),
+            method(F::BigIntAsN(BigIntAsNKind::AsIntN), "asIntN", 2, 2),
+        ];
+        self.define_builtin_entries(bigint_prototype, realm, PROTOTYPE)?;
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::PrimitiveConstructor(kind),
+            F::PrimitiveConstructor(KIND),
             1,
             "BigInt",
             1,
         )?;
-        for (selector, name) in [
-            (BigIntAsNKind::AsUintN, "asUintN"),
-            (BigIntAsNKind::AsIntN, "asIntN"),
-        ] {
-            self.define_native_builtin_auto_init(
-                constructor.as_object(),
-                realm,
-                NativeFunctionId::BigIntAsN(selector),
-                name,
-                2,
-                2,
-            )?;
-        }
-        self.define_function_data_property(
-            global_object,
-            "BigInt",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "BigInt", &constructor)?;
         self.define_constructor_relationship(&constructor, bigint_prototype)
     }
 
@@ -507,6 +375,38 @@ impl Runtime {
         function_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use GlobalUriCodecKind as Uri;
+        use NativeFunctionId as F;
+        const GLOBALS: &[BuiltinEntry] = &[
+            method(
+                F::GlobalNumberPredicate(GlobalNumberPredicateKind::IsNaN),
+                "isNaN",
+                1,
+                1,
+            ),
+            method(
+                F::GlobalNumberPredicate(GlobalNumberPredicateKind::IsFinite),
+                "isFinite",
+                1,
+                1,
+            ),
+            method(F::GlobalUriCodec(Uri::DecodeUri), "decodeURI", 1, 1),
+            method(
+                F::GlobalUriCodec(Uri::DecodeUriComponent),
+                "decodeURIComponent",
+                1,
+                1,
+            ),
+            method(F::GlobalUriCodec(Uri::EncodeUri), "encodeURI", 1, 1),
+            method(
+                F::GlobalUriCodec(Uri::EncodeUriComponent),
+                "encodeURIComponent",
+                1,
+                1,
+            ),
+            method(F::GlobalUriCodec(Uri::Escape), "escape", 1, 1),
+            method(F::GlobalUriCodec(Uri::Unescape), "unescape", 1, 1),
+        ];
         // QuickJS publishes these entries at the head of `js_global_funcs`,
         // before the frozen global constants and `%Number%`. Number's parser
         // statics later capture the first two callable identities.
@@ -517,66 +417,37 @@ impl Runtime {
             let callable = self.new_native_builtin(
                 function_prototype,
                 realm,
-                NativeFunctionId::GlobalNumberParse(kind),
+                F::GlobalNumberParse(kind),
                 arity,
                 name,
                 i32::from(arity),
             )?;
-            self.define_function_data_property(
-                global_object,
-                name,
-                Value::Object(callable.as_object().try_clone()?),
-                true,
-                true,
-            )?;
+            self.define_global_function(global_object, name, &callable)?;
         }
-        for (kind, name) in [
-            (GlobalNumberPredicateKind::IsNaN, "isNaN"),
-            (GlobalNumberPredicateKind::IsFinite, "isFinite"),
-        ] {
-            self.define_native_builtin_auto_init(
-                global_object,
-                realm,
-                NativeFunctionId::GlobalNumberPredicate(kind),
-                name,
-                1,
-                1,
-            )?;
-        }
-        for (kind, name) in [
-            (GlobalUriCodecKind::DecodeUri, "decodeURI"),
-            (GlobalUriCodecKind::DecodeUriComponent, "decodeURIComponent"),
-            (GlobalUriCodecKind::EncodeUri, "encodeURI"),
-            (GlobalUriCodecKind::EncodeUriComponent, "encodeURIComponent"),
-            (GlobalUriCodecKind::Escape, "escape"),
-            (GlobalUriCodecKind::Unescape, "unescape"),
-        ] {
-            self.define_native_builtin_auto_init(
-                global_object,
-                realm,
-                NativeFunctionId::GlobalUriCodec(kind),
-                name,
-                1,
-                1,
-            )?;
-        }
-        Ok(())
+        self.define_builtin_entries(global_object, realm, GLOBALS)
     }
 
     pub(crate) fn initialize_global_primitive_constants(
         &self,
+        realm: ContextId,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        const fn constant(name: &'static str, value: BuiltinValue) -> BuiltinEntry {
+            BuiltinEntry::Value {
+                name,
+                value,
+                writable: false,
+                configurable: false,
+            }
+        }
         // QuickJS `js_global_funcs` entries immediately before @@toStringTag:
         // all three are non-writable, non-enumerable and non-configurable.
-        for (name, value) in [
-            ("Infinity", Value::Float(f64::INFINITY)),
-            ("NaN", Value::Float(f64::NAN)),
-            ("undefined", Value::Undefined),
-        ] {
-            self.define_function_data_property(global_object, name, value, false, false)?;
-        }
-        Ok(())
+        const GLOBALS: &[BuiltinEntry] = &[
+            constant("Infinity", BuiltinValue::Float(f64::INFINITY)),
+            constant("NaN", BuiltinValue::Float(f64::NAN)),
+            constant("undefined", BuiltinValue::Undefined),
+        ];
+        self.define_builtin_entries(global_object, realm, GLOBALS)
     }
 
     pub(crate) fn initialize_global_this(
@@ -675,128 +546,103 @@ impl Runtime {
         realm: ContextId,
         function_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        self.define_native_builtin_auto_init(
-            function_prototype,
-            realm,
-            NativeFunctionId::FunctionPrototypeCall,
-            "call",
-            1,
-            1,
-        )?;
-        self.define_native_builtin_auto_init(
-            function_prototype,
-            realm,
-            NativeFunctionId::FunctionPrototypeApply,
-            "apply",
-            2,
-            2,
-        )?;
-        self.define_native_builtin_auto_init(
-            function_prototype,
-            realm,
-            NativeFunctionId::FunctionPrototypeBind,
-            "bind",
-            1,
-            1,
-        )?;
-        self.define_native_builtin_auto_init(
-            function_prototype,
-            realm,
-            NativeFunctionId::FunctionPrototypeToString,
-            "toString",
-            0,
-            0,
-        )?;
-
-        let has_instance = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::HasInstance)?);
-        self.define_native_builtin_auto_init_with_key(
-            function_prototype,
-            realm,
-            &has_instance,
-            NativeFunctionId::FunctionPrototypeHasInstance,
-            "[Symbol.hasInstance]",
-            1,
-            1,
-            PropertyFlags::data(false, false, false),
-        )?;
-
+        use NativeFunctionId as F;
         // Unlike C functions in JS_SetPropertyFunctionList, QuickJS's
         // CGETSET entries are instantiated eagerly. Keep that distinction so
         // descriptor reads and realm/GC edges match the upstream table.
-        for (target, property_name, getter_name) in [
-            (
-                NativeFunctionId::FunctionPrototypeFileName,
-                "fileName",
-                "get fileName",
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::FunctionPrototypeCall, "call", 1, 1),
+            method(F::FunctionPrototypeApply, "apply", 2, 2),
+            method(F::FunctionPrototypeBind, "bind", 1, 1),
+            method(F::FunctionPrototypeToString, "toString", 0, 0),
+            symbol_method(
+                WellKnownSymbol::HasInstance,
+                F::FunctionPrototypeHasInstance,
+                "[Symbol.hasInstance]",
+                1,
+                PropertyFlags::data(false, false, false),
             ),
-            (
-                NativeFunctionId::FunctionPrototypePosition(FunctionDebugPosition::Line),
-                "lineNumber",
-                "get lineNumber",
+            builtin_getter!(F::FunctionPrototypeFileName, "fileName"),
+            builtin_getter!(
+                F::FunctionPrototypePosition(FunctionDebugPosition::Line),
+                "lineNumber"
             ),
-            (
-                NativeFunctionId::FunctionPrototypePosition(FunctionDebugPosition::Column),
-                "columnNumber",
-                "get columnNumber",
+            builtin_getter!(
+                F::FunctionPrototypePosition(FunctionDebugPosition::Column),
+                "columnNumber"
             ),
-        ] {
-            self.define_native_builtin_getter(
-                function_prototype,
-                realm,
-                target,
-                property_name,
-                getter_name,
-            )?;
-        }
-        Ok(())
+        ];
+        self.define_builtin_entries(function_prototype, realm, PROTOTYPE)
     }
 
-    pub(crate) fn define_native_builtin_getter(
+    /// Publish `function` as a writable, configurable global data property.
+    pub(crate) fn define_global_function(
         &self,
-        function_prototype: &ObjectRef,
-        realm: ContextId,
-        target: NativeFunctionId,
-        property_name: &str,
-        getter_name: &str,
+        global_object: &ObjectRef,
+        name: &str,
+        function: &CallableRef,
     ) -> Result<(), RuntimeError> {
-        self.define_native_builtin_getter_on(
-            function_prototype,
-            function_prototype,
+        let value = Value::Object(function.as_object().try_clone()?);
+        self.define_function_data_property(global_object, name, value, true, true)
+    }
+
+    /// Create a hidden dynamic-function constructor (`GeneratorFunction` and
+    /// friends) whose prototype is `%Function%`. JS_NewCConstructor keeps the
+    /// constructor's own `prototype` fully fixed; JS_NEW_CTOR_READONLY only
+    /// changes the reciprocal `prototype.constructor` descriptor.
+    pub(crate) fn new_dynamic_function_constructor(
+        &self,
+        realm: ContextId,
+        kind: DynamicFunctionKind,
+        name: &str,
+        prototype: &ObjectRef,
+    ) -> Result<CallableRef, RuntimeError> {
+        let function_constructor = self
+            .0
+            .state
+            .borrow()
+            .heap
+            .context(realm)?
+            .function_constructor
+            .ok_or(RuntimeError::Invariant(
+                "dynamic function initialization requires the Function constructor",
+            ))?;
+        let function_constructor =
+            ObjectRef::from_borrowed_handle(self.clone(), function_constructor)?;
+        let constructor = self.new_native_builtin(
+            &function_constructor,
             realm,
-            target,
-            property_name,
-            getter_name,
-        )
+            NativeFunctionId::FunctionConstructor(kind),
+            1,
+            name,
+            1,
+        )?;
+        self.define_readonly_constructor_pair(constructor.as_object(), prototype, false)?;
+        Ok(constructor)
     }
 
-    pub(crate) fn define_native_builtin_getter_on(
+    /// Define `constructor.prototype` (non-writable, configurable only when
+    /// `prototype_configurable`) and a non-writable `prototype.constructor`.
+    pub(crate) fn define_readonly_constructor_pair(
         &self,
-        object: &ObjectRef,
-        function_prototype: &ObjectRef,
-        realm: ContextId,
-        target: NativeFunctionId,
-        property_name: &str,
-        getter_name: &str,
+        constructor: &ObjectRef,
+        prototype: &ObjectRef,
+        prototype_configurable: bool,
     ) -> Result<(), RuntimeError> {
-        let getter =
-            self.new_native_builtin(function_prototype, realm, target, 0, getter_name, 0)?;
-        let key = self.intern_property_key(property_name)?;
-        if !self.define_own_property(
-            object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "native builtin getter definition was rejected",
-            ));
-        }
-        Ok(())
+        self.define_function_data_property(
+            constructor,
+            "prototype",
+            Value::Object(prototype.try_clone()?),
+            false,
+            prototype_configurable,
+        )?;
+        self.define_function_data_property(
+            prototype,
+            "constructor",
+            Value::Object(constructor.try_clone()?),
+            false,
+            true,
+        )
     }
 
     pub(crate) fn define_constructor_relationship(

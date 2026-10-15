@@ -8,6 +8,7 @@ pub(crate) mod operation;
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::object::builtin_properties::{BuiltinEntry, method};
 
 use crate::engine::builtins::native::{ErrorConstructorKind, NativeFunctionId};
 use crate::engine::heap::ContextId;
@@ -26,27 +27,33 @@ impl Runtime {
         native_error_prototypes: &[ObjectRef],
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        // JS_NewCConstructor installs prototype fields before the constructor
+        // back-reference. Preserve that observable own-key order.
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(NativeFunctionId::ErrorPrototypeToString, "toString", 0, 0),
+            BuiltinEntry::LazyString {
+                name: "name",
+                value: "Error",
+            },
+            BuiltinEntry::LazyString {
+                name: "message",
+                value: "",
+            },
+        ];
+        const NATIVE_PROTOTYPE: &[BuiltinEntry] = &[BuiltinEntry::LazyString {
+            name: "message",
+            value: "",
+        }];
+        const CONSTRUCTOR: &[BuiltinEntry] =
+            &[method(NativeFunctionId::ErrorIsError, "isError", 1, 1)];
         if native_error_prototypes.len() != NativeErrorKind::COUNT {
             return Err(RuntimeError::Invariant(
                 "native Error prototype count did not match NativeErrorKind",
             ));
         }
-
-        // JS_NewCConstructor installs prototype fields before the constructor
-        // back-reference. Preserve that observable own-key order.
-        self.define_native_builtin_auto_init(
-            error_prototype,
-            realm,
-            NativeFunctionId::ErrorPrototypeToString,
-            "toString",
-            0,
-            0,
-        )?;
-        self.define_string_auto_init(error_prototype, realm, "name", "Error")?;
-        self.define_string_auto_init(error_prototype, realm, "message", "")?;
-
+        self.define_builtin_entries(error_prototype, realm, PROTOTYPE)?;
         for prototype in native_error_prototypes {
-            self.define_string_auto_init(prototype, realm, "message", "")?;
+            self.define_builtin_entries(prototype, realm, NATIVE_PROTOTYPE)?;
         }
 
         let error_constructor = self.new_native_builtin(
@@ -57,32 +64,19 @@ impl Runtime {
             "Error",
             1,
         )?;
-        self.define_native_builtin_auto_init(
-            error_constructor.as_object(),
-            realm,
-            NativeFunctionId::ErrorIsError,
-            "isError",
-            1,
-            1,
-        )?;
-        self.define_function_data_property(
-            global_object,
-            "Error",
-            Value::Object(error_constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(error_constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "Error", &error_constructor)?;
         self.define_constructor_relationship(&error_constructor, error_prototype)?;
 
-        for kind in NativeErrorKind::ALL {
-            let prototype =
-                native_error_prototypes
-                    .get(kind.index())
-                    .ok_or(RuntimeError::Invariant(
-                        "native Error prototype index was out of bounds",
-                    ))?;
-            let is_aggregate = kind == NativeErrorKind::Aggregate;
-            let readable_arguments = if is_aggregate { 2 } else { 1 };
+        for (kind, prototype) in NativeErrorKind::ALL
+            .into_iter()
+            .zip(native_error_prototypes)
+        {
+            let readable_arguments = if kind == NativeErrorKind::Aggregate {
+                2
+            } else {
+                1
+            };
             let constructor = self.new_native_builtin(
                 error_constructor.as_object(),
                 realm,
@@ -91,13 +85,7 @@ impl Runtime {
                 kind.name(),
                 i32::from(readable_arguments),
             )?;
-            self.define_function_data_property(
-                global_object,
-                kind.name(),
-                Value::Object(constructor.as_object().try_clone()?),
-                true,
-                true,
-            )?;
+            self.define_global_function(global_object, kind.name(), &constructor)?;
             self.define_constructor_relationship(&constructor, prototype)?;
         }
         Ok(())

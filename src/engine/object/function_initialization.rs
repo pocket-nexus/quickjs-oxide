@@ -16,7 +16,7 @@ use crate::engine::object::property::PropertyDescriptor;
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
 use crate::engine::object::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey,
+    OrdinaryPropertyDescriptor,
 };
 use crate::engine::value::{JsString, JsValue, Value};
 use std::cell::Cell;
@@ -211,57 +211,6 @@ impl Runtime {
             .state
             .borrow_mut()
             .define_function_auto_init_prototype(&self.0.poisoned, function.object_id(), realm)
-    }
-
-    pub(crate) fn define_native_builtin_auto_init(
-        &self,
-        object: &ObjectRef,
-        realm: ContextId,
-        target: NativeFunctionId,
-        name: &'static str,
-        length: u8,
-        min_readable_args: u8,
-    ) -> Result<(), RuntimeError> {
-        let key = self.intern_property_key(name)?;
-        self.define_native_builtin_auto_init_with_key(
-            object,
-            realm,
-            &key,
-            target,
-            name,
-            length,
-            min_readable_args,
-            PropertyFlags::data(true, false, true),
-        )
-    }
-
-    #[expect(clippy::too_many_arguments)]
-    pub(crate) fn define_native_builtin_auto_init_with_key(
-        &self,
-        object: &ObjectRef,
-        realm: ContextId,
-        key: &PropertyKey,
-        target: NativeFunctionId,
-        name: &'static str,
-        length: u8,
-        min_readable_args: u8,
-        flags: PropertyFlags,
-    ) -> Result<(), RuntimeError> {
-        self.validate_object_and_key(object, key)?;
-        self.0
-            .state
-            .borrow_mut()
-            .define_native_builtin_auto_init_with_key(
-                &self.0.poisoned,
-                object.object_id(),
-                realm,
-                key.atom(),
-                target,
-                name,
-                length,
-                min_readable_args,
-                flags,
-            )
     }
 
     pub(crate) fn define_string_auto_init(

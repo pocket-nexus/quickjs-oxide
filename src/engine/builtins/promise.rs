@@ -7,6 +7,9 @@
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, method, species_getter, to_string_tag,
+};
 
 use crate::engine::builtins::native::{NativeFunctionId, PromiseNativeKind, PromiseResolvingKind};
 use crate::engine::heap::{
@@ -14,10 +17,7 @@ use crate::engine::heap::{
     PromiseCapabilityExecutorData, PromiseReaction, PromiseReactionKind, PromiseRealmData,
     PromiseState, RawModuleRef, RawValue,
 };
-use crate::engine::object::{
-    AccessorValue, CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
-    PropertyKey, WellKnownSymbol,
-};
+use crate::engine::object::{CallableRef, DescriptorField, ObjectRef};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
@@ -181,92 +181,37 @@ impl Runtime {
         object_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use NativeFunctionId::Promise as F;
+        use PromiseNativeKind as K;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F(K::Then), "then", 2, 2),
+            method(F(K::Catch), "catch", 1, 1),
+            method(F(K::Finally), "finally", 1, 1),
+            to_string_tag("Promise"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F(K::Resolve), "resolve", 1, 1),
+            method(F(K::Reject), "reject", 1, 1),
+            method(F(K::All), "all", 1, 1),
+            method(F(K::AllSettled), "allSettled", 1, 1),
+            method(F(K::Any), "any", 1, 1),
+            method(F(K::Try), "try", 1, 1),
+            method(F(K::Race), "race", 1, 1),
+            method(F(K::WithResolvers), "withResolvers", 0, 0),
+            species_getter(F(K::Species)),
+        ];
         let promise_prototype = self.new_object(Some(object_prototype))?;
-        self.define_native_builtin_auto_init(
-            &promise_prototype,
-            realm,
-            NativeFunctionId::Promise(PromiseNativeKind::Then),
-            "then",
-            2,
-            2,
-        )?;
-        self.define_native_builtin_auto_init(
-            &promise_prototype,
-            realm,
-            NativeFunctionId::Promise(PromiseNativeKind::Catch),
-            "catch",
-            1,
-            1,
-        )?;
-        self.define_native_builtin_auto_init(
-            &promise_prototype,
-            realm,
-            NativeFunctionId::Promise(PromiseNativeKind::Finally),
-            "finally",
-            1,
-            1,
-        )?;
-        self.define_promise_to_string_tag(&promise_prototype)?;
-
+        self.define_builtin_entries(&promise_prototype, realm, PROTOTYPE)?;
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::Promise(PromiseNativeKind::Constructor),
+            F(K::Constructor),
             1,
             "Promise",
             1,
         )?;
-        for (kind, name, length) in [
-            (PromiseNativeKind::Resolve, "resolve", 1),
-            (PromiseNativeKind::Reject, "reject", 1),
-            (PromiseNativeKind::All, "all", 1),
-            (PromiseNativeKind::AllSettled, "allSettled", 1),
-            (PromiseNativeKind::Any, "any", 1),
-            (PromiseNativeKind::Try, "try", 1),
-            (PromiseNativeKind::Race, "race", 1),
-            (PromiseNativeKind::WithResolvers, "withResolvers", 0),
-        ] {
-            self.define_native_builtin_auto_init(
-                constructor.as_object(),
-                realm,
-                NativeFunctionId::Promise(kind),
-                name,
-                length,
-                length,
-            )?;
-        }
-        let species_getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::Promise(PromiseNativeKind::Species),
-            0,
-            "get [Symbol.species]",
-            0,
-        )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
-        if !self.define_own_property(
-            constructor.as_object(),
-            &species,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(species_getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Promise species definition was rejected",
-            ));
-        }
-
-        self.define_function_data_property(
-            global_object,
-            "Promise",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "Promise", &constructor)?;
         self.define_constructor_relationship(&constructor, &promise_prototype)?;
         self.0.state.borrow_mut().heap.attach_promise_intrinsics(
             realm,
@@ -275,11 +220,6 @@ impl Runtime {
                 constructor: constructor.as_object().object_id(),
             },
         )?;
-        Ok(())
-    }
-
-    fn define_promise_to_string_tag(&self, object: &ObjectRef) -> Result<(), RuntimeError> {
-        self.define_to_string_tag(object, "Promise")?;
         Ok(())
     }
 
