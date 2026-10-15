@@ -48,7 +48,7 @@ impl StateOwnPrefix {
             }
         }
     }
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn release_in_state(
         self,
         runtime: &Runtime,

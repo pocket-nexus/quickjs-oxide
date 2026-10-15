@@ -130,7 +130,7 @@ impl CollectionIndex {
             })
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(super) fn insert(&mut self, heap: &Heap, key: RawValue, index: usize) -> u64 {
         let hash = self.hash(heap, &key);
         self.insert_hashed(hash, index);

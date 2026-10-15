@@ -15,7 +15,6 @@ impl BorrowedOwnPropertyDescriptor<'_> {
     pub(crate) fn record(&self) -> &CompletePropertyDescriptor<RawValue> {
         &self.record
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn heap(&self) -> &Heap {
         self.heap
     }

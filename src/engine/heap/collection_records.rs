@@ -143,8 +143,8 @@ impl CollectionRecords {
         self.key_index.hash(heap, key)
     }
 
+    #[cfg(test)]
     /// The heap has validated the key, uniqueness and ID capacity before commit.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn insert(&mut self, heap: &Heap, record: MapRecord) -> usize {
         let hash = self.precompute_insert_hash(heap, &record.key);
         self.insert_hashed(record, hash)

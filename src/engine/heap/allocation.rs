@@ -101,13 +101,6 @@ impl Heap {
             NodeData::Object(ObjectData::ordinary(shape, Vec::new())),
         )?;
         let id = ObjectId { index, generation };
-        #[cfg(debug_assertions)]
-        if super::ownership::trace_object_matches(id) {
-            eprintln!(
-                "[o-alloc] {id:?}\n{}",
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
         Ok(id)
     }
 
@@ -234,13 +227,6 @@ impl Heap {
                 error,
                 published: false,
             })?;
-        #[cfg(debug_assertions)]
-        if super::ownership::trace_object_matches(id) {
-            eprintln!(
-                "[o-alloc] {id:?}\n{}",
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
         if is_weak_object {
             self.link_weak_object(id)
                 .map_err(|error| ObjectAllocationError {

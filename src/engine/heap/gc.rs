@@ -8,8 +8,6 @@ use crate::engine::hash::FxBuildHasher;
 use std::cell::Cell;
 
 use super::AuxiliaryState;
-#[cfg(debug_assertions)]
-use super::LeafSlot;
 use super::{
     AsyncGeneratorRequestData, AtomIdx, BigIntId, BytecodeConstant, ContextData, ContextId,
     FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId, GeneratorActivationData,
@@ -360,7 +358,7 @@ impl Heap {
 
     /// Release one frame or closure ownership of a captured-variable cell.
     // Keep the typed cleanup-returning entry point; Runtime uses optional cleanup.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub fn release_var_ref(&mut self, id: VarRefId) -> Result<HeapCleanup, HeapError> {
         self.release_and_drain(RawId::VarRef(id))
     }
@@ -372,7 +370,6 @@ impl Heap {
 
     /// Release one function-bytecode reference and iteratively drain nodes.
     // Keep the typed cleanup-returning entry point; Runtime uses optional cleanup.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn release_function_bytecode(
         &mut self,
         id: FunctionBytecodeId,
@@ -1504,12 +1501,6 @@ impl Heap {
             );
             return Ok(());
         }
-        #[cfg(debug_assertions)]
-        if let RawId::Object(object) = id
-            && super::ownership::trace_object_matches(object)
-        {
-            super::ownership::record_object_retain(object);
-        }
         let node = self.live_node_mut(id)?;
         node.strong.set(
             node.strong
@@ -1533,16 +1524,6 @@ impl Heap {
                     operation: "retaining a heap reference",
                 })?,
         );
-        #[cfg(debug_assertions)]
-        if let RawId::String(string) = id
-            && super::ownership::trace_string_matches(string)
-        {
-            eprintln!(
-                "[strong-retain] {id:?} -> {}\n{}",
-                strong.get(),
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
         Ok(())
     }
 
@@ -1554,12 +1535,6 @@ impl Heap {
     /// fallible [`Heap::retain_raw`] keeps its checked overflow behavior.
     #[inline(always)]
     pub(in crate::engine::heap) fn retain_raw_fast(&self, id: RawId) {
-        #[cfg(debug_assertions)]
-        if let RawId::Object(object) = id
-            && super::ownership::trace_object_matches(object)
-        {
-            super::ownership::record_object_retain(object);
-        }
         if id.is_leaf() {
             self.retain_leaf_fast(id);
             return;
@@ -1576,17 +1551,6 @@ impl Heap {
         }
         let node = self.live_node_fast(id);
         node.strong.update(|value| value.saturating_add(1));
-        #[cfg(debug_assertions)]
-        match id {
-            RawId::Object(object) if super::ownership::trace_object_matches(object) => {
-                eprintln!(
-                    "[retain-fast] {object:?} -> {}\n{}",
-                    node.strong.get(),
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-            _ => {}
-        }
     }
 
     /// Leaf half of [`Heap::retain_raw_fast`], out of line so the shared fast
@@ -1595,16 +1559,6 @@ impl Heap {
     fn retain_leaf_fast(&self, id: RawId) {
         let strong = &self.live_leaf_fast(id).strong;
         strong.update(|value| value.saturating_add(1));
-        #[cfg(debug_assertions)]
-        if let RawId::String(string) = id
-            && super::ownership::trace_string_matches(string)
-        {
-            eprintln!(
-                "[strong-retain-fast] {id:?} -> {}\n{}",
-                strong.get(),
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
     }
 
     /// Validated shared-borrow retain: full identity check, then the `Cell`
@@ -1613,12 +1567,6 @@ impl Heap {
     /// one reference without requiring `&mut` access to the arena.
     #[inline(always)]
     pub(in crate::engine::heap) fn retain_raw_shared(&self, id: RawId) -> Result<(), HeapError> {
-        #[cfg(debug_assertions)]
-        if let RawId::Object(object) = id
-            && super::ownership::trace_object_matches(object)
-        {
-            super::ownership::record_object_retain(object);
-        }
         if id.is_leaf() {
             return self.retain_leaf_shared(id);
         }
@@ -1645,16 +1593,6 @@ impl Heap {
                     operation: "retaining a heap reference",
                 })?,
         );
-        #[cfg(debug_assertions)]
-        if let RawId::Object(object) = id
-            && super::ownership::trace_object_matches(object)
-        {
-            eprintln!(
-                "[retain-shared] {object:?} -> {}\n{}",
-                node.strong.get(),
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
         Ok(())
     }
 
@@ -1666,16 +1604,6 @@ impl Heap {
         strong.set(strong.get().checked_add(1).ok_or(HeapError::Overflow {
             operation: "retaining a heap reference",
         })?);
-        #[cfg(debug_assertions)]
-        if let RawId::String(string) = id
-            && super::ownership::trace_string_matches(string)
-        {
-            eprintln!(
-                "[strong-retain-shared] {id:?} -> {}\n{}",
-                strong.get(),
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
         Ok(())
     }
 
@@ -1696,12 +1624,6 @@ impl Heap {
         // queue or snapshotting outgoing edges. Explicit string tracing
         // retains the common path; reclamation still clears the debug ledger.
         if matches!(id, RawId::String(_) | RawId::BigInt(_)) && self.zero_queue.is_empty() {
-            #[cfg(debug_assertions)]
-            if matches!(id, RawId::String(id) if super::ownership::trace_string_matches(id)) {
-                // The traced decline reaches the full path, which reproduces
-                // the identity validation this fused lookup would have done.
-                return Ok(None);
-            }
             // One fused lookup covers the bounds/generation/kind checks of
             // the leaf identity validation and then serves the decrement or
             // retire decision.
@@ -1772,8 +1694,6 @@ impl Heap {
         } else {
             slot.value = LeafValue::Retired;
         }
-        #[cfg(debug_assertions)]
-        self.clear_leaf_alloc_site(index);
         Ok(())
     }
 
@@ -1791,16 +1711,6 @@ impl Heap {
     pub(in crate::engine::heap) fn try_release_nonfinal(&self, id: RawId) -> bool {
         if !self.zero_queue.is_empty() {
             return false;
-        }
-        #[cfg(debug_assertions)]
-        match id {
-            RawId::Object(object) if super::ownership::trace_object_matches(object) => {
-                return false;
-            }
-            RawId::String(string) if super::ownership::trace_string_matches(string) => {
-                return false;
-            }
-            _ => {}
         }
         if id.is_leaf() {
             return self.try_release_leaf_nonfinal(id);
@@ -1905,10 +1815,6 @@ impl Heap {
         if !self.zero_queue.is_empty() {
             return false;
         }
-        #[cfg(debug_assertions)]
-        if super::ownership::trace_object_matches(id) {
-            return false;
-        }
         if !self.admits_trusted(RawId::Object(id)) {
             return false;
         }
@@ -1931,12 +1837,6 @@ impl Heap {
     #[inline(always)]
     pub(crate) fn release_leaf_nonfinal_trusted(&self, id: RawId) -> bool {
         if !self.zero_queue.is_empty() {
-            return false;
-        }
-        #[cfg(debug_assertions)]
-        if let RawId::String(string) = id
-            && super::ownership::trace_string_matches(string)
-        {
             return false;
         }
         if !self.admits_trusted(id) {
@@ -1997,12 +1897,6 @@ impl Heap {
             }
             return Ok(());
         }
-        #[cfg(debug_assertions)]
-        if let RawId::Object(object) = id
-            && super::ownership::trace_object_matches(object)
-        {
-            super::ownership::record_object_release(object);
-        }
         let index = self.validate_slot_identity(id)?;
         let mut queue = false;
         let mut vacate_zombie = false;
@@ -2022,16 +1916,6 @@ impl Heap {
                             generation: id.generation(),
                         },
                     )?);
-                    #[cfg(debug_assertions)]
-                    if let RawId::String(string) = id
-                        && super::ownership::trace_string_matches(string)
-                    {
-                        eprintln!(
-                            "[strong-release] {id:?} -> {}\n{}",
-                            node.strong.get(),
-                            std::backtrace::Backtrace::force_capture()
-                        );
-                    }
                     // The count is the queue-state marker. No Node or ObjectData
                     // travels through a temporary enum during this transition.
                     queue = node.strong.get() == 0;
@@ -2107,16 +1991,6 @@ impl Heap {
                 index: id.index(),
                 generation: id.generation(),
             })?);
-        #[cfg(debug_assertions)]
-        if let RawId::String(string) = id
-            && super::ownership::trace_string_matches(string)
-        {
-            eprintln!(
-                "[strong-release] {id:?} -> {}\n{}",
-                slot.strong.get(),
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
         if slot.strong.get() == 0 {
             self.zero_queue.push_back(id);
         }
@@ -2431,8 +2305,6 @@ impl Heap {
         } else {
             slot.state = SlotState::Retired;
         }
-        #[cfg(debug_assertions)]
-        self.clear_alloc_site(index);
         Ok(())
     }
 
@@ -2455,8 +2327,6 @@ impl Heap {
         } else {
             slot.value = LeafValue::Retired;
         }
-        #[cfg(debug_assertions)]
-        self.clear_leaf_alloc_site(index);
         Ok(())
     }
 }
@@ -3556,385 +3426,6 @@ fn function_bytecode_atoms(bytecode: &FunctionBytecodeData) -> impl Iterator<Ite
 
 fn var_ref_atoms(var_ref: &VarRefData) -> impl Iterator<Item = AtomIdx> + '_ {
     raw_value_atom(&var_ref.value).into_iter()
-}
-
-/// Debug-only creation-site provenance for one live heap slot.
-///
-/// This is the §7.1 edge ledger's storage half: `reserve` records the call
-/// stack that created a slot, and the slot's own strong counter supplies the
-/// residual edge count, so retain/release stay unmodified.
-#[cfg(debug_assertions)]
-pub(crate) struct AllocSite {
-    pub(crate) generation: u32,
-    pub(crate) kind: HeapNodeKind,
-    pub(crate) backtrace: String,
-}
-
-/// Debug-only edge-ledger reporting for a heap that survived teardown.
-#[cfg(debug_assertions)]
-impl Heap {
-    pub(super) fn record_alloc_site(&mut self, index: u32, generation: u32, kind: HeapNodeKind) {
-        if !super::ownership::alloc_site_capture_enabled() {
-            return;
-        }
-        let backtrace = super::ownership::compact_backtrace();
-        let index = index as usize;
-        if self.alloc_sites.len() <= index {
-            self.alloc_sites.resize_with(index + 1, || None);
-        }
-        self.alloc_sites[index] = Some(AllocSite {
-            generation,
-            kind,
-            backtrace,
-        });
-    }
-
-    pub(super) fn clear_alloc_site(&mut self, index: u32) {
-        if let Some(site) = self.alloc_sites.get_mut(index as usize) {
-            *site = None;
-        }
-    }
-
-    pub(super) fn record_leaf_alloc_site(
-        &mut self,
-        index: u32,
-        generation: u32,
-        kind: HeapNodeKind,
-    ) {
-        if !super::ownership::alloc_site_capture_enabled() {
-            return;
-        }
-        let backtrace = super::ownership::compact_backtrace();
-        let index = index as usize;
-        if self.leaf_alloc_sites.len() <= index {
-            self.leaf_alloc_sites.resize_with(index + 1, || None);
-        }
-        self.leaf_alloc_sites[index] = Some(AllocSite {
-            generation,
-            kind,
-            backtrace,
-        });
-    }
-
-    pub(super) fn clear_leaf_alloc_site(&mut self, index: u32) {
-        if let Some(site) = self.leaf_alloc_sites.get_mut(index as usize) {
-            *site = None;
-        }
-    }
-
-    /// Print the edge ledger for every node that survived runtime teardown.
-    ///
-    /// Survivors are the externally rooted nodes; each line carries its
-    /// residual strong count and, when capture was enabled, the call stack
-    /// that created it.  This runs only on the teardown failure path.
-    pub(crate) fn debug_leak_report(&self) {
-        let live = self.counts().live;
-        if live == 0 {
-            return;
-        }
-        let roots = self.debug_external_roots();
-        eprintln!(
-            "[ledger] live={live} external_roots={} recorded_sites={}",
-            roots.len(),
-            self.alloc_sites
-                .iter()
-                .chain(self.leaf_alloc_sites.iter())
-                .chain(self.var_refs.alloc_sites.iter())
-                .chain(self.shapes.alloc_sites.iter())
-                .filter(|site| site.is_some())
-                .count(),
-        );
-        let shown = roots.len().min(8);
-        for (kind, index, residual, detail) in &roots[..shown] {
-            self.print_alloc_site(*index, *kind, *residual, detail);
-        }
-        if roots.len() > shown {
-            eprintln!("[ledger] ... {} more roots", roots.len() - shown);
-        }
-        if roots.is_empty() {
-            let mut printed = 0;
-            for (index, slot) in self.slots.iter().enumerate() {
-                if printed == 8 {
-                    break;
-                }
-                if let SlotState::Resident(node) = &slot.state
-                    && node.strong.get() != 0
-                {
-                    self.print_alloc_site(index, node.data.kind(), node.strong.get(), "");
-                    printed += 1;
-                }
-            }
-            for (index, slot) in self.leaf_slots.iter().enumerate() {
-                if printed == 8 {
-                    break;
-                }
-                if slot.is_live() {
-                    self.print_leaf_alloc_site(index, slot);
-                    printed += 1;
-                }
-            }
-            for (index, slot) in self.var_refs.slots.iter().enumerate() {
-                if printed == 8 {
-                    break;
-                }
-                if let AuxiliaryState::Live(node) = &slot.state {
-                    self.print_alloc_site(index, HeapNodeKind::VarRef, node.strong.get(), "");
-                    printed += 1;
-                }
-            }
-            for (index, slot) in self.shapes.slots.iter().enumerate() {
-                if printed == 8 {
-                    break;
-                }
-                if let AuxiliaryState::Live(node) = &slot.state {
-                    self.print_alloc_site(index, HeapNodeKind::Shape, node.strong.get(), "");
-                    printed += 1;
-                }
-            }
-        }
-    }
-
-    fn print_leaf_alloc_site(&self, index: usize, slot: &LeafSlot) {
-        let Some(kind) = slot.value.kind() else {
-            return;
-        };
-        eprintln!(
-            "[ledger] leaf#{index} {kind:?} residual={}",
-            slot.strong.get()
-        );
-        let site = self
-            .leaf_alloc_sites
-            .get(index)
-            .and_then(|site| site.as_ref())
-            .filter(|site| site.generation == slot.generation);
-        match site {
-            Some(site) => eprintln!(
-                "[ledger] leaf#{index} created {:?} at {}",
-                site.kind, site.backtrace
-            ),
-            None => eprintln!(
-                "[ledger] leaf#{index} no creation backtrace recorded (set QJS_EDGE_LEDGER=1)"
-            ),
-        }
-    }
-
-    fn print_alloc_site(&self, index: usize, kind: HeapNodeKind, residual: u32, detail: &str) {
-        eprintln!("[ledger] #{index} {kind:?} residual={residual} {detail}");
-        let (generation, sites) = match kind {
-            HeapNodeKind::VarRef => (
-                self.var_refs.slots.get(index).map(|slot| slot.generation),
-                &self.var_refs.alloc_sites,
-            ),
-            HeapNodeKind::Shape => (
-                self.shapes.slots.get(index).map(|slot| slot.generation),
-                &self.shapes.alloc_sites,
-            ),
-            _ => (
-                self.slots.get(index).map(|slot| slot.generation),
-                &self.alloc_sites,
-            ),
-        };
-        let site = sites
-            .get(index)
-            .and_then(|site| site.as_ref())
-            .filter(|site| Some(site.generation) == generation);
-        match site {
-            Some(site) => eprintln!(
-                "[ledger] #{index} created {:?} at {}",
-                site.kind, site.backtrace
-            ),
-            None => eprintln!(
-                "[ledger] #{index} no creation backtrace recorded (set QJS_EDGE_LEDGER=1)"
-            ),
-        }
-    }
-
-    /// Debug-only: list live nodes whose strong count exceeds internal
-    /// incoming edges, i.e. nodes retained by external roots.
-    pub(crate) fn debug_external_roots(
-        &self,
-    ) -> Vec<(crate::engine::heap::HeapNodeKind, usize, u32, String)> {
-        let mut incoming = HashMap::<RawId, usize>::new();
-        for slot in &self.slots {
-            if let SlotState::Resident(node) = &slot.state
-                && node.strong.get() != 0
-            {
-                for edge in node.data.edges() {
-                    if !edge.is_leaf() && self.is_live(edge) {
-                        let count = incoming.entry(edge).or_default();
-                        *count = count.saturating_add(1);
-                    }
-                }
-            }
-        }
-        for slot in &self.var_refs.slots {
-            if let AuxiliaryState::Live(node) = &slot.state {
-                for edge in var_ref_edges(&node.data) {
-                    if !edge.is_leaf() && self.is_live(edge) {
-                        let count = incoming.entry(edge).or_default();
-                        *count = count.saturating_add(1);
-                    }
-                }
-            }
-        }
-        for slot in &self.shapes.slots {
-            if let AuxiliaryState::Live(node) = &slot.state {
-                for edge in shape_edges(&node.data) {
-                    if !edge.is_leaf() && self.is_live(edge) {
-                        let count = incoming.entry(edge).or_default();
-                        *count = count.saturating_add(1);
-                    }
-                }
-            }
-        }
-        let mut bytecode_names = std::collections::HashMap::new();
-        for (index, slot) in self.slots.iter().enumerate() {
-            if let SlotState::Resident(node) = &slot.state
-                && node.strong.get() != 0
-                && let NodeData::FunctionBytecode(data) = &node.data
-            {
-                bytecode_names.insert(
-                    index,
-                    match &data.func_name {
-                        Some(name) => name.to_utf8_lossy(),
-                        None => "<anon>".to_string(),
-                    },
-                );
-            }
-        }
-        let mut roots = Vec::new();
-        for (index, slot) in self.slots.iter().enumerate() {
-            if let SlotState::Resident(node) = &slot.state
-                && node.strong.get() != 0
-            {
-                let strong = node.strong.get() as usize;
-                let id = shared_raw_id(node.data.kind(), index as u32, slot.generation);
-                let internal = incoming.get(&id).copied().unwrap_or(0);
-                if strong > internal {
-                    let detail = match &node.data {
-                        NodeData::Object(object) => match &object.payload {
-                            ObjectPayload::NativeFunction { data, .. } => {
-                                let native = format!("{data:?}");
-                                format!("{:?}:{}", object.kind, &native[..native.len().min(120)])
-                            }
-                            ObjectPayload::BytecodeFunction { bytecode, .. } => {
-                                let name = bytecode_names
-                                    .get(&(bytecode.index as usize))
-                                    .cloned()
-                                    .unwrap_or_default();
-                                format!("BytecodeFunction#{}:{name}", bytecode.index)
-                            }
-                            _ => format!("{:?}", object.kind),
-                        },
-                        NodeData::FunctionBytecode(data) => match &data.func_name {
-                            Some(name) => format!("bytecode:{}", name.to_utf8_lossy()),
-                            None => "bytecode:<anon>".to_string(),
-                        },
-                        _ => String::new(),
-                    };
-                    roots.push((node.data.kind(), index, (strong - internal) as u32, detail));
-                }
-            }
-        }
-        for (index, slot) in self.var_refs.slots.iter().enumerate() {
-            if let AuxiliaryState::Live(node) = &slot.state {
-                let id = RawId::VarRef(VarRefId {
-                    index: index as u32,
-                    generation: slot.generation,
-                });
-                let internal = incoming.get(&id).copied().unwrap_or(0);
-                let strong = node.strong.get() as usize;
-                if strong > internal {
-                    roots.push((
-                        HeapNodeKind::VarRef,
-                        index,
-                        (strong - internal) as u32,
-                        String::new(),
-                    ));
-                }
-            }
-        }
-        for (index, slot) in self.shapes.slots.iter().enumerate() {
-            if let AuxiliaryState::Live(node) = &slot.state {
-                let id = RawId::Shape(ShapeId {
-                    index: index as u32,
-                    generation: slot.generation,
-                });
-                let internal = incoming.get(&id).copied().unwrap_or(0);
-                let strong = node.strong.get() as usize;
-                if strong > internal {
-                    roots.push((
-                        HeapNodeKind::Shape,
-                        index,
-                        (strong - internal) as u32,
-                        String::new(),
-                    ));
-                }
-            }
-        }
-        roots
-    }
-
-    /// Debug-only: list every live node whose outgoing edges include `target`
-    /// together with the target's strong count, to separate a real external
-    /// root from an edge missed by `Edges`.
-    pub(crate) fn debug_incoming_edges_for_index(&self, target_index: usize) {
-        let Some(slot) = self.slots.get(target_index) else {
-            eprintln!("[incoming] index {target_index} is out of range");
-            return;
-        };
-        let SlotState::Resident(target) = &slot.state else {
-            eprintln!("[incoming] index {target_index} is not live");
-            return;
-        };
-        let strong = target.strong.get();
-        eprintln!(
-            "[incoming] target #{target_index} kind={:?} strong={strong}",
-            target.data.kind()
-        );
-        if let NodeData::Object(object) = &target.data {
-            let detail = format!("{:?}", object.payload);
-            eprintln!("[incoming] payload {}", &detail[..detail.len().min(400)]);
-        }
-        let target_id = shared_raw_id(target.data.kind(), target_index as u32, slot.generation);
-        for (index, slot) in self.slots.iter().enumerate() {
-            if let SlotState::Resident(node) = &slot.state
-                && node.strong.get() != 0
-            {
-                let mut hits = 0;
-                for edge in node.data.edges() {
-                    if edge == target_id {
-                        hits += 1;
-                    }
-                }
-                if hits != 0 {
-                    eprintln!("[incoming] from {:?} #{index} x{hits}", node.data.kind());
-                }
-            }
-        }
-        for (index, slot) in self.var_refs.slots.iter().enumerate() {
-            if let AuxiliaryState::Live(node) = &slot.state {
-                let hits = var_ref_edges(&node.data)
-                    .into_iter()
-                    .filter(|edge| *edge == target_id)
-                    .count();
-                if hits != 0 {
-                    eprintln!("[incoming] from VarRef #{index} x{hits}");
-                }
-            }
-        }
-        for (index, slot) in self.shapes.slots.iter().enumerate() {
-            if let AuxiliaryState::Live(node) = &slot.state {
-                let hits = shape_edges(&node.data)
-                    .into_iter()
-                    .filter(|edge| *edge == target_id)
-                    .count();
-                if hits != 0 {
-                    eprintln!("[incoming] from Shape #{index} x{hits}");
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

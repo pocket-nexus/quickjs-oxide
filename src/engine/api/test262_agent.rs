@@ -489,15 +489,6 @@ fn run_agent_worker(
         // while holding the coordinator mutex. Import and callback execution
         // therefore happen strictly after this worker's ACK.
         let delivery = session.wait_for_broadcast(sequence)?;
-        #[cfg(debug_assertions)]
-        {
-            let state = runtime.0.state.borrow();
-            eprintln!(
-                "[worker-before-import] live={} roots={:?}",
-                state.heap.counts().live,
-                state.heap.debug_external_roots()
-            );
-        }
         let shared = match context.import_shared_array_buffer(delivery.handle) {
             Ok(shared) => shared,
             Err(error) => {
@@ -511,15 +502,6 @@ fn run_agent_worker(
                 break;
             }
         };
-        #[cfg(debug_assertions)]
-        {
-            let state = runtime.0.state.borrow();
-            eprintln!(
-                "[worker-after-import] live={} roots={:?}",
-                state.heap.counts().live,
-                state.heap.debug_external_roots()
-            );
-        }
         if let Err(error) = context.call(
             &callback,
             Value::Undefined,
@@ -533,15 +515,6 @@ fn run_agent_worker(
             );
         }
 
-        #[cfg(debug_assertions)]
-        {
-            let state = runtime.0.state.borrow();
-            eprintln!(
-                "[worker-after-call] live={} roots={:?}",
-                state.heap.counts().live,
-                state.heap.debug_external_roots()
-            );
-        }
         // Pinned QuickJS clears broadcast_func immediately after JS_Call. A
         // synchronous replacement is therefore discarded, while a Promise
         // job can install the next callback during the following drain pass.

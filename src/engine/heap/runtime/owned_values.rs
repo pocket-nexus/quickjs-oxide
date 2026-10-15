@@ -8,14 +8,12 @@ use std::cell::Cell;
 /// One owned temporary. The poison flag is the owning RuntimeInner's header
 /// flag, borrowed independently of its state access.
 #[must_use]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OwnedValueGuard<'a> {
     state: &'a mut RuntimeState,
     poisoned: &'a Cell<bool>,
     value: Option<JsValue>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl<'a> OwnedValueGuard<'a> {
     pub(crate) fn new(
         state: &'a mut RuntimeState,
@@ -55,14 +53,12 @@ impl Drop for OwnedValueGuard<'_> {
 /// extra allocation; taking values through parts() transfers their edges to
 /// execution storage before any subsequent fallible operation.
 #[must_use]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OwnedValuesGuard<'a> {
     state: &'a mut RuntimeState,
     poisoned: &'a Cell<bool>,
     values: Vec<JsValue>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl<'a> OwnedValuesGuard<'a> {
     pub(crate) fn new(
         state: &'a mut RuntimeState,
