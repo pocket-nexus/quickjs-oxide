@@ -97,6 +97,13 @@ impl<'a> FrameExecution<'a> {
         }
     }
 
+    /// Whether a native continuation could still be admitted on this stack.
+    pub(in crate::engine::vm) fn can_push_with_continuations(&self, continuations: usize) -> bool {
+        self.execution
+            .frames
+            .can_push_with_continuations(continuations)
+    }
+
     /// End the frame projection before making its current PC and ancestors
     /// observable. Registration uses the segment's existing state access.
     pub(in crate::engine::vm) fn materialize_in_state(
