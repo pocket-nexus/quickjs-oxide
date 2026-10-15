@@ -398,7 +398,7 @@ pub(crate) fn run_case_directory(directory: &str) {
                 .is_none_or(|filter| case.name.contains(filter))
         })
         .collect::<Vec<_>>();
-    let workers = std::thread::available_parallelism().map_or(2, |count| count.get().min(4));
+    let workers = std::thread::available_parallelism().map_or(2, |count| count.get().min(2));
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut failures = std::thread::scope(|scope| {
         let handles = (0..workers)
