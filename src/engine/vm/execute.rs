@@ -139,10 +139,11 @@ impl<'a> FrameCursor<'a> {
         }
     }
 
-    /// The borrowed-field hit path pays this commit on every iteration; the
-    /// measurement after item 5e-2 shows the dispatch function's size is
-    /// neutral, so the accepted push completes inline at those two sites
-    /// while every other consumer keeps the shared out-of-line call.
+    /// Borrowed-field, global-cell and captured reads pay this commit on
+    /// every hit. The accepted push completes inline at those sites so the
+    /// value goes from registers into the slot; passing it to the shared
+    /// out-of-line call would move it through a caller temporary whose
+    /// piecewise stores the callee's full-width load cannot forward.
     #[inline(always)]
     fn commit_owned_hot(&mut self, state: &mut RuntimeState, value: JsValue) -> Result<(), Error> {
         match self.transaction.slots().try_push(value) {
@@ -702,7 +703,9 @@ fn execute_admitted_in_state(
                             "number_local_inc",
                             Some("guard")
                         ));
-                        if let Some(action) = read_local::<false>(&mut cursor, state, index)? {
+                        if let Some(action) =
+                            read_local_fallback::<false>(&mut cursor, state, index)?
+                        {
                             break 'dispatch Ok(action);
                         }
                     }
@@ -713,388 +716,21 @@ fn execute_admitted_in_state(
                     | Opcode::NumericArrayStoreAndLocal
                     | Opcode::NumericArrayUpdateElement
                     | Opcode::NumericArrayCompareBranch => {
-                        let region = executable.exec.numeric_region(operand).ok_or_else(|| {
-                            Error::internal("published numeric region is missing")
-                        })?;
-                        #[cfg(test)]
-                        NUMERIC_REGION_ATTEMPTS.update(|value| value + 1);
-                        profile!(record_execution_dispatch(runtime, executable, pc, true));
-                        let mut miss_reason = None;
-                        let hit = match decoded.opcode {
-                            Opcode::NumericArrayAccumulate | Opcode::NumericArrayStoreProduct => {
-                                match cursor.with_slots(|slots| {
-                                    Ok(numeric_local_array_region(
-                                        slots,
-                                        state,
-                                        region,
-                                        decoded.opcode == Opcode::NumericArrayAccumulate,
-                                    ))
-                                })? {
-                                    Ok(()) => true,
-                                    Err(reason) => {
-                                        miss_reason = Some(reason);
-                                        false
-                                    }
-                                }
-                            }
-                            Opcode::NumericArrayUpdateElement => {
-                                let generation = property_generation.checked_add(1);
-                                let result = cursor.with_slots(|slots| {
-                                    if generation.is_none() {
-                                        return Ok(Err(Miss::PropertyGenerationOverflow));
-                                    }
-                                    if !slots.has_operand_capacity(region.peak as usize) {
-                                        return Ok(Err(Miss::OperandCapacity));
-                                    }
-                                    let Some(index) =
-                                        region_number(slots, region.index).and_then(array_index)
-                                    else {
-                                        return Ok(Err(Miss::IndexNotNumericInteger));
-                                    };
-                                    let delta = if let Some(producer) = region.producer_index {
-                                        let product = executable
-                                            .exec
-                                            .product_source(producer)
-                                            .expect("verified product payload");
-                                        let Some(scale) = region_number(slots, product.scale)
-                                        else {
-                                            return Ok(Err(Miss::ScaleNotNumber));
-                                        };
-                                        let product_index = if region.shared_update_index {
-                                            index
-                                        } else {
-                                            let Some(product_index) =
-                                                region_number(slots, product.index)
-                                                    .and_then(array_index)
-                                            else {
-                                                return Ok(Err(Miss::IndexNotNumericInteger));
-                                            };
-                                            product_index
-                                        };
-                                        let Some(product_base) =
-                                            slots.direct_value(region_direct_slot(product.array))
-                                        else {
-                                            return Ok(Err(Miss::ReceiverBindingUnavailable));
-                                        };
-                                        let element = match state
-                                            .peek_dense_number_result(product_base, product_index)
-                                        {
-                                            Ok(value) => value,
-                                            Err(reason) => return Ok(Err(reason)),
-                                        };
-                                        element.mul(scale)
-                                    } else {
-                                        let Some(delta) = region_number(slots, region.value) else {
-                                            return Ok(Err(Miss::DeltaNotNumber));
-                                        };
-                                        delta
-                                    };
-                                    let Some(base) =
-                                        slots.direct_value(region_direct_slot(region.array))
-                                    else {
-                                        return Ok(Err(Miss::ReceiverBindingUnavailable));
-                                    };
-                                    Ok(state.try_add_array_own_number(base, index, delta))
-                                })?;
-                                match result {
-                                    Ok(()) => {
-                                        *property_generation = generation.unwrap();
-                                        true
-                                    }
-                                    Err(reason) => {
-                                        miss_reason = Some(reason);
-                                        false
-                                    }
-                                }
-                            }
-                            Opcode::NumericArrayCopyElement => {
-                                let generation = property_generation.checked_add(1);
-                                let result = cursor.with_slots(|slots| {
-                                    if generation.is_none() {
-                                        return Ok(Err(Miss::PropertyGenerationOverflow));
-                                    }
-                                    if !slots.has_operand_capacity(region.peak as usize) {
-                                        return Ok(Err(Miss::OperandCapacity));
-                                    }
-                                    let Some(index) =
-                                        region_number(slots, region.index).and_then(array_index)
-                                    else {
-                                        return Ok(Err(Miss::IndexNotNumericInteger));
-                                    };
-                                    let source = executable
-                                        .exec
-                                        .copy_source(
-                                            region
-                                                .producer_index
-                                                .expect("verified copy payload index"),
-                                        )
-                                        .expect("verified copy payload");
-                                    let Some(source_index) =
-                                        region_number(slots, source.index).and_then(array_index)
-                                    else {
-                                        return Ok(Err(Miss::IndexNotNumericInteger));
-                                    };
-                                    let Some(source_base) =
-                                        slots.direct_value(region_direct_slot(source.array))
-                                    else {
-                                        return Ok(Err(Miss::ReceiverBindingUnavailable));
-                                    };
-                                    let value = match state
-                                        .peek_dense_number_result(source_base, source_index)
-                                    {
-                                        Ok(value) => value,
-                                        Err(reason) => return Ok(Err(reason)),
-                                    };
-                                    let Some(target_base) =
-                                        slots.direct_value(region_direct_slot(region.array))
-                                    else {
-                                        return Ok(Err(Miss::ReceiverBindingUnavailable));
-                                    };
-                                    Ok(state.try_replace_array_own_number(
-                                        target_base,
-                                        index,
-                                        value,
-                                    ))
-                                })?;
-                                match result {
-                                    Ok(()) => {
-                                        *property_generation = generation.unwrap();
-                                        true
-                                    }
-                                    Err(reason) => {
-                                        miss_reason = Some(reason);
-                                        false
-                                    }
-                                }
-                            }
-                            Opcode::NumericArrayAddPreInc => {
-                                let result =
-                                    cursor.with_slots(|slots| {
-                                        if !slots.has_operand_capacity(region.peak as usize) {
-                                            return Ok(Err(Miss::OperandCapacity));
-                                        }
-                                        let Some(accumulator) =
-                                            slots.peek(0).ok().and_then(JsValue::as_number_repr)
-                                        else {
-                                            return Ok(Err(Miss::AccumulatorNotNumber));
-                                        };
-                                        let index_slot = match region.index {
-                                            NumberSource::Direct(DirectSource::Local(slot))
-                                            | NumberSource::Direct(DirectSource::CheckedLocal(
-                                                slot,
-                                            )) => slot,
-                                            _ => unreachable!("verified preincrement index"),
-                                        };
-                                        let Some(old_index) = slots.immediate_local(index_slot)
-                                        else {
-                                            return Ok(Err(Miss::IndexNotNumber));
-                                        };
-                                        let updated_index = old_index.add(Number::Int(1));
-                                        let Some(index) = array_index(updated_index) else {
-                                            return Ok(Err(Miss::IndexNotNumericInteger));
-                                        };
-                                        let Some(base) =
-                                            slots.direct_value(region_direct_slot(region.array))
-                                        else {
-                                            return Ok(Err(Miss::ReceiverBindingUnavailable));
-                                        };
-                                        let element =
-                                            match state.peek_dense_number_result(base, index) {
-                                                Ok(value) => value,
-                                                Err(reason) => return Ok(Err(reason)),
-                                            };
-                                        slots.commit_number_local_and_top(
-                                            index_slot,
-                                            updated_index,
-                                            accumulator.add(element),
-                                        )?;
-                                        Ok(Ok(()))
-                                    })?;
-                                match result {
-                                    Ok(()) => true,
-                                    Err(reason) => {
-                                        miss_reason = Some(reason);
-                                        false
-                                    }
-                                }
-                            }
-                            Opcode::NumericArrayStoreAndLocal => {
-                                cursor.publish_fault(state, active_frame)?;
-                                let generation = property_generation.checked_add(1);
-                                let result = cursor.with_slots(|slots| {
-                                    if generation.is_none() {
-                                        return Ok(Err(Miss::PropertyGenerationOverflow));
-                                    }
-                                    if !slots.has_operand_capacity(region.peak as usize) {
-                                        return Ok(Err(Miss::OperandCapacity));
-                                    }
-                                    let Some(value) = slots.peek(0)?.as_number_repr() else {
-                                        return Ok(Err(Miss::DeltaNotNumber));
-                                    };
-                                    let Some(index) =
-                                        slots.peek(1)?.as_number_repr().and_then(array_index)
-                                    else {
-                                        return Ok(Err(Miss::IndexNotNumericInteger));
-                                    };
-                                    let eligible = matches!(
-                                        slots.local(region.destination)?,
-                                        FrameBinding::Direct(
-                                            JsValue::Undefined
-                                                | JsValue::Null
-                                                | JsValue::Bool(_)
-                                                | JsValue::Int(_)
-                                                | JsValue::Float(_)
-                                        )
-                                    );
-                                    if !eligible {
-                                        return Ok(Err(Miss::DestinationOrReceiverUnavailable));
-                                    }
-                                    let base = slots.peek(2)?;
-                                    if let Err(reason) =
-                                        state.try_replace_array_own_number(base, index, value)
-                                    {
-                                        return Ok(Err(reason));
-                                    }
-                                    let old = slots.replace_local(
-                                        region.destination,
-                                        FrameBinding::Direct(number_value(value)),
-                                    )?;
-                                    debug_assert!(matches!(
-                                        old,
-                                        FrameBinding::Direct(
-                                            JsValue::Undefined
-                                                | JsValue::Null
-                                                | JsValue::Bool(_)
-                                                | JsValue::Int(_)
-                                                | JsValue::Float(_)
-                                        )
-                                    ));
-                                    let _value = slots.pop()?;
-                                    let _index = slots.pop()?;
-                                    Ok(Ok(slots.pop()?))
-                                })?;
-                                match result {
-                                    Ok(base) => {
-                                        *property_generation = generation.unwrap();
-                                        state
-                                            .release_owned_jsvalue(&runtime.0.poisoned, base)
-                                            .map_err(runtime_error_to_vm_error)?;
-                                        true
-                                    }
-                                    Err(reason) => {
-                                        miss_reason = Some(reason);
-                                        false
-                                    }
-                                }
-                            }
-                            Opcode::NumericArrayCompareBranch => {
-                                let result = cursor.with_slots(|slots| {
-                                    if !slots.has_operand_capacity(region.peak as usize) {
-                                        return Ok(Err(Miss::OperandCapacity));
-                                    }
-                                    let Some(index) =
-                                        region_number(slots, region.index).and_then(array_index)
-                                    else {
-                                        return Ok(Err(Miss::IndexNotNumericInteger));
-                                    };
-                                    let Some(rhs) = region_number(slots, region.value) else {
-                                        return Ok(Err(Miss::RhsNotNumber));
-                                    };
-                                    let Some(base) =
-                                        slots.direct_value(region_direct_slot(region.array))
-                                    else {
-                                        return Ok(Err(Miss::ReceiverBindingUnavailable));
-                                    };
-                                    Ok(state.peek_dense_number_result(base, index).map(|left| {
-                                        compare_direct_numbers(region.comparison as u16, left, rhs)
-                                    }))
-                                })?;
-                                if let Ok(decision) = result {
-                                    profile!(record_execution_outcome(
-                                        runtime,
-                                        executable,
-                                        pc,
-                                        "numeric_array_compare_branch",
-                                        None
-                                    ));
-                                    #[cfg(test)]
-                                    NUMERIC_REGION_HITS.update(|value| value + 1);
-                                    let target = if decision == region.when_true {
-                                        decoded.operand(1) as usize
-                                    } else {
-                                        region.fallthrough_pc as usize
-                                    };
-                                    cursor.advance(target);
-                                    continue;
-                                }
-                                miss_reason = result.err();
-                                false
-                            }
-                            _ => unreachable!("numeric region opcode was already selected"),
-                        };
-                        profile!(record_execution_outcome(
+                        if let Some(action) = execute_numeric_region(
                             runtime,
+                            state,
+                            &mut cursor,
                             executable,
+                            property_generation,
+                            active_frame,
+                            decoded.opcode,
+                            operand,
+                            decoded.operand(1),
+                            decoded.operand(2),
                             pc,
-                            match decoded.opcode {
-                                Opcode::NumericArrayAccumulate => "numeric_array_accumulate",
-                                Opcode::NumericArrayStoreProduct => "numeric_array_store_product",
-                                Opcode::NumericArrayCopyElement => "numeric_array_copy_element",
-                                Opcode::NumericArrayAddPreInc => "numeric_array_add_preinc",
-                                Opcode::NumericArrayStoreAndLocal => {
-                                    "numeric_array_store_and_local"
-                                }
-                                Opcode::NumericArrayUpdateElement => "numeric_array_update_element",
-                                Opcode::NumericArrayCompareBranch => "numeric_array_compare_branch",
-                                _ => unreachable!(),
-                            },
-                            if hit {
-                                None
-                            } else {
-                                miss_reason.map(Miss::name)
-                            }
-                        ));
-                        #[cfg(not(feature = "profiling"))]
-                        let _ = miss_reason;
-                        if hit {
-                            #[cfg(test)]
-                            NUMERIC_REGION_HITS.update(|value| value + 1);
-                            cursor.advance(decoded.operand(1) as usize);
-                            continue;
-                        }
-                        #[cfg(test)]
-                        NUMERIC_REGION_MISSES.update(|value| value + 1);
-                        let first = match decoded.opcode {
-                            Opcode::NumericArrayStoreAndLocal => {
-                                cursor.with_slots(|slots| {
-                                    slots.peek(2)?;
-                                    slots.insert_copy_in_state(state, 0, 3)
-                                })?;
-                                None
-                            }
-                            Opcode::NumericArrayAccumulate => {
-                                if region.checked {
-                                    read_local::<true>(&mut cursor, state, region.destination)?
-                                } else {
-                                    read_local::<false>(&mut cursor, state, region.destination)?
-                                }
-                            }
-                            _ => match region.array {
-                                DirectSource::Local(index) => {
-                                    read_local::<false>(&mut cursor, state, index)?
-                                }
-                                DirectSource::CheckedLocal(index) => {
-                                    read_local::<true>(&mut cursor, state, index)?
-                                }
-                                DirectSource::Argument(index) => {
-                                    read_arg(&mut cursor, state, index)?
-                                }
-                            },
-                        };
-                        if let Some(action) = first {
+                        )? {
                             break 'dispatch Ok(action);
                         }
-                        cursor.advance(decoded.operand(2) as usize);
                         continue;
                     }
                     Opcode::UpdateLocalDiscard | Opcode::UpdateLocalDiscardCheck => {
@@ -1133,10 +769,13 @@ fn execute_admitted_in_state(
                             continue;
                         }
                         if decoded.opcode == Opcode::UpdateLocalDiscardCheck {
-                            if let Some(action) = read_local::<true>(&mut cursor, state, index)? {
+                            if let Some(action) =
+                                read_local_fallback::<true>(&mut cursor, state, index)?
+                            {
                                 break 'dispatch Ok(action);
                             }
-                        } else if let Some(action) = read_local::<false>(&mut cursor, state, index)?
+                        } else if let Some(action) =
+                            read_local_fallback::<false>(&mut cursor, state, index)?
                         {
                             break 'dispatch Ok(action);
                         }
@@ -1186,7 +825,7 @@ fn execute_admitted_in_state(
                             "number_arg_inc",
                             Some("guard")
                         ));
-                        if let Some(action) = read_arg(&mut cursor, state, index)? {
+                        if let Some(action) = read_arg_fallback(&mut cursor, state, index)? {
                             break 'dispatch Ok(action);
                         }
                     }
@@ -1265,7 +904,7 @@ fn execute_admitted_in_state(
                         }
                         if decoded.opcode == Opcode::DensePostUpdateLocalCheck {
                             if let Some(action) =
-                                read_local::<true>(&mut cursor, state, base_index)?
+                                read_local_fallback::<true>(&mut cursor, state, base_index)?
                             {
                                 break 'dispatch Ok(action);
                             }
@@ -1274,11 +913,13 @@ fn execute_admitted_in_state(
                             Opcode::DensePreUpdateLocal | Opcode::DensePostUpdateLocal
                         ) {
                             if let Some(action) =
-                                read_local::<false>(&mut cursor, state, base_index)?
+                                read_local_fallback::<false>(&mut cursor, state, base_index)?
                             {
                                 break 'dispatch Ok(action);
                             }
-                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                        } else if let Some(action) =
+                            read_arg_fallback(&mut cursor, state, base_index)?
+                        {
                             break 'dispatch Ok(action);
                         }
                     }
@@ -1326,7 +967,8 @@ fn execute_admitted_in_state(
                             cursor.advance((decoded.next_pc + 5) as usize);
                             continue;
                         }
-                        if let Some(action) = read_local::<false>(&mut cursor, state, accumulator)?
+                        if let Some(action) =
+                            read_local_fallback::<false>(&mut cursor, state, accumulator)?
                         {
                             break 'dispatch Ok(action);
                         }
@@ -1378,7 +1020,8 @@ fn execute_admitted_in_state(
                             cursor.advance((decoded.next_pc + 8) as usize);
                             continue;
                         }
-                        if let Some(action) = read_local::<false>(&mut cursor, state, accumulator)?
+                        if let Some(action) =
+                            read_local_fallback::<false>(&mut cursor, state, accumulator)?
                         {
                             break 'dispatch Ok(action);
                         }
@@ -1422,11 +1065,13 @@ fn execute_admitted_in_state(
                         }
                         if decoded.opcode == Opcode::DenseIndexBinaryLocal {
                             if let Some(action) =
-                                read_local::<false>(&mut cursor, state, base_index)?
+                                read_local_fallback::<false>(&mut cursor, state, base_index)?
                             {
                                 break 'dispatch Ok(action);
                             }
-                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                        } else if let Some(action) =
+                            read_arg_fallback(&mut cursor, state, base_index)?
+                        {
                             break 'dispatch Ok(action);
                         }
                     }
@@ -1473,11 +1118,13 @@ fn execute_admitted_in_state(
                         }
                         if decoded.opcode == Opcode::DenseReadBinaryLocal {
                             if let Some(action) =
-                                read_local::<false>(&mut cursor, state, base_index)?
+                                read_local_fallback::<false>(&mut cursor, state, base_index)?
                             {
                                 break 'dispatch Ok(action);
                             }
-                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                        } else if let Some(action) =
+                            read_arg_fallback(&mut cursor, state, base_index)?
+                        {
                             break 'dispatch Ok(action);
                         }
                     }
@@ -1526,11 +1173,13 @@ fn execute_admitted_in_state(
                         }
                         if decoded.opcode == Opcode::DenseReadLocal {
                             if let Some(action) =
-                                read_local::<false>(&mut cursor, state, base_index)?
+                                read_local_fallback::<false>(&mut cursor, state, base_index)?
                             {
                                 break 'dispatch Ok(action);
                             }
-                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                        } else if let Some(action) =
+                            read_arg_fallback(&mut cursor, state, base_index)?
+                        {
                             break 'dispatch Ok(action);
                         }
                     }
@@ -1603,9 +1252,9 @@ fn execute_admitted_in_state(
                                     )
                                 })?;
                                 let load = if decoded.opcode == Opcode::BorrowedFieldLocal {
-                                    read_local::<false>(&mut cursor, state, base_index)
+                                    read_local_fallback::<false>(&mut cursor, state, base_index)
                                 } else {
-                                    read_arg(&mut cursor, state, base_index)
+                                    read_arg_fallback(&mut cursor, state, base_index)
                                 };
                                 match load {
                                     Ok(None) => {
@@ -1640,11 +1289,13 @@ fn execute_admitted_in_state(
                         }
                         if decoded.opcode == Opcode::BorrowedFieldLocal {
                             if let Some(action) =
-                                read_local::<false>(&mut cursor, state, base_index)?
+                                read_local_fallback::<false>(&mut cursor, state, base_index)?
                             {
                                 break 'dispatch Ok(action);
                             }
-                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                        } else if let Some(action) =
+                            read_arg_fallback(&mut cursor, state, base_index)?
+                        {
                             break 'dispatch Ok(action);
                         }
                     }
@@ -1690,11 +1341,8 @@ fn execute_admitted_in_state(
                             });
                             continue;
                         }
-                        let completed = cursor.with_slots(|slots| {
-                            slots.binary_number(|left, right| {
-                                binary_number_result(comparison, left, right)
-                            })
-                        })?;
+                        let completed =
+                            cursor.with_slots(|slots| binary_number_in_place(slots, comparison))?;
                         if !completed {
                             if matches!(comparison, Opcode::StrictEq | Opcode::StrictNeq) {
                                 let decision = cursor.strict_comparison(state, active_frame)?
@@ -1765,11 +1413,13 @@ fn execute_admitted_in_state(
                         }
                         if decoded.opcode == Opcode::CompareBranchLocalLt {
                             if let Some(action) =
-                                read_local::<false>(&mut cursor, state, left_index)?
+                                read_local_fallback::<false>(&mut cursor, state, left_index)?
                             {
                                 break 'dispatch Ok(action);
                             }
-                        } else if let Some(action) = read_arg(&mut cursor, state, left_index)? {
+                        } else if let Some(action) =
+                            read_arg_fallback(&mut cursor, state, left_index)?
+                        {
                             break 'dispatch Ok(action);
                         }
                     }
@@ -1824,11 +1474,13 @@ fn execute_admitted_in_state(
                         }
                         if decoded.opcode == Opcode::CompareBranchLocal {
                             if let Some(action) =
-                                read_local::<false>(&mut cursor, state, left_index)?
+                                read_local_fallback::<false>(&mut cursor, state, left_index)?
                             {
                                 break 'dispatch Ok(action);
                             }
-                        } else if let Some(action) = read_arg(&mut cursor, state, left_index)? {
+                        } else if let Some(action) =
+                            read_arg_fallback(&mut cursor, state, left_index)?
+                        {
                             break 'dispatch Ok(action);
                         }
                     }
@@ -1855,7 +1507,7 @@ fn execute_admitted_in_state(
                             if value.is_some() { None } else { Some("guard") }
                         ));
                         if let Some(value) = value {
-                            cursor.commit_owned(state, value)?;
+                            cursor.commit_owned_hot(state, value)?;
                         } else {
                             break 'dispatch Ok(VmAction::Binding {
                                 source: BindingSource::Closure,
@@ -1881,7 +1533,7 @@ fn execute_admitted_in_state(
                                     index,
                                 )?
                         {
-                            cursor.commit_owned(state, value)?;
+                            cursor.commit_owned_hot(state, value)?;
                             profile!(record_owned_execution_event("global_cell.local_complete"));
                         } else {
                             break 'dispatch Ok(VmAction::Environment(
@@ -2214,11 +1866,8 @@ fn execute_admitted_in_state(
                     | Opcode::Gte
                     | Opcode::StrictEq
                     | Opcode::StrictNeq => {
-                        let completed = cursor.with_slots(|slots| {
-                            slots.binary_number(|left, right| {
-                                binary_number_result(decoded.opcode, left, right)
-                            })
-                        })?;
+                        let completed = cursor
+                            .with_slots(|slots| binary_number_in_place(slots, decoded.opcode))?;
                         if !completed {
                             if matches!(decoded.opcode, Opcode::Eq | Opcode::Neq)
                                 && let Some(equal) = cursor.with_slots(|slots| {
@@ -2715,6 +2364,365 @@ fn execute_admitted_in_state(
     }
 }
 
+/// Fused numeric-array regions run only inside proven numeric loops. One
+/// out-of-line body keeps them out of the shared dispatch loop, whose hot
+/// arms then keep more state in registers. Only scalar operands cross the
+/// call: the decoder aggregate would spill on every dispatch. `None` means
+/// the cursor has advanced.
+#[inline(never)]
+#[expect(clippy::too_many_arguments)]
+fn execute_numeric_region(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    cursor: &mut FrameCursor<'_>,
+    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+    property_generation: &mut u64,
+    active_frame: ActiveFrameToken,
+    opcode: Opcode,
+    operand: u32,
+    hit_pc: u32,
+    miss_pc: u32,
+    pc: usize,
+) -> Result<Option<VmAction>, Error> {
+    #[cfg(not(feature = "profiling"))]
+    let _ = (runtime, pc);
+
+    let region = executable
+        .exec
+        .numeric_region(operand)
+        .ok_or_else(|| Error::internal("published numeric region is missing"))?;
+    #[cfg(test)]
+    NUMERIC_REGION_ATTEMPTS.update(|value| value + 1);
+    profile!(record_execution_dispatch(runtime, executable, pc, true));
+    let mut miss_reason = None;
+    let hit = match opcode {
+        Opcode::NumericArrayAccumulate | Opcode::NumericArrayStoreProduct => {
+            match cursor.with_slots(|slots| {
+                Ok(numeric_local_array_region(
+                    slots,
+                    state,
+                    region,
+                    opcode == Opcode::NumericArrayAccumulate,
+                ))
+            })? {
+                Ok(()) => true,
+                Err(reason) => {
+                    miss_reason = Some(reason);
+                    false
+                }
+            }
+        }
+        Opcode::NumericArrayUpdateElement => {
+            let generation = property_generation.checked_add(1);
+            let result = cursor.with_slots(|slots| {
+                if generation.is_none() {
+                    return Ok(Err(Miss::PropertyGenerationOverflow));
+                }
+                if !slots.has_operand_capacity(region.peak as usize) {
+                    return Ok(Err(Miss::OperandCapacity));
+                }
+                let Some(index) = region_number(slots, region.index).and_then(array_index) else {
+                    return Ok(Err(Miss::IndexNotNumericInteger));
+                };
+                let delta = if let Some(producer) = region.producer_index {
+                    let product = executable
+                        .exec
+                        .product_source(producer)
+                        .expect("verified product payload");
+                    let Some(scale) = region_number(slots, product.scale) else {
+                        return Ok(Err(Miss::ScaleNotNumber));
+                    };
+                    let product_index = if region.shared_update_index {
+                        index
+                    } else {
+                        let Some(product_index) =
+                            region_number(slots, product.index).and_then(array_index)
+                        else {
+                            return Ok(Err(Miss::IndexNotNumericInteger));
+                        };
+                        product_index
+                    };
+                    let Some(product_base) = slots.direct_value(region_direct_slot(product.array))
+                    else {
+                        return Ok(Err(Miss::ReceiverBindingUnavailable));
+                    };
+                    let element = match state.peek_dense_number_result(product_base, product_index)
+                    {
+                        Ok(value) => value,
+                        Err(reason) => return Ok(Err(reason)),
+                    };
+                    element.mul(scale)
+                } else {
+                    let Some(delta) = region_number(slots, region.value) else {
+                        return Ok(Err(Miss::DeltaNotNumber));
+                    };
+                    delta
+                };
+                let Some(base) = slots.direct_value(region_direct_slot(region.array)) else {
+                    return Ok(Err(Miss::ReceiverBindingUnavailable));
+                };
+                Ok(state.try_add_array_own_number(base, index, delta))
+            })?;
+            match result {
+                Ok(()) => {
+                    *property_generation = generation.unwrap();
+                    true
+                }
+                Err(reason) => {
+                    miss_reason = Some(reason);
+                    false
+                }
+            }
+        }
+        Opcode::NumericArrayCopyElement => {
+            let generation = property_generation.checked_add(1);
+            let result = cursor.with_slots(|slots| {
+                if generation.is_none() {
+                    return Ok(Err(Miss::PropertyGenerationOverflow));
+                }
+                if !slots.has_operand_capacity(region.peak as usize) {
+                    return Ok(Err(Miss::OperandCapacity));
+                }
+                let Some(index) = region_number(slots, region.index).and_then(array_index) else {
+                    return Ok(Err(Miss::IndexNotNumericInteger));
+                };
+                let source = executable
+                    .exec
+                    .copy_source(region.producer_index.expect("verified copy payload index"))
+                    .expect("verified copy payload");
+                let Some(source_index) = region_number(slots, source.index).and_then(array_index)
+                else {
+                    return Ok(Err(Miss::IndexNotNumericInteger));
+                };
+                let Some(source_base) = slots.direct_value(region_direct_slot(source.array)) else {
+                    return Ok(Err(Miss::ReceiverBindingUnavailable));
+                };
+                let value = match state.peek_dense_number_result(source_base, source_index) {
+                    Ok(value) => value,
+                    Err(reason) => return Ok(Err(reason)),
+                };
+                let Some(target_base) = slots.direct_value(region_direct_slot(region.array)) else {
+                    return Ok(Err(Miss::ReceiverBindingUnavailable));
+                };
+                Ok(state.try_replace_array_own_number(target_base, index, value))
+            })?;
+            match result {
+                Ok(()) => {
+                    *property_generation = generation.unwrap();
+                    true
+                }
+                Err(reason) => {
+                    miss_reason = Some(reason);
+                    false
+                }
+            }
+        }
+        Opcode::NumericArrayAddPreInc => {
+            let result = cursor.with_slots(|slots| {
+                if !slots.has_operand_capacity(region.peak as usize) {
+                    return Ok(Err(Miss::OperandCapacity));
+                }
+                let Some(accumulator) = slots.peek(0).ok().and_then(JsValue::as_number_repr) else {
+                    return Ok(Err(Miss::AccumulatorNotNumber));
+                };
+                let index_slot = match region.index {
+                    NumberSource::Direct(DirectSource::Local(slot))
+                    | NumberSource::Direct(DirectSource::CheckedLocal(slot)) => slot,
+                    _ => unreachable!("verified preincrement index"),
+                };
+                let Some(old_index) = slots.immediate_local(index_slot) else {
+                    return Ok(Err(Miss::IndexNotNumber));
+                };
+                let updated_index = old_index.add(Number::Int(1));
+                let Some(index) = array_index(updated_index) else {
+                    return Ok(Err(Miss::IndexNotNumericInteger));
+                };
+                let Some(base) = slots.direct_value(region_direct_slot(region.array)) else {
+                    return Ok(Err(Miss::ReceiverBindingUnavailable));
+                };
+                let element = match state.peek_dense_number_result(base, index) {
+                    Ok(value) => value,
+                    Err(reason) => return Ok(Err(reason)),
+                };
+                slots.commit_number_local_and_top(
+                    index_slot,
+                    updated_index,
+                    accumulator.add(element),
+                )?;
+                Ok(Ok(()))
+            })?;
+            match result {
+                Ok(()) => true,
+                Err(reason) => {
+                    miss_reason = Some(reason);
+                    false
+                }
+            }
+        }
+        Opcode::NumericArrayStoreAndLocal => {
+            cursor.publish_fault(state, active_frame)?;
+            let generation = property_generation.checked_add(1);
+            let result = cursor.with_slots(|slots| {
+                if generation.is_none() {
+                    return Ok(Err(Miss::PropertyGenerationOverflow));
+                }
+                if !slots.has_operand_capacity(region.peak as usize) {
+                    return Ok(Err(Miss::OperandCapacity));
+                }
+                let Some(value) = slots.peek(0)?.as_number_repr() else {
+                    return Ok(Err(Miss::DeltaNotNumber));
+                };
+                let Some(index) = slots.peek(1)?.as_number_repr().and_then(array_index) else {
+                    return Ok(Err(Miss::IndexNotNumericInteger));
+                };
+                let eligible = matches!(
+                    slots.local(region.destination)?,
+                    FrameBinding::Direct(
+                        JsValue::Undefined
+                            | JsValue::Null
+                            | JsValue::Bool(_)
+                            | JsValue::Int(_)
+                            | JsValue::Float(_)
+                    )
+                );
+                if !eligible {
+                    return Ok(Err(Miss::DestinationOrReceiverUnavailable));
+                }
+                let base = slots.peek(2)?;
+                if let Err(reason) = state.try_replace_array_own_number(base, index, value) {
+                    return Ok(Err(reason));
+                }
+                let old = slots.replace_local(
+                    region.destination,
+                    FrameBinding::Direct(number_value(value)),
+                )?;
+                debug_assert!(matches!(
+                    old,
+                    FrameBinding::Direct(
+                        JsValue::Undefined
+                            | JsValue::Null
+                            | JsValue::Bool(_)
+                            | JsValue::Int(_)
+                            | JsValue::Float(_)
+                    )
+                ));
+                let _value = slots.pop()?;
+                let _index = slots.pop()?;
+                Ok(Ok(slots.pop()?))
+            })?;
+            match result {
+                Ok(base) => {
+                    *property_generation = generation.unwrap();
+                    state
+                        .release_owned_jsvalue(&runtime.0.poisoned, base)
+                        .map_err(runtime_error_to_vm_error)?;
+                    true
+                }
+                Err(reason) => {
+                    miss_reason = Some(reason);
+                    false
+                }
+            }
+        }
+        Opcode::NumericArrayCompareBranch => {
+            let result = cursor.with_slots(|slots| {
+                if !slots.has_operand_capacity(region.peak as usize) {
+                    return Ok(Err(Miss::OperandCapacity));
+                }
+                let Some(index) = region_number(slots, region.index).and_then(array_index) else {
+                    return Ok(Err(Miss::IndexNotNumericInteger));
+                };
+                let Some(rhs) = region_number(slots, region.value) else {
+                    return Ok(Err(Miss::RhsNotNumber));
+                };
+                let Some(base) = slots.direct_value(region_direct_slot(region.array)) else {
+                    return Ok(Err(Miss::ReceiverBindingUnavailable));
+                };
+                Ok(state
+                    .peek_dense_number_result(base, index)
+                    .map(|left| compare_direct_numbers(region.comparison as u16, left, rhs)))
+            })?;
+            if let Ok(decision) = result {
+                profile!(record_execution_outcome(
+                    runtime,
+                    executable,
+                    pc,
+                    "numeric_array_compare_branch",
+                    None
+                ));
+                #[cfg(test)]
+                NUMERIC_REGION_HITS.update(|value| value + 1);
+                let target = if decision == region.when_true {
+                    hit_pc as usize
+                } else {
+                    region.fallthrough_pc as usize
+                };
+                cursor.advance(target);
+                return Ok(None);
+            }
+            miss_reason = result.err();
+            false
+        }
+        _ => unreachable!("numeric region opcode was already selected"),
+    };
+    profile!(record_execution_outcome(
+        runtime,
+        executable,
+        pc,
+        match opcode {
+            Opcode::NumericArrayAccumulate => "numeric_array_accumulate",
+            Opcode::NumericArrayStoreProduct => "numeric_array_store_product",
+            Opcode::NumericArrayCopyElement => "numeric_array_copy_element",
+            Opcode::NumericArrayAddPreInc => "numeric_array_add_preinc",
+            Opcode::NumericArrayStoreAndLocal => "numeric_array_store_and_local",
+            Opcode::NumericArrayUpdateElement => "numeric_array_update_element",
+            Opcode::NumericArrayCompareBranch => "numeric_array_compare_branch",
+            _ => unreachable!(),
+        },
+        if hit {
+            None
+        } else {
+            miss_reason.map(Miss::name)
+        }
+    ));
+    #[cfg(not(feature = "profiling"))]
+    let _ = miss_reason;
+    if hit {
+        #[cfg(test)]
+        NUMERIC_REGION_HITS.update(|value| value + 1);
+        cursor.advance(hit_pc as usize);
+        return Ok(None);
+    }
+    #[cfg(test)]
+    NUMERIC_REGION_MISSES.update(|value| value + 1);
+    let first = match opcode {
+        Opcode::NumericArrayStoreAndLocal => {
+            cursor.with_slots(|slots| {
+                slots.peek(2)?;
+                slots.insert_copy_in_state(state, 0, 3)
+            })?;
+            None
+        }
+        Opcode::NumericArrayAccumulate => {
+            if region.checked {
+                read_local_fallback::<true>(cursor, state, region.destination)?
+            } else {
+                read_local_fallback::<false>(cursor, state, region.destination)?
+            }
+        }
+        _ => match region.array {
+            DirectSource::Local(index) => read_local_fallback::<false>(cursor, state, index)?,
+            DirectSource::CheckedLocal(index) => read_local_fallback::<true>(cursor, state, index)?,
+            DirectSource::Argument(index) => read_arg_fallback(cursor, state, index)?,
+        },
+    };
+    if let Some(action) = first {
+        return Ok(Some(action));
+    }
+    cursor.advance(miss_pc as usize);
+    Ok(None)
+}
+
 #[inline(always)]
 fn region_direct_slot(source: DirectSource) -> DirectSlot {
     match source {
@@ -2793,6 +2801,12 @@ fn read_local<const CHECKED: bool>(
     if cursor.with_slots(|slots| slots.push_direct_immediate(DirectSlot::Local(index)))? {
         return Ok(None);
     }
+    let poisoned = cursor.poisoned;
+    if cursor.with_slots(|slots| {
+        slots.push_direct_heap_copy_in_state(state, poisoned, DirectSlot::Local(index))
+    })? {
+        return Ok(None);
+    }
     let (copied, uninitialized) = cursor.with_slots(|slots| match slots.local(index)? {
         FrameBinding::Direct(value) => {
             copy_value_in_state(state, value).map(|value| (Some(value), false))
@@ -2829,6 +2843,12 @@ fn read_arg(
     if cursor.with_slots(|slots| slots.push_direct_immediate(DirectSlot::Argument(index)))? {
         return Ok(None);
     }
+    let poisoned = cursor.poisoned;
+    if cursor.with_slots(|slots| {
+        slots.push_direct_heap_copy_in_state(state, poisoned, DirectSlot::Argument(index))
+    })? {
+        return Ok(None);
+    }
     let copied = cursor.with_slots(|slots| match slots.parameter(index)? {
         FrameBinding::Direct(value) => copy_value_in_state(state, value).map(Some),
         FrameBinding::Captured(id) if slots.has_operand_capacity(1) => {
@@ -2847,6 +2867,27 @@ fn read_arg(
         checked: false,
         keep: false,
     }))
+}
+
+/// Guard misses of fused operations fall back to an ordinary binding read.
+/// They share these out-of-line copies; only the plain read opcodes inline
+/// the read itself.
+#[inline(never)]
+fn read_local_fallback<const CHECKED: bool>(
+    cursor: &mut FrameCursor<'_>,
+    state: &mut RuntimeState,
+    index: u16,
+) -> Result<Option<VmAction>, Error> {
+    read_local::<CHECKED>(cursor, state, index)
+}
+
+#[inline(never)]
+fn read_arg_fallback(
+    cursor: &mut FrameCursor<'_>,
+    state: &mut RuntimeState,
+    index: u16,
+) -> Result<Option<VmAction>, Error> {
+    read_arg(cursor, state, index)
 }
 
 /// Operations requiring observable semantics leave the frame window untouched.
@@ -3325,7 +3366,21 @@ fn compare_direct_numbers(opcode: u16, left: Number, right: Number) -> bool {
     }
 }
 
+/// Number-only binary operators read both operand slots, compute, and write
+/// the result slot in one out-of-line body. The result goes from registers
+/// into the slot; returning it through a caller temporary would leave
+/// piecewise stores that the following full-width move cannot forward.
+#[inline(never)]
+fn binary_number_in_place(slots: &mut FrameSlots<'_>, opcode: Opcode) -> Result<bool, Error> {
+    slots.binary_number(|left, right| binary_number_value(opcode, left, right))
+}
+
 fn binary_number_result(opcode: Opcode, left: Number, right: Number) -> JsValue {
+    binary_number_value(opcode, left, right)
+}
+
+#[inline(always)]
+fn binary_number_value(opcode: Opcode, left: Number, right: Number) -> JsValue {
     match opcode {
         Opcode::Add => number_value(left.add(right)),
         Opcode::Sub => number_value(left.sub(right)),
