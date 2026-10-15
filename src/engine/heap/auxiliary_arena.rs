@@ -75,8 +75,6 @@ pub(super) struct AuxiliaryArena<T: AuxiliaryPayload> {
     #[cfg(feature = "profiling")]
     pub(super) slots: profiling::ArenaStorage<AuxiliarySlot<T>>,
     pub(super) free: Vec<u32>,
-    #[cfg(debug_assertions)]
-    pub(super) alloc_sites: Vec<Option<gc::AllocSite>>,
 }
 
 impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
@@ -89,8 +87,6 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
             #[cfg(feature = "profiling")]
             slots: profiling::ArenaStorage::new(allocation_id),
             free: Vec::new(),
-            #[cfg(debug_assertions)]
-            alloc_sites: Vec::new(),
         }
     }
 
@@ -120,8 +116,6 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
         }
         slot.state = AuxiliaryState::Initializing { strong: 1 };
         let generation = slot.generation;
-        #[cfg(debug_assertions)]
-        self.record_alloc_site(index, generation);
         Ok(T::id(index, generation))
     }
 
@@ -142,8 +136,6 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
         }
         slot.state = AuxiliaryState::Vacant;
         self.free.push(index);
-        #[cfg(debug_assertions)]
-        self.clear_alloc_site(index);
         Ok(())
     }
 
@@ -346,31 +338,6 @@ impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
         } else {
             slot.state = AuxiliaryState::Retired;
         }
-        #[cfg(debug_assertions)]
-        self.clear_alloc_site(index);
         Ok(())
-    }
-
-    #[cfg(debug_assertions)]
-    fn record_alloc_site(&mut self, index: u32, generation: u32) {
-        if !super::ownership::alloc_site_capture_enabled() {
-            return;
-        }
-        let index = index as usize;
-        if self.alloc_sites.len() <= index {
-            self.alloc_sites.resize_with(index + 1, || None);
-        }
-        self.alloc_sites[index] = Some(gc::AllocSite {
-            generation,
-            kind: T::KIND,
-            backtrace: super::ownership::compact_backtrace(),
-        });
-    }
-
-    #[cfg(debug_assertions)]
-    fn clear_alloc_site(&mut self, index: u32) {
-        if let Some(site) = self.alloc_sites.get_mut(index as usize) {
-            *site = None;
-        }
     }
 }

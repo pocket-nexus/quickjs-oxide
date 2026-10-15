@@ -24,7 +24,6 @@ impl StateOwnedCompleteDescriptor {
             },
         }
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn record(&self) -> &CompletePropertyDescriptor<RawValue> {
         &self.record
     }
@@ -151,7 +150,6 @@ impl Drop for StateCompleteDescriptorGuard<'_> {
 }
 
 impl OwnedCompletePropertyDescriptor {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn into_state_owned(mut self) -> StateOwnedCompleteDescriptor {
         StateOwnedCompleteDescriptor {
             record: std::mem::replace(

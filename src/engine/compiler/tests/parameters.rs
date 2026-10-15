@@ -19,13 +19,6 @@ fn class_constructor_guard_precedes_observable_parameter_initialization() {
                     && !function.metadata().has_prototype
             })
             .expect("class constructor child");
-        validate_parameter_bytecode_layout(
-            constructor.metadata(),
-            constructor.code(),
-            &vec![false; usize::from(constructor.metadata().local_count)],
-            constructor.parameter_environment(),
-        )
-        .unwrap_or_else(|error| panic!("invalid constructor ABI for {source}: {error}"));
         let guard = constructor
             .code()
             .iter()

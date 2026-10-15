@@ -655,8 +655,7 @@ mod tests {
     #[test]
     fn synchronous_leaves_resume_and_throw_without_losing_the_current_frame() {
         let (runtime, mut context) = test_context();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_script_true(
             &mut context,
             r#"
@@ -698,8 +697,7 @@ mod tests {
     #[test]
     fn global_cell_writes_keep_binding_semantics() {
         let (runtime, mut context) = test_context();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_script_true(
             &mut context,
             r#"

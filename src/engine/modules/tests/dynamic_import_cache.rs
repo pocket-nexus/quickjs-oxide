@@ -62,8 +62,7 @@ fn dynamic_import_load_samples_replacement_installed_by_normalize() {
 
 #[test]
 fn dynamic_import_resolution_failure_retries_the_acyclic_source_graph() {
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let (runtime, mut context) = test_context();
     let (loader, loads, _) = MapModuleLoader::new([("pkg/a.js", "import './missing.js';")]);
     let _loader_registration = runtime.set_module_loader(loader);
@@ -198,8 +197,7 @@ fn dynamic_import_reuses_cycle_root_rejection_promise_and_tracker_history() {
 
 #[test]
 fn dynamic_import_successful_cycle_reuses_one_evaluation_promise() {
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let (runtime, mut context) = test_context();
     let (loader, loads, _) = MapModuleLoader::new([
         (

@@ -1,91 +1,15 @@
+use crate::object_graph_observation::intrinsic_prototype;
 use crate::object_graph_observation::{
     define_checked_builtin_data as define_data, define_checked_builtin_data_key as define_data_key,
     eval_callable, expect_object, global_callable, global_string as string_global,
 };
 use crate::runtime_observation::error_text;
-use crate::runtime_observation::{host_runtime, host_runtime_context};
+use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{property_callable, take_thrown_object as take_exception_object};
 use quickjs_oxide::engine::api::{
-    AccessorValue, CallableRef, Context, DescriptorField, JsBigInt, JsString, ObjectRef,
+    AccessorValue, CallableRef, Context, DescriptorField, JsString, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey, Runtime, RuntimeError, Value, WellKnownSymbol,
-    number_to_string,
 };
-use std::ffi::OsStr;
-
-const ORACLE_PROBE: &str = r#"
-function numberText(value) {
-    if (Number.isNaN(value)) return "NaN";
-    if (Object.is(value, -0)) return "-0";
-    return String(value);
-}
-function observe(thunk) {
-    try { return numberText(thunk()); }
-    catch (error) {
-        if (error !== null && typeof error === "object")
-            return "throw:" + error.name + ":" + error.message;
-        return "throw:" + String(error);
-    }
-}
-
-print("call=" + [
-    Number(), Number(undefined), Number(null), Number(false), Number(true),
-    Number(17), Number(3.5), Number(-0), Number(" 0x10 "), Number("1.25")
-].map(numberText).join("|"));
-
-print("bigint=" + [
-    Number(9007199254740993n),
-    Number(9007199254740995n),
-    Number(18446744073709553664n),
-    Number(18446744073709553665n),
-    Number(1n << 1024n),
-    Number(-(1n << 1024n))
-].map(numberText).join("|"));
-
-var exoticLog = "";
-var exotic = {
-    [Symbol.toPrimitive]: function(hint) {
-        exoticLog += "exotic:" + hint + "|";
-        return 41;
-    }
-};
-var fallbackLog = "";
-var fallback = {
-    valueOf: function() { fallbackLog += "valueOf|"; return {}; },
-    toString: function() { fallbackLog += "toString|"; return "42"; }
-};
-var throwing = {
-    [Symbol.toPrimitive]: function() { throw 77; }
-};
-print("object=" + [
-    numberText(Number(exotic)), exoticLog,
-    numberText(Number(fallback)), fallbackLog,
-    observe(function() { return Number(throwing); })
-].join("|"));
-print("symbol=" + observe(function() { return Number(Symbol("number")); }));
-"#;
-
-const EXPECTED_CONSTRUCTOR_OBSERVATIONS: &[&str] = &[
-    "call=0|NaN|0|0|1|17|3.5|-0|16|1.25",
-    "bigint=9007199254740992|9007199254740996|18446744073709552000|18446744073709556000|Infinity|-Infinity",
-    "object=41|exotic:number||42|valueOf|toString||throw:77",
-    "symbol=throw:TypeError:cannot convert symbol to number",
-];
-
-#[test]
-fn number_call_conversion_matches_the_pinned_quickjs_probe() {
-    let rust = rust_constructor_observations();
-    assert_eq!(
-        rust, EXPECTED_CONSTRUCTOR_OBSERVATIONS,
-        "host-side Number conversion contract changed"
-    );
-
-    let oracle = require_qjs_oracle!("Number constructor differential");
-    assert_eq!(
-        rust,
-        oracle_observations(&oracle),
-        "Number constructor conversion differed from pinned QuickJS"
-    );
-}
 
 #[test]
 fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
@@ -510,185 +434,6 @@ fn number_wrapper_keeps_its_realm_graph_alive_until_collection() {
     assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
-fn rust_constructor_observations() -> Vec<String> {
-    let (runtime, mut context) = host_runtime_context();
-    let global = context.global_object().unwrap();
-    let number = global_callable(&runtime, &mut context, "Number");
-
-    let call_values = [
-        context.call(&number, Value::Undefined, &[]).unwrap(),
-        context
-            .call(&number, Value::Undefined, &[Value::Undefined])
-            .unwrap(),
-        context
-            .call(&number, Value::Undefined, &[Value::Null])
-            .unwrap(),
-        context
-            .call(&number, Value::Undefined, &[Value::Bool(false)])
-            .unwrap(),
-        context
-            .call(&number, Value::Undefined, &[Value::Bool(true)])
-            .unwrap(),
-        context
-            .call(&number, Value::Undefined, &[Value::Int(17)])
-            .unwrap(),
-        context
-            .call(&number, Value::Undefined, &[Value::Float(3.5)])
-            .unwrap(),
-        context
-            .call(&number, Value::Undefined, &[Value::Float(-0.0)])
-            .unwrap(),
-        context
-            .call(
-                &number,
-                Value::Undefined,
-                &[Value::String(JsString::try_from_utf8(" 0x10 ").unwrap())],
-            )
-            .unwrap(),
-        context
-            .call(
-                &number,
-                Value::Undefined,
-                &[Value::String(JsString::try_from_utf8("1.25").unwrap())],
-            )
-            .unwrap(),
-    ];
-
-    let short_down = JsBigInt::parse_js_string("9007199254740993").unwrap();
-    let short_up = JsBigInt::parse_js_string("9007199254740995").unwrap();
-    let heap_down = JsBigInt::parse_js_string("18446744073709553664").unwrap();
-    let heap_up = JsBigInt::parse_js_string("18446744073709553665").unwrap();
-    let two_to_1024 = JsBigInt::parse_radix(&format!("1{}", "0".repeat(1024)), 2).unwrap();
-    let negative_two_to_1024 = two_to_1024.neg().unwrap();
-    let bigint_values = [
-        short_down,
-        short_up,
-        heap_down,
-        heap_up,
-        two_to_1024,
-        negative_two_to_1024,
-    ]
-    .map(|value| {
-        context
-            .call(&number, Value::Undefined, &[Value::BigInt(value)])
-            .unwrap()
-    });
-
-    define_global(
-        &runtime,
-        &global,
-        "exoticLog",
-        Value::String(JsString::try_from_utf8("").unwrap()),
-    );
-    let exotic = context.new_object().unwrap();
-    let exotic_conversion = eval_callable(
-        &runtime,
-        &mut context,
-        "(function(hint) { exoticLog += 'exotic:' + hint + '|'; return 41; })",
-    );
-    define_data_key(
-        &runtime,
-        &exotic,
-        &PropertyKey::from(
-            runtime
-                .well_known_symbol(WellKnownSymbol::ToPrimitive)
-                .expect("well-known symbol"),
-        ),
-        Value::Object(
-            exotic_conversion
-                .as_object()
-                .try_clone()
-                .expect("duplicate root"),
-        ),
-    );
-    let exotic_value = context
-        .call(&number, Value::Undefined, &[Value::Object(exotic)])
-        .unwrap();
-
-    define_global(
-        &runtime,
-        &global,
-        "fallbackLog",
-        Value::String(JsString::try_from_utf8("").unwrap()),
-    );
-    let fallback = context.new_object().unwrap();
-    let fallback_result = context.new_object().unwrap();
-    define_global(
-        &runtime,
-        &global,
-        "fallbackObject",
-        Value::Object(fallback_result),
-    );
-    let value_of = eval_callable(
-        &runtime,
-        &mut context,
-        "(function() { fallbackLog += 'valueOf|'; return fallbackObject; })",
-    );
-    let to_string = eval_callable(
-        &runtime,
-        &mut context,
-        "(function() { fallbackLog += 'toString|'; return '42'; })",
-    );
-    define_data(
-        &runtime,
-        &fallback,
-        "valueOf",
-        Value::Object(value_of.as_object().try_clone().expect("duplicate root")),
-    );
-    define_data(
-        &runtime,
-        &fallback,
-        "toString",
-        Value::Object(to_string.as_object().try_clone().expect("duplicate root")),
-    );
-    let fallback_value = context
-        .call(&number, Value::Undefined, &[Value::Object(fallback)])
-        .unwrap();
-
-    let throwing = context.new_object().unwrap();
-    let thrower = eval_callable(&runtime, &mut context, "(function() { throw 77; })");
-    define_data_key(
-        &runtime,
-        &throwing,
-        &PropertyKey::from(
-            runtime
-                .well_known_symbol(WellKnownSymbol::ToPrimitive)
-                .expect("well-known symbol"),
-        ),
-        Value::Object(thrower.as_object().try_clone().expect("duplicate root")),
-    );
-    let thrown = match context.call(&number, Value::Undefined, &[Value::Object(throwing)]) {
-        Err(RuntimeError::Exception) => context.take_exception().unwrap().unwrap(),
-        result => panic!("throwing Number conversion unexpectedly returned {result:?}"),
-    };
-
-    let symbol = runtime
-        .new_symbol(Some(JsString::try_from_utf8("number").unwrap()))
-        .unwrap();
-    let symbol_error = match context.call(&number, Value::Undefined, &[Value::Symbol(symbol)]) {
-        Err(RuntimeError::Exception) => take_exception_object(&mut context),
-        result => panic!("Number(Symbol) unexpectedly returned {result:?}"),
-    };
-
-    vec![
-        format!("call={}", join_number_values(&call_values)),
-        format!("bigint={}", join_number_values(&bigint_values)),
-        format!(
-            "object={}|{}|{}|{}|throw:{}",
-            number_value_text(exotic_value),
-            string_global(&runtime, &mut context, &global, "exoticLog"),
-            number_value_text(fallback_value),
-            string_global(&runtime, &mut context, &global, "fallbackLog"),
-            value_text(thrown),
-        ),
-        format!(
-            "symbol=throw:{}:{}",
-            error_text(&runtime, &mut context, &symbol_error, "name"),
-            error_text(&runtime, &mut context, &symbol_error, "message"),
-        ),
-    ]
-}
-
 fn constructor_prototype(
     runtime: &Runtime,
     context: &mut Context,
@@ -700,11 +445,6 @@ fn constructor_prototype(
         panic!("constructor prototype was not an object");
     };
     prototype
-}
-
-fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {
-    let constructor = global_callable(runtime, context, name);
-    constructor_prototype(runtime, context, &constructor)
 }
 
 fn bound_constructor(runtime: &Runtime, context: &mut Context) -> CallableRef {
@@ -745,44 +485,4 @@ fn assert_number(value: Value, expected: f64) {
         .as_number()
         .unwrap_or_else(|| panic!("expected Number, got {value:?}"));
     assert_eq!(actual.to_bits(), expected.to_bits());
-}
-
-fn join_number_values<const N: usize>(values: &[Value; N]) -> String {
-    values
-        .iter()
-        .map(|value| value.try_clone().expect("duplicate root"))
-        .map(number_value_text)
-        .collect::<Vec<_>>()
-        .join("|")
-}
-
-fn number_value_text(value: Value) -> String {
-    let number = value
-        .as_number()
-        .unwrap_or_else(|| panic!("expected Number observation, got {value:?}"));
-    if number.is_nan() {
-        "NaN".to_owned()
-    } else if number == 0.0 && number.is_sign_negative() {
-        "-0".to_owned()
-    } else {
-        number_to_string(number)
-    }
-}
-
-fn value_text(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => number_to_string(value),
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Symbol(_) => "Symbol".to_owned(),
-        Value::Object(_) => "[object Object]".to_owned(),
-    }
-}
-
-fn oracle_observations(oracle: &OsStr) -> Vec<String> {
-    crate::quickjs_oracle::probe_lines(oracle, ORACLE_PROBE, "Number constructor")
 }

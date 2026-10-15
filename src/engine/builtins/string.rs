@@ -6,6 +6,7 @@ pub(crate) use factory::{StringFactoryKind, StringFactoryResume, StringFactorySt
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::object::builtin_properties::{BuiltinEntry, BuiltinKey, alias, method};
 
 use crate::engine::builtins::native::{
     NativeFunctionId, PrimitiveKind, StringCaseKind, StringCharAtKind, StringCreateHtmlKind,
@@ -129,180 +130,117 @@ impl Runtime {
         realm: ContextId,
         string_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        for (target, name, min_readable_args) in [
-            (
-                NativeFunctionId::StringPrototypeCharAt(StringCharAtKind::At),
-                "at",
-                1,
-            ),
-            (NativeFunctionId::StringPrototypeCharCodeAt, "charCodeAt", 1),
-            (
-                NativeFunctionId::StringPrototypeCharAt(StringCharAtKind::CharAt),
+        use BuiltinKey::Name;
+        use NativeFunctionId as F;
+        // QuickJS explicitly forbids AutoInit for `JS_ALIAS_DEF`: the alias
+        // stores the exact canonical function object with its canonical name.
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::StringPrototypeCharAt(StringCharAtKind::At), "at", 1, 1),
+            method(F::StringPrototypeCharCodeAt, "charCodeAt", 1, 1),
+            method(
+                F::StringPrototypeCharAt(StringCharAtKind::CharAt),
                 "charAt",
                 1,
-            ),
-            (NativeFunctionId::StringPrototypeConcat, "concat", 0),
-            (
-                NativeFunctionId::StringPrototypeCodePointAt,
-                "codePointAt",
                 1,
             ),
-        ] {
-            self.define_native_builtin_auto_init(
-                string_prototype,
-                realm,
-                target,
-                name,
-                1,
-                min_readable_args,
-            )?;
-        }
-        for (target, name) in [
-            (
-                NativeFunctionId::StringPrototypeWellFormed(StringWellFormedKind::IsWellFormed),
+            method(F::StringPrototypeConcat, "concat", 1, 0),
+            method(F::StringPrototypeCodePointAt, "codePointAt", 1, 1),
+            method(
+                F::StringPrototypeWellFormed(StringWellFormedKind::IsWellFormed),
                 "isWellFormed",
+                0,
+                0,
             ),
-            (
-                NativeFunctionId::StringPrototypeWellFormed(StringWellFormedKind::ToWellFormed),
+            method(
+                F::StringPrototypeWellFormed(StringWellFormedKind::ToWellFormed),
                 "toWellFormed",
+                0,
+                0,
             ),
-        ] {
-            self.define_native_builtin_auto_init(string_prototype, realm, target, name, 0, 0)?;
-        }
-        for (selector, name) in [
-            (StringIndexOfKind::IndexOf, "indexOf"),
-            (StringIndexOfKind::LastIndexOf, "lastIndexOf"),
-        ] {
-            self.define_native_builtin_auto_init(
-                string_prototype,
-                realm,
-                NativeFunctionId::StringPrototypeIndexOf(selector),
-                name,
+            method(
+                F::StringPrototypeIndexOf(StringIndexOfKind::IndexOf),
+                "indexOf",
                 1,
                 1,
-            )?;
-        }
-        for (selector, name) in [
-            (StringIncludesKind::Includes, "includes"),
-            (StringIncludesKind::EndsWith, "endsWith"),
-            (StringIncludesKind::StartsWith, "startsWith"),
-        ] {
-            self.define_native_builtin_auto_init(
-                string_prototype,
-                realm,
-                NativeFunctionId::StringPrototypeIncludes(selector),
-                name,
+            ),
+            method(
+                F::StringPrototypeIndexOf(StringIndexOfKind::LastIndexOf),
+                "lastIndexOf",
                 1,
                 1,
-            )?;
-        }
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeMatch,
-            "match",
-            1,
-            1,
-        )?;
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeMatchAll,
-            "matchAll",
-            1,
-            1,
-        )?;
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeSearch,
-            "search",
-            1,
-            1,
-        )?;
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeSplit,
-            "split",
-            2,
-            2,
-        )?;
-        for (selector, name) in [
-            (StringSubrangeKind::Substring, "substring"),
-            (StringSubrangeKind::Substr, "substr"),
-            (StringSubrangeKind::Slice, "slice"),
-        ] {
-            self.define_native_builtin_auto_init(
-                string_prototype,
-                realm,
-                NativeFunctionId::StringPrototypeSubrange(selector),
-                name,
+            ),
+            method(
+                F::StringPrototypeIncludes(StringIncludesKind::Includes),
+                "includes",
+                1,
+                1,
+            ),
+            method(
+                F::StringPrototypeIncludes(StringIncludesKind::EndsWith),
+                "endsWith",
+                1,
+                1,
+            ),
+            method(
+                F::StringPrototypeIncludes(StringIncludesKind::StartsWith),
+                "startsWith",
+                1,
+                1,
+            ),
+            method(F::StringPrototypeMatch, "match", 1, 1),
+            method(F::StringPrototypeMatchAll, "matchAll", 1, 1),
+            method(F::StringPrototypeSearch, "search", 1, 1),
+            method(F::StringPrototypeSplit, "split", 2, 2),
+            method(
+                F::StringPrototypeSubrange(StringSubrangeKind::Substring),
+                "substring",
                 2,
                 2,
-            )?;
-        }
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeRepeat,
-            "repeat",
-            1,
-            1,
-        )?;
-        for (selector, name) in [
-            (StringReplaceKind::Replace, "replace"),
-            (StringReplaceKind::ReplaceAll, "replaceAll"),
-        ] {
-            self.define_native_builtin_auto_init(
-                string_prototype,
-                realm,
-                NativeFunctionId::StringPrototypeReplace(selector),
-                name,
+            ),
+            method(
+                F::StringPrototypeSubrange(StringSubrangeKind::Substr),
+                "substr",
                 2,
                 2,
-            )?;
-        }
-        for (selector, name) in [
-            (StringPadKind::End, "padEnd"),
-            (StringPadKind::Start, "padStart"),
-        ] {
-            self.define_native_builtin_auto_init(
-                string_prototype,
-                realm,
-                NativeFunctionId::StringPrototypePad(selector),
-                name,
+            ),
+            method(
+                F::StringPrototypeSubrange(StringSubrangeKind::Slice),
+                "slice",
+                2,
+                2,
+            ),
+            method(F::StringPrototypeRepeat, "repeat", 1, 1),
+            method(
+                F::StringPrototypeReplace(StringReplaceKind::Replace),
+                "replace",
+                2,
+                2,
+            ),
+            method(
+                F::StringPrototypeReplace(StringReplaceKind::ReplaceAll),
+                "replaceAll",
+                2,
+                2,
+            ),
+            method(F::StringPrototypePad(StringPadKind::End), "padEnd", 1, 1),
+            method(
+                F::StringPrototypePad(StringPadKind::Start),
+                "padStart",
                 1,
                 1,
-            )?;
-        }
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeTrim(StringTrimKind::Both),
-            "trim",
-            0,
-            0,
-        )?;
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeTrim(StringTrimKind::End),
-            "trimEnd",
-            0,
-            0,
-        )?;
-        self.define_string_prototype_alias(realm, string_prototype, "trimRight", "trimEnd")?;
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeTrim(StringTrimKind::Start),
-            "trimStart",
-            0,
-            0,
-        )?;
-        self.define_string_prototype_alias(realm, string_prototype, "trimLeft", "trimStart")?;
-        Ok(())
+            ),
+            method(F::StringPrototypeTrim(StringTrimKind::Both), "trim", 0, 0),
+            method(F::StringPrototypeTrim(StringTrimKind::End), "trimEnd", 0, 0),
+            alias(Name("trimRight"), Name("trimEnd")),
+            method(
+                F::StringPrototypeTrim(StringTrimKind::Start),
+                "trimStart",
+                0,
+                0,
+            ),
+            alias(Name("trimLeft"), Name("trimStart")),
+        ];
+        self.define_builtin_entries(string_prototype, realm, PROTOTYPE)
     }
 
     /// Install the four case-conversion entries between the String brand
@@ -314,22 +252,15 @@ impl Runtime {
         realm: ContextId,
         string_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        for (selector, name) in [
-            (StringCaseKind::Lower, "toLowerCase"),
-            (StringCaseKind::Upper, "toUpperCase"),
-            (StringCaseKind::Lower, "toLocaleLowerCase"),
-            (StringCaseKind::Upper, "toLocaleUpperCase"),
-        ] {
-            self.define_native_builtin_auto_init(
-                string_prototype,
-                realm,
-                NativeFunctionId::StringPrototypeCase(selector),
-                name,
-                0,
-                0,
-            )?;
-        }
-        Ok(())
+        use NativeFunctionId::StringPrototypeCase as F;
+        use StringCaseKind as K;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F(K::Lower), "toLowerCase", 0, 0),
+            method(F(K::Upper), "toUpperCase", 0, 0),
+            method(F(K::Lower), "toLocaleLowerCase", 0, 0),
+            method(F(K::Upper), "toLocaleUpperCase", 0, 0),
+        ];
+        self.define_builtin_entries(string_prototype, realm, PROTOTYPE)
     }
 
     /// Install the legacy Annex-B CreateHTML table after @@iterator and before
@@ -340,31 +271,24 @@ impl Runtime {
         realm: ContextId,
         string_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        for (selector, name, length) in [
-            (StringCreateHtmlKind::Anchor, "anchor", 1),
-            (StringCreateHtmlKind::Big, "big", 0),
-            (StringCreateHtmlKind::Blink, "blink", 0),
-            (StringCreateHtmlKind::Bold, "bold", 0),
-            (StringCreateHtmlKind::Fixed, "fixed", 0),
-            (StringCreateHtmlKind::FontColor, "fontcolor", 1),
-            (StringCreateHtmlKind::FontSize, "fontsize", 1),
-            (StringCreateHtmlKind::Italics, "italics", 0),
-            (StringCreateHtmlKind::Link, "link", 1),
-            (StringCreateHtmlKind::Small, "small", 0),
-            (StringCreateHtmlKind::Strike, "strike", 0),
-            (StringCreateHtmlKind::Sub, "sub", 0),
-            (StringCreateHtmlKind::Sup, "sup", 0),
-        ] {
-            self.define_native_builtin_auto_init(
-                string_prototype,
-                realm,
-                NativeFunctionId::StringPrototypeCreateHtml(selector),
-                name,
-                length,
-                length,
-            )?;
-        }
-        Ok(())
+        use NativeFunctionId::StringPrototypeCreateHtml as F;
+        use StringCreateHtmlKind as K;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F(K::Anchor), "anchor", 1, 1),
+            method(F(K::Big), "big", 0, 0),
+            method(F(K::Blink), "blink", 0, 0),
+            method(F(K::Bold), "bold", 0, 0),
+            method(F(K::Fixed), "fixed", 0, 0),
+            method(F(K::FontColor), "fontcolor", 1, 1),
+            method(F(K::FontSize), "fontsize", 1, 1),
+            method(F(K::Italics), "italics", 0, 0),
+            method(F(K::Link), "link", 1, 1),
+            method(F(K::Small), "small", 0, 0),
+            method(F(K::Strike), "strike", 0, 0),
+            method(F(K::Sub), "sub", 0, 0),
+            method(F(K::Sup), "sup", 0, 0),
+        ];
+        self.define_builtin_entries(string_prototype, realm, PROTOTYPE)
     }
 
     /// Install the two Unicode-aware intrinsics which QuickJS appends with
@@ -375,70 +299,21 @@ impl Runtime {
         realm: ContextId,
         string_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeNormalize,
-            "normalize",
-            0,
-            0,
-        )?;
-        self.define_native_builtin_auto_init(
-            string_prototype,
-            realm,
-            NativeFunctionId::StringPrototypeLocaleCompare,
-            "localeCompare",
-            1,
-            1,
-        )
-    }
-
-    /// Materialize and copy one canonical String method for a pinned
-    /// `JS_ALIAS_DEF`. QuickJS explicitly forbids AutoInit for aliases: the
-    /// property read instantiates the canonical function immediately, then the
-    /// alias stores that exact object with the canonical function name.
-    fn define_string_prototype_alias(
-        &self,
-        realm: ContextId,
-        string_prototype: &ObjectRef,
-        alias: &'static str,
-        canonical: &'static str,
-    ) -> Result<(), RuntimeError> {
-        let canonical_key = self.intern_property_key(canonical)?;
-        let value = match self.get_property_in_realm(realm, string_prototype, &canonical_key)? {
-            Completion::Return(JsValue::Object(id)) => {
-                ObjectRef::from_owned_handle(self.clone(), id)
-            }
-            Completion::Return(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "String canonical alias target was not callable",
-                ));
-            }
-            Completion::Throw(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "String canonical alias initialization threw during bootstrap",
-                ));
-            }
-        };
-        let key = self.intern_property_key(alias)?;
-        if !self.define_raw_property(
-            string_prototype,
-            &key,
-            &crate::engine::object::property::PropertyDescriptor {
-                value: Some(crate::engine::heap::RawValue::Object(value.object_id())),
-                writable: Some(true),
-                enumerable: Some(false),
-                configurable: Some(true),
-                ..Default::default()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "String prototype alias definition rejected",
-            ));
-        }
-        Ok(())
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(
+                NativeFunctionId::StringPrototypeNormalize,
+                "normalize",
+                0,
+                0,
+            ),
+            method(
+                NativeFunctionId::StringPrototypeLocaleCompare,
+                "localeCompare",
+                1,
+                1,
+            ),
+        ];
+        self.define_builtin_entries(string_prototype, realm, PROTOTYPE)
     }
 
     /// Publish the complete own table of QuickJS's `%String%` constructor.
@@ -453,6 +328,13 @@ impl Runtime {
         string_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use NativeFunctionId::StringStatic as F;
+        use StringStaticKind as K;
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F(K::FromCharCode), "fromCharCode", 1, 1),
+            method(F(K::FromCodePoint), "fromCodePoint", 1, 1),
+            method(F(K::Raw), "raw", 1, 1),
+        ];
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
@@ -461,27 +343,8 @@ impl Runtime {
             "String",
             1,
         )?;
-        for (selector, name) in [
-            (StringStaticKind::FromCharCode, "fromCharCode"),
-            (StringStaticKind::FromCodePoint, "fromCodePoint"),
-            (StringStaticKind::Raw, "raw"),
-        ] {
-            self.define_native_builtin_auto_init(
-                constructor.as_object(),
-                realm,
-                NativeFunctionId::StringStatic(selector),
-                name,
-                1,
-                1,
-            )?;
-        }
-        self.define_function_data_property(
-            global_object,
-            "String",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "String", &constructor)?;
         self.define_constructor_relationship(&constructor, string_prototype)
     }
 

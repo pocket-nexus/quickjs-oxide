@@ -325,11 +325,10 @@ impl RegExpExecStep {
             && let Some(input_value @ JsValue::String(_)) = arguments.readable.first()
             && let Some((input, last_index)) = runtime.plain_exec_inputs(*object, input_value)?
         {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_runtime_event(
+            profile!(record_runtime_event(
                 "regexp_exec.plain",
-                "core.regexp_exec.plain",
-            );
+                "core.regexp_exec.plain"
+            ));
             return Ok(Self::Complete(runtime.finish_builtin_regexp_exec(
                 realm,
                 *object,

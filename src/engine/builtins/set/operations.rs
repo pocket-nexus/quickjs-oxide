@@ -3,7 +3,6 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::{
         iterator::step::{NextStep, finish_next},
-        native::SetNativeKind,
         object::ObjectIteratorStep,
     },
     heap::{ContextId, ObjectPayload},
@@ -24,20 +23,6 @@ pub(crate) enum SetOperation {
     Difference,
     SymmetricDifference,
     Union,
-}
-impl SetOperation {
-    pub(crate) fn from_native(kind: SetNativeKind) -> Option<Self> {
-        Some(match kind {
-            SetNativeKind::IsDisjointFrom => Self::Disjoint,
-            SetNativeKind::IsSubsetOf => Self::Subset,
-            SetNativeKind::IsSupersetOf => Self::Superset,
-            SetNativeKind::Intersection => Self::Intersection,
-            SetNativeKind::Difference => Self::Difference,
-            SetNativeKind::SymmetricDifference => Self::SymmetricDifference,
-            SetNativeKind::Union => Self::Union,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum SetStep {
     Complete(Completion),

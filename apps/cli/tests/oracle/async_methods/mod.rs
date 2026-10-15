@@ -6,4 +6,3 @@ mod oracle_async_generator_class_method;
 mod oracle_async_generator_object_method;
 mod oracle_async_generator_private_class_method;
 mod oracle_async_object_method;
-mod oracle_async_private_class_method;

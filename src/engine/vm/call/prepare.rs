@@ -40,9 +40,7 @@ impl Runtime {
         arguments: &[Value],
         bytecode: FunctionBytecodeRef,
     ) -> Result<PreparedBytecodeFrame<'_>, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        let _profile_phase =
-            crate::engine::api::profiling::PhaseTimer::start_vm("bytecode.prepare");
+        profile!(let _profile_phase = PhaseTimer::start_vm("bytecode.prepare"));
         let PreparedBytecodeHeader {
             executable,
             active_frame,
@@ -112,9 +110,7 @@ impl Runtime {
         new_target: JsValue,
         bytecode: FunctionBytecodeRef,
     ) -> Result<PreparedBytecodeHeader<'_>, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        let _profile_phase =
-            crate::engine::api::profiling::PhaseTimer::start_vm("bytecode.prepare");
+        profile!(let _profile_phase = PhaseTimer::start_vm("bytecode.prepare"));
         self.prepare_bytecode_header(callable, this_value, new_target, bytecode)
     }
 

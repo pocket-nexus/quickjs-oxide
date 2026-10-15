@@ -1,6 +1,5 @@
 //! Object string conversions retain tag fallback and method lookup across callbacks.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
@@ -15,15 +14,6 @@ use crate::engine::{
 pub(crate) enum ObjectStringKind {
     Tag,
     Locale,
-}
-impl ObjectStringKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::ObjectPrototypeToString => Self::Tag,
-            NativeFunctionId::ObjectPrototypeToLocaleString => Self::Locale,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum ObjectStringStep {
     Complete(Completion),

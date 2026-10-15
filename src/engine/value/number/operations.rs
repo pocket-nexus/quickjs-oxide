@@ -212,25 +212,15 @@ impl Number {
                 // Integer zero has no sign; a negative operand still makes
                 // zero multiplication produce the observable Number -0.
                 if value == 0 && (a | b) < 0 {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "number_mul.int_negative_zero",
-                    );
+                    profile!(record_owned_execution_event("number_mul.int_negative_zero"));
                     return Self::Float(-0.0);
                 }
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "number_mul.int_result",
-                );
+                profile!(record_owned_execution_event("number_mul.int_result"));
                 return Self::Int(value);
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("number_mul.int_overflow");
+            profile!(record_owned_execution_event("number_mul.int_overflow"));
         } else {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "number_mul.float_operands",
-            );
+            profile!(record_owned_execution_event("number_mul.float_operands"));
         }
         Self::compact(self.float() * rhs.float())
     }

@@ -500,8 +500,8 @@ fn array_length_uses_quickjs_double_conversion_and_caller_realm_errors() {
         .heap
         .context(caller.realm)
         .unwrap()
-        .native_error_prototypes[NativeErrorKind::Range.index()]
-    .unwrap();
+        .native_error_prototype(NativeErrorKind::Range)
+        .unwrap();
     assert_eq!(
         runtime
             .get_prototype_of(&error)

@@ -1,6 +1,5 @@
 //! String factories share conversion order and String.raw's latched buffer error.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::StringStaticKind,
@@ -14,16 +13,6 @@ pub(crate) enum StringFactoryKind {
     Static(StringStaticKind),
     #[cfg(feature = "test262-host")]
     CodePointRange,
-}
-impl StringFactoryKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::StringStatic(kind) => Some(Self::Static(kind)),
-            #[cfg(feature = "test262-host")]
-            NativeFunctionId::StringCodePointRange => Some(Self::CodePointRange),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum StringFactoryStep {
     Complete(Completion),

@@ -215,8 +215,7 @@ impl Runtime {
             self, &callable, realm, target, 0, mode,
         )?;
         let active_frame = publication.publish(0, 0, true)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
+        profile!(record_owned_execution_event("native_activation_prepared"));
         Ok(PreparedNativeCall {
             activation: NativeActivation {
                 runtime: Some(self.clone()),
@@ -272,8 +271,7 @@ impl Runtime {
         continuation: bool,
         selected: Option<super::super::frames::NativeClassification>,
     ) -> Result<PreparedNativeCall, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("native.prepare");
+        profile!(let _profile_phase = PhaseTimer::start_vm("native.prepare"));
         let callable = callable_input.as_ref();
         // Every early return below abandons an already-owned invocation or a
         // partially materialized readable buffer. Keep them under one owner so
@@ -412,8 +410,7 @@ impl Runtime {
             readable: std::mem::take(&mut owners.readable),
         };
 
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
+        profile!(record_owned_execution_event("native_activation_prepared"));
         Ok(PreparedNativeCall {
             activation: NativeActivation {
                 runtime: Some(self.clone()),
@@ -470,7 +467,7 @@ impl NativeActivation {
         self.callable.as_ref().expect("native callable present")
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(in crate::engine::vm) fn own_continuation(&mut self) -> Result<(), RuntimeError> {
         self.active_frame
             .as_mut()

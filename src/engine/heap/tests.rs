@@ -561,7 +561,6 @@ fn bytecode(
         argument_definitions: Rc::from([]),
         local_definitions: Rc::from([]),
         closure_variables: Rc::from([]),
-        private_bindings: PublishedPrivateBindings::none(),
         eval_environments: Rc::from([]),
         debug: None,
         auxiliary_atoms: auxiliary_atoms.into_boxed_slice(),
@@ -602,12 +601,10 @@ fn bytecode_test_realm(heap: &mut Heap) -> ContextId {
 mod buffers;
 mod bytecode;
 mod collections;
-mod eval_bytecode;
 mod function_lifetimes;
 mod modules;
 mod native;
 mod objects;
-mod private_bytecode;
 mod slots;
 mod storage;
 mod weak_collections;

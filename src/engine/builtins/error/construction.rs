@@ -230,9 +230,13 @@ impl RuntimeState {
         kind: NativeErrorKind,
         message: NativeErrorMessage,
     ) -> Result<ObjectId, RuntimeError> {
-        let prototype = self.heap.context(realm)?.native_error_prototypes[kind.index()].ok_or(
-            RuntimeError::Invariant("realm has no native Error prototype"),
-        )?;
+        let prototype = self
+            .heap
+            .context(realm)?
+            .native_error_prototype(kind)
+            .ok_or(RuntimeError::Invariant(
+                "realm has no native Error prototype",
+            ))?;
         self.heap.retain_object(prototype)?;
         let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
         let (state, prototype_owner) = prototype_owner.parts();
@@ -315,8 +319,8 @@ mod state_factory_tests {
             .heap
             .context(context.realm)
             .unwrap()
-            .native_error_prototypes[NativeErrorKind::Type.index()]
-        .unwrap();
+            .native_error_prototype(NativeErrorKind::Type)
+            .unwrap();
         let object = state
             .new_native_error_without_backtrace_from_message(
                 &runtime.0.poisoned,
@@ -383,8 +387,8 @@ mod state_factory_tests {
             .heap
             .context(context.realm)
             .unwrap()
-            .native_error_prototypes[NativeErrorKind::Type.index()]
-        .unwrap();
+            .native_error_prototype(NativeErrorKind::Type)
+            .unwrap();
         for (prototype, error_factory) in [(ordinary_prototype, false), (error_prototype, true)] {
             let before = state.heap.object_strong_count(prototype).unwrap();
             state

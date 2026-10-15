@@ -183,7 +183,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .async_generator
+            .async_generator()
             .ok_or(RuntimeError::Invariant(
                 "realm has no AsyncGenerator intrinsics",
             ))?
@@ -221,7 +221,6 @@ impl Runtime {
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     #[cfg(test)]
     pub(super) fn new_async_from_sync_iterator(
         &self,

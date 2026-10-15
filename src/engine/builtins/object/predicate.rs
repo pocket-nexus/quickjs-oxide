@@ -1,6 +1,5 @@
 //! Own-property predicates retain their distinct receiver/key conversion order.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::builtins::native::ObjectAccessorKind;
 use crate::engine::object::{
     AccessorValue, CallableRef, DescriptorField, OwnedPropertyDescriptor,
@@ -23,18 +22,6 @@ pub(crate) enum PredicateKind {
     HasOwn,
     PrototypeHasOwn,
     Enumerable,
-}
-impl PredicateKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::ObjectPrototypeDefineAccessor(kind) => Self::Define(kind),
-            NativeFunctionId::ObjectPrototypeLookupAccessor(kind) => Self::Lookup(kind),
-            NativeFunctionId::ObjectHasOwn => Self::HasOwn,
-            NativeFunctionId::ObjectPrototypeHasOwnProperty => Self::PrototypeHasOwn,
-            NativeFunctionId::ObjectPrototypePropertyIsEnumerable => Self::Enumerable,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum PredicateStep {
     Descriptor { resume: PredicateResume },

@@ -451,16 +451,14 @@ impl RuntimeState {
             if previous == target {
                 // Reusing the same weak edge creates no new relationship.
                 // Keep reverse storage bounded by distinct forward edges.
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "shape_transition_duplicate_avoided",
-                );
+                profile!(record_owned_execution_event(
+                    "shape_transition_duplicate_avoided"
+                ));
                 return;
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "shape_transition_rebound_edge",
-            );
+            profile!(record_owned_execution_event(
+                "shape_transition_rebound_edge"
+            ));
             // A stale target may be replaced before its delayed cleanup is
             // applied. Detach its reverse edge now so that cleanup cannot
             // remove the newly rebound forward edge. IDs include generation.
@@ -1029,42 +1027,15 @@ impl Drop for RuntimeInner {
             #[cfg(debug_assertions)]
             return;
         }
+        // `QJS_TEARDOWN_PROBE` lets subprocess tests exercise poisoned
+        // teardown without these debug-only leak assertions.
         #[cfg(debug_assertions)]
-        {
+        if std::env::var_os("QJS_TEARDOWN_PROBE").is_none() {
             let state = self.state.get_mut();
             let live = state.heap.counts().live;
-            let probe = std::env::var_os("QJS_TEARDOWN_PROBE").is_some();
+            debug_assert_eq!(live, 0, "runtime teardown left live heap nodes");
             let live_atoms = state.atoms.debug_live_unpinned_count();
-            if live != 0 {
-                if probe {
-                    let roots = state.heap.debug_external_roots();
-                    let shown = roots.len().min(6);
-                    eprintln!(
-                        "[teardown] thread={:?} live={live} shown={}/{} {:?}",
-                        std::thread::current().name(),
-                        roots.len(),
-                        shown,
-                        &roots[..shown]
-                    );
-                    crate::engine::heap::ownership::dump_outstanding_object_retains();
-                    if let Ok(wanted) = std::env::var("QJS_TRACE_OBJECT_ID")
-                        && let Ok(index) = wanted.parse::<usize>()
-                    {
-                        state.heap.debug_incoming_edges_for_index(index);
-                    }
-                }
-                state.heap.debug_leak_report();
-                if !probe {
-                    state.atoms.debug_leak_report();
-                    debug_assert_eq!(live, 0, "runtime teardown left live heap nodes");
-                }
-            }
-            if live_atoms != 0 {
-                state.atoms.debug_leak_report();
-                if !probe {
-                    debug_assert_eq!(live_atoms, 0, "runtime teardown left live unpinned atoms");
-                }
-            }
+            debug_assert_eq!(live_atoms, 0, "runtime teardown left live unpinned atoms");
         }
     }
 }

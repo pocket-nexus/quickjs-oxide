@@ -21,13 +21,11 @@
 //! making this low-level arena depend on `AtomTable` mutability or callbacks.
 
 use crate::engine::code::function::metadata::{
-    ClassInitializerKind, ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName,
-    ConstructorKind, EvalBindingSource, EvalEnvironment, EvalKind, EvalScopeKind,
-    EvalVariableEnvironment, FunctionKind, FunctionMetadata, ParameterEnvironmentLayout,
-    VariableDefinition,
+    ClassInitializerKind, ClosureVariable, ClosureVariableKind, ConstructorKind, EvalEnvironment,
+    FunctionMetadata, ParameterEnvironmentLayout, VariableDefinition,
 };
 #[cfg(test)]
-use crate::engine::code::function::metadata::{EvalBinding, EvalScope, ParameterArgumentCell};
+use crate::engine::code::function::metadata::{ClosureSource, ClosureVariableName};
 
 /// Identity check for a trusted handle: the holder owns a strong edge, so
 /// plain release builds skip the generation and kind comparison. Debug builds
@@ -62,8 +60,8 @@ use gc::{
     async_generator_request_edges, context_edges, function_bytecode_edges,
     generator_activation_atoms, generator_activation_edges, object_edges, object_layout_edges,
     promise_reaction_edges, property_slot_atoms, property_slot_edges, raw_module_record_atoms,
-    raw_module_record_edges, raw_value_atom, raw_value_edges, raw_value_is_immediate,
-    raw_value_matches_weak_key, shape_edges, var_ref_edges,
+    raw_module_record_edges, raw_value_atom, raw_value_edges, raw_value_is_immediate, shape_edges,
+    var_ref_edges,
 };
 
 #[cfg(any(test, feature = "profiling"))]
@@ -72,21 +70,13 @@ pub(crate) use slot_ownership::SlotReleaseReadiness;
 mod collection_index;
 mod collection_records;
 mod collections;
-use crate::engine::code::bytecode_validation;
-use bytecode_validation::{
-    EvalEnvironmentPhaseContext, parameter_initializer_visible_locals,
-    validate_class_initializer_bytecode_layout, validate_derived_constructor_bytecode_layout,
-    validate_eval_environment_phase_layout, validate_parameter_bytecode_layout,
-    validate_parameter_initializer_scope_layout, validate_pattern_parameter_bytecode_layout,
-};
-pub use collection_records::{CollectionRecords, MapRecord};
-pub(crate) use collections::CollectionIteratorCurrentIndices;
-pub use collections::{WeakCollectionKey, WeakCollectionRecords};
-mod private_validation;
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::atom::Atom;
 use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native;
+pub use collection_records::{CollectionRecords, MapRecord};
+pub(crate) use collections::CollectionIteratorCurrentIndices;
+pub use collections::{WeakCollectionKey, WeakCollectionRecords};
 use native::{
     ArrayBufferNativeKind, ArrayIteratorKind, DataViewNativeKind, DynamicFunctionKind,
     GeneratorResumeKind, MapIteratorKind, NativeFunctionData, NativeFunctionId, PrimitiveKind,
@@ -94,14 +84,12 @@ use native::{
     SharedArrayBufferNativeKind, TypedArrayElementKind, TypedArrayNativeKind,
 };
 use native::{DynamicImportHandlerKind, ModuleEvaluationKind};
-use private_validation::validate_published_private_elements;
 use std::cell::Cell;
 
-use crate::engine::code::bytecode::{Instruction, MAX_LOCAL_SLOTS, PrivateNameSource};
+use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::debug::Pc2LineTable;
 use crate::engine::code::module::{
-    ModuleImport, ModuleImportCollision, ModuleImportName, ModuleLinkInitializer, ModuleRequest,
-    ModuleRequestIndex, ModuleStarExport,
+    ModuleImport, ModuleImportName, ModuleRequest, ModuleRequestIndex, ModuleStarExport,
 };
 use crate::engine::heap::shared_memory::SharedBufferHandle;
 use crate::engine::object::shape::{PropertyFlags, PropertyStorageKind, Shape, ShapeError};
@@ -349,12 +337,6 @@ pub struct Heap {
     zero_queue: VecDeque<RawId>,
     weak_head: Option<ObjectId>,
     weak_tail: Option<ObjectId>,
-    /// Debug-only edge ledger: creation-site provenance for live slots.  See
-    /// [`Heap::debug_leak_report`]; empty and absent in release builds.
-    #[cfg(debug_assertions)]
-    alloc_sites: Vec<Option<gc::AllocSite>>,
-    #[cfg(debug_assertions)]
-    leaf_alloc_sites: Vec<Option<gc::AllocSite>>,
     #[cfg(feature = "profiling")]
     collection_scratch_peak_bytes: usize,
     gc_pressure: Option<std::rc::Rc<gc_pressure::GcPressure>>,

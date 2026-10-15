@@ -1,6 +1,5 @@
 //! Branded scalar formatting and BigInt widths preserve argument conversion order.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{BigIntAsNKind, NumberFormatKind, PrimitiveKind},
@@ -16,16 +15,6 @@ pub(crate) enum NumericKind {
     ToString(PrimitiveKind),
     Format(NumberFormatKind),
     BigIntAsN(BigIntAsNKind),
-}
-impl NumericKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::PrimitivePrototypeToString(kind) => Some(Self::ToString(kind)),
-            NativeFunctionId::NumberPrototypeFormat(kind) => Some(Self::Format(kind)),
-            NativeFunctionId::BigIntAsN(kind) => Some(Self::BigIntAsN(kind)),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum NumericStep {
     Complete(Completion),

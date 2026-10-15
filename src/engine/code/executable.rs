@@ -482,22 +482,20 @@ fn published_function_data(bytecode: &FunctionBytecodeData) -> Rc<PublishedFunct
                 metadata: bytecode.metadata,
                 realm: bytecode.realm,
             });
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_call_buffer_capacity(
+            profile!(record_call_buffer_capacity(
                 "executable.published_data_rc",
                 0,
                 1,
-                size_of::<PublishedFunctionData>(),
-            );
+                size_of::<PublishedFunctionData>()
+            ));
             data
         });
     let data = data.clone();
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_call_buffer_share(
+    profile!(record_call_buffer_share(
         "executable.published_data_rc",
         1,
-        size_of::<PublishedFunctionData>(),
-    );
+        size_of::<PublishedFunctionData>()
+    ));
     data
 }
 

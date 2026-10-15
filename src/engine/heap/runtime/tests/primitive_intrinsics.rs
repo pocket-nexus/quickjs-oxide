@@ -70,7 +70,7 @@ fn number_intrinsic_graph_payload_constants_and_aliases_match_quickjs() {
             .heap
             .context(context.realm)
             .unwrap()
-            .primitive_prototypes[PrimitiveKind::Number.index()],
+            .primitive_prototype(PrimitiveKind::Number),
         Some(prototype.object_id())
     );
 
@@ -179,25 +179,21 @@ fn boolean_intrinsic_graph_payload_and_brand_methods_match_quickjs() {
     let symbol_prototype = context.symbol_prototype().unwrap();
     {
         let state = runtime.0.state.borrow();
-        let slots = state
-            .heap
-            .context(context.realm)
-            .unwrap()
-            .primitive_prototypes;
+        let realm = state.heap.context(context.realm).unwrap();
         assert_eq!(
-            slots[PrimitiveKind::Boolean.index()],
+            realm.primitive_prototype(PrimitiveKind::Boolean),
             Some(prototype.object_id())
         );
         assert_eq!(
-            slots[PrimitiveKind::BigInt.index()],
+            realm.primitive_prototype(PrimitiveKind::BigInt),
             Some(bigint_prototype.object_id())
         );
         assert_eq!(
-            slots[PrimitiveKind::Symbol.index()],
+            realm.primitive_prototype(PrimitiveKind::Symbol),
             Some(symbol_prototype.object_id())
         );
         assert!(
-            slots[PrimitiveKind::String.index()].is_some(),
+            realm.primitive_prototype(PrimitiveKind::String).is_some(),
             "String exotic-core prototype slot was not initialized"
         );
     }

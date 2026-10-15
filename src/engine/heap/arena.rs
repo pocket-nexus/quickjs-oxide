@@ -22,10 +22,6 @@ impl Heap {
             zero_queue: VecDeque::new(),
             weak_head: None,
             weak_tail: None,
-            #[cfg(debug_assertions)]
-            alloc_sites: Vec::new(),
-            #[cfg(debug_assertions)]
-            leaf_alloc_sites: Vec::new(),
             #[cfg(feature = "profiling")]
             collection_scratch_peak_bytes: 0,
         }
@@ -149,8 +145,6 @@ impl Heap {
     ) -> Result<(u32, u32), HeapError> {
         let (index, generation) = self.reserve_vacant()?;
         self.slots[index as usize].state = SlotState::Initializing { kind, strong: 1 };
-        #[cfg(debug_assertions)]
-        self.record_alloc_site(index, generation, kind);
         Ok((index, generation))
     }
 
@@ -227,8 +221,6 @@ impl Heap {
         let slot = &mut self.leaf_slots[index as usize];
         slot.strong.set(1);
         slot.value = LeafValue::String(value);
-        #[cfg(debug_assertions)]
-        self.record_leaf_alloc_site(index, generation, HeapNodeKind::String);
         Ok(StringId { index, generation })
     }
 
@@ -240,8 +232,6 @@ impl Heap {
         let slot = &mut self.leaf_slots[index as usize];
         slot.strong.set(1);
         slot.value = LeafValue::BigInt(value);
-        #[cfg(debug_assertions)]
-        self.record_leaf_alloc_site(index, generation, HeapNodeKind::BigInt);
         Ok(BigIntId { index, generation })
     }
 
@@ -260,8 +250,6 @@ impl Heap {
         }
         slot.state = SlotState::Vacant;
         self.free.push(index);
-        #[cfg(debug_assertions)]
-        self.clear_alloc_site(index);
         Ok(())
     }
 

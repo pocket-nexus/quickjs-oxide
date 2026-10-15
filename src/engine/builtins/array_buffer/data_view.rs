@@ -15,7 +15,10 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::NativeFunctionId,
     heap::{ContextId, ObjectId},
-    object::ObjectRef,
+    object::{
+        ObjectRef,
+        builtin_properties::{BuiltinEntry, builtin_getter, method, to_string_tag},
+    },
     value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
@@ -28,20 +31,6 @@ use crate::engine::{
 
 #[cfg(test)]
 mod tests;
-
-const DATA_VIEW_ELEMENT_KINDS: [DataViewElementKind; 11] = [
-    DataViewElementKind::Int8,
-    DataViewElementKind::Uint8,
-    DataViewElementKind::Int16,
-    DataViewElementKind::Uint16,
-    DataViewElementKind::Int32,
-    DataViewElementKind::Uint32,
-    DataViewElementKind::BigInt64,
-    DataViewElementKind::BigUint64,
-    DataViewElementKind::Float16,
-    DataViewElementKind::Float32,
-    DataViewElementKind::Float64,
-];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct DataViewSnapshot {
@@ -60,71 +49,49 @@ impl Runtime {
         object_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use DataViewElementKind as E;
+        use DataViewNativeKind as K;
+        use NativeFunctionId::DataView as F;
+        // Byte-wide accessors read one fewer (littleEndian) argument.
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            builtin_getter!(F(K::Buffer), "buffer"),
+            builtin_getter!(F(K::ByteLength), "byteLength"),
+            builtin_getter!(F(K::ByteOffset), "byteOffset"),
+            method(F(K::Get(E::Int8)), "getInt8", 1, 1),
+            method(F(K::Get(E::Uint8)), "getUint8", 1, 1),
+            method(F(K::Get(E::Int16)), "getInt16", 1, 2),
+            method(F(K::Get(E::Uint16)), "getUint16", 1, 2),
+            method(F(K::Get(E::Int32)), "getInt32", 1, 2),
+            method(F(K::Get(E::Uint32)), "getUint32", 1, 2),
+            method(F(K::Get(E::BigInt64)), "getBigInt64", 1, 2),
+            method(F(K::Get(E::BigUint64)), "getBigUint64", 1, 2),
+            method(F(K::Get(E::Float16)), "getFloat16", 1, 2),
+            method(F(K::Get(E::Float32)), "getFloat32", 1, 2),
+            method(F(K::Get(E::Float64)), "getFloat64", 1, 2),
+            method(F(K::Set(E::Int8)), "setInt8", 2, 2),
+            method(F(K::Set(E::Uint8)), "setUint8", 2, 2),
+            method(F(K::Set(E::Int16)), "setInt16", 2, 3),
+            method(F(K::Set(E::Uint16)), "setUint16", 2, 3),
+            method(F(K::Set(E::Int32)), "setInt32", 2, 3),
+            method(F(K::Set(E::Uint32)), "setUint32", 2, 3),
+            method(F(K::Set(E::BigInt64)), "setBigInt64", 2, 3),
+            method(F(K::Set(E::BigUint64)), "setBigUint64", 2, 3),
+            method(F(K::Set(E::Float16)), "setFloat16", 2, 3),
+            method(F(K::Set(E::Float32)), "setFloat32", 2, 3),
+            method(F(K::Set(E::Float64)), "setFloat64", 2, 3),
+            to_string_tag("DataView"),
+        ];
         let prototype = self.new_object(Some(object_prototype))?;
-
-        for (kind, name) in [
-            (DataViewNativeKind::Buffer, "buffer"),
-            (DataViewNativeKind::ByteLength, "byteLength"),
-            (DataViewNativeKind::ByteOffset, "byteOffset"),
-        ] {
-            self.define_native_builtin_getter_on(
-                &prototype,
-                function_prototype,
-                realm,
-                NativeFunctionId::DataView(kind),
-                name,
-                &format!("get {name}"),
-            )?;
-        }
-
-        for element in DATA_VIEW_ELEMENT_KINDS {
-            let readable = if data_view_element_width(element) == 1 {
-                1
-            } else {
-                2
-            };
-            self.define_native_builtin_auto_init(
-                &prototype,
-                realm,
-                NativeFunctionId::DataView(DataViewNativeKind::Get(element)),
-                data_view_get_name(element),
-                1,
-                readable,
-            )?;
-        }
-        for element in DATA_VIEW_ELEMENT_KINDS {
-            let readable = if data_view_element_width(element) == 1 {
-                2
-            } else {
-                3
-            };
-            self.define_native_builtin_auto_init(
-                &prototype,
-                realm,
-                NativeFunctionId::DataView(DataViewNativeKind::Set(element)),
-                data_view_set_name(element),
-                2,
-                readable,
-            )?;
-        }
-
-        self.define_to_string_tag(&prototype, "DataView")?;
-
+        self.define_builtin_entries(&prototype, realm, PROTOTYPE)?;
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::DataView(DataViewNativeKind::Constructor),
+            F(K::Constructor),
             3,
             "DataView",
             1,
         )?;
-        self.define_function_data_property(
-            global_object,
-            "DataView",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_global_function(global_object, "DataView", &constructor)?;
         self.define_constructor_relationship(&constructor, &prototype)?;
         self.0.state.borrow_mut().heap.attach_data_view_intrinsics(
             realm,
@@ -521,7 +488,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .data_view
+            .data_view()
             .ok_or(RuntimeError::Invariant("realm has no DataView intrinsics"))?
             .prototype;
         Ok(ObjectRef::from_borrowed_handle(self.clone(), prototype)?)
@@ -581,38 +548,6 @@ fn data_view_in_bounds_byte_length(
         }
         Some(length) => Some(length),
         None => Some(buffer.byte_length - view.byte_offset),
-    }
-}
-
-fn data_view_get_name(element: DataViewElementKind) -> &'static str {
-    match element {
-        DataViewElementKind::Int8 => "getInt8",
-        DataViewElementKind::Uint8 => "getUint8",
-        DataViewElementKind::Int16 => "getInt16",
-        DataViewElementKind::Uint16 => "getUint16",
-        DataViewElementKind::Int32 => "getInt32",
-        DataViewElementKind::Uint32 => "getUint32",
-        DataViewElementKind::BigInt64 => "getBigInt64",
-        DataViewElementKind::BigUint64 => "getBigUint64",
-        DataViewElementKind::Float16 => "getFloat16",
-        DataViewElementKind::Float32 => "getFloat32",
-        DataViewElementKind::Float64 => "getFloat64",
-    }
-}
-
-fn data_view_set_name(element: DataViewElementKind) -> &'static str {
-    match element {
-        DataViewElementKind::Int8 => "setInt8",
-        DataViewElementKind::Uint8 => "setUint8",
-        DataViewElementKind::Int16 => "setInt16",
-        DataViewElementKind::Uint16 => "setUint16",
-        DataViewElementKind::Int32 => "setInt32",
-        DataViewElementKind::Uint32 => "setUint32",
-        DataViewElementKind::BigInt64 => "setBigInt64",
-        DataViewElementKind::BigUint64 => "setBigUint64",
-        DataViewElementKind::Float16 => "setFloat16",
-        DataViewElementKind::Float32 => "setFloat32",
-        DataViewElementKind::Float64 => "setFloat64",
     }
 }
 

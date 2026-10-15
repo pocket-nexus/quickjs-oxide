@@ -7,7 +7,6 @@
 //! every primitive conversion is allocation-free.
 use super::{quickjs_binary, quickjs_max, quickjs_min, quickjs_unary};
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{MathBinaryKind, MathMinMaxKind, MathUnaryKind},
@@ -26,19 +25,6 @@ pub(crate) enum MathKind {
     Hypot,
     Imul,
     Clz32,
-}
-impl MathKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::MathUnary(kind) => Self::Unary(kind),
-            NativeFunctionId::MathBinary(kind) => Self::Binary(kind),
-            NativeFunctionId::MathMinMax(kind) => Self::MinMax(kind),
-            NativeFunctionId::MathHypot => Self::Hypot,
-            NativeFunctionId::MathImul => Self::Imul,
-            NativeFunctionId::MathClz32 => Self::Clz32,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum MathStep {
     Complete(Completion),
@@ -120,10 +106,9 @@ impl MathStep {
                             .arguments
                             .push_back(runtime.dup_jsvalue(remaining_value)?);
                     }
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "math_remaining_arguments_owned",
-                    );
+                    profile!(record_owned_execution_event(
+                        "math_remaining_arguments_owned"
+                    ));
                     return MathResume(Box::new(resume)).next();
                 }
                 // Object arguments above retain the shared waiting protocol.
@@ -131,17 +116,15 @@ impl MathStep {
                 // the same conversion kernel used by NumberStep completion.
                 let result = runtime.number_from_primitive_jsvalue(realm, value)?;
                 if let Some(completion) = resume.accept_number(runtime, result)? {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "math_completed_without_argument_storage",
-                    );
+                    profile!(record_owned_execution_event(
+                        "math_completed_without_argument_storage"
+                    ));
                     return Ok(Self::Complete(completion));
                 }
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "math_completed_without_argument_storage",
-            );
+            profile!(record_owned_execution_event(
+                "math_completed_without_argument_storage"
+            ));
             resume.finish()
         }
     }

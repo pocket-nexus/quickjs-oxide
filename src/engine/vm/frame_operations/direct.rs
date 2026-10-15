@@ -36,8 +36,7 @@ pub(in crate::engine::vm) fn complete(
             .release_jsvalue(released)
             .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
         frame.resume_pc = frame.next_pc()?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_instruction(depth);
+        profile!(record_owned_instruction(depth));
         return Ok(true);
     }
     Ok(false)

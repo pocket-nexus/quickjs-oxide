@@ -1,9 +1,7 @@
 //! Slice and splice keep copied result and completed receiver mutations across replies.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
-    builtins::native::ArraySliceKind,
     heap::ContextId,
     object::{
         ObjectRef, OwnedPropertyDescriptor, PropertyKey,
@@ -20,16 +18,6 @@ pub(crate) enum SliceKind {
     Slice,
     Splice,
     ToSpliced,
-}
-impl SliceKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::ArrayPrototypeSlice(ArraySliceKind::Slice) => Some(Self::Slice),
-            NativeFunctionId::ArrayPrototypeSlice(ArraySliceKind::Splice) => Some(Self::Splice),
-            NativeFunctionId::ArrayPrototypeToSpliced => Some(Self::ToSpliced),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum SliceStep {
     Return(JsValue),
@@ -272,8 +260,7 @@ impl SliceResume {
         }
         let key = runtime.property_key_for_index(self.0.cursor)?;
         let outcome = runtime.define_selected_set_data(&result, &key, value, false)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("array_slice_local_define");
+        profile!(record_owned_execution_event("array_slice_local_define"));
         Ok(Some(match outcome {
             PropertyDefineOutcome::Defined(true) => {
                 NativeConversion::Value(InternalDefineResult::Defined)
@@ -513,10 +500,7 @@ impl SliceResume {
                 use crate::engine::object::{OrdinaryRead, PreparedHas};
                 match runtime.prepare_has_property(&self.0.object, &key)? {
                     PreparedHas::Complete(has) => {
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "array_slice_local_has",
-                        );
+                        profile!(record_owned_execution_event("array_slice_local_has"));
                         if !has {
                             self.0.cursor += 1;
                             continue;
@@ -535,10 +519,7 @@ impl SliceResume {
                     None,
                 )? {
                     OrdinaryRead::Complete(value) => {
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "array_slice_local_read",
-                        );
+                        profile!(record_owned_execution_event("array_slice_local_read"));
                         value.unwrap_or(JsValue::Undefined)
                     }
                     read => {
@@ -598,10 +579,7 @@ impl SliceResume {
                     return Ok(SliceStep::complete(Completion::Throw(value)));
                 }
                 self.0.cursor += 1;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "array_slice_resident_element",
-                );
+                profile!(record_owned_execution_event("array_slice_resident_element"));
             }
         }
     }
@@ -1136,8 +1114,7 @@ impl Runtime {
             state.release_atoms(atoms)?;
             return Err(error.into());
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("array_slice_dense_batch");
+        profile!(record_owned_execution_event("array_slice_dense_batch"));
         Ok(true)
     }
 }

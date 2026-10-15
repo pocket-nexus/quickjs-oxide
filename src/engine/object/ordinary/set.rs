@@ -9,15 +9,13 @@ use crate::engine::object::{OwnedCompletePropertyDescriptor, OwnedPropertyDescri
 #[inline]
 fn clone_set_object(value: &ObjectRef) -> Result<ObjectRef, RuntimeError> {
     let copy = value.try_clone()?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("set_owner_clone.ObjectRef");
+    profile!(record_owned_execution_event("set_owner_clone.ObjectRef"));
     Ok(copy)
 }
 #[inline]
 fn clone_set_key(value: &PropertyKey) -> Result<PropertyKey, RuntimeError> {
     let copy = value.try_clone()?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("set_owner_clone.PropertyKey");
+    profile!(record_owned_execution_event("set_owner_clone.PropertyKey"));
     Ok(copy)
 }
 
@@ -187,10 +185,9 @@ fn initial_set(
                 PropertySetAction::Throw(value)
             }
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "set_array_length_completed_without_query",
-        );
+        profile!(record_owned_execution_event(
+            "set_array_length_completed_without_query"
+        ));
         return Ok(InitialSet::Action(action));
     }
 
@@ -203,10 +200,9 @@ fn initial_set(
         // The shared converter reacquires the view before writing. Object
         // conversion, Proxy receivers and non-canonical keys retain their
         // original state machine; no callback is hidden in this shortcut.
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "typed_write_completed_without_set_state",
-        );
+        profile!(record_owned_execution_event(
+            "typed_write_completed_without_set_state"
+        ));
         return Ok(InitialSet::Action(set_completion(match result {
             NativeConversion::Value(_) => NativeConversion::Value(InternalSetResult::Accepted),
             NativeConversion::Throw(value) => NativeConversion::Throw(value),
@@ -477,10 +473,9 @@ impl SetStep {
                     } else {
                         InternalDefineResult::RejectedOrdinary(object)
                     });
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "set_definition_completed_without_query",
-                    );
+                    profile!(record_owned_execution_event(
+                        "set_definition_completed_without_query"
+                    ));
                     resume.defined(runtime, result)?
                 }
                 step => return Ok(step),
@@ -604,8 +599,7 @@ fn start_waiting(
         value,
         receiver,
     };
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("set_state_created");
+    profile!(record_owned_execution_event("set_state_created"));
     let selected = state.select_walk_probe(runtime, object, probe)?;
     if let SelectedSet::Complete(action) = selected {
         // Initial completed selection used to drop State under this guard.
@@ -671,8 +665,7 @@ impl State {
                 current = object;
                 probe = SetProbe::Special(kind);
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(match &probe {
+            profile!(record_owned_execution_event(match &probe {
                 SetProbe::Stored(_) => "set_selected.Stored",
                 SetProbe::Rejected(_) => "set_selected.Rejected",
                 SetProbe::SpecialAt(..) => unreachable!("selected special normalized above"),
@@ -680,7 +673,7 @@ impl State {
                 SetProbe::Setter(_) => "set_selected.Setter",
                 SetProbe::Missing(_) => "set_selected.Missing",
                 SetProbe::Special(_) => "set_selected.Special",
-            });
+            }));
             match probe {
                 SetProbe::Rejected(reason) => {
                     return Ok(SelectedSet::Complete(PropertySetAction::Rejected(reason)));
@@ -943,10 +936,7 @@ impl State {
                         ArrayOwnKey::Index(_)
                     ) =>
                 {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "set_local_descriptor_read",
-                    );
+                    profile!(record_owned_execution_event("set_local_descriptor_read"));
                     let descriptor = runtime.get_own_property_owned(&object, &self.key)?;
                     self.select_descriptor(runtime, NativeConversion::Value(descriptor))?
                 }
@@ -963,10 +953,7 @@ impl State {
                             }))
                     ) =>
                 {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "set_local_define_attempt",
-                    );
+                    profile!(record_owned_execution_event("set_local_define_attempt"));
                     let result = match runtime.define_selected_set_data(
                         &object,
                         &self.key,
@@ -981,30 +968,27 @@ impl State {
                         ),
                         PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
                     };
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "set_definition_completed_without_query",
-                    );
+                    profile!(record_owned_execution_event(
+                        "set_definition_completed_without_query"
+                    ));
                     SelectedSet::Complete(self.defined_action(runtime, &object, result)?)
                 }
                 SelectedSet::ArrayLength(object) if !matches!(self.value, JsValue::Object(_)) => {
                     // to_array_length itself drives the authoritative ArrayLengthStep;
                     // non-objects cannot call JS. It re-reads writable/length only
                     // after both conversions and uses the canonical truncate kernel.
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "set_local_array_length_attempt",
-                    );
+                    profile!(record_owned_execution_event(
+                        "set_local_array_length_attempt"
+                    ));
                     let action = runtime.prepare_set_array_length(
                         self.realm,
                         &object,
                         &self.key,
                         runtime.dup_jsvalue(&self.value)?,
                     )?;
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "set_array_length_completed_without_query",
-                    );
+                    profile!(record_owned_execution_event(
+                        "set_array_length_completed_without_query"
+                    ));
                     SelectedSet::Complete(action)
                 }
                 selected => break Ok(selected),
@@ -1040,8 +1024,7 @@ impl SetResume {
         runtime: &Runtime,
         selected: SelectedSet,
     ) -> Result<SetStep, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(match &selected {
+        profile!(record_owned_execution_event(match &selected {
             SelectedSet::Complete(_) => "set_completion_adapter",
             SelectedSet::Walk(_) => "set_request_publish.Walk",
             SelectedSet::Proxy(_) => "set_request_publish.Proxy",
@@ -1049,7 +1032,7 @@ impl SetResume {
             SelectedSet::ArrayLength(_) => "set_request_publish.ArrayLength",
             SelectedSet::Descriptor(_) => "set_request_publish.Descriptor",
             SelectedSet::Define(..) => "set_request_publish.Define",
-        });
+        }));
         match selected {
             SelectedSet::Complete(action) => complete(action),
             SelectedSet::Walk(object) => {
@@ -1764,8 +1747,7 @@ mod tests {
             let key = runtime.intern_property_key(name).unwrap();
             let mut deliveries = 0;
             let mut action = None;
-            #[cfg(feature = "profiling")]
-            let profile = crate::engine::api::profiling::CostProfile::start();
+            profile!(let profile = CostProfile::start());
             let initial = SetStep::start_receiver_into(
                 &runtime,
                 context.realm,
@@ -1860,8 +1842,7 @@ mod tests {
     #[test]
     fn local_new_property_definition_preserves_prototype_callbacks_and_key_order() {
         let (runtime, mut context) = test_context();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_script_true(
             &mut context,
             r#"

@@ -1,7 +1,7 @@
 use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native::NativeCProto;
 use crate::engine::test_support::test_context;
-use crate::engine::value::{JsValue, conversion::NativeConversion};
+use crate::engine::value::{JsString, JsValue, conversion::NativeConversion};
 
 use super::*;
 

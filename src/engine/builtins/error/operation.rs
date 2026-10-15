@@ -1,6 +1,5 @@
 //! Error construction and stringification retain intermediate values in observable order.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::ErrorConstructorKind,
@@ -16,15 +15,6 @@ use crate::engine::{
 pub(crate) enum ErrorKind {
     Constructor(ErrorConstructorKind),
     ToString,
-}
-impl ErrorKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::ErrorConstructor(kind) => Some(Self::Constructor(kind)),
-            NativeFunctionId::ErrorPrototypeToString => Some(Self::ToString),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum ErrorStep {
     Complete(Completion),
@@ -226,10 +216,10 @@ impl ErrorResume {
                         let context = state.heap.context(realm)?;
                         match kind {
                             ErrorConstructorKind::Error => context
-                                .error_prototype
+                                .error_prototype()
                                 .ok_or(RuntimeError::Invariant("realm has no Error prototype"))?,
                             ErrorConstructorKind::Native(kind) => {
-                                context.native_error_prototypes[kind.index()].ok_or(
+                                context.native_error_prototype(kind).ok_or(
                                     RuntimeError::Invariant("realm has no native Error prototype"),
                                 )?
                             }

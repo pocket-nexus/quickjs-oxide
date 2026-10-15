@@ -1,7 +1,6 @@
 //! Shared Object/Reflect property algorithms. Requests retain their evaluated inputs.
 use crate::engine::atom::PropertyKeyKind;
 
-use crate::engine::builtins::native::{NativeFunctionId, ObjectExtensibilityKind, ReflectKind};
 use crate::engine::builtins::native::{
     ObjectIntegrityKind, ObjectKeysKind, ObjectOwnPropertyKeysKind,
 };
@@ -39,38 +38,6 @@ pub(crate) enum PropertyKind {
     ObjectDescriptor,
     ObjectExtensible,
     ObjectPrevent,
-}
-impl PropertyKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::Reflect(kind) => match kind {
-                ReflectKind::Get => Self::Get,
-                ReflectKind::OwnKeys => Self::Keys,
-                ReflectKind::Set => Self::Set,
-                ReflectKind::Has => Self::Has,
-                ReflectKind::DeleteProperty => Self::Delete,
-                ReflectKind::DefineProperty => Self::Define,
-                ReflectKind::GetOwnPropertyDescriptor => Self::Descriptor,
-                ReflectKind::IsExtensible => Self::Extensible,
-                ReflectKind::PreventExtensions => Self::Prevent,
-                _ => return None,
-            },
-            NativeFunctionId::ObjectIntegrity(kind) => Self::Integrity(kind),
-            NativeFunctionId::ObjectAssign => Self::Assign,
-            NativeFunctionId::ObjectKeys(kind) => Self::ObjectKeys(kind),
-            NativeFunctionId::ObjectGetOwnPropertyKeys(kind) => Self::ObjectOwnKeys(kind),
-            NativeFunctionId::ObjectGetOwnPropertyDescriptors => Self::ObjectDescriptors,
-            NativeFunctionId::ObjectDefineProperty => Self::ObjectDefine,
-            NativeFunctionId::ObjectGetOwnPropertyDescriptor => Self::ObjectDescriptor,
-            NativeFunctionId::ObjectExtensibility(ObjectExtensibilityKind::IsExtensible) => {
-                Self::ObjectExtensible
-            }
-            NativeFunctionId::ObjectExtensibility(ObjectExtensibilityKind::PreventExtensions) => {
-                Self::ObjectPrevent
-            }
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum PropertyStep {
     Keys { resume: PropertyResume },

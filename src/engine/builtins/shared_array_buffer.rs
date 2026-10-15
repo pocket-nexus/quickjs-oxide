@@ -10,18 +10,18 @@ use crate::engine::api::context::Context;
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, builtin_getter, method, species_getter, to_string_tag,
+};
 
 use crate::engine::builtins::native::{NativeFunctionId, SharedArrayBufferNativeKind};
 use crate::engine::heap::shared_memory::{
     MAX_SHARED_ARRAY_BUFFER_BYTE_LENGTH, SharedBufferHandle, SharedMemoryError,
 };
 use crate::engine::heap::{ContextId, ObjectData, ObjectPayload, SharedArrayBufferRealmData};
-use crate::engine::object::{
-    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    WellKnownSymbol,
-};
+use crate::engine::object::ObjectRef;
+use crate::engine::value::JsValue;
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -40,93 +40,31 @@ impl Runtime {
         object_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use NativeFunctionId::SharedArrayBuffer as F;
+        use SharedArrayBufferNativeKind as K;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            builtin_getter!(F(K::ByteLength), "byteLength"),
+            builtin_getter!(F(K::MaxByteLength), "maxByteLength"),
+            builtin_getter!(F(K::Growable), "growable"),
+            method(F(K::Grow), "grow", 1, 1),
+            method(F(K::Slice), "slice", 2, 2),
+            to_string_tag("SharedArrayBuffer"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[species_getter(F(K::Species))];
         let prototype = self.new_object(Some(object_prototype))?;
-
-        for (kind, property_name, getter_name) in [
-            (
-                SharedArrayBufferNativeKind::ByteLength,
-                "byteLength",
-                "get byteLength",
-            ),
-            (
-                SharedArrayBufferNativeKind::MaxByteLength,
-                "maxByteLength",
-                "get maxByteLength",
-            ),
-            (
-                SharedArrayBufferNativeKind::Growable,
-                "growable",
-                "get growable",
-            ),
-        ] {
-            self.define_native_builtin_getter_on(
-                &prototype,
-                function_prototype,
-                realm,
-                NativeFunctionId::SharedArrayBuffer(kind),
-                property_name,
-                getter_name,
-            )?;
-        }
-
-        for (kind, name, length) in [
-            (SharedArrayBufferNativeKind::Grow, "grow", 1),
-            (SharedArrayBufferNativeKind::Slice, "slice", 2),
-        ] {
-            self.define_native_builtin_auto_init(
-                &prototype,
-                realm,
-                NativeFunctionId::SharedArrayBuffer(kind),
-                name,
-                length,
-                length,
-            )?;
-        }
-
-        self.define_to_string_tag(&prototype, "SharedArrayBuffer")?;
-
+        self.define_builtin_entries(&prototype, realm, PROTOTYPE)?;
         // Two readable arguments preserve QuickJS's padded argv[0]/argv[1]
         // contract while the public constructor length remains one.
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::SharedArrayBuffer(SharedArrayBufferNativeKind::Constructor),
+            F(K::Constructor),
             2,
             "SharedArrayBuffer",
             1,
         )?;
-        let species_getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::SharedArrayBuffer(SharedArrayBufferNativeKind::Species),
-            0,
-            "get [Symbol.species]",
-            0,
-        )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
-        if !self.define_own_property(
-            constructor.as_object(),
-            &species,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(species_getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "SharedArrayBuffer species definition was rejected",
-            ));
-        }
-
-        self.define_function_data_property(
-            global_object,
-            "SharedArrayBuffer",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "SharedArrayBuffer", &constructor)?;
         self.define_constructor_relationship(&constructor, &prototype)?;
         self.0
             .state
@@ -469,7 +407,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .shared_array_buffer
+            .shared_array_buffer()
             .ok_or(RuntimeError::Invariant(
                 "realm has no SharedArrayBuffer intrinsics",
             ))?
@@ -654,8 +592,9 @@ fn shared_memory_runtime_error(error: SharedMemoryError) -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};
     use crate::engine::test_support::test_context;
-    use crate::engine::value::JsString;
+    use crate::engine::value::{JsString, Value};
 
     #[test]
     fn constructor_descriptors_and_key_order_match_pinned_quickjs() {

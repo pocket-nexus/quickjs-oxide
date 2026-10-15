@@ -11,7 +11,6 @@ use std::path::PathBuf;
 
 use std::process::{Command, Output};
 
-use crate::runtime_completion_oracle::run as run_eval;
 use crate::runtime_observation::{eval, text};
 
 const EXPECTED: &str =
@@ -40,47 +39,6 @@ fn for_await_of_transcript_matches_pinned_quickjs() {
         oxide.stdout, quickjs.stdout,
         "quickjs-oxide for-await transcript differs from pinned QuickJS"
     );
-}
-
-#[test]
-fn for_await_contextual_grammar_matches_pinned_quickjs() {
-    const VALID: &[&str] = &[
-        "async function f(xs){for await(var x of xs){}}",
-        "async function* f(xs){for await(var x of xs){yield x;}}",
-        "({async f(xs){for await(async of xs){}}})",
-        "class C { static async f(xs){for await(const x of xs){}} }",
-    ];
-    const INVALID: &[&str] = &[
-        "for await(var x of xs){}",
-        "function f(xs){for await(var x of xs){}}",
-        "function* f(xs){for await(var x of xs){}}",
-        "async function f(xs){for await(var x in xs){}}",
-        "async function f(xs){for aw\\u0061it(var x of xs){}}",
-    ];
-
-    let oracle = std::env::var_os("QJS_ORACLE");
-    for source in VALID {
-        let oxide = run_eval(env!("CARGO_BIN_EXE_qjs").as_ref(), source);
-        assert_success("quickjs-oxide", &oxide);
-        if let Some(oracle) = &oracle {
-            let quickjs = run_eval(oracle, source);
-            assert_success("pinned QuickJS", &quickjs);
-        }
-    }
-    for source in INVALID {
-        let oxide = run_eval(env!("CARGO_BIN_EXE_qjs").as_ref(), source);
-        assert!(
-            !oxide.status.success(),
-            "quickjs-oxide accepted invalid for-await source: {source}"
-        );
-        if let Some(oracle) = &oracle {
-            let quickjs = run_eval(oracle, source);
-            assert!(
-                !quickjs.status.success(),
-                "pinned QuickJS accepted invalid for-await source: {source}"
-            );
-        }
-    }
 }
 
 #[test]

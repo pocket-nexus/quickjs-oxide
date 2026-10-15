@@ -1,7 +1,6 @@
 //! Ordered text coercions share the existing callback-free string kernels.
 use super::create_html_definition;
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{StringCaseKind, StringCreateHtmlKind, StringPadKind, StringTrimKind},
@@ -22,20 +21,6 @@ pub(crate) enum StringTextKind {
     Normalize,
     LocaleCompare,
     Html(StringCreateHtmlKind),
-}
-impl StringTextKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::StringPrototypeTrim(kind) => Self::Trim(kind),
-            NativeFunctionId::StringPrototypeCase(kind) => Self::Case(kind),
-            NativeFunctionId::StringPrototypeRepeat => Self::Repeat,
-            NativeFunctionId::StringPrototypePad(kind) => Self::Pad(kind),
-            NativeFunctionId::StringPrototypeNormalize => Self::Normalize,
-            NativeFunctionId::StringPrototypeLocaleCompare => Self::LocaleCompare,
-            NativeFunctionId::StringPrototypeCreateHtml(kind) => Self::Html(kind),
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum StringTextStep {
     Complete(Completion),

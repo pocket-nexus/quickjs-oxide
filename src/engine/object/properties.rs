@@ -1281,10 +1281,9 @@ impl Runtime {
         }
         self.append_dense_array_raw(object, value.as_raw())?;
         self.grow_dense_array_length(object, index, old_length)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "set_dense_append_from_selection",
-        );
+        profile!(record_owned_execution_event(
+            "set_dense_append_from_selection"
+        ));
         Ok(None)
     }
 

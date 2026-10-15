@@ -1,6 +1,5 @@
 //! Instructions, compilation drafts and runtime-rooted code.
 pub mod bytecode;
-pub(crate) mod bytecode_validation;
 pub mod debug;
 pub mod function;
 pub(crate) mod instruction;

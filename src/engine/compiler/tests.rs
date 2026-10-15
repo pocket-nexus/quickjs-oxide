@@ -21,7 +21,6 @@ use crate::engine::code::bytecode::{
     ApplyKind, ArgumentsKind, DefineMethodKind, DynamicEnvironmentSource, EvalVariableSource,
     Instruction, IteratorCallKind,
 };
-use crate::engine::code::bytecode_validation::validate_parameter_bytecode_layout;
 use crate::engine::code::debug::DebugInfoMode;
 
 use crate::engine::code::function::metadata::{
@@ -53,7 +52,7 @@ use super::{
     compile_unlinked_module_with_filename, compile_unlinked_module_with_name_and_attribute_checker,
     compile_unlinked_script, compile_unlinked_script_source_with_filename,
     compile_unlinked_script_with_filename, ensure_closure_variable, lower_unlinked_tree,
-    resolve_identifiers, validate_scope_graph, validate_source_length,
+    resolve_identifiers, validate_source_length,
 };
 
 fn evaluate(source: &str) -> Value {

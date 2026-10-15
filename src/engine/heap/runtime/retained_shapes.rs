@@ -23,8 +23,7 @@ pub(crate) struct RetainedShapes {
 impl RuntimeState {
     pub(crate) fn retain_construction_shape(&mut self, id: ShapeId) -> Result<(), RuntimeError> {
         if self.retained_shapes.members.contains(&id) {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("shape_prefix_reused");
+            profile!(record_owned_execution_event("shape_prefix_reused"));
             return Ok(());
         }
         let shape = self.heap.shape(id)?;
@@ -45,8 +44,7 @@ impl RuntimeState {
         while self.retained_shapes.order.len() >= MAX_SHAPES
             || self.retained_shapes.bytes + bytes > MAX_BYTES
         {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("shape_prefix_evicted");
+            profile!(record_owned_execution_event("shape_prefix_evicted"));
             let (old, charge) = self.retained_shapes.order.pop_front().unwrap();
             self.retained_shapes.members.remove(&old);
             self.retained_shapes.bytes -= charge;
@@ -57,8 +55,7 @@ impl RuntimeState {
         self.retained_shapes.order.push_back((id, bytes));
         self.retained_shapes.members.insert(id);
         self.retained_shapes.bytes += bytes;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("shape_prefix_retained");
+        profile!(record_owned_execution_event("shape_prefix_retained"));
         Ok(())
     }
 

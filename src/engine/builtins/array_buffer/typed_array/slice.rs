@@ -7,7 +7,6 @@
 
 use super::{TypedArraySnapshot, typed_array_absolute_byte_offset};
 
-use crate::engine::builtins::native::{NativeFunctionId, TypedArrayNativeKind};
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::TypedArrayElementKind,
@@ -164,15 +163,6 @@ impl Runtime {
 pub(crate) enum TypedSliceKind {
     Slice,
     Subarray,
-}
-impl TypedSliceKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Slice) => Self::Slice,
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Subarray) => Self::Subarray,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum TypedSliceStep {
     Complete(Completion),

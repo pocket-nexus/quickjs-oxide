@@ -4,6 +4,7 @@ use crate::engine::api::error::{ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::PropertyKeyKind;
+use crate::engine::object::builtin_properties::{BuiltinEntry, BuiltinKey, method};
 
 use crate::engine::builtins::native::{
     NativeFunctionId, ObjectAccessorKind, ObjectExtensibilityKind, ObjectIntegrityKind,
@@ -12,9 +13,7 @@ use crate::engine::builtins::native::{
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ContextId, ObjectId, ObjectPayload, PrimitiveObjectData};
 use crate::engine::object::operations::{ArrayOwnKey, InternalDefineResult};
-use crate::engine::object::{
-    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, SymbolRef,
-};
+use crate::engine::object::{ObjectRef, PropertyKey, SymbolRef};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
@@ -144,121 +143,51 @@ impl Runtime {
         realm: ContextId,
         object_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        for (target, name, length, min_readable_args) in [
-            (NativeFunctionId::ObjectPrototypeToString, "toString", 0, 0),
-            (
-                NativeFunctionId::ObjectPrototypeToLocaleString,
-                "toLocaleString",
-                0,
-                0,
-            ),
-            (NativeFunctionId::ObjectPrototypeValueOf, "valueOf", 0, 0),
-            (
-                NativeFunctionId::ObjectPrototypeHasOwnProperty,
-                "hasOwnProperty",
-                1,
-                1,
-            ),
-            (
-                NativeFunctionId::ObjectPrototypeIsPrototypeOf,
-                "isPrototypeOf",
-                1,
-                1,
-            ),
-            (
-                NativeFunctionId::ObjectPrototypePropertyIsEnumerable,
+        use NativeFunctionId as F;
+        use ObjectAccessorKind as A;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::ObjectPrototypeToString, "toString", 0, 0),
+            method(F::ObjectPrototypeToLocaleString, "toLocaleString", 0, 0),
+            method(F::ObjectPrototypeValueOf, "valueOf", 0, 0),
+            method(F::ObjectPrototypeHasOwnProperty, "hasOwnProperty", 1, 1),
+            method(F::ObjectPrototypeIsPrototypeOf, "isPrototypeOf", 1, 1),
+            method(
+                F::ObjectPrototypePropertyIsEnumerable,
                 "propertyIsEnumerable",
                 1,
                 1,
             ),
-        ] {
-            self.define_native_builtin_auto_init(
-                object_prototype,
-                realm,
-                target,
-                name,
-                length,
-                min_readable_args,
-            )?;
-        }
-
-        let function_prototype = self
-            .0
-            .state
-            .borrow()
-            .heap
-            .context(realm)?
-            .function_prototype;
-        let function_prototype = ObjectRef::from_borrowed_handle(self.clone(), function_prototype)?;
-        let getter = self.new_native_builtin(
-            &function_prototype,
-            realm,
-            NativeFunctionId::ObjectPrototypeProtoGetter,
-            0,
-            "get __proto__",
-            0,
-        )?;
-        let setter = self.new_native_builtin(
-            &function_prototype,
-            realm,
-            NativeFunctionId::ObjectPrototypeProtoSetter,
-            1,
-            "set __proto__",
-            1,
-        )?;
-        let proto = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Proto)?;
-        if !self.define_own_property(
-            object_prototype,
-            &proto,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(getter)),
-                set: DescriptorField::Present(AccessorValue::Callable(setter)),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
+            BuiltinEntry::Accessor {
+                key: BuiltinKey::Name("__proto__"),
+                get: Some((F::ObjectPrototypeProtoGetter, "get __proto__")),
+                set: Some((F::ObjectPrototypeProtoSetter, "set __proto__")),
             },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Object.prototype __proto__ definition was rejected",
-            ));
-        }
-
-        for (target, name, length, min_readable_args) in [
-            (
-                NativeFunctionId::ObjectPrototypeDefineAccessor(ObjectAccessorKind::Getter),
+            method(
+                F::ObjectPrototypeDefineAccessor(A::Getter),
                 "__defineGetter__",
                 2,
                 2,
             ),
-            (
-                NativeFunctionId::ObjectPrototypeDefineAccessor(ObjectAccessorKind::Setter),
+            method(
+                F::ObjectPrototypeDefineAccessor(A::Setter),
                 "__defineSetter__",
                 2,
                 2,
             ),
-            (
-                NativeFunctionId::ObjectPrototypeLookupAccessor(ObjectAccessorKind::Getter),
+            method(
+                F::ObjectPrototypeLookupAccessor(A::Getter),
                 "__lookupGetter__",
                 1,
                 1,
             ),
-            (
-                NativeFunctionId::ObjectPrototypeLookupAccessor(ObjectAccessorKind::Setter),
+            method(
+                F::ObjectPrototypeLookupAccessor(A::Setter),
                 "__lookupSetter__",
                 1,
                 1,
             ),
-        ] {
-            self.define_native_builtin_auto_init(
-                object_prototype,
-                realm,
-                target,
-                name,
-                length,
-                min_readable_args,
-            )?;
-        }
-        Ok(())
+        ];
+        self.define_builtin_entries(object_prototype, realm, PROTOTYPE)
     }
 
     pub(crate) fn initialize_object_intrinsic(
@@ -268,140 +197,76 @@ impl Runtime {
         object_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let constructor = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::ObjectConstructor,
-            1,
-            "Object",
-            1,
-        )?;
-        for (target, name, length, min_readable_args) in [
-            (NativeFunctionId::ObjectCreate, "create", 2, 2),
-            (
-                NativeFunctionId::ObjectGetPrototypeOf,
-                "getPrototypeOf",
-                1,
-                1,
-            ),
-            (
-                NativeFunctionId::ObjectSetPrototypeOf,
-                "setPrototypeOf",
-                2,
-                2,
-            ),
-            (
-                NativeFunctionId::ObjectDefineProperty,
-                "defineProperty",
-                3,
-                3,
-            ),
-            (
-                NativeFunctionId::ObjectDefineProperties,
-                "defineProperties",
-                2,
-                2,
-            ),
-            (
-                NativeFunctionId::ObjectGetOwnPropertyKeys(ObjectOwnPropertyKeysKind::Names),
+        use NativeFunctionId as F;
+        use ObjectExtensibilityKind as Ext;
+        use ObjectIntegrityKind as Integrity;
+        use ObjectKeysKind as Keys;
+        use ObjectOwnPropertyKeysKind as OwnKeys;
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F::ObjectCreate, "create", 2, 2),
+            method(F::ObjectGetPrototypeOf, "getPrototypeOf", 1, 1),
+            method(F::ObjectSetPrototypeOf, "setPrototypeOf", 2, 2),
+            method(F::ObjectDefineProperty, "defineProperty", 3, 3),
+            method(F::ObjectDefineProperties, "defineProperties", 2, 2),
+            method(
+                F::ObjectGetOwnPropertyKeys(OwnKeys::Names),
                 "getOwnPropertyNames",
                 1,
                 1,
             ),
-            (
-                NativeFunctionId::ObjectGetOwnPropertyKeys(ObjectOwnPropertyKeysKind::Symbols),
+            method(
+                F::ObjectGetOwnPropertyKeys(OwnKeys::Symbols),
                 "getOwnPropertySymbols",
                 1,
                 1,
             ),
-            (NativeFunctionId::ObjectGroupBy, "groupBy", 2, 2),
-            (
-                NativeFunctionId::ObjectKeys(ObjectKeysKind::Keys),
-                "keys",
-                1,
-                1,
-            ),
-            (
-                NativeFunctionId::ObjectKeys(ObjectKeysKind::Values),
-                "values",
-                1,
-                1,
-            ),
-            (
-                NativeFunctionId::ObjectKeys(ObjectKeysKind::Entries),
-                "entries",
-                1,
-                1,
-            ),
-            (
-                NativeFunctionId::ObjectExtensibility(ObjectExtensibilityKind::IsExtensible),
+            method(F::ObjectGroupBy, "groupBy", 2, 2),
+            method(F::ObjectKeys(Keys::Keys), "keys", 1, 1),
+            method(F::ObjectKeys(Keys::Values), "values", 1, 1),
+            method(F::ObjectKeys(Keys::Entries), "entries", 1, 1),
+            method(
+                F::ObjectExtensibility(Ext::IsExtensible),
                 "isExtensible",
                 1,
                 1,
             ),
-            (
-                NativeFunctionId::ObjectExtensibility(ObjectExtensibilityKind::PreventExtensions),
+            method(
+                F::ObjectExtensibility(Ext::PreventExtensions),
                 "preventExtensions",
                 1,
                 1,
             ),
-            (
-                NativeFunctionId::ObjectGetOwnPropertyDescriptor,
+            method(
+                F::ObjectGetOwnPropertyDescriptor,
                 "getOwnPropertyDescriptor",
                 2,
                 2,
             ),
-            (
-                NativeFunctionId::ObjectGetOwnPropertyDescriptors,
+            method(
+                F::ObjectGetOwnPropertyDescriptors,
                 "getOwnPropertyDescriptors",
                 1,
                 1,
             ),
-            (NativeFunctionId::ObjectIs, "is", 2, 2),
-            (NativeFunctionId::ObjectAssign, "assign", 2, 2),
-            (
-                NativeFunctionId::ObjectIntegrity(ObjectIntegrityKind::Seal),
-                "seal",
-                1,
-                1,
-            ),
-            (
-                NativeFunctionId::ObjectIntegrity(ObjectIntegrityKind::Freeze),
-                "freeze",
-                1,
-                1,
-            ),
-            (
-                NativeFunctionId::ObjectIntegrity(ObjectIntegrityKind::IsSealed),
-                "isSealed",
-                1,
-                1,
-            ),
-            (
-                NativeFunctionId::ObjectIntegrity(ObjectIntegrityKind::IsFrozen),
-                "isFrozen",
-                1,
-                1,
-            ),
-            (NativeFunctionId::ObjectFromEntries, "fromEntries", 1, 1),
-            (NativeFunctionId::ObjectHasOwn, "hasOwn", 2, 2),
-        ] {
-            self.define_native_builtin_auto_init(
-                constructor.as_object(),
-                realm,
-                target,
-                name,
-                length,
-                min_readable_args,
-            )?;
-        }
-        self.define_function_data_property(
-            global_object,
+            method(F::ObjectIs, "is", 2, 2),
+            method(F::ObjectAssign, "assign", 2, 2),
+            method(F::ObjectIntegrity(Integrity::Seal), "seal", 1, 1),
+            method(F::ObjectIntegrity(Integrity::Freeze), "freeze", 1, 1),
+            method(F::ObjectIntegrity(Integrity::IsSealed), "isSealed", 1, 1),
+            method(F::ObjectIntegrity(Integrity::IsFrozen), "isFrozen", 1, 1),
+            method(F::ObjectFromEntries, "fromEntries", 1, 1),
+            method(F::ObjectHasOwn, "hasOwn", 2, 2),
+        ];
+        let constructor = self.new_native_builtin(
+            function_prototype,
+            realm,
+            F::ObjectConstructor,
+            1,
             "Object",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
+            1,
         )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "Object", &constructor)?;
         self.define_constructor_relationship(&constructor, object_prototype)
     }
 

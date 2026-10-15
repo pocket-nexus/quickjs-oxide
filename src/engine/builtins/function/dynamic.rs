@@ -230,9 +230,9 @@ impl DynamicFunctionResume {
                         let context = state.heap.context(realm)?;
                         match self.0.kind {
                             DynamicFunctionKind::Normal => context.function_prototype,
-                            DynamicFunctionKind::Generator => context.generator.ok_or(RuntimeError::Invariant("dynamic GeneratorFunction realm has no Generator intrinsics"))?.function_prototype,
-                            DynamicFunctionKind::Async => context.async_function.ok_or(RuntimeError::Invariant("dynamic AsyncFunction realm has no AsyncFunction intrinsics"))?.function_prototype,
-                            DynamicFunctionKind::AsyncGenerator => context.async_generator.ok_or(RuntimeError::Invariant("dynamic AsyncGeneratorFunction realm has no AsyncGenerator intrinsics"))?.function_prototype,
+                            DynamicFunctionKind::Generator => context.generator().ok_or(RuntimeError::Invariant("dynamic GeneratorFunction realm has no Generator intrinsics"))?.function_prototype,
+                            DynamicFunctionKind::Async => context.async_function().ok_or(RuntimeError::Invariant("dynamic AsyncFunction realm has no AsyncFunction intrinsics"))?.function_prototype,
+                            DynamicFunctionKind::AsyncGenerator => context.async_generator().ok_or(RuntimeError::Invariant("dynamic AsyncGeneratorFunction realm has no AsyncGenerator intrinsics"))?.function_prototype,
                         }
                     };
                     ObjectRef::from_borrowed_handle(runtime.clone(), prototype)?

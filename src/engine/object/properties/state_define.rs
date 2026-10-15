@@ -73,10 +73,9 @@ impl RuntimeState {
             }
         }
         let accepted = self.define_raw_property_with_poison(poisoned, object, atom, descriptor)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "ordinary_descriptor_defined_in_state",
-        );
+        profile!(record_owned_execution_event(
+            "ordinary_descriptor_defined_in_state"
+        ));
         Ok(Some(accepted))
     }
 }

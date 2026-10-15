@@ -5,12 +5,7 @@ use super::{
 };
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
-    builtins::{
-        native::{
-            MapNativeKind, NativeFunctionId, SetNativeKind, WeakMapNativeKind, WeakSetNativeKind,
-        },
-        weak_collection::WeakCollectionKind,
-    },
+    builtins::weak_collection::WeakCollectionKind,
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
     value::{JsValue, conversion::NativeConversion},
@@ -27,15 +22,6 @@ pub(crate) enum CollectionKind {
     WeakSet,
 }
 impl CollectionKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::Map(MapNativeKind::Constructor) => Some(Self::Map),
-            NativeFunctionId::Set(SetNativeKind::Constructor) => Some(Self::Set),
-            NativeFunctionId::WeakMap(WeakMapNativeKind::Constructor) => Some(Self::WeakMap),
-            NativeFunctionId::WeakSet(WeakSetNativeKind::Constructor) => Some(Self::WeakSet),
-            _ => None,
-        }
-    }
     fn pairs(self) -> bool {
         matches!(self, Self::Map | Self::WeakMap)
     }

@@ -1,7 +1,5 @@
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_observation::property_callable;
-use crate::runtime_observation::value_text;
-use quickjs_oxide::engine::api::AccessorValue;
 use quickjs_oxide::engine::api::DescriptorField;
 use quickjs_oxide::engine::api::OrdinaryPropertyDescriptor;
 use quickjs_oxide::engine::api::WellKnownSymbol;
@@ -9,11 +7,6 @@ use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, PropertyKey, Runtime,
     Value,
 };
-use std::ffi::OsStr;
-
-pub(crate) fn oracle_lines(oracle: &OsStr, source: &str, description: &str) -> Vec<String> {
-    super::quickjs_oracle::eval_std_lines(oracle, source, description)
-}
 
 pub(crate) fn global_callable(runtime: &Runtime, context: &mut Context, name: &str) -> CallableRef {
     let global = context.global_object().unwrap();
@@ -94,15 +87,6 @@ pub(crate) fn int_property(
     value
 }
 
-pub(crate) fn data_bits(writable: bool, enumerable: bool, configurable: bool) -> String {
-    format!(
-        "D:{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable),
-    )
-}
-
 // Helpers shared verbatim by several oracle modules.
 
 pub(crate) fn object(value: Value) -> ObjectRef {
@@ -167,15 +151,6 @@ pub(crate) fn require_object(value: Value, description: &str) -> ObjectRef {
     object
 }
 
-pub(crate) fn bits(writable: bool, enumerable: bool, configurable: bool) -> String {
-    format!(
-        "{},{},{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
-}
-
 pub(crate) fn function(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
     let Value::Object(object) = context.eval(source).unwrap() else {
         panic!("function probe did not return an object: {source}");
@@ -184,167 +159,6 @@ pub(crate) fn function(runtime: &Runtime, context: &mut Context, source: &str) -
         .as_callable(&object)
         .unwrap()
         .unwrap_or_else(|| panic!("function probe was not callable: {source}"))
-}
-
-pub(crate) fn define_global_via_data(
-    runtime: &Runtime,
-    context: &mut Context,
-    name: &str,
-    value: Value,
-) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    define_context_data(runtime, context, &global, &key, value);
-}
-
-pub(crate) fn global_value(runtime: &Runtime, context: &mut Context, name: &str) -> Value {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(&global, &key).unwrap()
-}
-
-pub(crate) fn define_context_data(
-    _runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    value: Value,
-) {
-    assert!(
-        context
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-pub(crate) fn getter_descriptor(getter: CallableRef) -> OrdinaryPropertyDescriptor {
-    OrdinaryPropertyDescriptor {
-        get: DescriptorField::Present(AccessorValue::Callable(getter)),
-        set: DescriptorField::Present(AccessorValue::Undefined),
-        enumerable: DescriptorField::Present(true),
-        configurable: DescriptorField::Present(true),
-        ..OrdinaryPropertyDescriptor::new()
-    }
-}
-
-pub(crate) fn complete_data_descriptor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-) -> (Value, bool, bool, bool) {
-    let Some(CompleteOrdinaryPropertyDescriptor::Data {
-        value,
-        writable,
-        enumerable,
-        configurable,
-    }) = runtime.get_own_property(object, key).unwrap()
-    else {
-        panic!("expected a complete data descriptor");
-    };
-    (value, writable, enumerable, configurable)
-}
-
-pub(crate) const fn bit(value: bool) -> u8 {
-    value as u8
-}
-
-pub(crate) fn get_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> Value {
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(object, &key).unwrap()
-}
-
-pub(crate) fn property_text(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> String {
-    value_text(get_property(runtime, context, object, name))
-}
-
-pub(crate) fn callable_int_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    callable: &CallableRef,
-    name: &str,
-) -> i32 {
-    let Value::Int(value) = context
-        .get_property(
-            callable.as_object(),
-            &runtime.intern_property_key(name).unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("callable {name} was not an Int");
-    };
-    value
-}
-
-pub(crate) fn callable_string_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    callable: &CallableRef,
-    name: &str,
-) -> String {
-    let Value::String(value) = context
-        .get_property(
-            callable.as_object(),
-            &runtime.intern_property_key(name).unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("callable {name} was not a String");
-    };
-    value.to_utf8_lossy()
-}
-
-pub(crate) fn joined_own_key_names(runtime: &Runtime, object: &ObjectRef) -> String {
-    runtime
-        .own_property_keys(object)
-        .unwrap()
-        .iter()
-        .map(|key| {
-            runtime
-                .property_key_to_js_string(key)
-                .unwrap()
-                .to_utf8_lossy()
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-pub(crate) fn data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Some(CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    }) = runtime.get_own_property(object, &key).unwrap()
-    else {
-        panic!("{name} was not an own data property");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
 }
 
 pub(crate) fn define_checked_builtin_data(
@@ -391,34 +205,6 @@ pub(crate) fn eval_callable(runtime: &Runtime, context: &mut Context, source: &s
         .unwrap_or_else(|| panic!("source did not produce a callable: {source:?}"))
 }
 
-pub(crate) fn global_object_value(
-    runtime: &Runtime,
-    context: &mut Context,
-    global: &ObjectRef,
-    name: &str,
-) -> Value {
-    context
-        .get_property(global, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-}
-
-pub(crate) fn descriptor_bits(descriptor: &CompleteOrdinaryPropertyDescriptor) -> String {
-    match descriptor {
-        CompleteOrdinaryPropertyDescriptor::Data {
-            writable,
-            enumerable,
-            configurable,
-            ..
-        } => format!(
-            "{}{}{}",
-            u8::from(*writable),
-            u8::from(*enumerable),
-            u8::from(*configurable)
-        ),
-        CompleteOrdinaryPropertyDescriptor::Accessor { .. } => "accessor".to_owned(),
-    }
-}
-
 pub(crate) fn global_string(
     runtime: &Runtime,
     context: &mut Context,
@@ -456,123 +242,6 @@ pub(crate) fn error_string_property(
         );
     };
     value.to_utf8_lossy()
-}
-
-pub(crate) fn own_data_descriptor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-) -> (Value, bool, bool, bool) {
-    let descriptor = runtime
-        .get_own_property(object, key)
-        .unwrap()
-        .expect("expected own property descriptor");
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        value,
-        writable,
-        enumerable,
-        configurable,
-    } = descriptor
-    else {
-        panic!("expected a data property descriptor");
-    };
-    (value, writable, enumerable, configurable)
-}
-
-pub(crate) fn function_probe(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("function probe did not return an object: {source}");
-    };
-    runtime.as_callable(&object).unwrap().unwrap()
-}
-
-pub(crate) fn define_global_flagged(
-    runtime: &Runtime,
-    context: &mut Context,
-    name: &str,
-    value: Value,
-) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    define_context_data_with_flags(context, &global, &key, value, true, true);
-}
-
-pub(crate) fn set_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    assert!(context.set_property(&global, &key, value).unwrap());
-}
-
-pub(crate) fn string_global(runtime: &Runtime, context: &mut Context, name: &str) -> String {
-    let Value::String(value) = global_value(runtime, context, name) else {
-        panic!("global {name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
-pub(crate) fn define_context_data_with_flags(
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    value: Value,
-    writable: bool,
-    configurable: bool,
-) {
-    assert!(
-        context
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(writable),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-pub(crate) fn define_context_accessor(
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    get: AccessorValue,
-    set: AccessorValue,
-    configurable: bool,
-) {
-    assert!(
-        context
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(get),
-                    set: DescriptorField::Present(set),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-pub(crate) fn define_global_key(
-    runtime: &Runtime,
-    global: &ObjectRef,
-    name: &str,
-    value: Value,
-) -> PropertyKey {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key_with_flags(runtime, global, &key, value, true, true, true);
-    key
 }
 
 pub(crate) fn define_data_with_flags(
@@ -623,60 +292,6 @@ pub(crate) fn define_data_key_with_flags(
     );
 }
 
-pub(crate) fn define_accessor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    name: &str,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_accessor_key(runtime, object, &key, get, set);
-}
-
-pub(crate) fn define_accessor_key(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(
-                        get.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    set: DescriptorField::Present(
-                        set.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host accessor-property definition was rejected"
-    );
-}
-
-pub(crate) fn object_has_prototype(
-    runtime: &Runtime,
-    value: &Value,
-    prototype: &ObjectRef,
-) -> bool {
-    let Value::Object(object) = value else {
-        return false;
-    };
-    runtime
-        .get_prototype_of(object)
-        .unwrap()
-        .is_some_and(|actual| actual == *prototype)
-}
-
 pub(crate) fn object_property(
     runtime: &Runtime,
     context: &mut Context,
@@ -704,32 +319,6 @@ pub(crate) fn eval_source_callable(
         .as_callable(&object)
         .unwrap()
         .unwrap_or_else(|| panic!("{source:?} was not callable"))
-}
-
-pub(crate) fn named_data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    data_flags_key(runtime, object, &runtime.intern_property_key(name).unwrap())
-}
-
-pub(crate) fn data_flags_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey) -> String {
-    let descriptor = runtime
-        .get_own_property(object, key)
-        .unwrap()
-        .expect("property descriptor was absent");
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    } = descriptor
-    else {
-        panic!("property descriptor was not data");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
 }
 
 pub(crate) fn define_global_data(
@@ -803,18 +392,6 @@ pub(crate) fn checked_property_value(
     context
         .get_property(object, &key)
         .unwrap_or_else(|error| panic!("read property {name}: {error}"))
-}
-
-pub(crate) fn string_property_value(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> String {
-    let Value::String(value) = checked_property_value(runtime, context, object, name) else {
-        panic!("{name} was not a string");
-    };
-    value.to_utf8_lossy()
 }
 
 pub(crate) fn eval_named_callable(
@@ -911,28 +488,6 @@ pub(crate) fn define_builtin_data_key(
     );
 }
 
-pub(crate) fn checked_data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    let descriptor = runtime
-        .get_own_property(object, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-        .unwrap_or_else(|| panic!("{name} descriptor was absent"));
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    } = descriptor
-    else {
-        panic!("{name} descriptor was not data");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
-}
-
 pub(crate) fn define_to_primitive(runtime: &Runtime, object: &ObjectRef, callable: CallableRef) {
     define_builtin_data_key(
         runtime,
@@ -993,71 +548,4 @@ pub(crate) fn define_global_with_message(
             .unwrap(),
         "could not define {name}",
     );
-}
-
-/// How [`object_statics_after_delete`] reports presence after deletion.
-#[derive(Clone, Copy)]
-pub(crate) enum PresenceProbe {
-    /// `Runtime::has_own_property` on `Object`.
-    Own,
-    /// The JavaScript `'name' in Object` expression.
-    In,
-}
-
-/// In a fresh runtime, delete the not-yet-materialized `Object[name]` and
-/// report `deleted|'name' in Object|own|typeof` for it.
-pub(crate) fn object_static_after_delete(name: &str) -> String {
-    let (runtime, mut context) = crate::runtime_observation::host_runtime_context();
-    let object = global_callable(&runtime, &mut context, "Object");
-    let key = runtime.intern_property_key(name).unwrap();
-    let deleted = runtime.delete_property(object.as_object(), &key).unwrap();
-    let Value::Bool(in_object) = context.eval(&format!("'{name}' in Object")).unwrap() else {
-        panic!("Object.{name} inherited-presence probe was not boolean");
-    };
-    let own = runtime.has_own_property(object.as_object(), &key).unwrap();
-    let kind = crate::runtime_oracle::value_type(
-        &runtime,
-        &context.get_property(object.as_object(), &key).unwrap(),
-    );
-    format!("{deleted}|{in_object}|{own}|{kind}")
-}
-
-/// In a fresh runtime, delete every not-yet-materialized `Object[name]`, then
-/// report all delete results, all presence probes and all value types, joined
-/// with `|`.
-pub(crate) fn object_statics_after_delete(names: &[&str], presence: PresenceProbe) -> String {
-    let (runtime, mut context) = crate::runtime_observation::host_runtime_context();
-    let object = global_callable(&runtime, &mut context, "Object");
-    let mut values = Vec::new();
-    for name in names {
-        let key = runtime.intern_property_key(name).unwrap();
-        values.push(
-            runtime
-                .delete_property(object.as_object(), &key)
-                .unwrap()
-                .to_string(),
-        );
-    }
-    for name in names {
-        let present = match presence {
-            PresenceProbe::Own => {
-                let key = runtime.intern_property_key(name).unwrap();
-                runtime.has_own_property(object.as_object(), &key).unwrap()
-            }
-            PresenceProbe::In => {
-                let Value::Bool(present) = context.eval(&format!("'{name}' in Object")).unwrap()
-                else {
-                    panic!("Object.{name} inherited-presence probe was not boolean");
-                };
-                present
-            }
-        };
-        values.push(present.to_string());
-    }
-    for name in names {
-        let key = runtime.intern_property_key(name).unwrap();
-        let value = context.get_property(object.as_object(), &key).unwrap();
-        values.push(crate::runtime_oracle::value_type(&runtime, &value).to_owned());
-    }
-    values.join("|")
 }

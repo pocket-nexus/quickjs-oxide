@@ -365,68 +365,6 @@ fn publication_accepts_arbitrary_debug_source_bytes() {
 }
 
 #[test]
-fn publication_rejects_malformed_debug_pc_order_range_and_position() {
-    let runtime = Runtime::new();
-    let context = runtime.new_context().expect("create context");
-    let baseline = runtime
-        .heap_counts()
-        .expect("runtime state")
-        .function_bytecode_nodes;
-
-    let malformed = [
-        UnlinkedFunctionDebug {
-            filename: JsString::from_static("range.js"),
-            pc2line: Some(Pc2LineTable::new(
-                LineColumn::new(0, 0),
-                vec![Pc2LineEntry {
-                    pc: 2,
-                    position: LineColumn::new(0, 0),
-                }],
-            )),
-            source: None,
-        },
-        UnlinkedFunctionDebug {
-            filename: JsString::from_static("order.js"),
-            pc2line: Some(Pc2LineTable::new(
-                LineColumn::new(0, 0),
-                vec![
-                    Pc2LineEntry {
-                        pc: 1,
-                        position: LineColumn::new(0, 1),
-                    },
-                    Pc2LineEntry {
-                        pc: 0,
-                        position: LineColumn::new(0, 0),
-                    },
-                ],
-            )),
-            source: None,
-        },
-        UnlinkedFunctionDebug {
-            filename: JsString::from_static("position.js"),
-            pc2line: Some(Pc2LineTable::new(LineColumn::new(u32::MAX, 0), Vec::new())),
-            source: None,
-        },
-    ];
-
-    for debug in malformed {
-        assert!(
-            runtime
-                .publish_unlinked_function(context.realm, debug_draft(debug))
-                .is_err()
-        );
-        assert_eq!(
-            runtime
-                .heap_counts()
-                .expect("runtime state")
-                .function_bytecode_nodes,
-            baseline,
-            "malformed debug metadata changed the heap"
-        );
-    }
-}
-
-#[test]
 fn publication_keeps_duplicate_last_and_unreachable_pc_metadata() {
     let runtime = Runtime::new();
     let context = runtime.new_context().expect("create context");

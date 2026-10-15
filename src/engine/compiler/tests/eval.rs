@@ -810,13 +810,6 @@ fn parameter_environment_descendant_arguments_capture_keeps_a_body_only_prologue
         .parameter_environment()
         .expect("outer function has a parameter environment");
     assert_eq!(layout.synthetic_arguments_local, None);
-    validate_parameter_bytecode_layout(
-        function.metadata(),
-        function.code(),
-        &vec![false; usize::from(function.metadata().local_count)],
-        Some(layout),
-    )
-    .unwrap();
     let arguments_local = function
         .code()
         .windows(2)

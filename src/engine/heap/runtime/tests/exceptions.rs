@@ -224,8 +224,8 @@ fn vm_fault_materializes_a_native_error_in_the_callee_realm() {
         .heap
         .context(compiler_context.realm)
         .unwrap()
-        .native_error_prototypes[NativeErrorKind::Type.index()]
-    .unwrap();
+        .native_error_prototype(NativeErrorKind::Type)
+        .unwrap();
     let mut caller_context = runtime.new_context().expect("create context");
     let caller_prototype = runtime
         .0
@@ -234,8 +234,8 @@ fn vm_fault_materializes_a_native_error_in_the_callee_realm() {
         .heap
         .context(caller_context.realm)
         .unwrap()
-        .native_error_prototypes[NativeErrorKind::Type.index()]
-    .unwrap();
+        .native_error_prototype(NativeErrorKind::Type)
+        .unwrap();
     assert_ne!(expected_prototype, caller_prototype);
 
     assert_eq!(

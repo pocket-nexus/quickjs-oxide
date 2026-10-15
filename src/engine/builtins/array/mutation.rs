@@ -1,6 +1,5 @@
 //! Array endpoint mutations retain their copy cursor across observable property operations.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{ArrayPopKind, ArrayPushKind},
@@ -16,15 +15,6 @@ use crate::engine::{
 pub(crate) enum MutationKind {
     Push(ArrayPushKind),
     Pop(ArrayPopKind),
-}
-impl MutationKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::ArrayPrototypePush(kind) => Some(Self::Push(kind)),
-            NativeFunctionId::ArrayPrototypePop(kind) => Some(Self::Pop(kind)),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum MutationStep {
     Complete(Completion),
@@ -215,10 +205,9 @@ impl MutationStep {
         kind: MutationKind,
         object: ObjectRef,
     ) -> MutationResume {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "progress.array_mutation.created",
-        );
+        profile!(record_owned_execution_event(
+            "progress.array_mutation.created"
+        ));
         MutationResume(Box::new(MutationResumeState {
             runtime: runtime.clone(),
             pending_effect: MutationStepPending::default(),
@@ -568,10 +557,7 @@ impl MutationResume {
                     }
                     action => return self.wait(runtime, action),
                 };
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "array_mutation_local_stage",
-                );
+                profile!(record_owned_execution_event("array_mutation_local_stage"));
             }
         }
     }
@@ -789,8 +775,7 @@ mod tests {
     fn push_inline_argument_uses_actual_count_and_retains_immediate_payload() {
         let runtime = Runtime::new();
         let context = runtime.new_context().expect("create context");
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         for value in [
             Value::Undefined,
             Value::Null,

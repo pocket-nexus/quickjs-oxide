@@ -1,6 +1,5 @@
 //! Shared Object/Reflect prototype algorithms, returning internal-method requests.
 
-use crate::engine::builtins::native::{NativeFunctionId, ReflectKind};
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
@@ -21,20 +20,6 @@ pub(crate) enum BuiltinPrototypeKind {
     ObjectSet,
     ReflectGet,
     ReflectSet,
-}
-impl BuiltinPrototypeKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::ObjectPrototypeProtoGetter => Self::Getter,
-            NativeFunctionId::ObjectPrototypeProtoSetter => Self::Setter,
-            NativeFunctionId::ObjectPrototypeIsPrototypeOf => Self::IsPrototype,
-            NativeFunctionId::ObjectGetPrototypeOf => Self::ObjectGet,
-            NativeFunctionId::ObjectSetPrototypeOf => Self::ObjectSet,
-            NativeFunctionId::Reflect(ReflectKind::GetPrototypeOf) => Self::ReflectGet,
-            NativeFunctionId::Reflect(ReflectKind::SetPrototypeOf) => Self::ReflectSet,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum BuiltinPrototypeStep {
     Complete(Completion),

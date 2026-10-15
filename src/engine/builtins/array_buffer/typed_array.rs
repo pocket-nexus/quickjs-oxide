@@ -14,7 +14,9 @@ use crate::engine::heap::{
     ArrayBufferViewData, ObjectData, ObjectPayload, TypedArrayData, TypedArrayRealmData,
 };
 
-use crate::engine::object::builtin_properties::NativeBuiltinProperty;
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, BuiltinKey, alias, builtin_getter, method, species_getter, symbol_getter,
+};
 
 use super::MAX_ARRAY_BUFFER_LENGTH;
 use crate::engine::{
@@ -26,8 +28,8 @@ use crate::engine::{
     builtins::native::NativeFunctionId,
     heap::{ContextId, ObjectId},
     object::{
-        AccessorValue, CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
-        OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
+        CallableRef, CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor,
+        PropertyKey, WellKnownSymbol,
     },
     value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
@@ -130,298 +132,147 @@ impl Runtime {
         object_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let base_prototype = self.new_object(Some(object_prototype))?;
-
-        self.define_native_builtin_getter_on(
-            &base_prototype,
-            function_prototype,
-            realm,
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Length),
-            "length",
-            "get length",
-        )?;
-        // Publish before the next getter group to preserve own-key order.
-        let methods = [
-            NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::At),
-                "at",
+        use ArrayFindKind as Find;
+        use ArrayIterationKind as Each;
+        use BuiltinKey::{Name, Symbol};
+        use NativeFunctionId::TypedArray as F;
+        use TypedArrayNativeKind as K;
+        use Uint8ArrayCodecKind as Codec;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            builtin_getter!(F(K::Length), "length"),
+            method(F(K::At), "at", 1, 1),
+            method(F(K::With), "with", 2, 2),
+            builtin_getter!(F(K::Buffer), "buffer"),
+            builtin_getter!(F(K::ByteLength), "byteLength"),
+            builtin_getter!(F(K::ByteOffset), "byteOffset"),
+            method(F(K::Set), "set", 1, 2),
+            method(F(K::Iterator(ArrayIteratorKind::Value)), "values", 0, 0),
+            method(F(K::Iterator(ArrayIteratorKind::Key)), "keys", 0, 0),
+            method(
+                F(K::Iterator(ArrayIteratorKind::KeyAndValue)),
+                "entries",
+                0,
+                0,
+            ),
+            method(F(K::CopyWithin), "copyWithin", 2, 2),
+            method(F(K::Iteration(Each::Every)), "every", 1, 1),
+            method(F(K::Iteration(Each::Some)), "some", 1, 1),
+            method(F(K::Iteration(Each::ForEach)), "forEach", 1, 1),
+            method(F(K::Iteration(Each::Map)), "map", 1, 1),
+            method(F(K::Iteration(Each::Filter)), "filter", 1, 1),
+            method(F(K::Reduce(ArrayReduceKind::Reduce)), "reduce", 1, 1),
+            method(
+                F(K::Reduce(ArrayReduceKind::ReduceRight)),
+                "reduceRight",
                 1,
                 1,
             ),
-            NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::With),
-                "with",
-                2,
-                2,
+            method(F(K::Fill), "fill", 1, 1),
+            method(F(K::Find(Find::Find)), "find", 1, 1),
+            method(F(K::Find(Find::FindIndex)), "findIndex", 1, 1),
+            method(F(K::Find(Find::FindLast)), "findLast", 1, 1),
+            method(F(K::Find(Find::FindLastIndex)), "findLastIndex", 1, 1),
+            method(F(K::Reverse), "reverse", 0, 0),
+            method(F(K::ToReversed), "toReversed", 0, 0),
+            method(F(K::Slice), "slice", 2, 2),
+            method(F(K::Subarray), "subarray", 2, 2),
+            method(F(K::Sort), "sort", 1, 1),
+            method(F(K::ToSorted), "toSorted", 1, 1),
+            method(F(K::Join(ArrayJoinKind::Join)), "join", 1, 1),
+            method(
+                F(K::Join(ArrayJoinKind::ToLocaleString)),
+                "toLocaleString",
+                0,
+                0,
+            ),
+            method(F(K::Search(ArraySearchKind::IndexOf)), "indexOf", 1, 1),
+            method(
+                F(K::Search(ArraySearchKind::LastIndexOf)),
+                "lastIndexOf",
+                1,
+                1,
+            ),
+            method(F(K::Search(ArraySearchKind::Includes)), "includes", 1, 1),
+        ];
+        // Installed after the concrete classes, behind the toString alias.
+        const PROTOTYPE_TAIL: &[BuiltinEntry] = &[
+            alias(Symbol(WellKnownSymbol::Iterator), Name("values")),
+            symbol_getter(
+                WellKnownSymbol::ToStringTag,
+                F(K::ToStringTag),
+                "get [Symbol.toStringTag]",
             ),
         ];
-        self.define_native_builtin_auto_init_batch(&base_prototype, realm, methods)?;
-
-        for (kind, name) in [
-            (TypedArrayNativeKind::Buffer, "buffer"),
-            (TypedArrayNativeKind::ByteLength, "byteLength"),
-            (TypedArrayNativeKind::ByteOffset, "byteOffset"),
-        ] {
-            self.define_native_builtin_getter_on(
-                &base_prototype,
-                function_prototype,
-                realm,
-                NativeFunctionId::TypedArray(kind),
-                name,
-                &format!("get {name}"),
-            )?;
-        }
-        let mut methods = vec![NativeBuiltinProperty::new(
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Set),
-            "set",
-            1,
-            2,
-        )];
-        for (kind, name) in [
-            (ArrayIteratorKind::Value, "values"),
-            (ArrayIteratorKind::Key, "keys"),
-            (ArrayIteratorKind::KeyAndValue, "entries"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::Iterator(kind)),
-                name,
-                0,
-                0,
-            ));
-        }
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::CopyWithin),
-            "copyWithin",
-            2,
-            2,
-        ));
-        for (kind, name) in [
-            (ArrayIterationKind::Every, "every"),
-            (ArrayIterationKind::Some, "some"),
-            (ArrayIterationKind::ForEach, "forEach"),
-            (ArrayIterationKind::Map, "map"),
-            (ArrayIterationKind::Filter, "filter"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::Iteration(kind)),
-                name,
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F(K::From), "from", 1, 3),
+            method(F(K::Of), "of", 0, 0),
+            species_getter(F(K::Species)),
+        ];
+        const UINT8_PROTOTYPE: &[BuiltinEntry] = &[
+            method(F(K::Uint8Codec(Codec::ToBase64)), "toBase64", 0, 1),
+            method(F(K::Uint8Codec(Codec::ToHex)), "toHex", 0, 0),
+            method(
+                F(K::Uint8Codec(Codec::SetFromBase64)),
+                "setFromBase64",
                 1,
-                1,
-            ));
-        }
-        for (kind, name) in [
-            (ArrayReduceKind::Reduce, "reduce"),
-            (ArrayReduceKind::ReduceRight, "reduceRight"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::Reduce(kind)),
-                name,
-                1,
-                1,
-            ));
-        }
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Fill),
-            "fill",
-            1,
-            1,
-        ));
-        for (kind, name) in [
-            (ArrayFindKind::Find, "find"),
-            (ArrayFindKind::FindIndex, "findIndex"),
-            (ArrayFindKind::FindLast, "findLast"),
-            (ArrayFindKind::FindLastIndex, "findLastIndex"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::Find(kind)),
-                name,
-                1,
-                1,
-            ));
-        }
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Reverse),
-            "reverse",
-            0,
-            0,
-        ));
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::ToReversed),
-            "toReversed",
-            0,
-            0,
-        ));
-        for (kind, name) in [
-            (TypedArrayNativeKind::Slice, "slice"),
-            (TypedArrayNativeKind::Subarray, "subarray"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(kind),
-                name,
                 2,
-                2,
-            ));
-        }
-        for (kind, name) in [
-            (TypedArrayNativeKind::Sort, "sort"),
-            (TypedArrayNativeKind::ToSorted, "toSorted"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(kind),
-                name,
-                1,
-                1,
-            ));
-        }
-        for (kind, name, length) in [
-            (ArrayJoinKind::Join, "join", 1),
-            (ArrayJoinKind::ToLocaleString, "toLocaleString", 0),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::Join(kind)),
-                name,
-                length,
-                length,
-            ));
-        }
-        for (kind, name) in [
-            (ArraySearchKind::IndexOf, "indexOf"),
-            (ArraySearchKind::LastIndexOf, "lastIndexOf"),
-            (ArraySearchKind::Includes, "includes"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::Search(kind)),
-                name,
-                1,
-                1,
-            ));
-        }
-
-        self.define_native_builtin_auto_init_batch(&base_prototype, realm, methods)?;
-
+            ),
+            method(F(K::Uint8Codec(Codec::SetFromHex)), "setFromHex", 1, 1),
+        ];
+        const UINT8_CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F(K::Uint8Codec(Codec::FromBase64)), "fromBase64", 1, 2),
+            method(F(K::Uint8Codec(Codec::FromHex)), "fromHex", 1, 1),
+        ];
+        let base_prototype = self.new_object(Some(object_prototype))?;
+        self.define_builtin_entries(&base_prototype, realm, PROTOTYPE)?;
         let base_constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::BaseConstructor),
+            F(K::BaseConstructor),
             0,
             "TypedArray",
             0,
         )?;
-        let methods = [
-            NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::From),
-                "from",
-                1,
-                3,
-            ),
-            NativeBuiltinProperty::new(
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::Of),
-                "of",
-                0,
-                0,
-            ),
-        ];
-        self.define_native_builtin_auto_init_batch(base_constructor.as_object(), realm, methods)?;
-
-        let species_getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Species),
-            0,
-            "get [Symbol.species]",
-            0,
-        )?;
-        let species = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::Species)
-                .expect("well-known symbol"),
-        );
-        if !self.define_own_property(
-            base_constructor.as_object(),
-            &species,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(species_getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "TypedArray species definition was rejected",
-            ));
-        }
+        self.define_builtin_entries(base_constructor.as_object(), realm, CONSTRUCTOR)?;
         self.define_constructor_relationship(&base_constructor, &base_prototype)?;
 
         let mut prototypes = Vec::with_capacity(TypedArrayElementKind::COUNT);
         let mut constructors = Vec::with_capacity(TypedArrayElementKind::COUNT);
         for element in TypedArrayElementKind::ALL {
+            let is_uint8 = element == TypedArrayElementKind::Uint8;
+            let bytes = i32::from(element.byte_length());
             let prototype = self.new_object(Some(&base_prototype))?;
             self.define_function_data_property(
                 &prototype,
                 "BYTES_PER_ELEMENT",
-                Value::Int(i32::from(element.byte_length())),
+                Value::Int(bytes),
                 false,
                 false,
             )?;
-            if element == TypedArrayElementKind::Uint8 {
-                let mut methods = Vec::new();
-                for (kind, name, length, min_readable_args) in [
-                    (Uint8ArrayCodecKind::ToBase64, "toBase64", 0, 1),
-                    (Uint8ArrayCodecKind::ToHex, "toHex", 0, 0),
-                    (Uint8ArrayCodecKind::SetFromBase64, "setFromBase64", 1, 2),
-                    (Uint8ArrayCodecKind::SetFromHex, "setFromHex", 1, 1),
-                ] {
-                    methods.push(NativeBuiltinProperty::new(
-                        NativeFunctionId::TypedArray(TypedArrayNativeKind::Uint8Codec(kind)),
-                        name,
-                        length,
-                        min_readable_args,
-                    ));
-                }
-                self.define_native_builtin_auto_init_batch(&prototype, realm, methods)?;
+            if is_uint8 {
+                self.define_builtin_entries(&prototype, realm, UINT8_PROTOTYPE)?;
             }
             let constructor = self.new_native_builtin(
                 base_constructor.as_object(),
                 realm,
-                NativeFunctionId::TypedArray(TypedArrayNativeKind::Constructor(element)),
+                F(K::Constructor(element)),
                 3,
                 element.name(),
                 3,
             )?;
+            let constructor_object = constructor.as_object();
             self.define_function_data_property(
-                constructor.as_object(),
+                constructor_object,
                 "BYTES_PER_ELEMENT",
-                Value::Int(i32::from(element.byte_length())),
+                Value::Int(bytes),
                 false,
                 false,
             )?;
-            if element == TypedArrayElementKind::Uint8 {
-                let mut methods = Vec::new();
-                for (kind, name, min_readable_args) in [
-                    (Uint8ArrayCodecKind::FromBase64, "fromBase64", 2),
-                    (Uint8ArrayCodecKind::FromHex, "fromHex", 1),
-                ] {
-                    methods.push(NativeBuiltinProperty::new(
-                        NativeFunctionId::TypedArray(TypedArrayNativeKind::Uint8Codec(kind)),
-                        name,
-                        1,
-                        min_readable_args,
-                    ));
-                }
-                self.define_native_builtin_auto_init_batch(
-                    constructor.as_object(),
-                    realm,
-                    methods,
-                )?;
+            if is_uint8 {
+                self.define_builtin_entries(constructor_object, realm, UINT8_CONSTRUCTOR)?;
             }
             self.define_constructor_relationship(&constructor, &prototype)?;
-            self.define_function_data_property(
-                global_object,
-                element.name(),
-                Value::Object(constructor.as_object().try_clone()?),
-                true,
-                true,
-            )?;
+            self.define_global_function(global_object, element.name(), &constructor)?;
             prototypes.push(prototype);
             constructors.push(constructor);
         }
@@ -432,79 +283,14 @@ impl Runtime {
         };
         let to_string_key =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToString)?;
-        let to_string = match self.get_property_in_realm(realm, &array_prototype, &to_string_key)? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => {
-                let _ = self.release_jsvalue(value);
-                return Err(RuntimeError::Invariant(
-                    "Array.prototype.toString was unavailable during TypedArray bootstrap",
-                ));
-            }
-        };
-        let mut alias = crate::engine::object::OwnedPropertyDescriptor::new(self);
-        alias.value = DescriptorField::Present(to_string);
-        alias.writable = DescriptorField::Present(true);
-        alias.enumerable = DescriptorField::Present(false);
-        alias.configurable = DescriptorField::Present(true);
-        if !self.define_ordinary_owned_property(&base_prototype, &to_string_key, &alias)? {
-            return Err(RuntimeError::Invariant(
-                "TypedArray toString alias definition was rejected",
-            ));
-        }
-
-        let values_key =
-            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
-        let values = match self.get_property_in_realm(realm, &base_prototype, &values_key)? {
-            Completion::Return(value) => value,
-            Completion::Throw(value) => {
-                let _ = self.release_jsvalue(value);
-                return Err(RuntimeError::Invariant(
-                    "TypedArray values was unavailable during iterator alias bootstrap",
-                ));
-            }
-        };
-        let iterator = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::Iterator)
-                .expect("well-known symbol"),
-        );
-        let mut alias = crate::engine::object::OwnedPropertyDescriptor::new(self);
-        alias.value = DescriptorField::Present(values);
-        alias.writable = DescriptorField::Present(true);
-        alias.enumerable = DescriptorField::Present(false);
-        alias.configurable = DescriptorField::Present(true);
-        if !self.define_ordinary_owned_property(&base_prototype, &iterator, &alias)? {
-            return Err(RuntimeError::Invariant(
-                "TypedArray iterator alias definition was rejected",
-            ));
-        }
-
-        let to_string_tag = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::ToStringTag)
-                .expect("well-known symbol"),
-        );
-        let tag_getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::ToStringTag),
-            0,
-            "get [Symbol.toStringTag]",
-            0,
-        )?;
-        if !self.define_own_property(
+        self.define_builtin_alias(
             &base_prototype,
-            &to_string_tag,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(tag_getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "TypedArray toStringTag definition was rejected",
-            ));
-        }
+            realm,
+            &array_prototype,
+            &to_string_key,
+            Name("toString"),
+        )?;
+        self.define_builtin_entries(&base_prototype, realm, PROTOTYPE_TAIL)?;
 
         let prototypes: [ObjectRef; TypedArrayElementKind::COUNT] =
             prototypes.try_into().map_err(|_| {
@@ -923,7 +709,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .typed_array
+            .typed_array()
             .ok_or(RuntimeError::Invariant(
                 "realm has no TypedArray intrinsics",
             ))?

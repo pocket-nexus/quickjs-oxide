@@ -66,8 +66,7 @@ pub(super) fn home_object(
         .slots
         .push(&mut frame.window, JsValue::Object(home.into_handle()))?;
     frame.resume_pc = frame.next_pc()?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     Ok(CallStep::Entered)
 }
 
@@ -100,8 +99,7 @@ pub(super) fn get_super(
             .map_err(runtime_error_to_vm_error)?;
         execution.slots.push(&mut frame.window, prototype)?;
         frame.resume_pc = frame.next_pc()?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_instruction(depth);
+        profile!(record_owned_instruction(depth));
         return Ok(CallStep::Entered);
     }
     Ok(CallStep::Bridge)
@@ -257,8 +255,9 @@ pub(super) fn reset_captured(
         reusable,
     )?;
     frame.resume_pc = frame.next_pc()?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(execution.slots.depth(&frame.window));
+    profile!(record_owned_instruction(
+        execution.slots.depth(&frame.window)
+    ));
     Ok(CallStep::Entered)
 }
 
@@ -283,8 +282,9 @@ pub(super) fn close_captured(
         frame.executable.local_definitions[usize::from(index)].kind,
     )?;
     frame.resume_pc = frame.next_pc()?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(execution.slots.depth(&frame.window));
+    profile!(record_owned_instruction(
+        execution.slots.depth(&frame.window)
+    ));
     Ok(CallStep::Entered)
 }
 
@@ -310,13 +310,12 @@ pub(super) fn catch(
             .regions
             .try_reserve(1)
             .map_err(|_| Error::internal("catch region allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "cold.regions",
             before,
             frame.cold.regions.capacity(),
-            size_of::<super::VmUnwindRegion>(),
-        );
+            size_of::<super::VmUnwindRegion>()
+        ));
         frame.cold.regions.push(super::VmUnwindRegion::Catch {
             target: target as usize,
             stack_depth: depth,
@@ -354,8 +353,7 @@ pub(super) fn catch(
         frame.cold.regions.pop();
     }
     frame.resume_pc = frame.next_pc()?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     Ok(CallStep::Entered)
 }
 
@@ -369,8 +367,7 @@ pub(super) fn throw(
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
     let completion = Completion::Throw(execution.slots.pop(&mut frame.window)?);
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     Ok(CallStep::Complete(completion))
 }
 
@@ -474,8 +471,7 @@ pub(super) fn binding(
                 execution.slots.push(&mut frame.window, value)?;
             }
             frame.resume_pc = frame.next_pc()?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
+            profile!(record_owned_instruction(depth));
             Ok(CallStep::Entered)
         }
         Err(error) => {
@@ -553,8 +549,7 @@ pub(super) fn initialize_derived(
                 }
             }
             frame.resume_pc = frame.next_pc()?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
+            profile!(record_owned_instruction(depth));
             Ok(CallStep::Entered)
         }
         Err(error) => {

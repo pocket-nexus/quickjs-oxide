@@ -1,8 +1,6 @@
 // Keep the String oracle implementations in separate modules so their private
 // helpers remain isolated while Cargo builds one integration target.
 
-use crate::quickjs_oracle;
-
 mod oracle_string_byte_codec;
 mod oracle_string_case;
 mod oracle_string_conversion_core;

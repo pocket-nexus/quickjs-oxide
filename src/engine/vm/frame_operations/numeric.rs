@@ -35,10 +35,9 @@ pub(in crate::engine::vm) fn commit_output(
     let mut previous = previous;
     let result = (|| {
         let frame = execution.frames.current_mut(id)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "numeric_legacy_fallthrough_recovery_decode",
-        );
+        profile!(record_owned_execution_event(
+            "numeric_legacy_fallthrough_recovery_decode"
+        ));
         let resume_pc = frame.next_pc()?;
         {
             let mut slots = execution.slots.borrow_frame_slots(&mut frame.window)?;
@@ -48,8 +47,7 @@ pub(in crate::engine::vm) fn commit_output(
             slots.push_pending(&mut value)?;
         }
         frame.resume_pc = resume_pc;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_instruction(_depth);
+        profile!(record_owned_instruction(_depth));
         Ok(())
     })();
     if let Some(value) = value {
@@ -115,8 +113,9 @@ pub(in crate::engine::vm) fn try_complete_primitive(
                     .map(|step| Some(NumericProgress::Deferred(step)));
             }
         };
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("numeric_completed_without_query");
+    profile!(record_owned_execution_event(
+        "numeric_completed_without_query"
+    ));
     let mut value = Some(output.value);
     let mut previous = output.previous;
     let result: Result<usize, Error> = (|| {
@@ -136,8 +135,7 @@ pub(in crate::engine::vm) fn try_complete_primitive(
         let _ = runtime.release_jsvalue(value);
     }
     frame.resume_pc = result?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     Ok(Some(NumericProgress::Completed))
 }
 
@@ -373,8 +371,7 @@ mod tests {
                 .unwrap()
                 .contains(&Opcode::CompareBranchStack)
         );
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
         #[cfg(feature = "profiling")]
         assert_eq!(
@@ -545,8 +542,7 @@ mod tests {
                 .unwrap()
                 .contains(&Opcode::Sub)
         );
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_eq!(context.eval(source).unwrap(), Value::Float(121.5));
         #[cfg(feature = "profiling")]
         {
@@ -569,8 +565,7 @@ mod tests {
     #[test]
     fn primitive_numeric_domains_complete_at_the_carried_boundary() {
         let (_, mut context) = test_context();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_eq!(
             context
                 .eval(
@@ -600,8 +595,7 @@ mod tests {
     #[test]
     fn number_only_arithmetic_needs_no_numeric_action() {
         let (_, mut context) = test_context();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_eq!(
             context
                 .eval("function subtract(a,b){return a-b}; subtract(123.5,2)")
@@ -623,8 +617,7 @@ mod tests {
     #[test]
     fn object_numeric_decline_keeps_throw_identity_and_conversion_count() {
         let (_, mut context) = test_context();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_eq!(
             context
                 .eval(
@@ -931,8 +924,7 @@ mod tests {
     #[test]
     fn primitive_numeric_completion_keeps_bigint_operators_and_two_update_results() {
         let (runtime, mut context) = test_context();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_script_true(
             &mut context,
             r#"(()=>{

@@ -7,7 +7,6 @@
 
 use super::typed_array_absolute_byte_offset;
 
-use crate::engine::builtins::native::{NativeFunctionId, TypedArrayNativeKind};
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::TypedArrayElementKind,
@@ -193,15 +192,6 @@ impl Runtime {
 pub(crate) enum TypedMutationKind {
     CopyWithin,
     Fill,
-}
-impl TypedMutationKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::CopyWithin) => Self::CopyWithin,
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Fill) => Self::Fill,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum TypedMutationStep {
     Complete(Completion),

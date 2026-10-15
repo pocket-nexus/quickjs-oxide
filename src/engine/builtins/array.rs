@@ -14,14 +14,15 @@ use crate::engine::builtins::native::{
     NativeFunctionId,
 };
 use crate::engine::heap::{AutoInitProperty, ContextId, ObjectData, PropertySlot};
-use crate::engine::object::builtin_properties::NativeBuiltinProperty;
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, BuiltinKey, method, species_getter, to_string_tag,
+};
 use crate::engine::object::operations::{
     ArrayLengthConversion, ArrayOwnKey, InternalDefineResult, PropertyDefineOutcome,
 };
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
 use crate::engine::object::{
-    AccessorValue, CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
-    PropertyKey, WellKnownSymbol,
+    CallableRef, DescriptorField, ObjectRef, PropertyKey, WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
@@ -178,282 +179,148 @@ impl Runtime {
         array_iterator_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let mut methods = vec![
-            NativeBuiltinProperty::new(NativeFunctionId::ArrayPrototypeAt, "at", 1, 1),
-            NativeBuiltinProperty::new(NativeFunctionId::ArrayPrototypeWith, "with", 2, 2),
-            NativeBuiltinProperty::new(NativeFunctionId::ArrayPrototypeConcat, "concat", 1, 0),
-        ];
-        for (kind, name) in [
-            (ArrayIterationKind::Every, "every"),
-            (ArrayIterationKind::Some, "some"),
-            (ArrayIterationKind::ForEach, "forEach"),
-            (ArrayIterationKind::Map, "map"),
-            (ArrayIterationKind::Filter, "filter"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::ArrayPrototypeIteration(kind),
-                name,
+        use ArrayFindKind as Find;
+        use ArrayIterationKind as Each;
+        use ArrayIteratorKind as Iter;
+        use NativeFunctionId as F;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::ArrayPrototypeAt, "at", 1, 1),
+            method(F::ArrayPrototypeWith, "with", 2, 2),
+            method(F::ArrayPrototypeConcat, "concat", 1, 0),
+            method(F::ArrayPrototypeIteration(Each::Every), "every", 1, 1),
+            method(F::ArrayPrototypeIteration(Each::Some), "some", 1, 1),
+            method(F::ArrayPrototypeIteration(Each::ForEach), "forEach", 1, 1),
+            method(F::ArrayPrototypeIteration(Each::Map), "map", 1, 1),
+            method(F::ArrayPrototypeIteration(Each::Filter), "filter", 1, 1),
+            method(
+                F::ArrayPrototypeReduce(ArrayReduceKind::Reduce),
+                "reduce",
                 1,
                 1,
-            ));
-        }
-        for (kind, name) in [
-            (ArrayReduceKind::Reduce, "reduce"),
-            (ArrayReduceKind::ReduceRight, "reduceRight"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::ArrayPrototypeReduce(kind),
-                name,
+            ),
+            method(
+                F::ArrayPrototypeReduce(ArrayReduceKind::ReduceRight),
+                "reduceRight",
                 1,
                 1,
-            ));
-        }
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeFill,
-            "fill",
-            1,
-            1,
-        ));
-        for (kind, name) in [
-            (ArrayFindKind::Find, "find"),
-            (ArrayFindKind::FindIndex, "findIndex"),
-            (ArrayFindKind::FindLast, "findLast"),
-            (ArrayFindKind::FindLastIndex, "findLastIndex"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::ArrayPrototypeFind(kind),
-                name,
+            ),
+            method(F::ArrayPrototypeFill, "fill", 1, 1),
+            method(F::ArrayPrototypeFind(Find::Find), "find", 1, 1),
+            method(F::ArrayPrototypeFind(Find::FindIndex), "findIndex", 1, 1),
+            method(F::ArrayPrototypeFind(Find::FindLast), "findLast", 1, 1),
+            method(
+                F::ArrayPrototypeFind(Find::FindLastIndex),
+                "findLastIndex",
                 1,
                 1,
-            ));
-        }
-        for (kind, name) in [
-            (ArraySearchKind::IndexOf, "indexOf"),
-            (ArraySearchKind::LastIndexOf, "lastIndexOf"),
-            (ArraySearchKind::Includes, "includes"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::ArrayPrototypeSearch(kind),
-                name,
+            ),
+            method(
+                F::ArrayPrototypeSearch(ArraySearchKind::IndexOf),
+                "indexOf",
                 1,
                 1,
-            ));
-        }
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeJoin(ArrayJoinKind::Join),
-            "join",
-            1,
-            1,
-        ));
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeToString,
-            "toString",
-            0,
-            0,
-        ));
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeJoin(ArrayJoinKind::ToLocaleString),
-            "toLocaleString",
-            0,
-            0,
-        ));
-        for (target, name, length) in [
-            (
-                NativeFunctionId::ArrayPrototypePop(ArrayPopKind::Pop),
-                "pop",
+            ),
+            method(
+                F::ArrayPrototypeSearch(ArraySearchKind::LastIndexOf),
+                "lastIndexOf",
+                1,
+                1,
+            ),
+            method(
+                F::ArrayPrototypeSearch(ArraySearchKind::Includes),
+                "includes",
+                1,
+                1,
+            ),
+            method(F::ArrayPrototypeJoin(ArrayJoinKind::Join), "join", 1, 1),
+            method(F::ArrayPrototypeToString, "toString", 0, 0),
+            method(
+                F::ArrayPrototypeJoin(ArrayJoinKind::ToLocaleString),
+                "toLocaleString",
+                0,
                 0,
             ),
-            (
-                NativeFunctionId::ArrayPrototypePush(ArrayPushKind::Push),
-                "push",
-                1,
-            ),
-            (
-                NativeFunctionId::ArrayPrototypePop(ArrayPopKind::Shift),
-                "shift",
-                0,
-            ),
-            (
-                NativeFunctionId::ArrayPrototypePush(ArrayPushKind::Unshift),
+            method(F::ArrayPrototypePop(ArrayPopKind::Pop), "pop", 0, 0),
+            method(F::ArrayPrototypePush(ArrayPushKind::Push), "push", 1, 0),
+            method(F::ArrayPrototypePop(ArrayPopKind::Shift), "shift", 0, 0),
+            method(
+                F::ArrayPrototypePush(ArrayPushKind::Unshift),
                 "unshift",
                 1,
+                0,
             ),
-        ] {
-            methods.push(NativeBuiltinProperty::new(target, name, length, 0));
-        }
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeReverse,
-            "reverse",
-            0,
-            0,
-        ));
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeToReversed,
-            "toReversed",
-            0,
-            0,
-        ));
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeSort,
-            "sort",
-            1,
-            1,
-        ));
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeToSorted,
-            "toSorted",
-            1,
-            1,
-        ));
-        for (kind, name) in [
-            (ArraySliceKind::Slice, "slice"),
-            (ArraySliceKind::Splice, "splice"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::ArrayPrototypeSlice(kind),
-                name,
+            method(F::ArrayPrototypeReverse, "reverse", 0, 0),
+            method(F::ArrayPrototypeToReversed, "toReversed", 0, 0),
+            method(F::ArrayPrototypeSort, "sort", 1, 1),
+            method(F::ArrayPrototypeToSorted, "toSorted", 1, 1),
+            method(F::ArrayPrototypeSlice(ArraySliceKind::Slice), "slice", 2, 2),
+            method(
+                F::ArrayPrototypeSlice(ArraySliceKind::Splice),
+                "splice",
                 2,
                 2,
-            ));
-        }
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeToSpliced,
-            "toSpliced",
-            2,
-            2,
-        ));
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::ArrayPrototypeCopyWithin,
-            "copyWithin",
-            2,
-            2,
-        ));
-        for (kind, name, length, min_readable_args) in [
-            (ArrayFlattenKind::FlatMap, "flatMap", 1, 1),
-            (ArrayFlattenKind::Flat, "flat", 0, 0),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::ArrayPrototypeFlatten(kind),
-                name,
-                length,
-                min_readable_args,
-            ));
-        }
-        for (kind, name) in [
-            (ArrayIteratorKind::Value, "values"),
-            (ArrayIteratorKind::Key, "keys"),
-            (ArrayIteratorKind::KeyAndValue, "entries"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::ArrayPrototypeIterator(kind),
-                name,
+            ),
+            method(F::ArrayPrototypeToSpliced, "toSpliced", 2, 2),
+            method(F::ArrayPrototypeCopyWithin, "copyWithin", 2, 2),
+            method(
+                F::ArrayPrototypeFlatten(ArrayFlattenKind::FlatMap),
+                "flatMap",
+                1,
+                1,
+            ),
+            method(
+                F::ArrayPrototypeFlatten(ArrayFlattenKind::Flat),
+                "flat",
                 0,
                 0,
-            ));
-        }
-
-        self.define_native_builtin_auto_init_batch(array_prototype, realm, methods)?;
-
-        self.define_native_builtin_auto_init(
-            array_iterator_prototype,
-            realm,
-            NativeFunctionId::ArrayIteratorNext,
-            "next",
-            0,
-            0,
-        )?;
-        self.define_to_string_tag(array_iterator_prototype, "Array Iterator")?;
-
+            ),
+            method(F::ArrayPrototypeIterator(Iter::Value), "values", 0, 0),
+            method(F::ArrayPrototypeIterator(Iter::Key), "keys", 0, 0),
+            method(
+                F::ArrayPrototypeIterator(Iter::KeyAndValue),
+                "entries",
+                0,
+                0,
+            ),
+        ];
+        const ITERATOR_PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::ArrayIteratorNext, "next", 0, 0),
+            to_string_tag("Array Iterator"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F::ArrayIsArray, "isArray", 1, 1),
+            method(F::ArrayFrom, "from", 1, 3),
+            method(F::ArrayOf, "of", 0, 0),
+        ];
+        const SPECIES: &[BuiltinEntry] = &[species_getter(F::ArraySpeciesGetter)];
+        self.define_builtin_entries(array_prototype, realm, PROTOTYPE)?;
+        self.define_builtin_entries(array_iterator_prototype, realm, ITERATOR_PROTOTYPE)?;
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::ArrayConstructor,
+            F::ArrayConstructor,
             1,
             "Array",
             1,
         )?;
-        let methods = [
-            NativeBuiltinProperty::new(NativeFunctionId::ArrayIsArray, "isArray", 1, 1),
-            NativeBuiltinProperty::new(NativeFunctionId::ArrayFrom, "from", 1, 3),
-            NativeBuiltinProperty::new(NativeFunctionId::ArrayOf, "of", 0, 0),
-        ];
-        self.define_native_builtin_auto_init_batch(constructor.as_object(), realm, methods)?;
-
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
         self.define_constructor_relationship(&constructor, array_prototype)?;
-
-        let getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::ArraySpeciesGetter,
-            0,
-            "get [Symbol.species]",
-            0,
-        )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
-        if !self.define_own_property(
-            constructor.as_object(),
-            &species,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Array species definition was rejected",
-            ));
-        }
-
+        self.define_builtin_entries(constructor.as_object(), realm, SPECIES)?;
         let values = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
-        let values = match self.get_property_in_realm(realm, array_prototype, &values)? {
-            Completion::Return(JsValue::Object(id)) => {
-                ObjectRef::from_owned_handle(self.clone(), id)
-            }
-            Completion::Return(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "Array.prototype.values was not callable during alias bootstrap",
-                ));
-            }
-            Completion::Throw(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "Array.prototype.values initialization threw during bootstrap",
-                ));
-            }
-        };
+        let values = self.define_builtin_alias(
+            array_prototype,
+            realm,
+            array_prototype,
+            &values,
+            BuiltinKey::Symbol(WellKnownSymbol::Iterator),
+        )?;
         self.0
             .state
             .borrow_mut()
             .heap
-            .attach_array_prototype_values(realm, values.object_id())?;
-        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
-        if !self.define_raw_property(
-            array_prototype,
-            &iterator,
-            &crate::engine::object::property::PropertyDescriptor {
-                value: Some(crate::engine::heap::RawValue::Object(values.object_id())),
-                writable: Some(true),
-                enumerable: Some(false),
-                configurable: Some(true),
-                ..Default::default()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Array iterator alias definition was rejected",
-            ));
-        }
+            .attach_array_prototype_values(realm, values)?;
         self.define_array_unscopables_auto_init(array_prototype, realm)?;
-
-        self.define_function_data_property(
-            global_object,
-            "Array",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_global_function(global_object, "Array", &constructor)?;
         self.0
             .state
             .borrow_mut()

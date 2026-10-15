@@ -94,14 +94,14 @@ impl GeneratorPrototype {
                 let context = state.heap.context(realm)?;
                 if self.creation.asynchronous {
                     context
-                        .async_generator
+                        .async_generator()
                         .ok_or(RuntimeError::Invariant(
                             "generator realm has no async-generator intrinsics",
                         ))?
                         .prototype
                 } else {
                     context
-                        .generator
+                        .generator()
                         .ok_or(RuntimeError::Invariant(
                             "generator realm has no generator intrinsics",
                         ))?

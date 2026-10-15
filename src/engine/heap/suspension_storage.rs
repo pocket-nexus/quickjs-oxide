@@ -93,12 +93,6 @@ impl Heap {
                 ));
             }
         }
-        let mut candidate = self.object(id)?.clone();
-        candidate.payload = ObjectPayload::Generator {
-            state,
-            activation: Some(Box::new(activation.clone())),
-        };
-        self.validate_object_layout(&candidate)?;
         let edges = generator_activation_edges(&activation);
         self.retain_edges_transactionally(&edges)?;
         let ObjectPayload::Generator {
@@ -286,15 +280,6 @@ impl Heap {
             }
         }
 
-        let mut candidate = self.object(id)?.clone();
-        let ObjectPayload::AsyncGenerator(candidate_data) = &mut candidate.payload else {
-            unreachable!("AsyncGenerator payload was validated before suspension")
-        };
-        candidate_data.state = state;
-        candidate_data.activation = Some(Box::new(activation.clone()));
-        candidate_data.resume_realm = resume_realm;
-        self.validate_object_layout(&candidate)?;
-
         let mut edges = generator_activation_edges(&activation);
         edges.extend(resume_realm.map(RawId::Context));
         self.retain_edges_transactionally(&edges)?;
@@ -442,14 +427,6 @@ impl Heap {
                 ));
             }
         }
-
-        let mut candidate = self.object(id)?.clone();
-        let ObjectPayload::AsyncFunctionState(candidate_data) = &mut candidate.payload else {
-            unreachable!("AsyncFunction payload was validated before suspension")
-        };
-        candidate_data.phase = AsyncFunctionPhase::Awaiting;
-        candidate_data.activation = Some(Box::new(activation.clone()));
-        self.validate_object_layout(&candidate)?;
 
         let edges = generator_activation_edges(&activation);
         self.retain_edges_transactionally(&edges)?;

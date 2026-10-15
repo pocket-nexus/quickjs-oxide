@@ -19,8 +19,7 @@ impl<T: Reusable> PooledBox<T> {
     pub(super) fn new(value: T) -> Self {
         let cached = T::pool().with(|pool| pool.borrow_mut().pop());
         let mut slot = cached.unwrap_or_else(|| {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(T::EVENT);
+            profile!(record_owned_execution_event(T::EVENT));
             Box::new(None)
         });
         *slot = Some(value);

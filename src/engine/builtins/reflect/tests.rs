@@ -2,6 +2,7 @@ use crate::engine::api::Context;
 use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native::NativeCProto;
 use crate::engine::test_support::test_context;
+use crate::engine::value::JsString;
 
 use super::*;
 

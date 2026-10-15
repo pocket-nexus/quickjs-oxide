@@ -4,7 +4,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::{
         iterator::step::{CloseStep, NextStep, finish_close, finish_next},
-        native::{ArrayPushKind, NativeFunctionId},
+        native::ArrayPushKind,
     },
     heap::ContextId,
     object::{
@@ -22,19 +22,6 @@ pub(crate) enum IterationKind {
     Entries,
     Group,
     MapGroup,
-}
-impl IterationKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::ObjectFromEntries => Some(Self::Entries),
-            NativeFunctionId::ObjectGroupBy => Some(Self::Group),
-            NativeFunctionId::Map(crate::engine::builtins::native::MapNativeKind::GroupBy)
-            | NativeFunctionId::Set(crate::engine::builtins::native::SetNativeKind::GroupBy) => {
-                Some(Self::MapGroup)
-            }
-            _ => None,
-        }
-    }
 }
 pub(crate) enum IterationStep {
     Complete(Completion),

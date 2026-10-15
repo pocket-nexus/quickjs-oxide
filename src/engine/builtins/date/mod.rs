@@ -10,7 +10,9 @@ mod parse;
 mod prototype;
 
 use super::*;
-use crate::engine::object::builtin_properties::NativeBuiltinProperty;
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, BuiltinKey, alias, method, symbol_method,
+};
 
 /// Side-effect-free ISO rendering used by the qjs diagnostic value printer.
 /// Invalid dates deliberately return `None`: pinned `JS_PrintValue` then falls
@@ -35,206 +37,103 @@ impl Runtime {
         date_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use DateGetFieldKind as Get;
+        use DateNativeKind as K;
+        use DateSetFieldKind as Set;
+        use DateStringMethod as Str;
+        const fn date(kind: K, name: &'static str) -> BuiltinEntry {
+            method(
+                NativeFunctionId::Date(kind),
+                name,
+                kind.length(),
+                kind.length(),
+            )
+        }
+        const fn get(kind: Get) -> BuiltinEntry {
+            date(K::GetField(kind), kind.name())
+        }
+        const fn set(kind: Set) -> BuiltinEntry {
+            date(K::SetField(kind), kind.name())
+        }
         // Source-table order matters even though OrdinaryOwnPropertyKeys later
-        // groups the symbol after all String keys.
-        for (kind, name) in [
-            (DateNativeKind::TimeValue, "valueOf"),
-            (DateNativeKind::String(DateStringMethod::String), "toString"),
-        ] {
-            self.define_native_builtin_auto_init(
-                date_prototype,
-                realm,
-                NativeFunctionId::Date(kind),
-                name,
-                kind.length(),
-                kind.length(),
-            )?;
-        }
-
-        let to_primitive = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToPrimitive)?);
-        let to_primitive_kind = DateNativeKind::ToPrimitive;
-        self.define_native_builtin_auto_init_with_key(
-            date_prototype,
-            realm,
-            &to_primitive,
-            NativeFunctionId::Date(to_primitive_kind),
-            "[Symbol.toPrimitive]",
-            to_primitive_kind.length(),
-            to_primitive_kind.length(),
-            PropertyFlags::data(false, false, true),
-        )?;
-
-        let utc_string_kind = DateNativeKind::String(DateStringMethod::UtcString);
-        self.define_native_builtin_auto_init(
-            date_prototype,
-            realm,
-            NativeFunctionId::Date(utc_string_kind),
-            "toUTCString",
-            utc_string_kind.length(),
-            utc_string_kind.length(),
-        )?;
-        // QuickJS explicitly materializes aliases instead of putting an
-        // AutoInit alias in the shape. Preserve both identity and the aliased
-        // function's original `name`.
-        let utc_string_key =
-            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToUTCString)?;
-        let utc_string = match self.get_property_in_realm(realm, date_prototype, &utc_string_key)? {
-            Completion::Return(crate::engine::value::JsValue::Object(id)) => {
-                ObjectRef::from_owned_handle(self.clone(), id)
-            }
-            Completion::Return(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "Date.prototype.toUTCString did not materialize as an object",
-                ));
-            }
-            Completion::Throw(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "Date.prototype.toUTCString materialization threw",
-                ));
-            }
-        };
-        let alias = self.intern_property_key("toGMTString")?;
-        if !self.define_raw_property(
-            date_prototype,
-            &alias,
-            &crate::engine::object::property::PropertyDescriptor {
-                value: Some(crate::engine::heap::RawValue::Object(
-                    utc_string.object_id(),
-                )),
-                writable: Some(true),
-                enumerable: Some(false),
-                configurable: Some(true),
-                ..Default::default()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Date.prototype.toGMTString alias rejected",
-            ));
-        }
-
-        // The UTC/GMT alias has already been materialized. The following
-        // table has no intermediate reads and can publish one final layout.
-        // The toUTCString read and toGMTString alias above are a publication boundary.
-        let mut methods = Vec::new();
-        for (kind, name) in [
-            (
-                DateNativeKind::String(DateStringMethod::IsoString),
-                "toISOString",
+        // groups the symbol after all String keys. QuickJS explicitly
+        // materializes aliases instead of putting an AutoInit alias in the
+        // shape, preserving both identity and the original function `name`.
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            date(K::TimeValue, "valueOf"),
+            date(K::String(Str::String), "toString"),
+            symbol_method(
+                WellKnownSymbol::ToPrimitive,
+                NativeFunctionId::Date(K::ToPrimitive),
+                "[Symbol.toPrimitive]",
+                K::ToPrimitive.length(),
+                PropertyFlags::data(false, false, true),
             ),
-            (
-                DateNativeKind::String(DateStringMethod::DateString),
-                "toDateString",
+            date(K::String(Str::UtcString), "toUTCString"),
+            alias(
+                BuiltinKey::Name("toGMTString"),
+                BuiltinKey::Name("toUTCString"),
             ),
-            (
-                DateNativeKind::String(DateStringMethod::TimeString),
-                "toTimeString",
-            ),
-            (
-                DateNativeKind::String(DateStringMethod::LocaleString),
-                "toLocaleString",
-            ),
-            (
-                DateNativeKind::String(DateStringMethod::LocaleDateString),
-                "toLocaleDateString",
-            ),
-            (
-                DateNativeKind::String(DateStringMethod::LocaleTimeString),
-                "toLocaleTimeString",
-            ),
-            (DateNativeKind::TimezoneOffset, "getTimezoneOffset"),
-            (DateNativeKind::TimeValue, "getTime"),
-        ] {
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::Date(kind),
-                name,
-                kind.length(),
-                kind.length(),
-            ));
-        }
-        for kind in DateGetFieldKind::ALL {
-            let target = DateNativeKind::GetField(kind);
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::Date(target),
-                kind.name(),
-                target.length(),
-                target.length(),
-            ));
-        }
-
-        let set_time = DateNativeKind::SetTime;
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::Date(set_time),
-            "setTime",
-            set_time.length(),
-            set_time.length(),
-        ));
-        for kind in DateSetFieldKind::ALL.into_iter().take(12) {
-            let target = DateNativeKind::SetField(kind);
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::Date(target),
-                kind.name(),
-                target.length(),
-                target.length(),
-            ));
-        }
-        let set_year = DateNativeKind::SetYear;
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::Date(set_year),
-            "setYear",
-            set_year.length(),
-            set_year.length(),
-        ));
-        for kind in [DateSetFieldKind::FullYear, DateSetFieldKind::UtcFullYear] {
-            let target = DateNativeKind::SetField(kind);
-            methods.push(NativeBuiltinProperty::new(
-                NativeFunctionId::Date(target),
-                kind.name(),
-                target.length(),
-                target.length(),
-            ));
-        }
-        let to_json = DateNativeKind::ToJson;
-        methods.push(NativeBuiltinProperty::new(
-            NativeFunctionId::Date(to_json),
-            "toJSON",
-            to_json.length(),
-            to_json.length(),
-        ));
-
-        self.define_native_builtin_auto_init_batch(date_prototype, realm, methods)?;
-
-        let constructor_kind = DateNativeKind::Constructor;
+            date(K::String(Str::IsoString), "toISOString"),
+            date(K::String(Str::DateString), "toDateString"),
+            date(K::String(Str::TimeString), "toTimeString"),
+            date(K::String(Str::LocaleString), "toLocaleString"),
+            date(K::String(Str::LocaleDateString), "toLocaleDateString"),
+            date(K::String(Str::LocaleTimeString), "toLocaleTimeString"),
+            date(K::TimezoneOffset, "getTimezoneOffset"),
+            date(K::TimeValue, "getTime"),
+            get(Get::Year),
+            get(Get::FullYear),
+            get(Get::UtcFullYear),
+            get(Get::Month),
+            get(Get::UtcMonth),
+            get(Get::Date),
+            get(Get::UtcDate),
+            get(Get::Hours),
+            get(Get::UtcHours),
+            get(Get::Minutes),
+            get(Get::UtcMinutes),
+            get(Get::Seconds),
+            get(Get::UtcSeconds),
+            get(Get::Milliseconds),
+            get(Get::UtcMilliseconds),
+            get(Get::Day),
+            get(Get::UtcDay),
+            date(K::SetTime, "setTime"),
+            set(Set::Milliseconds),
+            set(Set::UtcMilliseconds),
+            set(Set::Seconds),
+            set(Set::UtcSeconds),
+            set(Set::Minutes),
+            set(Set::UtcMinutes),
+            set(Set::Hours),
+            set(Set::UtcHours),
+            set(Set::Date),
+            set(Set::UtcDate),
+            set(Set::Month),
+            set(Set::UtcMonth),
+            date(K::SetYear, "setYear"),
+            set(Set::FullYear),
+            set(Set::UtcFullYear),
+            date(K::ToJson, "toJSON"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            date(K::Now, "now"),
+            date(K::Parse, "parse"),
+            date(K::Utc, "UTC"),
+        ];
+        self.define_builtin_entries(date_prototype, realm, PROTOTYPE)?;
+        let length = K::Constructor.length();
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::Date(constructor_kind),
-            constructor_kind.length(),
+            NativeFunctionId::Date(K::Constructor),
+            length,
             "Date",
-            i32::from(constructor_kind.length()),
+            i32::from(length),
         )?;
-        for (kind, name) in [
-            (DateNativeKind::Now, "now"),
-            (DateNativeKind::Parse, "parse"),
-            (DateNativeKind::Utc, "UTC"),
-        ] {
-            self.define_native_builtin_auto_init(
-                constructor.as_object(),
-                realm,
-                NativeFunctionId::Date(kind),
-                name,
-                kind.length(),
-                kind.length(),
-            )?;
-        }
-        self.define_function_data_property(
-            global_object,
-            "Date",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "Date", &constructor)?;
         self.define_constructor_relationship(&constructor, date_prototype)
     }
 

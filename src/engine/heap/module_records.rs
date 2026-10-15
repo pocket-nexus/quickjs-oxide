@@ -152,9 +152,6 @@ pub(crate) struct RawModuleRecord {
     /// the module record owns the object independently from the hidden
     /// closure cell used by source text which actually reads `import.meta`.
     pub(crate) import_meta: Option<ObjectId>,
-    pub(crate) declaration_order: Rc<[u16]>,
-    pub(crate) link_initializers: Rc<[ModuleLinkInitializer]>,
-    pub(crate) import_collisions: Rc<[ModuleImportCollision]>,
     pub(crate) requested_modules: Rc<Vec<ModuleRequest>>,
     pub(crate) imports: Rc<[ModuleImport]>,
     pub(crate) exports: Rc<[RawPublishedModuleExport]>,
@@ -237,31 +234,6 @@ impl RawModuleRecord {
     }
 }
 
-pub(in crate::engine::heap) fn module_record_has_pristine_construction_metadata(
-    record: &RawModuleRecord,
-) -> bool {
-    record.import_meta.is_none()
-        && record.declaration_order.is_empty()
-        && record.link_initializers.is_empty()
-        && record.import_collisions.is_empty()
-        && record.imports.is_empty()
-        && record.exports.is_empty()
-        && record.star_exports.is_empty()
-        && record.instance.is_none()
-        && matches!(record.namespace, RawModuleNamespaceState::Empty)
-        && matches!(record.link_status, RawModuleLinkStatus::Unlinked)
-        && matches!(record.evaluation, RawModuleEvaluationState::Unevaluated)
-        && !record.has_top_level_await
-        && record.evaluation_cycle_root.is_none()
-        && record.evaluation_promise.is_none()
-        && record.evaluation_resolve.is_none()
-        && record.evaluation_reject.is_none()
-        && record.pending_async_dependencies == 0
-        && record.async_parent_modules.is_empty()
-        && record.async_evaluation_order.is_none()
-        && record.link_realm.is_none()
-}
-
 pub(in crate::engine::heap) fn module_record_references_identity(
     record: &RawModuleRecord,
     module: ModuleId,
@@ -333,9 +305,6 @@ pub(in crate::engine::heap) fn aborted_module_record(record: &RawModuleRecord) -
         name: record.name.clone(),
         body: RawModuleRecordBody::Aborted,
         import_meta: None,
-        declaration_order: Rc::from([]),
-        link_initializers: Rc::from([]),
-        import_collisions: Rc::from([]),
         requested_modules: Rc::new(Vec::new()),
         imports: Rc::from([]),
         exports: Rc::from([]),

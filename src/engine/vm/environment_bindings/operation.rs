@@ -535,75 +535,17 @@ impl EnvironmentStep {
     }
 }
 impl EnvironmentResume {
-    pub(crate) fn take_has_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .has_object
-            .take()
-            .expect("EnvironmentStep Has object")
-    }
-    pub(crate) fn take_has_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .has_key
-            .take()
-            .expect("EnvironmentStep Has key")
-    }
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .read_object
-            .take()
-            .expect("EnvironmentStep Read object")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .read_key
-            .take()
-            .expect("EnvironmentStep Read key")
-    }
-    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .read_receiver
-            .take()
-            .expect("EnvironmentStep Read receiver")
-    }
-    pub(crate) fn take_set_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .set_object
-            .take()
-            .expect("EnvironmentStep Set object")
-    }
-    pub(crate) fn take_set_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .set_key
-            .take()
-            .expect("EnvironmentStep Set key")
-    }
-    pub(crate) fn take_set_value(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .set_value
-            .take()
-            .expect("EnvironmentStep Set value")
-    }
-    pub(crate) fn take_delete_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .delete_object
-            .take()
-            .expect("EnvironmentStep Delete object")
-    }
-    pub(crate) fn take_delete_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .delete_key
-            .take()
-            .expect("EnvironmentStep Delete key")
+    pending_takes! { 0.pending_effect =>
+        take_has_object(has_object) -> ObjectRef, "EnvironmentStep Has object";
+        take_has_key(has_key) -> PropertyKey, "EnvironmentStep Has key";
+        take_read_object(read_object) -> ObjectRef, "EnvironmentStep Read object";
+        take_read_key(read_key) -> PropertyKey, "EnvironmentStep Read key";
+        take_read_receiver(read_receiver) -> JsValue, "EnvironmentStep Read receiver";
+        take_set_object(set_object) -> ObjectRef, "EnvironmentStep Set object";
+        take_set_key(set_key) -> PropertyKey, "EnvironmentStep Set key";
+        take_set_value(set_value) -> JsValue, "EnvironmentStep Set value";
+        take_delete_object(delete_object) -> ObjectRef, "EnvironmentStep Delete object";
+        take_delete_key(delete_key) -> PropertyKey, "EnvironmentStep Delete key";
     }
 }
 const _: () = assert!(std::mem::size_of::<EnvironmentStep>() <= 64);

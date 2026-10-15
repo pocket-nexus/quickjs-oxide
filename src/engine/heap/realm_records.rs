@@ -170,6 +170,181 @@ pub struct TypedArrayRealmData {
     pub prototypes: [ObjectId; TypedArrayElementKind::COUNT],
 }
 
+/// Optional realm-owned intrinsic root slots, in Context GC edge order.
+///
+/// Ranged entries name the first of `PrimitiveKind::COUNT` primitive wrapper
+/// prototypes, `TypedArrayElementKind::COUNT` concrete TypedArray prototypes,
+/// and `NativeErrorKind::COUNT` native error prototypes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Intrinsic {
+    PrimitivePrototypes = 0,
+    DatePrototype = 5,
+    RegExpPrototype,
+    RegExpConstructor,
+    RegExpStringIteratorPrototype,
+    MapPrototype,
+    MapIteratorPrototype,
+    SetPrototype,
+    SetIteratorPrototype,
+    WeakMapPrototype,
+    WeakSetPrototype,
+    WeakRefPrototype,
+    FinalizationRegistryPrototype,
+    ArrayBufferPrototype,
+    SharedArrayBufferPrototype,
+    DataViewPrototype,
+    TypedArrayPrototypes,
+    GeneratorPrototype = 32,
+    GeneratorFunctionPrototype,
+    AsyncFunctionPrototype,
+    AsyncIteratorPrototype,
+    AsyncFromSyncIteratorPrototype,
+    AsyncGeneratorPrototype,
+    AsyncGeneratorFunctionPrototype,
+    PromisePrototype,
+    PromiseConstructor,
+    IteratorConstructor,
+    IteratorConcatPrototype,
+    IteratorHelperPrototype,
+    IteratorWrapPrototype,
+    FunctionConstructor,
+    ArrayConstructor,
+    /// Original `Array.prototype.values`, cached like QuickJS's
+    /// `JSContext.array_proto_values` for every later arguments object.
+    ArrayPrototypeValues,
+    /// Shared frozen poison callable of restricted function accessors.
+    ThrowTypeError,
+    /// Original `%eval%`, compared by direct-eval dispatch after user code
+    /// mutates the global property.
+    EvalFunction,
+    ErrorPrototype,
+    NativeErrorPrototypes,
+}
+
+const _: () = assert!(Intrinsic::DatePrototype as usize == PrimitiveKind::COUNT);
+const _: () = assert!(
+    Intrinsic::GeneratorPrototype as usize
+        == Intrinsic::TypedArrayPrototypes as usize + TypedArrayElementKind::COUNT
+);
+
+/// Number of optional intrinsic root slots.
+pub(crate) const INTRINSIC_COUNT: usize =
+    Intrinsic::NativeErrorPrototypes as usize + NativeErrorKind::COUNT;
+/// Presence bit of the three RegExp result shapes, past every slot bit.
+const REGEXP_RESULT_SHAPES: u64 = 1 << 63;
+const _: () = assert!(INTRINSIC_COUNT < 63);
+
+/// Optional intrinsic roots, each present only after its attach succeeded.
+///
+/// Slots are a bare array plus a presence mask rather than
+/// `[Option<ObjectId>; N]`, which would add a discriminant word per slot.
+#[derive(Debug)]
+pub struct IntrinsicRoots {
+    objects: [ObjectId; INTRINSIC_COUNT],
+    /// RegExp object shape, then the result, result-with-indices, and
+    /// indices-array shapes; rooted with `Intrinsic::RegExpPrototype`.
+    regexp_shapes: [ShapeId; 4],
+    present: u64,
+}
+
+impl IntrinsicRoots {
+    const fn new() -> Self {
+        Self {
+            objects: [ObjectId {
+                index: 0,
+                generation: 0,
+            }; INTRINSIC_COUNT],
+            regexp_shapes: [ShapeId {
+                index: 0,
+                generation: 0,
+            }; 4],
+            present: 0,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn get(&self, slot: usize) -> Option<ObjectId> {
+        if self.present & (1 << slot) == 0 {
+            None
+        } else {
+            Some(self.objects[slot])
+        }
+    }
+
+    pub(super) const fn set(&mut self, slot: usize, object: ObjectId) {
+        self.objects[slot] = object;
+        self.present |= 1 << slot;
+    }
+
+    /// Upper bound of the owned edges visited by [`Self::visit`], counting
+    /// all four RegExp shapes once the RegExp roots exist.
+    pub(super) const fn len(&self) -> usize {
+        self.present.count_ones() as usize + 3
+    }
+
+    pub(super) fn set_regexp_shapes(&mut self, shapes: &[ShapeId]) {
+        self.regexp_shapes[..shapes.len()].copy_from_slice(shapes);
+        if shapes.len() == 4 {
+            self.present |= REGEXP_RESULT_SHAPES;
+        }
+    }
+
+    /// Owned edges in Context GC order: every present slot, with the RegExp
+    /// shapes after the RegExp roots, and `globals` before the Error roots.
+    pub(super) fn visit<E>(
+        &self,
+        globals: [ObjectId; 2],
+        visit: &mut impl FnMut(RawId) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let objects = |slots: std::ops::Range<usize>| {
+            slots.filter_map(|slot| self.get(slot)).map(RawId::Object)
+        };
+        for edge in objects(0..Intrinsic::MapPrototype as usize) {
+            visit(edge)?;
+        }
+        if self.get(Intrinsic::RegExpPrototype as usize).is_some() {
+            let shapes = if self.present & REGEXP_RESULT_SHAPES == 0 {
+                1
+            } else {
+                4
+            };
+            for shape in &self.regexp_shapes[..shapes] {
+                visit(RawId::Shape(*shape))?;
+            }
+        }
+        let globals = globals.into_iter().map(RawId::Object);
+        for edge in objects(Intrinsic::MapPrototype as usize..Intrinsic::ErrorPrototype as usize)
+            .chain(globals)
+            .chain(objects(Intrinsic::ErrorPrototype as usize..INTRINSIC_COUNT))
+        {
+            visit(edge)?;
+        }
+        Ok(())
+    }
+}
+
+/// Single-slot `ContextData` accessors named after their intrinsics.
+macro_rules! intrinsic_accessors {
+    ($($name:ident => $slot:ident),* $(,)?) => {$(
+        #[inline]
+        #[must_use]
+        pub fn $name(&self) -> Option<ObjectId> {
+            self.intrinsic(Intrinsic::$slot)
+        }
+    )*};
+}
+
+/// `ContextData` accessors assembling one attached intrinsic group.
+macro_rules! intrinsic_groups {
+    ($($name:ident -> $group:ident { $($field:ident: $slot:ident),* $(,)? }),* $(,)?) => {$(
+        #[must_use]
+        pub fn $name(&self) -> Option<$group> {
+            Some($group { $($field: self.intrinsic(Intrinsic::$slot)?),* })
+        }
+    )*};
+}
+
 /// Realm-owned roots which participate in QuickJS's cycle graph.
 ///
 /// The bootstrap roots needed by ordinary script evaluation are explicit;
@@ -200,86 +375,15 @@ pub struct ContextData {
     /// Realm-local `%ArrayIteratorPrototype%`, whose prototype is the realm's
     /// `%IteratorPrototype%`.
     pub array_iterator_prototype: ObjectId,
-    /// Realm-local `%Array%` constructor, attached after the cyclic Context
-    /// has been published.
-    pub array_constructor: Option<ObjectId>,
-    /// Original realm-local `Array.prototype.values` identity. QuickJS caches
-    /// this callable in `JSContext.array_proto_values` and installs that
-    /// cached value on every later arguments object even if user code mutates
-    /// or deletes `Array.prototype.values`.
-    pub array_prototype_values: Option<ObjectId>,
     /// Realm-local `%StringIteratorPrototype%`, whose prototype is the realm's
     /// `%IteratorPrototype%`.
     pub string_iterator_prototype: ObjectId,
-    /// Realm-local equivalents of QuickJS `class_proto[JS_CLASS_*]` for the
-    /// five primitive wrapper classes. An absent entry remains an explicit
-    /// implementation gap rather than inheriting from the wrong prototype.
-    pub primitive_prototypes: [Option<ObjectId>; PrimitiveKind::COUNT],
-    /// Realm-local `%Date.prototype%`. Pinned QuickJS creates this as an
-    /// ordinary object without a Date time-value slot, then uses it as the
-    /// default prototype for genuine Date instances.
-    pub date_prototype: Option<ObjectId>,
-    /// Realm-local RegExp constructor, ordinary prototype, RegExp String
-    /// Iterator prototype, and canonical one-slot instance shape. They are
-    /// attached atomically after the cyclic Context has been published.
-    pub regexp: Option<RegExpRealmData>,
-    /// Realm-local Map constructor, ordinary prototype, and Map Iterator
-    /// prototype, attached atomically after the cyclic Context is published.
-    pub map: Option<MapRealmData>,
-    /// Realm-local Set ordinary prototype and Set Iterator prototype,
-    /// attached atomically after the cyclic Context is published.
-    pub set: Option<SetRealmData>,
-    /// Realm-local WeakMap ordinary prototype, attached after its public
-    /// constructor/prototype cycle is initialized.
-    pub weak_map: Option<WeakMapRealmData>,
-    /// Realm-local WeakSet ordinary prototype, attached after its public
-    /// constructor/prototype cycle is initialized.
-    pub weak_set: Option<WeakSetRealmData>,
-    /// Realm-local WeakRef and FinalizationRegistry class prototypes,
-    /// attached atomically by the shared weak-reference bootstrap step.
-    pub weak_ref: Option<WeakRefRealmData>,
-    /// Realm-local `%ArrayBuffer.prototype%` class root, attached after the
-    /// public constructor/prototype cycle has been initialized and validated.
-    pub array_buffer: Option<ArrayBufferRealmData>,
-    /// Realm-local `%SharedArrayBuffer.prototype%` class root, attached after
-    /// the public constructor/prototype cycle has been initialized.
-    pub shared_array_buffer: Option<SharedArrayBufferRealmData>,
-    /// Realm-local `%DataView.prototype%` class root, attached after the
-    /// public constructor/prototype cycle has been initialized and validated.
-    pub data_view: Option<DataViewRealmData>,
-    /// Realm-local concrete TypedArray prototype roots. The hidden abstract
-    /// prototype stays reachable through the concrete prototype graph.
-    pub typed_array: Option<TypedArrayRealmData>,
-    /// Realm-local `%GeneratorPrototype%` and
-    /// `%GeneratorFunction.prototype%`, attached after their reciprocal
-    /// constructor/prototype graph has been initialized.
-    pub generator: Option<GeneratorRealmData>,
-    /// Realm-local `%AsyncFunction.prototype%`, attached after its hidden
-    /// constructor/prototype graph has been initialized.
-    pub async_function: Option<AsyncFunctionRealmData>,
-    /// Realm-local async-iterator and async-generator intrinsic graph.
-    pub async_generator: Option<AsyncGeneratorRealmData>,
-    /// Realm-local `%Promise.prototype%` and `%Promise%`, attached atomically
-    /// after their reciprocal public property graph is initialized.
-    pub promise: Option<PromiseRealmData>,
-    /// Realm-local `%Iterator%` constructor plus the hidden Iterator Concat,
-    /// Iterator Helper, and Iterator Wrap class prototypes.
-    pub iterator: Option<IteratorRealmData>,
-    /// `%Function%`, published after the cyclic realm bootstrap has created
-    /// `%Function.prototype%` and the global object.
-    pub function_constructor: Option<ObjectId>,
-    /// Shared frozen poison callable used by legacy restricted function
-    /// accessors and strict arguments objects.
-    pub throw_type_error: Option<ObjectId>,
-    /// Original realm-local `%eval%` identity. QuickJS caches this callable
-    /// separately from the writable/configurable global `eval` property so
-    /// direct-eval dispatch can compare identity after user mutation.
-    pub eval_function: Option<ObjectId>,
     pub global_object: ObjectId,
     /// Null-prototype storage for global lexical bindings (`let`/`const`).
     pub global_var_object: ObjectId,
-    pub error_prototype: Option<ObjectId>,
-    pub native_error_prototypes: [Option<ObjectId>; NativeErrorKind::COUNT],
+    /// Optional intrinsic roots attached after the cyclic Context is
+    /// published; see [`Intrinsic`].
+    pub(crate) intrinsic_roots: IntrinsicRoots,
     /// QuickJS keeps Math.random's xorshift64* state on each JSContext.  Zero
     /// is reserved for the not-yet-seeded bootstrap state.
     pub(in crate::engine::heap) math_random_state: u64,
@@ -294,6 +398,10 @@ pub struct ContextData {
     /// `JSContext.loaded_modules` rather than a Rust-side parallel graph.
     pub(crate) loaded_modules: LoadedModuleCache,
 }
+
+// Optional roots share one presence mask rather than per-slot `Option`s.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<ContextData>() <= 984);
 
 impl ContextData {
     /// Construct the complete mandatory realm root set.
@@ -321,33 +429,10 @@ impl ContextData {
             array_prototype,
             iterator_prototype,
             array_iterator_prototype,
-            array_constructor: None,
-            array_prototype_values: None,
             string_iterator_prototype,
-            primitive_prototypes: [None; PrimitiveKind::COUNT],
-            date_prototype: None,
-            regexp: None,
-            map: None,
-            set: None,
-            weak_map: None,
-            weak_set: None,
-            weak_ref: None,
-            array_buffer: None,
-            shared_array_buffer: None,
-            data_view: None,
-            typed_array: None,
-            generator: None,
-            async_function: None,
-            async_generator: None,
-            promise: None,
-            iterator: None,
-            function_constructor: None,
-            throw_type_error: None,
-            eval_function: None,
             global_object,
             global_var_object,
-            error_prototype: None,
-            native_error_prototypes: [None; NativeErrorKind::COUNT],
+            intrinsic_roots: IntrinsicRoots::new(),
             math_random_state: 0,
             global_objects: Vec::new(),
             intrinsics: Vec::new(),
@@ -372,14 +457,18 @@ impl ContextData {
         kind: PrimitiveKind,
         prototype: ObjectId,
     ) -> Self {
-        self.primitive_prototypes[kind.index()] = Some(prototype);
+        self.intrinsic_roots.set(
+            Intrinsic::PrimitivePrototypes as usize + kind.index(),
+            prototype,
+        );
         self
     }
 
     /// Attach the ordinary Date prototype to this realm before publish.
     #[must_use]
     pub const fn with_date_prototype(mut self, prototype: ObjectId) -> Self {
-        self.date_prototype = Some(prototype);
+        self.intrinsic_roots
+            .set(Intrinsic::DatePrototype as usize, prototype);
         self
     }
 
@@ -390,12 +479,100 @@ impl ContextData {
         error_prototype: ObjectId,
         native_error_prototypes: [ObjectId; NativeErrorKind::COUNT],
     ) -> Self {
-        self.error_prototype = Some(error_prototype);
+        self.intrinsic_roots
+            .set(Intrinsic::ErrorPrototype as usize, error_prototype);
         let mut index = 0;
         while index < NativeErrorKind::COUNT {
-            self.native_error_prototypes[index] = Some(native_error_prototypes[index]);
+            let slot = Intrinsic::NativeErrorPrototypes as usize + index;
+            self.intrinsic_roots
+                .set(slot, native_error_prototypes[index]);
             index += 1;
         }
         self
+    }
+    #[inline]
+    #[must_use]
+    pub fn intrinsic(&self, slot: Intrinsic) -> Option<ObjectId> {
+        self.intrinsic_roots.get(slot as usize)
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn primitive_prototype(&self, kind: PrimitiveKind) -> Option<ObjectId> {
+        self.intrinsic_roots
+            .get(Intrinsic::PrimitivePrototypes as usize + kind.index())
+    }
+
+    intrinsic_accessors! {
+        date_prototype => DatePrototype,
+        function_constructor => FunctionConstructor,
+        array_constructor => ArrayConstructor,
+        array_prototype_values => ArrayPrototypeValues,
+        throw_type_error => ThrowTypeError,
+        eval_function => EvalFunction,
+        error_prototype => ErrorPrototype,
+    }
+
+    intrinsic_groups! {
+        map -> MapRealmData { prototype: MapPrototype, iterator_prototype: MapIteratorPrototype },
+        set -> SetRealmData { prototype: SetPrototype, iterator_prototype: SetIteratorPrototype },
+        weak_map -> WeakMapRealmData { prototype: WeakMapPrototype },
+        weak_set -> WeakSetRealmData { prototype: WeakSetPrototype },
+        weak_ref -> WeakRefRealmData {
+            weak_ref_prototype: WeakRefPrototype,
+            finalization_registry_prototype: FinalizationRegistryPrototype,
+        },
+        array_buffer -> ArrayBufferRealmData { prototype: ArrayBufferPrototype },
+        shared_array_buffer -> SharedArrayBufferRealmData { prototype: SharedArrayBufferPrototype },
+        data_view -> DataViewRealmData { prototype: DataViewPrototype },
+        generator -> GeneratorRealmData {
+            prototype: GeneratorPrototype,
+            function_prototype: GeneratorFunctionPrototype,
+        },
+        async_function -> AsyncFunctionRealmData { function_prototype: AsyncFunctionPrototype },
+        async_generator -> AsyncGeneratorRealmData {
+            async_iterator_prototype: AsyncIteratorPrototype,
+            async_from_sync_iterator_prototype: AsyncFromSyncIteratorPrototype,
+            prototype: AsyncGeneratorPrototype,
+            function_prototype: AsyncGeneratorFunctionPrototype,
+        },
+        promise -> PromiseRealmData {
+            prototype: PromisePrototype,
+            constructor: PromiseConstructor,
+        },
+        iterator -> IteratorRealmData {
+            constructor: IteratorConstructor,
+            concat_prototype: IteratorConcatPrototype,
+            helper_prototype: IteratorHelperPrototype,
+            wrap_prototype: IteratorWrapPrototype,
+        },
+    }
+
+    #[must_use]
+    pub fn native_error_prototype(&self, kind: NativeErrorKind) -> Option<ObjectId> {
+        self.intrinsic_roots
+            .get(Intrinsic::NativeErrorPrototypes as usize + kind.index())
+    }
+
+    #[must_use]
+    pub fn regexp(&self) -> Option<RegExpRealmData> {
+        let shapes = &self.intrinsic_roots.regexp_shapes;
+        Some(RegExpRealmData {
+            prototype: self.intrinsic(Intrinsic::RegExpPrototype)?,
+            constructor: self.intrinsic(Intrinsic::RegExpConstructor)?,
+            string_iterator_prototype: self.intrinsic(Intrinsic::RegExpStringIteratorPrototype)?,
+            object_shape: shapes[0],
+            result_shapes: (self.intrinsic_roots.present & REGEXP_RESULT_SHAPES != 0)
+                .then(|| [shapes[1], shapes[2], shapes[3]]),
+        })
+    }
+
+    #[must_use]
+    pub fn typed_array(&self) -> Option<TypedArrayRealmData> {
+        let first = Intrinsic::TypedArrayPrototypes as usize;
+        self.intrinsic_roots.get(first)?;
+        Some(TypedArrayRealmData {
+            prototypes: std::array::from_fn(|index| self.intrinsic_roots.objects[first + index]),
+        })
     }
 }

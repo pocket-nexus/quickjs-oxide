@@ -108,16 +108,14 @@ impl BytecodeCallRequest {
             cold,
             storage: arguments.take(),
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "call_callee_owner_transferred",
-        );
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_call_storage(
+        profile!(record_owned_execution_event(
+            "call_callee_owner_transferred"
+        ));
+        profile!(record_owned_call_storage(
             frame_bytes,
             flag_bytes,
-            entry.storage.original_arguments.capacity() * size_of::<JsValue>(),
-        );
+            entry.storage.original_arguments.capacity() * size_of::<JsValue>()
+        ));
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
         Ok(entry)

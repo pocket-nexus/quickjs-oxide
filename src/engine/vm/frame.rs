@@ -493,13 +493,12 @@ impl FrameStore {
         self.frames
             .try_reserve(1)
             .map_err(|_| Error::internal("execution frame allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_storage(
+        profile!(record_owned_storage(
             crate::engine::api::profiling::OwnedStorageEvent::FrameCapacity {
                 before,
                 after: self.frames.capacity(),
-            },
-        );
+            }
+        ));
         Ok(FramePush { store: self, next })
     }
 
@@ -555,10 +554,9 @@ impl FramePush<'_> {
         self.store.unmaterialized_depth += usize::from(!frame.active_frame.is_materialized());
         self.store.frames.push((id, frame));
         self.store.installed_wait_depth += depth as u128;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_storage(
-            crate::engine::api::profiling::OwnedStorageEvent::FramePush(self.store.frames.len()),
-        );
+        profile!(record_owned_storage(
+            crate::engine::api::profiling::OwnedStorageEvent::FramePush(self.store.frames.len())
+        ));
         id
     }
 }
