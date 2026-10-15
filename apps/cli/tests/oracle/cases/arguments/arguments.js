@@ -64,3 +64,5 @@ Function('a','return arguments.length+"|"+arguments[0]')(11)
 (function(){var target=function(a){return arguments.length+'|'+arguments[0]+'|'+arguments[1]+'|'+(arguments.callee===target)};return target.bind(null,3)(4)})()
 // case: Function apply supplies the target's exact actual argument vector
 (function(){var target=function(a){return arguments.length+'|'+arguments[0]+'|'+arguments[1]+'|'+(arguments.callee===target)};return target.apply(null,[5,6])})()
+// case: mapped arguments write-through (former Rust-only smoke)
+(function(a){a=41;arguments[0]++;return a})(1)

@@ -370,3 +370,5 @@
             for(var i=0;i<129;i++)values[i]=x;
             return [Math.sumPrecise(values),129*x];
         })()
+// case: sumPrecise smoke (former Rust-only smoke)
+Math.sumPrecise([20,22])
