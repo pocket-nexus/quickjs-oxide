@@ -19,6 +19,7 @@ const DIRECTORIES: &[&str] = &[
     "number",
     "object",
     "operators",
+    "parameters",
     "primitive_intrinsics",
     "program_declarations",
     "proxy_reflect",
@@ -110,6 +111,11 @@ fn object() {
 #[test]
 fn operators() {
     run_case_directory("operators");
+}
+
+#[test]
+fn parameters() {
+    run_case_directory("parameters");
 }
 
 #[test]

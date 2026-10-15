@@ -457,40 +457,6 @@ pub(crate) fn rust_error_observation(source: &str) -> String {
     take_rust_error(&runtime, &mut context)
 }
 
-pub(crate) fn observe_rust_with_engine_errors(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> String {
-    match context.eval(source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            checked_value_type(runtime, &value),
-            primitive_value_text_with_rust_float(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
-                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    runtime_error_string_property(runtime, context, &error, "name", description),
-                    runtime_error_string_property(runtime, context, &error, "message", description),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    checked_value_type(runtime, &value),
-                    primitive_value_text_with_rust_float(value),
-                ),
-            }
-        }
-        Err(error) => format!("engine|{error}"),
-    }
-}
-
 pub(crate) fn rust_case_observation(case: &Case) -> String {
     let (runtime, mut context) = host_runtime_context();
     match context.eval(case.source) {
@@ -624,40 +590,6 @@ pub(crate) fn rust_case_name_observation(case: &Case) -> String {
             "Rust engine failure for {} / {} ({:?}): {error}",
             case.group, case.description, case.source,
         ),
-    }
-}
-
-pub(crate) fn observe_rust(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> String {
-    match context.eval(source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            value_type(runtime, &value),
-            primitive_value_text_with_rust_float(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
-                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    runtime_error_string_property(runtime, context, &error, "name", description),
-                    runtime_error_string_property(runtime, context, &error, "message", description),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(runtime, &value),
-                    primitive_value_text_with_rust_float(value),
-                ),
-            }
-        }
-        Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
     }
 }
 

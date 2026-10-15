@@ -7,12 +7,6 @@ pub(crate) struct GroupedCase {
     pub(crate) expected: &'static str,
 }
 
-pub(crate) struct ExpectedCase {
-    pub(crate) description: &'static str,
-    pub(crate) source: &'static str,
-    pub(crate) expected: &'static str,
-}
-
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct NativeErrorObservation {
     pub(crate) name: Vec<u16>,

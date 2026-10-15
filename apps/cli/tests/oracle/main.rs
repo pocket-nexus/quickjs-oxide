@@ -50,7 +50,6 @@ mod number;
 mod number_kernels;
 mod object;
 mod operators;
-mod parameters;
 mod primitive_intrinsics;
 mod primitives;
 mod program_declarations;
