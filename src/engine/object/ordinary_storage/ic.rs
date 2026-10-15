@@ -28,7 +28,7 @@ fn record_selection_reason(_reason: &'static str) {
 }
 
 impl RuntimeState {
-    /// `base.field[index]` through a monomorphic data hit at `pc`, retaining
+    /// `base.field[index]` through a cached data hit at `pc`, retaining
     /// neither the receiver nor the field. The element is a snapshot like
     /// [`Self::try_array_value_read`]; the frame consumer copies it. Every
     /// miss is free of cache side effects.
@@ -50,7 +50,7 @@ impl RuntimeState {
         let field = executable
             .property_read_ic
             .site(pc)?
-            .peek_monomorphic_object(&self.heap, *receiver)?;
+            .peek_object(&self.heap, *receiver)?;
         self.try_array_value_read(&JsValue::Object(field), index)
     }
 
