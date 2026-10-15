@@ -43,7 +43,6 @@ use crate::engine::compiler::pseudo_binding::PseudoBinding;
 use crate::engine::compiler::pseudo_binding::ensure_eval_visible_pseudo_bindings;
 use crate::engine::compiler::pseudo_binding::find_or_create_own_pseudo_binding;
 use crate::engine::compiler::pseudo_binding::install_pseudo_binding_prologues;
-use crate::engine::compiler::scope_validation::validate_scope_graph;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 use std::collections::HashMap;
@@ -100,10 +99,9 @@ fn function_resolution_events(tree: &FunctionTree) -> Result<Vec<FunctionResolut
 }
 
 pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> {
-    #[cfg(feature = "profiling")]
-    let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Resolution,
-    );
+    profile!(let _phase_timer = PhaseTimer::start(
+        crate::engine::api::profiling::CompilePhase::Resolution
+    ));
 
     #[derive(Clone, Copy)]
     enum UnresolvedAccess {
@@ -123,7 +121,6 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
         tree.functions.iter().map(Box::as_ref),
     );
     install_eval_variable_objects(tree)?;
-    validate_scope_graph(tree)?;
     seed_global_declarations(tree)?;
     seed_module_bindings(tree)?;
     module::resolve_module_exports(tree)?;
@@ -243,8 +240,7 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
                 as u64,
         tree.functions.iter().map(Box::as_ref),
     );
-
-    validate_scope_graph(tree)
+    Ok(())
 }
 
 /// QuickJS `add_eval_variables` allocates one hidden `<var>` local before

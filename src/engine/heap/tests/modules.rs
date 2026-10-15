@@ -52,9 +52,6 @@ fn parsing_module_record(
         name: JsString::from_static(name),
         body: RawModuleRecordBody::Parsing,
         import_meta: None,
-        declaration_order: Rc::from([]),
-        link_initializers: Rc::from([]),
-        import_collisions: Rc::from([]),
         requested_modules: requests
             .iter()
             .map(|specifier| ModuleRequest {

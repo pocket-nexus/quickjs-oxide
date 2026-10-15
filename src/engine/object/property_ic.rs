@@ -471,8 +471,7 @@ impl crate::engine::heap::runtime::RuntimeState {
             }
         };
         self.retain_raw_root(raw.clone())?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("proxy_trap_read.hit");
+        profile!(record_owned_execution_event("proxy_trap_read.hit"));
         Ok(Some(
             crate::engine::value::JsValue::from_raw(raw)
                 .expect("cached trap excludes internal sentinels"),
@@ -794,8 +793,7 @@ impl SiteCacheTable<super::append_ic::PropertyAppendCache> {
 
 #[inline]
 fn event(name: &'static str) {
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(name);
+    profile!(record_owned_execution_event(name));
     #[cfg(not(feature = "profiling"))]
     let _ = name;
 }

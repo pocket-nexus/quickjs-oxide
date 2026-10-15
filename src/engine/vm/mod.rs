@@ -1,3 +1,17 @@
+/// Generates `take_*` accessors that move one field out of a pending effect.
+macro_rules! pending_takes {
+    (0 . $effect:ident => $($name:ident($field:ident) -> $ty:ty, $msg:literal;)*) => {
+        $(pub(crate) fn $name(&mut self) -> $ty {
+            self.0 .$effect.$field.take().expect($msg)
+        })*
+    };
+    ($effect:ident => $($name:ident($field:ident) -> $ty:ty, $msg:literal;)*) => {
+        $(pub(crate) fn $name(&mut self) -> $ty {
+            self.$effect.$field.take().expect($msg)
+        })*
+    };
+}
+
 #[cfg(test)]
 mod numeric_coercion_tests;
 #[cfg(test)]

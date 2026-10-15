@@ -116,11 +116,11 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
 > {
     transaction.peek(count + usize::from(method))?;
     let callable = transaction.peek(count)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_callsite_callee(runtime, executable, fault_pc, callable);
+    profile!(record_callsite_callee(
+        runtime, executable, fault_pc, callable
+    ));
     let crate::engine::value::JsValue::Object(function) = callable else {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("core.call_decline.general");
+        profile!(record_owned_execution_event("core.call_decline.general"));
         return Ok(None);
     };
     // A site hit is an ordinary callee authenticated here before; the
@@ -128,8 +128,7 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
     let site = executable.call_ic.site(fault_pc);
     if let Some((callee, closure)) = site.and_then(|site| site.hit(runtime.domain_id(), *function))
     {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("call_site_cache.hit");
+        profile!(record_owned_execution_event("call_site_cache.hit"));
         let checked = transaction.check_ordinary_call_depth(count, method)?;
         return Ok(Some((
             crate::engine::vm::call::ordinary::OrdinaryCall::from_site(*function, callee, closure),
@@ -140,33 +139,27 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
         .as_ref()
         .is_some_and(|hint| hint.matches_in_domain(runtime.domain_id(), *function))
     {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "core.call_decline.native_hint",
-        );
+        profile!(record_owned_execution_event(
+            "core.call_decline.native_hint"
+        ));
         return Ok(None);
     }
     let selected = match DirectSelection::select_in_state(runtime, state, *function) {
         Ok(DirectSelection::Ordinary(selected)) => selected,
         Ok(DirectSelection::General) => {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "core.call_decline.general",
-            );
+            profile!(record_owned_execution_event("core.call_decline.general"));
             return Ok(None);
         }
         Ok(DirectSelection::Native(native)) => {
             *native_hint =
                 Some(crate::engine::object::LinkedNativeSelection::from_direct_native(native));
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("core.call_decline.native");
+            profile!(record_owned_execution_event("core.call_decline.native"));
             return Ok(None);
         }
         Err(error) => {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "core.call_decline.authentication_error",
-            );
+            profile!(record_owned_execution_event(
+                "core.call_decline.authentication_error"
+            ));
             transaction.validate_call_value_domains(runtime, count, method)?;
             return Err(runtime_error_to_vm_error(error));
         }
@@ -175,15 +168,13 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
     let call = selected
         .authenticate_slot_in_state(runtime, state)
         .map_err(|error| {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "core.call_decline.authentication_error",
-            );
+            profile!(record_owned_execution_event(
+                "core.call_decline.authentication_error"
+            ));
             runtime_error_to_vm_error(error)
         })?;
     if let Some(site) = site {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("call_site_cache.fill");
+        profile!(record_owned_execution_event("call_site_cache.fill"));
         call.fill_site(site);
     }
     Ok(Some((call, checked)))
@@ -283,8 +274,7 @@ pub(super) fn enter_apply(
         tail,
         fallthrough,
     )?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("apply.entered_ordinary");
+    profile!(record_owned_execution_event("apply.entered_ordinary"));
     Ok(true)
 }
 
@@ -301,13 +291,10 @@ pub(super) fn enter_selected(
     selected_native: Option<crate::engine::object::LinkedNativeSelection>,
     fallthrough: crate::engine::vm::execute::FallthroughPc,
 ) -> Result<Entry, Error> {
-    #[cfg(feature = "profiling")]
-    let _sample = crate::engine::api::profiling::VmCallSample::enter();
+    profile!(let _sample = VmCallSample::enter());
     // End this scope before executing native code or installing the child.
     // It covers the direct driver, unlike the legacy bytecode.prepare timer.
-    #[cfg(feature = "profiling")]
-    let prepare_timer =
-        crate::engine::api::profiling::PhaseTimer::start_vm_sampled("direct.prepare.sampled");
+    profile!(let prepare_timer = PhaseTimer::start_vm_sampled("direct.prepare.sampled"));
     let logical_depth = execution.frames.logical_active_depth(runtime);
     let frame = execution.frames.current_mut(id)?;
     let count = usize::from(count);
@@ -343,22 +330,20 @@ pub(super) fn enter_selected(
         } else {
             entry_operand
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_callsite_callee(
+        profile!(record_callsite_callee(
             runtime,
             &profile_body.executable,
             profile_pc,
-            linked,
-        );
+            linked
+        ));
         let Some(selected) = crate::engine::vm::frames::NativeClassification::classify_linked(
             runtime, selected, linked,
         ) else {
             return Ok(Entry::General);
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "native_linked_classification_consumed",
-        );
+        profile!(record_owned_execution_event(
+            "native_linked_classification_consumed"
+        ));
         Prepared::Native(selected)
     } else {
         let callable_value = if method {
@@ -366,18 +351,14 @@ pub(super) fn enter_selected(
         } else {
             entry_operand
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_callsite_callee(
+        profile!(record_callsite_callee(
             runtime,
             &profile_body.executable,
             profile_pc,
-            callable_value,
-        );
+            callable_value
+        ));
         let selection_result = {
-            #[cfg(feature = "profiling")]
-            let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
-                "direct.select.sampled",
-            );
+            profile!(let _timer = PhaseTimer::start_vm_sampled("direct.select.sampled"));
             DirectSelection::select_jsvalue(runtime, callable_value)
         };
         match selection_result {
@@ -388,17 +369,15 @@ pub(super) fn enter_selected(
                 // slots or reenter JavaScript; metadata errors still follow
                 // the original operand-domain error order.
                 let checked = {
-                    #[cfg(feature = "profiling")]
-                    let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
-                        "ordinary.validate.sampled",
-                    );
+                    profile!(let _timer = PhaseTimer::start_vm_sampled(
+                        "ordinary.validate.sampled"
+                    ));
                     transaction.validate_ordinary_call_operands(count, method)?
                 };
                 let call = {
-                    #[cfg(feature = "profiling")]
-                    let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
-                        "ordinary.authenticate.sampled",
-                    );
+                    profile!(let _timer = PhaseTimer::start_vm_sampled(
+                        "ordinary.authenticate.sampled"
+                    ));
                     ordinary
                         .authenticate_slot(runtime)
                         .map_err(runtime_error_to_vm_error)?
@@ -430,12 +409,10 @@ pub(super) fn enter_selected(
                 return Ok(Entry::General);
             }
             call.install(runtime, execution, id, checked, tail, fallthrough)?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_call.carried_fallthrough",
-            );
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
+            profile!(record_owned_execution_event(
+                "ordinary_call.carried_fallthrough"
+            ));
+            profile!(record_owned_instruction(depth));
             Ok(Entry::Ordinary)
         }
         Prepared::Native(mut selected) => {
@@ -467,10 +444,7 @@ pub(super) fn enter_selected(
             {
                 execution.frames.materialize(runtime)?;
             } else {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "native_unobserved_entry",
-                );
+                profile!(record_owned_execution_event("native_unobserved_entry"));
             }
             let (receiver, arguments) = operands.take();
             let result = super::super::proxy_get_driver::start_native_with_classification(
@@ -612,8 +586,7 @@ pub(super) fn finish(
         .map_err(runtime_error_to_vm_error)?;
     if target.operation.is_some() {
         let value = execution.pending.take().expect("retired property return");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("property_return_direct");
+        profile!(record_owned_execution_event("property_return_direct"));
         return match crate::engine::vm::proxy_get_driver::reply(
             runtime,
             execution,
@@ -639,8 +612,7 @@ pub(super) fn finish(
             .release_jsvalue(value)
             .map_err(runtime_error_to_vm_error)?;
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("ordinary_return_direct");
+    profile!(record_owned_execution_event("ordinary_return_direct"));
     Ok(ReturnProgress::Returned)
 }
 
@@ -694,8 +666,7 @@ mod layout_tests {
             crate::engine::vm::driver::push_frame(&runtime, &mut execution, entry).unwrap();
         assert!(execution.selected_native.is_none());
         let runtime_owners = std::rc::Rc::strong_count(&runtime.0);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         let action = {
             let mut state = runtime.0.state.borrow_mut();
             execute_frame_in_state(&runtime, &mut state, &mut execution, parent).unwrap()

@@ -482,8 +482,7 @@ pub(super) fn initializer(
             let entry = request.prepare(runtime, &mut execution.call_storage)?;
             push_frame(runtime, execution, entry)?;
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_instruction(depth);
+        profile!(record_owned_instruction(depth));
         Ok(CallStep::Entered)
     })();
     match result {
@@ -574,8 +573,7 @@ fn finish_class_result(
             .map_err(runtime_error_to_vm_error)?;
     }
     frame.resume_pc = frame.next_pc()?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     match result {
         Ok(DefineClassOutcome::Defined {
             constructor,
@@ -832,8 +830,7 @@ mod ordinary_constructor_tests {
     #[test]
     fn ordinary_constructor_preserves_inputs_new_target_and_return_contracts() {
         let (runtime, mut context) = test_context();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         for source in [
             "(()=>{let marker={};function C(a,b){this.a=a;this.b=b;this.target=new.target;return 3}let p=C.prototype;for(let i=0;i<16;i++){let o=new C(marker,i);if(o.a!==marker||o.b!==i||o.target!==C||Object.getPrototypeOf(o)!==p)return false}return true})()",
             "(()=>{let result={};function C(){this.side=1;return result}void C.prototype;return new C()===result})()",

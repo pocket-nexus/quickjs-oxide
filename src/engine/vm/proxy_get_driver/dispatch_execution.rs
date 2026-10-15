@@ -17,10 +17,9 @@ pub(super) fn finish(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "dispatch_execution.finish.visit",
-        );
+        profile!(record_owned_execution_event(
+            "dispatch_execution.finish.visit"
+        ));
         match &mut *step {
             Step::RootDescriptor(result) => {
                 if !matches!(owner, ReturnOwner::Root)
@@ -208,10 +207,9 @@ pub(super) fn activation(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "dispatch_execution.activation.visit",
-        );
+        profile!(record_owned_execution_event(
+            "dispatch_execution.activation.visit"
+        ));
         let realm = query.realm;
         match &mut *step {
             Step::ResumeFrame {
@@ -323,10 +321,9 @@ pub(super) fn prepare(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "dispatch_execution.prepare.visit",
-        );
+        profile!(record_owned_execution_event(
+            "dispatch_execution.prepare.visit"
+        ));
         let realm = query.realm;
         match &mut *step {
             Step::ModuleCallbackOperation {

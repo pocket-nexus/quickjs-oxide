@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate exact Unicode property ranges and code-point sequences through the
 # checksum-pinned QuickJS 2026-06-04 libunicode implementation in a test-only
-# generator.
+# generator, then compact them with encode-unicode-property-tables.py.
 # Product builds consume only the generated Rust arrays.
 
 set -euo pipefail
@@ -71,7 +71,8 @@ trap 'rm -rf -- "$tmp_dir"; rm -f -- "$tmp_output"' EXIT HUP INT TERM
 cc -std=c11 -O2 -I "$source_dir" \
     "$helper" "$source_dir/cutils.c" \
     -o "$tmp_dir/dump-unicode-properties"
-"$tmp_dir/dump-unicode-properties" >"$tmp_output"
+"$tmp_dir/dump-unicode-properties" >"$tmp_dir/expanded.rs"
+python3 "$tool_dir/encode-unicode-property-tables.py" <"$tmp_dir/expanded.rs" >"$tmp_output"
 
 mkdir -p -- "$(dirname -- "$output_file")"
 chmod 0644 "$tmp_output"

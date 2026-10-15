@@ -1,0 +1,319 @@
+// DIRECT_CASES
+// case: assignment returns its unconsumed RHS while writing every leaf form
+(function(){
+            var shorthand=0,holder={fixed:0,computed:0},key='dynamic';
+            var source={shorthand:40,fixed:1,dynamic:1},result;
+            result=({shorthand,fixed:holder.fixed,[key]:holder.computed}=source);
+            return (result===source)+'|'+shorthand+'|'+holder.fixed+'|'+holder.computed;
+        })()
+// case: fixed numeric and computed symbol source keys are supported
+(function(){
+            var symbol=Symbol('value'),numeric,symbolic;
+            ({1:numeric,[symbol]:symbolic}={1:40,[symbol]:2});
+            return numeric+'|'+symbolic;
+        })()
+// case: primitive sources are converted with ToObject
+(function(){
+            var first,length,missing;
+            ({0:first,length,missing=40}='ab');
+            return first+'|'+length+'|'+missing;
+        })()
+// case: null and undefined fail before any target Reference is evaluated
+(function(){
+            var calls=0,target={};
+            function receiver(){calls++;return target}
+            var nullError,undefinedError;
+            try{({p:receiver().p}=null)}catch(error){nullError=error.name}
+            try{({p:receiver().p}=undefined)}catch(error){undefinedError=error.name}
+            return nullError+'|'+undefinedError+'|'+calls;
+        })()
+// case: defaults use strict undefined and perform NamedEvaluation
+(function(){
+            var zero,nil,missing,named,arrow,log='';
+            ({
+                zero=(log+='zero|',9),
+                nil=(log+='nil|',8),
+                missing=(log+='missing|',40),
+                named=function(){},
+                arrow=()=>{}
+            }={zero:0,nil:null});
+            return zero+'|'+nil+'|'+missing+'|'+named.name+'|'+arrow.name+'|'+log;
+        })()
+// REFERENCE_ORDER_CASES
+// case: a fixed leaf prepares its member Reference before Get and puts after default
+(function(){
+            var log='',target={},source={};
+            function receiver(){log+='R|';return target}
+            Object.defineProperty(source,'p',{get:function(){log+='G|';return undefined}});
+            Object.defineProperty(target,'value',{set:function(value){log+='P:'+value+'|'}});
+            ({p:receiver().value=(log+='D|',42)}=source);
+            return log;
+        })()
+// case: a computed target evaluates base and key before Get but coerces key after Get
+(function(){
+            var log='',target={},source={},key={};
+            function receiver(){log+='R|';return target}
+            function keyExpression(){log+='E|';return key}
+            key[Symbol.toPrimitive]=function(hint){log+='K:'+hint+'|';return 'value'};
+            Object.defineProperty(source,'p',{get:function(){log+='G|';return 42}});
+            Object.defineProperty(target,'value',{set:function(value){log+='P:'+value+'|'}});
+            ({p:receiver()[keyExpression()]}=source);
+            return log;
+        })()
+// case: a computed source key is coerced before the target Reference and source Get
+(function(){
+            var log='',target={},source={},key={};
+            function receiver(){log+='R|';return target}
+            key[Symbol.toPrimitive]=function(hint){log+='K:'+hint+'|';return 'p'};
+            Object.defineProperty(source,'p',{get:function(){log+='G|';return 42}});
+            Object.defineProperty(target,'value',{set:function(value){log+='P:'+value+'|'}});
+            ({[(log+='E|',key)]:receiver().value}=source);
+            return log;
+        })()
+// case: with retains an existing identifier Reference across source deletion
+(function(){
+            var value='outer',scope={value:'scope'},source={};
+            Object.defineProperty(source,'p',{get:function(){delete scope.value;return 40}});
+            with(scope){({p:value}=source)}
+            return value+'|'+scope.value;
+        })()
+// case: with resolves a missing identifier before the source getter adds it
+(function(){
+            var value='outer',scope={},source={};
+            Object.defineProperty(source,'p',{get:function(){scope.value='late';return 41}});
+            with(scope){({p:value}=source)}
+            return value+'|'+scope.value;
+        })()
+// case: super fixed and computed leaves retain depth-three References
+(function(){
+            var log='',key={};
+            key[Symbol.toPrimitive]=function(hint){log+='K:'+hint+'|';return 'second'};
+            var proto={
+                set first(value){log+='P1:'+value+'|';this.left=value},
+                set second(value){log+='P2:'+value+'|';this.right=value}
+            };
+            var home={
+                __proto__:proto,
+                run(source){
+                    ({a:super.first,b:super[(log+='E|',key)]}=source);
+                    return this.left+'|'+this.right+'|'+log;
+                }
+            };
+            var source={a:40};
+            Object.defineProperty(source,'b',{get:function(){log+='G|';return 2}});
+            return home.run(source);
+        })()
+// case: a nested array reads the outer property before preparing its inner Reference
+(function(){
+            var log='',target={},source={};
+            function receiver(){log+='R|';return target}
+            Object.defineProperty(source,'p',{get:function(){log+='G|';return [42]}});
+            Object.defineProperty(target,'value',{set:function(value){log+='P:'+value+'|'}});
+            ({p:[receiver().value]}=source);
+            return log;
+        })()
+// case: a nested object reads each outer property before that level prepares a leaf Reference
+(function(){
+            var log='',target={},inner={},source={};
+            function receiver(){log+='R|';return target}
+            Object.defineProperty(source,'p',{get:function(){log+='G|';return inner}});
+            Object.defineProperty(inner,'q',{get:function(){log+='H|';return 42}});
+            Object.defineProperty(target,'value',{set:function(value){log+='P:'+value+'|'}});
+            ({p:{q:receiver().value}}=source);
+            return log;
+        })()
+// NESTED_CASES
+// case: object patterns recurse into arrays objects defaults elisions and rest
+(function(){
+            var first,second,third,tail,last;
+            ({a:[first,{b:second=40},,...tail],c:{d:[third],e:last=5}}=
+              {a:[1,{b:undefined},9,2,3],c:{d:[4]}});
+            return first+'|'+second+'|'+tail.join(',')+'|'+third+'|'+last;
+        })()
+// case: array patterns recurse back into object assignments
+(function(){
+            var first,second,rest;
+            [{a:first},{b:[second],...rest}]=[{a:40},{b:[2],c:3,d:4}];
+            return first+'|'+second+'|'+Object.keys(rest).join(',')+'|'+rest.c+'|'+rest.d;
+        })()
+// case: nested object defaults run before recursively converting the replacement
+(function(){
+            var log='',value;
+            function fallback(){log+='D|';return{q:42}}
+            var source={};
+            Object.defineProperty(source,'p',{get:function(){log+='G|';return undefined}});
+            ({p:{q:value}=fallback()}=source);
+            return value+'|'+log;
+        })()
+// case: nested array defaults run before acquiring and closing their iterator
+(function(){
+            var log='',value,done=false;
+            var iterator={
+                [Symbol.iterator]:function(){log+='I|';return this},
+                next:function(){log+='N|';if(done)return{done:true};done=true;return{value:42,done:false}},
+                return:function(){log+='C|';return{done:true}}
+            };
+            ({p:[value]=(log+='D|',iterator)}={});
+            return value+'|'+log;
+        })()
+// case: nested object rest can itself be reached through an array pattern
+(function(){
+            var head,rest;
+            [{head,...rest}]=[{head:40,a:1,b:2}];
+            return head+'|'+Object.keys(rest).join(',')+'|'+rest.a+'|'+rest.b;
+        })()
+// case: an object rest target may be another destructuring pattern through array rest
+(function(){
+            var first,others;
+            ({items:[first,...{length:others}]}={items:[40,1,2,3]});
+            return first+'|'+others;
+        })()
+// REST_CASES
+// case: rest excludes fixed computed and symbol keys after one key coercion
+(function(){
+            var calls=0,key={},symbol=Symbol('symbol'),fixed,dynamic,symbolic,rest;
+            key[Symbol.toPrimitive]=function(hint){calls++;return hint==='string'?'dynamic':'wrong'};
+            var source={fixed:40,dynamic:1,keep:2,[symbol]:3};
+            ({fixed,[key]:dynamic,[symbol]:symbolic,...rest}=source);
+            return calls+'|'+fixed+'|'+dynamic+'|'+symbolic+'|'+
+                Object.keys(rest).join(',')+'|'+rest.keep+'|'+
+                Object.getOwnPropertySymbols(rest).length;
+        })()
+// case: rest canonicalizes duplicate numeric and string exclusions
+(function(){
+            var first,second,rest;
+            ({1:first,['1']:second,...rest}={1:40,keep:2});
+            return first+'|'+second+'|'+Object.keys(rest).join(',')+'|'+rest.keep;
+        })()
+// case: rest copies only enumerable own properties and materializes getter values
+(function(){
+            var calls=0,source=Object.create({inherited:1}),rest;
+            Object.defineProperty(source,'copied',{enumerable:true,get:function(){calls++;return 42}});
+            Object.defineProperty(source,'hidden',{enumerable:false,value:2});
+            ({...rest}=source);
+            var descriptor=Object.getOwnPropertyDescriptor(rest,'copied');
+            return calls+'|'+rest.copied+'|'+('hidden' in rest)+'|'+('inherited' in rest)+'|'+
+                descriptor.writable+'|'+descriptor.enumerable+'|'+descriptor.configurable;
+        })()
+// case: a computed rest target evaluates its Reference before copy and coerces after copy
+(function(){
+            var log='',target={},source={},key={};
+            function receiver(){log+='R|';return target}
+            function keyExpression(){log+='E|';return key}
+            key[Symbol.toPrimitive]=function(hint){log+='K:'+hint+'|';return 'rest'};
+            Object.defineProperty(source,'a',{enumerable:true,get:function(){log+='G|';return 42}});
+            Object.defineProperty(target,'rest',{set:function(value){log+='P:'+value.a+'|'}});
+            ({...receiver()[keyExpression()]}=source);
+            return log;
+        })()
+// case: a rest Reference failure happens before source getters are copied
+(function(){
+            var log='',source={};
+            Object.defineProperty(source,'a',{enumerable:true,get:function(){log+='G|';return 1}});
+            function receiver(){log+='R|';throw 'reference-error'}
+            try{({...receiver().rest}=source)}catch(error){return log+'caught:'+error}
+        })()
+// case: a copy failure prevents target-key coercion and Put
+(function(){
+            var log='',target={},source={},key={};
+            key[Symbol.toPrimitive]=function(){log+='K|';return 'rest'};
+            Object.defineProperty(source,'a',{enumerable:true,get:function(){log+='G|';throw 'copy-error'}});
+            Object.defineProperty(target,'rest',{set:function(){log+='P|'}});
+            try{({...target[key]}=source)}catch(error){return log+'caught:'+error}
+        })()
+// case: rest accepts fixed member and super assignment targets
+(function(){
+            var holder={};
+            ({a:holder.a,...holder.rest}={a:40,b:1});
+            var proto={set rest(value){this.saved=value}};
+            var home={__proto__:proto,run(source){({...super.rest}=source);return this.saved}};
+            var saved=home.run({c:2,d:3});
+            return holder.a+'|'+holder.rest.b+'|'+saved.c+'|'+saved.d;
+        })()
+// case: rest preserves the original assignment result identity
+(function(){
+            var rest,source={a:40,b:2},result;
+            result=({a:rest,...rest}=source);
+            return (result===source)+'|'+rest.b;
+        })()
+// LOOP_CASES
+// case: for-of object assignment heads update identifiers across iterations
+(function(){
+            var left,right,log='';
+            for({left,right} of [{left:1,right:2},{left:40,right:2}])log+=left+':'+right+'|';
+            return log+'last:'+left+':'+right;
+        })()
+// case: for-in object assignment heads destructure each yielded string key
+(function(){
+            var first,second,log='';
+            for({0:first,1:second} in {ab:1,cd:2})log+=first+second+'|';
+            return log+'last:'+first+second;
+        })()
+// case: for-of object heads support member targets nested arrays and rest
+(function(){
+            var target={};
+            for({head:target.head,items:[target.first],...target.rest} of
+                [{head:1,items:[2],extra:3},{head:40,items:[2],extra:4}]){}
+            return target.head+'|'+target.first+'|'+target.rest.extra;
+        })()
+// case: for-of prepares a with Reference independently for each yielded object
+(function(){
+            var value='outer',scope={value:0},log='';
+            with(scope){for({p:value} of [{p:40},{p:2}])log+=value+'|'}
+            return log+value+'|'+scope.value;
+        })()
+// ITERATOR_CLOSE_CASES
+// case: an object-head Put failure closes the outer iterator and keeps the pending fault
+(function(){
+            var log='',target={},done=false,iterator={
+                [Symbol.iterator]:function(){log+='I|';return this},
+                next:function(){log+='N|';if(done)return{done:true};done=true;return{value:{p:1},done:false}},
+                return:function(){log+='C|';throw 'close-error'}
+            };
+            Object.defineProperty(target,'value',{set:function(){log+='P|';throw 'put-error'}});
+            try{for({p:target.value} of iterator){}}
+            catch(error){return log+'caught:'+error}
+        })()
+// case: nested assignment failure closes the inner then outer iterator
+(function(){
+            var log='',target={},outerDone=false,inner={
+                [Symbol.iterator]:function(){log+='II|';return this},
+                next:function(){log+='IN|';return{value:1,done:false}},
+                return:function(){log+='IC|';throw 'inner-close'}
+            },outer={
+                [Symbol.iterator]:function(){log+='OI|';return this},
+                next:function(){log+='ON|';if(outerDone)return{done:true};outerDone=true;return{value:{p:inner},done:false}},
+                return:function(){log+='OC|';throw 'outer-close'}
+            };
+            Object.defineProperty(target,'value',{set:function(){log+='P|';throw 'put-error'}});
+            try{for({p:[target.value]} of outer){}}
+            catch(error){return log+'caught:'+error}
+        })()
+// case: successful nested short patterns close only their inner iterators
+(function(){
+            var log='',value,outerIndex=0;
+            function inner(next){var done=false;return{
+                [Symbol.iterator]:function(){log+='I'+next+'|';return this},
+                next:function(){log+='N'+next+'|';if(done)return{done:true};done=true;return{value:next,done:false}},
+                return:function(){log+='C'+next+'|';return{done:true}}
+            }}
+            var outer={
+                [Symbol.iterator]:function(){log+='OI|';return this},
+                next:function(){outerIndex++;return outerIndex<3?{value:{p:inner(outerIndex)},done:false}:{done:true}},
+                return:function(){log+='OC|';return{done:true}}
+            };
+            for({p:[value]} of outer)log+='V'+value+'|';
+            return log;
+        })()
+// case: a source getter failure in an object head closes the outer iterator
+(function(){
+            var log='',value,done=false,source={},iterator;
+            Object.defineProperty(source,'p',{get:function(){log+='G|';throw 'get-error'}});
+            iterator={
+                [Symbol.iterator]:function(){log+='I|';return this},
+                next:function(){log+='N|';if(done)return{done:true};done=true;return{value:source,done:false}},
+                return:function(){log+='C|';return{done:true}}
+            };
+            try{for({p:value} of iterator){}}
+            catch(error){return log+'caught:'+error}
+        })()

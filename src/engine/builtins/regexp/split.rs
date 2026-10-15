@@ -57,8 +57,7 @@ impl Runtime {
         // original allocation and append timing using the shared constructor
         // kernel, which defines own C/W/E data without inherited setters.
         self.append_fresh_array_value_jsvalue(result, value)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("regexp_result.split_append");
+        profile!(record_owned_execution_event("regexp_result.split_append"));
         *length = next;
         Ok(())
     }
@@ -108,8 +107,7 @@ impl Runtime {
         let realm_regexp = state
             .heap
             .context(realm)?
-            .regexp
-            .as_ref()
+            .regexp()
             .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))?;
         let (constructor, prototype) = (realm_regexp.constructor, realm_regexp.prototype);
         match super::replace::raw_regexp_property_slot(
@@ -175,11 +173,10 @@ impl Runtime {
             &standard.pattern,
             &JsString::from_owned_latin1(flags.into_bytes()),
         )?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_runtime_event(
+        profile!(record_runtime_event(
             "regexp_split.standard",
-            "core.regexp_split.standard",
-        );
+            "core.regexp_split.standard"
+        ));
         let input = standard.input;
         let flat = input.linearize();
         let size = flat.len();
@@ -529,8 +526,7 @@ impl RegExpSplitResume {
         let key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         self.0.phase = Phase::Set(state);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("regexp_split.next_box_reused");
+        profile!(record_owned_execution_event("regexp_split.next_box_reused"));
         Ok(RegExpSplitStep::make_set(object, key, value, self))
     }
     fn execute(
@@ -547,8 +543,7 @@ impl RegExpSplitResume {
         } else {
             Phase::Exec(state)
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("regexp_split.exec_box_reused");
+        profile!(record_owned_execution_event("regexp_split.exec_box_reused"));
         Ok(RegExpSplitStep::make_exec(regexp, input, self))
     }
     fn captures(
@@ -572,10 +567,9 @@ impl RegExpSplitResume {
             index,
             count,
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "regexp_split.capture_box_reused",
-        );
+        profile!(record_owned_execution_event(
+            "regexp_split.capture_box_reused"
+        ));
         Ok(RegExpSplitStep::make_read(object, key, self))
     }
 }
@@ -622,8 +616,7 @@ impl RegExpSplitStep {
 }
 impl RegExpSplitResume {
     fn new(runtime: &Runtime, realm: ContextId, phase: Phase) -> Self {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("regexp_split.resident_box");
+        profile!(record_owned_execution_event("regexp_split.resident_box"));
         Self(Box::new(RegExpSplitResumeState {
             step_pending: RegExpSplitStepPending::new(runtime),
             realm,

@@ -31,13 +31,7 @@ impl Runtime {
             "eval",
             1,
         )?;
-        self.define_function_data_property(
-            global_object,
-            "eval",
-            Value::Object(function.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_global_function(global_object, "eval", &function)?;
         self.0
             .state
             .borrow_mut()
@@ -194,7 +188,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .eval_function
+            .eval_function()
             .ok_or(RuntimeError::Invariant(
                 "context has no original eval function root",
             ))?;
@@ -218,7 +212,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .eval_function
+            .eval_function()
             .ok_or(RuntimeError::Invariant(
                 "context has no original eval function root",
             ))?;

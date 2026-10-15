@@ -153,10 +153,6 @@ mod tests {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn arena_layout_is_compact() {
-        eprintln!(
-            "ArenaSlot bytes: {}",
-            std::mem::size_of::<super::super::ArenaSlot>()
-        );
         assert!(std::mem::size_of::<super::super::ArenaSlot>() <= 280);
         assert!(
             std::mem::size_of::<super::super::ObjectData>() <= 272,

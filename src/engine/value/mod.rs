@@ -290,13 +290,6 @@ impl PartialEq<PrimitiveValue> for Value {
 
 pub(crate) mod conversion;
 
-#[cfg(test)]
-impl crate::engine::code::bytecode::TestConstant for Value {
-    fn is_string(&self) -> bool {
-        matches!(self, Self::String(_))
-    }
-}
-
 impl From<number::operations::Number> for Value {
     fn from(value: number::operations::Number) -> Self {
         match value {

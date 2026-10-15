@@ -8,7 +8,7 @@ use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::builtins::native::{DynamicFunctionKind, NativeFunctionId};
+use crate::engine::builtins::native::DynamicFunctionKind;
 use crate::engine::builtins::promise::RootedPromiseCapability;
 use crate::engine::code::function::metadata::FunctionKind;
 
@@ -57,43 +57,12 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         let async_function_prototype = self.new_object(Some(function_prototype))?;
         self.define_to_string_tag(&async_function_prototype, "AsyncFunction")?;
-
-        let function_constructor = self
-            .0
-            .state
-            .borrow()
-            .heap
-            .context(realm)?
-            .function_constructor
-            .ok_or(RuntimeError::Invariant(
-                "AsyncFunction initialization requires the Function constructor",
-            ))?;
-        let function_constructor =
-            ObjectRef::from_borrowed_handle(self.clone(), function_constructor)?;
-        let constructor = self.new_native_builtin(
-            &function_constructor,
+        self.new_dynamic_function_constructor(
             realm,
-            NativeFunctionId::FunctionConstructor(DynamicFunctionKind::Async),
-            1,
+            DynamicFunctionKind::Async,
             "AsyncFunction",
-            1,
-        )?;
-
-        self.define_function_data_property(
-            constructor.as_object(),
-            "prototype",
-            Value::Object(async_function_prototype.try_clone()?),
-            false,
-            false,
-        )?;
-        self.define_function_data_property(
             &async_function_prototype,
-            "constructor",
-            Value::Object(constructor.as_object().try_clone()?),
-            false,
-            true,
         )?;
-
         self.0
             .state
             .borrow_mut()

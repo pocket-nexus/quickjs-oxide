@@ -6,19 +6,20 @@
 
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
-use crate::engine::heap::{ObjectId, RawValue};
+use crate::engine::heap::ObjectId;
+use crate::engine::heap::runtime::RuntimeState;
+use crate::engine::object::builtin_properties::NativeBuiltinProperty;
 use std::cell::Cell;
 
 use crate::engine::builtins::native::{
     MathBinaryKind, MathMinMaxKind, MathUnaryKind, NativeFunctionId,
 };
 use crate::engine::heap::{AutoInitProperty, ContextId, PropertySlot};
+use crate::engine::object::ObjectRef;
 use crate::engine::object::shape::PropertyFlags;
-use crate::engine::object::{ObjectRef, WellKnownSymbol};
+use crate::engine::value::JsValue;
 #[cfg(test)]
 use crate::engine::value::Value;
-use crate::engine::value::{JsString, JsValue};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -616,129 +617,62 @@ impl RuntimeState {
         poisoned: &Cell<bool>,
         realm: ContextId,
     ) -> Result<ObjectId, RuntimeError> {
-        let math = self.new_ordinary_object_in_realm(poisoned, realm)?;
-        let mut result_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(math));
-        let (state, result_owner) = result_owner.parts();
-        for (target, name, length) in [
-            (NativeFunctionId::MathMinMax(MathMinMaxKind::Min), "min", 2),
-            (NativeFunctionId::MathMinMax(MathMinMaxKind::Max), "max", 2),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Abs), "abs", 1),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::Floor),
-                "floor",
-                1,
-            ),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Ceil), "ceil", 1),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::Round),
-                "round",
-                1,
-            ),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Sqrt), "sqrt", 1),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Acos), "acos", 1),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Asin), "asin", 1),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Atan), "atan", 1),
-            (
+        use MathUnaryKind as U;
+        use NativeFunctionId::MathUnary;
+        const fn m(
+            target: NativeFunctionId,
+            name: &'static str,
+            length: u8,
+        ) -> NativeBuiltinProperty {
+            NativeBuiltinProperty::new(target, name, length, length)
+        }
+        const fn unary(kind: MathUnaryKind, name: &'static str) -> NativeBuiltinProperty {
+            m(MathUnary(kind), name, 1)
+        }
+        const METHODS: &[NativeBuiltinProperty] = &[
+            m(NativeFunctionId::MathMinMax(MathMinMaxKind::Min), "min", 2),
+            m(NativeFunctionId::MathMinMax(MathMinMaxKind::Max), "max", 2),
+            unary(U::Abs, "abs"),
+            unary(U::Floor, "floor"),
+            unary(U::Ceil, "ceil"),
+            unary(U::Round, "round"),
+            unary(U::Sqrt, "sqrt"),
+            unary(U::Acos, "acos"),
+            unary(U::Asin, "asin"),
+            unary(U::Atan, "atan"),
+            m(
                 NativeFunctionId::MathBinary(MathBinaryKind::Atan2),
                 "atan2",
                 2,
             ),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Cos), "cos", 1),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Exp), "exp", 1),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Log), "log", 1),
-            (NativeFunctionId::MathBinary(MathBinaryKind::Pow), "pow", 2),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Sin), "sin", 1),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Tan), "tan", 1),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::Trunc),
-                "trunc",
-                1,
-            ),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Sign), "sign", 1),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Cosh), "cosh", 1),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Sinh), "sinh", 1),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Tanh), "tanh", 1),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::Acosh),
-                "acosh",
-                1,
-            ),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::Asinh),
-                "asinh",
-                1,
-            ),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::Atanh),
-                "atanh",
-                1,
-            ),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::Expm1),
-                "expm1",
-                1,
-            ),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::Log1p),
-                "log1p",
-                1,
-            ),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Log2), "log2", 1),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::Log10),
-                "log10",
-                1,
-            ),
-            (NativeFunctionId::MathUnary(MathUnaryKind::Cbrt), "cbrt", 1),
-            (NativeFunctionId::MathHypot, "hypot", 2),
-            (NativeFunctionId::MathRandom, "random", 0),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::F16Round),
-                "f16round",
-                1,
-            ),
-            (
-                NativeFunctionId::MathUnary(MathUnaryKind::FRound),
-                "fround",
-                1,
-            ),
-            (NativeFunctionId::MathImul, "imul", 2),
-            (NativeFunctionId::MathClz32, "clz32", 1),
-            (NativeFunctionId::MathSumPrecise, "sumPrecise", 1),
-        ] {
-            state.define_native_builtin_auto_init(
-                poisoned, math, realm, target, name, length, length,
-            )?;
-        }
-
-        let to_string_tag = state.well_known_symbols[&WellKnownSymbol::ToStringTag];
-        {
-            let string = state.heap.allocate_string(JsString::from_static("Math"))?;
-            let mut producer = OwnedValueGuard::new(state, poisoned, JsValue::String(string));
-            let (state, producer) = producer.parts();
-            if !state.define_raw_property_with_poison(
-                poisoned,
-                math,
-                to_string_tag,
-                &crate::engine::object::property::PropertyDescriptor {
-                    value: Some(RawValue::String(string)),
-                    writable: Some(false),
-                    enumerable: Some(false),
-                    configurable: Some(true),
-                    ..crate::engine::object::property::PropertyDescriptor::new()
-                },
-            )? {
-                return Err(RuntimeError::Invariant(
-                    "Math toStringTag definition was rejected",
-                ));
-            }
-            state.release_owned_jsvalue(
-                poisoned,
-                producer.take().expect("intrinsic tag producer"),
-            )?;
-        }
-
-        for (name, value) in [
+            unary(U::Cos, "cos"),
+            unary(U::Exp, "exp"),
+            unary(U::Log, "log"),
+            m(NativeFunctionId::MathBinary(MathBinaryKind::Pow), "pow", 2),
+            unary(U::Sin, "sin"),
+            unary(U::Tan, "tan"),
+            unary(U::Trunc, "trunc"),
+            unary(U::Sign, "sign"),
+            unary(U::Cosh, "cosh"),
+            unary(U::Sinh, "sinh"),
+            unary(U::Tanh, "tanh"),
+            unary(U::Acosh, "acosh"),
+            unary(U::Asinh, "asinh"),
+            unary(U::Atanh, "atanh"),
+            unary(U::Expm1, "expm1"),
+            unary(U::Log1p, "log1p"),
+            unary(U::Log2, "log2"),
+            unary(U::Log10, "log10"),
+            unary(U::Cbrt, "cbrt"),
+            m(NativeFunctionId::MathHypot, "hypot", 2),
+            m(NativeFunctionId::MathRandom, "random", 0),
+            unary(U::F16Round, "f16round"),
+            unary(U::FRound, "fround"),
+            m(NativeFunctionId::MathImul, "imul", 2),
+            m(NativeFunctionId::MathClz32, "clz32", 1),
+            m(NativeFunctionId::MathSumPrecise, "sumPrecise", 1),
+        ];
+        const CONSTANTS: &[(&str, f64)] = &[
             ("E", std::f64::consts::E),
             ("LN10", std::f64::consts::LN_10),
             ("LN2", std::f64::consts::LN_2),
@@ -747,27 +681,7 @@ impl RuntimeState {
             ("PI", std::f64::consts::PI),
             ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
             ("SQRT2", std::f64::consts::SQRT_2),
-        ] {
-            let key = state.intern_property_key_js_string(&JsString::try_from_utf8(name)?)?;
-            let defined = state.define_fresh_function_data_property(
-                poisoned,
-                math,
-                key,
-                &RawValue::Float(value),
-                false,
-                false,
-            );
-            if !poisoned.get()
-                && let Err(error) = state.atoms.release(key)
-            {
-                poisoned.set(true);
-                return defined.and(Err(error.into()));
-            }
-            defined?;
-        }
-        let JsValue::Object(object) = result_owner.take().expect("intrinsic factory result") else {
-            unreachable!("intrinsic factory allocated an object")
-        };
-        Ok(object)
+        ];
+        self.instantiate_namespace_object(poisoned, realm, METHODS, "Math", CONSTANTS)
     }
 }

@@ -115,8 +115,7 @@ impl Parents {
         Ok(())
     }
     fn push(&mut self, resume: Resume) {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("parent_push");
+        profile!(record_owned_execution_event("parent_push"));
         self.0.push(resume);
     }
     fn pop(&mut self) -> Option<Resume> {
@@ -333,8 +332,7 @@ fn finish_instruction_call(
                     execution.slots.push_owned(&mut parent.window, &mut value)?;
                 }
                 parent.resume_pc = resume_pc;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_instruction(_depth);
+                profile!(record_owned_instruction(_depth));
                 Ok(CallStep::Entered)
             })();
             let released = runtime
@@ -477,10 +475,9 @@ pub(super) fn start_boolean(
         drop(object);
         return match result {
             Ok(completion) => {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "delete_completed_without_query",
-                );
+                profile!(record_owned_execution_event(
+                    "delete_completed_without_query"
+                ));
                 finish_instruction_call(
                     runtime,
                     execution,
@@ -631,50 +628,6 @@ pub(super) fn start_prototype(
         Progress::Call(step) => Ok(step),
         Progress::Conversion(_) => Err(Error::internal("prototype query returned a conversion")),
     }
-}
-
-/// The lookup and its receiver selection are already complete. Only the
-/// selected callback/service is scheduled; no property lookup is replayed.
-#[allow(dead_code)] // Used by the parallel conversion consumer batch.
-pub(super) fn start_conversion_state_read(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    frame: FrameId,
-    effect: crate::engine::object::StateReadEffect,
-    atom: crate::engine::atom::Atom,
-    wait: super::conversion_driver::ConversionWait,
-) -> Result<Progress, Error> {
-    let mut step = Step::StateRead {
-        effect: Some(effect),
-        atom: Some(atom),
-        resume: Some(Resume::Identity),
-    };
-    let prepared = (|| {
-        let parent = execution.frames.current_mut(frame)?;
-        let identity = parent
-            .property_generation
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-        parent.property_generation = identity;
-        Ok((identity, parent.executable.realm))
-    })();
-    let (identity, realm) = match prepared {
-        Ok(value) => value,
-        Err(error) => {
-            step.release_owned(runtime);
-            return Err(error);
-        }
-    };
-    let result = advance(
-        runtime,
-        execution,
-        frame,
-        identity,
-        Vec::new(),
-        step,
-        Finish::Conversion(wait),
-    );
-    finish_error(runtime, realm, result)
 }
 
 pub(super) fn start_conversion(
@@ -849,10 +802,9 @@ pub(super) fn start_native_with_classification(
                 depth,
                 tail,
             );
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "native_call_completed_without_query",
-            );
+            profile!(record_owned_execution_event(
+                "native_call_completed_without_query"
+            ));
             result
         })();
         return result.or_else(|error| super::property_driver::throw_error(runtime, realm, error));
@@ -924,10 +876,9 @@ pub(super) fn start_waitable_native_call(
             execution.frames.can_push_with_continuations(1),
         )? {
             native::LocalNativeResult::Complete(completion) => {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "native_call_completed_without_query",
-                );
+                profile!(record_owned_execution_event(
+                    "native_call_completed_without_query"
+                ));
                 finish_call_instruction_call(runtime, execution, owner, completion, depth, tail)
             }
             native::LocalNativeResult::Waiting(mut records) => {
@@ -1004,10 +955,7 @@ pub(super) fn start_waitable_native_call(
                     ))),
                 );
                 execution.query_storage.recycle_native_wait(records);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "native_call_direct_wait",
-                );
+                profile!(record_owned_execution_event("native_call_direct_wait"));
                 drive_native_call(runtime, execution, owner, identity, query, Ok(step))
             }
         }
@@ -1036,8 +984,7 @@ fn finish_call_instruction_call(
     tail: bool,
 ) -> Result<CallStep, Error> {
     if tail {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_instruction(depth);
+        profile!(record_owned_instruction(depth));
         return Ok(CallStep::Complete(completion));
     }
     finish_instruction_call(runtime, execution, owner, completion, true, depth)
@@ -1561,8 +1508,9 @@ fn finish_write_action(
             strict,
         )
         .map_err(runtime_error_to_vm_error)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("write_completed_without_query");
+    profile!(record_owned_execution_event(
+        "write_completed_without_query"
+    ));
     use super::property_driver::PropertyProgress;
     match finish_instruction_call(
         runtime,
@@ -1615,8 +1563,7 @@ fn schedule_write(
         .checked_add(1)
         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
     parent.property_generation = identity;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("set_wait_handoff");
+    profile!(record_owned_execution_event("set_wait_handoff"));
     write_call_progress(advance(
         runtime,
         execution,
@@ -1931,14 +1878,11 @@ fn drive_inner<'a>(
         }
         match result {
             Ok(Next::Done(result)) => {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    if query.had_callback {
-                        "query_completed_after_callback"
-                    } else {
-                        "query_completed_without_callback"
-                    },
-                );
+                profile!(record_owned_execution_event(if query.had_callback {
+                    "query_completed_after_callback"
+                } else {
+                    "query_completed_without_callback"
+                }));
                 #[cfg(feature = "profiling")]
                 if !query.had_callback {
                     query.consumer.completed_without_callback();
@@ -1954,10 +1898,7 @@ fn drive_inner<'a>(
                 put_pending(runtime, execution, owner, pending)?;
                 match push_frame(runtime, execution, entry.take()) {
                     Ok(id) => {
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "query_bytecode_callback",
-                        );
+                        profile!(record_owned_execution_event("query_bytecode_callback"));
                         let child = execution.frames.current_mut(id)?;
                         child.set_resume_pc(pc)?;
                         return Ok(Progress::Call(CallStep::Entered));
@@ -2106,8 +2047,7 @@ fn advance_inner(
         let next = dispatch(runtime, execution, owner, identity, query, step)?;
         let (target, receiver, arguments, resume) = match next {
             Next::Continue => {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event("query_continue");
+                profile!(record_owned_execution_event("query_continue"));
                 continue;
             }
             Next::Invoke => {
@@ -2387,8 +2327,7 @@ fn invoke(
             });
         }
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("native_leaf_completion");
+    profile!(record_owned_execution_event("native_leaf_completion"));
     // Normalization has consumed Bound and Proxy targets; bytecode always
     // installs an explicit child above. Only a classified native leaf can
     // reach this synchronous ABI, never a generic JS-call dispatcher.
@@ -3049,10 +2988,7 @@ pub(super) fn start_array_next_without_pending(
                     .ok_or_else(|| Error::internal("Array-next wait lost activation"))?;
                 query.finish = Some(install_iterator_finish(execution, pending, true)?);
                 native::install_waiting(&mut query, waiting_call, Resume::IteratorNext(resume));
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "iterator_native_direct_wait",
-                );
+                profile!(record_owned_execution_event("iterator_native_direct_wait"));
                 return drive(
                     runtime,
                     execution,
@@ -3067,10 +3003,9 @@ pub(super) fn start_array_next_without_pending(
                 .map_err(runtime_error_to_vm_error)?
                 .map_err(|_| Error::internal("Array-next returned an ordinary result object"))?
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "iterator_native_completed_without_query",
-        );
+        profile!(record_owned_execution_event(
+            "iterator_native_completed_without_query"
+        ));
         let (value, done, abrupt) = match result {
             ObjectIteratorStep::Yield(value) => (value, false, None),
             ObjectIteratorStep::Done => (crate::engine::value::JsValue::Undefined, true, None),
@@ -3166,10 +3101,7 @@ fn start_array_next_direct(
                 waiting_call.expect("native wait has an activation"),
                 Resume::IteratorNext(resume),
             );
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "iterator_native_direct_wait",
-            );
+            profile!(record_owned_execution_event("iterator_native_direct_wait"));
             return drive(
                 runtime,
                 execution,
@@ -3197,10 +3129,9 @@ fn start_array_next_direct(
             "direct ForOfNext did not finish its instruction",
         ));
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "iterator_native_completed_without_query",
-    );
+    profile!(record_owned_execution_event(
+        "iterator_native_completed_without_query"
+    ));
     super::iterator_driver::finish(runtime, execution, pending).map(Progress::Call)
 }
 
@@ -3398,8 +3329,7 @@ pub(super) fn start_object_copy(
             return Err(Error::internal("copy query identity exhausted"));
         };
         execution.frames.current_mut(frame)?.property_generation = identity;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("copy_wait_handoff");
+        profile!(record_owned_execution_event("copy_wait_handoff"));
         advance(
             runtime,
             execution,
@@ -3562,10 +3492,9 @@ pub(super) fn start_numeric(
     let realm = parent.executable.realm;
     let step = match step {
         super::numeric::operation::NumericStep::Complete { value, previous } => {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "numeric_completed_without_query",
-            );
+            profile!(record_owned_execution_event(
+                "numeric_completed_without_query"
+            ));
             return match finish_numeric(runtime, execution, frame, value, previous, depth)? {
                 CallStep::Entered => Ok(NumericProgress::Completed),
                 _ => Err(Error::internal(
@@ -3662,10 +3591,7 @@ pub(super) fn start_public_field(
         let descriptor = descriptor;
         match runtime.try_define_owned_property(&object, &key, &descriptor) {
             Ok(None) => {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "public_field_query_fallback",
-                );
+                profile!(record_owned_execution_event("public_field_query_fallback"));
                 return start_public_field_pending(
                     runtime, execution, frame, realm, identity, object, key, descriptor, depth,
                 );
@@ -3700,10 +3626,9 @@ pub(super) fn start_public_field(
             false,
             depth,
         )?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "public_field_completed_without_query",
-        );
+        profile!(record_owned_execution_event(
+            "public_field_completed_without_query"
+        ));
         Ok(Progress::Call(result))
     });
     match finish_error(runtime, realm, result)? {
@@ -3797,10 +3722,9 @@ pub(super) fn start_for_in_query(
         .map_err(runtime_error_to_vm_error)?
     {
         ForInStep::Complete { value, done } => {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "for_in_completed_without_query",
-            );
+            profile!(record_owned_execution_event(
+                "for_in_completed_without_query"
+            ));
             // The for-in machine now produces internal values directly.
             finish_for_in(runtime, execution, frame, value, done, depth)
         }
@@ -3864,8 +3788,7 @@ fn finish_for_in(
                 .push(&mut parent.window, JsValue::Bool(done))?;
         }
         parent.resume_pc = resume_pc;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_instruction(_depth);
+        profile!(record_owned_instruction(_depth));
         Ok(CallStep::Entered)
     })();
     let released = runtime

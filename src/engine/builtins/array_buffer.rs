@@ -13,15 +13,15 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 #[cfg(feature = "test262-host")]
 use crate::engine::object::CallableRef;
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, builtin_getter, method, species_getter, to_string_tag,
+};
 
 use crate::engine::builtins::native::{ArrayBufferNativeKind, NativeFunctionId};
 use crate::engine::heap::{
     ArrayBufferData, ArrayBufferRealmData, ContextId, ObjectData, ObjectPayload,
 };
-use crate::engine::object::{
-    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    WellKnownSymbol,
-};
+use crate::engine::object::ObjectRef;
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
@@ -72,110 +72,35 @@ impl Runtime {
         object_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use ArrayBufferNativeKind as K;
+        use NativeFunctionId::ArrayBuffer as F;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            builtin_getter!(F(K::ByteLength), "byteLength"),
+            builtin_getter!(F(K::MaxByteLength), "maxByteLength"),
+            builtin_getter!(F(K::Resizable), "resizable"),
+            builtin_getter!(F(K::Detached), "detached"),
+            method(F(K::Resize), "resize", 1, 1),
+            method(F(K::Slice), "slice", 2, 2),
+            method(F(K::Transfer), "transfer", 0, 1),
+            method(F(K::TransferToFixedLength), "transferToFixedLength", 0, 1),
+            to_string_tag("ArrayBuffer"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F(K::IsView), "isView", 1, 1),
+            species_getter(F(K::Species)),
+        ];
         let prototype = self.new_object(Some(object_prototype))?;
-
-        for (kind, property_name, getter_name) in [
-            (
-                ArrayBufferNativeKind::ByteLength,
-                "byteLength",
-                "get byteLength",
-            ),
-            (
-                ArrayBufferNativeKind::MaxByteLength,
-                "maxByteLength",
-                "get maxByteLength",
-            ),
-            (
-                ArrayBufferNativeKind::Resizable,
-                "resizable",
-                "get resizable",
-            ),
-            (ArrayBufferNativeKind::Detached, "detached", "get detached"),
-        ] {
-            self.define_native_builtin_getter_on(
-                &prototype,
-                function_prototype,
-                realm,
-                NativeFunctionId::ArrayBuffer(kind),
-                property_name,
-                getter_name,
-            )?;
-        }
-
-        for (kind, name, length, readable) in [
-            (ArrayBufferNativeKind::Resize, "resize", 1, 1),
-            (ArrayBufferNativeKind::Slice, "slice", 2, 2),
-            (ArrayBufferNativeKind::Transfer, "transfer", 0, 1),
-            (
-                ArrayBufferNativeKind::TransferToFixedLength,
-                "transferToFixedLength",
-                0,
-                1,
-            ),
-        ] {
-            self.define_native_builtin_auto_init(
-                &prototype,
-                realm,
-                NativeFunctionId::ArrayBuffer(kind),
-                name,
-                length,
-                readable,
-            )?;
-        }
-
-        self.define_to_string_tag(&prototype, "ArrayBuffer")?;
-
+        self.define_builtin_entries(&prototype, realm, PROTOTYPE)?;
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::ArrayBuffer(ArrayBufferNativeKind::Constructor),
+            F(K::Constructor),
             2,
             "ArrayBuffer",
             1,
         )?;
-        self.define_native_builtin_auto_init(
-            constructor.as_object(),
-            realm,
-            NativeFunctionId::ArrayBuffer(ArrayBufferNativeKind::IsView),
-            "isView",
-            1,
-            1,
-        )?;
-        let species_getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::ArrayBuffer(ArrayBufferNativeKind::Species),
-            0,
-            "get [Symbol.species]",
-            0,
-        )?;
-        let species = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::Species)
-                .expect("well-known symbol"),
-        );
-        if !self.define_own_property(
-            constructor.as_object(),
-            &species,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(species_getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "ArrayBuffer species definition was rejected",
-            ));
-        }
-
-        self.define_function_data_property(
-            global_object,
-            "ArrayBuffer",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "ArrayBuffer", &constructor)?;
         self.define_constructor_relationship(&constructor, &prototype)?;
         self.0
             .state
@@ -647,7 +572,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .array_buffer
+            .array_buffer()
             .ok_or(RuntimeError::Invariant(
                 "realm has no ArrayBuffer intrinsics",
             ))?

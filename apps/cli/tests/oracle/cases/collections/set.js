@@ -1,0 +1,488 @@
+function __bit(value){return value?"1":"0"}
+function __bits(object,key){
+    var descriptor=Object.getOwnPropertyDescriptor(object,key);
+    if(descriptor===undefined)return "missing";
+    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+__bit(descriptor.configurable);
+}
+function __isConstructor(value){
+    try{Reflect.construct(function(){},[],value);return true}catch(_error){return false}
+}
+function __completion(thunk){
+    try{return "return:"+String(thunk())}
+    catch(error){
+        if(error!==null&&typeof error==="object")return "throw:"+error.name+":"+error.message;
+        return "throw:"+typeof error+":"+String(error);
+    }
+}
+function __number(value){
+    if(value!==value)return "NaN";
+    if(value===0)return 1/value===-Infinity?"-0":"+0";
+    if(value===Infinity)return "+Infinity";
+    if(value===-Infinity)return "-Infinity";
+    return String(value);
+}
+function __setValues(set){
+    var iterator=set.values(),step,values=[];
+    while(!(step=iterator.next()).done){
+        var value=step.value;
+        if(typeof value==="number")values[values.length]=__number(value);
+        else if(typeof value==="bigint")values[values.length]=String(value)+"n";
+        else values[values.length]=String(value);
+    }
+    return values.join(",");
+}
+// case: graph / constructor prototype aliases metadata descriptors and iterator graph
+(function(){
+            function keys(object){
+                return Reflect.ownKeys(object).map(function(key){return String(key)}).join(",");
+            }
+            function metadata(owner,key){
+                var fn=owner[key];
+                return String(key)+":"+fn.name+":"+fn.length+":"+__isConstructor(fn)+":"+
+                    __bits(owner,key)+":"+__bits(fn,"name")+":"+__bits(fn,"length")+":"+keys(fn);
+            }
+            var methodNames=["add","has","delete","clear","forEach","isDisjointFrom",
+                "isSubsetOf","isSupersetOf","intersection","difference","symmetricDifference",
+                "union","values","keys","entries"],methods=[],index;
+            for(index=0;index<methodNames.length;index++)
+                methods[index]=metadata(Set.prototype,methodNames[index]);
+            var sizeDescriptor=Object.getOwnPropertyDescriptor(Set.prototype,"size");
+            var speciesDescriptor=Object.getOwnPropertyDescriptor(Set,Symbol.species);
+            var sampleIterator=new Set().entries();
+            var iteratorPrototype=Object.getPrototypeOf(sampleIterator);
+            var arrayIteratorPrototype=Object.getPrototypeOf([][Symbol.iterator]());
+            return [
+                "global="+__bits(globalThis,"Set")+":"+
+                    (Object.getOwnPropertyDescriptor(globalThis,"Set").value===Set),
+                "constructor="+Set.name+":"+Set.length+":"+__isConstructor(Set)+":"+keys(Set),
+                "links="+(Object.getPrototypeOf(Set)===Function.prototype)+":"+
+                    (Object.getPrototypeOf(Set.prototype)===Object.prototype)+":"+
+                    (Set.prototype.constructor===Set),
+                "descriptors="+__bits(Set,"prototype")+":"+__bits(Set.prototype,"constructor"),
+                "prototype-keys="+keys(Set.prototype),
+                "prototype-brand="+Object.prototype.toString.call(Set.prototype)+":"+
+                    __completion(function(){return Set.prototype.size}),
+                "methods="+methods.join(";"),
+                "aliases="+(Set.prototype.keys===Set.prototype.values)+":"+
+                    (Set.prototype[Symbol.iterator]===Set.prototype.values)+":"+
+                    (Set.prototype.entries!==Set.prototype.values)+":"+
+                    Set.prototype[Symbol.iterator].name+":"+__bits(Set.prototype,Symbol.iterator),
+                "size="+__bits(Set.prototype,"size")+":"+sizeDescriptor.get.name+":"+
+                    sizeDescriptor.get.length+":"+__isConstructor(sizeDescriptor.get)+":"+
+                    keys(sizeDescriptor.get),
+                "tags="+__bits(Set.prototype,Symbol.toStringTag)+":"+
+                    Set.prototype[Symbol.toStringTag]+":"+Object.prototype.toString.call(new Set()),
+                "species="+__bits(Set,Symbol.species)+":"+speciesDescriptor.get.name+":"+
+                    speciesDescriptor.get.length+":"+__isConstructor(speciesDescriptor.get)+":"+
+                    keys(speciesDescriptor.get)+":"+(speciesDescriptor.get.call(17)===17),
+                "groupBy="+metadata(Set,"groupBy")+":"+(Set.groupBy!==Map.groupBy),
+                "iterator="+keys(iteratorPrototype)+":"+
+                    metadata(iteratorPrototype,"next")+":"+
+                    __bits(iteratorPrototype,Symbol.toStringTag)+":"+
+                    iteratorPrototype[Symbol.toStringTag]+":"+
+                    (Object.getPrototypeOf(iteratorPrototype)===Object.getPrototypeOf(arrayIteratorPrototype))+":"+
+                    (sampleIterator[Symbol.iterator]()===sampleIterator)
+            ].join("|");
+        })()
+// case: core / SameValueZero add has delete clear entries and negative-zero normalization
+(function(){
+            var firstObject=Object(),secondObject=Object(),set=new Set(),values=[],step,value;
+            var sameReturn=set.add(NaN)===set;
+            set.add(0/0).add(-0).add(+0).add(1n).add(BigInt("1")).add(1);
+            set.add(firstObject).add(secondObject).add(undefined).add(firstObject);
+            var iterator=set.values();
+            while(!(step=iterator.next()).done){
+                value=step.value;
+                if(value===firstObject)values[values.length]="firstObject";
+                else if(value===secondObject)values[values.length]="secondObject";
+                else if(typeof value==="number")values[values.length]=__number(value);
+                else if(typeof value==="bigint")values[values.length]=String(value)+"n";
+                else values[values.length]=String(value);
+            }
+            var entry=new Set([firstObject]).entries().next().value;
+            var deleted=set.delete(0/0),afterDelete=set.size,cleared=set.clear();
+            set.add(-0);
+            var normalized=set.values().next().value;
+            return [sameReturn,values.join(","),set.has(+0),set.has(-0),set.has(NaN),
+                set.has(1n),set.has(1),set.has(Object()),entry[0]===firstObject,
+                entry[1]===firstObject,deleted,afterDelete,cleared===undefined,set.size,
+                __number(normalized)].join("|");
+        })()
+// case: constructor / newTarget prototype cached adder and iterator observations follow QuickJS order
+(function(){
+            var log="",custom=Object.create(Set.prototype),iterator=Object(),count=0;
+            var originalAdd=Set.prototype.add;
+            var NewTarget=(function(){}).bind(null);
+            Object.defineProperty(NewTarget,"prototype",{
+                configurable:true,
+                get:function(){log+="prototype;";return custom}
+            });
+            Object.defineProperty(custom,"add",{
+                configurable:true,
+                get:function(){
+                    log+="add-get;";
+                    return function(value){
+                        log+="adder:"+value+";";
+                        Object.defineProperty(iterator,"next",{
+                            configurable:true,writable:true,
+                            value:function(){throw "changed-next"}
+                        });
+                        return originalAdd.call(this,value);
+                    };
+                }
+            });
+            var iterable=Object();
+            Object.defineProperty(iterable,Symbol.iterator,{
+                get:function(){
+                    log+="iterator-get;";
+                    return function(){log+="iterator-call;";return iterator};
+                }
+            });
+            Object.defineProperty(iterator,"next",{
+                configurable:true,
+                get:function(){
+                    log+="next-get;";
+                    return function(){
+                        log+="next-call;";
+                        var result=Object(),done=count++!==0;
+                        Object.defineProperty(result,"done",{
+                            get:function(){log+="done:"+done+";";return done}
+                        });
+                        Object.defineProperty(result,"value",{
+                            get:function(){log+="step-value;";return 7}
+                        });
+                        return result;
+                    };
+                }
+            });
+            var set=Reflect.construct(Set,[iterable],NewTarget);
+            function Fallback(){}Fallback.prototype=17;
+            var fallback=Reflect.construct(Set,[],Fallback);
+            return [log,Object.getPrototypeOf(set)===custom,set.size,set.has(7),
+                Object.getPrototypeOf(fallback)===Set.prototype,new Set(null).size,
+                __completion(function(){return Set()})].join("|");
+        })()
+// case: constructor / adder failure closes while iterator acquisition and step failures do not
+(function(){
+            function invalidAdder(){
+                var log="",prototype=Object.create(Set.prototype),iterable=Object();
+                Object.defineProperty(prototype,"add",{get:function(){log+="add-get;";return 0}});
+                Object.defineProperty(iterable,Symbol.iterator,{get:function(){log+="iterator-get;";throw "iterator"}});
+                function Target(){}Target.prototype=prototype;
+                try{Reflect.construct(Set,[iterable],Target);return log+"missing"}
+                catch(error){return log+(error!==null&&typeof error==="object"?error.name:String(error))}
+            }
+            function primitiveIterator(){
+                var log="",iterable=Object();
+                Object.defineProperty(iterable,Symbol.iterator,{get:function(){
+                    log+="iterator-get;";return function(){log+="iterator-call;";return 1};
+                }});
+                try{new Set(iterable);return log+"missing"}
+                catch(error){return log+(error!==null&&typeof error==="object"?error.name:String(error))}
+            }
+            function run(mode){
+                var log="",iterator=Object(),iterable=Object(),count=0;
+                var prototype=Object.create(Set.prototype),originalAdd=Set.prototype.add;
+                prototype.add=function(value){
+                    log+="adder;";
+                    if(mode===5)throw "adder";
+                    return originalAdd.call(this,value);
+                };
+                function Target(){}Target.prototype=prototype;
+                iterable[Symbol.iterator]=function(){log+="iterator;";return iterator};
+                Object.defineProperty(iterator,"return",{get:function(){
+                    log+="return-get;";
+                    return function(){log+="return-call;";throw "close"};
+                }});
+                Object.defineProperty(iterator,"next",{get:function(){
+                    log+="next-get;";
+                    if(mode===1)throw "next-get";
+                    return function(){
+                        log+="next-call;";
+                        if(mode===2)throw "next-call";
+                        var result=Object(),done=count++!==0;
+                        Object.defineProperty(result,"done",{get:function(){
+                            log+="done;";if(mode===3)throw "done";return done;
+                        }});
+                        Object.defineProperty(result,"value",{get:function(){
+                            log+="value;";if(mode===4)throw "value";return 9;
+                        }});
+                        return result;
+                    };
+                }});
+                try{Reflect.construct(Set,[iterable],Target);return log+"ok"}
+                catch(error){return log+"catch:"+(error!==null&&typeof error==="object"?error.name:String(error))}
+            }
+            var output=[invalidAdder(),primitiveIterator()],mode;
+            for(mode=1;mode<=5;mode++)output[output.length]=mode+":"+run(mode);
+            return output.join("|");
+        })()
+// case: iteration / delete clear re-add and exhaustion retain live Set Iterator behavior
+(function(){
+            function value(step){return step.done?"done":String(step.value)}
+            function entry(step){return step.done?"done":step.value[0]+":"+step.value[1]}
+            var set=new Set(["a","b","c"]),output=[],iterator=set.values();
+            output[output.length]=value(iterator.next());
+            set.delete("a");set.delete("b");set.add("d");set.add("a");
+            output[output.length]=value(iterator.next());
+            output[output.length]=value(iterator.next());
+            output[output.length]=value(iterator.next());
+            set.clear();set.add("e");
+            output[output.length]=value(iterator.next());
+            output[output.length]=value(iterator.next());
+            set.add("f");
+            output[output.length]=value(iterator.next());
+
+            set=new Set(["x","y"]);iterator=set.values();
+            output[output.length]=value(iterator.next());
+            set.clear();set.add("z");
+            output[output.length]=value(iterator.next());
+            output[output.length]=value(iterator.next());
+
+            set=new Set(["p"]);iterator=set.entries();
+            output[output.length]=entry(iterator.next());
+            output[output.length]=entry(iterator.next());
+            return output.join("|");
+        })()
+// case: iteration / forEach locks current records and observes reentrant deletion and appends
+(function(){
+            var set=new Set(["a","b"]),receiver={marker:1},log=[];
+            set.forEach(function(value,key,observed){
+                log[log.length]="outer:"+value+":"+(value===key)+":"+
+                    (this===receiver)+":"+(observed===set);
+                if(value==="a"){
+                    observed.delete("b");observed.add("c");
+                    observed.forEach(function(innerValue,innerKey,innerSet){
+                        log[log.length]="inner:"+innerValue+":"+(innerValue===innerKey)+":"+
+                            (this===receiver)+":"+(innerSet===set);
+                        if(innerValue==="a")innerSet.add("d");
+                        if(innerValue==="c")innerSet.delete("c");
+                    },receiver);
+                }
+                if(value==="d"){
+                    observed.delete("d");observed.add("e");
+                }
+            },receiver);
+            return log.join(";")+"|"+set.size+"|"+set.has("a")+"|"+
+                set.has("b")+"|"+set.has("c")+"|"+set.has("d")+"|"+set.has("e");
+        })()
+// case: methods / all seven Set methods preserve order and bypass constructor species and add
+(function(){
+            var a=new Set([1,2,3,-0,NaN]),b=new Set([3,4,+0,0/0]);
+            var union=a.union(b),intersection=a.intersection(b),difference=a.difference(b);
+            var symmetric=a.symmetricDifference(b);
+            var subset=a.isSubsetOf(union),superset=a.isSupersetOf(intersection);
+            var disjoint=a.isDisjointFrom(new Set([8,9]));
+            var originalAdd=Set.prototype.add,addCalls=0,constructorGets=0;
+            Set.prototype.add=function(value){
+                addCalls++;return originalAdd.call(this,value);
+            };
+            Object.defineProperty(a,"constructor",{get:function(){constructorGets++;return Set}});
+            var custom=Object.create(Set.prototype);
+            Object.setPrototypeOf(a,custom);
+            var direct=Set.prototype.union.call(a,b);
+            Set.prototype.add=originalAdd;
+            return [__setValues(union),__setValues(intersection),__setValues(difference),
+                __setValues(symmetric),subset,superset,disjoint,
+                Object.getPrototypeOf(direct)===Set.prototype,__setValues(direct),
+                addCalls,constructorGets].join("|");
+        })()
+// case: protocol / GetSetRecord order and size-selected traversal match pinned QuickJS
+(function(){
+            function run(method,left,right,declaredSize){
+                var log="",index=0,iterator=Object(),other=Object();
+                iterator.next=function(){
+                    log+="next;";
+                    if(index>=right.length)return {done:true,value:undefined};
+                    return {done:false,value:right[index++]};
+                };
+                iterator.return=function(){log+="return;";return iterator};
+                Object.defineProperty(other,"size",{get:function(){log+="size;";return declaredSize}});
+                Object.defineProperty(other,"has",{get:function(){
+                    log+="has-get;";
+                    return function(value){
+                        var found=false,candidate,i;
+                        log+="has:"+value+";";
+                        for(i=0;i<right.length;i++){
+                            candidate=right[i];
+                            if(candidate===value||(candidate!==candidate&&value!==value))found=true;
+                        }
+                        return found;
+                    };
+                }});
+                Object.defineProperty(other,"keys",{get:function(){
+                    log+="keys-get;";
+                    return function(){log+="keys-call;";return iterator};
+                }});
+                var result=Set.prototype[method].call(new Set(left),other);
+                return log+"=>"+(result!==null&&typeof result==="object"?__setValues(result):String(result));
+            }
+            var genuine=new Set([2]),genuineLog="",originalHas=Set.prototype.has;
+            var originalKeys=Set.prototype.keys;
+            Object.defineProperty(genuine,"size",{get:function(){genuineLog+="size;";return 99}});
+            Object.defineProperty(genuine,"has",{get:function(){
+                genuineLog+="has-get;";
+                return function(value){genuineLog+="has-call;";return originalHas.call(this,value)};
+            }});
+            Object.defineProperty(genuine,"keys",{get:function(){
+                genuineLog+="keys-get;";
+                return function(){genuineLog+="keys-call;";return originalKeys.call(this)};
+            }});
+            var genuineResult=new Set([2]).isSubsetOf(genuine);
+            return [
+                run("isDisjointFrom",[1],[2,3],2),
+                run("isDisjointFrom",[1,2,3],[2],1),
+                run("intersection",[1,2,3],[3,2],2),
+                run("intersection",[1,2],[2],3),
+                genuineLog+"=>"+genuineResult
+            ].join("|");
+        })()
+// case: protocol / GetSetRecord validation and iterator-close boundaries preserve abrupt order
+(function(){
+            function record(size,has,keys,log){
+                var object=Object();
+                Object.defineProperty(object,"size",{get:function(){log.text+="size;";return size}});
+                Object.defineProperty(object,"has",{get:function(){log.text+="has;";return has}});
+                Object.defineProperty(object,"keys",{get:function(){log.text+="keys;";return keys}});
+                return object;
+            }
+            function validation(size,has,keys){
+                var log={text:""},other=record(size,has,keys,log);
+                var completion=__completion(function(){return new Set().union(other)});
+                return log.text+completion;
+            }
+            var brandLog={text:""},brandOther=record(0,function(){},function(){},brandLog);
+            var brand=__completion(function(){return Set.prototype.union.call(Object(),brandOther)});
+
+            var nextLog="",nextIterator=Object(),nextOther=Object();
+            nextIterator.next=function(){nextLog+="next;";throw "next"};
+            nextIterator.return=function(){nextLog+="return;";return nextIterator};
+            nextOther.size=0;nextOther.has=function(){};
+            nextOther.keys=function(){nextLog+="keys;";return nextIterator};
+            var nextCompletion=__completion(function(){return new Set([1]).union(nextOther)});
+
+            var closeLog="",closeIterator=Object(),closeOther=Object();
+            closeIterator.next=function(){closeLog+="next;";return {done:false,value:2}};
+            closeIterator.return=function(){closeLog+="return;";throw "close"};
+            closeOther.size=1;closeOther.has=function(){};
+            closeOther.keys=function(){closeLog+="keys;";return closeIterator};
+            var closeCompletion=__completion(function(){
+                return new Set([1,2]).isDisjointFrom(closeOther);
+            });
+
+            var primitiveLog="",originalNumberNext=Number.prototype.next;
+            Number.prototype.next=function(){primitiveLog+="next:"+this+";";return {done:true}};
+            var primitiveOther=Object();
+            primitiveOther.size=0;primitiveOther.has=function(){};
+            primitiveOther.keys=function(){primitiveLog+="keys;";return 7};
+            var primitiveCompletion=__completion(function(){
+                return new Set().union(primitiveOther).size;
+            });
+            if(originalNumberNext===undefined)delete Number.prototype.next;
+            else Number.prototype.next=originalNumberNext;
+            function nullishIterator(value){
+                var other=Object();other.size=0;other.has=function(){};
+                other.keys=function(){return value};
+                return __completion(function(){return new Set().union(other)});
+            }
+            return [
+                brandLog.text+brand,
+                validation(NaN,function(){},function(){}),
+                validation(-1,function(){},function(){}),
+                validation(0n,function(){},function(){}),
+                validation(0,undefined,function(){}),
+                validation(0,function(){},undefined),
+                __completion(function(){return new Set().union(null)}),
+                __completion(function(){return new Set().union(undefined)}),
+                nullishIterator(null),
+                nullishIterator(undefined),
+                nextLog+nextCompletion,
+                closeLog+closeCompletion,
+                primitiveLog+primitiveCompletion
+            ].join("|");
+        })()
+// case: methods / symmetricDifference retains copied order under mutating set-like iteration
+(function(){
+            var receiver=new Set([1,2]),index=0,iterator=Object(),other=Object();
+            iterator.next=function(){
+                if(index===0){index++;receiver.delete(2);return {done:false,value:2}}
+                if(index===1){index++;return {done:false,value:3}}
+                return {done:true,value:undefined};
+            };
+            other.size=2;
+            other.has=function(){return false};
+            other.keys=function(){return iterator};
+            var result=receiver.symmetricDifference(other);
+            return [__setValues(receiver),__setValues(result),result!==receiver,
+                Object.getPrototypeOf(result)===Set.prototype].join("|");
+        })()
+// case: groupBy / Set.groupBy is a distinct static function which returns a strong Map
+(function(){
+            var objectKey=Object(),coerced=false,log="";
+            objectKey.toString=function(){coerced=true;throw "coerced"};
+            var values=[-0,+0,NaN,0/0,1n,1,"object"],keys=[];
+            var grouped=Set.groupBy.call(Object(),values,function(value,index){
+                "use strict";
+                log+=(this===globalThis)+":"+index+";";
+                return index===6?objectKey:value;
+            });
+            var iterator=grouped.keys(),step,key;
+            while(!(step=iterator.next()).done){
+                key=step.value;
+                if(key===objectKey)keys[keys.length]="object";
+                else if(typeof key==="number")keys[keys.length]=__number(key);
+                else if(typeof key==="bigint")keys[keys.length]=String(key)+"n";
+                else keys[keys.length]=String(key);
+            }
+            return [Set.groupBy!==Map.groupBy,grouped instanceof Map,grouped instanceof Set,
+                Object.getPrototypeOf(grouped)===Map.prototype,grouped.size,keys.join(","),
+                grouped.get(-0).length,grouped.get(NaN).length,
+                grouped.get(1n)[0]===1n,grouped.get(1)[0]===1,
+                grouped.get(objectKey)[0],coerced,log].join("|");
+        })()
+// case: groupBy / Set.groupBy callback validation and abrupt iterator-close ordering match Map.groupBy
+(function(){
+            function invalidCallback(){
+                var log="",iterable=Object();
+                Object.defineProperty(iterable,Symbol.iterator,{get:function(){log+="touched;";throw "iterator"}});
+                try{Set.groupBy(iterable,0);return log+"missing"}
+                catch(error){return log+(error!==null&&typeof error==="object"?error.name:String(error))}
+            }
+            function callbackThrow(){
+                var log="",iterator=Object(),iterable=Object();
+                iterable[Symbol.iterator]=function(){log+="iterator;";return iterator};
+                iterator.next=function(){
+                    log+="next;";var result=Object();result.done=false;result.value=7;return result;
+                };
+                iterator.return=function(){log+="return;";throw "close"};
+                try{Set.groupBy(iterable,function(){log+="callback;";throw "callback"});return log+"missing"}
+                catch(error){return log+String(error)}
+            }
+            function nextThrow(){
+                var log="",iterator=Object(),iterable=Object();
+                iterable[Symbol.iterator]=function(){return iterator};
+                iterator.next=function(){log+="next;";throw "next"};
+                iterator.return=function(){log+="return;"};
+                try{Set.groupBy(iterable,function(){return 0});return log+"missing"}
+                catch(error){return log+String(error)}
+            }
+            return invalidCallback()+"|"+callbackThrow()+"|"+nextThrow()+"|"+
+                __completion(function(){return new Set.groupBy([],function(){return 0})});
+        })()
+// case: brands / Set Map and iterator methods enforce independent brands and constructability
+(function(){
+            var setIteratorNext=Object.getPrototypeOf(new Set().values()).next;
+            var mapIteratorNext=Object.getPrototypeOf(new Map().entries()).next;
+            var setIterator=new Set([1]).values(),mapIterator=new Map([[1,2]]).entries();
+            return [
+                __completion(function(){return Set.prototype.add.call(new Map(),1)}),
+                __completion(function(){return Map.prototype.set.call(new Set(),1,2)}),
+                __completion(function(){return Object.getOwnPropertyDescriptor(Set.prototype,"size").get.call(Object())}),
+                __completion(function(){return Set.prototype.union.call(Object(),new Set())}),
+                __completion(function(){return setIteratorNext.call(mapIterator)}),
+                __completion(function(){return mapIteratorNext.call(setIterator)}),
+                __completion(function(){return new Set.prototype.add()}),
+                __completion(function(){return Set.prototype.add.call(new Set(),"x") instanceof Set}),
+                __completion(function(){return new Set.groupBy([],function(){return 0})})
+            ].join("|");
+        })()

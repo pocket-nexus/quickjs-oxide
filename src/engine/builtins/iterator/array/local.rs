@@ -129,10 +129,9 @@ impl ArrayNextStep {
                     resume.number(runtime, result)?
                 }
                 Self::Complete(result) => {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "array_next_completed_without_waiting_state",
-                    );
+                    profile!(record_owned_execution_event(
+                        "array_next_completed_without_waiting_state"
+                    ));
                     return Ok(Self::Complete(result));
                 }
                 step => return Ok(step),

@@ -38,10 +38,7 @@ impl RuntimeState {
     ) -> Result<Option<JsValue>, RuntimeError> {
         *boundary = None;
         loop {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_read.state_probe",
-            );
+            profile!(record_owned_execution_event("ordinary_read.state_probe"));
             let mut selection = self.select_own_read(object, atom, false)?;
             if let OwnReadSelection::Special(kind) = selection {
                 selection = match kind {
@@ -222,9 +219,13 @@ impl RuntimeState {
                 )?));
             }
         };
-        let prototype = self.heap.context(realm)?.primitive_prototypes[kind.index()].ok_or(
-            RuntimeError::Invariant("primitive prototype is not implemented in this realm"),
-        )?;
+        let prototype =
+            self.heap
+                .context(realm)?
+                .primitive_prototype(kind)
+                .ok_or(RuntimeError::Invariant(
+                    "primitive prototype is not implemented in this realm",
+                ))?;
         self.select_ordinary_read_in_state(poisoned, prototype, atom, domain_id, boundary, native)
     }
 }

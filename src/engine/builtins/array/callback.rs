@@ -1,6 +1,5 @@
 //! Array callback loops retain the captured length and reread each observable property.
 
-use crate::engine::builtins::native::NativeFunctionId;
 #[cfg(test)]
 use crate::engine::value::Value;
 use crate::engine::{
@@ -22,16 +21,6 @@ pub(crate) enum CallbackKind {
     Iteration(ArrayIterationKind),
     Reduce(ArrayReduceKind),
     Find(ArrayFindKind),
-}
-impl CallbackKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::ArrayPrototypeIteration(kind) => Some(Self::Iteration(kind)),
-            NativeFunctionId::ArrayPrototypeReduce(kind) => Some(Self::Reduce(kind)),
-            NativeFunctionId::ArrayPrototypeFind(kind) => Some(Self::Find(kind)),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum CallbackStep {
     Complete(Completion),

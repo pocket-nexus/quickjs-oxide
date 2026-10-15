@@ -11,8 +11,9 @@
 
 use super::array_buffer::typed_array::TypedArraySnapshot;
 use crate::engine::builtins::buffer_access::BufferAccessToken;
-use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
-use crate::engine::heap::{ObjectId, RawValue};
+use crate::engine::heap::ObjectId;
+use crate::engine::heap::runtime::RuntimeState;
+use crate::engine::object::builtin_properties::NativeBuiltinProperty;
 use std::cell::Cell;
 
 use crate::engine::builtins::native::{
@@ -589,106 +590,30 @@ impl RuntimeState {
         poisoned: &Cell<bool>,
         realm: ContextId,
     ) -> Result<ObjectId, RuntimeError> {
-        let atomics = self.new_ordinary_object_in_realm(poisoned, realm)?;
-        let mut result_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(atomics));
-        let (state, result_owner) = result_owner.parts();
-        for (target, name, length, readable) in [
-            (
-                AtomicsNativeKind::Operation(AtomicsOperationKind::Add),
-                "add",
-                3,
-                3,
-            ),
-            (
-                AtomicsNativeKind::Operation(AtomicsOperationKind::And),
-                "and",
-                3,
-                3,
-            ),
-            (
-                AtomicsNativeKind::Operation(AtomicsOperationKind::Or),
-                "or",
-                3,
-                3,
-            ),
-            (
-                AtomicsNativeKind::Operation(AtomicsOperationKind::Sub),
-                "sub",
-                3,
-                3,
-            ),
-            (
-                AtomicsNativeKind::Operation(AtomicsOperationKind::Xor),
-                "xor",
-                3,
-                3,
-            ),
-            (
-                AtomicsNativeKind::Operation(AtomicsOperationKind::Exchange),
-                "exchange",
-                3,
-                3,
-            ),
-            (
-                AtomicsNativeKind::Operation(AtomicsOperationKind::CompareExchange),
-                "compareExchange",
-                4,
-                4,
-            ),
-            (
-                AtomicsNativeKind::Operation(AtomicsOperationKind::Load),
-                "load",
-                2,
-                2,
-            ),
-            (AtomicsNativeKind::Store, "store", 3, 3),
-            (AtomicsNativeKind::IsLockFree, "isLockFree", 1, 1),
-            (AtomicsNativeKind::Pause, "pause", 0, 0),
-            (AtomicsNativeKind::Wait, "wait", 4, 4),
-            (AtomicsNativeKind::Notify, "notify", 3, 3),
-        ] {
-            state.define_native_builtin_auto_init(
-                poisoned,
-                atomics,
-                realm,
-                NativeFunctionId::Atomics(target),
-                name,
-                length,
-                readable,
-            )?;
+        use AtomicsNativeKind as K;
+        use AtomicsOperationKind as Op;
+        const fn m(
+            kind: AtomicsNativeKind,
+            name: &'static str,
+            length: u8,
+        ) -> NativeBuiltinProperty {
+            NativeBuiltinProperty::new(NativeFunctionId::Atomics(kind), name, length, length)
         }
-
-        let to_string_tag = state.well_known_symbols[&WellKnownSymbol::ToStringTag];
-        {
-            let string = state
-                .heap
-                .allocate_string(JsString::from_static("Atomics"))?;
-            let mut producer = OwnedValueGuard::new(state, poisoned, JsValue::String(string));
-            let (state, producer) = producer.parts();
-            if !state.define_raw_property_with_poison(
-                poisoned,
-                atomics,
-                to_string_tag,
-                &crate::engine::object::property::PropertyDescriptor {
-                    value: Some(RawValue::String(string)),
-                    writable: Some(false),
-                    enumerable: Some(false),
-                    configurable: Some(true),
-                    ..crate::engine::object::property::PropertyDescriptor::new()
-                },
-            )? {
-                return Err(RuntimeError::Invariant(
-                    "Atomics toStringTag definition was rejected",
-                ));
-            }
-            state.release_owned_jsvalue(
-                poisoned,
-                producer.take().expect("intrinsic tag producer"),
-            )?;
-        }
-        let JsValue::Object(object) = result_owner.take().expect("intrinsic factory result") else {
-            unreachable!("intrinsic factory allocated an object")
-        };
-        Ok(object)
+        const METHODS: &[NativeBuiltinProperty] = &[
+            m(K::Operation(Op::Add), "add", 3),
+            m(K::Operation(Op::And), "and", 3),
+            m(K::Operation(Op::Or), "or", 3),
+            m(K::Operation(Op::Sub), "sub", 3),
+            m(K::Operation(Op::Xor), "xor", 3),
+            m(K::Operation(Op::Exchange), "exchange", 3),
+            m(K::Operation(Op::CompareExchange), "compareExchange", 4),
+            m(K::Operation(Op::Load), "load", 2),
+            m(K::Store, "store", 3),
+            m(K::IsLockFree, "isLockFree", 1),
+            m(K::Pause, "pause", 0),
+            m(K::Wait, "wait", 4),
+            m(K::Notify, "notify", 3),
+        ];
+        self.instantiate_namespace_object(poisoned, realm, METHODS, "Atomics", &[])
     }
 }

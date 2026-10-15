@@ -20,7 +20,6 @@ use crate::engine::compiler::model::bindings::IrAnnexBinding;
 use crate::engine::compiler::model::bindings::IrEvalDeclaration;
 use crate::engine::compiler::model::bindings::IrGlobalDeclaration;
 use crate::engine::compiler::model::bindings::IrHoistedFunction;
-use crate::engine::compiler::model::bindings::IrProgramAnnexFunction;
 use crate::engine::compiler::model::bindings::IrScopedFunction;
 use crate::engine::compiler::model::bindings::binding_kind_from_closure_flags;
 use crate::engine::compiler::model::ir::IdentifierAccess;
@@ -971,15 +970,8 @@ impl<'source> Parser<'source> {
         // QuickJS publishes this synthetic global only after the child has
         // parsed successfully. Deferred tree-wide identifier resolution still
         // lets the child capture the resulting recursive binding.
-        let IrAnnexBinding::Static(binding) =
-            self.ensure_annex_b_binding(name, declaration_span)?
-        else {
-            return Err(Error::internal(
-                "Program Annex B declaration targeted dynamic eval storage",
-            ));
-        };
-
-        let authored_closure = self.emit(IrOp::MakeClosure(parsed.constant))?;
+        self.ensure_annex_b_binding(name, declaration_span)?;
+        self.emit(IrOp::MakeClosure(parsed.constant))?;
         self.emit_instruction(Instruction::Dup)?;
         self.emit_identifier_inherited(
             name,
@@ -991,13 +983,6 @@ impl<'source> Parser<'source> {
         // Program-body lexical exception is active. It is observable through
         // pre-existing global accessors, whose setter runs twice.
         self.emit_identifier_inherited(name, declaration_span, body_scope, IdentifierAccess::Put)?;
-        self.current_ir_mut()
-            .program_annex_functions
-            .push(IrProgramAnnexFunction {
-                binding,
-                constant: parsed.constant,
-                authored_closure,
-            });
         Ok(())
     }
 
@@ -1041,7 +1026,6 @@ impl<'source> Parser<'source> {
             .push(IrScopedFunction {
                 binding: prepared.binding,
                 constant: parsed.constant,
-                annex_binding,
                 authored_closure,
             });
         Ok(())

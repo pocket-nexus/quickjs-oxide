@@ -57,15 +57,13 @@ pub(super) fn execute(
             .map_err(runtime_error_to_vm_error)?;
         cursor.commit_owned(state, JsValue::Object(array))?;
         cursor.advance(fallthrough.index());
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_instruction(depth);
+        profile!(record_owned_instruction(depth));
     }
     // Every element and the result owner are published before the
     // original allocation checkpoint can observe this Array.
     state
         .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
         .map_err(runtime_error_to_vm_error)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("core.internal_array_from");
+    profile!(record_owned_execution_event("core.internal_array_from"));
     Ok(())
 }

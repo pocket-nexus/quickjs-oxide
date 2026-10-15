@@ -114,10 +114,9 @@ impl<'source> Parser<'source> {
         context: RootCompileContext,
         mut module_attribute_checker: Option<&mut dyn ModuleImportAttributeChecker>,
     ) -> Result<FunctionTree, ModuleCompileFailure> {
-        #[cfg(feature = "profiling")]
-        let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-            crate::engine::api::profiling::CompilePhase::Parse,
-        );
+        profile!(let _phase_timer = PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Parse
+        ));
         validate_source_length(source.len())?;
         let is_module = matches!(&context, RootCompileContext::Module);
         let (

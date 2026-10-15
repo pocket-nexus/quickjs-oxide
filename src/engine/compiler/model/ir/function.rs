@@ -21,7 +21,6 @@ use crate::engine::compiler::model::bindings::IrBinding;
 use crate::engine::compiler::model::bindings::IrEvalDeclaration;
 use crate::engine::compiler::model::bindings::IrGlobalDeclaration;
 use crate::engine::compiler::model::bindings::IrHoistedFunction;
-use crate::engine::compiler::model::bindings::IrProgramAnnexFunction;
 use crate::engine::compiler::model::bindings::IrScopedFunction;
 use crate::engine::compiler::model::bindings::ResolvedBinding;
 use crate::engine::compiler::model::bindings::SyntheticLocal;
@@ -223,9 +222,6 @@ pub(in crate::engine::compiler) struct FunctionIr {
     /// Scoped lexical function slots, including one slot per sloppy same-scope
     /// duplicate as in QuickJS `JS_VAR_FUNCTION_DECL`.
     pub(in crate::engine::compiler) scoped_functions: Vec<IrScopedFunction>,
-    /// ProgramBody's labelled-function exception has authored closure writes
-    /// but no lexical scope-entry slot.
-    pub(in crate::engine::compiler) program_annex_functions: Vec<IrProgramAnnexFunction>,
     pub(in crate::engine::compiler) var_scope: ScopeId,
     pub(in crate::engine::compiler) body_scope: ScopeId,
     /// QuickJS `eval_ret_idx`: the script-only hidden completion local.
@@ -443,7 +439,6 @@ impl FunctionIr {
             function_hoists_installed: false,
             pseudo_binding_prologues_installed: false,
             scoped_functions: Vec::new(),
-            program_annex_functions: Vec::new(),
             var_scope,
             body_scope: body,
             eval_ret_local,

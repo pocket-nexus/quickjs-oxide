@@ -1,6 +1,5 @@
 //! String scalar operations retain the converted receiver before argument coercions.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{
         error::{Error, NativeErrorKind},
@@ -23,19 +22,6 @@ pub(crate) enum ScalarTextKind {
     Concat,
     WellFormed(StringWellFormedKind),
     Iterator,
-}
-impl ScalarTextKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::StringPrototypeCharAt(kind) => Self::CharAt(kind),
-            NativeFunctionId::StringPrototypeCharCodeAt => Self::CharCodeAt,
-            NativeFunctionId::StringPrototypeCodePointAt => Self::CodePointAt,
-            NativeFunctionId::StringPrototypeConcat => Self::Concat,
-            NativeFunctionId::StringPrototypeWellFormed(kind) => Self::WellFormed(kind),
-            NativeFunctionId::StringPrototypeIterator => Self::Iterator,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum ScalarTextStep {
     Complete(Completion),
@@ -106,16 +92,14 @@ impl ScalarTextStep {
             )));
         }
         if let Some(result) = complete_primitive(runtime, realm, kind, this_value, arguments)? {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "string_scalar_completed_without_state",
-            );
+            profile!(record_owned_execution_event(
+                "string_scalar_completed_without_state"
+            ));
             return Ok(Self::Complete(result));
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "string_scalar_resident_allocated",
-        );
+        profile!(record_owned_execution_event(
+            "string_scalar_resident_allocated"
+        ));
         let arguments = match kind {
             ScalarTextKind::Concat => {
                 let mut values = Vec::new();

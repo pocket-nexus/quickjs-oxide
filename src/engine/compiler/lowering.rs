@@ -19,7 +19,6 @@ use crate::engine::api::error::ErrorKind;
 use crate::engine::atom::AtomTable;
 use crate::engine::code::bytecode::DynamicEnvironmentSource;
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::code::bytecode_validation::quickjs_copies_defined_argument_count;
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::code::debug::Pc2LineEntry;
 use crate::engine::code::debug::Pc2LineTable;
@@ -39,7 +38,7 @@ use crate::engine::code::function::metadata::ParameterArgumentCell;
 use crate::engine::code::function::metadata::ParameterBodyStorage;
 use crate::engine::code::function::metadata::ParameterEnvironmentLayout;
 use crate::engine::code::function::metadata::ParameterPatternCopy;
-use crate::engine::compiler::flow::{plan_numeric_regions, verify_lowered_max_stack};
+use crate::engine::compiler::flow::{lowered_max_stack, plan_numeric_regions};
 use crate::engine::compiler::optimize::{
     apply_quickjs_late_throw_sites, elide_initialized_local_checks, fold_quickjs_constant_branches,
 };
@@ -238,7 +237,7 @@ pub(super) fn lower_detached_script(tree: FunctionTree) -> Result<DetachedByteco
             )),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let max_stack = verify_lowered_max_stack(&code, constants.len())?;
+    let max_stack = lowered_max_stack(&code)?;
     let bytecode = DetachedBytecode {
         code,
         constants,
@@ -254,10 +253,9 @@ pub(super) fn lower_unlinked_tree(
     tree: FunctionTree,
     debug_info: DebugInfoMode,
 ) -> Result<UnlinkedFunction, Error> {
-    #[cfg(feature = "profiling")]
-    let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Lowering,
-    );
+    profile!(let _phase_timer = PhaseTimer::start(
+        crate::engine::api::profiling::CompilePhase::Lowering
+    ));
 
     let FunctionTree {
         functions: tree_functions,
@@ -525,7 +523,6 @@ pub(super) fn lower_unlinked_tree(
             function.parameters.len(),
             dynamic_bindings,
         );
-        let constant_count = function.constants.len();
         let constants = function
             .constants
             .into_iter()
@@ -549,7 +546,7 @@ pub(super) fn lower_unlinked_tree(
                     .ok_or_else(|| Error::internal("child function was not lowered exactly once")),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let max_stack = verify_lowered_max_stack(&code, constant_count)?;
+        let max_stack = lowered_max_stack(&code)?;
         let metadata = FunctionMetadata {
             argument_count: u16::try_from(function.parameters.len())
                 .map_err(|_| Error::new(ErrorKind::JsInternal, "too many arguments"))?,
@@ -660,8 +657,7 @@ pub(super) fn lower_unlinked_tree(
             )?),
             DebugInfoMode::StripDebug => None,
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_lowered_function(&code, max_stack);
+        profile!(record_lowered_function(&code, max_stack));
         let unlinked = UnlinkedFunction::new(
             code,
             constants,
@@ -1542,6 +1538,32 @@ fn build_unlinked_debug(
     })
 }
 
+/// Whether pinned QuickJS copies `defined_arg_count` out of its parser record.
+///
+/// QuickJS gates that copy on `arg_count + var_count > 0`. Most Rust locals
+/// correspond directly to QuickJS variables, but owning-function HomeObject,
+/// active-function, `new.target`, and ordinary `this` reads use dedicated
+/// bytecode here while QuickJS resolves each to a hidden variable. This
+/// predicate keeps the observable empty terminal rest-BindingPattern `length`
+/// quirk.
+fn quickjs_copies_defined_argument_count(
+    argument_count: usize,
+    local_count: usize,
+    code: &[Instruction],
+) -> bool {
+    argument_count != 0
+        || local_count != 0
+        || code.iter().any(|instruction| {
+            matches!(
+                instruction,
+                Instruction::PushHomeObject
+                    | Instruction::PushActiveFunction
+                    | Instruction::PushNewTarget
+                    | Instruction::PushThis
+            )
+        })
+}
+
 pub(in crate::engine::compiler) fn unlinked_primitive(
     value: Value,
 ) -> Result<UnlinkedConstant, Error> {
@@ -1560,8 +1582,18 @@ mod tests {
     use crate::engine::compiler::lexer::{Position, Span};
     use crate::engine::compiler::{
         FunctionIrOptions, FunctionSourceInfo, IrScope, ScopeId, SuperCapabilities,
-        WITH_OBJECT_LOCAL_NAME, validate_scope_graph,
+        WITH_OBJECT_LOCAL_NAME,
     };
+
+    #[test]
+    fn active_function_counts_as_a_quickjs_hidden_variable() {
+        assert!(!quickjs_copies_defined_argument_count(0, 0, &[]));
+        assert!(quickjs_copies_defined_argument_count(
+            0,
+            0,
+            &[Instruction::PushActiveFunction],
+        ));
+    }
 
     #[test]
     fn debug_source_cache_preserves_gaps_equal_coordinates_and_error_order() {
@@ -1690,21 +1722,5 @@ mod tests {
         assert!(lifecycles[scope.0].tdz_locals.is_empty());
         assert!(lifecycles[scope.0].function_entries.is_empty());
         assert_eq!(lifecycles[scope.0].close_locals, [0]);
-
-        let (strict, _, names) = make_function(true);
-        let tree = FunctionTree {
-            functions: vec![Box::new(strict)],
-            names,
-            source: "".into(),
-            filename: JsString::from_static("<strict-with-metadata>"),
-            module: None,
-            pending_unsupported: None,
-        };
-        assert!(
-            validate_scope_graph(&tree)
-                .unwrap_err()
-                .message()
-                .contains("strict function retained a local with object")
-        );
     }
 }

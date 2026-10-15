@@ -404,8 +404,7 @@ pub(super) fn freeze_entry(
     kind: VmSuspendKind,
     pc: usize,
 ) -> Result<EncodedVmActivation, RuntimeError> {
-    #[cfg(feature = "profiling")]
-    let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("freeze.encode");
+    profile!(let _profile_phase = PhaseTimer::start_vm("freeze.encode"));
     // Encoding has not yet published or balanced any conversion edges. Keep
     // the ordinary frame owner until the complete encoded record exists.
     let mut entry = super::frame::FrameEntryGuard::new(runtime, entry);
@@ -491,8 +490,7 @@ pub(crate) fn thaw(
     data: &GeneratorActivationData,
     expected_function_kind: FunctionKind,
 ) -> Result<RootedVmActivation, RuntimeError> {
-    #[cfg(feature = "profiling")]
-    let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("thaw.decode");
+    profile!(let _profile_phase = PhaseTimer::start_vm("thaw.decode"));
     runtime.0.state.borrow().heap.context(resume_caller_realm)?;
     let bytecode_probe = FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), data.bytecode)?;
     let executable = runtime.snapshot_function_bytecode(&bytecode_probe)?;

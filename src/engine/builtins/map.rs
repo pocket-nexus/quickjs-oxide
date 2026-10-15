@@ -14,10 +14,10 @@ use crate::engine::builtins::native::{MapIteratorKind, MapNativeKind, NativeFunc
 use crate::engine::heap::{
     ContextId, HeapError, MapRealmData, ObjectData, ObjectPayload, RawValue,
 };
-use crate::engine::object::{
-    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    WellKnownSymbol,
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, BuiltinKey, alias, builtin_getter, method, species_getter, to_string_tag,
 };
+use crate::engine::object::{ObjectRef, WellKnownSymbol};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
@@ -36,162 +36,43 @@ impl Runtime {
         iterator_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use BuiltinKey::{Name, Symbol};
+        use MapIteratorKind as I;
+        use MapNativeKind as K;
+        use NativeFunctionId::Map as F;
+        // QuickJS's alias table preserves the exact entries-function identity.
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F(K::Set), "set", 2, 2),
+            method(F(K::Get), "get", 1, 1),
+            method(F(K::GetOrInsert), "getOrInsert", 2, 2),
+            method(F(K::GetOrInsertComputed), "getOrInsertComputed", 2, 2),
+            method(F(K::Has), "has", 1, 1),
+            method(F(K::Delete), "delete", 1, 1),
+            method(F(K::Clear), "clear", 0, 0),
+            builtin_getter!(F(K::Size), "size"),
+            method(F(K::ForEach), "forEach", 1, 2),
+            method(F(K::Iterator(I::Value)), "values", 0, 0),
+            method(F(K::Iterator(I::Key)), "keys", 0, 0),
+            method(F(K::Iterator(I::KeyAndValue)), "entries", 0, 0),
+            alias(Symbol(WellKnownSymbol::Iterator), Name("entries")),
+            to_string_tag("Map"),
+        ];
+        const ITERATOR_PROTOTYPE: &[BuiltinEntry] = &[
+            method(NativeFunctionId::MapIteratorNext, "next", 0, 0),
+            to_string_tag("Map Iterator"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F(K::GroupBy), "groupBy", 2, 2),
+            species_getter(F(K::Species)),
+        ];
         let map_prototype = self.new_object(Some(object_prototype))?;
         let map_iterator_prototype = self.new_object(Some(iterator_prototype))?;
-
-        for (kind, name, length, readable) in [
-            (MapNativeKind::Set, "set", 2, 2),
-            (MapNativeKind::Get, "get", 1, 1),
-            (MapNativeKind::GetOrInsert, "getOrInsert", 2, 2),
-            (
-                MapNativeKind::GetOrInsertComputed,
-                "getOrInsertComputed",
-                2,
-                2,
-            ),
-            (MapNativeKind::Has, "has", 1, 1),
-            (MapNativeKind::Delete, "delete", 1, 1),
-            (MapNativeKind::Clear, "clear", 0, 0),
-        ] {
-            self.define_native_builtin_auto_init(
-                &map_prototype,
-                realm,
-                NativeFunctionId::Map(kind),
-                name,
-                length,
-                readable,
-            )?;
-        }
-        self.define_native_builtin_getter_on(
-            &map_prototype,
-            function_prototype,
-            realm,
-            NativeFunctionId::Map(MapNativeKind::Size),
-            "size",
-            "get size",
-        )?;
-        for (kind, name, length, readable) in [
-            (MapNativeKind::ForEach, "forEach", 1, 2),
-            (
-                MapNativeKind::Iterator(MapIteratorKind::Value),
-                "values",
-                0,
-                0,
-            ),
-            (MapNativeKind::Iterator(MapIteratorKind::Key), "keys", 0, 0),
-            (
-                MapNativeKind::Iterator(MapIteratorKind::KeyAndValue),
-                "entries",
-                0,
-                0,
-            ),
-        ] {
-            self.define_native_builtin_auto_init(
-                &map_prototype,
-                realm,
-                NativeFunctionId::Map(kind),
-                name,
-                length,
-                readable,
-            )?;
-        }
-
-        // QuickJS's alias table preserves the exact entries-function identity.
-        let entries_key =
-            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Entries)?;
-        let entries = match self.get_property_in_realm(realm, &map_prototype, &entries_key)? {
-            Completion::Return(JsValue::Object(id)) => {
-                ObjectRef::from_owned_handle(self.clone(), id)
-            }
-            Completion::Return(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "Map.prototype.entries was not callable during bootstrap",
-                ));
-            }
-            Completion::Throw(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "Map.prototype.entries initialization threw during bootstrap",
-                ));
-            }
-        };
-        let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
-        if !self.define_raw_property(
-            &map_prototype,
-            &iterator_key,
-            &crate::engine::object::property::PropertyDescriptor {
-                value: Some(crate::engine::heap::RawValue::Object(entries.object_id())),
-                writable: Some(true),
-                enumerable: Some(false),
-                configurable: Some(true),
-                ..Default::default()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Map iterator alias definition was rejected",
-            ));
-        }
-        self.define_to_string_tag(&map_prototype, "Map")?;
-
-        self.define_native_builtin_auto_init(
-            &map_iterator_prototype,
-            realm,
-            NativeFunctionId::MapIteratorNext,
-            "next",
-            0,
-            0,
-        )?;
-        self.define_to_string_tag(&map_iterator_prototype, "Map Iterator")?;
-
-        let constructor = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::Map(MapNativeKind::Constructor),
-            1,
-            "Map",
-            0,
-        )?;
-        self.define_native_builtin_auto_init(
-            constructor.as_object(),
-            realm,
-            NativeFunctionId::Map(MapNativeKind::GroupBy),
-            "groupBy",
-            2,
-            2,
-        )?;
-        let species_getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::Map(MapNativeKind::Species),
-            0,
-            "get [Symbol.species]",
-            0,
-        )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
-        if !self.define_own_property(
-            constructor.as_object(),
-            &species,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(species_getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Map species definition was rejected",
-            ));
-        }
-
-        self.define_function_data_property(
-            global_object,
-            "Map",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(&map_prototype, realm, PROTOTYPE)?;
+        self.define_builtin_entries(&map_iterator_prototype, realm, ITERATOR_PROTOTYPE)?;
+        let constructor =
+            self.new_native_builtin(function_prototype, realm, F(K::Constructor), 1, "Map", 0)?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "Map", &constructor)?;
         self.define_constructor_relationship(&constructor, &map_prototype)?;
         self.0.state.borrow_mut().heap.attach_map_intrinsics(
             realm,
@@ -212,7 +93,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .map
+            .map()
             .ok_or(RuntimeError::Invariant("realm has no Map intrinsics"))
     }
 

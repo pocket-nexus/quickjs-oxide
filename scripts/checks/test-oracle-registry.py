@@ -90,6 +90,24 @@ class OracleRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, 'must live under apps/cli/tests/oracle'):
             self.inventory()
 
+    def test_unregistered_case_directory_is_rejected(self):
+        self.write('cases/topic/values.js', '// case: one\n1\n')
+        with self.assertRaisesRegex(SystemExit, 'no runner test'):
+            self.inventory()
+
+    def test_registered_case_directory_is_accepted(self):
+        self.write('main.rs', (self.oracle / 'main.rs').read_text() + 'mod cases;\n')
+        self.write('cases.rs', '#[test]\nfn topic() {}\n')
+        self.write('cases/topic/values.js', '// case: one\n1\n')
+        self.assertEqual(self.inventory(), {False: 2, True: 3})
+
+    def test_non_js_case_fixture_is_rejected(self):
+        self.write('main.rs', (self.oracle / 'main.rs').read_text() + 'mod cases;\n')
+        self.write('cases.rs', '#[test]\nfn topic() {}\n')
+        self.write('cases/topic/values.txt', '')
+        with self.assertRaisesRegex(SystemExit, 'must be .js'):
+            self.inventory()
+
 
 if __name__ == '__main__':
     unittest.main()

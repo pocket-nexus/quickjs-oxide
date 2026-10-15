@@ -1,11 +1,8 @@
 //! Global parsers and codecs keep their converted input until later argument conversion ends.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
-    builtins::native::{
-        GlobalNumberPredicateKind, GlobalUriCodecKind, NumberParseKind, SymbolRegistryKind,
-    },
+    builtins::native::{GlobalNumberPredicateKind, GlobalUriCodecKind, NumberParseKind},
     heap::ContextId,
     value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
@@ -19,17 +16,6 @@ pub(crate) enum GlobalKind {
     Predicate(GlobalNumberPredicateKind),
     Uri(GlobalUriCodecKind),
     SymbolFor,
-}
-impl GlobalKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::GlobalNumberParse(kind) => Self::Parse(kind),
-            NativeFunctionId::GlobalNumberPredicate(kind) => Self::Predicate(kind),
-            NativeFunctionId::GlobalUriCodec(kind) => Self::Uri(kind),
-            NativeFunctionId::SymbolRegistry(SymbolRegistryKind::For) => Self::SymbolFor,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum GlobalStep {
     Complete(Completion),
@@ -129,10 +115,9 @@ impl GlobalStep {
                     resume.number(runtime, result)?
                 }
                 Self::Complete(completion) => {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "global_completed_without_waiting_state",
-                    );
+                    profile!(record_owned_execution_event(
+                        "global_completed_without_waiting_state"
+                    ));
                     return Ok(Self::Complete(completion));
                 }
                 step => return Ok(step),

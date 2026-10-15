@@ -105,7 +105,8 @@ pub(super) fn binding_error(
     let value = runtime
         .new_native_error_from_error_jsvalue(frame.executable.realm, native, &error)
         .map_err(runtime_error_to_vm_error)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(execution.slots.depth(&frame.window));
+    profile!(record_owned_instruction(
+        execution.slots.depth(&frame.window)
+    ));
     Ok(super::Completion::Throw(value))
 }

@@ -74,11 +74,11 @@ impl crate::engine::heap::runtime::RuntimeState {
             (
                 context.object_prototype,
                 context
-                    .array_prototype_values
+                    .array_prototype_values()
                     .ok_or(RuntimeError::Invariant(
                         "realm has no cached Array.prototype.values root",
                     ))?,
-                context.throw_type_error.ok_or(RuntimeError::Invariant(
+                context.throw_type_error().ok_or(RuntimeError::Invariant(
                     "realm has no shared %ThrowTypeError% root",
                 ))?,
             )
@@ -302,11 +302,11 @@ impl Runtime {
             let context = state.heap.context(realm)?;
             (
                 context
-                    .array_prototype_values
+                    .array_prototype_values()
                     .ok_or(RuntimeError::Invariant(
                         "realm has no cached Array.prototype.values root",
                     ))?,
-                context.throw_type_error.ok_or(RuntimeError::Invariant(
+                context.throw_type_error().ok_or(RuntimeError::Invariant(
                     "realm has no shared %ThrowTypeError% root",
                 ))?,
             )

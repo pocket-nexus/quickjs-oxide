@@ -42,10 +42,8 @@ impl<'a> FrameExecution<'a> {
     ) -> Result<Self, Error> {
         let frame = execution.frames.current_mut(id)?;
         execution.slots.check_current(&frame.window)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("core.window_authentication");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("core.pc_authentication");
+        profile!(record_owned_execution_event("core.window_authentication"));
+        profile!(record_owned_execution_event("core.pc_authentication"));
         if !frame.executable.exec.is_boundary(frame.resume_pc) {
             return Err(Error::internal(
                 "execution entry PC is not an instruction boundary",
@@ -139,10 +137,7 @@ impl<'a> FrameExecution<'a> {
             return Ok(Entry::General);
         };
         if !self.execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "core.call_decline.overflow",
-            );
+            profile!(record_owned_execution_event("core.call_decline.overflow"));
             return Ok(Entry::General);
         }
         // The same exclusive lease produced these operands. Between preflight
@@ -290,9 +285,7 @@ impl<'a> FrameExecution<'a> {
         tail: bool,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<(), Error> {
-        #[cfg(feature = "profiling")]
-        let _timer =
-            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
+        profile!(let _timer = PhaseTimer::start_vm_sampled("ordinary.install.sampled"));
         #[cfg(feature = "profiling")]
         {
             let count = checked.count();
@@ -317,10 +310,9 @@ impl<'a> FrameExecution<'a> {
             call,
             fallthrough,
             |transaction, state, layout, function, observes_arguments| {
-                #[cfg(feature = "profiling")]
-                let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
-                    "ordinary.install.slots.sampled",
-                );
+                profile!(let _timer = PhaseTimer::start_vm_sampled(
+                    "ordinary.install.slots.sampled"
+                ));
                 let installed = transaction.install_ordinary_window(
                     runtime,
                     state,
@@ -479,8 +471,7 @@ impl<'a> FrameExecution<'a> {
             resume_pc: 0,
             cold,
         });
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
+        profile!(record_owned_call_storage(frame_bytes, flag_bytes, 0));
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
         Ok(result)
@@ -507,24 +498,21 @@ impl<'a> FrameExecution<'a> {
                 return Ok(ReturnProgress::Declined);
             };
             if target.operation.is_some() {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "core.return_decline.operation",
-                );
+                profile!(record_owned_execution_event(
+                    "core.return_decline.operation"
+                ));
                 return Ok(ReturnProgress::Declined);
             }
             if frame.executable.root().is_some() {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "core.return_decline.public_root",
-                );
+                profile!(record_owned_execution_event(
+                    "core.return_decline.public_root"
+                ));
                 return Ok(ReturnProgress::Declined);
             }
             if execution.pending.is_none() {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "core.return_decline.missing_result",
-                );
+                profile!(record_owned_execution_event(
+                    "core.return_decline.missing_result"
+                ));
                 return Ok(ReturnProgress::Declined);
             }
             if let Err(error) = frame
@@ -562,10 +550,7 @@ impl<'a> FrameExecution<'a> {
                 ));
             }
             if target.tail {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "ordinary_tail_return_direct",
-                );
+                profile!(record_owned_execution_event("ordinary_tail_return_direct"));
                 continue;
             }
             if matches!(target.value_use, ReturnValue::Push) {
@@ -585,8 +570,7 @@ impl<'a> FrameExecution<'a> {
                     return Err(super::runtime_error_to_vm_error(error));
                 }
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("ordinary_return_direct");
+            profile!(record_owned_execution_event("ordinary_return_direct"));
             return Ok(ReturnProgress::Returned);
         }
     }
@@ -718,8 +702,7 @@ impl FrameTransaction<'_> {
         count: usize,
         method: bool,
     ) -> Result<bool, Error> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
+        profile!(record_owned_execution_event("call_value_domain_validation"));
         self.store
             .validate_call_value_domains_current(self.window, runtime, count, method)
     }
@@ -731,8 +714,7 @@ impl FrameTransaction<'_> {
         count: usize,
         method: bool,
     ) -> Result<CheckedOrdinaryCallOperands, Error> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
+        profile!(record_owned_execution_event("call_value_domain_validation"));
         // Preserve the existing domain-check order: receiver, then arguments
         // from left to right. The driver has already peeked the callee for
         // selection; the final read makes the sealed proof complete.
@@ -810,10 +792,9 @@ impl FrameTransaction<'_> {
         } else {
             JsValue::Undefined
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "native_callee_owner_transferred",
-        );
+        profile!(record_owned_execution_event(
+            "native_callee_owner_transferred"
+        ));
         Ok((arguments, receiver, callable))
     }
 
@@ -831,12 +812,10 @@ impl SlotStore {
         window: &'a mut FrameWindow,
     ) -> Result<FrameTransaction<'a>, Error> {
         self.check_current(window)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("core.window_authentication");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "frame_authentication.transaction",
-        );
+        profile!(record_owned_execution_event("core.window_authentication"));
+        profile!(record_owned_execution_event(
+            "frame_authentication.transaction"
+        ));
         Ok(FrameTransaction {
             store: self,
             window,
@@ -1317,8 +1296,7 @@ mod primitive_transaction_tests {
             &[Instruction::ReturnUndefined],
             vec![JsValue::Int(7)],
         );
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         {
             let mut segment = FrameExecution::admit(&mut execution, id).unwrap();
             for value in [9, 11] {
@@ -1435,8 +1413,7 @@ mod primitive_transaction_tests {
             &[Instruction::Call(0), Instruction::Return],
             vec![JsValue::Object(child_id)],
         );
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         let mut state = runtime.0.state.borrow_mut();
         {
             let mut segment = FrameExecution::admit(&mut execution, parent).unwrap();

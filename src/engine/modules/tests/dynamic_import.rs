@@ -3,8 +3,7 @@ use crate::engine::test_support::test_context;
 
 #[test]
 fn dynamic_import_load_and_finish_are_distinct_fifo_jobs_with_gc_roots() {
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let (runtime, mut context) = test_context();
     let (loader, loads, _) = MapModuleLoader::new([(
         "pkg/dependency.js",
@@ -55,8 +54,7 @@ fn dynamic_import_load_and_finish_are_distinct_fifo_jobs_with_gc_roots() {
 
 #[test]
 fn dynamic_import_waits_for_a_pending_tla_evaluation_and_reuses_it() {
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let (runtime, mut context) = test_context();
     drop(
         context

@@ -1,11 +1,8 @@
-use crate::oracle_cases::GroupedCase as Case;
-use crate::oracle_cases::SuccessCase;
 use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::engine::api::RuntimeError;
 use quickjs_oxide::engine::api::number_to_string;
 use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, Value};
 use std::fmt::Write as _;
-use std::process::Output;
 
 /// Create a runtime with the system host services and one fresh context.
 /// Destructure it as `let (runtime, mut context)` so the context still drops
@@ -42,20 +39,6 @@ pub(crate) fn checked_value_type(runtime: &Runtime, value: &Value) -> &'static s
                 "object"
             }
         }
-        Value::Symbol(_) => "symbol",
-    }
-}
-
-/// Classify a value without inspecting object callability.
-pub(crate) fn plain_value_type(value: &Value) -> &'static str {
-    match value {
-        Value::Undefined => "undefined",
-        Value::Null => "object",
-        Value::Bool(_) => "boolean",
-        Value::Int(_) | Value::Float(_) => "number",
-        Value::BigInt(_) => "bigint",
-        Value::String(_) => "string",
-        Value::Object(_) => "object",
         Value::Symbol(_) => "symbol",
     }
 }
@@ -265,22 +248,6 @@ pub(crate) fn drain(runtime: &Runtime) -> usize {
     count
 }
 
-pub(crate) fn assert_success(engine: &str, case: &SuccessCase, output: &Output) {
-    assert!(
-        output.status.success(),
-        "{engine} rejected {}: {}\nsource:\n{}",
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-        case.source
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        case.expected_stdout,
-        "{engine} output drifted for {}",
-        case.description
-    );
-}
-
 pub(crate) fn normalize_rust_value_text(value: Value) -> String {
     match value {
         Value::Undefined => "undefined|undefined".to_owned(),
@@ -293,33 +260,6 @@ pub(crate) fn normalize_rust_value_text(value: Value) -> String {
         Value::Object(_) => "object|<object>".to_owned(),
         Value::Symbol(_) => "symbol|<symbol>".to_owned(),
     }
-}
-
-pub(crate) fn take_rust_error(runtime: &Runtime, context: &mut Context) -> String {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("Rust parser did not materialize an Error object");
-    };
-    let read = |context: &mut Context, name: &str| {
-        let key = runtime.intern_property_key(name).unwrap();
-        context.get_property(&error, &key).unwrap()
-    };
-    let Value::String(name) = read(context, "name") else {
-        panic!("Rust Error.name was not a string");
-    };
-    let Value::String(message) = read(context, "message") else {
-        panic!("Rust Error.message was not a string");
-    };
-    let Value::Int(line) = read(context, "lineNumber") else {
-        panic!("Rust Error.lineNumber was not an integer");
-    };
-    let Value::Int(column) = read(context, "columnNumber") else {
-        panic!("Rust Error.columnNumber was not an integer");
-    };
-    format!(
-        "{}|{}|{line}:{column}",
-        name.to_utf8_lossy(),
-        message.to_utf8_lossy()
-    )
 }
 
 pub(crate) fn normalize_rust_value_units(value: &Value) -> String {
@@ -380,26 +320,6 @@ pub(crate) fn show_exception(runtime: &Runtime, context: &mut Context, exception
     }
 }
 
-pub(crate) fn hex(value: &JsString) -> String {
-    value
-        .utf16_units()
-        .map(|unit| format!("{unit:04x}"))
-        .collect()
-}
-
-pub(crate) fn value_text(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => value.to_string(),
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Object(_) | Value::Symbol(_) => panic!("unexpected observation value"),
-    }
-}
-
 pub(crate) fn error_text(
     runtime: &Runtime,
     context: &mut Context,
@@ -445,47 +365,6 @@ pub(crate) fn array_value_text(
         .join(",")
 }
 
-pub(crate) fn show(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined:undefined".to_owned(),
-        Value::Null => "object:null".to_owned(),
-        Value::Bool(value) => format!("boolean:{value}"),
-        Value::Int(value) => format!("number:{value}"),
-        Value::Float(value) => format!("number:{value}"),
-        Value::BigInt(value) => format!("bigint:{value}"),
-        Value::String(value) => format!("string:{}", value.to_utf8_lossy()),
-        Value::Symbol(_) => "symbol:<symbol>".to_owned(),
-        Value::Object(_) => "object:<object>".to_owned(),
-    }
-}
-
-pub(crate) fn error_name(
-    runtime: &Runtime,
-    context: &mut quickjs_oxide::engine::api::Context,
-    error: &quickjs_oxide::engine::api::ObjectRef,
-    case: &Case,
-) -> String {
-    let key = runtime
-        .intern_property_key("name")
-        .expect("Error name property key");
-    let Value::String(value) = context.get_property(error, &key).unwrap_or_else(|failure| {
-        panic!(
-            "read Error.name for {} / {}: {failure}",
-            case.group, case.description,
-        )
-    }) else {
-        panic!(
-            "Error.name was not a string for {} / {}",
-            case.group, case.description,
-        );
-    };
-    value.to_utf8_lossy()
-}
-
-pub(crate) fn eval_text(context: &mut Context, source: &str) -> String {
-    primitive_value_text_with_rust_float(context.eval(source).unwrap())
-}
-
 pub(crate) fn hex_bytes(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -505,28 +384,6 @@ pub(crate) fn js_utf16(units: &[u16]) -> String {
     }
     source.push('"');
     source
-}
-
-pub(crate) fn primitive_value_text_with_signed_zero(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => {
-            if value.is_nan() {
-                "NaN".to_owned()
-            } else if value == 0.0 && value.is_sign_negative() {
-                "-0".to_owned()
-            } else {
-                value.to_string()
-            }
-        }
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Object(_) => "[object Object]".to_owned(),
-        Value::Symbol(_) => "Symbol()".to_owned(),
-    }
 }
 
 pub(crate) fn assert_native_error(
@@ -571,15 +428,6 @@ pub(crate) fn string_text(value: Value) -> String {
         panic!("expected a string value");
     };
     value.to_utf8_lossy()
-}
-
-/// Take the pending Error object and render `throw:name:message` with both
-/// strings as UTF-16 hex.
-pub(crate) fn take_hex_error(runtime: &Runtime, context: &mut Context) -> String {
-    let error = take_error_object(context);
-    let name = error_string(runtime, context, &error, "name");
-    let message = error_string(runtime, context, &error, "message");
-    format!("throw:{}:{}", hex(&name), hex(&message))
 }
 
 /// Spell UTF-16 code units as a JavaScript `String.fromCharCode(...)` call.

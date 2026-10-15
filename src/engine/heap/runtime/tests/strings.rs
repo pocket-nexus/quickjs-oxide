@@ -11,8 +11,8 @@ fn string_wrapper_exotic_indices_length_define_delete_and_order_match_quickjs() 
         .heap
         .context(context.realm)
         .unwrap()
-        .primitive_prototypes[PrimitiveKind::String.index()]
-    .expect("String exotic-core prototype slot was absent");
+        .primitive_prototype(PrimitiveKind::String)
+        .expect("String exotic-core prototype slot was absent");
     let string_prototype =
         crate::engine::api::ObjectRef::from_borrowed_handle(runtime.clone(), string_prototype_id)
             .unwrap();

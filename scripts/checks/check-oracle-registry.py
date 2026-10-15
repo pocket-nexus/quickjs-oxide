@@ -75,8 +75,28 @@ def inventory():
         fail('unregistered oracle sources: ' + ', '.join(str(p.relative_to(ROOT)) for p in sorted(orphans)))
     if list((ROOT / 'apps/cli/tests').glob('oracle_*.rs')):
         fail('oracle sources must live under apps/cli/tests/oracle/')
+    case_inventory()
     print(f'Oracle module tree covers {counts[False]} default + {counts[True]} host tests across {len(visited)} sources.')
     return counts
+
+
+def case_inventory():
+    """Every JS fixture directory under cases/ needs its own runner test."""
+    cases = ORACLE / 'cases'
+    if not cases.exists():
+        return 0
+    runner = (ORACLE / 'cases.rs').read_text() if (ORACLE / 'cases.rs').exists() else ''
+    total = 0
+    for path in sorted(cases.iterdir()):
+        if not path.is_dir() or path.is_symlink():
+            fail(f'oracle case fixtures must live in a directory: {path.relative_to(ROOT)}')
+        if not re.search(r'#\[test\]\s*fn ' + re.escape(path.name) + r'\(\)', runner):
+            fail(f'oracle case directory has no runner test: {path.relative_to(ROOT)}')
+        for fixture in sorted(path.rglob('*')):
+            if fixture.is_file() and fixture.suffix != '.js':
+                fail(f'oracle case fixtures must be .js files: {fixture.relative_to(ROOT)}')
+            total += fixture.suffix == '.js'
+    return total
 
 
 def compiled_inventory(features=False, test_filter=None):

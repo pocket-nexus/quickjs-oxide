@@ -7,7 +7,6 @@ use crate::engine::{
     api::{
         Error, ErrorKind, error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError,
     },
-    builtins::native::NativeFunctionId,
     heap::{ContextId, IteratorConsumerKind},
     object::{CallableRef, ObjectRef, PropertyKey},
     value::{JsValue, conversion::NativeConversion},
@@ -21,16 +20,6 @@ pub(crate) enum ConsumeKind {
     Predicate(IteratorConsumerKind),
     Reduce,
     Array,
-}
-impl ConsumeKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::IteratorPrototypeConsume(kind) => Some(Self::Predicate(kind)),
-            NativeFunctionId::IteratorPrototypeReduce => Some(Self::Reduce),
-            NativeFunctionId::IteratorPrototypeToArray => Some(Self::Array),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum ConsumeStep {
     Complete(Completion),

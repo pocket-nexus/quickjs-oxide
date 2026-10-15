@@ -93,10 +93,9 @@ impl ArrayNextStep {
         };
 
         if let Some(value) = Self::dense_immediate_next(runtime, &iterator, source, index, kind)? {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "array_next_dense_immediate_leaf",
-            );
+            profile!(record_owned_execution_event(
+                "array_next_dense_immediate_leaf"
+            ));
             return Ok(Self::Complete(NativeInvokeOutcome::IteratorNextRaw {
                 value,
                 done: false,
@@ -302,10 +301,7 @@ impl ArrayNextResume {
                     }
                     action => return self.wait(runtime, action),
                 };
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "array_next_resident_stage",
-                );
+                profile!(record_owned_execution_event("array_next_resident_stage"));
             }
         }
     }

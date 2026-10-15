@@ -14,10 +14,9 @@ pub(super) fn relocate_ir_fragment(
     old_range: Range<usize>,
     new_start: usize,
 ) -> Result<(), Error> {
-    #[cfg(feature = "profiling")]
-    let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Relocation,
-    );
+    profile!(let _phase_timer = PhaseTimer::start(
+        crate::engine::api::profiling::CompilePhase::Relocation
+    ));
     for operation in operations {
         let Some(target) = ir_target_mut(&mut operation.op) else {
             continue;
@@ -57,14 +56,6 @@ pub(super) fn insert_hoist_fragment(
                 .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         }
     }
-    for annex in &mut function.program_annex_functions {
-        if annex.authored_closure >= at {
-            annex.authored_closure = annex
-                .authored_closure
-                .checked_add(fragment.len())
-                .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
-        }
-    }
     for operation in &mut function.ops {
         let Some(target) = ir_target_mut(&mut operation.op) else {
             continue;
@@ -97,12 +88,6 @@ pub(super) fn prepend_hoist_prefix(
             .checked_add(prefix.len())
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
     }
-    for annex in &mut function.program_annex_functions {
-        annex.authored_closure = annex
-            .authored_closure
-            .checked_add(prefix.len())
-            .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
-    }
     for operation in &mut function.ops {
         let Some(target) = ir_target_mut(&mut operation.op) else {
             continue;
@@ -126,10 +111,9 @@ pub(super) fn relocate_lowered_instruction(
     let Some(target) = instruction_target_mut(instruction) else {
         return Ok(());
     };
-    #[cfg(feature = "profiling")]
-    let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Relocation,
-    );
+    profile!(let _phase_timer = PhaseTimer::start(
+        crate::engine::api::profiling::CompilePhase::Relocation
+    ));
     let old =
         usize::try_from(*target).map_err(|_| Error::internal("jump target did not fit usize"))?;
     let new = offsets

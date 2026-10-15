@@ -28,7 +28,7 @@ Adapters and applications depend on the root package, whose production dependenc
 
 ## Compilation and publication
 
-The compiler builds temporary `Instruction` values from parsed and resolved source. Lowering uses a temporary data-flow and effect graph to select bounded numeric operations. `verify_parts` in `code/bytecode.rs` proves stack states, the stack limit and jump targets; `code/bytecode_validation.rs` authenticates compiler-authored frame, parameter and eval binding layouts. The encoder in `code/exec.rs` checks operand counts, widths, instruction boundaries and numeric region plans while it builds one `ExecCode` word stream; the temporary instruction graph is then dropped.
+The compiler builds temporary `Instruction` values from parsed and resolved source. Lowering uses a temporary data-flow and effect graph to select bounded numeric operations. `compute_stack_size` in `code/bytecode.rs` computes the reachable stack depth and enforces the QuickJS stack limit. Compiler output is trusted: there is no separate bytecode or layout validator. The encoder in `code/exec.rs` lays out operand widths and instruction boundaries while it builds one `ExecCode` word stream; the temporary instruction graph is then dropped.
 
 Each execution word carries an opcode header and short operand; wide operands occupy following words. The published function keeps constants, linked identities, source positions, instruction boundaries and operation metadata. Runtime frames use execution-word positions for faults, fallthrough and resumption.
 

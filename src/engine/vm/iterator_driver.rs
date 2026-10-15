@@ -440,13 +440,12 @@ fn finish_local(
                         .regions
                         .try_reserve(1)
                         .map_err(|_| Error::internal("iterator region allocation failed"))?;
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_call_buffer_capacity(
+                    profile!(record_call_buffer_capacity(
                         "cold.regions",
                         before,
                         frame.cold.regions.capacity(),
-                        size_of::<super::VmUnwindRegion>(),
-                    );
+                        size_of::<super::VmUnwindRegion>()
+                    ));
                 }
                 execution.slots.push(
                     &mut frame.window,
@@ -529,8 +528,7 @@ fn finish_local(
         .decode(pending.pc as u32)
         .map_err(|_| Error::internal("iterator pending PC is not an instruction boundary"))?
         .next_pc as usize;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     Ok(CallStep::Entered)
 }
 
@@ -605,8 +603,7 @@ pub(super) fn finish_next(
         return Ok(CallStep::Complete(Completion::Throw(value)));
     }
     frame.resume_pc = frame.next_pc()?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     Ok(CallStep::Entered)
 }
 
@@ -706,8 +703,7 @@ fn dispatch_action(
 
 impl PendingIteratorState {
     fn into_resident(self) -> PendingIterator {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("iterator_resident_allocated");
+        profile!(record_owned_execution_event("iterator_resident_allocated"));
         PendingIterator(Box::new(self))
     }
 

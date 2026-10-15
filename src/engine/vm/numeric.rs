@@ -194,15 +194,6 @@ pub(in crate::engine::vm) fn allocate_bigint_jsvalue(
         .heap
         .allocate_bigint(bigint)
         .map_err(|error| Error::internal(error.to_string()))?;
-    #[cfg(debug_assertions)]
-    if std::env::var("QJS_TRACE_BIGINT_ID")
-        .is_ok_and(|value| format!("{id:?}").contains(&format!("index: {value},")))
-    {
-        eprintln!(
-            "[alloc-b] {id:?}\n{}",
-            std::backtrace::Backtrace::force_capture()
-        );
-    }
     Ok(JsValue::BigInt(id))
 }
 

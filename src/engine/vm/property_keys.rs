@@ -128,10 +128,9 @@ pub(super) fn set_name(
     match result {
         Ok(()) => {
             frame.resume_pc = frame.next_pc()?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(
-                execution.slots.depth(&frame.window),
-            );
+            profile!(record_owned_instruction(
+                execution.slots.depth(&frame.window)
+            ));
             Ok(None)
         }
         Err(error) => {

@@ -462,10 +462,10 @@ fn iterator_intrinsics_attach_transactionally_and_form_a_collectable_realm_cycle
             },
         ),
         Err(HeapError::Invariant(
-            "Iterator Helper prototype is not an ordinary child of the realm's Iterator prototype",
+            "intrinsic root has an invalid class graph",
         ))
     );
-    assert!(heap.context(realm).unwrap().iterator.is_none());
+    assert!(heap.context(realm).unwrap().iterator().is_none());
 
     heap.live_node_mut(RawId::Object(wrap_prototype))
         .unwrap()
@@ -477,7 +477,7 @@ fn iterator_intrinsics_attach_transactionally_and_form_a_collectable_realm_cycle
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(heap.context(realm).unwrap().iterator.is_none());
+    assert!(heap.context(realm).unwrap().iterator().is_none());
     assert_eq!(
         heap.object_strong_count(constructor),
         Ok(constructor_strong)
@@ -497,7 +497,7 @@ fn iterator_intrinsics_attach_transactionally_and_form_a_collectable_realm_cycle
 
     heap.attach_iterator_intrinsics(realm, iterator).unwrap();
     assert!(
-        matches!(heap.context(realm).unwrap().iterator, Some(attached)
+        matches!(heap.context(realm).unwrap().iterator(), Some(attached)
             if attached.constructor == iterator.constructor
                 && attached.concat_prototype == iterator.concat_prototype
                 && attached.helper_prototype == iterator.helper_prototype
@@ -522,7 +522,7 @@ fn iterator_intrinsics_attach_transactionally_and_form_a_collectable_realm_cycle
     assert!(matches!(
         heap.attach_iterator_intrinsics(realm, iterator),
         Err(HeapError::Invariant(
-            "context already has Iterator intrinsic roots"
+            "context already has these intrinsic roots"
         ))
     ));
 
@@ -714,7 +714,7 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
             .heap
             .context(fixture.realm)
             .unwrap()
-            .regexp
+            .regexp()
             .is_none()
     );
     assert_eq!(
@@ -748,7 +748,7 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
         .attach_regexp_intrinsics(fixture.realm, realm_data, fixture.last_index)
         .unwrap();
     assert!(
-        matches!(fixture.heap.context(fixture.realm).unwrap().regexp, Some(attached)
+        matches!(fixture.heap.context(fixture.realm).unwrap().regexp(), Some(attached)
             if attached.prototype == realm_data.prototype
                 && attached.constructor == realm_data.constructor
                 && attached.string_iterator_prototype == realm_data.string_iterator_prototype
@@ -786,7 +786,7 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
             .heap
             .attach_regexp_intrinsics(fixture.realm, realm_data, fixture.last_index,),
         Err(HeapError::Invariant(
-            "context already has RegExp intrinsic roots"
+            "context already has these intrinsic roots"
         ))
     );
     assert_eq!(
@@ -983,7 +983,7 @@ fn regexp_intrinsics_reject_mismatched_constructor_prototype_and_shape() {
             .heap
             .context(fixture.realm)
             .unwrap()
-            .regexp
+            .regexp()
             .is_none()
     );
     fixture.dispose();
@@ -1085,7 +1085,7 @@ fn context_roots_intrinsic_prototypes_until_realm_finalization() {
         string_iterator_prototype
     );
     assert_eq!(
-        heap.context(context).unwrap().date_prototype,
+        heap.context(context).unwrap().date_prototype(),
         Some(date_prototype)
     );
     assert!(matches!(

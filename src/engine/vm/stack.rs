@@ -247,54 +247,6 @@ impl Drop for FrameStorageGuard<'_> {
     }
 }
 
-/// Temporary frame storage inside a state-held execution segment. Reborrowing
-/// parts() permits computation without relinquishing the cleanup capability.
-#[must_use]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::engine::vm) struct StateFrameStorageGuard<'a> {
-    state: &'a mut crate::engine::heap::runtime::RuntimeState,
-    poisoned: &'a std::cell::Cell<bool>,
-    storage: Option<FrameStorage>,
-}
-#[cfg_attr(not(test), allow(dead_code))]
-impl<'a> StateFrameStorageGuard<'a> {
-    pub(in crate::engine::vm) fn new(
-        state: &'a mut crate::engine::heap::runtime::RuntimeState,
-        poisoned: &'a std::cell::Cell<bool>,
-        storage: FrameStorage,
-    ) -> Self {
-        Self {
-            state,
-            poisoned,
-            storage: Some(storage),
-        }
-    }
-    pub(in crate::engine::vm) fn parts(
-        &mut self,
-    ) -> (
-        &mut crate::engine::heap::runtime::RuntimeState,
-        &mut Option<FrameStorage>,
-    ) {
-        (self.state, &mut self.storage)
-    }
-}
-impl Drop for StateFrameStorageGuard<'_> {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            self.poisoned.set(true);
-        }
-        if self.poisoned.get() {
-            return;
-        }
-        let _unwind = crate::engine::api::runtime::RuntimeUnwindGuard::from_flag(self.poisoned);
-        if let Some(storage) = self.storage.take()
-            && release_frame_storage_in_state(self.state, storage).is_err()
-        {
-            self.poisoned.set(true);
-        }
-    }
-}
-
 #[cfg(test)]
 mod nullish;
 mod number;
@@ -358,13 +310,12 @@ impl SlotStore {
         self.native_argument_buffers
             .try_reserve(depth.saturating_sub(self.native_argument_buffers.len()))
             .map_err(|_| Error::internal("native argument recycler allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "call.native_pool",
             _before,
             self.native_argument_buffers.capacity(),
-            size_of::<Vec<JsValue>>(),
-        );
+            size_of::<Vec<JsValue>>()
+        ));
         Ok(())
     }
 
@@ -378,13 +329,12 @@ impl SlotStore {
         arguments
             .try_reserve_exact(count)
             .map_err(|_| Error::internal("native call arguments allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "call.native_argv",
             _before,
             arguments.capacity(),
-            size_of::<JsValue>(),
-        );
+            size_of::<JsValue>()
+        ));
         Ok(arguments)
     }
 
@@ -718,16 +668,15 @@ impl SlotStore {
                 };
                 self.slots[parameters_end + index] = Some(binding);
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_call_preparation(
+            profile!(record_call_preparation(
                 parameter_count,
                 0,
                 local_count,
                 0,
                 actual_count,
                 root_copies,
-                1 + usize::from(function_name.is_some()),
-            );
+                1 + usize::from(function_name.is_some())
+            ));
             if let Some((parent, count, method)) = source {
                 let start = source_start.unwrap();
                 for index in 0..count {
@@ -756,10 +705,9 @@ impl SlotStore {
                     self.argument_buffer = storage.original_arguments;
                 }
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "call_bindings_initialized_in_window",
-            );
+            profile!(record_owned_execution_event(
+                "call_bindings_initialized_in_window"
+            ));
         } else {
             for (index, value) in storage.original_arguments.into_iter().enumerate() {
                 self.slots[base + index] = Some(FrameBinding::Direct(value));
@@ -818,8 +766,7 @@ impl SlotStore {
     }
 
     fn check_current(&self, window: &FrameWindow) -> Result<(), Error> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("slot_authentication");
+        profile!(record_owned_execution_event("slot_authentication"));
         if self.owner != window.owner
             || self.windows.last() != Some(&window.id)
             || self.active_end != window.whole().end
@@ -881,8 +828,7 @@ impl SlotStore {
         count: usize,
         method: bool,
     ) -> Result<bool, Error> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
+        profile!(record_owned_execution_event("call_value_domain_validation"));
         // An ordinary zero-argument call had no domain-check reads at all.
         if count == 0 && !method {
             return Ok(true);
@@ -2857,8 +2803,7 @@ mod tests {
         let marker = runtime.new_object(None).unwrap();
         let marker_id = marker.object_id();
         let mut slots = SlotStore::new(16);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         let mut capacity = None;
         for _ in 0..20 {
             let mut windows = Vec::new();
@@ -3477,39 +3422,5 @@ mod tests {
             .unwrap();
         assert_eq!(slots.depth(&reused), 0);
         assert!(slots.slots.iter().all(Option::is_none));
-    }
-}
-
-#[cfg(test)]
-mod state_storage_ownership_tests {
-    use super::{FrameStorage, StateFrameStorageGuard};
-    use crate::engine::{api::Runtime, value::JsValue, vm::bindings::FrameBinding};
-
-    #[test]
-    fn state_storage_guard_releases_aliases_without_reborrowing_runtime() {
-        let runtime = Runtime::new();
-        let id = runtime.new_object(None).unwrap().into_handle();
-        runtime.retain_object_handle(id).unwrap();
-        runtime.retain_object_handle(id).unwrap();
-        let before = std::rc::Rc::strong_count(&runtime.0);
-        let mut state = runtime.0.state.borrow_mut();
-        {
-            let mut guard = StateFrameStorageGuard::new(
-                &mut state,
-                &runtime.0.poisoned,
-                FrameStorage {
-                    original_arguments: vec![JsValue::Object(id)],
-                    parameters: vec![FrameBinding::Direct(JsValue::Object(id))],
-                    locals: Vec::new(),
-                    operands: vec![JsValue::Object(id)],
-                },
-            );
-            let (state, storage) = guard.parts();
-            assert_eq!(state.heap.object_strong_count(id), Ok(3));
-            assert_eq!(storage.as_ref().unwrap().operands.len(), 1);
-            assert_eq!(std::rc::Rc::strong_count(&runtime.0), before);
-        }
-        assert!(state.heap.object(id).is_err());
-        assert!(!runtime.0.poisoned.get());
     }
 }

@@ -12,19 +12,17 @@ use crate::engine::value::number::operations::Number;
 
 #[inline(always)]
 fn record_selection(_result: &NamedDataSelection) {
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(match _result {
+    profile!(record_owned_execution_event(match _result {
         NamedDataSelection::Data(_) => "property_selection.data",
         NamedDataSelection::CompleteAbsent => "property_selection.absent",
         NamedDataSelection::Accessor(_) => "property_selection.accessor",
         NamedDataSelection::ContinueLookup => "property_selection.general",
-    });
+    }));
 }
 
 #[inline(always)]
 fn record_selection_reason(_reason: &'static str) {
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(_reason);
+    profile!(record_owned_execution_event(_reason));
 }
 
 impl RuntimeState {
@@ -86,10 +84,7 @@ impl RuntimeState {
             && let Some(cache) = executable.property_read_ic.site(pc)
         {
             if let Some(raw) = cache.read_inline(&self.heap, *receiver) {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "property_selection.cache",
-                );
+                profile!(record_owned_execution_event("property_selection.cache"));
                 return match raw {
                     RawValue::Int(value) => Some(JsValue::Int(*value)),
                     RawValue::Float(value) => Some(JsValue::Float(*value)),
@@ -174,10 +169,11 @@ impl RuntimeState {
                     record_selection_reason("property_selection.string_index_allocation");
                     return None;
                 }
-                let prototype =
-                    self.heap.context(executable.realm).ok().and_then(|realm| {
-                        realm.primitive_prototypes[PrimitiveKind::String.index()]
-                    })?;
+                let prototype = self
+                    .heap
+                    .context(executable.realm)
+                    .ok()
+                    .and_then(|realm| realm.primitive_prototype(PrimitiveKind::String))?;
                 record_selection_reason("property_selection.string_prototype");
                 (prototype, true)
             }
@@ -192,15 +188,13 @@ impl RuntimeState {
             };
         };
         if !probed && let Some(raw) = cache.read(&self.heap, receiver) {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("property_selection.cache");
+            profile!(record_owned_execution_event("property_selection.cache"));
             let result = self.promote_field_in_state(domain_id, raw, keep_receiver, native);
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(if result.is_some() {
+            profile!(record_owned_execution_event(if result.is_some() {
                 "property_selection.data"
             } else {
                 "property_selection.general"
-            });
+            }));
             return result;
         }
         let result =
@@ -235,10 +229,9 @@ impl RuntimeState {
         native: &mut Option<LinkedNativeSelection>,
     ) -> NamedDataSelection {
         let selected = cache.miss_selected(&self.heap, &self.atoms, Some(receiver), atom);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "property_selection.cache_miss",
-        );
+        profile!(record_owned_execution_event(
+            "property_selection.cache_miss"
+        ));
         match selected {
             CacheSelection::Data(raw) => self
                 .promote_field_in_state(domain_id, raw, keep_receiver, native)
@@ -287,10 +280,9 @@ impl RuntimeState {
         keep_receiver: bool,
         native: &mut Option<LinkedNativeSelection>,
     ) -> Option<JsValue> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "property_selection.promotion_attempt",
-        );
+        profile!(record_owned_execution_event(
+            "property_selection.promotion_attempt"
+        ));
         match raw {
             RawValue::Object(function) => {
                 let selected = if keep_receiver {

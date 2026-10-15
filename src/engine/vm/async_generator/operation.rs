@@ -747,41 +747,13 @@ impl AsyncGeneratorStep {
     }
 }
 impl AsyncGeneratorResume {
-    pub(crate) fn take_run_activation(&mut self) -> Box<RootedVmActivation> {
-        self.pending_effect
-            .run_activation
-            .take()
-            .expect("AsyncGeneratorStep Run activation")
-    }
-    pub(crate) fn take_run_input(&mut self) -> VmActivationResume {
-        self.pending_effect
-            .run_input
-            .take()
-            .expect("AsyncGeneratorStep Run input")
-    }
-    pub(crate) fn take_resolve_value(&mut self) -> JsValue {
-        self.pending_effect
-            .resolve_value
-            .take()
-            .expect("AsyncGeneratorStep Resolve value")
-    }
-    pub(crate) fn take_resolve_realm(&mut self) -> ContextId {
-        self.pending_effect
-            .resolve_realm
-            .take()
-            .expect("AsyncGeneratorStep Resolve realm")
-    }
-    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
-        self.pending_effect
-            .call_callable
-            .take()
-            .expect("AsyncGeneratorStep Call callable")
-    }
-    pub(crate) fn take_call_value(&mut self) -> JsValue {
-        self.pending_effect
-            .call_value
-            .take()
-            .expect("AsyncGeneratorStep Call value")
+    pending_takes! { pending_effect =>
+        take_run_activation(run_activation) -> Box<RootedVmActivation>, "AsyncGeneratorStep Run activation";
+        take_run_input(run_input) -> VmActivationResume, "AsyncGeneratorStep Run input";
+        take_resolve_value(resolve_value) -> JsValue, "AsyncGeneratorStep Resolve value";
+        take_resolve_realm(resolve_realm) -> ContextId, "AsyncGeneratorStep Resolve realm";
+        take_call_callable(call_callable) -> CallableRef, "AsyncGeneratorStep Call callable";
+        take_call_value(call_value) -> JsValue, "AsyncGeneratorStep Call value";
     }
 }
 const _: () = assert!(std::mem::size_of::<AsyncGeneratorStep>() <= 64);

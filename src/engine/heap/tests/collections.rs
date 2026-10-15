@@ -324,7 +324,7 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(heap.context(realm).unwrap().map.is_none());
+    assert!(heap.context(realm).unwrap().map().is_none());
     assert_eq!(heap.object_strong_count(prototype), Ok(prototype_strong));
     assert_eq!(
         heap.object_strong_count(constructor),
@@ -336,7 +336,7 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
         .set(iterator_strong);
 
     heap.attach_map_intrinsics(realm, map).unwrap();
-    assert!(matches!(heap.context(realm).unwrap().map, Some(attached)
+    assert!(matches!(heap.context(realm).unwrap().map(), Some(attached)
             if attached.prototype == map.prototype
                 && attached.iterator_prototype == map.iterator_prototype));
     assert_eq!(
@@ -354,7 +354,7 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
     assert!(matches!(
         heap.attach_map_intrinsics(realm, map),
         Err(HeapError::Invariant(
-            "context already has Map intrinsic roots"
+            "context already has these intrinsic roots"
         ))
     ));
 
@@ -583,74 +583,6 @@ fn set_symbol_atoms_transfer_and_return_on_delete_clear_and_finalize() {
 }
 
 #[test]
-fn set_layout_and_iterator_source_are_structurally_validated() {
-    let mut heap = Heap::new();
-    let shape = empty_shape(&mut heap);
-
-    let malformed = ObjectData {
-        shape,
-        slots: Slots::new(),
-
-        used_as_prototype: false,
-        private_brand_home: None,
-        is_html_dda: false,
-        extensible: true,
-        immutable_prototype: false,
-        is_constructor: false,
-        kind: ObjectKind::Set,
-        payload: ObjectPayload::Set {
-            records: {
-                let mut records = CollectionRecords::default();
-                records.insert(
-                    &heap,
-                    MapRecord {
-                        key: RawValue::Int(1),
-                        value: RawValue::Int(2),
-                    },
-                );
-                records
-            },
-        },
-    };
-    assert!(matches!(
-        heap.allocate_object(malformed),
-        Err(HeapError::Invariant(
-            "Set record value slot is not undefined"
-        ))
-    ));
-    assert_eq!(heap.counts().object_nodes, 0);
-
-    let map = heap
-        .allocate_object(ObjectData::map(shape, Vec::new()))
-        .unwrap();
-    assert!(matches!(
-        heap.allocate_object(ObjectData::set_iterator(
-            shape,
-            Vec::new(),
-            map,
-            SetIteratorKind::Value,
-        )),
-        Err(HeapError::Invariant(
-            "Set Iterator source does not have the Set class"
-        ))
-    ));
-    assert_eq!(heap.object_strong_count(map), Ok(1));
-
-    let mut mismatched = ObjectData::set(shape, Vec::new());
-    mismatched.kind = ObjectKind::Map;
-    assert!(matches!(
-        heap.allocate_object(mismatched),
-        Err(HeapError::Invariant(
-            "object kind does not match its class payload"
-        ))
-    ));
-
-    heap.release_object(map).unwrap();
-    heap.release_shape(shape).unwrap();
-    assert_eq!(heap.counts().live, 0);
-}
-
-#[test]
 fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
     let mut heap = Heap::new();
     let empty_shape = empty_shape(&mut heap);
@@ -696,7 +628,7 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(heap.context(realm).unwrap().set.is_none());
+    assert!(heap.context(realm).unwrap().set().is_none());
     assert_eq!(heap.object_strong_count(prototype), Ok(prototype_strong));
     assert_eq!(
         heap.object_strong_count(constructor),
@@ -708,7 +640,7 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
         .set(iterator_strong);
 
     heap.attach_set_intrinsics(realm, set).unwrap();
-    assert!(matches!(heap.context(realm).unwrap().set, Some(attached)
+    assert!(matches!(heap.context(realm).unwrap().set(), Some(attached)
             if attached.prototype == set.prototype
                 && attached.iterator_prototype == set.iterator_prototype));
     assert_eq!(
@@ -726,7 +658,7 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
     assert!(matches!(
         heap.attach_set_intrinsics(realm, set),
         Err(HeapError::Invariant(
-            "context already has Set intrinsic roots"
+            "context already has these intrinsic roots"
         ))
     ));
 

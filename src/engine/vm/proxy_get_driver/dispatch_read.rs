@@ -18,10 +18,9 @@ pub(super) fn prototype(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "dispatch_read.prototype.visit",
-        );
+        profile!(record_owned_execution_event(
+            "dispatch_read.prototype.visit"
+        ));
         let realm = query.realm;
         match &mut *step {
             Step::OwnComplete(descriptor) => {
@@ -159,10 +158,9 @@ pub(super) fn attributes(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "dispatch_read.attributes.visit",
-        );
+        profile!(record_owned_execution_event(
+            "dispatch_read.attributes.visit"
+        ));
         let realm = query.realm;
         match &mut *step {
             Step::Delete {
@@ -316,8 +314,7 @@ pub(super) fn get(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("dispatch_read.get.visit");
+        profile!(record_owned_execution_event("dispatch_read.get.visit"));
         let realm = query.realm;
         let (target, receiver, arguments, resume) = match &mut *step {
             Step::Convert { value, resume } => {

@@ -74,8 +74,7 @@ impl crate::engine::heap::runtime::RuntimeState {
         let shape = self
             .heap
             .context(realm)?
-            .regexp
-            .as_ref()
+            .regexp()
             .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))?
             .result_shapes
             .ok_or(RuntimeError::Invariant("RegExp result layouts missing"))?[0];
@@ -131,8 +130,7 @@ impl Runtime {
         program: Rc<CompiledRegExp>,
         matched: RegExpMatch,
     ) -> Result<JsValue, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("regexp_result.build");
+        profile!(record_owned_execution_event("regexp_result.build"));
         let capture_count = matched.captures().len();
         if usize::from(program.capture_count()) != capture_count {
             return Err(RuntimeError::Invariant(
@@ -261,8 +259,7 @@ impl Runtime {
         named: &NamedCaptures,
         captures: &[JsValue],
     ) -> Result<ObjectRef, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("regexp_result.groups_layout");
+        profile!(record_owned_execution_event("regexp_result.groups_layout"));
         let names = named
             .values
             .iter()

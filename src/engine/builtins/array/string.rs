@@ -1,6 +1,5 @@
 //! Array stringification retains partial output and failure ordering across callbacks.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::ArrayJoinKind,
@@ -18,15 +17,6 @@ use crate::engine::{
 pub(crate) enum ArrayStringKind {
     Join(ArrayJoinKind),
     ToString,
-}
-impl ArrayStringKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::ArrayPrototypeJoin(kind) => Some(Self::Join(kind)),
-            NativeFunctionId::ArrayPrototypeToString => Some(Self::ToString),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum ArrayStringStep {
     Complete(Completion),

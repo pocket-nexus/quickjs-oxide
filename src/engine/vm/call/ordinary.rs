@@ -118,10 +118,9 @@ impl<'a> DirectSelection<'a> {
         state: &crate::engine::heap::runtime::RuntimeState,
         function: ObjectId,
     ) -> Result<Self, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "direct_callee_payload_selection",
-        );
+        profile!(record_owned_execution_event(
+            "direct_callee_payload_selection"
+        ));
         let object = state.heap.object(function)?;
         Self::select_object_data(runtime, state, function, object)
     }
@@ -228,10 +227,9 @@ impl OrdinaryCall {
         let input = crate::engine::vm::CallInput::new(receiver, JsValue::Undefined, None);
         let entry =
             self.prepare_input(runtime, storage, input, arguments, caller_realm, return_to)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "property_callback_lazy_install",
-        );
+        profile!(record_owned_execution_event(
+            "property_callback_lazy_install"
+        ));
         Ok(entry)
     }
 
@@ -278,12 +276,11 @@ impl OrdinaryCall {
             reusable_captured_locals: flags,
             input: input.take().into(),
         });
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_call_storage(
+        profile!(record_owned_call_storage(
             frame_bytes,
             flag_bytes,
-            frame_storage.storage_mut().original_arguments.capacity() * size_of::<JsValue>(),
-        );
+            frame_storage.storage_mut().original_arguments.capacity() * size_of::<JsValue>()
+        ));
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
         Ok(FrameEntry {
@@ -382,10 +379,7 @@ impl OrdinarySelection {
         state: &crate::engine::heap::runtime::RuntimeState,
     ) -> Result<OrdinaryCall, RuntimeError> {
         let facts = if let Some(facts) = self.authentication {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_call_auth_cache_hit",
-            );
+            profile!(record_owned_execution_event("ordinary_call_auth_cache_hit"));
             facts
         } else {
             let facts = state
@@ -400,10 +394,7 @@ impl OrdinarySelection {
                 ));
             };
             *authentication.borrow_mut() = Some(facts.clone());
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_call_authenticated",
-            );
+            profile!(record_owned_execution_event("ordinary_call_authenticated"));
             facts
         };
         Ok(OrdinaryCall {

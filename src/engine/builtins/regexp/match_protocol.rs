@@ -330,10 +330,7 @@ impl RegExpMatchResume {
                     runtime.into_jsvalue(Value::String(matched))?
                 };
                 runtime.append_fresh_array_value_jsvalue(&state.matches, matched_value)?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "regexp_result.match_append",
-                );
+                profile!(record_owned_execution_event("regexp_result.match_append"));
                 state.count = next;
                 if empty {
                     Ok(RegExpMatchStep::make_read(

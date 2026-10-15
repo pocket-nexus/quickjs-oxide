@@ -32,6 +32,7 @@ macro_rules! require_pinned_qjs_oracle {
 }
 
 pub(crate) mod grouped_case_oracle;
+pub(crate) mod js_cases;
 pub(crate) mod object_graph_observation;
 pub(crate) mod oracle_cases;
 pub(crate) mod primitive_probe;
@@ -40,7 +41,6 @@ pub(crate) mod quickjs_array_completion_oracle;
 pub(crate) mod quickjs_control_value_oracle;
 pub(crate) mod quickjs_indexed_oracle;
 pub(crate) mod quickjs_object_pattern_oracle;
-pub(crate) mod quickjs_object_super_oracle;
 pub(crate) mod quickjs_oracle;
 pub(crate) mod quickjs_plain_eval_oracle;
 pub(crate) mod quickjs_program_property_oracle;

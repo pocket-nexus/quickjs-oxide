@@ -10,6 +10,7 @@ use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::NativeFunctionId;
+use crate::engine::object::builtin_properties::{BuiltinEntry, method};
 
 use crate::engine::heap::{ContextId, InternalCallableData, ObjectData, ObjectPayload};
 use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
@@ -41,6 +42,8 @@ impl Runtime {
         function_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        const CONSTRUCTOR: &[BuiltinEntry] =
+            &[method(NativeFunctionId::ProxyRevocable, "revocable", 2, 2)];
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
@@ -50,21 +53,8 @@ impl Runtime {
             2,
         )?;
         self.set_constructor_bit(constructor.as_object(), true)?;
-        self.define_native_builtin_auto_init(
-            constructor.as_object(),
-            realm,
-            NativeFunctionId::ProxyRevocable,
-            "revocable",
-            2,
-            2,
-        )?;
-        self.define_function_data_property(
-            global_object,
-            "Proxy",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "Proxy", &constructor)
     }
 
     /// Allocate one genuine Proxy after validating the two object operands.

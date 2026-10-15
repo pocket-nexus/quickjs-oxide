@@ -212,8 +212,7 @@ pub(super) fn step(
                 execution.slots.push(&mut frame.window, home)?;
             }
             frame.resume_pc = frame.next_pc()?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
+            profile!(record_owned_instruction(depth));
             Ok(None)
         }
         Err(error) => {

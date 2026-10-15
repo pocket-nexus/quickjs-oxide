@@ -16,10 +16,7 @@ impl SliceStep {
                     let receiver = JsValue::Object(object.object_id());
                     match runtime.prepare_ordinary_read_selected(&object, &key, &receiver, None)? {
                         OrdinaryRead::Complete(value) => {
-                            #[cfg(feature = "profiling")]
-                            crate::engine::api::profiling::record_owned_execution_event(
-                                "array_slice_local_read",
-                            );
+                            profile!(record_owned_execution_event("array_slice_local_read"));
                             resume.resume_once(
                                 runtime,
                                 Completion::Return(value.unwrap_or(JsValue::Undefined)),
@@ -76,8 +73,7 @@ pub(super) fn define_local(
     descriptor: OwnedPropertyDescriptor,
 ) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
     let result = runtime.internal_define_owned_property(realm, object, key, descriptor)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("array_slice_local_define");
+    profile!(record_owned_execution_event("array_slice_local_define"));
     Ok(result)
 }
 

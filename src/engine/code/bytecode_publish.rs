@@ -7,11 +7,6 @@ use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{BytecodeConstant, RawValue};
 use crate::engine::value::JsString;
 
-mod private_elements;
-pub(in crate::engine::code) use private_elements::{
-    PrivateBindingRole, PrivateBindingScanner, private_closure_role,
-};
-
 /// Link each distinct static-name constant index once. The caller owns the
 /// atom transaction: any later failure releases `auxiliary_atoms`, while
 /// successful publication transfers those references to the bytecode node.
