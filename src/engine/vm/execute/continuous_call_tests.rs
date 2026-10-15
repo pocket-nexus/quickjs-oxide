@@ -88,8 +88,7 @@ fn ordinary_child_and_parent_execute_under_one_state_access() {
     let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
     let parent = crate::engine::vm::driver::push_frame(&runtime, &mut execution, entry).unwrap();
     let runtime_owners = std::rc::Rc::strong_count(&runtime.0);
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     {
         let mut state = runtime.0.state.borrow_mut();
         let action =
@@ -137,8 +136,7 @@ fn constructor_gc_services_published_inputs_inside_the_execution_segment() {
         constructor_execution(&runtime, &mut context, JsValue::Object(marker));
     let runtime_owners = std::rc::Rc::strong_count(&runtime.0);
     runtime.0.gc_pressure.remaining.set(1);
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     {
         let mut state = runtime.0.state.borrow_mut();
         assert!(state.heap.object(garbage).is_ok());

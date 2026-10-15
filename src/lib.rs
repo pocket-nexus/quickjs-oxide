@@ -5,6 +5,23 @@
 //! source is compiled to stack bytecode, bytecode executes inside a context,
 //! and contexts share a runtime-owned heap and atom table.
 
+/// Profiling-only statement: `profile!(name(args))` calls
+/// `engine::api::profiling::name`, `profile!(let x = Type::start(args))`
+/// binds a profiling guard. Both expand to nothing without `profiling`.
+#[cfg(feature = "profiling")]
+macro_rules! profile {
+    ($name:ident($($arg:tt)*)) => {
+        $crate::engine::api::profiling::$name($($arg)*)
+    };
+    (let $var:ident = $ty:ident::$function:ident($($arg:tt)*)) => {
+        let $var = $crate::engine::api::profiling::$ty::$function($($arg)*);
+    };
+}
+#[cfg(not(feature = "profiling"))]
+macro_rules! profile {
+    ($($statement:tt)*) => {};
+}
+
 /// Interpreter implementation; embedders use [`engine::api`].
 ///
 /// Old root API aliases are deliberately unavailable:

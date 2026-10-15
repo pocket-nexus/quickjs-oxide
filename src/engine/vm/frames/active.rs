@@ -134,6 +134,7 @@ impl ActiveFrames {
             self.pop();
         }
     }
+    #[cfg(test)]
     pub(super) fn mark_native_continuation(&mut self, depth: usize, token: ActiveFrameToken) {
         let record = *self.get(depth).expect("native frame index");
         assert_eq!(record.token, token);

@@ -99,10 +99,9 @@ fn function_resolution_events(tree: &FunctionTree) -> Result<Vec<FunctionResolut
 }
 
 pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> {
-    #[cfg(feature = "profiling")]
-    let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Resolution,
-    );
+    profile!(let _phase_timer = PhaseTimer::start(
+        crate::engine::api::profiling::CompilePhase::Resolution
+    ));
 
     #[derive(Clone, Copy)]
     enum UnresolvedAccess {

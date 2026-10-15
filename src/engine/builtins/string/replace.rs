@@ -168,11 +168,10 @@ impl StringReplaceStep {
                 &input,
                 &replacement,
             )? {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_runtime_event(
+                profile!(record_runtime_event(
                     "stringreplace_standard_delegated",
-                    "core.stringreplace_standard_delegated",
-                );
+                    "core.stringreplace_standard_delegated"
+                ));
                 return Ok(Self::Complete(completion));
             }
         }
@@ -214,10 +213,9 @@ impl StringReplaceStep {
         if let StringReplaceAction::Complete(result) = action {
             return Ok(Self::Complete(result));
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "stringreplace_resident_allocated",
-        );
+        profile!(record_owned_execution_event(
+            "stringreplace_resident_allocated"
+        ));
         StringReplaceResume(Box::new(resume)).publish(runtime, action)
     }
 }
@@ -303,10 +301,7 @@ impl StringReplaceResumeState {
                         None,
                     )? {
                         crate::engine::object::OrdinaryRead::Complete(value) => {
-                            #[cfg(feature = "profiling")]
-                            crate::engine::api::profiling::record_owned_execution_event(
-                                "stringreplace_read_local",
-                            );
+                            profile!(record_owned_execution_event("stringreplace_read_local"));
                             self.advance(
                                 runtime,
                                 Completion::Return(value.unwrap_or(JsValue::Undefined)),
@@ -318,10 +313,9 @@ impl StringReplaceResumeState {
                     }
                 }
                 StringReplaceAction::Primitive(value) if !matches!(value, JsValue::Object(_)) => {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "stringreplace_primitive_local",
-                    );
+                    profile!(record_owned_execution_event(
+                        "stringreplace_primitive_local"
+                    ));
                     self.advance(runtime, Completion::Return(value))?
                 }
                 action @ (StringReplaceAction::Primitive(_)

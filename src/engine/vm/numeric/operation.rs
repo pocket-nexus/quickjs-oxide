@@ -608,10 +608,9 @@ fn nullish_html_dda(
         _ => false,
     };
     let temporary = if needs_temporary {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "numeric_nullish_temporary_checkpoint",
-        );
+        profile!(record_owned_execution_event(
+            "numeric_nullish_temporary_checkpoint"
+        ));
         Some(runtime.dup_jsvalue(value)?)
     } else {
         None
@@ -660,10 +659,9 @@ fn equality(
             };
             return match equal {
                 Ok(equal) => {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "numeric_nullish_equality_direct",
-                    );
+                    profile!(record_owned_execution_event(
+                        "numeric_nullish_equality_direct"
+                    ));
                     equality_complete(runtime, kind, left, right, equal)
                 }
                 Err(error) => Err(equality_error(

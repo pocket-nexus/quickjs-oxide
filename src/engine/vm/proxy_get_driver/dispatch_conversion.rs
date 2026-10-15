@@ -15,12 +15,10 @@ pub(super) fn primitive(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "dispatch_conversion.primitive.visit",
-        );
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("conversion_transition");
+        profile!(record_owned_execution_event(
+            "dispatch_conversion.primitive.visit"
+        ));
+        profile!(record_owned_execution_event("conversion_transition"));
         let realm = query.realm;
         match &mut *step {
             Step::String { value, resume } => {
@@ -117,10 +115,7 @@ pub(super) fn primitive(
                 let resume = resume.take().expect("selected Step field");
                 *step = match next {
                     crate::engine::value::conversion::number::NumberStep::Complete(result) => {
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "conversion_immediate",
-                        );
+                        profile!(record_owned_execution_event("conversion_immediate"));
                         resume
                             .number(runtime, result)
                             .map_err(runtime_error_to_vm_error)?
@@ -233,12 +228,10 @@ pub(super) fn constructor(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "dispatch_conversion.constructor.visit",
-        );
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("conversion_transition");
+        profile!(record_owned_execution_event(
+            "dispatch_conversion.constructor.visit"
+        ));
+        profile!(record_owned_execution_event("conversion_transition"));
         let realm = query.realm;
         match &mut *step {
             Step::ConstructorSource { new_target, resume } => {

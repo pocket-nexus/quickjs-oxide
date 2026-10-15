@@ -267,8 +267,7 @@ pub(super) fn step(
                 Some(target) => target,
                 None => frame.next_pc()?,
             };
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
+            profile!(record_owned_instruction(depth));
             Ok(CallStep::Entered)
         }
         Err(error) => {
@@ -297,12 +296,11 @@ fn perform(
     let result = match operation {
         P::Constant(index) => {
             let value = load_value_constant(runtime, &frame.executable, index)?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_storage(
+            profile!(record_owned_storage(
                 crate::engine::api::profiling::OwnedStorageEvent::Copy {
                     heap_root: matches!(value, JsValue::Object(_) | JsValue::Symbol(_)),
-                },
-            );
+                }
+            ));
             value
         }
         P::IteratorCheckObject => {

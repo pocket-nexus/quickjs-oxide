@@ -72,8 +72,7 @@ fn captured_scalar_reads_complete_without_an_activation_or_cell_owner_copy() {
             .heap
             .var_ref_strong_count(cell)
             .unwrap();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert!(matches!(
             super::execute_frame(&runtime, &mut execution, id).unwrap(),
             super::VmAction::Complete

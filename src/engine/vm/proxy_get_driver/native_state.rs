@@ -199,10 +199,9 @@ pub(super) fn try_array(
             });
             guard.retire().map_err(runtime_error_to_vm_error)?;
             slots.recycle_native_argument_buffer(std::mem::take(&mut guard.arguments));
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "native_completed_through_state_guard",
-            );
+            profile!(record_owned_execution_event(
+                "native_completed_through_state_guard"
+            ));
             Ok(guard.result.take())
         }
     }

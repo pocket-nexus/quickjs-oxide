@@ -275,11 +275,10 @@ impl ExecCode {
         #[cfg(feature = "profiling")]
         let (rejected_numeric_sites, omitted_numeric_sites) =
             collect_rejected_numeric_sites(code, locals, arguments, regions, &opcodes, &boundaries);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_compiled_numeric_rejections(
+        profile!(record_compiled_numeric_rejections(
             &rejected_numeric_sites,
-            omitted_numeric_sites,
-        );
+            omitted_numeric_sites
+        ));
         let result = Self {
             words: words.into_iter().map(Cell::new).collect::<Vec<_>>().into(),
             boundaries: boundaries.into(),

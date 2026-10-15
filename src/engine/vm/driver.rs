@@ -469,8 +469,7 @@ pub(super) fn enter_call(
         };
         let entry = request.prepare(runtime, &mut execution.call_storage)?;
         push_direct_call_frame(runtime, execution, id, entry, count, method)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_instruction(observed_depth);
+        profile!(record_owned_instruction(observed_depth));
         return Ok(CallStep::Entered);
     }
     let mut arguments = execution.slots.take_argument_buffer(count)?;
@@ -524,8 +523,7 @@ pub(super) fn enter_call(
     frame.resume_pc = frame.next_pc()?;
     let entry = request.prepare(runtime, &mut execution.call_storage)?;
     push_frame(runtime, execution, entry)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(observed_depth);
+    profile!(record_owned_instruction(observed_depth));
     Ok(CallStep::Entered)
 }
 
@@ -674,8 +672,7 @@ fn run_frames_with_state(
     mut conversion: Option<super::conversion_driver::ConversionTask>,
     mut next_operation: u64,
 ) -> Result<RunningExit, Error> {
-    #[cfg(feature = "profiling")]
-    let _core = crate::engine::api::profiling::CoreExecutionScope::enter();
+    profile!(let _core = CoreExecutionScope::enter());
     loop {
         if let Some(result) = execution.root_descriptor.take() {
             if execution.frames.current_id().is_some()
@@ -731,8 +728,7 @@ fn run_frames_with_state(
                     let depth = execution.slots.depth(&frame.window) + operands;
                     execution.slots.push(&mut frame.window, value)?;
                     frame.resume_pc = frame.next_pc()?;
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_instruction(depth);
+                    profile!(record_owned_instruction(depth));
                     continue;
                 }
                 Progress::Complete(completion) => {

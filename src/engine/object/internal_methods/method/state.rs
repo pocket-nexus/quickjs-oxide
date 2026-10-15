@@ -557,8 +557,7 @@ mod tests {
             panic!()
         };
         let strong = std::rc::Rc::strong_count(&runtime.0);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         let mut state = runtime.0.state.borrow_mut();
         let StateMethodStep::Complete(selection) = StateMethodStep::start(
             &runtime,
@@ -594,8 +593,7 @@ mod tests {
             panic!()
         };
         let strong = std::rc::Rc::strong_count(&runtime.0);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         let mut state = runtime.0.state.borrow_mut();
         let step = StateMethodStep::start(
             &runtime,

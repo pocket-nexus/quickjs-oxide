@@ -91,8 +91,7 @@ fn resident_object_publishes_one_owner_and_fault_metadata_before_pressure_collec
     let (mut execution, id) = object_execution(&runtime, context.realm);
     let owners = std::rc::Rc::strong_count(&runtime.0);
     runtime.0.gc_pressure.remaining.set(1);
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let object;
     {
         let mut state = runtime.0.state.borrow_mut();

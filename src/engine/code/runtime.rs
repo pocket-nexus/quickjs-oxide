@@ -33,10 +33,9 @@ impl Runtime {
         realm: ContextId,
         function: UnlinkedFunction,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-            crate::engine::api::profiling::CompilePhase::Publish,
-        );
+        profile!(let _phase_timer = PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Publish
+        ));
         let _operation = self.operation()?;
 
         let mut frames = vec![PublishFrame::new(function)];

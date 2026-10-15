@@ -591,59 +591,16 @@ impl FromSyncStep {
     }
 }
 impl FromSyncResume {
-    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
-        self.pending_effect
-            .read_receiver
-            .take()
-            .expect("FromSyncStep Read receiver")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.pending_effect
-            .read_key
-            .take()
-            .expect("FromSyncStep Read key")
-    }
-    pub(crate) fn take_call_callable(&mut self) -> CallableRef {
-        self.pending_effect
-            .call_callable
-            .take()
-            .expect("FromSyncStep Call callable")
-    }
-    pub(crate) fn take_call_receiver(&mut self) -> JsValue {
-        self.pending_effect
-            .call_receiver
-            .take()
-            .expect("FromSyncStep Call receiver")
-    }
-    pub(crate) fn take_call_arguments(&mut self) -> Vec<JsValue> {
-        self.pending_effect
-            .call_arguments
-            .take()
-            .expect("FromSyncStep Call arguments")
-    }
-    pub(crate) fn take_resolve_value(&mut self) -> JsValue {
-        self.pending_effect
-            .resolve_value
-            .take()
-            .expect("FromSyncStep Resolve value")
-    }
-    pub(crate) fn take_resolve_realm(&mut self) -> ContextId {
-        self.pending_effect
-            .resolve_realm
-            .take()
-            .expect("FromSyncStep Resolve realm")
-    }
-    pub(crate) fn take_close_iterator(&mut self) -> ObjectRef {
-        self.pending_effect
-            .close_iterator
-            .take()
-            .expect("FromSyncStep Close iterator")
-    }
-    pub(crate) fn take_close_completion(&mut self) -> Completion {
-        self.pending_effect
-            .close_completion
-            .take()
-            .expect("FromSyncStep Close completion")
+    pending_takes! { pending_effect =>
+        take_read_receiver(read_receiver) -> JsValue, "FromSyncStep Read receiver";
+        take_read_key(read_key) -> PropertyKey, "FromSyncStep Read key";
+        take_call_callable(call_callable) -> CallableRef, "FromSyncStep Call callable";
+        take_call_receiver(call_receiver) -> JsValue, "FromSyncStep Call receiver";
+        take_call_arguments(call_arguments) -> Vec<JsValue>, "FromSyncStep Call arguments";
+        take_resolve_value(resolve_value) -> JsValue, "FromSyncStep Resolve value";
+        take_resolve_realm(resolve_realm) -> ContextId, "FromSyncStep Resolve realm";
+        take_close_iterator(close_iterator) -> ObjectRef, "FromSyncStep Close iterator";
+        take_close_completion(close_completion) -> Completion, "FromSyncStep Close completion";
     }
 }
 const _: () = assert!(std::mem::size_of::<FromSyncStep>() <= 64);

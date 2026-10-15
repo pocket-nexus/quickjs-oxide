@@ -109,8 +109,7 @@ mod tests {
             panic!()
         };
         let strong = std::rc::Rc::strong_count(&runtime.0);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         let mut state = runtime.0.state.borrow_mut();
         let StateOwnPrefix::Direct(target) =
             StateOwnPrefix::select(&runtime, &mut state, context.realm, proxy.object_id()).unwrap()
@@ -184,8 +183,7 @@ fn shared_own_snapshot_hands_backing_service_outside_state_without_query() {
     let (runtime, mut context) = test_context();
     let Value::Object(proxy)=context.eval("var ownShared=new Int32Array(new SharedArrayBuffer(4));ownShared[0]=37;new Proxy(ownShared,{})").unwrap() else{panic!()};
     let key = runtime.property_key_for_index(0).unwrap();
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let token = {
         let mut state = runtime.0.state.borrow_mut();
         let StateOwnPrefix::Direct(target) =

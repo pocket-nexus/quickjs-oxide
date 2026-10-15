@@ -149,8 +149,7 @@ impl<'a> NativePublicationWitness<'a> {
         min_readable_args: u8,
         mode: super::call::NativeInvokeMode,
     ) -> Result<Self, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("native_publication_checked");
+        profile!(record_owned_execution_event("native_publication_checked"));
         if !callable.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("native callable"));
         }
@@ -230,8 +229,7 @@ impl<'a> NativePublicationWitness<'a> {
         if realm != selected.defining_realm {
             runtime.0.state.borrow().heap.context(realm)?;
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("native_classification_reused");
+        profile!(record_owned_execution_event("native_classification_reused"));
         Ok(Self {
             runtime,
             callable,
@@ -614,7 +612,6 @@ impl Runtime {
     /// internal hidden native frames are absent from the observable stack and
     /// are skipped. Backtrace barriers deliberately do not participate in
     /// this lookup.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn active_script_or_module_name(&self) -> Result<Option<JsString>, RuntimeError> {
         let state = self.0.state.borrow();
         for frame in state.active_frames.iter().rev() {
@@ -927,7 +924,7 @@ impl ActiveFrameGuard {
                 .map(FunctionBytecodeRef::into_execution_handle),
         }
     }
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(super) fn mark_native_continuation(&mut self) -> Result<(), RuntimeError> {
         let mut state = self.runtime.0.state.borrow_mut();
         let frame = state
@@ -1048,10 +1045,8 @@ impl crate::engine::heap::runtime::RuntimeState {
                 pc: Some(BytecodePc::new(frame.fault_pc)),
             },
         });
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("lazy_frame_materialized");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("frame_materialization_new");
+        profile!(record_owned_execution_event("lazy_frame_materialized"));
+        profile!(record_owned_execution_event("frame_materialization_new"));
         Ok(ActiveFrameRestore {
             token,
             depth,
@@ -1082,19 +1077,16 @@ impl crate::engine::heap::runtime::RuntimeState {
             ));
         };
         if *stored == Some(pc) {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "runtime_pc_publication_repeated",
-            );
+            profile!(record_owned_execution_event(
+                "runtime_pc_publication_repeated"
+            ));
             return Ok(());
         }
         *stored = Some(pc);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "runtime_pc_publication_materialized",
-        );
+        profile!(record_owned_execution_event("runtime_pc_publication"));
+        profile!(record_owned_execution_event(
+            "runtime_pc_publication_materialized"
+        ));
         Ok(())
     }
 
@@ -1120,19 +1112,16 @@ impl crate::engine::heap::runtime::RuntimeState {
             ));
         };
         if *frame_pc == Some(pc) {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "runtime_pc_publication_repeated",
-            );
+            profile!(record_owned_execution_event(
+                "runtime_pc_publication_repeated"
+            ));
             return Ok(());
         }
         *frame_pc = Some(pc);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "runtime_pc_publication_active",
-        );
+        profile!(record_owned_execution_event("runtime_pc_publication"));
+        profile!(record_owned_execution_event(
+            "runtime_pc_publication_active"
+        ));
         Ok(())
     }
 }

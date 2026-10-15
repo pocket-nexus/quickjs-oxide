@@ -115,10 +115,9 @@ impl GlobalStep {
                     resume.number(runtime, result)?
                 }
                 Self::Complete(completion) => {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "global_completed_without_waiting_state",
-                    );
+                    profile!(record_owned_execution_event(
+                        "global_completed_without_waiting_state"
+                    ));
                     return Ok(Self::Complete(completion));
                 }
                 step => return Ok(step),

@@ -402,8 +402,7 @@ impl Runtime {
             }
         };
         let length = if let Some(length) = arguments_length {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("arguments.direct_length");
+            profile!(record_owned_execution_event("arguments.direct_length"));
             u64::from(length)
         } else {
             let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;

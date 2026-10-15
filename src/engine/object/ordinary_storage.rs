@@ -190,10 +190,9 @@ fn materialized_array_own_number(
         PropertySlot::Data(RawValue::Float(value)) => Some(Number::Float(*value)),
         _ => None,
     }?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "array_materialized_own_number_read",
-    );
+    profile!(record_owned_execution_event(
+        "array_materialized_own_number_read"
+    ));
     Some(number)
 }
 
@@ -408,8 +407,7 @@ impl Runtime {
         receiver_is_target: bool,
         _walk_missing: bool,
     ) -> Result<SetProbe, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("property_storage_set_probe");
+        profile!(record_owned_execution_event("property_storage_set_probe"));
         enum Selected {
             Setter(Option<ObjectId>),
             Missing(Option<ObjectId>),
@@ -475,10 +473,9 @@ impl Runtime {
                                         PropertySlot::Data(value.as_raw()),
                                         None,
                                     )?;
-                                    #[cfg(feature = "profiling")]
-                                    crate::engine::api::profiling::record_owned_execution_event(
-                                        "set_missing_committed_from_selection",
-                                    );
+                                    profile!(record_owned_execution_event(
+                                        "set_missing_committed_from_selection"
+                                    ));
                                     return Ok(SetProbe::Stored(true));
                                 }
                             }
@@ -511,10 +508,9 @@ impl Runtime {
                             slot.index,
                             PropertySlot::Data(value.as_raw()),
                         )?;
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "set_own_data_committed_from_selection",
-                        );
+                        profile!(record_owned_execution_event(
+                            "set_own_data_committed_from_selection"
+                        ));
                         return Ok(SetProbe::Stored(true));
                     }
                     BorrowedSet::Setter(set) => Selected::Setter(set),
@@ -2818,8 +2814,7 @@ impl RuntimeState {
             };
         }
         let value = Runtime::typed_array_number_read_in_heap(&mut self.heap, *object, index)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("typed_array_number_read_leaf");
+        profile!(record_owned_execution_event("typed_array_number_read_leaf"));
         Some(value)
     }
 

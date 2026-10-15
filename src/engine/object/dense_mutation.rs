@@ -120,8 +120,7 @@ impl RuntimeState {
                 return Err(error.into());
             }
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("array_mutation_dense_push");
+        profile!(record_owned_execution_event("array_mutation_dense_push"));
         Ok(Some(i32::try_from(length + 1).map_or_else(
             |_| JsValue::Float(f64::from(length + 1)),
             JsValue::Int,
@@ -154,8 +153,7 @@ impl RuntimeState {
             value = JsValue::from_raw(self.heap.take_last_array_dense_value(id, length)?)
                 .expect("validated public dense tail");
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("array_mutation_dense_pop");
+        profile!(record_owned_execution_event("array_mutation_dense_pop"));
         Ok(Some(value))
     }
 }

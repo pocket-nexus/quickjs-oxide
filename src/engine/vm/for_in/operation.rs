@@ -132,8 +132,7 @@ impl ForInStep {
                 }
                 step => return Ok(step),
             };
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("for_in_local_step");
+            profile!(record_owned_execution_event("for_in_local_step"));
         }
     }
 
@@ -299,8 +298,7 @@ fn advance(
 }
 
 fn record_local_step() {
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("for_in_local_step");
+    profile!(record_owned_execution_event("for_in_local_step"));
 }
 
 impl ForInResume {

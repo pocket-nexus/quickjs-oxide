@@ -143,12 +143,11 @@ pub(in crate::engine::vm) fn prepare_call(
         reusable_captured_locals: flags,
         input: prepared.input.take().into(),
     });
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_call_storage(
+    profile!(record_owned_call_storage(
         size_of::<crate::engine::vm::frame::FrameBody>(),
         cold.reusable_captured_locals.capacity(),
-        original_arguments.capacity() * size_of::<JsValue>(),
-    );
+        original_arguments.capacity() * size_of::<JsValue>()
+    ));
     let entry = FrameEntry {
         property_generation: 0,
         iterator_generation: 0,

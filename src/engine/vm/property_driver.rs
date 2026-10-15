@@ -771,10 +771,9 @@ fn complete_read_recovering(
     if consume > 2 || (preserved_receiver.is_none() && consume == 0) {
         return Err(Error::internal("property read consumes too many operands"));
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "property_legacy_fallthrough_recovery_decode",
-    );
+    profile!(record_owned_execution_event(
+        "property_legacy_fallthrough_recovery_decode"
+    ));
     let next_pc = execution.frames.current_mut(id)?.next_pc()?;
     complete_read(
         runtime,
@@ -982,10 +981,9 @@ fn read_pending(
             runtime, execution, id, callable, receiver, arguments, false, depth,
         );
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "property_legacy_fallthrough_recovery_decode",
-    );
+    profile!(record_owned_execution_event(
+        "property_legacy_fallthrough_recovery_decode"
+    ));
     frame.resume_pc = frame.next_pc()?;
     if let Some((call, receiver)) = ordinary_callback {
         let entry = call.prepare_callback(
@@ -1011,8 +1009,7 @@ fn read_pending(
             value.ok_or_else(|| Error::internal("property result missing"))?,
         )?;
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     Ok(CallStep::Entered)
 }
 
@@ -1188,10 +1185,8 @@ pub(in crate::engine::vm) mod read_completion_tests {
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
         let owners = std::rc::Rc::strong_count(&runtime.0);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
-        #[cfg(feature = "profiling")]
-        let _scope = crate::engine::api::profiling::CoreExecutionScope::enter();
+        profile!(let profile = CostProfile::start());
+        profile!(let _scope = CoreExecutionScope::enter());
         assert!(matches!(
             read_progress_selected(
                 &runtime,
@@ -1401,10 +1396,8 @@ pub(in crate::engine::vm) mod read_completion_tests {
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
         let owners = std::rc::Rc::strong_count(&runtime.0);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
-        #[cfg(feature = "profiling")]
-        let _scope = crate::engine::api::profiling::CoreExecutionScope::enter();
+        profile!(let profile = CostProfile::start());
+        profile!(let _scope = CoreExecutionScope::enter());
         assert!(matches!(
             execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Complete
@@ -1508,8 +1501,7 @@ pub(in crate::engine::vm) mod read_completion_tests {
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
         let owners = std::rc::Rc::strong_count(&runtime.0);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert!(matches!(
             execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Complete
@@ -1770,10 +1762,8 @@ pub(in crate::engine::vm) mod read_completion_tests {
             )
             .unwrap();
         let owners = std::rc::Rc::strong_count(&runtime.0);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
-        #[cfg(feature = "profiling")]
-        let _scope = crate::engine::api::profiling::CoreExecutionScope::enter();
+        profile!(let profile = CostProfile::start());
+        profile!(let _scope = CoreExecutionScope::enter());
         {
             let mut state = runtime.0.state.borrow_mut();
             assert!(matches!(

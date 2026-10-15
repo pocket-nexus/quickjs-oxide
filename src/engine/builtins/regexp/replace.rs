@@ -652,10 +652,9 @@ impl RegExpReplaceStep {
             )?));
         }
         let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "regexpreplace_resident_allocated",
-        );
+        profile!(record_owned_execution_event(
+            "regexpreplace_resident_allocated"
+        ));
         let mut resume = RegExpReplaceResume(Box::new(RegExpReplaceResumeState {
             runtime: runtime.clone(),
             step_pending: RegExpReplaceStepPending::default(),
@@ -825,10 +824,9 @@ impl RegExpReplaceResume {
             action = match action {
                 ReplaceAction::Complete(result) => return Ok(RegExpReplaceStep::Complete(result)),
                 ReplaceAction::Primitive { value, .. } if !matches!(value, JsValue::Object(_)) => {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "regexpreplace_primitive_local",
-                    );
+                    profile!(record_owned_execution_event(
+                        "regexpreplace_primitive_local"
+                    ));
                     self.advance(runtime, Completion::Return(value))?
                 }
                 ReplaceAction::Read { target, key } => {
@@ -836,10 +834,7 @@ impl RegExpReplaceResume {
                     let receiver = JsValue::Object(object.object_id());
                     match runtime.prepare_ordinary_read_selected(object, &key, &receiver, None)? {
                         crate::engine::object::OrdinaryRead::Complete(value) => {
-                            #[cfg(feature = "profiling")]
-                            crate::engine::api::profiling::record_owned_execution_event(
-                                "regexpreplace_read_local",
-                            );
+                            profile!(record_owned_execution_event("regexpreplace_read_local"));
                             self.advance(
                                 runtime,
                                 Completion::Return(value.unwrap_or(JsValue::Undefined)),
