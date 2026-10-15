@@ -39,12 +39,6 @@ pub(crate) enum ErrorPropertyStyle {
     RuntimeCaseContext,
 }
 
-#[derive(Clone, Copy)]
-enum EngineFailureStyle {
-    Source,
-    DescriptionOnly,
-}
-
 /// Observe the public runtime's completion protocol without adding a
 /// domain-specific source prelude.
 pub(crate) fn observe_eval_completion(
@@ -61,7 +55,6 @@ pub(crate) fn observe_eval_completion(
         value_type,
         primitive_value_text,
         ErrorPropertyStyle::Compact,
-        EngineFailureStyle::Source,
     )
 }
 
@@ -80,7 +73,6 @@ pub(crate) fn observe_eval_completion_with_error_context(
         value_type,
         primitive_value_text,
         ErrorPropertyStyle::CaseContext,
-        EngineFailureStyle::Source,
     )
 }
 
@@ -100,7 +92,6 @@ pub(crate) fn observe_legacy_float_eval_completion(
         value_type,
         primitive_value_text_with_rust_float,
         ErrorPropertyStyle::RuntimeCaseContext,
-        EngineFailureStyle::Source,
     )
 }
 
@@ -120,7 +111,6 @@ pub(crate) fn observe_checked_legacy_float_eval_completion(
         checked_value_type,
         primitive_value_text_with_rust_float,
         ErrorPropertyStyle::RuntimeCaseContext,
-        EngineFailureStyle::Source,
     )
 }
 
@@ -142,25 +132,6 @@ pub(crate) fn observe_read_context_eval_completion_with_prelude(
         value_type,
         primitive_value_text,
         ErrorPropertyStyle::ReadContext,
-        EngineFailureStyle::Source,
-    )
-}
-
-fn observe_eval_completion_without_source_diagnostic(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> String {
-    observe_eval_completion_with(
-        runtime,
-        context,
-        source,
-        description,
-        value_type,
-        primitive_value_text,
-        ErrorPropertyStyle::Compact,
-        EngineFailureStyle::DescriptionOnly,
     )
 }
 
@@ -173,7 +144,6 @@ fn observe_eval_completion_with(
     value_type: fn(&Runtime, &Value) -> &'static str,
     value_text: fn(Value) -> String,
     error_property_style: ErrorPropertyStyle,
-    engine_failure_style: EngineFailureStyle,
 ) -> String {
     match context.eval(source) {
         Ok(value) => format!(
@@ -213,14 +183,7 @@ fn observe_eval_completion_with(
                 ),
             }
         }
-        Err(error) => match engine_failure_style {
-            EngineFailureStyle::Source => {
-                panic!("Rust engine failure for {description} ({source:?}): {error}")
-            }
-            EngineFailureStyle::DescriptionOnly => {
-                panic!("Rust engine failure for {description}: {error}")
-            }
-        },
+        Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
     }
 }
 
@@ -358,29 +321,6 @@ pub(crate) fn compare_eval_completion_cases(group: &str, cases: &[(&str, &str)])
     }
 }
 
-/// Compare prefixed vectors which retain their compact, fail-fast diagnostics.
-pub(crate) fn compare_eval_completion_cases_with_prelude(
-    prelude: &str,
-    group: &str,
-    cases: &[(&str, &str)],
-) {
-    let oracle = require_qjs_oracle!("{group}");
-    for &(description, source) in cases {
-        let (runtime, mut context) = host_runtime_context();
-        let source = source_with_prelude(prelude, source);
-        assert_eq!(
-            observe_eval_completion_without_source_diagnostic(
-                &runtime,
-                &mut context,
-                &source,
-                description,
-            ),
-            crate::quickjs_oracle::observe_completion(&oracle, &source, description),
-            "{group} drifted for {description}",
-        );
-    }
-}
-
 /// Compare prefixed vectors while collecting every completion mismatch in the
 /// group before failing.
 pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
@@ -401,7 +341,6 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
             value_type,
             primitive_value_text,
             ErrorPropertyStyle::ReadContext,
-            EngineFailureStyle::Source,
         );
         let expected = crate::quickjs_oracle::observe_completion(&oracle, &source, description);
         if actual != expected {
@@ -989,7 +928,6 @@ pub(crate) fn compare_prelude_cases_collecting_failures(
             value_type,
             value_text,
             error_property_style,
-            EngineFailureStyle::Source,
         );
         let expected = oracle_completion(&oracle, &prefixed, description);
         if actual != expected {
@@ -1051,60 +989,5 @@ function __units(value){
         index++;
     }
     return string.length+"["+output.join(",")+"]";
-}
-"#;
-
-pub(crate) const STRING_CAPTURE_PRELUDE: &str = r#"
-function __bits(object,key){
-    var descriptor=Object.getOwnPropertyDescriptor(object,key);
-    return (descriptor.writable?"1":"0")+
-           (descriptor.enumerable?"1":"0")+
-           (descriptor.configurable?"1":"0");
-}
-function __isConstructor(value){
-    try{new value();return true}catch(_){return false}
-}
-function __units(value){
-    value=String(value);
-    var output="",index=0;
-    while(index<value.length){
-        var unit=value.charCodeAt(index).toString(16);
-        while(unit.length<4)unit="0"+unit;
-        if(index)output+=",";
-        output+=unit;
-        index++;
-    }
-    return output;
-}
-function __capture(callback){
-    try{return "return:"+callback()}
-    catch(error){
-        if(error!==null&&typeof error==="object")return "throw:"+error.name+":"+error.message;
-        return "throw:"+typeof error+":"+String(error);
-    }
-}
-"#;
-
-pub(crate) const STRING_CASE_PRELUDE: &str = r#"
-function __bits(object,key){
-    var descriptor=Object.getOwnPropertyDescriptor(object,key);
-    return (descriptor.writable?"1":"0")+
-           (descriptor.enumerable?"1":"0")+
-           (descriptor.configurable?"1":"0");
-}
-function __isConstructor(value){
-    try{new value();return true}catch(_){return false}
-}
-function __units(value){
-    value=String(value);
-    var output="",index=0;
-    while(index<value.length){
-        var unit=value.charCodeAt(index).toString(16);
-        while(unit.length<4)unit="0"+unit;
-        if(index)output+=",";
-        output+=unit;
-        index++;
-    }
-    return output;
 }
 "#;

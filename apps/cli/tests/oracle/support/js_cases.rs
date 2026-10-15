@@ -4,7 +4,8 @@
 // the comparison mode (default `completion`). Text before the first
 // `// case: <name>` marker is a prelude prepended to every case; each marker
 // starts one independently evaluated case. A file without markers is a single
-// case named after the file.
+// case named after the file. A prelude line `// prelude: <name>` splices in
+// the shared prelude `oracle/preludes/<name>.js`.
 //
 // - `completion`: evaluate prelude + case as a global script in a fresh
 //   in-process runtime and compare `return|typeof|String(value)` or
@@ -68,6 +69,12 @@ fn parse_fixture(label: &str, text: &str) -> Vec<Case> {
             cases.push((name.to_owned(), String::new()));
         } else if let Some((_, source)) = cases.last_mut() {
             source.push_str(line);
+        } else if let Some(name) = line.trim_end().strip_prefix("// prelude: ") {
+            let path = cases_root().join(format!("../preludes/{name}.js"));
+            let shared = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{label}: read {}: {error}", path.display()));
+            prelude.push_str(shared.trim_end_matches('\n'));
+            prelude.push('\n');
         } else {
             prelude.push_str(line);
         }

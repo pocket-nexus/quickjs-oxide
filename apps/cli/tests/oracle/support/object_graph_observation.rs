@@ -612,46 +612,6 @@ pub(crate) fn define_data_key_with_flags(
     );
 }
 
-pub(crate) fn define_accessor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    name: &str,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_accessor_key(runtime, object, &key, get, set);
-}
-
-pub(crate) fn define_accessor_key(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    get: Option<CallableRef>,
-    set: Option<CallableRef>,
-) {
-    assert!(
-        runtime
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(
-                        get.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    set: DescriptorField::Present(
-                        set.map_or(AccessorValue::Undefined, AccessorValue::Callable),
-                    ),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap(),
-        "host accessor-property definition was rejected"
-    );
-}
-
 pub(crate) fn object_property(
     runtime: &Runtime,
     context: &mut Context,
@@ -858,28 +818,6 @@ pub(crate) fn define_builtin_data_key(
             )
             .unwrap()
     );
-}
-
-pub(crate) fn checked_data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    let descriptor = runtime
-        .get_own_property(object, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-        .unwrap_or_else(|| panic!("{name} descriptor was absent"));
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    } = descriptor
-    else {
-        panic!("{name} descriptor was not data");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
 }
 
 pub(crate) fn define_to_primitive(runtime: &Runtime, object: &ObjectRef, callable: CallableRef) {

@@ -573,15 +573,6 @@ pub(crate) fn string_text(value: Value) -> String {
     value.to_utf8_lossy()
 }
 
-/// Take the pending Error object and render `throw:name:message` with both
-/// strings as UTF-16 hex.
-pub(crate) fn take_hex_error(runtime: &Runtime, context: &mut Context) -> String {
-    let error = take_error_object(context);
-    let name = error_string(runtime, context, &error, "name");
-    let message = error_string(runtime, context, &error, "message");
-    format!("throw:{}:{}", hex(&name), hex(&message))
-}
-
 /// Spell UTF-16 code units as a JavaScript `String.fromCharCode(...)` call.
 pub(crate) fn from_char_code_source(units: &[u16]) -> String {
     let values = units
