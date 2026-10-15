@@ -18,6 +18,7 @@ const DIRECTORIES: &[&str] = &[
     "global",
     "iterator",
     "json",
+    "lexical",
     "member_access",
     "number",
     "object",
@@ -111,6 +112,11 @@ fn iterator() {
 #[test]
 fn json() {
     run_case_directory("json");
+}
+
+#[test]
+fn lexical() {
+    run_case_directory("lexical");
 }
 
 #[test]

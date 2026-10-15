@@ -41,7 +41,6 @@ mod generator_yield_star_depth;
 mod global;
 mod iterator;
 mod json;
-mod lexical;
 mod math_intrinsic;
 mod module_reentry;
 mod number;
