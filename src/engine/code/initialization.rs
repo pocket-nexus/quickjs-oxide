@@ -6,8 +6,14 @@ use super::bytecode::Instruction;
 use super::instruction::ControlEffect;
 use std::collections::VecDeque;
 
+/// Largest `reachable blocks × locals` product analyzed. The facts and their
+/// per-block copies in callers grow with this product, so a huge function
+/// (typically a generated top-level script) gets no facts instead.
+const MAX_FACT_BITS: usize = 1 << 24;
+
 /// Entry state at each instruction that starts a basic block. Non-entry and
-/// unreachable positions are `None`; callers treat those as unknown.
+/// unreachable positions are `None`; callers treat those as unknown. Every
+/// position is `None` when the function exceeds [`MAX_FACT_BITS`].
 pub(crate) fn definite_initialization_entries(
     code: &[Instruction],
     local_count: usize,
@@ -95,6 +101,13 @@ pub(crate) fn definite_initialization_entries(
             }
         }
     }
+    let reachable_count = reachable
+        .iter()
+        .filter(|&&is_reachable| is_reachable)
+        .count();
+    if reachable_count.saturating_mul(local_count) > MAX_FACT_BITS {
+        return result;
+    }
     // Transfer effects are independent of predecessor state. Scan each block
     // once, then converge only blocks whose incoming facts may have changed.
     let words = local_count.div_ceil(64);
@@ -168,4 +181,21 @@ pub(crate) fn definite_initialization_entries(
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_FACT_BITS, definite_initialization_entries};
+    use crate::engine::code::bytecode::Instruction::*;
+
+    #[test]
+    fn facts_stop_at_the_reachable_block_budget() {
+        // Two reachable blocks: [0, 2) and [2, 4).
+        let code = [InitializeLocal(0), Goto(2), Nop, ReturnUndefined];
+        let within = definite_initialization_entries(&code, MAX_FACT_BITS / 2);
+        assert_eq!(within[0].as_ref().map(|facts| facts[0]), Some(false));
+        assert_eq!(within[2].as_ref().map(|facts| facts[0]), Some(true));
+        let over = definite_initialization_entries(&code, MAX_FACT_BITS / 2 + 1);
+        assert!(over.iter().all(Option::is_none));
+    }
 }
