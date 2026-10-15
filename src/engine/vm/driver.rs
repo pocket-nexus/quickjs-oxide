@@ -238,26 +238,8 @@ pub(super) fn enter_call(
                 target,
                 defining_realm,
                 min_readable_args,
-                match bound_receiver {
-                    Some(bound) => {
-                        runtime
-                            .release_jsvalue(receiver)
-                            .map_err(runtime_error_to_vm_error)?;
-                        bound
-                    }
-                    None => receiver,
-                },
-                match bound_arguments {
-                    Some(bound) => {
-                        for value in arguments {
-                            runtime
-                                .release_jsvalue(value)
-                                .map_err(runtime_error_to_vm_error)?;
-                        }
-                        bound
-                    }
-                    None => arguments,
-                },
+                prefer_bound_receiver(runtime, bound_receiver, receiver)?,
+                prefer_bound_arguments(runtime, bound_arguments, arguments)?,
                 tail,
                 depth,
                 Some(selected),
@@ -310,7 +292,12 @@ pub(super) fn enter_call(
                         }
                     },
                 );
-                bound_receiver = Some(this_value);
+                // A nested bound target replaces the outer bound receiver.
+                if let Some(previous) = bound_receiver.replace(this_value) {
+                    runtime
+                        .release_jsvalue(previous)
+                        .map_err(runtime_error_to_vm_error)?;
+                }
                 callable = target;
             }
             CallableExecution::Proxy => {
@@ -336,8 +323,8 @@ pub(super) fn enter_call(
                     execution,
                     id,
                     callable.as_object().try_clone()?,
-                    bound_receiver.unwrap_or(receiver),
-                    bound_arguments.unwrap_or(arguments),
+                    prefer_bound_receiver(runtime, bound_receiver, receiver)?,
+                    prefer_bound_arguments(runtime, bound_arguments, arguments)?,
                     tail,
                     depth,
                 );
@@ -365,26 +352,8 @@ pub(super) fn enter_call(
                     target,
                     defining_realm,
                     min_readable_args,
-                    match bound_receiver {
-                        Some(bound) => {
-                            runtime
-                                .release_jsvalue(receiver)
-                                .map_err(runtime_error_to_vm_error)?;
-                            bound
-                        }
-                        None => receiver,
-                    },
-                    match bound_arguments {
-                        Some(bound) => {
-                            for value in arguments {
-                                runtime
-                                    .release_jsvalue(value)
-                                    .map_err(runtime_error_to_vm_error)?;
-                            }
-                            bound
-                        }
-                        None => arguments,
-                    },
+                    prefer_bound_receiver(runtime, bound_receiver, receiver)?,
+                    prefer_bound_arguments(runtime, bound_arguments, arguments)?,
                     tail,
                     depth,
                 );
@@ -402,26 +371,8 @@ pub(super) fn enter_call(
                     execution,
                     id,
                     callable,
-                    match bound_receiver {
-                        Some(bound) => {
-                            runtime
-                                .release_jsvalue(receiver)
-                                .map_err(runtime_error_to_vm_error)?;
-                            bound
-                        }
-                        None => receiver,
-                    },
-                    match bound_arguments {
-                        Some(bound) => {
-                            for value in arguments {
-                                runtime
-                                    .release_jsvalue(value)
-                                    .map_err(runtime_error_to_vm_error)?;
-                            }
-                            bound
-                        }
-                        None => arguments,
-                    },
+                    prefer_bound_receiver(runtime, bound_receiver, receiver)?,
+                    prefer_bound_arguments(runtime, bound_arguments, arguments)?,
                     tail,
                     depth,
                 );
@@ -489,17 +440,8 @@ pub(super) fn enter_call(
     runtime
         .release_jsvalue(function)
         .map_err(runtime_error_to_vm_error)?;
-    if let Some(normalized) = bound_arguments {
-        // The superseded operand edges surrender before the normalized owners
-        // move into the request.
-        for argument in arguments {
-            runtime
-                .release_jsvalue(argument)
-                .map_err(runtime_error_to_vm_error)?;
-        }
-        arguments = normalized;
-    }
-    let receiver = bound_receiver.unwrap_or(receiver);
+    let arguments = prefer_bound_arguments(runtime, bound_arguments, arguments)?;
+    let receiver = prefer_bound_receiver(runtime, bound_receiver, receiver)?;
     if kind != FunctionKind::Normal {
         let depth = execution.slots.depth(&frame.window) + count + 1 + usize::from(method);
         return super::proxy_get_driver::start_callback_call(
@@ -527,6 +469,39 @@ pub(super) fn enter_call(
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(observed_depth);
     Ok(CallStep::Entered)
+}
+
+/// A bound receiver replaces the call-site receiver, whose edge is released.
+fn prefer_bound_receiver(
+    runtime: &Runtime,
+    bound: Option<JsValue>,
+    receiver: JsValue,
+) -> Result<JsValue, Error> {
+    let Some(bound) = bound else {
+        return Ok(receiver);
+    };
+    runtime
+        .release_jsvalue(receiver)
+        .map_err(runtime_error_to_vm_error)?;
+    Ok(bound)
+}
+
+/// Normalized bound arguments replace the call-site arguments, whose edges
+/// are released.
+fn prefer_bound_arguments(
+    runtime: &Runtime,
+    bound: Option<Vec<JsValue>>,
+    arguments: Vec<JsValue>,
+) -> Result<Vec<JsValue>, Error> {
+    let Some(bound) = bound else {
+        return Ok(arguments);
+    };
+    for value in arguments {
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
+    }
+    Ok(bound)
 }
 
 pub(super) fn execute(
