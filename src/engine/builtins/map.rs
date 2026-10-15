@@ -212,7 +212,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .map
+            .map()
             .ok_or(RuntimeError::Invariant("realm has no Map intrinsics"))
     }
 

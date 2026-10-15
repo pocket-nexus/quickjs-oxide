@@ -923,7 +923,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .typed_array
+            .typed_array()
             .ok_or(RuntimeError::Invariant(
                 "realm has no TypedArray intrinsics",
             ))?

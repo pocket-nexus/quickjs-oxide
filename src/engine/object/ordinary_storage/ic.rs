@@ -148,10 +148,11 @@ impl RuntimeState {
                     record_selection_reason("property_selection.string_index_allocation");
                     return None;
                 }
-                let prototype =
-                    self.heap.context(executable.realm).ok().and_then(|realm| {
-                        realm.primitive_prototypes[PrimitiveKind::String.index()]
-                    })?;
+                let prototype = self
+                    .heap
+                    .context(executable.realm)
+                    .ok()
+                    .and_then(|realm| realm.primitive_prototype(PrimitiveKind::String))?;
                 record_selection_reason("property_selection.string_prototype");
                 (prototype, true)
             }

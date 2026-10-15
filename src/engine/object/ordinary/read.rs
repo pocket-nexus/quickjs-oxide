@@ -222,9 +222,13 @@ impl RuntimeState {
                 )?));
             }
         };
-        let prototype = self.heap.context(realm)?.primitive_prototypes[kind.index()].ok_or(
-            RuntimeError::Invariant("primitive prototype is not implemented in this realm"),
-        )?;
+        let prototype =
+            self.heap
+                .context(realm)?
+                .primitive_prototype(kind)
+                .ok_or(RuntimeError::Invariant(
+                    "primitive prototype is not implemented in this realm",
+                ))?;
         self.select_ordinary_read_in_state(poisoned, prototype, atom, domain_id, boundary, native)
     }
 }

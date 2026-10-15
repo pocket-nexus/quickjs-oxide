@@ -554,10 +554,10 @@ fn async_function_intrinsic_root_is_a_function_prototype_child() {
             },
         ),
         Err(HeapError::Invariant(
-            "AsyncFunction prototype does not inherit from Function.prototype"
+            "intrinsic root has an invalid class graph"
         ))
     );
-    assert!(heap.context(realm).unwrap().async_function.is_none());
+    assert!(heap.context(realm).unwrap().async_function().is_none());
 
     let roots = AsyncFunctionRealmData {
         function_prototype: async_function_prototype,
@@ -565,7 +565,7 @@ fn async_function_intrinsic_root_is_a_function_prototype_child() {
     let before = heap.object_strong_count(async_function_prototype).unwrap();
     heap.attach_async_function_intrinsics(realm, roots).unwrap();
     assert!(
-        matches!(heap.context(realm).unwrap().async_function, Some(attached)
+        matches!(heap.context(realm).unwrap().async_function(), Some(attached)
             if attached.function_prototype == roots.function_prototype)
     );
     assert_eq!(
@@ -575,7 +575,7 @@ fn async_function_intrinsic_root_is_a_function_prototype_child() {
     assert_eq!(
         heap.attach_async_function_intrinsics(realm, roots),
         Err(HeapError::Invariant(
-            "context already has AsyncFunction intrinsic roots"
+            "context already has these intrinsic roots"
         ))
     );
     assert_eq!(

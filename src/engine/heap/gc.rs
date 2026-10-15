@@ -11,12 +11,11 @@ use super::AuxiliaryState;
 use super::{
     AsyncGeneratorRequestData, AtomIdx, BigIntId, BytecodeConstant, ContextData, ContextId,
     FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId, GeneratorActivationData,
-    GeneratorFrameBinding, Hash, HashMap, Heap, HeapError, InternalCallableData, LeafValue,
-    NativeErrorKind, Node, NodeData, ObjectData, ObjectId, ObjectPayload, PrimitiveKind,
-    PrimitiveObjectData, PromiseCapabilityData, PromiseReaction, PropertySlot, RawId,
-    RawModuleEvaluationState, RawModuleLinkRealm, RawModuleNamespaceState, RawModuleRecord,
-    RawModuleRecordBody, RawValue, Shape, ShapeId, SlotState, StringId, TypedArrayElementKind,
-    VarRefData, VarRefId, VecDeque, WeakCollectionKey, is_map_storable_value,
+    GeneratorFrameBinding, Hash, HashMap, Heap, HeapError, InternalCallableData, LeafValue, Node,
+    NodeData, ObjectData, ObjectId, ObjectPayload, PrimitiveObjectData, PromiseCapabilityData,
+    PromiseReaction, PropertySlot, RawId, RawModuleEvaluationState, RawModuleLinkRealm,
+    RawModuleNamespaceState, RawModuleRecord, RawModuleRecordBody, RawValue, Shape, ShapeId,
+    SlotState, StringId, VarRefData, VarRefId, VecDeque, WeakCollectionKey, is_map_storable_value,
 };
 use super::{Edges, HeapNodeKind};
 
@@ -2881,28 +2880,8 @@ fn raw_value_edge(value: &RawValue) -> Option<RawId> {
 
 pub(super) fn context_edges(context: &ContextData) -> Vec<RawId> {
     let mut edges = Vec::with_capacity(
-        13usize
-            .saturating_add(PrimitiveKind::COUNT)
-            .saturating_add(NativeErrorKind::COUNT)
-            .saturating_add(context.regexp.map_or(0, |_| 4))
-            .saturating_add(context.map.map_or(0, |_| 2))
-            .saturating_add(context.set.map_or(0, |_| 2))
-            .saturating_add(context.weak_map.map_or(0, |_| 1))
-            .saturating_add(context.weak_set.map_or(0, |_| 1))
-            .saturating_add(context.weak_ref.map_or(0, |_| 2))
-            .saturating_add(context.array_buffer.map_or(0, |_| 1))
-            .saturating_add(context.shared_array_buffer.map_or(0, |_| 1))
-            .saturating_add(context.data_view.map_or(0, |_| 1))
-            .saturating_add(
-                context
-                    .typed_array
-                    .map_or(0, |_| TypedArrayElementKind::COUNT),
-            )
-            .saturating_add(context.generator.map_or(0, |_| 2))
-            .saturating_add(context.async_function.map_or(0, |_| 1))
-            .saturating_add(context.async_generator.map_or(0, |_| 4))
-            .saturating_add(context.promise.map_or(0, |_| 2))
-            .saturating_add(context.iterator.map_or(0, |_| 4))
+        12usize
+            .saturating_add(context.intrinsic_roots.len())
             .saturating_add(context.global_objects.len())
             .saturating_add(context.intrinsics.len())
             .saturating_add(context.initial_shapes.len())
@@ -2920,119 +2899,19 @@ pub(super) fn visit_context_edges<E>(
     context: &ContextData,
     visit: &mut impl FnMut(RawId) -> Result<(), E>,
 ) -> Result<(), E> {
-    visit(RawId::Object(context.object_prototype))?;
-    visit(RawId::Object(context.function_prototype))?;
-    visit(RawId::Object(context.array_prototype))?;
-    visit(RawId::Object(context.iterator_prototype))?;
-    visit(RawId::Object(context.array_iterator_prototype))?;
-    visit(RawId::Object(context.string_iterator_prototype))?;
-    for edge in context
-        .primitive_prototypes
-        .iter()
-        .flatten()
-        .copied()
-        .map(RawId::Object)
-    {
-        visit(edge)?;
+    for edge in [
+        context.object_prototype,
+        context.function_prototype,
+        context.array_prototype,
+        context.iterator_prototype,
+        context.array_iterator_prototype,
+        context.string_iterator_prototype,
+    ] {
+        visit(RawId::Object(edge))?;
     }
-    if let Some(edge) = context.date_prototype.map(RawId::Object) {
-        visit(edge)?;
-    }
-    if let Some(regexp) = context.regexp {
-        visit(RawId::Object(regexp.prototype))?;
-        visit(RawId::Object(regexp.constructor))?;
-        visit(RawId::Object(regexp.string_iterator_prototype))?;
-        visit(RawId::Shape(regexp.object_shape))?;
-        for edge in regexp.result_shapes.into_iter().flatten().map(RawId::Shape) {
-            visit(edge)?;
-        }
-    }
-    if let Some(map) = context.map {
-        visit(RawId::Object(map.prototype))?;
-        visit(RawId::Object(map.iterator_prototype))?;
-    }
-    if let Some(set) = context.set {
-        visit(RawId::Object(set.prototype))?;
-        visit(RawId::Object(set.iterator_prototype))?;
-    }
-    if let Some(weak_map) = context.weak_map {
-        visit(RawId::Object(weak_map.prototype))?;
-    }
-    if let Some(weak_set) = context.weak_set {
-        visit(RawId::Object(weak_set.prototype))?;
-    }
-    if let Some(weak_ref) = context.weak_ref {
-        visit(RawId::Object(weak_ref.weak_ref_prototype))?;
-        visit(RawId::Object(weak_ref.finalization_registry_prototype))?;
-    }
-    if let Some(array_buffer) = context.array_buffer {
-        visit(RawId::Object(array_buffer.prototype))?;
-    }
-    if let Some(shared_array_buffer) = context.shared_array_buffer {
-        visit(RawId::Object(shared_array_buffer.prototype))?;
-    }
-    if let Some(data_view) = context.data_view {
-        visit(RawId::Object(data_view.prototype))?;
-    }
-    if let Some(typed_array) = context.typed_array {
-        for edge in typed_array.prototypes.into_iter().map(RawId::Object) {
-            visit(edge)?;
-        }
-    }
-    if let Some(generator) = context.generator {
-        visit(RawId::Object(generator.prototype))?;
-        visit(RawId::Object(generator.function_prototype))?;
-    }
-    if let Some(async_function) = context.async_function {
-        visit(RawId::Object(async_function.function_prototype))?;
-    }
-    if let Some(async_generator) = context.async_generator {
-        visit(RawId::Object(async_generator.async_iterator_prototype))?;
-        visit(RawId::Object(
-            async_generator.async_from_sync_iterator_prototype,
-        ))?;
-        visit(RawId::Object(async_generator.prototype))?;
-        visit(RawId::Object(async_generator.function_prototype))?;
-    }
-    if let Some(promise) = context.promise {
-        visit(RawId::Object(promise.prototype))?;
-        visit(RawId::Object(promise.constructor))?;
-    }
-    if let Some(iterator) = context.iterator {
-        visit(RawId::Object(iterator.constructor))?;
-        visit(RawId::Object(iterator.concat_prototype))?;
-        visit(RawId::Object(iterator.helper_prototype))?;
-        visit(RawId::Object(iterator.wrap_prototype))?;
-    }
-    if let Some(edge) = context.function_constructor.map(RawId::Object) {
-        visit(edge)?;
-    }
-    if let Some(edge) = context.array_constructor.map(RawId::Object) {
-        visit(edge)?;
-    }
-    if let Some(edge) = context.array_prototype_values.map(RawId::Object) {
-        visit(edge)?;
-    }
-    if let Some(edge) = context.throw_type_error.map(RawId::Object) {
-        visit(edge)?;
-    }
-    if let Some(edge) = context.eval_function.map(RawId::Object) {
-        visit(edge)?;
-    }
-    visit(RawId::Object(context.global_object))?;
-    visit(RawId::Object(context.global_var_object))?;
-    if let Some(edge) = context.error_prototype.map(RawId::Object) {
-        visit(edge)?;
-    }
-    for edge in context
-        .native_error_prototypes
-        .iter()
-        .flatten()
-        .copied()
-        .map(RawId::Object)
-    {
-        visit(edge)?;
-    }
+    context
+        .intrinsic_roots
+        .visit([context.global_object, context.global_var_object], visit)?;
     for edge in context.global_objects.iter().copied().map(RawId::Object) {
         visit(edge)?;
     }

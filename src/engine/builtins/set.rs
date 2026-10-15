@@ -231,7 +231,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .set
+            .set()
             .ok_or(RuntimeError::Invariant("realm has no Set intrinsics"))
     }
 

@@ -181,7 +181,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .weak_map
+            .weak_map()
             .ok_or(RuntimeError::Invariant("realm has no WeakMap intrinsics"))
     }
 
@@ -191,7 +191,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .weak_set
+            .weak_set()
             .ok_or(RuntimeError::Invariant("realm has no WeakSet intrinsics"))
     }
 

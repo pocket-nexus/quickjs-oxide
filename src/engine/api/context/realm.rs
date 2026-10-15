@@ -156,7 +156,7 @@ impl Context {
             .borrow()
             .heap
             .context(self.realm)?
-            .function_constructor
+            .function_constructor()
             .ok_or(RuntimeError::Invariant("realm has no Function constructor"))?;
         Ok(CallableRef::from_validated_object(
             ObjectRef::from_borrowed_handle(self.runtime.clone(), object)?,
