@@ -296,9 +296,12 @@ fn global_math_is_realm_aware_and_materializes_only_on_get() {
         let shape = state.heap.shape(object.shape).unwrap();
         let slot_index =
             usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).unwrap()).unwrap();
+        let Some(PropertySlot::VarRef(cell)) = object.slots.get(slot_index) else {
+            panic!("materialized global Math was not stored in a VarRef cell");
+        };
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::Data(RawValue::Object(id))) if *id == first_math.object_id()
+            state.heap.var_ref(*cell).unwrap().value,
+            RawValue::Object(id) if id == first_math.object_id()
         ));
     }
 

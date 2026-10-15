@@ -703,3 +703,91 @@ fn fresh_object_field_publication_failure_preserves_consumed_producer_and_atom_o
     assert_eq!(state.heap.object_strong_count(suffix), Ok(1));
     assert_eq!(state.heap.object_strong_count(later), Ok(0));
 }
+
+#[test]
+fn global_namespace_autoinit_materializes_as_a_var_ref_cell() {
+    use crate::engine::test_support::assert_script_true;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let global = context.global_object().unwrap();
+    let names = ["Math", "JSON", "Reflect", "Atomics"];
+    let order = "Object.getOwnPropertyNames(globalThis).join()";
+    // Each function links its global slot before the first read materializes.
+    assert_script_true(
+        &mut context,
+        "var readers = [function () { return Math; }, function () { return JSON; },
+            function () { return Reflect; }, function () { return Atomics; }]; true",
+    );
+    let Value::String(before) = context.eval(order).unwrap() else {
+        panic!("own property names");
+    };
+    assert_script_true(
+        &mut context,
+        "readers.every(function (read, i) {
+            var name = ['Math', 'JSON', 'Reflect', 'Atomics'][i];
+            var value = read();
+            var d = Object.getOwnPropertyDescriptor(globalThis, name);
+            return typeof value === 'object' && value === globalThis[name] && d.value === value
+                && d.writable && !d.enumerable && d.configurable
+                && value[Symbol.toStringTag] === name;
+        })",
+    );
+    let keys: Vec<_> = names
+        .iter()
+        .map(|name| runtime.intern_property_key(name).unwrap())
+        .collect();
+    {
+        let state = runtime.0.state.borrow();
+        for (name, key) in names.iter().zip(&keys) {
+            let (slot, flags) = own_slot(&state, global.object_id(), key.atom());
+            assert!(matches!(slot, PropertySlot::VarRef(_)), "{name}");
+            assert_eq!(flags, PropertyFlags::data(true, false, true), "{name}");
+        }
+    }
+    let Value::String(after) = context.eval(order).unwrap() else {
+        panic!("own property names");
+    };
+    assert_eq!(before, after);
+    assert_script_true(
+        &mut context,
+        "var saved = Math; Math = 1;
+        var ok = readers[0]() === 1 && globalThis.Math === 1;
+        Math = saved; ok && readers[0]() === saved",
+    );
+    assert_script_true(
+        &mut context,
+        "delete globalThis.JSON && typeof globalThis.JSON === 'undefined'
+            && (function () { try { readers[1](); return false; }
+                catch (e) { return e instanceof ReferenceError; } })()",
+    );
+    assert_script_true(&mut context, "var JSON = 7; readers[1]() === 7");
+    assert_script_true(
+        &mut context,
+        "delete globalThis.Reflect && typeof globalThis.Reflect === 'undefined'",
+    );
+    assert_script_true(&mut context, "let Reflect = 3; Reflect === 3");
+}
+
+#[test]
+fn global_namespace_autoinit_reads_work_across_realms() {
+    use crate::engine::test_support::assert_script_true;
+    let runtime = Runtime::new();
+    let mut first = runtime.new_context().unwrap();
+    let mut second = runtime.new_context().unwrap();
+    assert_script_true(
+        &mut first,
+        "var readMath = function () { return Math; }; true",
+    );
+    assert_script_true(
+        &mut second,
+        "Math.abs(-2) === 2 && typeof Math === 'object'",
+    );
+    assert_script_true(
+        &mut first,
+        "readMath() === Math && Math.max(1, 3) === 3 && JSON.stringify([1]) === '[1]'",
+    );
+    assert_script_true(
+        &mut second,
+        "Object.getPrototypeOf(Math) === Object.prototype",
+    );
+}

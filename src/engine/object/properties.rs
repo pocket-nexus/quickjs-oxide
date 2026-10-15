@@ -2647,6 +2647,35 @@ impl RuntimeState {
         };
         let mut producer = OwnedValueGuard::new(self, poisoned, initialized);
         let (state, producer) = producer.parts();
+        if let ObjectPayload::GlobalObject { uninitialized_vars } =
+            state.heap.object(object)?.payload
+        {
+            // Publish a global value as a VarRef cell, as ordinary global data
+            // is stored, so linked `GetVar` slots read it in the loop. The
+            // flags are unchanged, so the slot is replaced in place.
+            let flags = {
+                let shape = state.heap.shape(state.heap.object(object)?.shape)?;
+                shape
+                    .entries()
+                    .get(slot_index)
+                    .ok_or(RuntimeError::Invariant("autoinit shape entry disappeared"))?
+                    .flags
+            };
+            state.store_complete_global_raw_property(
+                poisoned,
+                object,
+                uninitialized_vars,
+                key,
+                crate::engine::object::property::CompletePropertyDescriptor::Data {
+                    value: producer.as_ref().expect("AutoInit producer").as_raw(),
+                    writable: flags.writable,
+                    enumerable: flags.enumerable,
+                    configurable: flags.configurable,
+                },
+            )?;
+            return state
+                .release_owned_jsvalue(poisoned, producer.take().expect("AutoInit producer"));
+        }
         state.replace_property_slot_with_poison(
             poisoned,
             object,
