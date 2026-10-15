@@ -2449,6 +2449,9 @@ fn complete_in_segment(
         VmAction::ClassInitializer(super::construct_driver::InitializerKind::Instance) => {
             class_initializer::try_skip_absent(runtime, state, segment)
         }
+        VmAction::Predicate(super::predicate_driver::Kind::Instance) => {
+            instance_of::try_complete(runtime, state, segment)
+        }
         _ => Ok(false),
     }
 }
@@ -3955,6 +3958,7 @@ mod array_construct;
 mod class_initializer;
 mod element_read;
 mod for_of;
+mod instance_of;
 mod leaf_native;
 mod string_add;
 
