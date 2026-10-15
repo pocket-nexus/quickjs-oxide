@@ -2369,6 +2369,15 @@ fn execute_admitted_in_state(
                 fallthrough,
             } => {
                 if !segment.enter_constructor(runtime, state, arguments, fallthrough)? {
+                    if array_construct::try_complete(
+                        runtime,
+                        state,
+                        &mut segment,
+                        arguments,
+                        fallthrough,
+                    )? {
+                        continue;
+                    }
                     return Ok(action);
                 }
                 // The allocation is now published in a complete child frame;
@@ -3942,6 +3951,7 @@ mod named_native_fact_tests;
 mod array_allocation_tests;
 
 mod array_allocation;
+mod array_construct;
 mod class_initializer;
 mod element_read;
 mod for_of;
