@@ -1,4 +1,3 @@
-use crate::oracle_cases::GroupedCase as Case;
 use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::engine::api::RuntimeError;
 use quickjs_oxide::engine::api::number_to_string;
@@ -263,33 +262,6 @@ pub(crate) fn normalize_rust_value_text(value: Value) -> String {
     }
 }
 
-pub(crate) fn take_rust_error(runtime: &Runtime, context: &mut Context) -> String {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("Rust parser did not materialize an Error object");
-    };
-    let read = |context: &mut Context, name: &str| {
-        let key = runtime.intern_property_key(name).unwrap();
-        context.get_property(&error, &key).unwrap()
-    };
-    let Value::String(name) = read(context, "name") else {
-        panic!("Rust Error.name was not a string");
-    };
-    let Value::String(message) = read(context, "message") else {
-        panic!("Rust Error.message was not a string");
-    };
-    let Value::Int(line) = read(context, "lineNumber") else {
-        panic!("Rust Error.lineNumber was not an integer");
-    };
-    let Value::Int(column) = read(context, "columnNumber") else {
-        panic!("Rust Error.columnNumber was not an integer");
-    };
-    format!(
-        "{}|{}|{line}:{column}",
-        name.to_utf8_lossy(),
-        message.to_utf8_lossy()
-    )
-}
-
 pub(crate) fn normalize_rust_value_units(value: &Value) -> String {
     match value {
         Value::Undefined => "undefined|undefined".to_owned(),
@@ -391,29 +363,6 @@ pub(crate) fn array_value_text(
         })
         .collect::<Vec<_>>()
         .join(",")
-}
-
-pub(crate) fn error_name(
-    runtime: &Runtime,
-    context: &mut quickjs_oxide::engine::api::Context,
-    error: &quickjs_oxide::engine::api::ObjectRef,
-    case: &Case,
-) -> String {
-    let key = runtime
-        .intern_property_key("name")
-        .expect("Error name property key");
-    let Value::String(value) = context.get_property(error, &key).unwrap_or_else(|failure| {
-        panic!(
-            "read Error.name for {} / {}: {failure}",
-            case.group, case.description,
-        )
-    }) else {
-        panic!(
-            "Error.name was not a string for {} / {}",
-            case.group, case.description,
-        );
-    };
-    value.to_utf8_lossy()
 }
 
 pub(crate) fn hex_bytes(bytes: &[u8]) -> String {

@@ -3,9 +3,7 @@ use crate::oracle_cases::CompileCase;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::oracle_cases::StartMatchCase as MatchCase;
 use crate::runtime_observation::array_value_text;
-use crate::runtime_observation::error_name;
 use crate::runtime_observation::host_runtime_context;
-use crate::runtime_observation::take_rust_error;
 use crate::runtime_observation::{
     checked_value_type, error_string_property, primitive_value_text,
     primitive_value_text_with_rust_float, string_property, string_property_with_read_context,
@@ -200,52 +198,6 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
 
 // Helpers shared verbatim by several oracle modules.
 
-const SCRIPT_CASE_NAME_OBSERVER: &str = r#"
-try {
-  var value = std.evalScript(scriptArgs[0]);
-  print('return|' + typeof value + '|' + String(value));
-} catch (error) {
-  if (error !== null && typeof error === 'object')
-    print('throw|object|' + error.name);
-  else
-    print('throw|' + typeof error + '|' + String(error));
-}
-"#;
-
-/// Like [`oracle_script_case_observation`], but a thrown object reports only
-/// its `name`.
-pub(crate) fn oracle_script_case_name_observation(oracle: &OsStr, case: &Case) -> String {
-    observe_script_case(oracle, SCRIPT_CASE_NAME_OBSERVER, case)
-}
-
-fn observe_script_case(oracle: &OsStr, wrapper: &str, case: &Case) -> String {
-    let output = Command::new(oracle)
-        .args(["--std", "-e", wrapper, case.source])
-        .output()
-        .unwrap_or_else(|error| {
-            panic!(
-                "could not run QuickJS for {} / {}: {error}",
-                case.group, case.description,
-            )
-        });
-    assert!(
-        output.status.success(),
-        "QuickJS observer failed for {} / {}: {}",
-        case.group,
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-    );
-    String::from_utf8(output.stdout)
-        .unwrap_or_else(|error| {
-            panic!(
-                "QuickJS output was not UTF-8 for {} / {}: {error}",
-                case.group, case.description,
-            )
-        })
-        .trim_end()
-        .to_owned()
-}
-
 pub(crate) fn run(executable: &OsStr, source: &str) -> Output {
     Command::new(executable)
         .args(["-e", source])
@@ -285,12 +237,6 @@ if (__qjo_type === "number") {
     print(__qjo_type + "|" + String(__qjo_value));
 }
 "#;
-
-pub(crate) fn rust_error_observation(source: &str) -> String {
-    let (runtime, mut context) = host_runtime_context();
-    assert_eq!(context.eval(source), Err(RuntimeError::Exception));
-    take_rust_error(&runtime, &mut context)
-}
 
 pub(crate) fn rust_case_observation(case: &Case) -> String {
     let (runtime, mut context) = host_runtime_context();
@@ -370,48 +316,6 @@ pub(crate) fn observe_array_aware_eval(
             }
         }
         Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
-    }
-}
-
-pub(crate) fn rust_case_name_observation(case: &Case) -> String {
-    let (runtime, mut context) = host_runtime_context();
-    match context.eval(case.source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            checked_value_type(&runtime, &value),
-            primitive_value_text(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "take Rust exception for {} / {}: {error}",
-                        case.group, case.description,
-                    )
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Rust exception was missing for {} / {}",
-                        case.group, case.description,
-                    )
-                });
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}",
-                    error_name(&runtime, &mut context, &error, case),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    checked_value_type(&runtime, &value),
-                    primitive_value_text(value),
-                ),
-            }
-        }
-        Err(error) => panic!(
-            "Rust engine failure for {} / {} ({:?}): {error}",
-            case.group, case.description, case.source,
-        ),
     }
 }
 

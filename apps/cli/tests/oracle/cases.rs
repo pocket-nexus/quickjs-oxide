@@ -34,6 +34,7 @@ const DIRECTORIES: &[&str] = &[
     "proxy_reflect",
     "regexp",
     "string",
+    "templates",
     "typed_array",
     "unicode_lexical",
     "update",
@@ -198,6 +199,11 @@ fn regexp() {
 #[test]
 fn string() {
     run_case_directory("string");
+}
+
+#[test]
+fn templates() {
+    run_case_directory("templates");
 }
 
 #[test]

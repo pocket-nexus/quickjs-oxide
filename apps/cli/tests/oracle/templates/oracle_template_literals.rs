@@ -1,5 +1,4 @@
-use super::quickjs_syntax_diagnostic_oracle::observe_cmdline_syntax_error as oracle_error_observation;
-use crate::runtime_completion_oracle::{ORACLE_NORMALIZER, rust_error_observation};
+use crate::runtime_completion_oracle::ORACLE_NORMALIZER;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::normalize_rust_value_units as normalize_rust_value;
 use quickjs_oxide::engine::api::{
@@ -8,150 +7,6 @@ use quickjs_oxide::engine::api::{
 };
 use std::ffi::OsStr;
 use std::process::Command;
-
-const VALUE_CASES: &[(&str, &str)] = &[
-    ("empty no-substitution template", "``"),
-    ("plain no-substitution template", "`quickjs`"),
-    ("UTF-16 and astral text", "`é中🚀`"),
-    ("numeric and Unicode escapes", r"`\0\x41\u0042\u{1F680}`"),
-    ("lone surrogate escapes", r"`\uD800x\uDC00`"),
-    ("simple escapes", r"`\b\t\n\v\f\r`"),
-    ("escaped substitution opener", r"`\${value}`"),
-    ("escaped template quote", r"`\``"),
-    ("escaped backslash", r"`\\`"),
-    ("physical LF normalizes to LF", "`a\nb`"),
-    ("physical CR normalizes to LF", "`a\rb`"),
-    ("physical CRLF normalizes to LF", "`a\r\nb`"),
-    ("physical line separator remains", "`a\u{2028}b`"),
-    ("physical paragraph separator remains", "`a\u{2029}b`"),
-    ("LF line continuation disappears", "`a\\\nb`"),
-    ("CR line continuation disappears", "`a\\\rb`"),
-    ("CRLF line continuation disappears", "`a\\\r\nb`"),
-    ("line separator continuation disappears", "`a\\\u{2028}b`"),
-    (
-        "paragraph separator continuation disappears",
-        "`a\\\u{2029}b`",
-    ),
-    ("single interpolation", "`${42}`"),
-    (
-        "primitive interpolation sequence",
-        "`a${1}b${true}c${null}d${void 0}e`",
-    ),
-    (
-        "special Number interpolation",
-        "`${-0}|${0/0}|${1/0}|${-1/0}`",
-    ),
-    (
-        "BigInt interpolation",
-        "`x${123456789012345678901234567890n}y`",
-    ),
-    ("astral interpolation", "`a${\"🚀\"}b`"),
-    ("adjacent substitutions", "`${1}${2}`"),
-    ("empty tail is omitted", "`a${1}`"),
-    ("empty head remains the receiver", "`${1}z`"),
-    ("raw right brace", "`a}b`"),
-    ("escaped interpolation remains text", r"`a\${1}b`"),
-    ("nested template", "`a${`b${2}c`}d`"),
-    ("three nested templates", "`a${`b${`c${3}d`}e`}f`"),
-    ("comma expression substitution", "`a${(1,2)}b`"),
-    ("conditional substitution", "`a${false ? 1 : 2}b`"),
-    ("division inside substitution", "`a${8 / 2}b`"),
-    ("division after template", "`8` / 2"),
-    ("nested template followed by division", "`${`8` / 2}`"),
-    (
-        "function body and call inside substitution",
-        "`a${(function(){ return 7; })()}b`",
-    ),
-    (
-        "template returned by substitution call",
-        "`a${(function(){ return `b${3}c`; })()}d`",
-    ),
-    (
-        "substitutions evaluate before native concat coercion",
-        "(function(){ var log=''; var a=function(){}, b=function(){}; a.toString=function(){log=log+'a';return 'A';}; b.toString=function(){log=log+'b';return 'B';}; var one=function(){log=log+'1';return a;}; var two=function(){log=log+'2';return b;}; var value=`x${one()}y${two()}z`; return value+'|'+log; })()",
-    ),
-    (
-        "no-substitution template skips concat",
-        "TemplateStringPrototype.concat=1; `plain`",
-    ),
-    (
-        "concat receives primitive receiver and raw arguments",
-        "TemplateStringPrototype.concat=function(a,b,c,d,e){'use strict';return typeof this+'|'+this+'|'+typeof a+'|'+a+'|'+typeof b+'|'+b+'|'+typeof c+'|'+c+'|'+typeof d+'|'+d+'|'+typeof e;}; `a${42}b${true}c`",
-    ),
-    (
-        "empty later cooked segments are omitted",
-        "TemplateStringPrototype.concat=function(a,b,c,d){'use strict';return this+'|'+a+'|'+b+'|'+typeof c+'|'+typeof d;}; `${1}${2}`",
-    ),
-    (
-        "concat call waits for every substitution",
-        "(function(){var log='';TemplateStringPrototype.concat=function(a,b,c,d){'use strict';log=log+'h';return 'hook:'+this+':'+a+':'+b+':'+c+':'+d;};var one=function(){log=log+'1';return 10;};var two=function(){log=log+'2';return 20;};var value=`a${one()}b${two()}c`;return value+'|'+log;})()",
-    ),
-];
-
-const ERROR_CASES: &[(&str, &str)] = &[
-    ("empty unterminated template", "`"),
-    ("unterminated template text", "`abc"),
-    ("unterminated substitution", "`a${1"),
-    ("unterminated continuation", "`a${1}"),
-    ("empty substitution", "`${}`"),
-    ("extra expression token", "`a${1 2}b`"),
-    ("semicolon in substitution", "`a${1;2}b`"),
-    ("mismatched parenthesis", "`a${(1}b`"),
-    ("empty later substitution", "`a${1}b${}c`"),
-    ("short hex escape", r"`\x`"),
-    ("non-hex escape", r"`\xG0`"),
-    ("short Unicode escape", r"`\u`"),
-    ("non-hex Unicode escape", r"`\u00G0`"),
-    ("empty braced Unicode escape", r"`\u{}`"),
-    ("out-of-range Unicode escape", r"`\u{110000}`"),
-    ("legacy octal escape", r"`\1`"),
-    ("legacy zero-prefixed escape", r"`\01`"),
-    ("legacy eight escape", r"`\8`"),
-    ("malformed tail escape", r"`a${1}\xG0`"),
-    ("multiline empty substitution", "`a${\n}`"),
-    ("multiline unterminated continuation", "`a${\n1\n`"),
-    (
-        "initial malformed escape beats substitution grammar",
-        r"`\x${1 2}\x`",
-    ),
-    (
-        "substitution grammar beats later malformed escape",
-        r"`a${1 2}\x`",
-    ),
-    ("malformed tail follows valid substitution", r"`a${1}\x`"),
-    ("nested malformed escape", "`a${`\\x`}b`"),
-];
-
-#[test]
-fn untagged_template_values_match_pinned_quickjs() {
-    let oracle = require_qjs_oracle!("template differential");
-
-    for &(description, source) in VALUE_CASES {
-        let (runtime, mut context) = host_runtime_context();
-        expose_string_prototype(&runtime, &mut context);
-        let value = context
-            .eval(source)
-            .unwrap_or_else(|error| panic!("Rust rejected {description:?} ({source:?}): {error}"));
-        assert_eq!(
-            normalize_rust_value(&value),
-            oracle_value_observation(&oracle, source, description),
-            "value mismatch for {description:?} ({source:?})"
-        );
-    }
-}
-
-#[test]
-fn untagged_template_diagnostics_match_pinned_quickjs() {
-    let oracle = require_qjs_oracle!("template diagnostic differential");
-
-    for &(description, source) in ERROR_CASES {
-        assert_eq!(
-            rust_error_observation(source),
-            oracle_error_observation(&oracle, source),
-            "diagnostic mismatch for {description:?} ({source:?})"
-        );
-    }
-}
 
 #[test]
 fn template_concat_lookup_order_matches_pinned_quickjs() {
@@ -577,29 +432,6 @@ fn tagged_templates_publish_realm_local_template_objects() {
     );
 }
 
-fn expose_string_prototype(runtime: &Runtime, context: &mut Context) {
-    let prototype = context.string_prototype().unwrap();
-    let global = context.global_object().unwrap();
-    let key = runtime
-        .intern_property_key("TemplateStringPrototype")
-        .unwrap();
-    assert!(
-        context
-            .define_own_property(
-                &global,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Value::Object(prototype)),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
 fn install_concat_getter(runtime: &Runtime, context: &mut Context) {
     install_concat_getter_source(
         runtime,
@@ -656,25 +488,6 @@ fn rust_getter_fault_location(source: &str) -> String {
         panic!("template getter Error.stack was not a string");
     };
     eval_script_location(&stack.to_utf8_lossy())
-}
-
-fn oracle_value_observation(oracle: &OsStr, source: &str, description: &str) -> String {
-    let script = format!(
-        "globalThis.TemplateStringPrototype = String.prototype;\nvar __qjo_value = std.evalScript(scriptArgs[0]);\n{ORACLE_NORMALIZER}"
-    );
-    let output = Command::new(oracle)
-        .args(["--std", "-e", &script, source])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run QuickJS for {description:?}: {error}"));
-    assert!(
-        output.status.success(),
-        "QuickJS rejected {description:?} ({source:?}): {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS value output was not UTF-8")
-        .trim_end()
-        .to_owned()
 }
 
 fn oracle_getter_value_observation(oracle: &OsStr, source: &str, description: &str) -> String {
