@@ -1,11 +1,12 @@
 //! Callback-free native leaves completed inside the ordinary segment.
 //!
 //! A selected native normally leaves the dispatch loop and runs as a native
-//! activation. These targets cannot call JavaScript, throw or allocate when
-//! every operand they read is a Number (and, for `charCodeAt`, the receiver
-//! is a String primitive), so the call completes on the caller's frame. Any
-//! other operand declines before an operand moves, and the call takes the
-//! general path unchanged.
+//! activation. Math functions, and `charCodeAt`, `charAt`, `at`, `substring`,
+//! `substr` and `slice` on a String primitive receiver, cannot call
+//! JavaScript or throw when every argument they read is a Number, so the call
+//! completes on the caller's frame. The String results allocate through the
+//! same heap entry as the native activation. Any other operand declines
+//! before an operand moves, and the call takes the general path unchanged.
 use super::{FallthroughPc, FrameCursor};
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::builtins::native::NativeFunctionId;
@@ -13,6 +14,11 @@ use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::value::JsValue;
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::stack::{FrameExecution, FrameTurn};
+
+enum Leaf {
+    Value(JsValue),
+    String(crate::engine::value::JsString),
+}
 
 /// Math reads at most this many Number arguments on the leaf path.
 const MAX_ARGUMENTS: usize = 4;
@@ -59,34 +65,67 @@ pub(super) fn try_complete(
                 _ => return Ok(None),
             };
         }
-        if target == NativeFunctionId::StringPrototypeCharCodeAt {
+        if matches!(
+            target,
+            NativeFunctionId::StringPrototypeCharCodeAt
+                | NativeFunctionId::StringPrototypeCharAt(_)
+                | NativeFunctionId::StringPrototypeSubrange(_)
+        ) {
             if !method {
                 return Ok(None);
             }
             let JsValue::String(receiver) = slots.peek(count + 1)? else {
                 return Ok(None);
             };
-            // ToIntegerOrInfinity(undefined) is 0, as is NaN.
-            let index = if count == 0 { 0.0 } else { numbers[0] };
-            let index = crate::engine::value::number::to_int32_sat(index);
             let string = state
                 .heap
                 .string(*receiver)
                 .map_err(|error| runtime_error_to_vm_error(error.into()))?;
-            return Ok(Some(
-                usize::try_from(index)
-                    .ok()
-                    .and_then(|index| string.code_unit_at(index))
-                    .map_or(JsValue::Float(f64::NAN), |unit| {
-                        JsValue::Int(i32::from(unit))
-                    }),
-            ));
+            // An absent argument is `undefined`, whose Number is NaN.
+            let first = if count == 0 { f64::NAN } else { numbers[0] };
+            return Ok(Some(match target {
+                NativeFunctionId::StringPrototypeCharAt(kind) => {
+                    match crate::engine::builtins::primitive::text::char_at_result(
+                        kind, string, first,
+                    )
+                    .map_err(runtime_error_to_vm_error)?
+                    {
+                        Some(unit) => Leaf::String(unit),
+                        None => Leaf::Value(JsValue::Undefined),
+                    }
+                }
+                NativeFunctionId::StringPrototypeSubrange(kind) => {
+                    let end = (count >= 2).then_some(numbers[1]);
+                    let (start, end) =
+                        crate::engine::builtins::string_subrange_bounds(kind, string, first, end)
+                            .map_err(runtime_error_to_vm_error)?;
+                    Leaf::String(string.sub_string(start, end))
+                }
+                _ => Leaf::Value(
+                    usize::try_from(crate::engine::value::number::to_int32_sat(first))
+                        .ok()
+                        .and_then(|index| string.code_unit_at(index))
+                        .map_or(JsValue::Float(f64::NAN), |unit| {
+                            JsValue::Int(i32::from(unit))
+                        }),
+                ),
+            }));
         }
-        crate::engine::builtins::leaf_math_numbers(runtime, target, &numbers[..count])
-            .map_err(runtime_error_to_vm_error)
+        Ok(
+            crate::engine::builtins::leaf_math_numbers(runtime, target, &numbers[..count])
+                .map_err(runtime_error_to_vm_error)?
+                .map(Leaf::Value),
+        )
     })?;
-    let Some(result) = result else {
-        return Ok(false);
+    let result = match result {
+        None => return Ok(false),
+        Some(Leaf::Value(value)) => value,
+        Some(Leaf::String(string)) => JsValue::String(
+            state
+                .heap
+                .allocate_string(string)
+                .map_err(|error| runtime_error_to_vm_error(error.into()))?,
+        ),
     };
     // The leaf consumed the selection exactly as a native activation would.
     *selected_native = None;
@@ -156,6 +195,40 @@ mod tests {
             eval_string(&mut context, source),
             "5,9,98,97,1,2,TypeError,121,8,patched-1,2:v"
         );
+    }
+
+    #[test]
+    fn string_leaves_match_the_native_activation() {
+        let (_runtime, mut context) = test_context();
+        // `.call` reaches the same native through Function.prototype.call,
+        // which is not a leaf, so it is the activation's own answer.
+        let source = r#"
+            var s = 'héllo中\u{1F600}', mismatches = [], checked = 0;
+            var cases = [
+                ['charAt', [1]], ['charAt', []], ['charAt', [99]], ['charAt', [-1]],
+                ['charAt', [2.9]], ['charAt', [NaN]], ['at', [-1]], ['at', [-99]], ['at', []],
+                ['substring', [1, 3]], ['substring', [3, 1]], ['substring', []],
+                ['substring', [-5, 99]], ['substring', [NaN, 2]], ['substr', [1, 2]],
+                ['substr', [-3]], ['substr', [2, -1]], ['slice', [1, -1]], ['slice', [-2]],
+                ['slice', [3, 1]], ['slice', [0, Infinity]], ['charCodeAt', [6]],
+            ];
+            for (var round = 0; round < 3; round++) {
+                for (var [name, args] of cases) {
+                    var expected = JSON.stringify(String.prototype[name].call(s, ...args));
+                    var actual;
+                    switch (args.length) {
+                        case 0: actual = s[name](); break;
+                        case 1: actual = s[name](args[0]); break;
+                        default: actual = s[name](args[0], args[1]);
+                    }
+                    checked++;
+                    if (JSON.stringify(actual) !== expected) mismatches.push(name + args);
+                }
+            }
+            checked + ':' + mismatches.join() + ':' + ''.charAt(0).length + ':' + s.substring(2)
+                .length + ':' + new String('ab').charAt(1)
+        "#;
+        assert_eq!(eval_string(&mut context, source), "66::0:6:b");
     }
 
     #[test]

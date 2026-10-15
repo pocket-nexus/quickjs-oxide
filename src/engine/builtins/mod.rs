@@ -76,6 +76,7 @@ mod replacement;
 mod set;
 mod shared_array_buffer;
 mod string;
+pub(crate) use string::string_subrange_bounds;
 pub mod uri;
 mod weak_collection;
 mod weak_ref;

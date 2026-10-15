@@ -87,6 +87,59 @@ fn scan_string_region(
 /// Saturating/clamping integer conversion used by pinned QuickJS
 /// `JS_ToInt32Clamp` when `min` is zero. Negative relative indices receive
 /// `min_offset` once before the lower clamp; positive overflow clamps to max.
+/// Code-unit bounds of `substring`, `substr` and `slice` after their Number
+/// conversions (QuickJS `JS_ToInt32Clamp` on each argument). Shared by the
+/// native activation and the segment's callback-free leaf.
+pub(crate) fn string_subrange_bounds(
+    selector: StringSubrangeKind,
+    source: &JsString,
+    start_number: f64,
+    end_number: Option<f64>,
+) -> Result<(usize, usize), RuntimeError> {
+    let source_len = i32::try_from(source.len()).map_err(|_| {
+        RuntimeError::Invariant("String length exceeded QuickJS's signed index range")
+    })?;
+    let start_offset = match selector {
+        StringSubrangeKind::Substring => 0,
+        StringSubrangeKind::Substr | StringSubrangeKind::Slice => source_len,
+    };
+    let start = string_to_int32_clamp(start_number, source_len, start_offset);
+
+    let (range_start, range_end) = match selector {
+        StringSubrangeKind::Substring => {
+            let mut end = source_len;
+            if let Some(number) = end_number {
+                end = string_to_int32_clamp(number, source_len, 0);
+            }
+            if start < end {
+                (start, end)
+            } else {
+                (end, start)
+            }
+        }
+        StringSubrangeKind::Substr => {
+            let remaining = source_len - start;
+            let mut count = remaining;
+            if let Some(number) = end_number {
+                count = string_to_int32_clamp(number, remaining, 0);
+            }
+            (start, start + count)
+        }
+        StringSubrangeKind::Slice => {
+            let mut end = source_len;
+            if let Some(number) = end_number {
+                end = string_to_int32_clamp(number, source_len, source_len);
+            }
+            (start, end.max(start))
+        }
+    };
+    let range_start = usize::try_from(range_start)
+        .map_err(|_| RuntimeError::Invariant("String subrange start became negative"))?;
+    let range_end = usize::try_from(range_end)
+        .map_err(|_| RuntimeError::Invariant("String subrange end became negative"))?;
+    Ok((range_start, range_end))
+}
+
 fn string_to_int32_clamp(number: f64, max: i32, min_offset: i32) -> i32 {
     debug_assert!(max >= 0);
     debug_assert!(min_offset >= 0);
@@ -852,47 +905,8 @@ impl Runtime {
         start_number: f64,
         end_number: Option<f64>,
     ) -> Result<Completion, RuntimeError> {
-        let source_len = i32::try_from(source.len()).map_err(|_| {
-            RuntimeError::Invariant("String length exceeded QuickJS's signed index range")
-        })?;
-        let start_offset = match selector {
-            StringSubrangeKind::Substring => 0,
-            StringSubrangeKind::Substr | StringSubrangeKind::Slice => source_len,
-        };
-        let start = string_to_int32_clamp(start_number, source_len, start_offset);
-
-        let (range_start, range_end) = match selector {
-            StringSubrangeKind::Substring => {
-                let mut end = source_len;
-                if let Some(number) = end_number {
-                    end = string_to_int32_clamp(number, source_len, 0);
-                }
-                if start < end {
-                    (start, end)
-                } else {
-                    (end, start)
-                }
-            }
-            StringSubrangeKind::Substr => {
-                let remaining = source_len - start;
-                let mut count = remaining;
-                if let Some(number) = end_number {
-                    count = string_to_int32_clamp(number, remaining, 0);
-                }
-                (start, start + count)
-            }
-            StringSubrangeKind::Slice => {
-                let mut end = source_len;
-                if let Some(number) = end_number {
-                    end = string_to_int32_clamp(number, source_len, source_len);
-                }
-                (start, end.max(start))
-            }
-        };
-        let range_start = usize::try_from(range_start)
-            .map_err(|_| RuntimeError::Invariant("String subrange start became negative"))?;
-        let range_end = usize::try_from(range_end)
-            .map_err(|_| RuntimeError::Invariant("String subrange end became negative"))?;
+        let (range_start, range_end) =
+            string_subrange_bounds(selector, &source, start_number, end_number)?;
         Ok(Completion::Return(self.into_jsvalue(Value::String(
             source.sub_string(range_start, range_end),
         ))?))

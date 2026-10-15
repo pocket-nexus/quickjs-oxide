@@ -317,6 +317,35 @@ fn complete_primitive(
     Ok(Some(Completion::Return(value)))
 }
 
+/// `charAt` / `at` after the index conversion; `None` is `undefined`. Shared
+/// by the native activation and the segment's callback-free leaf.
+pub(crate) fn char_at_result(
+    kind: StringCharAtKind,
+    string: &JsString,
+    number: f64,
+) -> Result<Option<JsString>, RuntimeError> {
+    let mut index = crate::engine::value::number::to_int32_sat(number);
+    let length = i32::try_from(string.len()).map_err(|_| {
+        RuntimeError::Invariant("String length exceeded QuickJS signed index range")
+    })?;
+    if kind == StringCharAtKind::At && index < 0 {
+        index += length;
+    }
+    if index < 0 || index >= length {
+        return Ok(match kind {
+            StringCharAtKind::At => None,
+            StringCharAtKind::CharAt => Some(JsString::from_static("")),
+        });
+    }
+    Ok(Some(JsString::from_code_unit(
+        string
+            .code_unit_at(index as usize)
+            .ok_or(RuntimeError::Invariant(
+                "validated String index missing code unit",
+            ))?,
+    )))
+}
+
 /// The callback-free scalar kernel is shared by local and resumed execution.
 fn finish_index(
     runtime: &Runtime,
@@ -324,29 +353,10 @@ fn finish_index(
     string: &JsString,
     number: f64,
 ) -> Result<Completion, RuntimeError> {
-    let mut index = crate::engine::value::number::to_int32_sat(number);
+    let index = crate::engine::value::number::to_int32_sat(number);
     let value = match kind {
         ScalarTextKind::CharAt(kind) => {
-            let length = i32::try_from(string.len()).map_err(|_| {
-                RuntimeError::Invariant("String length exceeded QuickJS signed index range")
-            })?;
-            if kind == StringCharAtKind::At && index < 0 {
-                index += length;
-            }
-            if index < 0 || index >= length {
-                match kind {
-                    StringCharAtKind::At => Value::Undefined,
-                    StringCharAtKind::CharAt => Value::String(JsString::from_static("")),
-                }
-            } else {
-                Value::String(JsString::from_code_unit(
-                    string
-                        .code_unit_at(index as usize)
-                        .ok_or(RuntimeError::Invariant(
-                            "validated String index missing code unit",
-                        ))?,
-                ))
-            }
+            char_at_result(kind, string, number)?.map_or(Value::Undefined, Value::String)
         }
         ScalarTextKind::CharCodeAt => usize::try_from(index)
             .ok()
