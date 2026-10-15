@@ -800,3 +800,21 @@ fn native_getter_and_conversion_callbacks_share_the_explicit_call_continuation()
     })()"#,
     );
 }
+
+#[test]
+fn bound_calls_release_superseded_receivers() {
+    // Debug runtime teardown asserts that no heap node outlives these calls.
+    for source in [
+        "function t(){} t.bind(null).bind({})()",
+        "function t(){} var o = {f: t.bind({})}; o.f()",
+        "function t(a){} var o = {f: t.bind({}, 1).bind({}, 2)}; o.f(3)",
+        "var p = new Proxy(function(){}, {}); var o = {f: p.bind({}, 1)}; o.f(2)",
+        "function* g(){} var o = {f: g.bind({})}; o.f()",
+        "var o = {f: Math.max.bind({}).bind({}, 1)}; o.f(2)",
+    ] {
+        let (runtime, mut context) = test_context();
+        let _ = context.eval(source).unwrap();
+        drop(context);
+        drop(runtime);
+    }
+}

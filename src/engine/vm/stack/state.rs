@@ -52,6 +52,41 @@ fn copy_checked_in_state(state: &mut RuntimeState, value: &JsValue) -> Result<Js
 }
 
 impl FrameSlots<'_> {
+    /// Copies a trusted heap handle from a direct binding into the next
+    /// operand slot within this borrow. The copy goes from registers into the
+    /// slot; returning it through a caller temporary would leave piecewise
+    /// stores that the following full-width move cannot forward.
+    pub(in crate::engine::vm) fn push_direct_heap_copy_in_state(
+        &mut self,
+        state: &mut RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        source: super::DirectSlot,
+    ) -> Result<bool, Error> {
+        if !self.has_operand_capacity(1) {
+            return Ok(false);
+        }
+        let value = match self.direct_value(source) {
+            Some(&JsValue::Object(id)) if state.heap.admits_trusted(RawId::Object(id)) => {
+                state.heap.retain_object_fast(id);
+                JsValue::Object(id)
+            }
+            Some(&JsValue::String(id)) if state.heap.admits_trusted(RawId::String(id)) => {
+                state.heap.retain_string_fast(id);
+                JsValue::String(id)
+            }
+            _ => return Ok(false),
+        };
+        match self.try_push(value) {
+            Ok(()) => Ok(true),
+            Err(value) => {
+                state
+                    .release_owned_jsvalue(poisoned, value)
+                    .map_err(runtime_error_to_vm_error)?;
+                Err(Error::internal("checked operand capacity rejected a push"))
+            }
+        }
+    }
+
     pub(in crate::engine::vm) fn nullish_equality_in_state(
         &mut self,
         state: &mut RuntimeState,
