@@ -319,6 +319,42 @@ fn initialized_lexical_accesses_drop_tdz_checks_only_where_proven() {
 }
 
 #[test]
+fn oversized_functions_keep_tdz_checks_and_semantics() {
+    // 4000 block lexicals over at least 8000 blocks exceed the fact budget, so
+    // no check is elided, including the loop counter's.
+    let mut source = String::from("(function(){let total=0;");
+    for index in 0..4000 {
+        source.push_str(&format!(
+            "{{let v{index}={index};if(v{index}&1)total+=v{index};}}"
+        ));
+    }
+    source.push_str("for(let i=0;i<3;i+=1)total+=i;");
+    source.push_str("try{late;let late=1}catch(e){return e instanceof ReferenceError?total:-1}})");
+    let script = compile_unlinked_script(&source).unwrap();
+    let function = script
+        .constants()
+        .iter()
+        .find_map(|constant| constant.as_child())
+        .expect("script lost its function");
+    assert!(!function.code().iter().any(|instruction| {
+        matches!(
+            instruction,
+            Instruction::GetLocal(_) | Instruction::PutLocal(_) | Instruction::SetLocal(_)
+        ) && function.local_definitions()[match instruction {
+            Instruction::GetLocal(index)
+            | Instruction::PutLocal(index)
+            | Instruction::SetLocal(index) => usize::from(*index),
+            _ => unreachable!(),
+        }]
+        .is_lexical
+    }));
+    assert_eq!(
+        evaluate_in_context(&format!("{source}()")),
+        Value::Int(4_000_000 + 3)
+    );
+}
+
+#[test]
 fn lexical_tdz_and_readonly_errors_follow_checked_local_and_capture_order() {
     let (runtime, mut context) = test_context();
     for source in [
