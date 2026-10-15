@@ -7,13 +7,12 @@ use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end;
 use crate::quickjs_array_completion_oracle::observe_array_completion;
 use crate::runtime_observation::array_value_text;
 use crate::runtime_observation::error_name;
-use crate::runtime_observation::normalize_rust_value_text as normalize_rust_value;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::take_rust_error;
 use crate::runtime_observation::{
     checked_value_type, error_string_property, plain_value_type, primitive_value_text,
     primitive_value_text_with_rust_float, string_property, string_property_with_read_context,
 };
-use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::run_cli;
 use crate::runtime_oracle::{error_string_property as runtime_error_string_property, value_type};
 use quickjs_oxide::engine::api::JsString;
@@ -406,16 +405,6 @@ pub(crate) fn run(executable: &OsStr, source: &str) -> Output {
         .args(["-e", source])
         .output()
         .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
-}
-
-pub(crate) fn rust_value_observation(source: &str, description: &str) -> String {
-    let runtime = host_runtime();
-    let value = runtime
-        .new_context()
-        .expect("create context")
-        .eval(source)
-        .unwrap_or_else(|error| panic!("Rust rejected {description} ({source:?}): {error}"));
-    normalize_rust_value(value)
 }
 
 pub(crate) const ORACLE_NORMALIZER: &str = r#"

@@ -11,6 +11,7 @@ const DIRECTORIES: &[&str] = &[
     "control_flow",
     "errors",
     "eval",
+    "function_declarations",
     "function_semantics",
     "global",
     "iterator",
@@ -71,6 +72,11 @@ fn errors() {
 #[test]
 fn eval() {
     run_case_directory("eval");
+}
+
+#[test]
+fn function_declarations() {
+    run_case_directory("function_declarations");
 }
 
 #[test]
