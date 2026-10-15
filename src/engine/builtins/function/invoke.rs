@@ -1,10 +1,8 @@
 //! Call forwarding shares validation and argument ownership across both VM consumers.
 use super::arguments::{ArgumentsStep, finish as finish_arguments};
-use crate::engine::builtins::native::ReflectKind;
 use crate::engine::vm::call::{ConstructNewTarget, ConstructorRef, DirectCallTarget};
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
-    builtins::native::NativeFunctionId,
     heap::ContextId,
     value::{JsValue, conversion::NativeConversion},
     vm::{
@@ -19,17 +17,6 @@ pub(crate) enum InvokeKind {
     Apply,
     ReflectApply,
     ReflectConstruct,
-}
-impl InvokeKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::FunctionPrototypeCall => Self::Call,
-            NativeFunctionId::FunctionPrototypeApply => Self::Apply,
-            NativeFunctionId::Reflect(ReflectKind::Apply) => Self::ReflectApply,
-            NativeFunctionId::Reflect(ReflectKind::Construct) => Self::ReflectConstruct,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum InvokeStep {
     Construct(Box<InvokeConstruct>),

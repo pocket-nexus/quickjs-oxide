@@ -1,6 +1,5 @@
 //! String search and subrange coercions preserve their distinct position rules.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{StringIncludesKind, StringIndexOfKind, StringSubrangeKind},
@@ -17,16 +16,6 @@ pub(crate) enum StringSearchKind {
     Index(StringIndexOfKind),
     Includes(StringIncludesKind),
     Subrange(StringSubrangeKind),
-}
-impl StringSearchKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::StringPrototypeIndexOf(kind) => Self::Index(kind),
-            NativeFunctionId::StringPrototypeIncludes(kind) => Self::Includes(kind),
-            NativeFunctionId::StringPrototypeSubrange(kind) => Self::Subrange(kind),
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum StringSearchStep {
     Complete(Completion),

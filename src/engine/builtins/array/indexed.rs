@@ -1,6 +1,5 @@
 //! Indexed Array algorithms expose property and numeric conversion boundaries.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::ArraySearchKind,
@@ -20,19 +19,6 @@ pub(crate) enum IndexedKind {
     CopyWithin,
     Search(ArraySearchKind),
     ToReversed,
-}
-impl IndexedKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::ArrayPrototypeAt => Self::At,
-            NativeFunctionId::ArrayPrototypeWith => Self::With,
-            NativeFunctionId::ArrayPrototypeFill => Self::Fill,
-            NativeFunctionId::ArrayPrototypeCopyWithin => Self::CopyWithin,
-            NativeFunctionId::ArrayPrototypeSearch(kind) => Self::Search(kind),
-            NativeFunctionId::ArrayPrototypeToReversed => Self::ToReversed,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum IndexedStep {
     Complete(Completion),

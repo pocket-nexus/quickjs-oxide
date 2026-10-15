@@ -1,6 +1,5 @@
 //! TypedArray callbacks own their traversal and reacquire each live element.
 
-use crate::engine::builtins::native::{NativeFunctionId, TypedArrayNativeKind};
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{ArrayFindKind, ArrayReduceKind},
@@ -16,15 +15,6 @@ use crate::engine::{
 pub(crate) enum TypedTraversalKind {
     Find(ArrayFindKind),
     Reduce(ArrayReduceKind),
-}
-impl TypedTraversalKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Find(kind)) => Self::Find(kind),
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Reduce(kind)) => Self::Reduce(kind),
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum TypedTraversalStep {
     Complete(Completion),

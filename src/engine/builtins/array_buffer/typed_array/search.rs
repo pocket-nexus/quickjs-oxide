@@ -6,7 +6,6 @@
 //! integer-indexed views have no holes or prototype lookup, and shrinking a
 //! resizable buffer gives `includes(undefined)` a distinct observable result.
 
-use crate::engine::builtins::native::{NativeFunctionId, TypedArrayNativeKind};
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::ArraySearchKind,
@@ -159,15 +158,6 @@ impl Runtime {
 pub(crate) enum TypedSearchKind {
     At,
     Search(ArraySearchKind),
-}
-impl TypedSearchKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::At) => Self::At,
-            NativeFunctionId::TypedArray(TypedArrayNativeKind::Search(kind)) => Self::Search(kind),
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum TypedSearchStep {
     Complete(Completion),

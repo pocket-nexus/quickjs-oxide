@@ -1,9 +1,7 @@
 //! Slice and splice keep copied result and completed receiver mutations across replies.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
-    builtins::native::ArraySliceKind,
     heap::ContextId,
     object::{
         ObjectRef, OwnedPropertyDescriptor, PropertyKey,
@@ -20,16 +18,6 @@ pub(crate) enum SliceKind {
     Slice,
     Splice,
     ToSpliced,
-}
-impl SliceKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::ArrayPrototypeSlice(ArraySliceKind::Slice) => Some(Self::Slice),
-            NativeFunctionId::ArrayPrototypeSlice(ArraySliceKind::Splice) => Some(Self::Splice),
-            NativeFunctionId::ArrayPrototypeToSpliced => Some(Self::ToSpliced),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum SliceStep {
     Return(JsValue),

@@ -1,6 +1,5 @@
 //! Object.create/defineProperties: snapshot enumerable keys, then convert and publish each.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
@@ -12,15 +11,6 @@ use crate::engine::{
 pub(crate) enum DefinitionsKind {
     Create,
     Define,
-}
-impl DefinitionsKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::ObjectCreate => Self::Create,
-            NativeFunctionId::ObjectDefineProperties => Self::Define,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum DefinitionsStep {
     Complete(Completion),

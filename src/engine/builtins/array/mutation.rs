@@ -1,6 +1,5 @@
 //! Array endpoint mutations retain their copy cursor across observable property operations.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{ArrayPopKind, ArrayPushKind},
@@ -16,15 +15,6 @@ use crate::engine::{
 pub(crate) enum MutationKind {
     Push(ArrayPushKind),
     Pop(ArrayPopKind),
-}
-impl MutationKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        match target {
-            NativeFunctionId::ArrayPrototypePush(kind) => Some(Self::Push(kind)),
-            NativeFunctionId::ArrayPrototypePop(kind) => Some(Self::Pop(kind)),
-            _ => None,
-        }
-    }
 }
 pub(crate) enum MutationStep {
     Complete(Completion),
