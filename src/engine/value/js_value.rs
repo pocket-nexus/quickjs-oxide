@@ -38,7 +38,15 @@ use crate::engine::value::Value;
 /// It deliberately does not derive `PartialEq`: handle identity is not value
 /// equality (two distinct string nodes can hold equal text), so equality must
 /// go through the heap-aware helpers instead.
+///
+/// The four-byte tag places every narrow payload at offset 4 and every wide
+/// payload at offset 8. Copies of an unknown variant then split on the same
+/// aligned boundaries that payload stores use, so the CPU can forward a
+/// value that was just written. With a one-byte tag, `Bool` sits at offset 1
+/// and LLVM moves bytes 1..8 with overlapping loads that cannot be forwarded
+/// from the narrower stores that wrote them.
 #[must_use]
+#[repr(u32)]
 pub enum JsValue {
     Undefined,
     Null,
