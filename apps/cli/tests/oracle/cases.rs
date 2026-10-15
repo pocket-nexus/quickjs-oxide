@@ -27,6 +27,7 @@ const DIRECTORIES: &[&str] = &[
     "regexp",
     "string",
     "typed_array",
+    "unicode_lexical",
     "update",
 ];
 
@@ -153,6 +154,11 @@ fn string() {
 #[test]
 fn typed_array() {
     run_case_directory("typed_array");
+}
+
+#[test]
+fn unicode_lexical() {
+    run_case_directory("unicode_lexical");
 }
 
 #[test]
