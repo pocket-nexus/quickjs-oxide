@@ -1,5 +1,4 @@
 use crate::object_graph_observation::error_string_property as error_string_property_2;
-use crate::object_graph_observation::string_property_value;
 use crate::oracle_cases::CompileCase;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::oracle_cases::StartMatchCase as MatchCase;
@@ -11,7 +10,6 @@ use crate::runtime_observation::array_value_text;
 use crate::runtime_observation::assert_success;
 use crate::runtime_observation::error_name;
 use crate::runtime_observation::normalize_rust_value_text as normalize_rust_value;
-use crate::runtime_observation::primitive_value_text_with_signed_zero;
 use crate::runtime_observation::take_rust_error;
 use crate::runtime_observation::{
     checked_value_type, error_string_property, plain_value_type, primitive_value_text,
@@ -33,7 +31,6 @@ use std::process::Output;
 #[derive(Clone, Copy)]
 pub(crate) enum ErrorPropertyStyle {
     Compact,
-    CheckedValue,
     ReadContext,
     CaseContext,
     RuntimeCaseContext,
@@ -197,7 +194,6 @@ fn observed_error_string_property(
 ) -> String {
     match style {
         ErrorPropertyStyle::Compact => string_property(runtime, context, error, name),
-        ErrorPropertyStyle::CheckedValue => string_property_value(runtime, context, error, name),
         ErrorPropertyStyle::ReadContext => {
             string_property_with_read_context(runtime, context, error, name)
         }
@@ -267,45 +263,6 @@ pub(crate) fn assert_runtime_completion_helper_contracts() {
         ),
         "return|number|42"
     );
-}
-
-/// Self-check prelude vectors under pinned QuickJS: every `groups` vector
-/// must return and every `error_cases` vector must throw.
-pub(crate) fn self_check_prelude_vectors(
-    oracle: &std::ffi::OsStr,
-    prelude: &str,
-    groups: &[(&str, &[(&str, &str)])],
-    error_cases: &[(&str, &str)],
-) {
-    for &(group, cases) in groups {
-        for &(description, source) in cases {
-            let observation =
-                observe_quickjs_completion_with_prelude(prelude, oracle, source, description);
-            assert!(
-                observation.starts_with("return|"),
-                "{group} oracle vector unexpectedly threw for {description}: {observation:?}",
-            );
-        }
-    }
-    for &(description, source) in error_cases {
-        let observation =
-            observe_quickjs_completion_with_prelude(prelude, oracle, source, description);
-        assert!(
-            observation.starts_with("throw|"),
-            "error oracle vector unexpectedly returned for {description}: {observation:?}",
-        );
-    }
-}
-
-/// Observe QuickJS after prepending a domain-owned source prelude.
-pub(crate) fn observe_quickjs_completion_with_prelude(
-    prelude: &str,
-    oracle: &std::ffi::OsStr,
-    source: &str,
-    description: &str,
-) -> String {
-    let source = source_with_prelude(prelude, source);
-    crate::quickjs_oracle::observe_completion(oracle, &source, description)
 }
 
 /// Compare prefixed vectors while collecting every completion mismatch in the
@@ -823,54 +780,6 @@ pub(crate) fn observe_rust_compile(case: &CompileCase) -> String {
     }
 }
 
-pub(crate) const REGEXP_MATCH_ALL_PRELUDE: &str = r#"
-function __bit(value){return value?"1":"0"}
-function __bits(object,key){
-    var descriptor=Object.getOwnPropertyDescriptor(object,key);
-    if(descriptor===undefined)return "missing";
-    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+
-        __bit(descriptor.configurable);
-}
-function __isConstructor(value){
-    try{Reflect.construct(function(){},[],value);return true}
-    catch(_error){return false}
-}
-function __show(value){
-    if(value===undefined)return "undefined";
-    if(value===null)return "null";
-    if(typeof value==="number"){
-        if(value!==value)return "NaN";
-        if(value===0)return 1/value===-Infinity?"-0":"+0";
-    }
-    return String(value);
-}
-function __completion(callback){
-    try{return "return:"+String(callback())}
-    catch(error){
-        if(error!==null&&typeof error==="object")
-            return "throw:"+error.name+":"+error.message;
-        return "throw:"+typeof error+":"+String(error);
-    }
-}
-function __step(iterator){
-    var result=iterator.next(),value=result.value;
-    return String(result.done)+":"+
-        (value===undefined?"undefined":__show(value[0])+":"+
-            __show(value.index));
-}
-"#;
-
-pub(crate) fn compare_cases_collecting_failures(group: &str, cases: &[(&str, &str)]) {
-    compare_prelude_cases_collecting_failures(
-        REGEXP_MATCH_ALL_PRELUDE,
-        group,
-        cases,
-        primitive_value_text_with_signed_zero,
-        ErrorPropertyStyle::CheckedValue,
-        crate::quickjs_oracle::observe_completion,
-    );
-}
-
 /// Compare prelude-prefixed completion vectors, collecting every drift before
 /// failing. The caller owns the prelude, value spelling and Error reader.
 pub(crate) fn compare_prelude_cases_collecting_failures(
@@ -908,15 +817,6 @@ pub(crate) fn compare_prelude_cases_collecting_failures(
         failures.len(),
         failures.join("\n\n"),
     );
-}
-
-pub(crate) fn observed_source(source: &str) -> String {
-    format!("{REGEXP_MATCH_ALL_PRELUDE}\n{source}")
-}
-
-pub(crate) fn observe_oracle(oracle: &OsStr, source: &str, description: &str) -> String {
-    let source = observed_source(source);
-    crate::quickjs_oracle::observe_completion(oracle, &source, description)
 }
 
 pub(crate) const REGEXP_REPLACE_PRELUDE: &str = r#"

@@ -709,18 +709,6 @@ pub(crate) fn checked_property_value(
         .unwrap_or_else(|error| panic!("read property {name}: {error}"))
 }
 
-pub(crate) fn string_property_value(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> String {
-    let Value::String(value) = checked_property_value(runtime, context, object, name) else {
-        panic!("{name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
 pub(crate) fn eval_named_callable(
     runtime: &Runtime,
     context: &mut Context,

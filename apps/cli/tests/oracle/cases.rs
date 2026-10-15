@@ -7,6 +7,7 @@ const DIRECTORIES: &[&str] = &[
     "number",
     "object",
     "primitive_intrinsics",
+    "regexp",
     "string",
 ];
 
@@ -33,6 +34,11 @@ fn object() {
 #[test]
 fn primitive_intrinsics() {
     run_case_directory("primitive_intrinsics");
+}
+
+#[test]
+fn regexp() {
+    run_case_directory("regexp");
 }
 
 #[test]

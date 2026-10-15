@@ -507,28 +507,6 @@ pub(crate) fn js_utf16(units: &[u16]) -> String {
     source
 }
 
-pub(crate) fn primitive_value_text_with_signed_zero(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => {
-            if value.is_nan() {
-                "NaN".to_owned()
-            } else if value == 0.0 && value.is_sign_negative() {
-                "-0".to_owned()
-            } else {
-                value.to_string()
-            }
-        }
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Object(_) => "[object Object]".to_owned(),
-        Value::Symbol(_) => "Symbol()".to_owned(),
-    }
-}
-
 pub(crate) fn assert_native_error(
     runtime: &Runtime,
     context: &mut Context,
