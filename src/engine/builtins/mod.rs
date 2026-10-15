@@ -56,6 +56,7 @@ mod iterator;
 mod json;
 mod map;
 mod math;
+pub(crate) use math::operation::leaf_math_numbers;
 mod object;
 
 pub(crate) use object::definitions::{DefinitionsResume, DefinitionsStep};
