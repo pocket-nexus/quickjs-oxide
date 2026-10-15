@@ -2341,7 +2341,21 @@ fn execute_admitted_in_state(
                         profile!(record_owned_execution_event("core.internal_call"));
                         continue;
                     }
-                    super::driver::ordinary::Entry::General => return Ok(action),
+                    super::driver::ordinary::Entry::General => {
+                        if !tail
+                            && leaf_native::try_complete(
+                                runtime,
+                                state,
+                                &mut segment,
+                                arguments,
+                                method,
+                                fallthrough,
+                            )?
+                        {
+                            continue;
+                        }
+                        return Ok(action);
+                    }
                     super::driver::ordinary::Entry::Native(_)
                     | super::driver::ordinary::Entry::NativeReady => {
                         return Err(Error::internal(
@@ -3880,5 +3894,6 @@ mod named_native_fact_tests;
 mod array_allocation_tests;
 
 mod array_allocation;
+mod leaf_native;
 
 pub(super) mod named_read;

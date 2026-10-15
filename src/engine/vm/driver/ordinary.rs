@@ -656,7 +656,8 @@ mod layout_tests {
             &callable,
             JsValue::Undefined,
             JsValue::Undefined,
-            vec![callee, JsValue::Int(7)],
+            // A Boolean argument keeps Math.min off the segment's Number leaf.
+            vec![callee, JsValue::Bool(true)],
             bytecode,
             closure_slots,
         )
@@ -721,7 +722,7 @@ mod layout_tests {
                 VmAction::Complete
             ));
         }
-        assert_eq!(execution.pending, Some(JsValue::Int(7)));
+        assert_eq!(execution.pending, Some(JsValue::Int(1)));
         assert!(execution.selected_native.is_none());
         #[cfg(feature = "profiling")]
         {

@@ -423,6 +423,34 @@ impl RuntimeState {
 
     /// Append only the next dense index. The existing shared prototype walk
     /// and length selector establish the complete callback-free Set case.
+    /// `Array.prototype.push` of one value onto a dense Array whose writable
+    /// length equals its dense prefix: the same append as an indexed write at
+    /// `length`. Returns the new length; `None` leaves `input` untouched.
+    pub(crate) fn try_push_dense_value(
+        &mut self,
+        object: ObjectId,
+        input: &mut JsValue,
+    ) -> Result<Option<u32>, RuntimeError> {
+        let data = self.heap.object(object)?;
+        let ObjectPayload::Array { dense: Some(dense) } = &data.payload else {
+            return Ok(None);
+        };
+        let prefix = dense.len();
+        let Some(length) =
+            crate::engine::object::dense_mutation::writable_dense_length(self, data)?
+        else {
+            return Ok(None);
+        };
+        // A hole below the length would make the dense append fill it, but
+        // push writes at the length.
+        if length as usize != prefix || length == u32::MAX {
+            return Ok(None);
+        }
+        Ok(self
+            .try_append_dense_value(object, length, input)?
+            .then_some(length + 1))
+    }
+
     pub(crate) fn try_append_dense_value(
         &mut self,
         object: ObjectId,

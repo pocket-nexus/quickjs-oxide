@@ -77,6 +77,11 @@ impl LinkedNativeSelection {
         domain_id == self.domain_id && function == self.function
     }
 
+    /// The selected native's immutable target identity.
+    pub(crate) fn target(&self) -> crate::engine::builtins::native::NativeFunctionId {
+        self.data.target
+    }
+
     /// The selected native is the intrinsic `Function.prototype.apply`.
     pub(crate) fn is_function_apply(&self) -> bool {
         self.data.target

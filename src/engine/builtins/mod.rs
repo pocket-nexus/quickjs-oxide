@@ -56,6 +56,7 @@ mod iterator;
 mod json;
 mod map;
 mod math;
+pub(crate) use math::operation::leaf_math_numbers;
 mod object;
 
 pub(crate) use object::definitions::{DefinitionsResume, DefinitionsStep};
@@ -75,6 +76,7 @@ mod replacement;
 mod set;
 mod shared_array_buffer;
 mod string;
+pub(crate) use string::string_subrange_bounds;
 pub mod uri;
 mod weak_collection;
 mod weak_ref;

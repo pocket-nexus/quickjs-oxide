@@ -242,6 +242,56 @@ impl MathResumeState {
         Ok(None)
     }
 }
+/// Complete a Math call whose present arguments are all Numbers, through the
+/// same accumulation kernel as the native activation. Fixed-arity kinds read
+/// absent arguments as `undefined`, which converts to NaN without callbacks.
+/// `None` declines targets outside the Math families.
+pub(crate) fn leaf_math_numbers(
+    runtime: &Runtime,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    arguments: &[f64],
+) -> Result<Option<JsValue>, RuntimeError> {
+    use crate::engine::builtins::native::NativeFunctionId as N;
+    let kind = match target {
+        N::MathUnary(kind) => MathKind::Unary(kind),
+        N::MathBinary(kind) => MathKind::Binary(kind),
+        N::MathMinMax(kind) => MathKind::MinMax(kind),
+        N::MathHypot => MathKind::Hypot,
+        N::MathImul => MathKind::Imul,
+        N::MathClz32 => MathKind::Clz32,
+        _ => return Ok(None),
+    };
+    let count = match kind {
+        MathKind::Unary(_) | MathKind::Clz32 => 1,
+        MathKind::Binary(_) | MathKind::Imul => 2,
+        _ => arguments.len(),
+    };
+    let mut resume = MathResumeState {
+        kind,
+        arguments: std::collections::VecDeque::new(),
+        owner: None,
+        result: None,
+        count,
+    };
+    for index in 0..count {
+        let value = arguments.get(index).copied().unwrap_or(f64::NAN);
+        if let Some(completion) = resume.accept_number(runtime, NativeConversion::Value(value))? {
+            return Ok(Some(leaf_return(completion)?));
+        }
+    }
+    match resume.finish()? {
+        MathStep::Complete(completion) => Ok(Some(leaf_return(completion)?)),
+        MathStep::Number { .. } => Err(RuntimeError::Invariant("Math leaf requested a conversion")),
+    }
+}
+
+fn leaf_return(completion: Completion) -> Result<JsValue, RuntimeError> {
+    match completion {
+        Completion::Return(value) => Ok(value),
+        _ => Err(RuntimeError::Invariant("Math leaf did not return a Number")),
+    }
+}
+
 pub(crate) fn finish(
     runtime: &Runtime,
     realm: ContextId,
