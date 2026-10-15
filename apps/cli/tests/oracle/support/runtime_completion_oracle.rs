@@ -308,19 +308,6 @@ pub(crate) fn observe_quickjs_completion_with_prelude(
     crate::quickjs_oracle::observe_completion(oracle, &source, description)
 }
 
-/// Compare source/completion vectors against the pinned QuickJS oracle.
-pub(crate) fn compare_eval_completion_cases(group: &str, cases: &[(&str, &str)]) {
-    let oracle = require_qjs_oracle!("{group}");
-    for &(description, source) in cases {
-        let (runtime, mut context) = host_runtime_context();
-        assert_eq!(
-            observe_eval_completion(&runtime, &mut context, source, description),
-            crate::quickjs_oracle::observe_completion(&oracle, source, description),
-            "{group} drifted for {description}: {source:?}",
-        );
-    }
-}
-
 /// Compare prefixed vectors while collecting every completion mismatch in the
 /// group before failing.
 pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
@@ -671,27 +658,6 @@ pub(crate) fn observe_array_aware_eval(
             }
         }
         Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
-    }
-}
-
-pub(crate) fn oracle_case_completion(oracle: &OsStr, case: &Case) -> String {
-    let description = format!("{} / {}", case.group, case.description);
-    crate::quickjs_oracle::observe_completion(oracle, case.source, &description)
-}
-
-pub(crate) fn compare_object_pattern_cases(group: &str, cases: &[(&str, &str)]) {
-    let oracle = require_qjs_oracle!("{group} differential");
-    for &(description, source) in cases {
-        let (runtime, mut context) = host_runtime_context();
-        assert_eq!(
-            observe_legacy_float_eval_completion(&runtime, &mut context, source, description),
-            crate::support::quickjs_object_pattern_oracle::observe_completion_strip_one_lf(
-                &oracle,
-                source,
-                description,
-            ),
-            "{group} drifted for {description}: {source:?}",
-        );
     }
 }
 

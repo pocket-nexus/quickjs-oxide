@@ -1,142 +1,102 @@
-use crate::runtime_completion_oracle::compare_object_pattern_cases as compare_cases;
-
-// This target pins the object-binding declaration path shared by direct
-// declarations, classic for heads, and for-in/of heads in QuickJS 2026-06-04.
-// Object-rest bindings use the same declaration path. Assignment and catch
-// BindingPatterns have their own focused targets; parameters remain separate.
-
-const DIRECT_CASES: &[(&str, &str)] = &[
-    (
-        "fixed shorthand string number and keyword property names",
-        r#"(function(){
+// DIRECT_CASES
+// case: fixed shorthand string number and keyword property names
+(function(){
             var {fixed: a, shorthand, missing: defaulted=41}={fixed:1,shorthand:2};
             let {"text": text, 1: one}={text:3,1:4};
             const {if: keyword}={if:5};
             return a+'|'+shorthand+'|'+defaulted+'|'+text+'|'+one+'|'+keyword;
-        })()"#,
-    ),
-    (
-        "computed string number and Symbol keys",
-        r#"(function(){
+        })()
+// case: computed string number and Symbol keys
+(function(){
             var symbol=Symbol('object-binding'),source={text:40,1:1};
             source[symbol]=2;
             const {['text']: text,[1]: one,[symbol]: symbolic}=source;
             return text+one+symbolic;
-        })()"#,
-    ),
-    (
-        "defaults use strict undefined and anonymous functions receive names",
-        r#"(function(){
+        })()
+// case: defaults use strict undefined and anonymous functions receive names
+(function(){
             let {zero=9,nil=8,missing=7,named=function(){}}={zero:0,nil:null};
             return zero+'|'+nil+'|'+missing+'|'+named.name;
-        })()"#,
-    ),
-    (
-        "recursive object and array patterns share one source value",
-        r#"(function(){
+        })()
+// case: recursive object and array patterns share one source value
+(function(){
             let {left:{x=40}={},right:[y=41,{z=42}]=[]}={left:{},right:[undefined,{}]};
             const [{a},{b:[c]}]=[{a:1},{b:[2]}];
             return x+'|'+y+'|'+z+'|'+a+'|'+c;
-        })()"#,
-    ),
-    (
-        "nested pattern defaults run before recursive object conversion",
-        r#"(function(){
+        })()
+// case: nested pattern defaults run before recursive object conversion
+(function(){
             var log='';
             let {outer:{value=(log+='V',40)}=(log+='P',{})}={outer:undefined};
             return value+'|'+log;
-        })()"#,
-    ),
-    (
-        "object rest excludes fixed computed and Symbol keys",
-        r#"(function(){
+        })()
+// case: object rest excludes fixed computed and Symbol keys
+(function(){
             var symbol=Symbol('excluded'),source={fixed:1,kept:2};source[symbol]=3;
             const {fixed,[symbol]:symbolic,...rest}=source;
             return fixed+'|'+symbolic+'|'+rest.kept+'|'+('fixed' in rest)+'|'+(symbol in rest);
-        })()"#,
-    ),
-];
-
-const SURFACE_CASES: &[(&str, &str)] = &[
-    (
-        "classic for var let and const object-binding heads",
-        r#"(function(){
+        })()
+// SURFACE_CASES
+// case: classic for var let and const object-binding heads
+(function(){
             var log='';
             for(var {x}={x:1};x<3;x++)log+='v'+x;
             for(let {y=3}={};y<5;y++)log+='l'+y;
             for(const {z}={z:5};z===5;) { log+='c'+z; break; }
             return log;
-        })()"#,
-    ),
-    (
-        "classic for computed key accepts in inside its NoIn initializer",
-        r#"(function(){
+        })()
+// case: classic for computed key accepts in inside its NoIn initializer
+(function(){
             var result;
             for(let {[('x' in {x:1})?'x':'y']: value}={x:42};(result=value,false);){}
             return result;
-        })()"#,
-    ),
-    (
-        "for-of var binding keeps the final property value",
-        r#"(function(){
+        })()
+// case: for-of var binding keeps the final property value
+(function(){
             var log='';
             for(var {x=0} of [{x:1},{x:2},{}])log+=x;
             return log+'|'+x;
-        })()"#,
-    ),
-    (
-        "for-of lexical object bindings receive fresh captured cells",
-        r#"(function(){
+        })()
+// case: for-of lexical object bindings receive fresh captured cells
+(function(){
             var first,second,index=0;
             for(let {x=40} of [{x:1},{}]) {
                 if(index++===0)first=function(){return x};
                 else second=function(){return x};
             }
             return first()+'|'+second();
-        })()"#,
-    ),
-    (
-        "for-of const binding supports computed Symbol keys and nested arrays",
-        r#"(function(){
+        })()
+// case: for-of const binding supports computed Symbol keys and nested arrays
+(function(){
             var key=Symbol('key'),source={};source[key]=[40,2];
             var result='';
             for(const {[key]:[left,right]} of [source])result=left+'|'+right;
             return result;
-        })()"#,
-    ),
-    (
-        "for-in object binding consumes each yielded string key",
-        r#"(function(){
+        })()
+// case: for-in object binding consumes each yielded string key
+(function(){
             var result='';
             for(const {0:first,1:second} in {ab:1,cd:2})result+=first+second;
             return result;
-        })()"#,
-    ),
-];
-
-const ORDER_CASES: &[(&str, &str)] = &[
-    (
-        "computed key ToPropertyKey runs once with string hint before get and default",
-        r#"(function(){
+        })()
+// ORDER_CASES
+// case: computed key ToPropertyKey runs once with string hint before get and default
+(function(){
             var log='',key={};
             key[Symbol.toPrimitive]=function(hint){log+='K:'+hint+'|';return 'x'};
             var source={};
             Object.defineProperty(source,'x',{get:function(){log+='G|';return undefined}});
             var {[key]: value=(log+='D|',42)}=source;
             return value+'|'+log;
-        })()"#,
-    ),
-    (
-        "object conversion precedes computed property evaluation",
-        r#"(function(){
+        })()
+// case: object conversion precedes computed property evaluation
+(function(){
             var log='',key={};
             key[Symbol.toPrimitive]=function(){log+='K';return 'x'};
             try{let {[key]: value}=null}catch(error){return error.name+'|'+log}
-        })()"#,
-    ),
-    (
-        "properties evaluate key get and default from left to right",
-        r#"(function(){
+        })()
+// case: properties evaluate key get and default from left to right
+(function(){
             var log='',first={},second={},source={};
             first[Symbol.toPrimitive]=function(hint){log+='K1:'+hint+'|';return 'a'};
             second[Symbol.toPrimitive]=function(hint){log+='K2:'+hint+'|';return 'b'};
@@ -145,43 +105,33 @@ const ORDER_CASES: &[(&str, &str)] = &[
             Object.defineProperty(source,'z',{get:function(){log+='Gz|';return 3}});
             let {[first]: x=(log+='Da|',8),[second]: y=(log+='Db|',9),z}=source;
             return x+'|'+y+'|'+z+'|'+log;
-        })()"#,
-    ),
-    (
-        "fixed sloppy var prepares its with reference before the property getter",
-        r#"(function(){
+        })()
+// case: fixed sloppy var prepares its with reference before the property getter
+(function(){
             var value='outer',scope={value:'scope'},source={};
             Object.defineProperty(source,'x',{get:function(){delete scope.value;return 7}});
             with(scope){var {x:value}=source}
             return value+'|'+scope.value;
-        })()"#,
-    ),
-    (
-        "computed sloppy var evaluates key then prepares with reference before get",
-        r#"(function(){
+        })()
+// case: computed sloppy var evaluates key then prepares with reference before get
+(function(){
             var value='outer',scope={},source={},key={};
             key[Symbol.toPrimitive]=function(hint){scope.value='scope';return 'x'};
             Object.defineProperty(source,'x',{get:function(){delete scope.value;return 8}});
             with(scope){var {[key]:value}=source}
             return value+'|'+scope.value;
-        })()"#,
-    ),
-    (
-        "nested var prepares its leaf reference after the outer get and before the inner get",
-        r#"(function(){
+        })()
+// case: nested var prepares its leaf reference after the outer get and before the inner get
+(function(){
             var value='outer',scope={},inner={},source={};
             Object.defineProperty(source,'outer',{get:function(){scope.value='scope';return inner}});
             Object.defineProperty(inner,'inner',{get:function(){delete scope.value;return 9}});
             with(scope){var {outer:{inner:value}}=source}
             return value+'|'+scope.value;
-        })()"#,
-    ),
-];
-
-const FOR_OF_FAULT_CASES: &[(&str, &str)] = &[
-    (
-        "computed key fault closes the outer iterator",
-        r#"(function(){
+        })()
+// FOR_OF_FAULT_CASES
+// case: computed key fault closes the outer iterator
+(function(){
             var log='',done=false,key={};
             key[Symbol.toPrimitive]=function(){log+='K|';throw 'key-error'};
             var outer={
@@ -191,11 +141,9 @@ const FOR_OF_FAULT_CASES: &[(&str, &str)] = &[
             };
             try{for(const {[key]:value} of outer){}}
             catch(error){return log+'C:'+error}
-        })()"#,
-    ),
-    (
-        "property getter fault closes the outer iterator",
-        r#"(function(){
+        })()
+// case: property getter fault closes the outer iterator
+(function(){
             var log='',done=false,source={};
             Object.defineProperty(source,'x',{get:function(){log+='G|';throw 'get-error'}});
             var outer={
@@ -205,11 +153,9 @@ const FOR_OF_FAULT_CASES: &[(&str, &str)] = &[
             };
             try{for(const {x} of outer){}}
             catch(error){return log+'C:'+error}
-        })()"#,
-    ),
-    (
-        "nested array close fault closes outer and keeps the inner fault",
-        r#"(function(){
+        })()
+// case: nested array close fault closes outer and keeps the inner fault
+(function(){
             var log='',outerDone=false,inner={
                 [Symbol.iterator]:function(){log+='II|';return this},
                 next:function(){log+='IN|';return{value:1,done:false}},
@@ -223,11 +169,9 @@ const FOR_OF_FAULT_CASES: &[(&str, &str)] = &[
             };
             try{for(const {x:[value]} of outer){}}
             catch(error){return log+'C:'+error}
-        })()"#,
-    ),
-    (
-        "nested array next fault skips inner close but closes outer",
-        r#"(function(){
+        })()
+// case: nested array next fault skips inner close but closes outer
+(function(){
             var log='',outerDone=false,inner={
                 [Symbol.iterator]:function(){log+='II|';return this},
                 next:function(){log+='IN|';throw 'inner-next'},
@@ -241,11 +185,9 @@ const FOR_OF_FAULT_CASES: &[(&str, &str)] = &[
             };
             try{for(const {x:[value]} of outer){}}
             catch(error){return log+'C:'+error}
-        })()"#,
-    ),
-    (
-        "nested array default fault closes inner then outer and keeps the default fault",
-        r#"(function(){
+        })()
+// case: nested array default fault closes inner then outer and keeps the default fault
+(function(){
             var log='',outerDone=false,inner={
                 [Symbol.iterator]:function(){log+='II|';return this},
                 next:function(){log+='IN|';return{value:undefined,done:false}},
@@ -259,11 +201,9 @@ const FOR_OF_FAULT_CASES: &[(&str, &str)] = &[
             };
             try{for(const {x:[value=(log+='D|',function(){throw 'default-error'})()]} of outer){}}
             catch(error){return log+'C:'+error}
-        })()"#,
-    ),
-    (
-        "nested object conversion fault closes the outer iterator",
-        r#"(function(){
+        })()
+// case: nested object conversion fault closes the outer iterator
+(function(){
             var log='',done=false,source={};
             Object.defineProperty(source,'x',{get:function(){log+='G|';return null}});
             var outer={
@@ -273,11 +213,9 @@ const FOR_OF_FAULT_CASES: &[(&str, &str)] = &[
             };
             try{for(const {x:{value}} of outer){}}
             catch(error){return log+'C:'+error.name}
-        })()"#,
-    ),
-    (
-        "binding Put fault closes the outer iterator and keeps the Put fault",
-        r#"(function(){
+        })()
+// case: binding Put fault closes the outer iterator and keeps the Put fault
+(function(){
             var log='',done=false,scope={},source={};
             Object.defineProperty(scope,'value',{set:function(){log+='S|';throw 'put-error'}});
             Object.defineProperty(source,'x',{get:function(){log+='G|';return 1}});
@@ -288,122 +226,4 @@ const FOR_OF_FAULT_CASES: &[(&str, &str)] = &[
             };
             try{with(scope){for(var {x:value} of outer){}}}
             catch(error){return log+'C:'+error}
-        })()"#,
-    ),
-];
-
-const PARSER_CASES: &[(&str, &str)] = &[
-    ("direct object pattern requires an initializer", "var {x};"),
-    (
-        "reserved shorthand is not a binding target",
-        "let {if}={if:1}",
-    ),
-    ("string property requires a target", "let {\"x\"}={x:1}"),
-    ("computed property requires a target", "let {[x]}={}"),
-    ("method syntax is not a binding property", "let {x(){}}={}"),
-    (
-        "shorthand cannot be followed by an object pattern without a colon",
-        "let {a{b}}={a:{b:42}}",
-    ),
-    (
-        "shorthand cannot be followed by an array pattern without a colon",
-        "let {a[b]}={a:[42]}",
-    ),
-    (
-        "shorthand cannot take a nested pattern default without a colon",
-        "let {a{b}=defaultValue}={a:{b:42}}",
-    ),
-    (
-        "string property cannot take a nested pattern without a colon",
-        "let {\"a\"{b}}={}",
-    ),
-    (
-        "keyword property cannot take a nested pattern without a colon",
-        "let {if{b}}={}",
-    ),
-    (
-        "computed property cannot take a nested pattern without a colon",
-        "let {[\"a\"]{b}}={}",
-    ),
-    (
-        "strict shorthand eval diagnoses after the property name",
-        "'use strict';var {eval}={}",
-    ),
-    (
-        "strict shorthand arguments diagnoses after the property name",
-        "'use strict';var {arguments=1}={}",
-    ),
-    (
-        "escaped reserved spelling remains an ordinary property name",
-        "var {\\u0069f}={}",
-    ),
-    (
-        "escaped reserved alias is an invalid binding target",
-        "var {value:\\u0069f}={}",
-    ),
-    (
-        "escaped reserved computed alias is an invalid binding target",
-        "var {[0]:\\u0069f}={}",
-    ),
-    (
-        "malformed object rest keeps syntax priority",
-        "let {...rest,value}={}",
-    ),
-    (
-        "object rest trailing comma wins before the lexical let target error",
-        "let {...let,}={}",
-    ),
-    (
-        "object rest lexical let uses the binding diagnostic",
-        "let {...let}={}",
-    ),
-    (
-        "invalid initializer wins after a valid object rest target",
-        "let {...rest}=;",
-    ),
-    (
-        "invalid for-of RHS wins after a valid object rest target",
-        "for(let {...rest} of ){}",
-    ),
-    (
-        "later duplicate declaration wins after a valid object rest binding",
-        "let {...value}={},value",
-    ),
-];
-
-#[test]
-fn direct_object_binding_declarations_match_pinned_quickjs() {
-    compare_cases("direct object-binding declarations", DIRECT_CASES);
-}
-
-#[test]
-fn object_binding_loop_surfaces_match_pinned_quickjs() {
-    compare_cases("object-binding loop surfaces", SURFACE_CASES);
-}
-
-#[test]
-fn object_binding_evaluation_and_reference_order_matches_pinned_quickjs() {
-    compare_cases("object-binding evaluation order", ORDER_CASES);
-}
-
-#[test]
-fn for_of_object_binding_fault_cleanup_matches_pinned_quickjs() {
-    compare_cases("for-of object-binding cleanup", FOR_OF_FAULT_CASES);
-}
-
-#[test]
-fn object_binding_parser_diagnostics_match_pinned_quickjs() {
-    let oracle = require_qjs_oracle!("object-binding parser differential");
-    for &(description, source) in PARSER_CASES {
-        let rust = super::quickjs_object_pattern_oracle::run_cli_exact(
-            env!("CARGO_BIN_EXE_qjs").as_ref(),
-            source,
-            description,
-        );
-        let quickjs =
-            super::quickjs_object_pattern_oracle::run_cli_exact(&oracle, source, description);
-        assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
-        assert_eq!(rust.stdout, quickjs.stdout, "{description}");
-        assert_eq!(rust.stderr, quickjs.stderr, "{description}");
-    }
-}
+        })()

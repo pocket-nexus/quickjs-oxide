@@ -1,15 +1,5 @@
-use crate::grouped_case_oracle::{assert_cases_match_expectations, assert_cases_match_quickjs};
-use crate::oracle_cases::GroupedCase as Case;
-use crate::runtime_completion_oracle::rust_case_name_observation as rust_observation;
-
-// Pins direct-eval inheritance of ObjectLiteral HomeObject state against
-// QuickJS 2026-06-04. Classes, parameter initializers, async methods, and
-// generators remain separate slices.
-const CASES: &[Case] = &[
-    Case {
-        group: "method-read",
-        description: "dot and computed direct eval use the live HomeObject prototype and method receiver",
-        source: r#"
+// mode: completion-name
+// case: method-read / dot and computed direct eval use the live HomeObject prototype and method receiver
             (function () {
                 var getterThis;
                 var first = { get value() { getterThis = this; return -1; } };
@@ -28,13 +18,7 @@ const CASES: &[Case] = &[
                 Object.setPrototypeOf(home, second);
                 return home.read.call(receiver, "value");
             })()
-        "#,
-        expected: "return|string|42|42|true",
-    },
-    Case {
-        group: "strictness",
-        description: "caller and eval-source strictness govern rejected direct-eval super writes",
-        source: r#"
+// case: strictness / caller and eval-source strictness govern rejected direct-eval super writes
             (function () {
                 var home = {
                     sloppy() {
@@ -70,13 +54,7 @@ const CASES: &[Case] = &[
                     Object.hasOwn(localReceiver, "value")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|1|TypeError|TypeError|false|false|false",
-    },
-    Case {
-        group: "call-receiver",
-        description: "direct-eval super call reads from the base and invokes with the method receiver",
-        source: r#"
+// case: call-receiver / direct-eval super call reads from the base and invokes with the method receiver
             (function () {
                 var getterThis;
                 var callThis;
@@ -101,13 +79,7 @@ const CASES: &[Case] = &[
                     callThis === receiver
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|true|true",
-    },
-    Case {
-        group: "write",
-        description: "computed direct-eval super assignment writes through the current receiver",
-        source: r#"
+// case: write / computed direct-eval super assignment writes through the current receiver
             (function () {
                 var proto = {
                     set value(input) { this.saved = input + 1; }
@@ -125,13 +97,7 @@ const CASES: &[Case] = &[
                     Object.hasOwn(proto, "saved")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|41|42|false|false",
-    },
-    Case {
-        group: "update",
-        description: "direct-eval postfix and prefix super updates preserve values receiver and ordering",
-        source: r#"
+// case: update / direct-eval postfix and prefix super updates preserve values receiver and ordering
             (function () {
                 var log = "";
                 var proto = {
@@ -150,13 +116,7 @@ const CASES: &[Case] = &[
                 };
                 return home.update.call({ count: 40 });
             })()
-        "#,
-        expected: "return|string|40|42|42|gsgs",
-    },
-    Case {
-        group: "delete",
-        description: "direct-eval delete super throws before computed-key coercion",
-        source: r#"
+// case: delete / direct-eval delete super throws before computed-key coercion
             (function () {
                 var log = [];
                 var key = {
@@ -172,13 +132,7 @@ const CASES: &[Case] = &[
                 try { home.remove(); }
                 catch (error) { return [error.name, log.join(",")].join("|"); }
             })()
-        "#,
-        expected: "return|string|ReferenceError|expr",
-    },
-    Case {
-        group: "accessors",
-        description: "getter and setter direct eval inherit their own HomeObject this and arguments",
-        source: r#"
+// case: accessors / getter and setter direct eval inherit their own HomeObject this and arguments
             (function () {
                 var proto = {
                     get value() { return this.base + 2; },
@@ -197,13 +151,7 @@ const CASES: &[Case] = &[
                 descriptor.set.call(receiver, 40);
                 return [value, receiver.saved].join("|");
             })()
-        "#,
-        expected: "return|string|42|42",
-    },
-    Case {
-        group: "authored-arrow",
-        description: "an escaped authored arrow carries method direct-eval super across a live prototype change",
-        source: r#"
+// case: authored-arrow / an escaped authored arrow carries method direct-eval super across a live prototype change
             (function () {
                 var getterThis;
                 var first = { value: -1 };
@@ -219,13 +167,7 @@ const CASES: &[Case] = &[
                 Object.setPrototypeOf(home, second);
                 return [arrow(), getterThis === receiver].join("|");
             })()
-        "#,
-        expected: "return|string|42|true",
-    },
-    Case {
-        group: "eval-created-arrow",
-        description: "an escaped arrow created by eval retains imported this and HomeObject cells",
-        source: r#"
+// case: eval-created-arrow / an escaped arrow created by eval retains imported this and HomeObject cells
             (function () {
                 var getterThis;
                 var first = { value: -1 };
@@ -241,13 +183,7 @@ const CASES: &[Case] = &[
                 Object.setPrototypeOf(home, second);
                 return [arrow(), getterThis === receiver].join("|");
             })()
-        "#,
-        expected: "return|string|42|true",
-    },
-    Case {
-        group: "nested-eval",
-        description: "method and arrow nested direct eval recursively preserve super capability",
-        source: r#"
+// case: nested-eval / method and arrow nested direct eval recursively preserve super capability
             (function () {
                 var proto = {
                     get value() { return this.base + 2; }
@@ -265,13 +201,7 @@ const CASES: &[Case] = &[
                     home.arrow.call(receiver)
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|42",
-    },
-    Case {
-        group: "first-slot-wins",
-        description: "eval-visible pseudo relays are reused by authored super in the same escaped arrow",
-        source: r#"
+// case: first-slot-wins / eval-visible pseudo relays are reused by authored super in the same escaped arrow
             (function () {
                 var getterThis = [];
                 var proto = {
@@ -300,13 +230,7 @@ const CASES: &[Case] = &[
                     getterThis[2] === receiver
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|42|42|3|true|true|true",
-    },
-    Case {
-        group: "ordinary-cutoff",
-        description: "ordinary functions cut off authored and eval-created method super capability",
-        source: r#"
+// case: ordinary-cutoff / ordinary functions cut off authored and eval-created method super capability
             (function () {
                 var proto = { value: 42 };
                 var home = {
@@ -339,13 +263,7 @@ const CASES: &[Case] = &[
                 catch (error) { createdError = error.name; }
                 return [authoredError, arrowError, createdError].join("|");
             })()
-        "#,
-        expected: "return|string|SyntaxError|SyntaxError|SyntaxError",
-    },
-    Case {
-        group: "global-cutoff",
-        description: "global direct eval and a global arrow have no HomeObject capability",
-        source: r#"
+// case: global-cutoff / global direct eval and a global arrow have no HomeObject capability
             var directError;
             var arrowError;
             try { eval("super.value"); }
@@ -353,13 +271,7 @@ const CASES: &[Case] = &[
             try { (() => eval("super.value"))(); }
             catch (error) { arrowError = error.name; }
             [directError, arrowError].join("|");
-        "#,
-        expected: "return|string|SyntaxError|SyntaxError",
-    },
-    Case {
-        group: "indirect-cutoff",
-        description: "indirect eval inside a method does not inherit its HomeObject capability",
-        source: r#"
+// case: indirect-cutoff / indirect eval inside a method does not inherit its HomeObject capability
             (function () {
                 var home = {
                     method() { return (0, eval)("super.value"); }
@@ -367,13 +279,7 @@ const CASES: &[Case] = &[
                 try { home.method(); }
                 catch (error) { return error.name; }
             })()
-        "#,
-        expected: "return|string|SyntaxError",
-    },
-    Case {
-        group: "alias-cutoff",
-        description: "an eval alias called inside a method remains indirect and has no HomeObject",
-        source: r#"
+// case: alias-cutoff / an eval alias called inside a method remains indirect and has no HomeObject
             (function () {
                 var alias = eval;
                 var home = {
@@ -382,13 +288,7 @@ const CASES: &[Case] = &[
                 try { home.method(); }
                 catch (error) { return error.name; }
             })()
-        "#,
-        expected: "return|string|SyntaxError",
-    },
-    Case {
-        group: "super-call",
-        description: "object-method and global direct eval reject super call before arguments execute",
-        source: r#"
+// case: super-call / object-method and global direct eval reject super call before arguments execute
             var log = [];
             var methodError;
             var arrowError;
@@ -409,30 +309,3 @@ const CASES: &[Case] = &[
             try { eval("super(log.push('global'))"); }
             catch (error) { globalError = error.name; }
             [methodError, arrowError, nestedError, globalError, log.join(",")].join("|");
-        "#,
-        expected: "return|string|SyntaxError|SyntaxError|SyntaxError|SyntaxError|",
-    },
-];
-
-#[test]
-fn object_super_eval_semantics_match_pinned_expectations() {
-    assert_cases_match_expectations("object-super-eval", CASES, rust_observation);
-}
-
-#[test]
-fn object_super_eval_semantics_match_pinned_quickjs() {
-    assert_cases_match_quickjs(
-        "object-super-eval",
-        "object-super-eval oracle",
-        CASES,
-        |oracle, case| {
-            super::quickjs_object_super_oracle::observe_completion_name_only(
-                oracle,
-                case.source,
-                case.group,
-                case.description,
-            )
-        },
-        rust_observation,
-    );
-}

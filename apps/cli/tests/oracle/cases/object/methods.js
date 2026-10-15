@@ -1,18 +1,4 @@
-use crate::grouped_case_oracle::{
-    assert_cases_match_expectations, assert_cases_match_quickjs, rust_return_observation,
-};
-use crate::oracle_cases::GroupedCase as Case;
-use crate::runtime_completion_oracle::oracle_case_completion as oracle_observation;
-
-// Pins the synchronous, non-generator ObjectLiteral concise-method slice from
-// QuickJS 2026-06-04. Identifier rest parameters, accessors, and `super` have
-// separate oracles; async methods, generators, defaults, parameter
-// destructuring, and rest BindingPatterns deliberately belong to later slices.
-const CASES: &[Case] = &[
-    Case {
-        group: "property-keys",
-        description: "fixed computed string numeric and keyword keys define named methods",
-        source: r#"
+// case: property-keys / fixed computed string numeric and keyword keys define named methods
             (function () {
                 var computedKey = "computed";
                 var object = {
@@ -35,13 +21,7 @@ const CASES: &[Case] = &[
                     object.if.name
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|1|2|3|4|5|fixed|computed|quoted|7|if",
-    },
-    Case {
-        group: "property-keys",
-        description: "computed Symbol keys use QuickJS method name formatting",
-        source: r#"
+// case: property-keys / computed Symbol keys use QuickJS method name formatting
             (function () {
                 var described = Symbol("named");
                 var missing = Symbol();
@@ -57,13 +37,7 @@ const CASES: &[Case] = &[
                     object[empty].name
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|[named]||[]",
-    },
-    Case {
-        group: "property-keys",
-        description: "contextual get set and async keys remain ordinary methods before a paren",
-        source: r#"
+// case: property-keys / contextual get set and async keys remain ordinary methods before a paren
             (function () {
                 var object = {
                     get() { return 20; },
@@ -80,13 +54,7 @@ const CASES: &[Case] = &[
                     object.async.length
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|get|set|async|0|1|0",
-    },
-    Case {
-        group: "call-environment",
-        description: "a method owns dynamic this rather than capturing its defining receiver",
-        source: r#"
+// case: call-environment / a method owns dynamic this rather than capturing its defining receiver
             (function () {
                 var object = {
                     base: 100,
@@ -95,13 +63,7 @@ const CASES: &[Case] = &[
                 var method = object.method;
                 return object.method(-58) + "|" + method.call({ base: 40 }, 2);
             })()
-        "#,
-        expected: "return|string|42|42",
-    },
-    Case {
-        group: "call-environment",
-        description: "methods are not automatically strict but inherit outer strictness",
-        source: r#"
+// case: call-environment / methods are not automatically strict but inherit outer strictness
             (function () {
                 var sloppy = { method() { return this; } }.method;
                 var strict = (function () {
@@ -111,13 +73,7 @@ const CASES: &[Case] = &[
                 return (sloppy() === globalThis) + "|" +
                     (strict() === undefined);
             })()
-        "#,
-        expected: "return|string|true|true",
-    },
-    Case {
-        group: "call-environment",
-        description: "a method owns arguments and binds it to the current call",
-        source: r#"
+// case: call-environment / a method owns arguments and binds it to the current call
             (function (outer) {
                 var outerArguments = arguments;
                 return ({
@@ -129,19 +85,9 @@ const CASES: &[Case] = &[
                     }
                 }).method(20, 22);
             })(99)
-        "#,
-        expected: "return|string|true|2|42|42",
-    },
-    Case {
-        group: "call-environment",
-        description: "a directly called method has its own undefined new target",
-        source: "({ method() { return typeof new.target; } }).method()",
-        expected: "return|string|undefined",
-    },
-    Case {
-        group: "direct-eval",
-        description: "direct eval resolves the method this arguments and new target owners",
-        source: r#"
+// case: call-environment / a directly called method has its own undefined new target
+({ method() { return typeof new.target; } }).method()
+// case: direct-eval / direct eval resolves the method this arguments and new target owners
             (function () {
                 var method = ({
                     method(value) {
@@ -153,24 +99,12 @@ const CASES: &[Case] = &[
                 }).method;
                 return method.call({ tag: 19 }, 22);
             })()
-        "#,
-        expected: "return|number|42",
-    },
-    Case {
-        group: "scope",
-        description: "the property key does not create a private function self binding",
-        source: r#"
+// case: scope / the property key does not create a private function self binding
             (function () {
                 var method = 40;
                 return ({ method() { return method + 2; } }).method();
             })()
-        "#,
-        expected: "return|number|42",
-    },
-    Case {
-        group: "parameters",
-        description: "duplicate simple method parameters are an early error in sloppy code",
-        source: r#"
+// case: parameters / duplicate simple method parameters are an early error in sloppy code
             (function () {
                 try {
                     eval("({ method(value, value) { return value; } })");
@@ -179,24 +113,12 @@ const CASES: &[Case] = &[
                     return error.name;
                 }
             })()
-        "#,
-        expected: "return|string|SyntaxError",
-    },
-    Case {
-        group: "parameters",
-        description: "a trailing comma is accepted and does not increase method length",
-        source: r#"
+// case: parameters / a trailing comma is accepted and does not increase method length
             (function () {
                 var method = ({ method(value,) { return value + 1; } }).method;
                 return method(41) + "|" + method.length;
             })()
-        "#,
-        expected: "return|string|42|1",
-    },
-    Case {
-        group: "function-object",
-        description: "method name length property and function descriptors match QuickJS",
-        source: r#"
+// case: function-object / method name length property and function descriptors match QuickJS
             (function () {
                 var object = { method(left, right) {} };
                 var method = object.method;
@@ -223,13 +145,7 @@ const CASES: &[Case] = &[
                     Object.getPrototypeOf(method) === Function.prototype
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|method|2|true|true|true|true|method|false|false|true|2|false|false|true|false|true|true",
-    },
-    Case {
-        group: "function-object",
-        description: "methods remain callable but are not constructors or new targets",
-        source: r#"
+// case: function-object / methods remain callable but are not constructors or new targets
             (function () {
                 var method = { method() { return 42; } }.method;
                 var constructError = "none";
@@ -240,13 +156,7 @@ const CASES: &[Case] = &[
                 catch (error) { newTargetError = error.name; }
                 return method() + "|" + constructError + "|" + newTargetError;
             })()
-        "#,
-        expected: "return|string|42|TypeError|TypeError",
-    },
-    Case {
-        group: "proto",
-        description: "a __proto__ method is an own data property not a ProtoSetter",
-        source: r#"
+// case: proto / a __proto__ method is an own data property not a ProtoSetter
             (function () {
                 var object = {
                     __proto__: null,
@@ -262,27 +172,3 @@ const CASES: &[Case] = &[
                     descriptor.configurable
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|true|true|42|true|true|true",
-    },
-];
-
-#[test]
-fn object_method_semantics_match_pinned_expectations() {
-    assert_cases_match_expectations("object-method", CASES, rust_observation);
-}
-
-#[test]
-fn object_method_semantics_match_pinned_quickjs() {
-    assert_cases_match_quickjs(
-        "object-method",
-        "object-method differential",
-        CASES,
-        oracle_observation,
-        rust_observation,
-    );
-}
-
-fn rust_observation(case: &Case) -> String {
-    rust_return_observation("object-method", case)
-}

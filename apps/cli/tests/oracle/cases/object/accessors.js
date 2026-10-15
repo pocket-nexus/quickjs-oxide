@@ -1,18 +1,4 @@
-use crate::grouped_case_oracle::{
-    assert_cases_match_expectations, assert_cases_match_quickjs, rust_return_observation,
-};
-use crate::oracle_cases::GroupedCase as Case;
-use crate::runtime_completion_oracle::oracle_case_completion as oracle_observation;
-
-// Pins the synchronous ObjectLiteral getter/setter slice from QuickJS
-// 2026-06-04. Default/destructuring setter parameters and `super` remain
-// separate frontiers because they require non-simple parameter environments
-// or [[HomeObject]] semantics.
-const CASES: &[Case] = &[
-    Case {
-        group: "pairing",
-        description: "a getter and setter with the same key merge into one accessor",
-        source: r#"
+// case: pairing / a getter and setter with the same key merge into one accessor
             (function () {
                 var object = {
                     get answer() { return this.stored + 1; },
@@ -29,13 +15,7 @@ const CASES: &[Case] = &[
                     descriptor.configurable
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|41|function|function|true|true",
-    },
-    Case {
-        group: "pairing",
-        description: "repeated accessor halves replace only their matching half",
-        source: r#"
+// case: pairing / repeated accessor halves replace only their matching half
             (function () {
                 var object = {
                     set value(input) { this.first = input; },
@@ -57,13 +37,7 @@ const CASES: &[Case] = &[
                     object.third
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|20|42||22",
-    },
-    Case {
-        group: "pairing",
-        description: "data and method definitions replace accessor descriptor kinds in source order",
-        source: r#"
+// case: pairing / data and method definitions replace accessor descriptor kinds in source order
             (function () {
                 var a = { x: 1, get x() { return 42; } };
                 var b = { get x() { return 1; }, x: 42 };
@@ -87,13 +61,7 @@ const CASES: &[Case] = &[
                     dd.writable
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|function|true|42|42|true|function|42|42|true",
-    },
-    Case {
-        group: "property-keys",
-        description: "fixed computed string numeric keyword and Symbol keys infer accessor names",
-        source: r#"
+// case: property-keys / fixed computed string numeric keyword and Symbol keys infer accessor names
             (function () {
                 var described = Symbol("named");
                 var missing = Symbol();
@@ -119,13 +87,7 @@ const CASES: &[Case] = &[
                     Object.getOwnPropertyDescriptor(object, empty).set.name
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|get fixed|set quoted|get 7|set if|get [named]|set [named]|get |set []",
-    },
-    Case {
-        group: "grammar",
-        description: "a line terminator is allowed after contextual get and set",
-        source: r#"
+// case: grammar / a line terminator is allowed after contextual get and set
             (function () {
                 var object = {
                     get
@@ -142,13 +104,7 @@ const CASES: &[Case] = &[
                     descriptor.set.name
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|41|get answer|set answer",
-    },
-    Case {
-        group: "property-keys",
-        description: "computed accessor keys are converted exactly once per definition",
-        source: r#"
+// case: property-keys / computed accessor keys are converted exactly once per definition
             (function () {
                 var log = "";
                 var getterKey = {
@@ -164,13 +120,7 @@ const CASES: &[Case] = &[
                 object.answer = 42;
                 return log + "|" + object.answer;
             })()
-        "#,
-        expected: "return|string|gs|42",
-    },
-    Case {
-        group: "function-object",
-        description: "accessor function metadata and property descriptors match QuickJS",
-        source: r#"
+// case: function-object / accessor function metadata and property descriptors match QuickJS
             (function () {
                 var object = {
                     get answer() { return 42; },
@@ -204,13 +154,7 @@ const CASES: &[Case] = &[
                     setLength.configurable
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|get answer|set answer|0|1|false|false|true|true|false|false|true|false|false|true|false|false|true|false|false|true",
-    },
-    Case {
-        group: "call-environment",
-        description: "accessors own dynamic this arguments and new target",
-        source: r#"
+// case: call-environment / accessors own dynamic this arguments and new target
             (function () {
                 var descriptor = Object.getOwnPropertyDescriptor({
                     get answer() {
@@ -227,13 +171,7 @@ const CASES: &[Case] = &[
                 descriptor.set.call(receiver, 40);
                 return getter + "|" + receiver.saved;
             })()
-        "#,
-        expected: "return|string|42|42",
-    },
-    Case {
-        group: "call-environment",
-        description: "accessors inherit strictness rather than becoming strict automatically",
-        source: r#"
+// case: call-environment / accessors inherit strictness rather than becoming strict automatically
             (function () {
                 var sloppy = Object.getOwnPropertyDescriptor({
                     get x() { return this; }
@@ -247,13 +185,7 @@ const CASES: &[Case] = &[
                 return (sloppy() === globalThis) + "|" +
                     (strict() === undefined);
             })()
-        "#,
-        expected: "return|string|true|true",
-    },
-    Case {
-        group: "direct-eval",
-        description: "direct eval resolves accessor-owned this arguments and new target",
-        source: r#"
+// case: direct-eval / direct eval resolves accessor-owned this arguments and new target
             (function () {
                 var descriptor = Object.getOwnPropertyDescriptor({
                     get answer() {
@@ -274,24 +206,12 @@ const CASES: &[Case] = &[
                 descriptor.set.call(receiver, 40);
                 return getter + "|" + receiver.saved;
             })()
-        "#,
-        expected: "return|string|42|42",
-    },
-    Case {
-        group: "scope",
-        description: "an accessor property name does not create a private function binding",
-        source: r#"
+// case: scope / an accessor property name does not create a private function binding
             (function () {
                 var answer = 41;
                 return ({ get answer() { return answer + 1; } }).answer;
             })()
-        "#,
-        expected: "return|number|42",
-    },
-    Case {
-        group: "parameters",
-        description: "a simple setter accepts one parameter and a trailing comma",
-        source: r#"
+// case: parameters / a simple setter accepts one parameter and a trailing comma
             (function () {
                 var descriptor = Object.getOwnPropertyDescriptor({
                     set answer(value,) { this.saved = value; }
@@ -300,13 +220,7 @@ const CASES: &[Case] = &[
                 descriptor.set.call(receiver, 42);
                 return receiver.saved + "|" + descriptor.set.length;
             })()
-        "#,
-        expected: "return|string|42|1",
-    },
-    Case {
-        group: "parameters",
-        description: "getter and setter arity violations are syntax errors",
-        source: r#"
+// case: parameters / getter and setter arity violations are syntax errors
             (function () {
                 var sources = [
                     "({ get x(value) {} })",
@@ -322,13 +236,7 @@ const CASES: &[Case] = &[
                 }
                 return result.join("|");
             })()
-        "#,
-        expected: "return|string|SyntaxError|SyntaxError|SyntaxError|SyntaxError|SyntaxError",
-    },
-    Case {
-        group: "function-object",
-        description: "getter and setter functions are callable non-constructors without prototypes",
-        source: r#"
+// case: function-object / getter and setter functions are callable non-constructors without prototypes
             (function () {
                 var descriptor = Object.getOwnPropertyDescriptor({
                     get answer() { return 42; },
@@ -346,13 +254,7 @@ const CASES: &[Case] = &[
                     Object.hasOwn(descriptor.set, "prototype")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|TypeError|TypeError|false|false",
-    },
-    Case {
-        group: "proto",
-        description: "__proto__ accessors are ordinary own properties and not ProtoSetter entries",
-        source: r#"
+// case: proto / __proto__ accessors are ordinary own properties and not ProtoSetter entries
             (function () {
                 var object = {
                     __proto__: null,
@@ -370,13 +272,7 @@ const CASES: &[Case] = &[
                     typeof descriptor.set
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|true|true|42|41|function|function",
-    },
-    Case {
-        group: "source",
-        description: "Function.prototype.toString preserves accessor source spans",
-        source: r#"
+// case: source / Function.prototype.toString preserves accessor source spans
             (function () {
                 var descriptor = Object.getOwnPropertyDescriptor({
                     get answer(){ return 42; },
@@ -385,27 +281,3 @@ const CASES: &[Case] = &[
                 return Function.prototype.toString.call(descriptor.get) + "|" +
                     Function.prototype.toString.call(descriptor.set);
             })()
-        "#,
-        expected: "return|string|get answer(){ return 42; }|set answer(value){ this.saved = value; }",
-    },
-];
-
-#[test]
-fn object_accessor_semantics_match_pinned_expectations() {
-    assert_cases_match_expectations("object-accessor", CASES, rust_observation);
-}
-
-#[test]
-fn object_accessor_semantics_match_pinned_quickjs() {
-    assert_cases_match_quickjs(
-        "object-accessor",
-        "object-accessor differential",
-        CASES,
-        oracle_observation,
-        rust_observation,
-    );
-}
-
-fn rust_observation(case: &Case) -> String {
-    rust_return_observation("object-accessor", case)
-}

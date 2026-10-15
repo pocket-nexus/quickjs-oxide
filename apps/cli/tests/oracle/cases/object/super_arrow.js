@@ -1,15 +1,5 @@
-use crate::grouped_case_oracle::assert_cases_match_quickjs;
-use crate::oracle_cases::GroupedCase as Case;
-use crate::runtime_completion_oracle::rust_case_name_observation as rust_observation;
-
-// Pins lexical SuperProperty inheritance through arrows nested in synchronous
-// ObjectLiteral methods against QuickJS 2026-06-04. Direct eval, classes,
-// parameter initializers, async methods, and generators remain separate slices.
-const CASES: &[Case] = &[
-    Case {
-        group: "escaped-live",
-        description: "an escaped arrow keeps lexical this while reading the HomeObject's live prototype",
-        source: r#"
+// mode: completion-name
+// case: escaped-live / an escaped arrow keeps lexical this while reading the HomeObject's live prototype
             (function () {
                 var getterThis;
                 var first = { get value() { getterThis = this; return -1; } };
@@ -23,13 +13,7 @@ const CASES: &[Case] = &[
                 Object.setPrototypeOf(home, second);
                 return [arrow(), getterThis === receiver].join("|");
             })()
-        "#,
-        expected: "return|string|42|true",
-    },
-    Case {
-        group: "nested",
-        description: "nested arrows inherit lexical this and the enclosing method's HomeObject",
-        source: r#"
+// case: nested / nested arrows inherit lexical this and the enclosing method's HomeObject
             (function () {
                 var getterThis;
                 var proto = {
@@ -42,13 +26,7 @@ const CASES: &[Case] = &[
                 var receiver = { base: 40 };
                 return [home.make.call(receiver)()(), getterThis === receiver].join("|");
             })()
-        "#,
-        expected: "return|string|42|true",
-    },
-    Case {
-        group: "accessor",
-        description: "an escaped arrow from an accessor inherits its lexical this and HomeObject",
-        source: r#"
+// case: accessor / an escaped arrow from an accessor inherits its lexical this and HomeObject
             (function () {
                 var getterThis;
                 var proto = {
@@ -63,13 +41,7 @@ const CASES: &[Case] = &[
                 var arrow = getter.call(receiver);
                 return [arrow(), getterThis === receiver].join("|");
             })()
-        "#,
-        expected: "return|string|42|true",
-    },
-    Case {
-        group: "mixed-entry",
-        description: "arguments, new.target, and a function hoist coexist with lexical arrow super",
-        source: r#"
+// case: mixed-entry / arguments, new.target, and a function hoist coexist with lexical arrow super
             (function () {
                 var proto = {
                     get value() { return this.base + 2; }
@@ -90,13 +62,7 @@ const CASES: &[Case] = &[
                 var receiver = { base: 40 };
                 return home.make.call(receiver, "arg")();
             })()
-        "#,
-        expected: "return|string|42|40|arg|true|1",
-    },
-    Case {
-        group: "call-receiver",
-        description: "an arrow super call reads its getter from the base and calls with lexical this",
-        source: r#"
+// case: call-receiver / an arrow super call reads its getter from the base and calls with lexical this
             (function () {
                 var getterReceiver;
                 var proto = {
@@ -113,13 +79,7 @@ const CASES: &[Case] = &[
                 var result = home.make.call(receiver)();
                 return [result, getterReceiver === proto].join("|");
             })()
-        "#,
-        expected: "return|string|42|true",
-    },
-    Case {
-        group: "write",
-        description: "computed super assignment through an arrow writes to lexical this",
-        source: r#"
+// case: write / computed super assignment through an arrow writes to lexical this
             (function () {
                 var proto = {
                     set value(input) { this.saved = input + 1; }
@@ -137,13 +97,7 @@ const CASES: &[Case] = &[
                     Object.hasOwn(proto, "saved")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|41|42|false|false",
-    },
-    Case {
-        group: "update",
-        description: "postfix and prefix super updates in an arrow preserve values and lexical receiver",
-        source: r#"
+// case: update / postfix and prefix super updates in an arrow preserve values and lexical receiver
             (function () {
                 var log = "";
                 var proto = {
@@ -163,13 +117,7 @@ const CASES: &[Case] = &[
                 var receiver = { count: 40 };
                 return home.make.call(receiver)();
             })()
-        "#,
-        expected: "return|string|40|42|42|gsgs",
-    },
-    Case {
-        group: "strictness",
-        description: "an arrow super write uses inherited or local strictness independently",
-        source: r#"
+// case: strictness / an arrow super write uses inherited or local strictness independently
             (function () {
                 var home = {
                     sloppy() {
@@ -213,13 +161,7 @@ const CASES: &[Case] = &[
                     Object.hasOwn(localReceiver, "value")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|TypeError|TypeError|false|false|false",
-    },
-    Case {
-        group: "delete",
-        description: "delete super in an arrow throws before computed-key coercion",
-        source: r#"
+// case: delete / delete super in an arrow throws before computed-key coercion
             (function () {
                 var log = [];
                 var key = {
@@ -233,37 +175,7 @@ const CASES: &[Case] = &[
                 try { home.make()(); }
                 catch (error) { return [error.name, log.join(",")].join("|"); }
             })()
-        "#,
-        expected: "return|string|ReferenceError|expr",
-    },
-    Case {
-        group: "grammar",
-        description: "a normal function cuts off an enclosing method's super binding",
-        source: "({ method() { return function () { return super.value; }; } })",
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "grammar",
-        description: "a global arrow has no super binding to inherit",
-        source: "() => super.value",
-        expected: "throw|object|SyntaxError",
-    },
-];
-
-#[test]
-fn object_super_arrow_semantics_match_pinned_quickjs() {
-    assert_cases_match_quickjs(
-        "object-super-arrow",
-        "object-super-arrow oracle",
-        CASES,
-        |oracle, case| {
-            super::quickjs_object_super_oracle::observe_completion_name_only(
-                oracle,
-                case.source,
-                case.group,
-                case.description,
-            )
-        },
-        rust_observation,
-    );
-}
+// case: grammar / a normal function cuts off an enclosing method's super binding
+({ method() { return function () { return super.value; }; } })
+// case: grammar / a global arrow has no super binding to inherit
+() => super.value

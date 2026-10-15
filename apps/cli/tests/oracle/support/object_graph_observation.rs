@@ -9,11 +9,6 @@ use quickjs_oxide::engine::api::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, PropertyKey, Runtime,
     Value,
 };
-use std::ffi::OsStr;
-
-pub(crate) fn oracle_lines(oracle: &OsStr, source: &str, description: &str) -> Vec<String> {
-    super::quickjs_oracle::eval_std_lines(oracle, source, description)
-}
 
 pub(crate) fn global_callable(runtime: &Runtime, context: &mut Context, name: &str) -> CallableRef {
     let global = context.global_object().unwrap();
@@ -880,71 +875,4 @@ pub(crate) fn define_global_with_message(
             .unwrap(),
         "could not define {name}",
     );
-}
-
-/// How [`object_statics_after_delete`] reports presence after deletion.
-#[derive(Clone, Copy)]
-pub(crate) enum PresenceProbe {
-    /// `Runtime::has_own_property` on `Object`.
-    Own,
-    /// The JavaScript `'name' in Object` expression.
-    In,
-}
-
-/// In a fresh runtime, delete the not-yet-materialized `Object[name]` and
-/// report `deleted|'name' in Object|own|typeof` for it.
-pub(crate) fn object_static_after_delete(name: &str) -> String {
-    let (runtime, mut context) = crate::runtime_observation::host_runtime_context();
-    let object = global_callable(&runtime, &mut context, "Object");
-    let key = runtime.intern_property_key(name).unwrap();
-    let deleted = runtime.delete_property(object.as_object(), &key).unwrap();
-    let Value::Bool(in_object) = context.eval(&format!("'{name}' in Object")).unwrap() else {
-        panic!("Object.{name} inherited-presence probe was not boolean");
-    };
-    let own = runtime.has_own_property(object.as_object(), &key).unwrap();
-    let kind = crate::runtime_oracle::value_type(
-        &runtime,
-        &context.get_property(object.as_object(), &key).unwrap(),
-    );
-    format!("{deleted}|{in_object}|{own}|{kind}")
-}
-
-/// In a fresh runtime, delete every not-yet-materialized `Object[name]`, then
-/// report all delete results, all presence probes and all value types, joined
-/// with `|`.
-pub(crate) fn object_statics_after_delete(names: &[&str], presence: PresenceProbe) -> String {
-    let (runtime, mut context) = crate::runtime_observation::host_runtime_context();
-    let object = global_callable(&runtime, &mut context, "Object");
-    let mut values = Vec::new();
-    for name in names {
-        let key = runtime.intern_property_key(name).unwrap();
-        values.push(
-            runtime
-                .delete_property(object.as_object(), &key)
-                .unwrap()
-                .to_string(),
-        );
-    }
-    for name in names {
-        let present = match presence {
-            PresenceProbe::Own => {
-                let key = runtime.intern_property_key(name).unwrap();
-                runtime.has_own_property(object.as_object(), &key).unwrap()
-            }
-            PresenceProbe::In => {
-                let Value::Bool(present) = context.eval(&format!("'{name}' in Object")).unwrap()
-                else {
-                    panic!("Object.{name} inherited-presence probe was not boolean");
-                };
-                present
-            }
-        };
-        values.push(present.to_string());
-    }
-    for name in names {
-        let key = runtime.intern_property_key(name).unwrap();
-        let value = context.get_property(object.as_object(), &key).unwrap();
-        values.push(crate::runtime_oracle::value_type(&runtime, &value).to_owned());
-    }
-    values.join("|")
 }

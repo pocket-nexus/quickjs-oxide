@@ -10,11 +10,16 @@
 // - `completion`: evaluate prelude + case as a global script in a fresh
 //   in-process runtime and compare `return|typeof|String(value)` or
 //   `throw|object|name|message` with pinned QuickJS's `std.evalScript`.
+// - `completion-name`: like `completion`, but thrown objects compare only
+//   their `name`.
+// - `completion-array`: like `completion`, but an Array result is rendered
+//   `return|array|<String(element)>,...`.
 // - `print`: run prelude + case through both `qjs -e` executables and compare
 //   exit status, stdout and stderr.
 //
 // Set `ORACLE_CASE=<substring>` to run only matching `dir/file/case` names.
-use crate::runtime_completion_oracle::observe_eval_completion;
+use crate::quickjs_array_completion_oracle::observe_array_completion;
+use crate::runtime_completion_oracle::{observe_array_aware_eval, observe_eval_completion};
 use crate::runtime_observation::host_runtime_context;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -23,6 +28,8 @@ use std::process::Command;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Mode {
     Completion,
+    CompletionName,
+    CompletionArray,
     Print,
 }
 
@@ -53,6 +60,8 @@ fn parse_fixture(label: &str, text: &str) -> Vec<Case> {
     let mode = match lines.peek().map(|line| line.trim_end()) {
         Some("// mode: print") => Mode::Print,
         Some("// mode: completion") => Mode::Completion,
+        Some("// mode: completion-name") => Mode::CompletionName,
+        Some("// mode: completion-array") => Mode::CompletionArray,
         Some(line) if line.starts_with("// mode:") => panic!("{label}: unknown {line:?}"),
         _ => Mode::Completion,
     };
@@ -173,12 +182,39 @@ fn observe_process(program: &OsStr, case: &Case) -> String {
     )
 }
 
+fn observe_quickjs_completion(oracle: &OsStr, case: &Case) -> String {
+    let output = crate::quickjs_oracle::observe_completion_output(oracle, &case.source, &case.name);
+    output.strip_suffix('\n').unwrap_or(&output).to_owned()
+}
+
+/// Reduce `throw|object|<name>|<message>` to `throw|object|<name>`.
+fn without_error_message(observation: String) -> String {
+    match observation.strip_prefix("throw|object|") {
+        Some(rest) => format!(
+            "throw|object|{}",
+            rest.split('|').next().unwrap_or_default()
+        ),
+        None => observation,
+    }
+}
+
 fn compare_case(oracle: &OsStr, case: &Case) -> Option<String> {
     let (oxide, quickjs) = match case.mode {
         Mode::Completion => (
             observe_oxide_completion(case),
-            crate::quickjs_oracle::observe_completion(oracle, &case.source, &case.name),
+            observe_quickjs_completion(oracle, case),
         ),
+        Mode::CompletionName => (
+            without_error_message(observe_oxide_completion(case)),
+            without_error_message(observe_quickjs_completion(oracle, case)),
+        ),
+        Mode::CompletionArray => {
+            let (runtime, mut context) = host_runtime_context();
+            (
+                observe_array_aware_eval(&runtime, &mut context, &case.source, &case.name),
+                observe_array_completion(oracle, &case.source, &case.name),
+            )
+        }
         Mode::Print => (
             observe_process(env!("CARGO_BIN_EXE_qjs").as_ref(), case),
             observe_process(oracle, case),

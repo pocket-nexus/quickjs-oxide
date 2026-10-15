@@ -41,7 +41,6 @@ pub(crate) mod quickjs_array_completion_oracle;
 pub(crate) mod quickjs_control_value_oracle;
 pub(crate) mod quickjs_indexed_oracle;
 pub(crate) mod quickjs_object_pattern_oracle;
-pub(crate) mod quickjs_object_super_oracle;
 pub(crate) mod quickjs_oracle;
 pub(crate) mod quickjs_plain_eval_oracle;
 pub(crate) mod quickjs_program_property_oracle;

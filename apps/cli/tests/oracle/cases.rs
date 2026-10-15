@@ -2,7 +2,13 @@
 // comparison modes are documented in `support/js_cases.rs`.
 use crate::support::js_cases::{case_directories, run_case_directory};
 
-const DIRECTORIES: &[&str] = &["array", "number", "primitive_intrinsics", "string"];
+const DIRECTORIES: &[&str] = &[
+    "array",
+    "number",
+    "object",
+    "primitive_intrinsics",
+    "string",
+];
 
 #[test]
 fn every_case_directory_has_a_test() {
@@ -17,6 +23,11 @@ fn array() {
 #[test]
 fn number() {
     run_case_directory("number");
+}
+
+#[test]
+fn object() {
+    run_case_directory("object");
 }
 
 #[test]

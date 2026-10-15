@@ -1,16 +1,5 @@
-use crate::grouped_case_oracle::{assert_cases_match_expectations, assert_cases_match_quickjs};
-use crate::oracle_cases::GroupedCase as Case;
-use crate::runtime_completion_oracle::rust_case_name_observation as rust_observation;
-
-// Pins the direct SuperProperty slice for synchronous ObjectLiteral methods
-// and accessors against QuickJS 2026-06-04 before the Rust implementation is
-// opened. Nested Arrow/eval inheritance, parameter initializers, classes,
-// async methods, and generators deliberately belong to later slices.
-const CASES: &[Case] = &[
-    Case {
-        group: "lookup",
-        description: "dot and computed reads start at the HomeObject prototype",
-        source: r#"
+// mode: completion-name
+// case: lookup / dot and computed reads start at the HomeObject prototype
             (function () {
                 var grand = { inherited: 20 };
                 var proto = Object.create(grand);
@@ -23,13 +12,7 @@ const CASES: &[Case] = &[
                 };
                 return object.read();
             })()
-        "#,
-        expected: "return|number|42",
-    },
-    Case {
-        group: "receiver",
-        description: "super getters calls and setters use the current call receiver",
-        source: r#"
+// case: receiver / super getters calls and setters use the current call receiver
             (function () {
                 var proto = {
                     method(addend) { return this.base + addend; },
@@ -55,13 +38,7 @@ const CASES: &[Case] = &[
                     Object.hasOwn(home, "saved")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|41|42|false",
-    },
-    Case {
-        group: "receiver",
-        description: "QuickJS super-call getter rewrite reads with the frozen base before calling with this",
-        source: r#"
+// case: receiver / QuickJS super-call getter rewrite reads with the frozen base before calling with this
             (function () {
                 var getterReceiver;
                 var proto = {
@@ -77,13 +54,7 @@ const CASES: &[Case] = &[
                 var receiver = { base: 40 };
                 return [home.call.call(receiver), getterReceiver === proto].join("|");
             })()
-        "#,
-        expected: "return|string|42|true",
-    },
-    Case {
-        group: "home-object",
-        description: "an extracted method retains its HomeObject and observes its current prototype",
-        source: r#"
+// case: home-object / an extracted method retains its HomeObject and observes its current prototype
             (function () {
                 var first = { value: 1 };
                 var second = { value: 42 };
@@ -95,13 +66,7 @@ const CASES: &[Case] = &[
                 Object.setPrototypeOf(home, second);
                 return method.call({ value: 100 });
             })()
-        "#,
-        expected: "return|number|42",
-    },
-    Case {
-        group: "assignment",
-        description: "simple assignment returns the RHS and sends the current receiver to super Set",
-        source: r#"
+// case: assignment / simple assignment returns the RHS and sends the current receiver to super Set
             (function () {
                 var proto = {
                     set value(input) { this.saved = input + 1; }
@@ -114,13 +79,7 @@ const CASES: &[Case] = &[
                 var result = home.write.call(receiver, 41);
                 return [result, receiver.saved, Object.hasOwn(home, "saved")].join("|");
             })()
-        "#,
-        expected: "return|string|41|42|false",
-    },
-    Case {
-        group: "assignment",
-        description: "compound assignment performs receiver-sensitive Get then Set once each",
-        source: r#"
+// case: assignment / compound assignment performs receiver-sensitive Get then Set once each
             (function () {
                 var log = "";
                 var proto = {
@@ -135,13 +94,7 @@ const CASES: &[Case] = &[
                 var result = home.bump();
                 return [result, home.count, log].join("|");
             })()
-        "#,
-        expected: "return|string|42|42|gs",
-    },
-    Case {
-        group: "assignment",
-        description: "logical assignments short circuit RHS and super Set independently",
-        source: r#"
+// case: assignment / logical assignments short circuit RHS and super Set independently
             (function () {
                 var log = "";
                 var rhsCalls = 0;
@@ -173,13 +126,7 @@ const CASES: &[Case] = &[
                     log
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|0|42|42|0|42|42|2|ggsgs",
-    },
-    Case {
-        group: "assignment",
-        description: "JS_PROP_THROW_STRICT distinguishes rejected sloppy and strict super writes",
-        source: r#"
+// case: assignment / JS_PROP_THROW_STRICT distinguishes rejected sloppy and strict super writes
             (function () {
                 var home = {
                     sloppy() {
@@ -206,13 +153,7 @@ const CASES: &[Case] = &[
                     Object.hasOwn(strictReceiver, "value")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|TypeError|false|false",
-    },
-    Case {
-        group: "update",
-        description: "postfix and prefix updates preserve their distinct result values",
-        source: r#"
+// case: update / postfix and prefix updates preserve their distinct result values
             (function () {
                 var log = "";
                 var proto = {
@@ -230,13 +171,7 @@ const CASES: &[Case] = &[
                 };
                 return home.update();
             })()
-        "#,
-        expected: "return|string|40|42|42|gsgs",
-    },
-    Case {
-        group: "null-base",
-        description: "null HomeObject prototypes throw after assignment RHS evaluation",
-        source: r#"
+// case: null-base / null HomeObject prototypes throw after assignment RHS evaluation
             (function () {
                 var rhsCalls = 0;
                 var home = {
@@ -255,25 +190,13 @@ const CASES: &[Case] = &[
                     Object.hasOwn(home, "value")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|TypeError|TypeError|1|false",
-    },
-    Case {
-        group: "null-base",
-        description: "computed super read coerces its key before diagnosing a null base",
-        source: r#"
+// case: null-base / computed super read coerces its key before diagnosing a null base
             (function () {
                 var key = { toString() { throw "key coercion"; } };
                 var home = { __proto__: null, read() { return super[key]; } };
                 try { home.read(); } catch (error) { return error; }
             })()
-        "#,
-        expected: "return|string|key coercion",
-    },
-    Case {
-        group: "null-base",
-        description: "null super assignment rejects the base before deferred key coercion",
-        source: r#"
+// case: null-base / null super assignment rejects the base before deferred key coercion
             (function () {
                 var log = [];
                 var key = { toString() { log.push("key"); return "value"; } };
@@ -285,13 +208,7 @@ const CASES: &[Case] = &[
                 try { home.write(); } catch (error) { errorName = error.name; }
                 return [errorName, log.join(",")].join("|");
             })()
-        "#,
-        expected: "return|string|TypeError|rhs",
-    },
-    Case {
-        group: "computed-order",
-        description: "SuperBase is fixed before deferred computed-key conversion",
-        source: r#"
+// case: computed-order / SuperBase is fixed before deferred computed-key conversion
             (function () {
                 var log = [];
                 var first = {
@@ -324,13 +241,7 @@ const CASES: &[Case] = &[
                 var prefix = home.prefix();
                 return [read, compound, prefix, home.stored, log.join(",")].join("|");
             })()
-        "#,
-        expected: "return|string|40|41|42|42|key,get:first,key,get:first,set:first,key,get:first,set:first",
-    },
-    Case {
-        group: "computed-order",
-        description: "computed method and accessor keys run in source order and retain HomeObject",
-        source: r#"
+// case: computed-order / computed method and accessor keys run in source order and retain HomeObject
             (function () {
                 var log = [];
                 function key(name) { log.push("key:" + name); return name; }
@@ -367,24 +278,12 @@ const CASES: &[Case] = &[
                     log.join(",")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|41|42|proto,key:method,key:read,key:write,method-body,get-body,set-body",
-    },
-    Case {
-        group: "reference",
-        description: "delete super property is a runtime ReferenceError",
-        source: r#"
+// case: reference / delete super property is a runtime ReferenceError
             (function () {
                 var home = { remove() { return delete super.value; } };
                 try { home.remove(); } catch (error) { return error.name; }
             })()
-        "#,
-        expected: "return|string|ReferenceError",
-    },
-    Case {
-        group: "reference",
-        description: "for-of assignment rotates the yielded value behind the super Reference",
-        source: r#"
+// case: reference / for-of assignment rotates the yielded value behind the super Reference
             (function () {
                 var proto = { set value(input) { this.total += input; } };
                 var home = {
@@ -397,36 +296,5 @@ const CASES: &[Case] = &[
                 };
                 return home.run();
             })()
-        "#,
-        expected: "return|number|42",
-    },
-    Case {
-        group: "grammar",
-        description: "direct super calls are forbidden in ObjectLiteral methods",
-        source: "({ method() { super(); } })",
-        expected: "throw|object|SyntaxError",
-    },
-];
-
-#[test]
-fn object_super_semantics_match_pinned_expectations() {
-    assert_cases_match_expectations("object-super", CASES, rust_observation);
-}
-
-#[test]
-fn object_super_semantics_match_pinned_quickjs() {
-    assert_cases_match_quickjs(
-        "object-super",
-        "object-super oracle",
-        CASES,
-        |oracle, case| {
-            super::quickjs_object_super_oracle::observe_completion_name_only(
-                oracle,
-                case.source,
-                case.group,
-                case.description,
-            )
-        },
-        rust_observation,
-    );
-}
+// case: grammar / direct super calls are forbidden in ObjectLiteral methods
+({ method() { super(); } })
