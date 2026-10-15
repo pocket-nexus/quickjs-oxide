@@ -2395,7 +2395,7 @@ fn execute_admitted_in_state(
             // out-of-line completions below finishes it on this frame. One
             // call here keeps the action match's shape in the dispatch body.
             _ => {
-                if !complete_in_segment(runtime, state, &mut segment, &action)? {
+                if !complete_in_segment(runtime, state, &mut segment, action)? {
                     return Ok(action);
                 }
             }
@@ -2405,14 +2405,19 @@ fn execute_admitted_in_state(
 
 /// Actions whose common cases complete without leaving the segment. Each
 /// helper leaves every operand in place when it declines.
+///
+/// `cold` keeps the call path out of the dispatch body's code generation: as
+/// a plain call it made AWFY Mandelbrot 9 of 15 x86 link layouts slower by
+/// more than 3% (the default one by about 4%) with unchanged instructions.
+#[cold]
 #[inline(never)]
 fn complete_in_segment(
     runtime: &Runtime,
     state: &mut RuntimeState,
     segment: &mut FrameExecution<'_>,
-    action: &VmAction,
+    action: VmAction,
 ) -> Result<bool, Error> {
-    match *action {
+    match action {
         VmAction::Numeric {
             kind: super::numeric::operation::NumericKind::Add,
             fallthrough,
