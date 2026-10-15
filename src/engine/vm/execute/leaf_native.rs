@@ -4,12 +4,13 @@
 //! activation. Math functions, and `charCodeAt`, `charAt`, `at`, `substring`,
 //! `substr` and `slice` on a String primitive receiver, cannot call
 //! JavaScript or throw when every argument they read is a Number, so the call
-//! completes on the caller's frame. The String results allocate through the
+//! completes on the caller's frame, as does `push` of one value onto a dense
+//! Array with a writable length. The String results allocate through the
 //! same heap entry as the native activation. Any other operand declines
 //! before an operand moves, and the call takes the general path unchanged.
 use super::{FallthroughPc, FrameCursor};
 use crate::engine::api::{error::Error, runtime::Runtime};
-use crate::engine::builtins::native::NativeFunctionId;
+use crate::engine::builtins::native::{ArrayPushKind, NativeFunctionId};
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::value::JsValue;
 use crate::engine::vm::exception::runtime_error_to_vm_error;
@@ -50,6 +51,49 @@ pub(super) fn try_complete(
     };
     let target = selected.target();
     let mut cursor = FrameCursor::new(transaction, fault_pc, resume_pc, &runtime.0.poisoned);
+    if target == NativeFunctionId::ArrayPrototypePush(ArrayPushKind::Push) {
+        if count != 1 || !method {
+            return Ok(false);
+        }
+        let receiver = cursor.with_slots(|slots| {
+            let (JsValue::Object(callee), JsValue::Object(receiver)) =
+                (slots.peek(1)?, slots.peek(2)?)
+            else {
+                return Ok(None);
+            };
+            Ok(selected
+                .matches_in_domain(runtime.domain_id(), *callee)
+                .then_some(*receiver))
+        })?;
+        let Some(receiver) = receiver else {
+            return Ok(false);
+        };
+        let mut input = cursor.move_owned()?;
+        let length = match state.try_push_dense_value(receiver, &mut input) {
+            Ok(Some(length)) => length,
+            // Both outcomes leave `input` as it was; restore the operand.
+            Ok(None) => {
+                cursor.commit_push(input)?;
+                return Ok(false);
+            }
+            Err(error) => {
+                cursor.commit_push(input)?;
+                return Err(runtime_error_to_vm_error(error));
+            }
+        };
+        *selected_native = None;
+        for _ in 0..2 {
+            let operand = cursor.move_owned()?;
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, operand)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        let length = i32::try_from(length).map_or(JsValue::Float(f64::from(length)), JsValue::Int);
+        cursor.commit_owned(state, length)?;
+        cursor.advance(fallthrough.index());
+        profile!(record_owned_execution_event("native_leaf_push_in_segment"));
+        return Ok(true);
+    }
     let result = cursor.with_slots(|slots| {
         let JsValue::Object(callee) = slots.peek(count)? else {
             return Ok(None);
@@ -229,6 +273,34 @@ mod tests {
                 .length + ':' + new String('ab').charAt(1)
         "#;
         assert_eq!(eval_string(&mut context, source), "66::0:6:b");
+    }
+
+    #[test]
+    fn push_leaf_matches_the_native_activation() {
+        let (_runtime, mut context) = test_context();
+        let source = r#"
+var out = [];
+function t(name, f) { try { out.push(name + '=' + JSON.stringify(f())); } catch (e) { out.push(name + '!' + e.name); } }
+t('basic', () => { var a = []; var r = []; for (var i = 0; i < 5; i++) r.push(a.push(i * 2)); return [a, r]; });
+t('objects', () => { var a = []; var o = {}; a.push(o); a.push('s'); return [a.length, a[0] === o, a[1]]; });
+t('holes', () => { var a = new Array(3); var n = a.push(9); return [n, a.length, 1 in a, a[3]]; });
+t('holes2', () => { var a = [1, , 3]; return [a.push(4), a]; });
+t('frozen', () => { var a = Object.freeze([1]); return a.push(2); });
+t('nonext', () => { var a = [1]; Object.preventExtensions(a); return a.push(2); });
+t('rolen', () => { var a = [1]; Object.defineProperty(a, 'length', { writable: false }); return a.push(2); });
+t('setter', () => { var log = []; Object.defineProperty(Array.prototype, 3, { set(v) { log.push(v); }, configurable: true }); var a = [0, 1, 2]; var n = a.push(7); delete Array.prototype[3]; return [n, a.length, log, 3 in a]; });
+t('arraylike', () => { var o = { length: 1 }; return [Array.prototype.push.call(o, 5), o]; });
+t('multi', () => { var a = [1]; return [a.push(2, 3), a.push(), a]; });
+t('typed', () => { var a = []; for (var i = 0; i < 3; i++) a.push(i + 0.5); return a; });
+t('big', () => { var a = []; for (var i = 0; i < 2000; i++) a.push({ i }); var s = 0; for (var i = 0; i < a.length; i++) s += a[i].i; return [a.length, s]; });
+t('subclass', () => { class A extends Array {} var a = new A(); a.push(1); return [a.length, a instanceof A]; });
+t('patched', () => { var saved = Array.prototype.push; Array.prototype.push = function (v) { return 'p' + v; }; var r = [].push(1); Array.prototype.push = saved; return r; });
+out.join(';')
+"#;
+        assert_eq!(
+            eval_string(&mut context, source),
+            r#"basic=[[0,2,4,6,8],[1,2,3,4,5]];objects=[2,true,"s"];holes=[4,4,false,9];holes2=[4,[1,null,3,4]];frozen!TypeError;nonext!TypeError;rolen!TypeError;setter=[4,4,[7],false];arraylike=[2,{"1":5,"length":2}];multi=[3,3,[1,2,3]];typed=[0.5,1.5,2.5];big=[2000,1999000];subclass=[1,true];patched="p1""#
+        );
     }
 
     #[test]
