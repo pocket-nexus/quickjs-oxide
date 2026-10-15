@@ -27,7 +27,6 @@ mod atomics_non_shared;
 mod binary_data;
 mod cases;
 mod class_base;
-mod class_initialization;
 mod collections;
 mod control_flow;
 mod date_intrinsic;

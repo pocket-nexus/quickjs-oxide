@@ -1,13 +1,5 @@
-use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::Value;
-use std::ffi::OsStr;
-use std::process::Command;
-
-// Pins the derived-class portion of QuickJS 2026-06-04 `js_parse_class`,
-// `OP_define_class`, `OP_init_ctor`, and the derived-constructor return
-// protocol. Keep observations structural: error names are stable semantics,
-// while implementation-specific diagnostic wording is deliberately omitted.
-const PROBE: &str = r#"
+// mode: completion
+// case: derived class observation
 (function () {
     var out = [];
     function add(name, values) { out.push(name + "=" + values.join("|")); }
@@ -174,65 +166,3 @@ const PROBE: &str = r#"
 
     return out.join("\n");
 })()
-"#;
-
-const EXPECTED: &str = concat!(
-    "heritage=heritage,prototype,element|true|true|true|42|true|true|TypeError\n",
-    "default=42|2|0\n",
-    "explicit=fixed,a,b,base,done,spread,iterator,base,done|42|42\n",
-    "this=ReferenceError,ReferenceError|2|1\n",
-    "returns=42|42|ReferenceError|TypeError\n",
-    "new-target=TargetDerived|AlternateTarget|true\n",
-    "live-super=first,second|ReferenceError\n",
-    "relay=42|42|42|42",
-);
-
-#[test]
-fn derived_class_observation_is_stable() {
-    assert_eq!(rust_observation(), EXPECTED);
-}
-
-#[test]
-fn derived_class_observation_matches_pinned_quickjs() {
-    let oracle = require_pinned_qjs_oracle!("derived-class differential");
-    let rust = rust_observation();
-    let quickjs = oracle_observation(&oracle);
-    assert_eq!(quickjs, EXPECTED, "pinned QuickJS observation drifted");
-    assert_eq!(rust, quickjs);
-}
-
-fn rust_observation() -> String {
-    let (_runtime, mut context) = host_runtime_context();
-    let diagnostic_probe = [
-        "try { ",
-        PROBE,
-        " } catch (error) { 'UNEXPECTED=' + error.name + ':' + error.message + '\\n' + error.stack }",
-    ]
-    .concat();
-    let Value::String(value) = context
-        .eval(&diagnostic_probe)
-        .expect("Rust derived-class probe failed")
-    else {
-        panic!("Rust derived-class probe did not return a String");
-    };
-    value.to_utf8_lossy()
-}
-
-fn oracle_observation(oracle: &OsStr) -> String {
-    let source = format!("print({PROBE});");
-    let output = Command::new(oracle)
-        .arg("--script")
-        .arg("-e")
-        .arg(source)
-        .output()
-        .expect("failed to execute pinned qjs");
-    assert!(
-        output.status.success(),
-        "pinned qjs derived-class probe failed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    String::from_utf8(output.stdout)
-        .expect("pinned qjs emitted non-UTF-8 output")
-        .trim_end_matches(['\r', '\n'])
-        .to_owned()
-}
