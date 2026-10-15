@@ -1,8 +1,4 @@
 // mode: print
-// known-issue: teardown-leak: the probe leaves live heap nodes at quickjs-oxide
-// runtime teardown (debug assertion); the old host-API mirror never ran it.
-// Minimal repro: function t(a, b, c) {} var r = {}; var s = t.bind(r, 1);
-//   var n = t.bind(r, 1).bind({}, 2); s(2, 3); n(3); n.length;
 function bit(value) { return value ? 1 : 0; }
 function hex(value) {
     var out = "";
