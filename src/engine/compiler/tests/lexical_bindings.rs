@@ -269,6 +269,56 @@ fn nested_lexical_cleanup_shadowing_and_quickjs_var_quirks_execute() {
 }
 
 #[test]
+fn initialized_lexical_accesses_drop_tdz_checks_only_where_proven() {
+    let script = compile_unlinked_script(
+        "(function(n,f){let a=0;for(let i=0;i<n;i+=1){a+=i}\
+         if(f)b=1;let b=2;switch(n){case 0:let c=1;case 1:c}\
+         try{throw 0}catch(e){a}return a+b})",
+    )
+    .unwrap();
+    let function = script
+        .constants()
+        .iter()
+        .find_map(|constant| constant.as_child())
+        .expect("script lost its function");
+    let checked = function
+        .code()
+        .iter()
+        .filter_map(|instruction| match instruction {
+            Instruction::GetLocalCheck(index)
+            | Instruction::PutLocalCheck(index)
+            | Instruction::SetLocalCheck(index) => Some(
+                function.local_definitions()[usize::from(*index)]
+                    .name
+                    .clone()
+                    .expect("lexical lost its name"),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    // `b` before its declaration, `c` from the second case, and everything
+    // reached from the catch entry are unproven; the loop and counter are not.
+    assert_eq!(
+        checked,
+        ["b", "c", "a", "a", "b"].map(JsString::from_static)
+    );
+    // Elided reads keep their semantics, including generic `+=` on Strings.
+    assert_eq!(
+        evaluate_in_context(
+            "(function(){let s='a';s+=1;let n=1.5;n-=1;let m=2147483647;m+=1;\
+             let z=-0;z+=1;return s+'|'+n+'|'+m+'|'+z})()"
+        ),
+        Value::String(JsString::from_static("a1|0.5|2147483648|1"))
+    );
+    assert_eq!(
+        evaluate_in_context(
+            "(function(){try{x;let x=1}catch(e){return e instanceof ReferenceError}})()"
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn lexical_tdz_and_readonly_errors_follow_checked_local_and_capture_order() {
     let (runtime, mut context) = test_context();
     for source in [

@@ -1415,16 +1415,33 @@ fn discarded_binding_assignments_lower_to_a_single_put() {
         "{local:?}"
     );
     assert!(!keeps_copy(&local), "{local:?}");
+    // Both lexicals are initialized before the store, so their checks are
+    // elided; a store that may precede initialization keeps its check.
     let checked = code(
         "(function () { let o = {}; let s; s = o; return s; })",
         None,
     );
     assert!(
-        checked
+        contains(
+            &checked,
+            &[
+                Instruction::GetLocal(0),
+                Instruction::PutLocal(1),
+                Instruction::GetLocal(1)
+            ]
+        ) && !keeps_copy(&checked),
+        "{checked:?}"
+    );
+    let unproven = code(
+        "(function (f) { let o = {}; if (f) s = o; let s; return s; })",
+        None,
+    );
+    assert!(
+        unproven
             .iter()
             .any(|instruction| matches!(instruction, Instruction::PutLocalCheck(_)))
-            && !keeps_copy(&checked),
-        "{checked:?}"
+            && !keeps_copy(&unproven),
+        "{unproven:?}"
     );
     let argument = code("(function (a, o) { a = o; return a; })", None);
     assert!(

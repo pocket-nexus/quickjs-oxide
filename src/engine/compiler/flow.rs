@@ -93,15 +93,18 @@ fn direct_source(
     match *instruction {
         Instruction::GetLocal(slot) | Instruction::GetLocalCheck(slot) => {
             let definition = locals.get(slot as usize)?;
+            let checked = matches!(instruction, Instruction::GetLocalCheck(_));
+            // An unchecked lexical read was proven initialized by
+            // `elide_initialized_local_checks`; regions still re-prove it.
             if definition.kind != ClosureVariableKind::Normal
                 || captured.get(slot as usize).copied().unwrap_or(true)
-                || definition.is_lexical != matches!(instruction, Instruction::GetLocalCheck(_))
+                || checked && !definition.is_lexical
                 || definition.is_lexical
                     && !initialized.get(slot as usize).copied().unwrap_or(false)
             {
                 return None;
             }
-            Some(if definition.is_lexical {
+            Some(if checked {
                 DirectSource::CheckedLocal(slot)
             } else {
                 DirectSource::Local(slot)
@@ -151,8 +154,8 @@ fn numeric_destination(
     (definition.kind == ClosureVariableKind::Normal
         && !definition.is_const
         && !captured.get(index as usize).copied().unwrap_or(true)
-        && definition.is_lexical == checked
-        && (!checked || initialized.get(index as usize).copied().unwrap_or(false)))
+        && (definition.is_lexical || !checked)
+        && (!definition.is_lexical || initialized.get(index as usize).copied().unwrap_or(false)))
     .then_some((index, checked))
 }
 

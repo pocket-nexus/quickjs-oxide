@@ -530,7 +530,7 @@ fn discard_update_shape(
         Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => *index,
         _ => return None,
     };
-    if index >= 1 << 13 {
+    if index >= 1 << 12 {
         return None;
     }
     if locals.is_some_and(|definitions| {
@@ -542,14 +542,20 @@ fn discard_update_shape(
     }) {
         return None;
     }
-    let (increment, postfix) = match code.get(pc + 1)? {
-        Instruction::Inc => (true, false),
-        Instruction::Dec => (false, false),
-        Instruction::PostInc => (true, true),
-        Instruction::PostDec => (false, true),
+    // `x += 1` and `x -= 1` add one generic word before the store. For a
+    // Number the result equals `++x`/`--x`; any other value takes the generic
+    // `PushI32; Add/Sub` path, so string concatenation is preserved.
+    let (increment, postfix, binary) = match (code.get(pc + 1)?, code.get(pc + 2)) {
+        (Instruction::Inc, _) => (true, false, false),
+        (Instruction::Dec, _) => (false, false, false),
+        (Instruction::PostInc, _) => (true, true, false),
+        (Instruction::PostDec, _) => (false, true, false),
+        (Instruction::PushI32(1), Some(Instruction::Add)) => (true, false, true),
+        (Instruction::PushI32(1), Some(Instruction::Sub)) => (false, false, true),
         _ => return None,
     };
-    let length = match code.get(pc + 2)? {
+    let store = pc + 2 + usize::from(binary);
+    let mut length = match code.get(store)? {
         Instruction::PutLocal(target) | Instruction::PutLocalCheck(target) if *target == index => {
             if postfix {
                 4
@@ -564,9 +570,10 @@ fn discard_update_shape(
         }
         _ => return None,
     };
-    if length == 4 && !matches!(code.get(pc + 3), Some(Instruction::Drop)) {
+    if length == 4 && !matches!(code.get(store + 1), Some(Instruction::Drop)) {
         return None;
     }
+    length += usize::from(binary);
     if (1..length).any(|offset| entries.contains(&(pc + offset))) {
         return None;
     }
@@ -1392,7 +1399,7 @@ fn valid_direct_source(
         DirectSource::Local(index) | DirectSource::CheckedLocal(index) => {
             locals.get(index as usize).is_some_and(|definition| {
                 definition.kind == ClosureVariableKind::Normal
-                    && definition.is_lexical == matches!(source, DirectSource::CheckedLocal(_))
+                    && (definition.is_lexical || matches!(source, DirectSource::Local(_)))
                     && (!definition.is_lexical
                         || initialized.get(index as usize).copied().unwrap_or(false))
             })
@@ -1422,8 +1429,8 @@ fn valid_numeric_destination(
     locals.get(index as usize).is_some_and(|definition| {
         definition.kind == ClosureVariableKind::Normal
             && !definition.is_const
-            && definition.is_lexical == checked
-            && (!checked || initialized.get(index as usize).copied().unwrap_or(false))
+            && (definition.is_lexical || !checked)
+            && (!definition.is_lexical || initialized.get(index as usize).copied().unwrap_or(false))
     })
 }
 
@@ -1881,21 +1888,24 @@ fn published_operands(
         opcode,
         Opcode::UpdateLocalDiscard | Opcode::UpdateLocalDiscardCheck
     ) {
-        let operation = &code[source + 1];
-        let increment = matches!(operation, Instruction::Inc | Instruction::PostInc);
+        let binary = matches!(code[source + 1], Instruction::PushI32(_));
+        let operation = &code[source + 1 + usize::from(binary)];
+        let increment = matches!(
+            operation,
+            Instruction::Inc | Instruction::PostInc | Instruction::Add
+        );
         let postfix = matches!(operation, Instruction::PostInc | Instruction::PostDec);
-        let length = if postfix
+        let dropped = postfix
             || matches!(
-                code[source + 2],
+                code[source + 2 + usize::from(binary)],
                 Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-            ) {
-            4
-        } else {
-            3
-        };
-        let descriptor =
-            u32::from(increment) | (u32::from(postfix) << 1) | (u32::from(length == 4) << 2);
-        operands[0].bits |= descriptor << 13;
+            );
+        // Bits 2 and 3 each add one skipped single-word instruction.
+        let descriptor = u32::from(increment)
+            | (u32::from(postfix) << 1)
+            | (u32::from(dropped) << 2)
+            | (u32::from(binary) << 3);
+        operands[0].bits |= descriptor << 12;
     } else if matches!(
         opcode,
         Opcode::DensePreUpdateLocal | Opcode::DensePreUpdateArg
@@ -2779,16 +2789,16 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(code.opcode_at_source(0), Some(Opcode::UpdateLocalDiscard));
-        assert_eq!(code.decode(0).unwrap().operand(0), 7 << 13);
+        assert_eq!(code.decode(0).unwrap().operand(0), 7 << 12);
         assert_eq!(
             code.decode(0).unwrap().next_pc + 3,
             code.exec_pc(4).unwrap()
         );
 
         let wide_index = ExecCode::encode(&[
-            Instruction::GetLocal(8192),
+            Instruction::GetLocal(4096),
             Instruction::Inc,
-            Instruction::SetLocal(8192),
+            Instruction::SetLocal(4096),
             Instruction::Drop,
             Instruction::ReturnUndefined,
         ])
@@ -2818,6 +2828,49 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(entered.opcode_at_source(1), Some(Opcode::GetLocal));
+
+        // `x += 1` keeps its generic `PushI32; Add` words for non-Numbers and
+        // skips one more word on a hit.
+        let binary = ExecCode::encode(&[
+            Instruction::GetLocal(0),
+            Instruction::PushI32(1),
+            Instruction::Add,
+            Instruction::SetLocal(0),
+            Instruction::Drop,
+            Instruction::ReturnUndefined,
+        ])
+        .unwrap();
+        assert_eq!(binary.opcode_at_source(0), Some(Opcode::UpdateLocalDiscard));
+        assert_eq!(binary.opcode_at_source(1), Some(Opcode::PushI32));
+        assert_eq!(binary.decode(0).unwrap().operand(0), 0b1101 << 12);
+        assert_eq!(
+            binary.decode(0).unwrap().next_pc + 4,
+            binary.exec_pc(5).unwrap()
+        );
+        let decrement = ExecCode::encode(&[
+            Instruction::GetLocalCheck(0),
+            Instruction::PushI32(1),
+            Instruction::Sub,
+            Instruction::PutLocalCheck(0),
+            Instruction::ReturnUndefined,
+        ])
+        .unwrap();
+        assert_eq!(
+            decrement.opcode_at_source(0),
+            Some(Opcode::UpdateLocalDiscardCheck)
+        );
+        assert_eq!(decrement.decode(0).unwrap().operand(0), 0b1000 << 12);
+        for step in [Instruction::PushI32(2), Instruction::PushI32(-1)] {
+            let other = ExecCode::encode(&[
+                Instruction::GetLocal(0),
+                step,
+                Instruction::Add,
+                Instruction::PutLocal(0),
+                Instruction::ReturnUndefined,
+            ])
+            .unwrap();
+            assert_ne!(other.opcode_at_source(0), Some(Opcode::UpdateLocalDiscard));
+        }
     }
 
     #[test]

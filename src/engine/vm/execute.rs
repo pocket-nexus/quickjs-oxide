@@ -748,8 +748,8 @@ fn execute_admitted_in_state(
                         continue;
                     }
                     Opcode::UpdateLocalDiscard | Opcode::UpdateLocalDiscardCheck => {
-                        let index = published_u16(operand & 0x1fff);
-                        let descriptor = operand >> 13;
+                        let index = published_u16(operand & 0xfff);
+                        let descriptor = operand >> 12;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_execution_dispatch(
                             runtime, executable, pc, true,
@@ -781,7 +781,7 @@ fn execute_admitted_in_state(
                         );
                         if hit {
                             cursor.advance(
-                                (decoded.next_pc + if descriptor & 4 != 0 { 3 } else { 2 })
+                                (decoded.next_pc + 2 + ((descriptor >> 2) & 1) + (descriptor >> 3))
                                     as usize,
                             );
                             continue;
