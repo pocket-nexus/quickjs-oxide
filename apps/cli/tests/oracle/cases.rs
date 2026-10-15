@@ -3,6 +3,7 @@
 use crate::support::js_cases::{case_directories, run_case_directory};
 
 const DIRECTORIES: &[&str] = &[
+    "arguments",
     "array",
     "async_functions",
     "async_methods",
@@ -34,6 +35,11 @@ const DIRECTORIES: &[&str] = &[
 #[test]
 fn every_case_directory_has_a_test() {
     assert_eq!(case_directories(), DIRECTORIES);
+}
+
+#[test]
+fn arguments() {
+    run_case_directory("arguments");
 }
 
 #[test]

@@ -15,7 +15,6 @@ mod raw_json_module_bytes;
 mod raw_module_bytes;
 mod raw_script_bytes;
 
-mod arguments;
 mod array;
 mod array_assignment;
 mod array_construction;

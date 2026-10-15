@@ -72,32 +72,3 @@ pub(crate) fn rust_return_observation(label: &str, case: &Case) -> String {
         primitive_value_text(value),
     )
 }
-
-/// Compare `actual(case)` with `expected(case)` for every case and report all
-/// drifts together. `labels` name the two observations in each failure.
-pub(crate) fn assert_grouped_cases_agree<'a>(
-    cases: impl IntoIterator<Item = &'a Case>,
-    summary: &str,
-    labels: [&str; 2],
-    actual: impl Fn(&Case) -> String,
-    expected: impl Fn(&Case) -> String,
-) {
-    let [actual_label, expected_label] = labels;
-    let mut failures = Vec::new();
-    for case in cases {
-        let actual = actual(case);
-        let expected = expected(case);
-        if actual != expected {
-            failures.push(format!(
-                "{} / {}\nsource: {:?}\n{actual_label}: {actual:?}\n{expected_label}: {expected:?}",
-                case.group, case.description, case.source,
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "{summary} in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
-    );
-}

@@ -89,25 +89,6 @@ pub(crate) fn observe_legacy_float_eval_completion(
     )
 }
 
-/// Observe a legacy vector while retaining its explicit callable-inspection
-/// assertion and Rust float spelling.
-pub(crate) fn observe_checked_legacy_float_eval_completion(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> String {
-    observe_eval_completion_with(
-        runtime,
-        context,
-        source,
-        description,
-        checked_value_type,
-        primitive_value_text_with_rust_float,
-        ErrorPropertyStyle::RuntimeCaseContext,
-    )
-}
-
 /// Observe a completion after prepending a domain-owned source prelude. The
 /// caller keeps ownership of the prelude and its value spelling.
 pub(crate) fn observe_read_context_eval_completion_with_prelude(
