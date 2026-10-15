@@ -1,8 +1,10 @@
+use crate::object_graph_observation::intrinsic_prototype;
 use crate::object_graph_observation::{
     define_data_key_with_flags as define_data_key, expect_object,
 };
 use crate::primitive_probe::eval_callable;
 use crate::runtime_observation::host_runtime;
+use crate::runtime_observation::property_callable;
 use crate::runtime_observation::take_error_object as take_exception_object;
 use quickjs_oxide::engine::api::{
     CallableRef, Context, JsString, ObjectRef, PropertyKey, Runtime, RuntimeError, SymbolRef,
@@ -407,55 +409,9 @@ fn define_data(
     );
 }
 
-fn property_callable(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> CallableRef {
-    property_callable_key(
-        runtime,
-        context,
-        object,
-        &runtime.intern_property_key(name).unwrap(),
-        name,
-    )
-}
-
-fn property_callable_key(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    name: &str,
-) -> CallableRef {
-    let Value::Object(value) = context.get_property(object, key).unwrap() else {
-        panic!("{name} was not an object");
-    };
-    runtime
-        .as_callable(&value)
-        .unwrap()
-        .unwrap_or_else(|| panic!("{name} was not callable"))
-}
-
 fn call_symbol(context: &mut Context, callable: &CallableRef, arguments: &[Value]) -> SymbolRef {
     let Value::Symbol(value) = context.call(callable, Value::Undefined, arguments).unwrap() else {
         panic!("Symbol-producing call did not return a Symbol");
     };
     value
-}
-
-fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {
-    let global = context.global_object().unwrap();
-    let constructor = property_callable(runtime, context, &global, name);
-    let Value::Object(prototype) = context
-        .get_property(
-            constructor.as_object(),
-            &runtime.intern_property_key("prototype").unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("{name}.prototype was not an object");
-    };
-    prototype
 }

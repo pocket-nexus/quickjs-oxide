@@ -1,7 +1,7 @@
 use crate::runtime_observation::host_runtime;
+use crate::runtime_observation::property_callable;
 use quickjs_oxide::engine::api::{
-    CallableRef, DescriptorField, JsString, OrdinaryPropertyDescriptor, PropertyKey, Runtime,
-    Value, WellKnownSymbol,
+    DescriptorField, JsString, OrdinaryPropertyDescriptor, PropertyKey, Value, WellKnownSymbol,
 };
 
 #[test]
@@ -92,22 +92,6 @@ fn object_to_string_cross_realm_uses_receiver_tag_and_method_defining_realm() {
         first.call(&second_to_string, Value::Int(1), &[]).unwrap(),
         Value::String(JsString::try_from_utf8("[object SecondNumber]").unwrap())
     );
-}
-
-fn property_callable(
-    runtime: &Runtime,
-    context: &mut quickjs_oxide::engine::api::Context,
-    object: &quickjs_oxide::engine::api::ObjectRef,
-    name: &str,
-) -> CallableRef {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Value::Object(function) = context.get_property(object, &key).unwrap() else {
-        panic!("{name} was not an object");
-    };
-    runtime
-        .as_callable(&function)
-        .unwrap()
-        .unwrap_or_else(|| panic!("{name} was not callable"))
 }
 
 fn define_data_key(

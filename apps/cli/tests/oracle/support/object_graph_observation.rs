@@ -161,16 +161,6 @@ pub(crate) fn function(runtime: &Runtime, context: &mut Context, source: &str) -
         .unwrap_or_else(|| panic!("function probe was not callable: {source}"))
 }
 
-pub(crate) fn get_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> Value {
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(object, &key).unwrap()
-}
-
 pub(crate) fn define_checked_builtin_data(
     runtime: &Runtime,
     object: &ObjectRef,

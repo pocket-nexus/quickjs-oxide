@@ -1,3 +1,4 @@
+use crate::object_graph_observation::intrinsic_prototype;
 use crate::object_graph_observation::{
     define_checked_builtin_data as define_data, define_checked_builtin_data_key as define_data_key,
     eval_callable, expect_object, global_callable, global_string as string_global,
@@ -444,11 +445,6 @@ fn constructor_prototype(
         panic!("constructor prototype was not an object");
     };
     prototype
-}
-
-fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {
-    let constructor = global_callable(runtime, context, name);
-    constructor_prototype(runtime, context, &constructor)
 }
 
 fn bound_constructor(runtime: &Runtime, context: &mut Context) -> CallableRef {

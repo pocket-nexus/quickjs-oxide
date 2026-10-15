@@ -1,10 +1,11 @@
 use crate::object_graph_observation::data_property as data_descriptor;
+use crate::object_graph_observation::object_property;
 use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{RuntimeError, Value};
 
 #[test]
 fn typed_array_entries_pair_and_errors_use_the_builtin_defining_realm() {
@@ -123,20 +124,4 @@ fn typed_array_entries_pair_and_errors_use_the_builtin_defining_realm() {
         Some(defining_type_error),
         "TypedArray iterator brand TypeError did not use the builtin defining realm",
     );
-}
-
-fn object_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> ObjectRef {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Value::Object(value) = context
-        .get_property(object, &key)
-        .unwrap_or_else(|error| panic!("read object property {name}: {error}"))
-    else {
-        panic!("{name} was not an object");
-    };
-    value
 }

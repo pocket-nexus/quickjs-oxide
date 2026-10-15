@@ -1,4 +1,6 @@
 use crate::object_graph_observation::define_global;
+use crate::object_graph_observation::object_property;
+use crate::runtime_observation::take_exception_object;
 use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::eval_object;
 use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
@@ -166,31 +168,6 @@ fn proxy_hidden_edges_survive_gc_and_revocation_is_safe_across_collection() {
         string_property(&runtime, &mut context, &error, "name"),
         "TypeError",
     );
-}
-
-fn object_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> ObjectRef {
-    let Value::Object(value) = context
-        .get_property(object, &runtime.intern_property_key(name).unwrap())
-        .unwrap_or_else(|error| panic!("read object property {name}: {error}"))
-    else {
-        panic!("{name} was not an object");
-    };
-    value
-}
-
-fn take_exception_object(context: &mut Context, description: &str) -> ObjectRef {
-    let Some(Value::Object(error)) = context
-        .take_exception()
-        .unwrap_or_else(|failure| panic!("take {description}: {failure}"))
-    else {
-        panic!("{description} was missing or was not an object");
-    };
-    error
 }
 
 fn string_property(

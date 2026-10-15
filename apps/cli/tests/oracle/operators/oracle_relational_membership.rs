@@ -1,4 +1,5 @@
-use crate::object_graph_observation::{function, get_property};
+use crate::object_graph_observation::function;
+use crate::object_graph_observation::intrinsic_prototype;
 use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::take_error_object as take_exception_object;
 use quickjs_oxide::engine::api::{
@@ -222,17 +223,6 @@ fn membership_errors_follow_opcode_conversion_and_method_defining_realms() {
         Some(second_type_error),
         "post-call ToPrimitive framework error did not return to the opcode realm"
     );
-}
-
-fn intrinsic_prototype(runtime: &Runtime, context: &mut Context, name: &str) -> ObjectRef {
-    let global = context.global_object().unwrap();
-    let Value::Object(constructor) = get_property(runtime, context, &global, name) else {
-        panic!("{name} constructor was not an object");
-    };
-    let Value::Object(prototype) = get_property(runtime, context, &constructor, "prototype") else {
-        panic!("{name}.prototype was not an object");
-    };
-    prototype
 }
 
 fn define_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {

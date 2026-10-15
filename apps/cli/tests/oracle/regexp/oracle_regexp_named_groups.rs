@@ -1,10 +1,11 @@
+use crate::object_graph_observation::object_property;
 use crate::object_graph_observation::{
     eval_described_object as eval_object, eval_named_callable as eval_callable,
     require_object as expect_object,
 };
 use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::string_property_with_read_context as string_property;
-use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, Value};
+use quickjs_oxide::engine::api::Value;
 
 // Differential lock for pinned QuickJS 2026-06-04 named RegExp captures.
 //
@@ -70,19 +71,4 @@ fn regexp_named_group_results_use_the_exec_defining_realm() {
     );
     let indices_groups = object_property(&runtime, &mut caller, &indices, "groups");
     assert_eq!(runtime.get_prototype_of(&indices_groups).unwrap(), None);
-}
-
-fn object_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> ObjectRef {
-    let key = runtime.intern_property_key(name).unwrap();
-    expect_object(
-        context
-            .get_property(object, &key)
-            .unwrap_or_else(|error| panic!("read object property {name}: {error}")),
-        name,
-    )
 }

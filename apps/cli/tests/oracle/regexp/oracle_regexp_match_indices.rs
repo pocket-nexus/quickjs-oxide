@@ -1,10 +1,11 @@
+use crate::object_graph_observation::object_property;
 use crate::runtime_observation::host_runtime;
 
 use crate::object_graph_observation::{
     checked_property_value as value_property, eval_described_object as eval_object,
     eval_named_callable as eval_callable, require_object as expect_object,
 };
-use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, Value};
+use quickjs_oxide::engine::api::{JsString, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 RegExp match indices.
 //
@@ -94,13 +95,4 @@ fn regexp_match_indices_nested_arrays_use_the_exec_defining_realm() {
         Value::Object(named_pair),
         "indices.groups did not alias the participating pair",
     );
-}
-
-fn object_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> ObjectRef {
-    expect_object(value_property(runtime, context, object, name), name)
 }

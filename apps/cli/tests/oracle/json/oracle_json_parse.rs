@@ -1,9 +1,10 @@
+use crate::object_graph_observation::object_property;
 use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{
     property_callable_with_read_context as property_callable, take_exception_object,
 };
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
 
 #[test]
 fn json_parse_allocations_and_native_errors_use_the_method_defining_realm() {
@@ -129,20 +130,4 @@ fn json_parse_allocations_and_native_errors_use_the_method_defining_realm() {
         Some(caller_syntax_error),
         "JSON.parse native SyntaxError unexpectedly used the caller realm",
     );
-}
-
-fn object_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> ObjectRef {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Value::Object(value) = context
-        .get_property(object, &key)
-        .unwrap_or_else(|error| panic!("read object property {name}: {error}"))
-    else {
-        panic!("{name} was not an object property");
-    };
-    value
 }

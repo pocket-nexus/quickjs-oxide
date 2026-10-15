@@ -1,8 +1,9 @@
 use crate::object_graph_observation::{int_property, intrinsic_prototype};
 use crate::runtime_observation::host_runtime;
+use crate::runtime_observation::take_exception_object;
 use crate::runtime_observation::{property_callable, string_property};
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Context, JsString, ObjectRef, RuntimeError, Value};
+use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_split`
 // (`quickjs.c` 45894-45980) and its prototype-table entry (46640).
@@ -171,14 +172,4 @@ fn detached_string_split_and_result_retain_then_release_their_defining_realm() {
         0,
         "split callable, result, and defining realm must be collectable",
     );
-}
-
-fn take_exception_object(context: &mut Context, description: &str) -> ObjectRef {
-    let Some(Value::Object(error)) = context
-        .take_exception()
-        .unwrap_or_else(|failure| panic!("take {description}: {failure}"))
-    else {
-        panic!("{description} was not an object");
-    };
-    error
 }
