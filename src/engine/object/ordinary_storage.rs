@@ -325,6 +325,37 @@ pub(crate) fn prototypes_allow_dense_append(
     ))
 }
 
+/// No object from `object` up its prototype chain has a property `atom`, and
+/// none is exotic for it: an indexed read of `atom` is `undefined` without
+/// observable steps. The first object may be the receiver itself.
+pub(crate) fn chain_lacks_property(
+    state: &RuntimeState,
+    atom: Atom,
+    mut object: Option<ObjectId>,
+) -> Result<bool, RuntimeError> {
+    while let Some(id) = object {
+        let data = state.heap.object(id)?;
+        if let ObjectPayload::Array { dense } = &data.payload
+            && let Some(index) = state.atoms.array_index(atom)?
+        {
+            if dense
+                .as_ref()
+                .is_some_and(|values| (index as usize) < values.len())
+                || locate_in(state, data, atom)?.is_some()
+            {
+                return Ok(false);
+            }
+            object = state.heap.shape(data.shape)?.prototype();
+            continue;
+        }
+        match select_set_slot(state, id, atom)? {
+            BorrowedSet::Missing(next) => object = next,
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
 /// Continue an already-selected missing own property under the current borrow.
 /// Exotic boundaries return before changing the receiver; the caller consumes
 /// a local definition's same-borrow selection in the shared storage kernel.

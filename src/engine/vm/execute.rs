@@ -2391,8 +2391,56 @@ fn execute_admitted_in_state(
                     ));
                 }
             },
-            _ => return Ok(action),
+            // Every other action leaves the segment unless one of the
+            // out-of-line completions below finishes it on this frame. One
+            // call here keeps the action match's shape in the dispatch body.
+            _ => {
+                if !complete_in_segment(runtime, state, &mut segment, action)? {
+                    return Ok(action);
+                }
+            }
         }
+    }
+}
+
+/// Actions whose common cases complete without leaving the segment. Each
+/// helper leaves every operand in place when it declines.
+///
+/// `cold` keeps the call path out of the dispatch body's code generation: as
+/// a plain call it made AWFY Mandelbrot 9 of 15 x86 link layouts slower by
+/// more than 3% (the default one by about 4%) with unchanged instructions.
+#[cold]
+#[inline(never)]
+fn complete_in_segment(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    segment: &mut FrameExecution<'_>,
+    action: VmAction,
+) -> Result<bool, Error> {
+    match action {
+        VmAction::Numeric {
+            kind: super::numeric::operation::NumericKind::Add,
+            fallthrough,
+        } => string_add::try_complete(runtime, state, segment, fallthrough),
+        VmAction::Environment(super::environment_driver::Operation::Iterator(
+            super::iterator_driver::Operation::Next(offset),
+        )) => for_of::try_next(runtime, state, segment, offset),
+        VmAction::GetElement {
+            keep_receiver,
+            keep_key,
+            fallthrough,
+        } => element_read::try_complete(
+            runtime,
+            state,
+            segment,
+            keep_receiver,
+            keep_key,
+            fallthrough,
+        ),
+        VmAction::ClassInitializer(super::construct_driver::InitializerKind::Instance) => {
+            class_initializer::try_skip_absent(runtime, state, segment)
+        }
+        _ => Ok(false),
     }
 }
 
@@ -3894,6 +3942,10 @@ mod named_native_fact_tests;
 mod array_allocation_tests;
 
 mod array_allocation;
+mod class_initializer;
+mod element_read;
+mod for_of;
 mod leaf_native;
+mod string_add;
 
 pub(super) mod named_read;

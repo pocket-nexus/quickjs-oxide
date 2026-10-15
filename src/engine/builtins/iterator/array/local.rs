@@ -14,8 +14,7 @@ impl ArrayNextStep {
         index: u32,
         kind: ArrayIteratorKind,
     ) -> Result<Option<JsValue>, RuntimeError> {
-        use crate::engine::atom::{AtomKind, AtomSpelling};
-        use crate::engine::heap::{ObjectKind, RawValue};
+        use crate::engine::heap::RawValue;
         if kind == ArrayIteratorKind::KeyAndValue
             || !iterator.belongs_to(runtime)
             || runtime.0.deferred_references.has_pending()
@@ -25,16 +24,7 @@ impl ArrayNextStep {
         let Ok(mut state) = runtime.0.state.try_borrow_mut() else {
             return Ok(None);
         };
-        if state.heap.has_pending_zero_cleanup() {
-            return Ok(None);
-        }
-        let object = state.heap.object(source)?;
-        if object.kind != ObjectKind::Array {
-            return Ok(None);
-        }
-        let Some(raw) = object.dense_array_value(index) else {
-            // Sparse/slow elements retain the ordinary lookup and its exact
-            // post-increment getter/error ordering, even for Key mode.
+        let Some((raw, next_index)) = dense_next_in_state(&state, source, index, kind)? else {
             return Ok(None);
         };
         let value = match (kind, raw) {
@@ -43,41 +33,11 @@ impl ArrayNextStep {
             }
             (_, RawValue::Undefined) => JsValue::Undefined,
             (_, RawValue::Null) => JsValue::Null,
-            (_, RawValue::Bool(value)) => JsValue::Bool(*value),
-            (_, RawValue::Int(value)) => JsValue::Int(*value),
-            (_, RawValue::Float(value)) => JsValue::Float(*value),
-            (_, RawValue::ShortBigInt(value)) => JsValue::ShortBigInt(*value),
+            (_, RawValue::Bool(value)) => JsValue::Bool(value),
+            (_, RawValue::Int(value)) => JsValue::Int(value),
+            (_, RawValue::Float(value)) => JsValue::Float(value),
+            (_, RawValue::ShortBigInt(value)) => JsValue::ShortBigInt(value),
             _ => return Ok(None),
-        };
-        let shape = state.heap.shape(object.shape)?;
-        let Some(first) = shape.entries().first() else {
-            return Ok(None);
-        };
-        let length = first.atom;
-        // Borrow the already-owned mandatory property name; a malformed or
-        // unexpected layout falls back to the original interned-key accessor.
-        // The stored unbranded index is re-branded at this table boundary.
-        let length = state.atoms.brand(length)?;
-        let info = state.atoms.resolve(length)?;
-        let AtomSpelling::Text(text) = info.spelling else {
-            return Ok(None);
-        };
-        if info.kind != AtomKind::String
-            || text.len() != 6
-            || !b"length"
-                .iter()
-                .enumerate()
-                .all(|(i, b)| text.code_unit_at(i) == Some(u16::from(*b)))
-        {
-            return Ok(None);
-        }
-        let Some((length, _)) = Runtime::array_length_state_in_heap(&state.heap, source, length)?
-        else {
-            return Ok(None);
-        };
-        let Some(next_index) = live_next_index(index, length) else {
-            // Completion releases the source edge and can drain cleanup.
-            return Ok(None);
         };
         state
             .heap
@@ -138,6 +98,64 @@ impl ArrayNextStep {
             };
         }
     }
+}
+
+/// The dense element an Array iterator yields next and the index it then
+/// stores, without mutating anything. `None` is any case that needs the
+/// ordinary lookup: a pending zero cleanup, a non-Array or non-dense source,
+/// a malformed `length` layout, or the end of the Array (whose completion
+/// releases the source edge). The caller advances the iterator index.
+pub(crate) fn dense_next_in_state(
+    state: &crate::engine::heap::runtime::RuntimeState,
+    source: crate::engine::heap::ObjectId,
+    index: u32,
+    kind: ArrayIteratorKind,
+) -> Result<Option<(crate::engine::heap::RawValue, u32)>, RuntimeError> {
+    use crate::engine::atom::{AtomKind, AtomSpelling};
+    use crate::engine::heap::ObjectKind;
+    if kind == ArrayIteratorKind::KeyAndValue || state.heap.has_pending_zero_cleanup() {
+        return Ok(None);
+    }
+    let object = state.heap.object(source)?;
+    if object.kind != ObjectKind::Array {
+        return Ok(None);
+    }
+    let Some(raw) = object.dense_array_value(index).cloned() else {
+        // Sparse/slow elements retain the ordinary lookup and its exact
+        // post-increment getter/error ordering, even for Key mode.
+        return Ok(None);
+    };
+    let shape = state.heap.shape(object.shape)?;
+    let Some(first) = shape.entries().first() else {
+        return Ok(None);
+    };
+    let length = first.atom;
+    // Borrow the already-owned mandatory property name; a malformed or
+    // unexpected layout falls back to the original interned-key accessor.
+    // The stored unbranded index is re-branded at this table boundary.
+    let length = state.atoms.brand(length)?;
+    let info = state.atoms.resolve(length)?;
+    let AtomSpelling::Text(text) = info.spelling else {
+        return Ok(None);
+    };
+    if info.kind != AtomKind::String
+        || text.len() != 6
+        || !b"length"
+            .iter()
+            .enumerate()
+            .all(|(i, b)| text.code_unit_at(i) == Some(u16::from(*b)))
+    {
+        return Ok(None);
+    }
+    let Some((length, _)) = Runtime::array_length_state_in_heap(&state.heap, source, length)?
+    else {
+        return Ok(None);
+    };
+    let Some(next_index) = live_next_index(index, length) else {
+        // Completion releases the source edge and can drain cleanup.
+        return Ok(None);
+    };
+    Ok(Some((raw, next_index)))
 }
 
 #[cfg(test)]

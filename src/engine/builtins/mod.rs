@@ -223,7 +223,7 @@ pub(crate) use string::{StringReplaceResume, StringReplaceStep};
 
 pub(crate) use array::mutation::MutationKind as ArrayMutationKind;
 
-pub(crate) use iterator::array::{ArrayNextResume, ArrayNextStep};
+pub(crate) use iterator::array::{ArrayNextResume, ArrayNextStep, dense_next_in_state};
 
 pub(crate) use object::ObjectIteratorStep;
 
