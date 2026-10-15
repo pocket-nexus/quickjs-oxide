@@ -457,10 +457,6 @@ pub(crate) fn error_name(
     value.to_utf8_lossy()
 }
 
-pub(crate) fn eval_text(context: &mut Context, source: &str) -> String {
-    primitive_value_text_with_rust_float(context.eval(source).unwrap())
-}
-
 pub(crate) fn hex_bytes(bytes: &[u8]) -> String {
     bytes
         .iter()

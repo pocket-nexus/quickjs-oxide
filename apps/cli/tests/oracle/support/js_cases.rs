@@ -4,7 +4,8 @@
 // the comparison mode (default `completion`). Text before the first
 // `// case: <name>` marker is a prelude prepended to every case; each marker
 // starts one independently evaluated case. A file without markers is a single
-// case named after the file. A prelude line `// prelude: <name>` splices in
+// case named after the file. In completion modes a case may hold several
+// global scripts separated by `// ---` lines, run in order in one realm. A prelude line `// prelude: <name>` splices in
 // the shared prelude `oracle/preludes/<name>.js`.
 //
 // - `completion`: evaluate prelude + case as a global script in a fresh
@@ -220,20 +221,13 @@ const OXIDE_FORMATTER: &str = r"(function (kind, value, arrays) {
   return kind + '|' + typeof value + '|' + String(value);
 })";
 
-/// Evaluate the case in a fresh runtime and format its completion in JS.
+/// Separates the scripts of a sequence case; they run one after another as
+/// separate global scripts in the same realm, one completion line each.
+const SCRIPT_SEPARATOR: &str = "\n// ---\n";
+
+/// Evaluate the case in a fresh runtime and format its completion(s) in JS.
 fn observe_oxide_completion(case: &Case, arrays: bool) -> String {
     let (runtime, mut context) = host_runtime_context();
-    let (kind, value) = match context.eval(&case.source) {
-        Ok(value) => ("return", value),
-        Err(RuntimeError::Exception) => (
-            "throw",
-            context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("{}: take exception: {error}", case.name))
-                .unwrap_or_else(|| panic!("{}: exception was missing", case.name)),
-        ),
-        Err(error) => panic!("Rust engine failure for {}: {error}", case.name),
-    };
     let Ok(Value::Object(formatter)) = context.eval(OXIDE_FORMATTER) else {
         panic!("{}: formatter did not evaluate", case.name);
     };
@@ -241,15 +235,30 @@ fn observe_oxide_completion(case: &Case, arrays: bool) -> String {
         .as_callable(&formatter)
         .unwrap()
         .expect("formatter is callable");
-    let kind = Value::String(JsString::try_from_utf8(kind).unwrap());
-    match context.call(
-        &formatter,
-        Value::Undefined,
-        &[kind, value, Value::Bool(arrays)],
-    ) {
-        Ok(Value::String(text)) => text.to_utf8_lossy(),
-        other => panic!("{}: formatting the completion failed: {other:?}", case.name),
+    let mut lines = Vec::new();
+    for script in case.source.split(SCRIPT_SEPARATOR) {
+        let (kind, value) = match context.eval(script) {
+            Ok(value) => ("return", value),
+            Err(RuntimeError::Exception) => (
+                "throw",
+                context
+                    .take_exception()
+                    .unwrap_or_else(|error| panic!("{}: take exception: {error}", case.name))
+                    .unwrap_or_else(|| panic!("{}: exception was missing", case.name)),
+            ),
+            Err(error) => panic!("Rust engine failure for {}: {error}", case.name),
+        };
+        let kind = Value::String(JsString::try_from_utf8(kind).unwrap());
+        match context.call(
+            &formatter,
+            Value::Undefined,
+            &[kind, value, Value::Bool(arrays)],
+        ) {
+            Ok(Value::String(text)) => lines.push(text.to_utf8_lossy()),
+            other => panic!("{}: formatting the completion failed: {other:?}", case.name),
+        }
     }
+    lines.join("\n")
 }
 
 /// Like [`observe_oxide_completion`], but returned values and thrown
@@ -334,8 +343,32 @@ fn without_teardown_leak(observation: String) -> String {
     )
 }
 
+// Runs inside a function so the observer declares no globals of its own.
+const SEQUENCE_OBSERVER: &str = r"(function () {
+var scripts = std.in.readAsString().split('\n// ---\n');
+for (var index = 0; index < scripts.length; index++) {
+  try {
+    var value = std.evalScript(scripts[index]);
+    print('return|' + typeof value + '|' + String(value));
+  } catch (error) {
+    if (error !== null && typeof error === 'object')
+      print('throw|object|' + error.name + '|' + error.message);
+    else
+      print('throw|' + typeof error + '|' + String(error));
+  }
+}
+})();
+";
+
 fn observe_quickjs_completion(oracle: &OsStr, case: &Case) -> String {
-    let output = crate::quickjs_oracle::observe_completion_output(oracle, &case.source, &case.name);
+    let output = crate::quickjs_oracle::run_stdin_utf8(
+        oracle,
+        SEQUENCE_OBSERVER,
+        None,
+        &case.source,
+        &case.name,
+        "completion observer",
+    );
     output.strip_suffix('\n').unwrap_or(&output).to_owned()
 }
 

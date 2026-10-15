@@ -18,6 +18,7 @@ const DIRECTORIES: &[&str] = &[
     "object",
     "operators",
     "primitive_intrinsics",
+    "program_declarations",
     "proxy_reflect",
     "regexp",
     "string",
@@ -102,6 +103,11 @@ fn operators() {
 #[test]
 fn primitive_intrinsics() {
     run_case_directory("primitive_intrinsics");
+}
+
+#[test]
+fn program_declarations() {
+    run_case_directory("program_declarations");
 }
 
 #[test]
