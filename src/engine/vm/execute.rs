@@ -2379,46 +2379,6 @@ fn execute_admitted_in_state(
                 profile!(record_owned_execution_event("core.internal_construct"));
                 continue;
             }
-            VmAction::Numeric {
-                kind: super::numeric::operation::NumericKind::Add,
-                fallthrough,
-            } => {
-                if !string_add::try_complete(runtime, state, &mut segment, fallthrough)? {
-                    return Ok(action);
-                }
-                continue;
-            }
-            VmAction::Environment(super::environment_driver::Operation::Iterator(
-                super::iterator_driver::Operation::Next(offset),
-            )) => {
-                if !for_of::try_next(runtime, state, &mut segment, offset)? {
-                    return Ok(action);
-                }
-                continue;
-            }
-            VmAction::GetElement {
-                keep_receiver,
-                keep_key,
-                fallthrough,
-            } => {
-                if !element_read::try_complete(
-                    runtime,
-                    state,
-                    &mut segment,
-                    keep_receiver,
-                    keep_key,
-                    fallthrough,
-                )? {
-                    return Ok(action);
-                }
-                continue;
-            }
-            VmAction::ClassInitializer(super::construct_driver::InitializerKind::Instance) => {
-                if !class_initializer::try_skip_absent(runtime, state, &mut segment)? {
-                    return Ok(action);
-                }
-                continue;
-            }
             VmAction::Complete => match segment.finish_ordinary(runtime, state)? {
                 super::driver::ordinary::ReturnProgress::Returned => {
                     profile!(record_owned_execution_event("core.internal_return"));
@@ -2431,8 +2391,51 @@ fn execute_admitted_in_state(
                     ));
                 }
             },
-            _ => return Ok(action),
+            // Every other action leaves the segment unless one of the
+            // out-of-line completions below finishes it on this frame. One
+            // call here keeps the action match's shape in the dispatch body.
+            _ => {
+                if !complete_in_segment(runtime, state, &mut segment, &action)? {
+                    return Ok(action);
+                }
+            }
         }
+    }
+}
+
+/// Actions whose common cases complete without leaving the segment. Each
+/// helper leaves every operand in place when it declines.
+#[inline(never)]
+fn complete_in_segment(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
+    segment: &mut FrameExecution<'_>,
+    action: &VmAction,
+) -> Result<bool, Error> {
+    match *action {
+        VmAction::Numeric {
+            kind: super::numeric::operation::NumericKind::Add,
+            fallthrough,
+        } => string_add::try_complete(runtime, state, segment, fallthrough),
+        VmAction::Environment(super::environment_driver::Operation::Iterator(
+            super::iterator_driver::Operation::Next(offset),
+        )) => for_of::try_next(runtime, state, segment, offset),
+        VmAction::GetElement {
+            keep_receiver,
+            keep_key,
+            fallthrough,
+        } => element_read::try_complete(
+            runtime,
+            state,
+            segment,
+            keep_receiver,
+            keep_key,
+            fallthrough,
+        ),
+        VmAction::ClassInitializer(super::construct_driver::InitializerKind::Instance) => {
+            class_initializer::try_skip_absent(runtime, state, segment)
+        }
+        _ => Ok(false),
     }
 }
 
