@@ -9,6 +9,7 @@ use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::AtomKind;
+use crate::engine::object::builtin_properties::{BuiltinEntry, method, to_string_tag};
 
 use crate::engine::builtins::native::{NativeFunctionId, WeakMapNativeKind, WeakSetNativeKind};
 use crate::engine::heap::{
@@ -55,117 +56,41 @@ impl Runtime {
         object_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        self.initialize_weak_map_intrinsic(
-            realm,
-            function_prototype,
-            object_prototype,
-            global_object,
-        )?;
-        self.initialize_weak_set_intrinsic(
-            realm,
-            function_prototype,
-            object_prototype,
-            global_object,
-        )
-    }
-
-    fn initialize_weak_map_intrinsic(
-        &self,
-        realm: ContextId,
-        function_prototype: &ObjectRef,
-        object_prototype: &ObjectRef,
-        global_object: &ObjectRef,
-    ) -> Result<(), RuntimeError> {
-        let prototype = self.new_object(Some(object_prototype))?;
-        for (kind, name, length, readable) in [
-            (WeakMapNativeKind::Set, "set", 2, 2),
-            (WeakMapNativeKind::Get, "get", 1, 1),
-            (WeakMapNativeKind::GetOrInsert, "getOrInsert", 2, 2),
-            (
-                WeakMapNativeKind::GetOrInsertComputed,
-                "getOrInsertComputed",
-                2,
-                2,
-            ),
-            (WeakMapNativeKind::Has, "has", 1, 1),
-            (WeakMapNativeKind::Delete, "delete", 1, 1),
-        ] {
-            self.define_native_builtin_auto_init(
-                &prototype,
-                realm,
-                NativeFunctionId::WeakMap(kind),
-                name,
-                length,
-                readable,
-            )?;
-        }
-        self.define_to_string_tag(&prototype, "WeakMap")?;
-
-        let constructor = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::WeakMap(WeakMapNativeKind::Constructor),
-            1,
-            "WeakMap",
-            0,
-        )?;
-        self.define_function_data_property(
-            global_object,
-            "WeakMap",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
-        self.define_constructor_relationship(&constructor, &prototype)?;
+        use NativeFunctionId::{WeakMap as M, WeakSet as S};
+        use WeakMapNativeKind as MK;
+        use WeakSetNativeKind as SK;
+        const WEAK_MAP_PROTOTYPE: &[BuiltinEntry] = &[
+            method(M(MK::Set), "set", 2, 2),
+            method(M(MK::Get), "get", 1, 1),
+            method(M(MK::GetOrInsert), "getOrInsert", 2, 2),
+            method(M(MK::GetOrInsertComputed), "getOrInsertComputed", 2, 2),
+            method(M(MK::Has), "has", 1, 1),
+            method(M(MK::Delete), "delete", 1, 1),
+            to_string_tag("WeakMap"),
+        ];
+        const WEAK_SET_PROTOTYPE: &[BuiltinEntry] = &[
+            method(S(SK::Add), "add", 1, 1),
+            method(S(SK::Has), "has", 1, 1),
+            method(S(SK::Delete), "delete", 1, 1),
+            to_string_tag("WeakSet"),
+        ];
+        let install = |name, entries, target| -> Result<ObjectRef, RuntimeError> {
+            let prototype = self.new_object(Some(object_prototype))?;
+            self.define_builtin_entries(&prototype, realm, entries)?;
+            let constructor =
+                self.new_native_builtin(function_prototype, realm, target, 1, name, 0)?;
+            self.define_global_function(global_object, name, &constructor)?;
+            self.define_constructor_relationship(&constructor, &prototype)?;
+            Ok(prototype)
+        };
+        let prototype = install("WeakMap", WEAK_MAP_PROTOTYPE, M(MK::Constructor))?;
         self.0.state.borrow_mut().heap.attach_weak_map_intrinsics(
             realm,
             WeakMapRealmData {
                 prototype: prototype.object_id(),
             },
         )?;
-        Ok(())
-    }
-
-    fn initialize_weak_set_intrinsic(
-        &self,
-        realm: ContextId,
-        function_prototype: &ObjectRef,
-        object_prototype: &ObjectRef,
-        global_object: &ObjectRef,
-    ) -> Result<(), RuntimeError> {
-        let prototype = self.new_object(Some(object_prototype))?;
-        for (kind, name, length, readable) in [
-            (WeakSetNativeKind::Add, "add", 1, 1),
-            (WeakSetNativeKind::Has, "has", 1, 1),
-            (WeakSetNativeKind::Delete, "delete", 1, 1),
-        ] {
-            self.define_native_builtin_auto_init(
-                &prototype,
-                realm,
-                NativeFunctionId::WeakSet(kind),
-                name,
-                length,
-                readable,
-            )?;
-        }
-        self.define_to_string_tag(&prototype, "WeakSet")?;
-
-        let constructor = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::WeakSet(WeakSetNativeKind::Constructor),
-            1,
-            "WeakSet",
-            0,
-        )?;
-        self.define_function_data_property(
-            global_object,
-            "WeakSet",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
-        self.define_constructor_relationship(&constructor, &prototype)?;
+        let prototype = install("WeakSet", WEAK_SET_PROTOTYPE, S(SK::Constructor))?;
         self.0.state.borrow_mut().heap.attach_weak_set_intrinsics(
             realm,
             WeakSetRealmData {

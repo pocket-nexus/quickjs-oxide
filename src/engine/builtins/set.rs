@@ -14,10 +14,10 @@ use crate::engine::builtins::native::{
     MapNativeKind, NativeFunctionId, SetIteratorKind, SetNativeKind,
 };
 use crate::engine::heap::{ContextId, HeapError, ObjectData, ObjectPayload, SetRealmData};
-use crate::engine::object::{
-    AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    WellKnownSymbol,
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, BuiltinKey, alias, builtin_getter, method, species_getter, to_string_tag,
 };
+use crate::engine::object::{ObjectRef, WellKnownSymbol};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
@@ -35,158 +35,48 @@ impl Runtime {
         iterator_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let set_prototype = self.new_object(Some(object_prototype))?;
-        let set_iterator_prototype = self.new_object(Some(iterator_prototype))?;
-
-        for (kind, name, length, readable) in [
-            (SetNativeKind::Add, "add", 1, 1),
-            (SetNativeKind::Has, "has", 1, 1),
-            (SetNativeKind::Delete, "delete", 1, 1),
-            (SetNativeKind::Clear, "clear", 0, 0),
-        ] {
-            self.define_native_builtin_auto_init(
-                &set_prototype,
-                realm,
-                NativeFunctionId::Set(kind),
-                name,
-                length,
-                readable,
-            )?;
-        }
-        self.define_native_builtin_getter_on(
-            &set_prototype,
-            function_prototype,
-            realm,
-            NativeFunctionId::Set(SetNativeKind::Size),
-            "size",
-            "get size",
-        )?;
-        for (kind, name, length, readable) in [
-            (SetNativeKind::ForEach, "forEach", 1, 2),
-            (SetNativeKind::IsDisjointFrom, "isDisjointFrom", 1, 1),
-            (SetNativeKind::IsSubsetOf, "isSubsetOf", 1, 1),
-            (SetNativeKind::IsSupersetOf, "isSupersetOf", 1, 1),
-            (SetNativeKind::Intersection, "intersection", 1, 1),
-            (SetNativeKind::Difference, "difference", 1, 1),
-            (
-                SetNativeKind::SymmetricDifference,
-                "symmetricDifference",
-                1,
-                1,
-            ),
-            (SetNativeKind::Union, "union", 1, 1),
-        ] {
-            self.define_native_builtin_auto_init(
-                &set_prototype,
-                realm,
-                NativeFunctionId::Set(kind),
-                name,
-                length,
-                readable,
-            )?;
-        }
-
-        self.define_native_builtin_auto_init(
-            &set_prototype,
-            realm,
-            NativeFunctionId::Set(SetNativeKind::Iterator(SetIteratorKind::Value)),
-            "values",
-            0,
-            0,
-        )?;
+        use BuiltinKey::{Name, Symbol};
+        use NativeFunctionId::Set as F;
+        use SetIteratorKind as I;
+        use SetNativeKind as K;
         // QuickJS installs both aliases from the exact values-function object,
         // before `entries`; preserving that order is observable in ownKeys.
-        let values_key =
-            self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
-        let values = match self.get_property_in_realm(realm, &set_prototype, &values_key)? {
-            Completion::Return(JsValue::Object(id)) => {
-                ObjectRef::from_owned_handle(self.clone(), id)
-            }
-            Completion::Return(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "Set.prototype.values was not callable during bootstrap",
-                ));
-            }
-            Completion::Throw(value) => {
-                self.release_jsvalue(value)?;
-                return Err(RuntimeError::Invariant(
-                    "Set.prototype.values initialization threw during bootstrap",
-                ));
-            }
-        };
-        let keys_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Keys)?;
-        self.define_set_alias(&set_prototype, &keys_key, &values)?;
-        let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
-        self.define_set_alias(&set_prototype, &iterator_key, &values)?;
-        self.define_native_builtin_auto_init(
-            &set_prototype,
-            realm,
-            NativeFunctionId::Set(SetNativeKind::Iterator(SetIteratorKind::KeyAndValue)),
-            "entries",
-            0,
-            0,
-        )?;
-        self.define_to_string_tag(&set_prototype, "Set")?;
-
-        self.define_native_builtin_auto_init(
-            &set_iterator_prototype,
-            realm,
-            NativeFunctionId::SetIteratorNext,
-            "next",
-            0,
-            0,
-        )?;
-        self.define_to_string_tag(&set_iterator_prototype, "Set Iterator")?;
-
-        let constructor = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::Set(SetNativeKind::Constructor),
-            1,
-            "Set",
-            0,
-        )?;
-        self.define_native_builtin_auto_init(
-            constructor.as_object(),
-            realm,
-            NativeFunctionId::Set(SetNativeKind::GroupBy),
-            "groupBy",
-            2,
-            2,
-        )?;
-        let species_getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::Set(SetNativeKind::Species),
-            0,
-            "get [Symbol.species]",
-            0,
-        )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
-        if !self.define_own_property(
-            constructor.as_object(),
-            &species,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(species_getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Set species definition was rejected",
-            ));
-        }
-
-        self.define_function_data_property(
-            global_object,
-            "Set",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F(K::Add), "add", 1, 1),
+            method(F(K::Has), "has", 1, 1),
+            method(F(K::Delete), "delete", 1, 1),
+            method(F(K::Clear), "clear", 0, 0),
+            builtin_getter!(F(K::Size), "size"),
+            method(F(K::ForEach), "forEach", 1, 2),
+            method(F(K::IsDisjointFrom), "isDisjointFrom", 1, 1),
+            method(F(K::IsSubsetOf), "isSubsetOf", 1, 1),
+            method(F(K::IsSupersetOf), "isSupersetOf", 1, 1),
+            method(F(K::Intersection), "intersection", 1, 1),
+            method(F(K::Difference), "difference", 1, 1),
+            method(F(K::SymmetricDifference), "symmetricDifference", 1, 1),
+            method(F(K::Union), "union", 1, 1),
+            method(F(K::Iterator(I::Value)), "values", 0, 0),
+            alias(Name("keys"), Name("values")),
+            alias(Symbol(WellKnownSymbol::Iterator), Name("values")),
+            method(F(K::Iterator(I::KeyAndValue)), "entries", 0, 0),
+            to_string_tag("Set"),
+        ];
+        const ITERATOR_PROTOTYPE: &[BuiltinEntry] = &[
+            method(NativeFunctionId::SetIteratorNext, "next", 0, 0),
+            to_string_tag("Set Iterator"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F(K::GroupBy), "groupBy", 2, 2),
+            species_getter(F(K::Species)),
+        ];
+        let set_prototype = self.new_object(Some(object_prototype))?;
+        let set_iterator_prototype = self.new_object(Some(iterator_prototype))?;
+        self.define_builtin_entries(&set_prototype, realm, PROTOTYPE)?;
+        self.define_builtin_entries(&set_iterator_prototype, realm, ITERATOR_PROTOTYPE)?;
+        let constructor =
+            self.new_native_builtin(function_prototype, realm, F(K::Constructor), 1, "Set", 0)?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
+        self.define_global_function(global_object, "Set", &constructor)?;
         self.define_constructor_relationship(&constructor, &set_prototype)?;
         self.0.state.borrow_mut().heap.attach_set_intrinsics(
             realm,
@@ -195,30 +85,6 @@ impl Runtime {
                 iterator_prototype: set_iterator_prototype.object_id(),
             },
         )?;
-        Ok(())
-    }
-
-    fn define_set_alias(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        value: &ObjectRef,
-    ) -> Result<(), RuntimeError> {
-        if !self.define_raw_property(
-            object,
-            key,
-            &crate::engine::object::property::PropertyDescriptor {
-                value: Some(crate::engine::heap::RawValue::Object(value.object_id())),
-                writable: Some(true),
-                enumerable: Some(false),
-                configurable: Some(true),
-                ..Default::default()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Set intrinsic alias definition was rejected",
-            ));
-        }
         Ok(())
     }
 

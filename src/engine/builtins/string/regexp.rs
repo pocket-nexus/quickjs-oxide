@@ -1,6 +1,5 @@
 //! RegExp-backed String prototype methods.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
@@ -99,16 +98,6 @@ impl Runtime {
     }
 }
 
-impl StringProtocolKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::StringPrototypeMatch => Self::Match,
-            NativeFunctionId::StringPrototypeMatchAll => Self::MatchAll,
-            NativeFunctionId::StringPrototypeSearch => Self::Search,
-            _ => return None,
-        })
-    }
-}
 pub(crate) enum StringProtocolStep {
     Complete(Completion),
     Read { resume: StringProtocolResume },

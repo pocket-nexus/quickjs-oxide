@@ -55,11 +55,13 @@ use crate::engine::{
     builtins::native::NativeFunctionId,
     heap::ContextId,
     object::{
-        AccessorValue, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-        WellKnownSymbol,
+        ObjectRef, WellKnownSymbol,
+        builtin_properties::{
+            BuiltinEntry, METHOD_FLAGS, builtin_getter, method, species_getter, symbol_method,
+            to_string_tag,
+        },
         shape::{PropertyFlags, ShapeEntry},
     },
-    value::Value,
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -81,193 +83,68 @@ impl Runtime {
         iterator_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let regexp_prototype = self.new_object(Some(object_prototype))?;
-        let regexp_string_iterator_prototype = self.new_object(Some(iterator_prototype))?;
-        self.define_native_builtin_auto_init(
-            &regexp_string_iterator_prototype,
-            realm,
-            NativeFunctionId::RegExpStringIteratorNext,
-            "next",
-            0,
-            0,
-        )?;
-        self.define_to_string_tag(&regexp_string_iterator_prototype, "RegExp String Iterator")?;
+        use NativeFunctionId::RegExp as F;
+        use RegExpFlagKind as Flag;
+        use RegExpNativeKind as K;
+        use WellKnownSymbol as S;
         // Preserve pinned source-table order.  OrdinaryOwnPropertyKeys later
         // performs its own integer/String/Symbol grouping.
-        for (kind, property_name, getter_name) in [
-            (RegExpNativeKind::Flags, "flags", "get flags"),
-            (RegExpNativeKind::Source, "source", "get source"),
-        ] {
-            self.define_native_builtin_getter_on(
-                &regexp_prototype,
-                function_prototype,
-                realm,
-                NativeFunctionId::RegExp(kind),
-                property_name,
-                getter_name,
-            )?;
-        }
-        for kind in [
-            RegExpFlagKind::Global,
-            RegExpFlagKind::IgnoreCase,
-            RegExpFlagKind::Multiline,
-            RegExpFlagKind::DotAll,
-            RegExpFlagKind::Unicode,
-            RegExpFlagKind::UnicodeSets,
-            RegExpFlagKind::Sticky,
-            RegExpFlagKind::HasIndices,
-        ] {
-            self.define_native_builtin_getter_on(
-                &regexp_prototype,
-                function_prototype,
-                realm,
-                NativeFunctionId::RegExp(RegExpNativeKind::Flag(kind)),
-                regexp_flag_property_name(kind),
-                regexp_flag_getter_name(kind),
-            )?;
-        }
-        for (kind, name, length, min_readable_args) in [
-            (RegExpNativeKind::Exec, "exec", 1, 1),
-            (RegExpNativeKind::Compile, "compile", 2, 2),
-            (RegExpNativeKind::Test, "test", 1, 1),
-            (RegExpNativeKind::ToString, "toString", 0, 0),
-        ] {
-            self.define_native_builtin_auto_init(
-                &regexp_prototype,
-                realm,
-                NativeFunctionId::RegExp(kind),
-                name,
-                length,
-                min_readable_args,
-            )?;
-        }
-        let replace_key = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::Replace)
-                .expect("well-known symbol"),
-        );
-        self.define_native_builtin_auto_init_with_key(
-            &regexp_prototype,
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            builtin_getter!(F(K::Flags), "flags"),
+            builtin_getter!(F(K::Source), "source"),
+            builtin_getter!(F(K::Flag(Flag::Global)), "global"),
+            builtin_getter!(F(K::Flag(Flag::IgnoreCase)), "ignoreCase"),
+            builtin_getter!(F(K::Flag(Flag::Multiline)), "multiline"),
+            builtin_getter!(F(K::Flag(Flag::DotAll)), "dotAll"),
+            builtin_getter!(F(K::Flag(Flag::Unicode)), "unicode"),
+            builtin_getter!(F(K::Flag(Flag::UnicodeSets)), "unicodeSets"),
+            builtin_getter!(F(K::Flag(Flag::Sticky)), "sticky"),
+            builtin_getter!(F(K::Flag(Flag::HasIndices)), "hasIndices"),
+            method(F(K::Exec), "exec", 1, 1),
+            method(F(K::Compile), "compile", 2, 2),
+            method(F(K::Test), "test", 1, 1),
+            method(F(K::ToString), "toString", 0, 0),
+            symbol_method(
+                S::Replace,
+                F(K::Replace),
+                "[Symbol.replace]",
+                2,
+                METHOD_FLAGS,
+            ),
+            symbol_method(S::Match, F(K::Match), "[Symbol.match]", 1, METHOD_FLAGS),
+            symbol_method(
+                S::MatchAll,
+                F(K::MatchAll),
+                "[Symbol.matchAll]",
+                1,
+                METHOD_FLAGS,
+            ),
+            symbol_method(S::Search, F(K::Search), "[Symbol.search]", 1, METHOD_FLAGS),
+            symbol_method(S::Split, F(K::Split), "[Symbol.split]", 2, METHOD_FLAGS),
+        ];
+        const STRING_ITERATOR_PROTOTYPE: &[BuiltinEntry] = &[
+            method(NativeFunctionId::RegExpStringIteratorNext, "next", 0, 0),
+            to_string_tag("RegExp String Iterator"),
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F(K::Escape), "escape", 1, 1),
+            species_getter(F(K::Species)),
+        ];
+        let regexp_prototype = self.new_object(Some(object_prototype))?;
+        let regexp_string_iterator_prototype = self.new_object(Some(iterator_prototype))?;
+        self.define_builtin_entries(
+            &regexp_string_iterator_prototype,
             realm,
-            &replace_key,
-            NativeFunctionId::RegExp(RegExpNativeKind::Replace),
-            "[Symbol.replace]",
-            2,
-            2,
-            PropertyFlags::data(true, false, true),
+            STRING_ITERATOR_PROTOTYPE,
         )?;
-        let match_key = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::Match)
-                .expect("well-known symbol"),
-        );
-        self.define_native_builtin_auto_init_with_key(
-            &regexp_prototype,
-            realm,
-            &match_key,
-            NativeFunctionId::RegExp(RegExpNativeKind::Match),
-            "[Symbol.match]",
-            1,
-            1,
-            PropertyFlags::data(true, false, true),
-        )?;
-        let match_all_key = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::MatchAll)
-                .expect("well-known symbol"),
-        );
-        self.define_native_builtin_auto_init_with_key(
-            &regexp_prototype,
-            realm,
-            &match_all_key,
-            NativeFunctionId::RegExp(RegExpNativeKind::MatchAll),
-            "[Symbol.matchAll]",
-            1,
-            1,
-            PropertyFlags::data(true, false, true),
-        )?;
-        let search = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::Search)
-                .expect("well-known symbol"),
-        );
-        self.define_native_builtin_auto_init_with_key(
-            &regexp_prototype,
-            realm,
-            &search,
-            NativeFunctionId::RegExp(RegExpNativeKind::Search),
-            "[Symbol.search]",
-            1,
-            1,
-            PropertyFlags::data(true, false, true),
-        )?;
-        let split = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::Split)
-                .expect("well-known symbol"),
-        );
-        self.define_native_builtin_auto_init_with_key(
-            &regexp_prototype,
-            realm,
-            &split,
-            NativeFunctionId::RegExp(RegExpNativeKind::Split),
-            "[Symbol.split]",
-            2,
-            2,
-            PropertyFlags::data(true, false, true),
-        )?;
-
-        let constructor_kind = RegExpNativeKind::Constructor;
-        let constructor = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::RegExp(constructor_kind),
-            2,
-            "RegExp",
-            2,
-        )?;
-        self.define_native_builtin_auto_init(
-            constructor.as_object(),
-            realm,
-            NativeFunctionId::RegExp(RegExpNativeKind::Escape),
-            "escape",
-            1,
-            1,
-        )?;
-
-        let species_kind = RegExpNativeKind::Species;
-        let species_getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::RegExp(species_kind),
-            0,
-            "get [Symbol.species]",
-            0,
-        )?;
-        let species = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::Species)
-                .expect("well-known symbol"),
-        );
-        if !self.define_own_property(
-            constructor.as_object(),
-            &species,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(species_getter)),
-                set: DescriptorField::Present(AccessorValue::Undefined),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "RegExp species definition was rejected",
-            ));
-        }
+        self.define_builtin_entries(&regexp_prototype, realm, PROTOTYPE)?;
+        let constructor =
+            self.new_native_builtin(function_prototype, realm, F(K::Constructor), 2, "RegExp", 2)?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
 
         // JS_NewCConstructor publishes the global before installing the two
         // constructor relationship properties.
-        self.define_function_data_property(
-            global_object,
-            "RegExp",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_global_function(global_object, "RegExp", &constructor)?;
         self.define_constructor_relationship(&constructor, &regexp_prototype)?;
 
         // QuickJS retains a realm-local canonical shape for literal-created
@@ -379,31 +256,5 @@ impl Runtime {
             }
             RegExpNativeKind::Split => self.call_regexp_symbol_split(realm, invocation, arguments),
         }
-    }
-}
-
-const fn regexp_flag_property_name(kind: RegExpFlagKind) -> &'static str {
-    match kind {
-        RegExpFlagKind::HasIndices => "hasIndices",
-        RegExpFlagKind::Global => "global",
-        RegExpFlagKind::IgnoreCase => "ignoreCase",
-        RegExpFlagKind::Multiline => "multiline",
-        RegExpFlagKind::DotAll => "dotAll",
-        RegExpFlagKind::Unicode => "unicode",
-        RegExpFlagKind::UnicodeSets => "unicodeSets",
-        RegExpFlagKind::Sticky => "sticky",
-    }
-}
-
-const fn regexp_flag_getter_name(kind: RegExpFlagKind) -> &'static str {
-    match kind {
-        RegExpFlagKind::HasIndices => "get hasIndices",
-        RegExpFlagKind::Global => "get global",
-        RegExpFlagKind::IgnoreCase => "get ignoreCase",
-        RegExpFlagKind::Multiline => "get multiline",
-        RegExpFlagKind::DotAll => "get dotAll",
-        RegExpFlagKind::Unicode => "get unicode",
-        RegExpFlagKind::UnicodeSets => "get unicodeSets",
-        RegExpFlagKind::Sticky => "get sticky",
     }
 }

@@ -8,6 +8,7 @@ use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{AtomIdx, AtomKind};
+use crate::engine::object::builtin_properties::{BuiltinEntry, method, to_string_tag};
 
 use crate::engine::builtins::native::{
     FinalizationRegistryNativeKind, NativeFunctionId, WeakRefNativeKind,
@@ -16,8 +17,8 @@ use crate::engine::heap::{
     ContextId, HeapError, ObjectId, ObjectPayload, RawValue, WeakCollectionKey, WeakRefRealmData,
 };
 use crate::engine::object::{CallableRef, ObjectRef};
+use crate::engine::value::JsValue;
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -46,71 +47,36 @@ impl Runtime {
         object_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let weak_ref_prototype = self.new_object(Some(object_prototype))?;
-        self.define_native_builtin_auto_init(
-            &weak_ref_prototype,
-            realm,
-            NativeFunctionId::WeakRef(WeakRefNativeKind::Deref),
-            "deref",
-            0,
-            0,
-        )?;
-        self.define_to_string_tag(&weak_ref_prototype, "WeakRef")?;
-        let weak_ref_constructor = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::WeakRef(WeakRefNativeKind::Constructor),
-            1,
+        use FinalizationRegistryNativeKind as FK;
+        use NativeFunctionId::{FinalizationRegistry as F, WeakRef as W};
+        const WEAK_REF_PROTOTYPE: &[BuiltinEntry] = &[
+            method(W(WeakRefNativeKind::Deref), "deref", 0, 0),
+            to_string_tag("WeakRef"),
+        ];
+        const REGISTRY_PROTOTYPE: &[BuiltinEntry] = &[
+            method(F(FK::Register), "register", 2, 3),
+            method(F(FK::Unregister), "unregister", 1, 1),
+            to_string_tag("FinalizationRegistry"),
+        ];
+        let install = |name, entries, target| -> Result<ObjectRef, RuntimeError> {
+            let prototype = self.new_object(Some(object_prototype))?;
+            self.define_builtin_entries(&prototype, realm, entries)?;
+            let constructor =
+                self.new_native_builtin(function_prototype, realm, target, 1, name, 1)?;
+            self.define_global_function(global_object, name, &constructor)?;
+            self.define_constructor_relationship(&constructor, &prototype)?;
+            Ok(prototype)
+        };
+        let weak_ref_prototype = install(
             "WeakRef",
-            1,
+            WEAK_REF_PROTOTYPE,
+            W(WeakRefNativeKind::Constructor),
         )?;
-        self.define_function_data_property(
-            global_object,
-            "WeakRef",
-            Value::Object(weak_ref_constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
-        self.define_constructor_relationship(&weak_ref_constructor, &weak_ref_prototype)?;
-
-        let finalization_registry_prototype = self.new_object(Some(object_prototype))?;
-        self.define_native_builtin_auto_init(
-            &finalization_registry_prototype,
-            realm,
-            NativeFunctionId::FinalizationRegistry(FinalizationRegistryNativeKind::Register),
-            "register",
-            2,
-            3,
-        )?;
-        self.define_native_builtin_auto_init(
-            &finalization_registry_prototype,
-            realm,
-            NativeFunctionId::FinalizationRegistry(FinalizationRegistryNativeKind::Unregister),
-            "unregister",
-            1,
-            1,
-        )?;
-        self.define_to_string_tag(&finalization_registry_prototype, "FinalizationRegistry")?;
-        let finalization_registry_constructor = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::FinalizationRegistry(FinalizationRegistryNativeKind::Constructor),
-            1,
+        let finalization_registry_prototype = install(
             "FinalizationRegistry",
-            1,
+            REGISTRY_PROTOTYPE,
+            F(FK::Constructor),
         )?;
-        self.define_function_data_property(
-            global_object,
-            "FinalizationRegistry",
-            Value::Object(finalization_registry_constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
-        self.define_constructor_relationship(
-            &finalization_registry_constructor,
-            &finalization_registry_prototype,
-        )?;
-
         self.0.state.borrow_mut().heap.attach_weak_ref_intrinsics(
             realm,
             WeakRefRealmData {

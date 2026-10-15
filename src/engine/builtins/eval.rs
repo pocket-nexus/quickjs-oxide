@@ -31,13 +31,7 @@ impl Runtime {
             "eval",
             1,
         )?;
-        self.define_function_data_property(
-            global_object,
-            "eval",
-            Value::Object(function.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_global_function(global_object, "eval", &function)?;
         self.0
             .state
             .borrow_mut()

@@ -7,7 +7,6 @@
 //! every primitive conversion is allocation-free.
 use super::{quickjs_binary, quickjs_max, quickjs_min, quickjs_unary};
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{MathBinaryKind, MathMinMaxKind, MathUnaryKind},
@@ -26,19 +25,6 @@ pub(crate) enum MathKind {
     Hypot,
     Imul,
     Clz32,
-}
-impl MathKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::MathUnary(kind) => Self::Unary(kind),
-            NativeFunctionId::MathBinary(kind) => Self::Binary(kind),
-            NativeFunctionId::MathMinMax(kind) => Self::MinMax(kind),
-            NativeFunctionId::MathHypot => Self::Hypot,
-            NativeFunctionId::MathImul => Self::Imul,
-            NativeFunctionId::MathClz32 => Self::Clz32,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum MathStep {
     Complete(Completion),

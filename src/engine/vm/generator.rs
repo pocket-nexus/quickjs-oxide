@@ -9,6 +9,7 @@
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::object::builtin_properties::{BuiltinEntry, method, to_string_tag};
 
 use crate::engine::builtins::native::{DynamicFunctionKind, GeneratorResumeKind, NativeFunctionId};
 use crate::engine::code::function::metadata::FunctionKind;
@@ -31,83 +32,33 @@ impl Runtime {
         function_prototype: &ObjectRef,
         iterator_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use GeneratorResumeKind as K;
+        use NativeFunctionId::GeneratorPrototypeResume as F;
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F(K::Next), "next", 1, 1),
+            method(F(K::Return), "return", 1, 1),
+            method(F(K::Throw), "throw", 1, 1),
+            to_string_tag("Generator"),
+        ];
+        const FUNCTION_PROTOTYPE: &[BuiltinEntry] = &[to_string_tag("GeneratorFunction")];
         let generator_prototype = self.new_object(Some(iterator_prototype))?;
-        for (kind, name) in [
-            (GeneratorResumeKind::Next, "next"),
-            (GeneratorResumeKind::Return, "return"),
-            (GeneratorResumeKind::Throw, "throw"),
-        ] {
-            self.define_native_builtin_auto_init(
-                &generator_prototype,
-                realm,
-                NativeFunctionId::GeneratorPrototypeResume(kind),
-                name,
-                1,
-                1,
-            )?;
-        }
-        self.define_to_string_tag(&generator_prototype, "Generator")?;
-
+        self.define_builtin_entries(&generator_prototype, realm, PROTOTYPE)?;
         let generator_function_prototype = self.new_object(Some(function_prototype))?;
-        self.define_to_string_tag(&generator_function_prototype, "GeneratorFunction")?;
-
-        let function_constructor = self
-            .0
-            .state
-            .borrow()
-            .heap
-            .context(realm)?
-            .function_constructor()
-            .ok_or(RuntimeError::Invariant(
-                "Generator initialization requires the Function constructor",
-            ))?;
-        let function_constructor =
-            ObjectRef::from_borrowed_handle(self.clone(), function_constructor)?;
-        let constructor = self.new_native_builtin(
-            &function_constructor,
+        self.define_builtin_entries(&generator_function_prototype, realm, FUNCTION_PROTOTYPE)?;
+        self.new_dynamic_function_constructor(
             realm,
-            NativeFunctionId::FunctionConstructor(DynamicFunctionKind::Generator),
-            1,
+            DynamicFunctionKind::Generator,
             "GeneratorFunction",
-            1,
-        )?;
-
-        // JS_NewCConstructor keeps the hidden constructor's own `prototype`
-        // fully fixed. JS_NEW_CTOR_READONLY only changes the reciprocal
-        // `%GeneratorFunction.prototype%.constructor` descriptor below.
-        self.define_function_data_property(
-            constructor.as_object(),
-            "prototype",
-            Value::Object(generator_function_prototype.try_clone()?),
-            false,
-            false,
-        )?;
-        self.define_function_data_property(
             &generator_function_prototype,
-            "constructor",
-            Value::Object(constructor.as_object().try_clone()?),
-            false,
-            true,
         )?;
-
         // JS_SetConstructor2 then creates the second reciprocal pair.  Its
         // `constructor` value is `%GeneratorFunction.prototype%`, not the
         // hidden dynamic constructor.
-        self.define_function_data_property(
+        self.define_readonly_constructor_pair(
             &generator_function_prototype,
-            "prototype",
-            Value::Object(generator_prototype.try_clone()?),
-            false,
-            true,
-        )?;
-        self.define_function_data_property(
             &generator_prototype,
-            "constructor",
-            Value::Object(generator_function_prototype.try_clone()?),
-            false,
             true,
         )?;
-
         self.0.state.borrow_mut().heap.attach_generator_intrinsics(
             realm,
             GeneratorRealmData {

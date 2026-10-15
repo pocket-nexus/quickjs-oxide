@@ -8,6 +8,9 @@
 
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, METHOD_FLAGS, method, symbol_method, to_string_tag,
+};
 
 use crate::engine::builtins::native::{DynamicFunctionKind, GeneratorResumeKind, NativeFunctionId};
 use crate::engine::builtins::promise::RootedPromiseCapability;
@@ -16,9 +19,8 @@ use crate::engine::heap::{
     AsyncGeneratorRealmData, AsyncGeneratorRequestData, AsyncGeneratorResumeKind,
     AsyncGeneratorState, ContextId, InternalCallableData, ObjectData,
 };
-use crate::engine::object::shape::PropertyFlags;
-use crate::engine::object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol};
-use crate::engine::value::{JsValue, Value};
+use crate::engine::object::{CallableRef, ObjectRef, WellKnownSymbol};
+use crate::engine::value::JsValue;
 
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
@@ -56,110 +58,55 @@ impl Runtime {
         function_prototype: &ObjectRef,
         object_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let async_iterator_prototype = self.new_object(Some(object_prototype))?;
-        let async_iterator_key =
-            PropertyKey::from(self.well_known_symbol(WellKnownSymbol::AsyncIterator)?);
-        self.define_native_builtin_auto_init_with_key(
-            &async_iterator_prototype,
-            realm,
-            &async_iterator_key,
-            NativeFunctionId::IteratorPrototypeIterator,
+        use GeneratorResumeKind as K;
+        use NativeFunctionId as F;
+        const ASYNC_ITERATOR_PROTOTYPE: &[BuiltinEntry] = &[symbol_method(
+            WellKnownSymbol::AsyncIterator,
+            F::IteratorPrototypeIterator,
             "[Symbol.asyncIterator]",
             0,
-            0,
-            PropertyFlags::data(true, false, true),
-        )?;
-
+            METHOD_FLAGS,
+        )];
+        const ASYNC_FROM_SYNC_ITERATOR_PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::AsyncFromSyncIteratorResume(K::Next), "next", 1, 1),
+            method(F::AsyncFromSyncIteratorResume(K::Return), "return", 1, 1),
+            method(F::AsyncFromSyncIteratorResume(K::Throw), "throw", 1, 1),
+        ];
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::AsyncGeneratorPrototypeResume(K::Next), "next", 1, 1),
+            method(F::AsyncGeneratorPrototypeResume(K::Return), "return", 1, 1),
+            method(F::AsyncGeneratorPrototypeResume(K::Throw), "throw", 1, 1),
+            to_string_tag("AsyncGenerator"),
+        ];
+        const FUNCTION_PROTOTYPE: &[BuiltinEntry] = &[to_string_tag("AsyncGeneratorFunction")];
+        let async_iterator_prototype = self.new_object(Some(object_prototype))?;
+        self.define_builtin_entries(&async_iterator_prototype, realm, ASYNC_ITERATOR_PROTOTYPE)?;
         let async_from_sync_iterator_prototype =
             self.new_object(Some(&async_iterator_prototype))?;
-        for (kind, name) in [
-            (GeneratorResumeKind::Next, "next"),
-            (GeneratorResumeKind::Return, "return"),
-            (GeneratorResumeKind::Throw, "throw"),
-        ] {
-            self.define_native_builtin_auto_init(
-                &async_from_sync_iterator_prototype,
-                realm,
-                NativeFunctionId::AsyncFromSyncIteratorResume(kind),
-                name,
-                1,
-                1,
-            )?;
-        }
-
-        let async_generator_prototype = self.new_object(Some(&async_iterator_prototype))?;
-        for (kind, name) in [
-            (GeneratorResumeKind::Next, "next"),
-            (GeneratorResumeKind::Return, "return"),
-            (GeneratorResumeKind::Throw, "throw"),
-        ] {
-            self.define_native_builtin_auto_init(
-                &async_generator_prototype,
-                realm,
-                NativeFunctionId::AsyncGeneratorPrototypeResume(kind),
-                name,
-                1,
-                1,
-            )?;
-        }
-        self.define_to_string_tag(&async_generator_prototype, "AsyncGenerator")?;
-
-        let async_generator_function_prototype = self.new_object(Some(function_prototype))?;
-        self.define_to_string_tag(
-            &async_generator_function_prototype,
-            "AsyncGeneratorFunction",
-        )?;
-
-        let function_constructor = self
-            .0
-            .state
-            .borrow()
-            .heap
-            .context(realm)?
-            .function_constructor()
-            .ok_or(RuntimeError::Invariant(
-                "AsyncGenerator initialization requires the Function constructor",
-            ))?;
-        let function_constructor =
-            ObjectRef::from_borrowed_handle(self.clone(), function_constructor)?;
-        let constructor = self.new_native_builtin(
-            &function_constructor,
+        self.define_builtin_entries(
+            &async_from_sync_iterator_prototype,
             realm,
-            NativeFunctionId::FunctionConstructor(DynamicFunctionKind::AsyncGenerator),
-            1,
+            ASYNC_FROM_SYNC_ITERATOR_PROTOTYPE,
+        )?;
+        let async_generator_prototype = self.new_object(Some(&async_iterator_prototype))?;
+        self.define_builtin_entries(&async_generator_prototype, realm, PROTOTYPE)?;
+        let async_generator_function_prototype = self.new_object(Some(function_prototype))?;
+        self.define_builtin_entries(
+            &async_generator_function_prototype,
+            realm,
+            FUNCTION_PROTOTYPE,
+        )?;
+        self.new_dynamic_function_constructor(
+            realm,
+            DynamicFunctionKind::AsyncGenerator,
             "AsyncGeneratorFunction",
-            1,
-        )?;
-
-        self.define_function_data_property(
-            constructor.as_object(),
-            "prototype",
-            Value::Object(async_generator_function_prototype.try_clone()?),
-            false,
-            false,
-        )?;
-        self.define_function_data_property(
             &async_generator_function_prototype,
-            "constructor",
-            Value::Object(constructor.as_object().try_clone()?),
-            false,
-            true,
         )?;
-        self.define_function_data_property(
+        self.define_readonly_constructor_pair(
             &async_generator_function_prototype,
-            "prototype",
-            Value::Object(async_generator_prototype.try_clone()?),
-            false,
-            true,
-        )?;
-        self.define_function_data_property(
             &async_generator_prototype,
-            "constructor",
-            Value::Object(async_generator_function_prototype.try_clone()?),
-            false,
             true,
         )?;
-
         self.0
             .state
             .borrow_mut()

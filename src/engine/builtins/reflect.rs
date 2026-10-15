@@ -9,16 +9,17 @@
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
+use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, RawValue};
+use crate::engine::object::builtin_properties::NativeBuiltinProperty;
 use std::cell::Cell;
 
 use crate::engine::builtins::native::{NativeFunctionId, ReflectKind};
 use crate::engine::heap::{AutoInitProperty, ContextId, HeapError, ObjectPayload, PropertySlot};
+use crate::engine::object::ObjectRef;
 use crate::engine::object::shape::PropertyFlags;
-use crate::engine::object::{ObjectRef, WellKnownSymbol};
 use crate::engine::value::conversion::NativeConversion;
-use crate::engine::value::{JsString, JsValue, Value};
+use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -982,70 +983,25 @@ impl RuntimeState {
         poisoned: &Cell<bool>,
         realm: ContextId,
     ) -> Result<ObjectId, RuntimeError> {
-        let reflect = self.new_ordinary_object_in_realm(poisoned, realm)?;
-        let mut result_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(reflect));
-        let (state, result_owner) = result_owner.parts();
-        for (kind, name, length) in [
-            (ReflectKind::Apply, "apply", 3),
-            (ReflectKind::Construct, "construct", 2),
-            (ReflectKind::DefineProperty, "defineProperty", 3),
-            (ReflectKind::DeleteProperty, "deleteProperty", 2),
-            (ReflectKind::Get, "get", 2),
-            (
-                ReflectKind::GetOwnPropertyDescriptor,
-                "getOwnPropertyDescriptor",
-                2,
-            ),
-            (ReflectKind::GetPrototypeOf, "getPrototypeOf", 1),
-            (ReflectKind::Has, "has", 2),
-            (ReflectKind::IsExtensible, "isExtensible", 1),
-            (ReflectKind::OwnKeys, "ownKeys", 1),
-            (ReflectKind::PreventExtensions, "preventExtensions", 1),
-            (ReflectKind::Set, "set", 3),
-            (ReflectKind::SetPrototypeOf, "setPrototypeOf", 2),
-        ] {
-            state.define_native_builtin_auto_init(
-                poisoned,
-                reflect,
-                realm,
-                NativeFunctionId::Reflect(kind),
-                name,
-                length,
-                length,
-            )?;
+        use ReflectKind as K;
+        const fn m(kind: ReflectKind, name: &'static str, length: u8) -> NativeBuiltinProperty {
+            NativeBuiltinProperty::new(NativeFunctionId::Reflect(kind), name, length, length)
         }
-
-        let to_string_tag = state.well_known_symbols[&WellKnownSymbol::ToStringTag];
-        {
-            let string = state
-                .heap
-                .allocate_string(JsString::from_static("Reflect"))?;
-            let mut producer = OwnedValueGuard::new(state, poisoned, JsValue::String(string));
-            let (state, producer) = producer.parts();
-            if !state.define_raw_property_with_poison(
-                poisoned,
-                reflect,
-                to_string_tag,
-                &crate::engine::object::property::PropertyDescriptor {
-                    value: Some(RawValue::String(string)),
-                    writable: Some(false),
-                    enumerable: Some(false),
-                    configurable: Some(true),
-                    ..crate::engine::object::property::PropertyDescriptor::new()
-                },
-            )? {
-                return Err(RuntimeError::Invariant(
-                    "Reflect toStringTag definition was rejected",
-                ));
-            }
-            state.release_owned_jsvalue(
-                poisoned,
-                producer.take().expect("intrinsic tag producer"),
-            )?;
-        }
-        let JsValue::Object(object) = result_owner.take().expect("intrinsic factory result") else {
-            unreachable!("intrinsic factory allocated an object")
-        };
-        Ok(object)
+        const METHODS: &[NativeBuiltinProperty] = &[
+            m(K::Apply, "apply", 3),
+            m(K::Construct, "construct", 2),
+            m(K::DefineProperty, "defineProperty", 3),
+            m(K::DeleteProperty, "deleteProperty", 2),
+            m(K::Get, "get", 2),
+            m(K::GetOwnPropertyDescriptor, "getOwnPropertyDescriptor", 2),
+            m(K::GetPrototypeOf, "getPrototypeOf", 1),
+            m(K::Has, "has", 2),
+            m(K::IsExtensible, "isExtensible", 1),
+            m(K::OwnKeys, "ownKeys", 1),
+            m(K::PreventExtensions, "preventExtensions", 1),
+            m(K::Set, "set", 3),
+            m(K::SetPrototypeOf, "setPrototypeOf", 2),
+        ];
+        self.instantiate_namespace_object(poisoned, realm, METHODS, "Reflect", &[])
     }
 }

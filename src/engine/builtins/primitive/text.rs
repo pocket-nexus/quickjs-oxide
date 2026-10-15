@@ -1,6 +1,5 @@
 //! String scalar operations retain the converted receiver before argument coercions.
 
-use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{
         error::{Error, NativeErrorKind},
@@ -23,19 +22,6 @@ pub(crate) enum ScalarTextKind {
     Concat,
     WellFormed(StringWellFormedKind),
     Iterator,
-}
-impl ScalarTextKind {
-    pub(crate) fn for_target(target: NativeFunctionId) -> Option<Self> {
-        Some(match target {
-            NativeFunctionId::StringPrototypeCharAt(kind) => Self::CharAt(kind),
-            NativeFunctionId::StringPrototypeCharCodeAt => Self::CharCodeAt,
-            NativeFunctionId::StringPrototypeCodePointAt => Self::CodePointAt,
-            NativeFunctionId::StringPrototypeConcat => Self::Concat,
-            NativeFunctionId::StringPrototypeWellFormed(kind) => Self::WellFormed(kind),
-            NativeFunctionId::StringPrototypeIterator => Self::Iterator,
-            _ => return None,
-        })
-    }
 }
 pub(crate) enum ScalarTextStep {
     Complete(Completion),

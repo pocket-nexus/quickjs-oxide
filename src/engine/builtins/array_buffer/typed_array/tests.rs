@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::object::DescriptorField;
 use crate::engine::test_support::assert_script;
 use crate::engine::test_support::test_context;
 

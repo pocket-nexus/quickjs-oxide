@@ -18,10 +18,12 @@ use crate::engine::heap::{
     ContextId, IteratorConsumerKind, IteratorHelperData, IteratorHelperKind, IteratorRealmData,
     IteratorResumeKind, ObjectData, RawValue,
 };
-use crate::engine::object::shape::PropertyFlags;
+use crate::engine::object::builtin_properties::{
+    BuiltinEntry, BuiltinKey, METHOD_FLAGS, method, symbol_method, to_string_tag,
+};
 use crate::engine::object::{
     AccessorValue, CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
-    PropertyKey, WellKnownSymbol,
+    WellKnownSymbol,
 };
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsValue, Value};
@@ -48,84 +50,94 @@ impl Runtime {
         iterator_prototype: &ObjectRef,
         global_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
+        use IteratorConsumerKind as Consume;
+        use IteratorHelperKind as Helper;
+        use IteratorResumeKind as Resume;
+        use NativeFunctionId as F;
+        // This is the exact QuickJS table order.  The unusual constructor
+        // accessor follows the string methods, while both symbols come last.
+        const PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::IteratorPrototypeCreateHelper(Helper::Drop), "drop", 1, 1),
+            method(
+                F::IteratorPrototypeCreateHelper(Helper::Filter),
+                "filter",
+                1,
+                1,
+            ),
+            method(
+                F::IteratorPrototypeCreateHelper(Helper::FlatMap),
+                "flatMap",
+                1,
+                1,
+            ),
+            method(F::IteratorPrototypeCreateHelper(Helper::Map), "map", 1, 1),
+            method(F::IteratorPrototypeCreateHelper(Helper::Take), "take", 1, 1),
+            method(F::IteratorPrototypeConsume(Consume::Every), "every", 1, 1),
+            method(F::IteratorPrototypeConsume(Consume::Find), "find", 1, 1),
+            method(
+                F::IteratorPrototypeConsume(Consume::ForEach),
+                "forEach",
+                1,
+                1,
+            ),
+            method(F::IteratorPrototypeConsume(Consume::Some), "some", 1, 1),
+            method(F::IteratorPrototypeReduce, "reduce", 1, 1),
+            method(F::IteratorPrototypeToArray, "toArray", 0, 0),
+        ];
+        // `%IteratorPrototype%[@@toStringTag]` is an accessor, not the data
+        // property used by concrete iterator prototypes.
+        const PROTOTYPE_SYMBOLS: &[BuiltinEntry] = &[
+            symbol_method(
+                WellKnownSymbol::Iterator,
+                F::IteratorPrototypeIterator,
+                "[Symbol.iterator]",
+                0,
+                METHOD_FLAGS,
+            ),
+            BuiltinEntry::Accessor {
+                key: BuiltinKey::Symbol(WellKnownSymbol::ToStringTag),
+                get: Some((
+                    F::IteratorPrototypeToStringTagGetter,
+                    "get [Symbol.toStringTag]",
+                )),
+                set: Some((
+                    F::IteratorPrototypeToStringTagSetter,
+                    "set [Symbol.toStringTag]",
+                )),
+            },
+        ];
+        const CONSTRUCTOR: &[BuiltinEntry] = &[
+            method(F::IteratorConcat, "concat", 0, 0),
+            method(F::IteratorFrom, "from", 1, 1),
+        ];
+        const CONCAT_PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::IteratorConcatNext, "next", 0, 0),
+            method(F::IteratorConcatReturn, "return", 0, 0),
+            to_string_tag("Iterator Concat"),
+        ];
+        const HELPER_PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::IteratorHelperResume(Resume::Next), "next", 0, 0),
+            method(F::IteratorHelperResume(Resume::Return), "return", 0, 0),
+            to_string_tag("Iterator Helper"),
+        ];
+        const WRAP_PROTOTYPE: &[BuiltinEntry] = &[
+            method(F::IteratorWrapResume(Resume::Next), "next", 0, 0),
+            method(F::IteratorWrapResume(Resume::Return), "return", 0, 0),
+        ];
         let concat_prototype = self.new_object(Some(iterator_prototype))?;
         let helper_prototype = self.new_object(Some(iterator_prototype))?;
         let wrap_prototype = self.new_object(Some(iterator_prototype))?;
-
-        // This is the exact QuickJS table order.  The unusual constructor
-        // accessor follows the string methods, while both symbols come last.
-        for (kind, name) in [
-            (IteratorHelperKind::Drop, "drop"),
-            (IteratorHelperKind::Filter, "filter"),
-            (IteratorHelperKind::FlatMap, "flatMap"),
-            (IteratorHelperKind::Map, "map"),
-            (IteratorHelperKind::Take, "take"),
-        ] {
-            self.define_native_builtin_auto_init(
-                iterator_prototype,
-                realm,
-                NativeFunctionId::IteratorPrototypeCreateHelper(kind),
-                name,
-                1,
-                1,
-            )?;
-        }
-        for (kind, name) in [
-            (IteratorConsumerKind::Every, "every"),
-            (IteratorConsumerKind::Find, "find"),
-            (IteratorConsumerKind::ForEach, "forEach"),
-            (IteratorConsumerKind::Some, "some"),
-        ] {
-            self.define_native_builtin_auto_init(
-                iterator_prototype,
-                realm,
-                NativeFunctionId::IteratorPrototypeConsume(kind),
-                name,
-                1,
-                1,
-            )?;
-        }
-        self.define_native_builtin_auto_init(
-            iterator_prototype,
-            realm,
-            NativeFunctionId::IteratorPrototypeReduce,
-            "reduce",
-            1,
-            1,
-        )?;
-        self.define_native_builtin_auto_init(
-            iterator_prototype,
-            realm,
-            NativeFunctionId::IteratorPrototypeToArray,
-            "toArray",
-            0,
-            0,
-        )?;
+        self.define_builtin_entries(iterator_prototype, realm, PROTOTYPE)?;
 
         let constructor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::IteratorConstructor,
+            F::IteratorConstructor,
             0,
             "Iterator",
             0,
         )?;
-        self.define_native_builtin_auto_init(
-            constructor.as_object(),
-            realm,
-            NativeFunctionId::IteratorConcat,
-            "concat",
-            0,
-            0,
-        )?;
-        self.define_native_builtin_auto_init(
-            constructor.as_object(),
-            realm,
-            NativeFunctionId::IteratorFrom,
-            "from",
-            1,
-            1,
-        )?;
+        self.define_builtin_entries(constructor.as_object(), realm, CONSTRUCTOR)?;
         self.define_function_data_property(
             constructor.as_object(),
             "prototype",
@@ -139,7 +151,7 @@ impl Runtime {
         let constructor_accessor = self.new_native_builtin(
             function_prototype,
             realm,
-            NativeFunctionId::IteratorConstructorAccessor,
+            F::IteratorConstructorAccessor,
             0,
             "",
             0,
@@ -163,108 +175,11 @@ impl Runtime {
                 "Iterator.prototype constructor accessor was rejected",
             ));
         }
-
-        let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
-        self.define_native_builtin_auto_init_with_key(
-            iterator_prototype,
-            realm,
-            &iterator_key,
-            NativeFunctionId::IteratorPrototypeIterator,
-            "[Symbol.iterator]",
-            0,
-            0,
-            PropertyFlags::data(true, false, true),
-        )?;
-
-        // `%IteratorPrototype%[@@toStringTag]` is an accessor, not the data
-        // property used by concrete iterator prototypes.
-        let tag_getter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::IteratorPrototypeToStringTagGetter,
-            0,
-            "get [Symbol.toStringTag]",
-            0,
-        )?;
-        let tag_setter = self.new_native_builtin(
-            function_prototype,
-            realm,
-            NativeFunctionId::IteratorPrototypeToStringTagSetter,
-            1,
-            "set [Symbol.toStringTag]",
-            1,
-        )?;
-        let tag_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
-        if !self.define_own_property(
-            iterator_prototype,
-            &tag_key,
-            &OrdinaryPropertyDescriptor {
-                get: DescriptorField::Present(AccessorValue::Callable(tag_getter)),
-                set: DescriptorField::Present(AccessorValue::Callable(tag_setter)),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "Iterator.prototype toStringTag definition was rejected",
-            ));
-        }
-
-        self.define_native_builtin_auto_init(
-            &concat_prototype,
-            realm,
-            NativeFunctionId::IteratorConcatNext,
-            "next",
-            0,
-            0,
-        )?;
-        self.define_native_builtin_auto_init(
-            &concat_prototype,
-            realm,
-            NativeFunctionId::IteratorConcatReturn,
-            "return",
-            0,
-            0,
-        )?;
-        self.define_to_string_tag(&concat_prototype, "Iterator Concat")?;
-
-        for (kind, name) in [
-            (IteratorResumeKind::Next, "next"),
-            (IteratorResumeKind::Return, "return"),
-        ] {
-            self.define_native_builtin_auto_init(
-                &helper_prototype,
-                realm,
-                NativeFunctionId::IteratorHelperResume(kind),
-                name,
-                0,
-                0,
-            )?;
-        }
-        self.define_to_string_tag(&helper_prototype, "Iterator Helper")?;
-
-        for (kind, name) in [
-            (IteratorResumeKind::Next, "next"),
-            (IteratorResumeKind::Return, "return"),
-        ] {
-            self.define_native_builtin_auto_init(
-                &wrap_prototype,
-                realm,
-                NativeFunctionId::IteratorWrapResume(kind),
-                name,
-                0,
-                0,
-            )?;
-        }
-
-        self.define_function_data_property(
-            global_object,
-            "Iterator",
-            Value::Object(constructor.as_object().try_clone()?),
-            true,
-            true,
-        )?;
+        self.define_builtin_entries(iterator_prototype, realm, PROTOTYPE_SYMBOLS)?;
+        self.define_builtin_entries(&concat_prototype, realm, CONCAT_PROTOTYPE)?;
+        self.define_builtin_entries(&helper_prototype, realm, HELPER_PROTOTYPE)?;
+        self.define_builtin_entries(&wrap_prototype, realm, WRAP_PROTOTYPE)?;
+        self.define_global_function(global_object, "Iterator", &constructor)?;
         self.0.state.borrow_mut().heap.attach_iterator_intrinsics(
             realm,
             IteratorRealmData {
