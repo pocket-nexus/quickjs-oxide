@@ -4,6 +4,7 @@ use crate::support::js_cases::{case_directories, run_case_directory};
 
 const DIRECTORIES: &[&str] = &[
     "array",
+    "function_semantics",
     "number",
     "object",
     "primitive_intrinsics",
@@ -19,6 +20,11 @@ fn every_case_directory_has_a_test() {
 #[test]
 fn array() {
     run_case_directory("array");
+}
+
+#[test]
+fn function_semantics() {
+    run_case_directory("function_semantics");
 }
 
 #[test]

@@ -380,13 +380,6 @@ pub(crate) fn show_exception(runtime: &Runtime, context: &mut Context, exception
     }
 }
 
-pub(crate) fn hex(value: &JsString) -> String {
-    value
-        .utf16_units()
-        .map(|unit| format!("{unit:04x}"))
-        .collect()
-}
-
 pub(crate) fn value_text(value: Value) -> String {
     match value {
         Value::Undefined => "undefined".to_owned(),
