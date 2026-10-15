@@ -1,9 +1,3 @@
-use crate::oracle_cases::ExpectedCase as Case;
-use crate::string_value_cases::{
-    assert_string_cases_match_frozen, assert_string_cases_match_quickjs, oracle_string_observation,
-};
-
-const PRELUDE: &str = r#"
 function __bit(value){return value?"1":"0"}
 function __bits(object,key){
     var descriptor=Object.getOwnPropertyDescriptor(object,key);
@@ -49,12 +43,8 @@ function __hex(view,start,length){
     }
     return result;
 }
-"#;
-
-const CASES: &[Case] = &[
-    Case {
-        description: "constructor prototype descriptors and complete method graph",
-        source: r#"(function(){
+// case: constructor prototype descriptors and complete method graph
+(function(){
             var getters=["buffer","byteLength","byteOffset"];
             var suffixes=[
                 "Int8","Uint8","Int16","Uint16","Int32","Uint32",
@@ -86,44 +76,9 @@ const CASES: &[Case] = &[
                     ArrayBuffer.isView(Object.create(DataView.prototype))+":"+
                     ArrayBuffer.isView(new Proxy(view,{}))
             ].join("|");
-        })()"#,
-        expected: concat!(
-            "global=101|ctor=DataView:1:true:length,name,prototype|links=true:true:true|",
-            "proto=buffer,byteLength,byteOffset,getInt8,getUint8,getInt16,getUint16,",
-            "getInt32,getUint32,getBigInt64,getBigUint64,getFloat16,getFloat32,getFloat64,",
-            "setInt8,setUint8,setInt16,setUint16,setInt32,setUint32,setBigInt64,setBigUint64,",
-            "setFloat16,setFloat32,setFloat64,constructor,Symbol(Symbol.toStringTag)|",
-            "accessors=buffer:get buffer:0:false:001:length,name;",
-            "byteLength:get byteLength:0:false:001:length,name;",
-            "byteOffset:get byteOffset:0:false:001:length,name|",
-            "methods=getInt8:getInt8:1:false:101:length,name;",
-            "getUint8:getUint8:1:false:101:length,name;",
-            "getInt16:getInt16:1:false:101:length,name;",
-            "getUint16:getUint16:1:false:101:length,name;",
-            "getInt32:getInt32:1:false:101:length,name;",
-            "getUint32:getUint32:1:false:101:length,name;",
-            "getBigInt64:getBigInt64:1:false:101:length,name;",
-            "getBigUint64:getBigUint64:1:false:101:length,name;",
-            "getFloat16:getFloat16:1:false:101:length,name;",
-            "getFloat32:getFloat32:1:false:101:length,name;",
-            "getFloat64:getFloat64:1:false:101:length,name;",
-            "setInt8:setInt8:2:false:101:length,name;",
-            "setUint8:setUint8:2:false:101:length,name;",
-            "setInt16:setInt16:2:false:101:length,name;",
-            "setUint16:setUint16:2:false:101:length,name;",
-            "setInt32:setInt32:2:false:101:length,name;",
-            "setUint32:setUint32:2:false:101:length,name;",
-            "setBigInt64:setBigInt64:2:false:101:length,name;",
-            "setBigUint64:setBigUint64:2:false:101:length,name;",
-            "setFloat16:setFloat16:2:false:101:length,name;",
-            "setFloat32:setFloat32:2:false:101:length,name;",
-            "setFloat64:setFloat64:2:false:101:length,name|",
-            "tag=001:DataView|brand=true:false:false",
-        ),
-    },
-    Case {
-        description: "all eleven element formats preserve numeric boundaries and endian bytes",
-        source: r#"(function(){
+        })()
+// case: all eleven element formats preserve numeric boundaries and endian bytes
+(function(){
             var specs=[
                 ["Int8",1,255],
                 ["Uint8",1,-1],
@@ -156,25 +111,9 @@ const CASES: &[Case] = &[
                 __norm(edges.getFloat16(2))+":"+
                 __outcome(function(){return edges.setBigInt64(0,1)} )+":"+
                 __outcome(function(){return edges.setInt32(0,1n)});
-        })()"#,
-        expected: concat!(
-            "Int8=ff:-1:ff:-1|Uint8=ff:255:ff:255|",
-            "Int16=8001:-32767:0180:-32767|Uint16=fffe:65534:feff:65534|",
-            "Int32=80000001:-2147483647:01000080:-2147483647|",
-            "Uint32=ffffffff:4294967295:ffffffff:4294967295|",
-            "BigInt64=8000000000000001:-9223372036854775807n:",
-            "0100000000000080:-9223372036854775807n|",
-            "BigUint64=ffffffffffffffff:18446744073709551615n:",
-            "ffffffffffffffff:18446744073709551615n|",
-            "Float16=7bff:65504:ff7b:65504|",
-            "Float32=7f800000:Infinity:0000807f:Infinity|",
-            "Float64=8000000000000000:-0:0000000000000080:-0|",
-            "edges=0:NaN:throw:TypeError:throw:TypeError",
-        ),
-    },
-    Case {
-        description: "fixed and tracking views become out of bounds and recover across RAB resize",
-        source: r#"(function(){
+        })()
+// case: fixed and tracking views become out of bounds and recover across RAB resize
+(function(){
             function state(label,view,buffer){
                 return label+":"+
                     __outcome(function(){return view.byteOffset})+":"+
@@ -214,25 +153,9 @@ const CASES: &[Case] = &[
             result.push("grow10-read="+fixed.getUint16(0)+":"+
                 tracking.getUint8(5));
             return result.join("|");
-        })()"#,
-        expected: concat!(
-            "initial-fixed:return:2:return:4:true|",
-            "initial-tracking:return:2:return:6:true|",
-            "shrink4-fixed:throw:TypeError:throw:TypeError:true|",
-            "shrink4-tracking:return:2:return:2:true|",
-            "shrink4-read=throw:TypeError:return:4660|",
-            "grow8-fixed:return:2:return:4:true|",
-            "grow8-tracking:return:2:return:6:true|grow8-read=4660:0|",
-            "equal-offset:return:2:return:0:true|equal-offset-read=throw:RangeError|",
-            "shrink1-fixed:throw:TypeError:throw:TypeError:true|",
-            "shrink1-tracking:throw:TypeError:throw:TypeError:true|",
-            "grow10-fixed:return:2:return:4:true|",
-            "grow10-tracking:return:2:return:8:true|grow10-read=0:0",
-        ),
-    },
-    Case {
-        description: "detach preserves the DataView brand and buffer edge while invalidating access",
-        source: r#"(function(){
+        })()
+// case: detach preserves the DataView brand and buffer edge while invalidating access
+(function(){
             var buffer=new ArrayBuffer(8,{maxByteLength:16});
             var fixed=new DataView(buffer,2,4);
             var tracking=new DataView(buffer,2);
@@ -262,17 +185,9 @@ const CASES: &[Case] = &[
                         return DataView.prototype.getUint8.call({},0);
                     })
             ].join("|");
-        })()"#,
-        expected: concat!(
-            "source=0:16:true:true|moved=8:16:true:false|edges=true:true|",
-            "fixed=throw:TypeError:throw:TypeError:throw:TypeError:throw:TypeError|",
-            "tracking=throw:TypeError:throw:TypeError:throw:TypeError|",
-            "brand=true:true:[object DataView]|wrong=throw:TypeError:throw:TypeError",
-        ),
-    },
-    Case {
-        description: "constructor observes buffer and coercions before newTarget then revalidates",
-        source: r#"(function(){
+        })()
+// case: constructor observes buffer and coercions before newTarget then revalidates
+(function(){
             var result=[];
             (function(){
                 var log="",buffer=new ArrayBuffer(8,{maxByteLength:16});
@@ -372,36 +287,4 @@ const CASES: &[Case] = &[
                     return new DataView(new ArrayBuffer(4),2,3);
                 }));
             return result.join("|");
-        })()"#,
-        expected: concat!(
-            "success=olp:true:2:3|brand=throw:TypeError:|",
-            "offset-throw=throw:RangeError:o|offset-detach=throw:TypeError:o|",
-            "length-detach=throw:TypeError:lp|",
-            "prototype-shrink=throw:RangeError:olp|",
-            "omitted=6:6:6|call=throw:TypeError|",
-            "ranges=throw:RangeError:throw:RangeError",
-        ),
-    },
-];
-
-#[test]
-fn data_view_vectors_match_frozen_observations() {
-    assert_string_cases_match_frozen(Some(PRELUDE), CASES);
-}
-
-#[test]
-fn data_view_oracle_vectors_self_check() {
-    let oracle = require_pinned_qjs_oracle!("DataView oracle self-check");
-    let observations = CASES
-        .iter()
-        .map(|case| oracle_string_observation(&oracle, Some(PRELUDE), case))
-        .collect::<Vec<_>>();
-    let expected = CASES.iter().map(|case| case.expected).collect::<Vec<_>>();
-    assert_eq!(observations, expected);
-}
-
-#[test]
-fn data_view_matches_pinned_quickjs() {
-    let oracle = require_pinned_qjs_oracle!("DataView differential");
-    assert_string_cases_match_quickjs(&oracle, Some(PRELUDE), CASES);
-}
+        })()

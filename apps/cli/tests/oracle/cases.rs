@@ -6,6 +6,7 @@ const DIRECTORIES: &[&str] = &[
     "array",
     "async_functions",
     "async_methods",
+    "binary_data",
     "control_flow",
     "eval",
     "function_semantics",
@@ -40,6 +41,11 @@ fn async_functions() {
 #[test]
 fn async_methods() {
     run_case_directory("async_methods");
+}
+
+#[test]
+fn binary_data() {
+    run_case_directory("binary_data");
 }
 
 #[test]

@@ -2,5 +2,4 @@
 // builds one integration target.
 
 mod oracle_array_buffer;
-mod oracle_data_view;
 mod oracle_uint8array_codecs;
