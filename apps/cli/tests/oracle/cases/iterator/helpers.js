@@ -1,26 +1,5 @@
-use super::quickjs_string_result_oracle::observe_string_result;
-use crate::grouped_case_oracle::assert_grouped_cases_agree;
-use crate::oracle_cases::GroupedCase as Case;
-use crate::runtime_completion_oracle::observe_oxide;
-use crate::runtime_observation::host_runtime_context;
-
-const ORACLE_WRAPPER: &str = r#"
-var value = std.evalScript(scriptArgs[0]);
-if (typeof value !== "string")
-  throw new TypeError("Iterator helper observer returned a non-String");
-print(value);
-"#;
-
-// Differential lock for the synchronous Iterator helpers surface in pinned
-// QuickJS 2026-06-04. Every case catches its own JavaScript failures and
-// returns an ASCII-only observation, so host-side differences cannot mask a
-// semantic mismatch. Iterator.concat has its own deeper differential suite,
-// but its static constructor slot remains part of this shared intrinsic graph.
-const CASES: &[Case] = &[
-    Case {
-        group: "intrinsic graph",
-        description: "constructor prototype metadata and descriptor order",
-        source: r#"(function(){
+// case: intrinsic graph / constructor prototype metadata and descriptor order
+(function(){
             try {
                 function bit(value){return value?"1":"0"}
                 function bits(descriptor){
@@ -85,23 +64,9 @@ const CASES: &[Case] = &[
             } catch(error) {
                 return "case-error:"+(error&&error.name?error.name:String(error));
             }
-        })()"#,
-        expected: concat!(
-            "global=101:true|ctor=function:Iterator:0|links=true:true|",
-            "static=length,name,concat,from,prototype|",
-            "prototype=000:drop,filter,flatMap,map,take,every,find,forEach,some,",
-            "reduce,toArray,constructor,@@iterator,@@toStringTag|",
-            "methods=drop:drop:1:101;filter:filter:1:101;flatMap:flatMap:1:101;",
-            "map:map:1:101;take:take:1:101;every:every:1:101;find:find:1:101;",
-            "forEach:forEach:1:101;some:some:1:101;reduce:reduce:1:101;",
-            "toArray:toArray:0:101|constructor-accessor=101:true:0:0:0:0|",
-            "iterator=true:0:101|tag=101:true:true",
-        ),
-    },
-    Case {
-        group: "basic helpers",
-        description: "lazy transforms and eager consumers compose",
-        source: r#"(function(){
+        })()
+// case: basic helpers / lazy transforms and eager consumers compose
+(function(){
             try {
                 var lazy=[1,2,3].values()
                     .map(function(value,index){return value*10+index})
@@ -136,16 +101,9 @@ const CASES: &[Case] = &[
             } catch(error) {
                 return "case-error:"+(error&&error.name?error.name:String(error));
             }
-        })()"#,
-        expected: concat!(
-            "lazy=21,22,32,33|drop=2,3|take=1,2|every=true|find=4|some=true|",
-            "forEach=undefined:6:0,1,2|reduce=6:16|toArray=5,6",
-        ),
-    },
-    Case {
-        group: "Iterator.from",
-        description: "wrapper return lookup is dynamic and preserves result identity",
-        source: r#"(function(){
+        })()
+// case: Iterator.from / wrapper return lookup is dynamic and preserves result identity
+(function(){
             try {
                 var marker={done:true,value:42},argc=-1,receiver=false,touched=0;
                 var source={
@@ -178,13 +136,9 @@ const CASES: &[Case] = &[
             } catch(error) {
                 return "case-error:"+(error&&error.name?error.name:String(error));
             }
-        })()"#,
-        expected: "first=true:0:true:true|throw=boom|absent=true:true|brand=TypeError:0",
-    },
-    Case {
-        group: "numeric limits",
-        description: "huge finite helper limits use QuickJS signed low bits",
-        source: r#"(function(){
+        })()
+// case: numeric limits / huge finite helper limits use QuickJS signed low bits
+(function(){
             try {
                 function errorName(thunk){
                     try{thunk();return "none"}
@@ -204,16 +158,9 @@ const CASES: &[Case] = &[
             } catch(error) {
                 return "case-error:"+(error&&error.name?error.name:String(error));
             }
-        })()"#,
-        expected: concat!(
-            "range=RangeError,RangeError|e100=7:false,undefined:true|",
-            "p64=8:false,undefined:true",
-        ),
-    },
-    Case {
-        group: "flatMap close",
-        description: "inner normal-close errors replace step errors before outer close",
-        source: r#"(function(){
+        })()
+// case: flatMap close / inner normal-close errors replace step errors before outer close
+(function(){
             try {
                 var firstLog=[];
                 var firstOuter={
@@ -255,16 +202,9 @@ const CASES: &[Case] = &[
             } catch(error) {
                 return "case-error:"+(error&&error.name?error.name:String(error));
             }
-        })()"#,
-        expected: concat!(
-            "inner-return:inner-next,inner-return,outer-return|",
-            "second-return-get:get-return-1,get-return-2,outer-return",
-        ),
-    },
-    Case {
-        group: "String fallback",
-        description: "a primitive String remains the wrapped iterator and call receiver",
-        source: r#"(function(){
+        })()
+// case: String fallback / a primitive String remains the wrapped iterator and call receiver
+(function(){
             var iteratorDescriptor=
                 Object.getOwnPropertyDescriptor(String.prototype,Symbol.iterator);
             var nextDescriptor=Object.getOwnPropertyDescriptor(String.prototype,"next");
@@ -317,48 +257,4 @@ const CASES: &[Case] = &[
                     Object.defineProperty(String.prototype,"return",returnDescriptor);
                 }
             }
-        })()"#,
-        expected: "missing=TypeError|next=7:false:string:true|return=string:true:0:true",
-    },
-];
-
-#[test]
-fn iterator_helpers_match_pinned_expectations() {
-    assert_grouped_cases_agree(
-        CASES,
-        "Iterator helpers pinned expectations failed",
-        ["actual", "expected"],
-        |case| {
-            let (_runtime, mut context) = host_runtime_context();
-            observe_oxide(&mut context, case)
-        },
-        |case| case.expected.to_owned(),
-    );
-}
-
-#[test]
-fn iterator_helpers_oracle_vectors_self_check() {
-    let oracle = require_pinned_qjs_oracle!("Iterator helpers oracle self-check");
-    assert_grouped_cases_agree(
-        CASES,
-        "pinned QuickJS Iterator helpers vectors drifted",
-        ["actual", "expected"],
-        |case| observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER),
-        |case| case.expected.to_owned(),
-    );
-}
-
-#[test]
-fn iterator_helpers_match_pinned_quickjs() {
-    let oracle = require_pinned_qjs_oracle!("Iterator helpers differential");
-    assert_grouped_cases_agree(
-        CASES,
-        "Iterator helpers semantics drifted",
-        ["oxide", "quickjs"],
-        |case| {
-            let (_runtime, mut context) = host_runtime_context();
-            observe_oxide(&mut context, case)
-        },
-        |case| observe_string_result(&oracle, case.source, case.description, ORACLE_WRAPPER),
-    );
-}
+        })()

@@ -491,19 +491,6 @@ pub(crate) fn observe_rust_with_engine_errors(
     }
 }
 
-pub(crate) fn observe_oxide(context: &mut Context, case: &Case) -> String {
-    let value = context
-        .eval(case.source)
-        .unwrap_or_else(|error| panic!("Oxide observer failed for {}: {error}", case.description));
-    let Value::String(value) = value else {
-        panic!(
-            "Oxide observer returned a non-String for {}",
-            case.description
-        );
-    };
-    value.to_utf8_lossy()
-}
-
 pub(crate) fn rust_case_observation(case: &Case) -> String {
     let (runtime, mut context) = host_runtime_context();
     match context.eval(case.source) {

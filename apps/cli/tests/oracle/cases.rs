@@ -13,6 +13,7 @@ const DIRECTORIES: &[&str] = &[
     "eval",
     "function_semantics",
     "global",
+    "iterator",
     "json",
     "member_access",
     "number",
@@ -79,6 +80,11 @@ fn function_semantics() {
 #[test]
 fn global() {
     run_case_directory("global");
+}
+
+#[test]
+fn iterator() {
+    run_case_directory("iterator");
 }
 
 #[test]
