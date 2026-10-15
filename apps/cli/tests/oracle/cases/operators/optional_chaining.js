@@ -1,29 +1,5 @@
-use crate::grouped_case_oracle::assert_grouped_cases_agree;
-use crate::oracle_cases::GroupedCase as Case;
-use crate::runtime_completion_oracle::oracle_script_case_name_observation as oracle_observation;
-use crate::runtime_observation::host_runtime_context;
-use crate::runtime_observation::{
-    checked_value_type as value_type, primitive_value_text as primitive_text,
-};
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
-
-// Pins QuickJS 2026-06-04's optional-chain lowering before the Test262 feature
-// is admitted globally. In addition to the ordinary successful paths, this
-// table deliberately retains two upstream quirks:
-//
-// - an optional call of an identifier in a function containing `with` fails
-//   QuickJS's bytecode stack verification with InternalError;
-// - `delete value?.#private` is accepted, performs the private brand/read
-//   check for non-nullish values, returns true, and leaves the element intact.
-//
-// Those cases are semantic target evidence, not assumptions derived from the
-// ECMAScript specification. Every expected observation below was produced by
-// the repository's pinned QuickJS 2026-06-04 oracle.
-const CASES: &[Case] = &[
-    Case {
-        group: "basic member",
-        description: "fixed and computed members return values while nullish bases skip the key",
-        source: r#"
+// mode: completion-name
+// case: basic member / fixed and computed members return values while nullish bases skip the key
             (function () {
                 function text(value) {
                     return value === void 0 ? "undefined" : String(value);
@@ -44,13 +20,7 @@ const CASES: &[Case] = &[
                     conversions
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|42|undefined|undefined|1",
-    },
-    Case {
-        group: "basic call",
-        description: "bare member computed and chained optional calls select the intended boundary",
-        source: r#"
+// case: basic call / bare member computed and chained optional calls select the intended boundary
             (function () {
                 function text(value) {
                     return value === void 0 ? "undefined" : String(value);
@@ -79,25 +49,11 @@ const CASES: &[Case] = &[
                     text(nil?.()?.answer)
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|true:42|42|42|42|42|undefined|undefined|undefined",
-    },
-    Case {
-        group: "basic call",
-        description: "an optional call still rejects a present non-callable value",
-        source: r#"({ value: 1 }).value?.()"#,
-        expected: "throw|object|TypeError",
-    },
-    Case {
-        group: "basic call",
-        description: "an optional base does not make a present method call optional",
-        source: r#"({ method: 1 })?.method()"#,
-        expected: "throw|object|TypeError",
-    },
-    Case {
-        group: "short circuit",
-        description: "nullish member and call boundaries skip keys arguments and the remaining chain",
-        source: r#"
+// case: basic call / an optional call still rejects a present non-callable value
+({ value: 1 }).value?.()
+// case: basic call / an optional base does not make a present method call optional
+({ method: 1 })?.method()
+// case: short circuit / nullish member and call boundaries skip keys arguments and the remaining chain
             (function () {
                 var log = "";
                 function base(value) {
@@ -122,13 +78,7 @@ const CASES: &[Case] = &[
                 })?.[key()]?.(argument());
                 return [String(first), String(second), third, log].join("|");
             })()
-        "#,
-        expected: "return|string|undefined|undefined|42|bbkbkac",
-    },
-    Case {
-        group: "short circuit",
-        description: "the base is evaluated once and only traversed getters execute",
-        source: r#"
+// case: short circuit / the base is evaluated once and only traversed getters execute
             (function () {
                 var baseCalls = 0;
                 var gets = 0;
@@ -148,13 +98,7 @@ const CASES: &[Case] = &[
                 })()?.child.answer;
                 return [answer, String(skipped), baseCalls, gets].join("|");
             })()
-        "#,
-        expected: "return|string|42|undefined|2|1",
-    },
-    Case {
-        group: "chain extent",
-        description: "one optional boundary covers its tail while grouping and a nonoptional null tail throw",
-        source: r#"
+// case: chain extent / one optional boundary covers its tail while grouping and a nonoptional null tail throw
             (function () {
                 var first = null?.child.answer.value;
                 var second = ({ child: null })?.child?.answer.value;
@@ -179,13 +123,7 @@ const CASES: &[Case] = &[
                     tailError
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|undefined|undefined|42|TypeError|TypeError",
-    },
-    Case {
-        group: "receiver",
-        description: "dot computed optional-base and grouped calls retain the member receiver",
-        source: r#"
+// case: receiver / dot computed optional-base and grouped calls retain the member receiver
             (function () {
                 var object = {
                     base: 40,
@@ -208,13 +146,7 @@ const CASES: &[Case] = &[
                     conversions
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|true:42|true:42|true:42|true:42|1",
-    },
-    Case {
-        group: "receiver",
-        description: "nullish grouped fixed spread and multi-edge calls evaluate arguments then throw",
-        source: r#"
+// case: receiver / nullish grouped fixed spread and multi-edge calls evaluate arguments then throw
             (function () {
                 var log = "";
                 var errors = [];
@@ -235,13 +167,7 @@ const CASES: &[Case] = &[
                 }
                 return errors.join(",") + "|" + log;
             })()
-        "#,
-        expected: "return|string|TypeError,TypeError,TypeError|fsm",
-    },
-    Case {
-        group: "QuickJS with quirk",
-        description: "an optional call of a with-resolved identifier hits QuickJS stack verification",
-        source: r#"
+// case: QuickJS with quirk / an optional call of a with-resolved identifier hits QuickJS stack verification
             (function () {
                 var scope = {
                     base: 40,
@@ -255,13 +181,7 @@ const CASES: &[Case] = &[
                 }
                 return result;
             })()
-        "#,
-        expected: "throw|object|InternalError",
-    },
-    Case {
-        group: "receiver",
-        description: "QuickJS reads optional super getters with the prototype and calls with the live receiver",
-        source: r#"
+// case: receiver / QuickJS reads optional super getters with the prototype and calls with the live receiver
             (function () {
                 var getterReceivers = [];
                 var receiver;
@@ -299,26 +219,14 @@ const CASES: &[Case] = &[
                     getterReceivers.join(",")
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42:true|42:true|undefined|0|proto,proto",
-    },
-    Case {
-        group: "eval",
-        description: "eval optional call is indirect and cannot see the caller lexical environment",
-        source: r#"
+// case: eval / eval optional call is indirect and cannot see the caller lexical environment
             (function () {
                 var __qjo_optional_local = 41;
                 var direct = eval("__qjo_optional_local + 1");
                 var indirect = eval?.("typeof __qjo_optional_local");
                 return [direct, indirect, __qjo_optional_local].join("|");
             })()
-        "#,
-        expected: "return|string|42|undefined|41",
-    },
-    Case {
-        group: "eval",
-        description: "a shadowed eval remains an ordinary optional call and skips a nullish argument",
-        source: r#"
+// case: eval / a shadowed eval remains an ordinary optional call and skips a nullish argument
             (function () {
                 var calls = 0;
                 var eval = function (source) {
@@ -331,13 +239,7 @@ const CASES: &[Case] = &[
                 var second = eval?.((calls++, "skipped"));
                 return [first, String(second), calls].join("|");
             })()
-        "#,
-        expected: "return|string|true:shadow|undefined|1",
-    },
-    Case {
-        group: "delete",
-        description: "delete short circuits nullish keys and preserves sloppy and strict property rules",
-        source: r#"
+// case: delete / delete short circuits nullish keys and preserves sloppy and strict property rules
             (function () {
                 var log = "";
                 var object = { answer: 42 };
@@ -369,13 +271,7 @@ const CASES: &[Case] = &[
                     log
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|true|true|false|false|true|TypeError|",
-    },
-    Case {
-        group: "grouped boundary",
-        description: "grouping ends the optional chain so its result can be constructed",
-        source: r#"
+// case: grouped boundary / grouping ends the optional chain so its result can be constructed
             (function () {
                 function Constructor(value) {
                     this.answer = value;
@@ -383,13 +279,7 @@ const CASES: &[Case] = &[
                 var holder = { Constructor: Constructor };
                 return new (holder?.Constructor)(42).answer;
             })()
-        "#,
-        expected: "return|number|42",
-    },
-    Case {
-        group: "grouped boundary",
-        description: "grouping ends the optional chain while retaining a member tag receiver",
-        source: r#"
+// case: grouped boundary / grouping ends the optional chain while retaining a member tag receiver
             (function () {
                 var holder = {
                     tag: function (strings, value) {
@@ -403,13 +293,7 @@ const CASES: &[Case] = &[
                 };
                 return (holder?.tag)`a${42}b`;
             })()
-        "#,
-        expected: "return|string|true:a:42:b",
-    },
-    Case {
-        group: "special base",
-        description: "new.target can be the base of an optional member chain",
-        source: r#"
+// case: special base / new.target can be the base of an optional member chain
             (function () {
                 function Probe() {
                     if (new.target === void 0) {
@@ -419,13 +303,7 @@ const CASES: &[Case] = &[
                 }
                 return [Probe(), new Probe().seen].join("|");
             })()
-        "#,
-        expected: "return|string|undefined|Probe",
-    },
-    Case {
-        group: "async",
-        description: "a nullish optional call skips an await argument while a callable path suspends",
-        source: r#"
+// case: async / a nullish optional call skips an await argument while a callable path suspends
             (function () {
                 var log = "";
                 async function probe(callback) {
@@ -448,13 +326,7 @@ const CASES: &[Case] = &[
                     called instanceof Promise
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|r|true|a|true",
-    },
-    Case {
-        group: "generator",
-        description: "a nullish optional call skips a yield argument while a callable path resumes it",
-        source: r#"
+// case: generator / a nullish optional call skips a yield argument while a callable path resumes it
             (function () {
                 function* probe(callback) {
                     return callback?.(yield 40);
@@ -474,13 +346,7 @@ const CASES: &[Case] = &[
                     second.value
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|true|undefined|false|40|true|42",
-    },
-    Case {
-        group: "private element",
-        description: "optional private fields and methods short circuit before brand checks on nullish bases",
-        source: r#"
+// case: private element / optional private fields and methods short circuit before brand checks on nullish bases
             (function () {
                 class Box {
                     #value = 40;
@@ -510,13 +376,7 @@ const CASES: &[Case] = &[
                     brandError
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|40|undefined|undefined|42|undefined|TypeError",
-    },
-    Case {
-        group: "private element",
-        description: "a private field after an earlier optional link remains inside the same chain",
-        source: r#"
+// case: private element / a private field after an earlier optional link remains inside the same chain
             (function () {
                 class Box {
                     #value = 42;
@@ -544,13 +404,7 @@ const CASES: &[Case] = &[
                     wrongBrandError
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|42|undefined|TypeError|TypeError",
-    },
-    Case {
-        group: "QuickJS private quirk",
-        description: "grouping an optional private method loses the receiver before fixed or optional call",
-        source: r#"
+// case: QuickJS private quirk / grouping an optional private method loses the receiver before fixed or optional call
             (function () {
                 class Box {
                     #receiver() {
@@ -566,13 +420,7 @@ const CASES: &[Case] = &[
                 }
                 return new Box().test();
             })()
-        "#,
-        expected: "return|string|instance|undefined|undefined",
-    },
-    Case {
-        group: "QuickJS private quirk",
-        description: "delete of an optional private access returns true without deleting the private field",
-        source: r#"
+// case: QuickJS private quirk / delete of an optional private access returns true without deleting the private field
             (function () {
                 class Box {
                     #value = 42;
@@ -600,122 +448,48 @@ const CASES: &[Case] = &[
                     wrongBrand
                 ].join("|");
             })()
-        "#,
-        expected: "return|string|true:42|true:undefined|TypeError",
-    },
-    Case {
-        group: "early error assignment",
-        description: "an optional member cannot be a simple assignment target",
-        source: r#"var object = {}; object?.answer = 42;"#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error assignment",
-        description: "an optional member cannot be a compound assignment target",
-        source: r#"var object = { answer: 1 }; object?.answer += 1;"#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error assignment",
-        description: "an optional member cannot be a logical assignment target",
-        source: r#"var object = { answer: 0 }; object?.answer ||= 1;"#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error destructuring",
-        description: "an optional member cannot be an array destructuring assignment target",
-        source: r#"
+// case: early error assignment / an optional member cannot be a simple assignment target
+var object = {}; object?.answer = 42;
+// case: early error assignment / an optional member cannot be a compound assignment target
+var object = { answer: 1 }; object?.answer += 1;
+// case: early error assignment / an optional member cannot be a logical assignment target
+var object = { answer: 0 }; object?.answer ||= 1;
+// case: early error destructuring / an optional member cannot be an array destructuring assignment target
             var object = {};
             var values = [42];
             [object?.answer] = values;
-        "#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error iteration",
-        description: "an optional member cannot be a for-in assignment target",
-        source: r#"
+// case: early error iteration / an optional member cannot be a for-in assignment target
             var object = {};
             var source = { answer: 42 };
             for (object?.answer in source) {}
-        "#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error iteration",
-        description: "an optional member cannot be a for-of assignment target",
-        source: r#"
+// case: early error iteration / an optional member cannot be a for-of assignment target
             var object = {};
             var source = [42];
             for (object?.answer of source) {}
-        "#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error update",
-        description: "an optional member cannot be a postfix update target",
-        source: r#"var object = {}; object?.answer++;"#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error update",
-        description: "an optional member cannot be a prefix update target",
-        source: r#"var object = {}; ++object?.answer;"#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error new",
-        description: "new cannot directly construct an optional member chain",
-        source: r#"
+// case: early error update / an optional member cannot be a postfix update target
+var object = {}; object?.answer++;
+// case: early error update / an optional member cannot be a prefix update target
+var object = {}; ++object?.answer;
+// case: early error new / new cannot directly construct an optional member chain
             var holder = { Constructor: function () {} };
             new holder?.Constructor();
-        "#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error new",
-        description: "new cannot directly construct an optional call chain",
-        source: r#"
+// case: early error new / new cannot directly construct an optional call chain
             var Constructor = function () {};
             new Constructor?.();
-        "#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error template",
-        description: "a tagged template cannot directly follow an optional member chain",
-        source: r#"
+// case: early error template / a tagged template cannot directly follow an optional member chain
             var holder = { tag: function () {} };
             holder?.tag`value`;
-        "#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error template",
-        description: "an optional tag call cannot use tagged-template syntax",
-        source: r#"
+// case: early error template / an optional tag call cannot use tagged-template syntax
             var tag = function () {};
             tag?.`value`;
-        "#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error super",
-        description: "super itself cannot be the base of an optional member chain",
-        source: r#"
+// case: early error super / super itself cannot be the base of an optional member chain
             class Base {}
             class Derived extends Base {
                 method() {
                     return super?.value;
                 }
             }
-        "#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error private",
-        description: "delete of an ordinary private access remains a syntax error",
-        source: r#"
+// case: early error private / delete of an ordinary private access remains a syntax error
             var optional = null?.value;
             class Box {
                 #value;
@@ -723,131 +497,5 @@ const CASES: &[Case] = &[
                     return delete value.#value;
                 }
             }
-        "#,
-        expected: "throw|object|SyntaxError",
-    },
-    Case {
-        group: "early error private",
-        description: "an optional private name must still be declared by an enclosing class",
-        source: r#"var value = {}; value?.#missing;"#,
-        expected: "throw|object|SyntaxError",
-    },
-];
-
-#[test]
-fn optional_chaining_case_table_is_reviewed() {
-    assert_eq!(CASES.len(), 38, "update the reviewed oracle case count");
-    for (index, case) in CASES.iter().enumerate() {
-        assert!(
-            case.source.contains("?."),
-            "case lacks an optional chain: {}",
-            case.description,
-        );
-        assert!(
-            CASES[..index]
-                .iter()
-                .all(|earlier| earlier.description != case.description),
-            "duplicate case description: {}",
-            case.description,
-        );
-    }
-}
-
-#[test]
-fn optional_chaining_matches_pinned_expectations_without_an_oracle() {
-    assert_grouped_cases_agree(
-        CASES,
-        "optional-chaining pinned expectations failed",
-        ["oxide", "expected"],
-        rust_observation,
-        |case| case.expected.to_owned(),
-    );
-}
-
-#[test]
-fn optional_chaining_oracle_vectors_self_check() {
-    let oracle = require_pinned_qjs_oracle!("optional-chaining oracle self-check");
-
-    assert_grouped_cases_agree(
-        CASES,
-        "pinned QuickJS optional-chaining vectors drifted",
-        ["actual", "expected"],
-        |case| oracle_observation(&oracle, case),
-        |case| case.expected.to_owned(),
-    );
-}
-
-#[test]
-fn optional_chaining_matches_pinned_quickjs() {
-    let oracle = require_pinned_qjs_oracle!("optional-chaining differential");
-
-    assert_grouped_cases_agree(
-        CASES,
-        "optional-chaining semantics drifted",
-        ["oxide", "quickjs"],
-        rust_observation,
-        |case| oracle_observation(&oracle, case),
-    );
-}
-
-fn rust_observation(case: &Case) -> String {
-    let (runtime, mut context) = host_runtime_context();
-    match context.eval(case.source) {
-        Ok(value) => format!(
-            "return|{}|{}",
-            value_type(&runtime, &value),
-            primitive_text(value),
-        ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "take Rust exception for {} / {}: {error}",
-                        case.group, case.description,
-                    )
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Rust exception was missing for {} / {}",
-                        case.group, case.description,
-                    )
-                });
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}",
-                    error_name(&runtime, &mut context, &error, case),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(&runtime, &value),
-                    primitive_text(value),
-                ),
-            }
-        }
-        Err(error) => format!("engine|{error}"),
-    }
-}
-
-fn error_name(
-    runtime: &Runtime,
-    context: &mut Context,
-    error: &quickjs_oxide::engine::api::ObjectRef,
-    case: &Case,
-) -> String {
-    let key = runtime
-        .intern_property_key("name")
-        .expect("Error name property key");
-    let Value::String(value) = context.get_property(error, &key).unwrap_or_else(|failure| {
-        panic!(
-            "read Error.name for {} / {}: {failure}",
-            case.group, case.description,
-        )
-    }) else {
-        panic!(
-            "Error.name was not a string for {} / {}",
-            case.group, case.description,
-        );
-    };
-    value.to_utf8_lossy()
-}
+// case: early error private / an optional private name must still be declared by an enclosing class
+var value = {}; value?.#missing;

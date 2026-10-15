@@ -9,6 +9,7 @@ const DIRECTORIES: &[&str] = &[
     "global",
     "number",
     "object",
+    "operators",
     "primitive_intrinsics",
     "regexp",
     "string",
@@ -47,6 +48,11 @@ fn number() {
 #[test]
 fn object() {
     run_case_directory("object");
+}
+
+#[test]
+fn operators() {
+    run_case_directory("operators");
 }
 
 #[test]
