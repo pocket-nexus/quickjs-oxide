@@ -1,11 +1,9 @@
 use crate::oracle_cases::GroupedCase as Case;
-use crate::oracle_cases::SuccessCase;
 use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::engine::api::RuntimeError;
 use quickjs_oxide::engine::api::number_to_string;
 use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, Value};
 use std::fmt::Write as _;
-use std::process::Output;
 
 /// Create a runtime with the system host services and one fresh context.
 /// Destructure it as `let (runtime, mut context)` so the context still drops
@@ -263,22 +261,6 @@ pub(crate) fn drain(runtime: &Runtime) -> usize {
         count += 1;
     }
     count
-}
-
-pub(crate) fn assert_success(engine: &str, case: &SuccessCase, output: &Output) {
-    assert!(
-        output.status.success(),
-        "{engine} rejected {}: {}\nsource:\n{}",
-        case.description,
-        String::from_utf8_lossy(&output.stderr),
-        case.source
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        case.expected_stdout,
-        "{engine} output drifted for {}",
-        case.description
-    );
 }
 
 pub(crate) fn normalize_rust_value_text(value: Value) -> String {

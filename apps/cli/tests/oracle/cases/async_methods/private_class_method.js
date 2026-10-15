@@ -1,10 +1,6 @@
-use crate::oracle_cases::SuccessCase;
-use crate::runtime_completion_oracle::compare_success_cases;
+// mode: print
+// case: private async shape source reflection and settlement
 
-const SEMANTIC_CASES: &[SuccessCase] = &[
-    SuccessCase {
-        description: "private async shape source reflection and settlement",
-        source: r##"
 var events = [];
 class C {
     async /*a*/ #sum /*b*/ (left, right = 0) {
@@ -55,23 +51,8 @@ promise.then(function (value) {
 staticPromise.then(function (value) {
     print("static=" + value);
 });
-"##,
-        expected_stdout: concat!(
-            "shape=function|#sum|1|false|true|[object AsyncFunction]|AsyncFunction|",
-            "true|true|#sumStatic|2|true|true|",
-            "async /*a*/ #sum /*b*/ (left, right = 0) {\n",
-            "        events.push(\"body\");\n",
-            "        return await (left + right);\n",
-            "    }|async /*c*/ #sumStatic /*d*/ (left, right) {\n",
-            "        return await (left + right);\n",
-            "    }|TypeError|body,after\n",
-            "instance=42\n",
-            "static=42\n",
-        ),
-    },
-    SuccessCase {
-        description: "private brands and home objects survive await and extraction",
-        source: r##"
+// case: private brands and home objects survive await and extraction
+
 class Base {
     get answer() { return this.seed + 2; }
     static get answer() { return this.seed + 2; }
@@ -134,19 +115,8 @@ instanceMethod.call({ seed: 100 }).then(function (value) {
 staticMethod.call({ seed: 100 }).then(function (value) {
     print("borrowed-static=" + value);
 });
-"##,
-        expected_stdout: concat!(
-            "sync=true|false|true|false|TypeError:invalid brand on object|",
-            "TypeError:invalid brand on object\n",
-            "instance=42,42,42,40\n",
-            "static=42,42,42,40\n",
-            "borrowed-instance=102,102,102,100\n",
-            "borrowed-static=102,102,102,100\n",
-        ),
-    },
-    SuccessCase {
-        description: "private access timing and async rejection boundaries",
-        source: r##"
+// case: private access timing and async rejection boundaries
+
 var events = [];
 var synchronous = [];
 class C {
@@ -201,19 +171,3 @@ parameterPromise.then(undefined, function (error) {
 bodyPromise.then(undefined, function (error) {
     print("body=" + error.name + ":" + error.message + "|" + events.join(","));
 });
-"##,
-        expected_stdout: concat!(
-            "sync=access=TypeError:invalid brand on object,",
-            "assign=TypeError:'#body' is read-only|",
-            "parameter,after-parameter,body,after-body\n",
-            "parameter=RangeError:parameter|parameter,after-parameter,body,after-body\n",
-            "body=TypeError:private class field '#value' does not exist|",
-            "parameter,after-parameter,body,after-body\n",
-        ),
-    },
-];
-
-#[test]
-fn ordinary_private_async_class_method_semantics_match_pinned_quickjs() {
-    compare_success_cases("private async class method", SEMANTIC_CASES);
-}

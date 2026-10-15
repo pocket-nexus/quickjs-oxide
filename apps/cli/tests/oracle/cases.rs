@@ -5,6 +5,7 @@ use crate::support::js_cases::{case_directories, run_case_directory};
 const DIRECTORIES: &[&str] = &[
     "array",
     "async_functions",
+    "async_methods",
     "control_flow",
     "function_semantics",
     "global",
@@ -29,6 +30,11 @@ fn array() {
 #[test]
 fn async_functions() {
     run_case_directory("async_functions");
+}
+
+#[test]
+fn async_methods() {
+    run_case_directory("async_methods");
 }
 
 #[test]

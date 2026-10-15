@@ -2,12 +2,10 @@ use crate::object_graph_observation::error_string_property as error_string_prope
 use crate::oracle_cases::CompileCase;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::oracle_cases::StartMatchCase as MatchCase;
-use crate::oracle_cases::SuccessCase;
 use crate::quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf;
 use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end;
 use crate::quickjs_array_completion_oracle::observe_array_completion;
 use crate::runtime_observation::array_value_text;
-use crate::runtime_observation::assert_success;
 use crate::runtime_observation::error_name;
 use crate::runtime_observation::normalize_rust_value_text as normalize_rust_value;
 use crate::runtime_observation::take_rust_error;
@@ -408,28 +406,6 @@ pub(crate) fn run(executable: &OsStr, source: &str) -> Output {
         .args(["-e", source])
         .output()
         .unwrap_or_else(|error| panic!("could not run {executable:?}: {error}"))
-}
-
-pub(crate) fn compare_success_cases(group: &str, cases: &[SuccessCase]) {
-    let oracle = std::env::var_os("QJS_ORACLE");
-    if oracle.is_none() {
-        eprintln!("SKIP {group} differential: set QJS_ORACLE to pinned upstream qjs");
-    }
-
-    for case in cases {
-        let oxide = run(env!("CARGO_BIN_EXE_qjs").as_ref(), case.source);
-        assert_success("quickjs-oxide", case, &oxide);
-
-        if let Some(oracle) = &oracle {
-            let quickjs = run(oracle, case.source);
-            assert_success("pinned QuickJS", case, &quickjs);
-            assert_eq!(
-                oxide.stdout, quickjs.stdout,
-                "{group} output differed for {}",
-                case.description
-            );
-        }
-    }
 }
 
 pub(crate) fn rust_value_observation(source: &str, description: &str) -> String {
