@@ -2396,6 +2396,23 @@ fn execute_admitted_in_state(
                 }
                 continue;
             }
+            VmAction::GetElement {
+                keep_receiver,
+                keep_key,
+                fallthrough,
+            } => {
+                if !element_read::try_complete(
+                    runtime,
+                    state,
+                    &mut segment,
+                    keep_receiver,
+                    keep_key,
+                    fallthrough,
+                )? {
+                    return Ok(action);
+                }
+                continue;
+            }
             VmAction::ClassInitializer(super::construct_driver::InitializerKind::Instance) => {
                 if !class_initializer::try_skip_absent(runtime, state, &mut segment)? {
                     return Ok(action);
@@ -3918,6 +3935,7 @@ mod array_allocation_tests;
 
 mod array_allocation;
 mod class_initializer;
+mod element_read;
 mod for_of;
 mod leaf_native;
 mod string_add;
