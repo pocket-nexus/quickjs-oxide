@@ -27,10 +27,10 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .primitive_prototypes[kind.index()]
-        .ok_or(RuntimeError::Invariant(
-            "primitive prototype is not implemented in this realm",
-        ))?;
+            .primitive_prototype(kind)
+            .ok_or(RuntimeError::Invariant(
+                "primitive prototype is not implemented in this realm",
+            ))?;
         Ok(ObjectRef::from_borrowed_handle(self.clone(), prototype)?)
     }
 }

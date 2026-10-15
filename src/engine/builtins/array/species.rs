@@ -85,7 +85,7 @@ impl SpeciesResume {
                             .borrow()
                             .heap
                             .context(constructor_realm)?
-                            .array_constructor
+                            .array_constructor()
                             == Some(id)
                     {
                         return allocate(runtime, self.realm, self.length);

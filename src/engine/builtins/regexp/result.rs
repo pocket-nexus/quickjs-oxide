@@ -74,8 +74,7 @@ impl crate::engine::heap::runtime::RuntimeState {
         let shape = self
             .heap
             .context(realm)?
-            .regexp
-            .as_ref()
+            .regexp()
             .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))?
             .result_shapes
             .ok_or(RuntimeError::Invariant("RegExp result layouts missing"))?[0];

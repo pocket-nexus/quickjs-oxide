@@ -283,7 +283,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .iterator
+            .iterator()
             .ok_or(RuntimeError::Invariant("realm has no Iterator intrinsics"))
     }
 

@@ -205,9 +205,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .regexp
-            .as_ref()
-            .copied()
+            .regexp()
             .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))
     }
 

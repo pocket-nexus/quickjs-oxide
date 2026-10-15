@@ -194,7 +194,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .eval_function
+            .eval_function()
             .ok_or(RuntimeError::Invariant(
                 "context has no original eval function root",
             ))?;
@@ -218,7 +218,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .eval_function
+            .eval_function()
             .ok_or(RuntimeError::Invariant(
                 "context has no original eval function root",
             ))?;

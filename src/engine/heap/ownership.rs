@@ -9,124 +9,6 @@ use crate::engine::heap::{
 };
 use crate::engine::value::JsValue;
 
-#[cfg(debug_assertions)]
-pub(crate) fn trace_object_matches(id: ObjectId) -> bool {
-    static WANTED: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
-    WANTED
-        .get_or_init(|| {
-            std::env::var("QJS_TRACE_OBJECT_ID")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-        })
-        .is_some_and(|wanted| wanted == id.index)
-}
-
-#[cfg(debug_assertions)]
-pub(crate) fn trace_string_matches(id: StringId) -> bool {
-    static WANTED: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
-    WANTED
-        .get_or_init(|| {
-            std::env::var("QJS_TRACE_STRING_ID")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-        })
-        .is_some_and(|wanted| wanted == id.index)
-}
-
-#[cfg(debug_assertions)]
-thread_local! {
-    static OUTSTANDING_OBJECT_RETAINS: std::cell::RefCell<
-        std::collections::HashMap<u32, Vec<String>>,
-    > = std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-#[cfg(debug_assertions)]
-pub(crate) fn record_object_retain(id: ObjectId) {
-    if !trace_object_matches(id) {
-        return;
-    }
-    let backtrace = std::backtrace::Backtrace::force_capture().to_string();
-    let compact = backtrace
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            let at = line.strip_prefix("at ")?;
-            at.split_once(": ")
-                .map(|(path, _)| path.to_string())
-                .or_else(|| Some(at.to_string()))
-        })
-        .take(10)
-        .collect::<Vec<_>>()
-        .join(" <- ");
-    OUTSTANDING_OBJECT_RETAINS.with(|slot| {
-        slot.borrow_mut().entry(id.index).or_default().push(compact);
-    });
-}
-
-#[cfg(debug_assertions)]
-pub(crate) fn record_object_release(id: ObjectId) {
-    if !trace_object_matches(id) {
-        return;
-    }
-    OUTSTANDING_OBJECT_RETAINS.with(|slot| {
-        if let Some(entries) = slot.borrow_mut().get_mut(&id.index) {
-            entries.pop();
-        }
-    });
-}
-
-#[cfg(debug_assertions)]
-pub(crate) fn dump_outstanding_object_retains() {
-    let wanted = std::env::var("QJS_TRACE_OBJECT_ID")
-        .ok()
-        .and_then(|value| value.parse::<u32>().ok());
-    let Some(wanted) = wanted else {
-        return;
-    };
-    OUTSTANDING_OBJECT_RETAINS.with(|slot| {
-        let mut map = slot.borrow_mut();
-        if let Some(entries) = map.remove(&wanted) {
-            for (index, entry) in entries.iter().enumerate() {
-                eprintln!("[outstanding-retain] {wanted} #{index}: {entry}");
-            }
-        }
-    });
-}
-
-/// Whether the debug edge ledger captures creation backtraces.
-///
-/// Capture is enabled only for explicit leak diagnosis (`QJS_EDGE_LEDGER`,
-/// `QJS_TEARDOWN_PROBE`, or `QJS_TRACE_ROOTS`): a backtrace costs far more
-/// than the arena operation it annotates, and the acceptance budget is a
-/// debug test-time regression under 2×.
-#[cfg(debug_assertions)]
-pub(crate) fn alloc_site_capture_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        ["QJS_EDGE_LEDGER", "QJS_TEARDOWN_PROBE", "QJS_TRACE_ROOTS"]
-            .iter()
-            .any(|name| std::env::var_os(name).is_some())
-    })
-}
-
-/// Compact one captured backtrace into a single diagnostic line.
-#[cfg(debug_assertions)]
-pub(crate) fn compact_backtrace() -> String {
-    std::backtrace::Backtrace::force_capture()
-        .to_string()
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            let at = line.strip_prefix("at ")?;
-            at.split_once(": ")
-                .map(|(path, _)| path.to_string())
-                .or_else(|| Some(at.to_string()))
-        })
-        .take(12)
-        .collect::<Vec<_>>()
-        .join(" <- ")
-}
-
 impl Runtime {
     #[inline]
     pub(crate) fn operation(&self) -> Result<RuntimeOperation<'_>, RuntimeError> {
@@ -174,25 +56,6 @@ impl Runtime {
             return;
         }
         let _unwind = self.unwind_guard();
-        #[cfg(debug_assertions)]
-        if let DeferredRefOp::Object(id) = operation
-            && std::env::var_os("QJS_TRACE_ROOTS").is_some()
-        {
-            eprintln!("[release] {id:?} at {}", std::panic::Location::caller());
-            if trace_object_matches(id) {
-                let strong = self
-                    .0
-                    .state
-                    .try_borrow()
-                    .ok()
-                    .and_then(|state| state.heap.object_strong_count(id).ok());
-                eprintln!("[o-release] {id:?} strong_before={strong:?}");
-                eprintln!(
-                    "[release-o-backtrace]\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-        }
         self.apply_reference_release_or_defer(operation);
     }
 
@@ -204,13 +67,6 @@ impl Runtime {
         let result = if let Ok(mut state) = self.0.state.try_borrow_mut() {
             state.apply_deferred_operation(operation)
         } else {
-            #[cfg(debug_assertions)]
-            if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-                eprintln!(
-                    "[defer] {operation:?} at {}",
-                    std::panic::Location::caller()
-                );
-            }
             self.0.deferred_references.push_back(operation);
             // The state is still borrowed. The next existing operation boundary
             // (or a successful release) drains this work after the borrow ends.
@@ -226,17 +82,10 @@ impl Runtime {
         // release adds a global environment-lock lookup to ordinary value flow.
         if let Err(error) = &result {
             self.0.poisoned.set(true);
-            if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
-                eprintln!("[release] invalid root release {operation:?}: {error:?}");
-                if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-                    eprintln!(
-                        "[release-invalid-backtrace]\n{}",
-                        std::backtrace::Backtrace::force_capture()
-                    );
-                }
-            } else {
-                debug_assert!(false, "invalid root release {operation:?}: {error:?}");
-            }
+            debug_assert!(
+                std::env::var_os("QJS_TEARDOWN_PROBE").is_some(),
+                "invalid root release {operation:?}: {error:?}"
+            );
             return;
         }
         // No unwind or JavaScript can intervene after the successful release.
@@ -248,33 +97,15 @@ impl Runtime {
         let drain = self.drain_deferred_references_slow();
         if let Err(error) = &drain {
             self.0.poisoned.set(true);
-            if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
-                eprintln!("[release] deferred root release failed: {error:?}");
-            } else {
-                debug_assert!(false, "deferred root release failed: {error:?}");
-            }
+            debug_assert!(
+                std::env::var_os("QJS_TEARDOWN_PROBE").is_some(),
+                "deferred root release failed: {error:?}"
+            );
         }
     }
 
     #[track_caller]
     pub(crate) fn retain_object_handle(&self, id: ObjectId) -> Result<(), HeapError> {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            eprintln!("[retain] {id:?} at {}", std::panic::Location::caller());
-            if trace_object_matches(id) {
-                let strong = self
-                    .0
-                    .state
-                    .try_borrow()
-                    .ok()
-                    .and_then(|state| state.heap.object_strong_count(id).ok());
-                eprintln!("[o-retain] {id:?} strong_before={strong:?}");
-                eprintln!(
-                    "[retain-o-backtrace]\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-        }
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             return state.heap.retain_object(id);
         }
@@ -299,10 +130,6 @@ impl Runtime {
     #[inline]
     #[track_caller]
     pub(crate) fn retain_live_object_handle(&self, id: ObjectId) -> Result<(), HeapError> {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            return self.retain_object_handle(id);
-        }
         if let Ok(state) = self.0.state.try_borrow() {
             state.heap.retain_object_fast(id);
             return Ok(());
@@ -322,10 +149,6 @@ impl Runtime {
     #[inline]
     #[track_caller]
     pub(crate) fn retain_live_string_handle(&self, id: StringId) -> Result<(), HeapError> {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            return self.retain_string_handle(id);
-        }
         if let Ok(state) = self.0.state.try_borrow() {
             state.heap.retain_string_fast(id);
             return Ok(());
@@ -338,10 +161,6 @@ impl Runtime {
     #[inline]
     #[track_caller]
     pub(crate) fn retain_live_bigint_handle(&self, id: BigIntId) -> Result<(), HeapError> {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            return self.retain_bigint_handle(id);
-        }
         if let Ok(state) = self.0.state.try_borrow() {
             state.heap.retain_bigint_fast(id);
             return Ok(());
@@ -475,20 +294,6 @@ impl Runtime {
 
     #[track_caller]
     pub(crate) fn retain_string_handle(&self, id: StringId) -> Result<(), HeapError> {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            eprintln!("[retain-s] {id:?} at {}", std::panic::Location::caller());
-            if std::env::var("QJS_TRACE_STRING_ID")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-                == Some(id.index)
-            {
-                eprintln!(
-                    "[retain-s-backtrace]\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-        }
         let state = self.0.state.try_borrow().map_err(|_| {
             HeapError::Invariant("string node retained during a runtime state borrow")
         })?;
@@ -502,20 +307,6 @@ impl Runtime {
 
     #[track_caller]
     pub(crate) fn retain_bigint_handle(&self, id: BigIntId) -> Result<(), HeapError> {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            eprintln!("[retain-b] {id:?} at {}", std::panic::Location::caller());
-            if std::env::var("QJS_TRACE_BIGINT_ID")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-                == Some(id.index)
-            {
-                eprintln!(
-                    "[retain-b-backtrace]\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-        }
         let state = self.0.state.try_borrow().map_err(|_| {
             HeapError::Invariant("bigint node retained during a runtime state borrow")
         })?;
@@ -534,38 +325,6 @@ impl Runtime {
             return;
         }
         let _unwind = self.unwind_guard();
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            match id {
-                RawId::String(id) => {
-                    eprintln!("[release-s] {id:?} at {}", std::panic::Location::caller());
-                    if std::env::var("QJS_TRACE_STRING_ID")
-                        .ok()
-                        .and_then(|value| value.parse::<u32>().ok())
-                        == Some(id.index)
-                    {
-                        eprintln!(
-                            "[release-s-backtrace]\n{}",
-                            std::backtrace::Backtrace::force_capture()
-                        );
-                    }
-                }
-                RawId::BigInt(id) => {
-                    eprintln!("[release-b] {id:?} at {}", std::panic::Location::caller());
-                    if std::env::var("QJS_TRACE_BIGINT_ID")
-                        .ok()
-                        .and_then(|value| value.parse::<u32>().ok())
-                        == Some(id.index)
-                    {
-                        eprintln!(
-                            "[release-b-backtrace]\n{}",
-                            std::backtrace::Backtrace::force_capture()
-                        );
-                    }
-                }
-                _ => {}
-            }
-        }
         let result = if let Ok(mut state) = self.0.state.try_borrow_mut() {
             match state.heap.try_release_leaf_reference(id) {
                 Ok(Some(_)) => Ok(()),
@@ -585,13 +344,6 @@ impl Runtime {
     /// transactional store has retained its own copy edge.
     #[track_caller]
     pub(crate) fn release_converted_node_edge(&self, edge: RawId) {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            eprintln!(
-                "[release-converted] {edge:?} at {}",
-                std::panic::Location::caller()
-            );
-        }
         match edge {
             RawId::String(id) => self.release_or_defer(DeferredRefOp::String(id)),
             RawId::BigInt(id) => self.release_or_defer(DeferredRefOp::BigInt(id)),

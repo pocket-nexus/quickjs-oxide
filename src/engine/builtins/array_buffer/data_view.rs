@@ -521,7 +521,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .data_view
+            .data_view()
             .ok_or(RuntimeError::Invariant("realm has no DataView intrinsics"))?
             .prototype;
         Ok(ObjectRef::from_borrowed_handle(self.clone(), prototype)?)

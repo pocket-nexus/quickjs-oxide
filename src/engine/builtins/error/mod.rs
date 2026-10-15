@@ -134,10 +134,13 @@ impl Runtime {
     ) -> Result<ObjectRef, RuntimeError> {
         let prototype = {
             let state = self.0.state.borrow();
-            state.heap.context(realm)?.native_error_prototypes[NativeErrorKind::Aggregate.index()]
+            state
+                .heap
+                .context(realm)?
+                .native_error_prototype(NativeErrorKind::Aggregate)
                 .ok_or(RuntimeError::Invariant(
-                "realm has no AggregateError prototype",
-            ))?
+                    "realm has no AggregateError prototype",
+                ))?
         };
         let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
         let object = self.new_error_object(&prototype)?;

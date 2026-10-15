@@ -114,7 +114,6 @@ impl RuntimeState {
     /// assigned every temporary strong edge a cleanup owner. This neither
     /// reborrows Runtime nor drains external deferred releases or runs jobs.
     #[inline]
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn collect_if_requested(
         &mut self,
         pressure: &GcPressure,

@@ -337,12 +337,6 @@ pub struct Heap {
     zero_queue: VecDeque<RawId>,
     weak_head: Option<ObjectId>,
     weak_tail: Option<ObjectId>,
-    /// Debug-only edge ledger: creation-site provenance for live slots.  See
-    /// [`Heap::debug_leak_report`]; empty and absent in release builds.
-    #[cfg(debug_assertions)]
-    alloc_sites: Vec<Option<gc::AllocSite>>,
-    #[cfg(debug_assertions)]
-    leaf_alloc_sites: Vec<Option<gc::AllocSite>>,
     #[cfg(feature = "profiling")]
     collection_scratch_peak_bytes: usize,
     gc_pressure: Option<std::rc::Rc<gc_pressure::GcPressure>>,

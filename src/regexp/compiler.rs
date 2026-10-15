@@ -881,20 +881,16 @@ impl<'a> Parser<'a> {
         let mut set = if let Some(endpoints) = endpoints {
             UnicodeSet {
                 ranges: endpoints
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|&[start, end]| CharacterRange::new(start, end - 1))
+                    .map(|(start, end)| CharacterRange::new(start, end - 1))
                     .collect(),
                 strings: BTreeSet::new(),
             }
         } else if value.is_empty() && !inverted && self.flags.contains(RegExpFlags::UNICODE_SETS) {
-            let sequences = crate::source::unicode::property::sequence_property(&name)
-                .ok_or_else(|| CompileError::syntax(position, "unknown unicode property name"))?;
             let mut set = UnicodeSet::default();
-            for sequence in sequences {
+            crate::source::unicode::property::sequence_property(&name, |sequence| {
                 add_unicode_set_sequence(&mut set, sequence);
-            }
+            })
+            .ok_or_else(|| CompileError::syntax(position, "unknown unicode property name"))?;
             set
         } else {
             return Err(CompileError::syntax(

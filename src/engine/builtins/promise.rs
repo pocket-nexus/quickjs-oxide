@@ -289,7 +289,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .promise
+            .promise()
             .ok_or(RuntimeError::Invariant("realm has no Promise intrinsics"))
     }
 

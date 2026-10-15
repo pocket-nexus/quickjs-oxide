@@ -3814,11 +3814,6 @@ mod tests {
     #[test]
     fn cold_template_errors_do_not_widen_ordinary_tokens() {
         assert!(std::mem::size_of::<Token<'_>>() <= 80);
-        eprintln!(
-            "Token={} TokenKind={}",
-            std::mem::size_of::<Token<'_>>(),
-            std::mem::size_of::<TokenKind<'_>>()
-        );
     }
 
     #[test]

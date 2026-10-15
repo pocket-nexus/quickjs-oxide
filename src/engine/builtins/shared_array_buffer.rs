@@ -469,7 +469,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .shared_array_buffer
+            .shared_array_buffer()
             .ok_or(RuntimeError::Invariant(
                 "realm has no SharedArrayBuffer intrinsics",
             ))?

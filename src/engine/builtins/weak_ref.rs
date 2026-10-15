@@ -127,7 +127,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .weak_ref
+            .weak_ref()
             .ok_or(RuntimeError::Invariant("realm has no WeakRef intrinsics"))
     }
 

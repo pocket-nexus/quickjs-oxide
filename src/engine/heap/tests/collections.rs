@@ -324,7 +324,7 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(heap.context(realm).unwrap().map.is_none());
+    assert!(heap.context(realm).unwrap().map().is_none());
     assert_eq!(heap.object_strong_count(prototype), Ok(prototype_strong));
     assert_eq!(
         heap.object_strong_count(constructor),
@@ -336,7 +336,7 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
         .set(iterator_strong);
 
     heap.attach_map_intrinsics(realm, map).unwrap();
-    assert!(matches!(heap.context(realm).unwrap().map, Some(attached)
+    assert!(matches!(heap.context(realm).unwrap().map(), Some(attached)
             if attached.prototype == map.prototype
                 && attached.iterator_prototype == map.iterator_prototype));
     assert_eq!(
@@ -354,7 +354,7 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
     assert!(matches!(
         heap.attach_map_intrinsics(realm, map),
         Err(HeapError::Invariant(
-            "context already has Map intrinsic roots"
+            "context already has these intrinsic roots"
         ))
     ));
 
@@ -628,7 +628,7 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(heap.context(realm).unwrap().set.is_none());
+    assert!(heap.context(realm).unwrap().set().is_none());
     assert_eq!(heap.object_strong_count(prototype), Ok(prototype_strong));
     assert_eq!(
         heap.object_strong_count(constructor),
@@ -640,7 +640,7 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
         .set(iterator_strong);
 
     heap.attach_set_intrinsics(realm, set).unwrap();
-    assert!(matches!(heap.context(realm).unwrap().set, Some(attached)
+    assert!(matches!(heap.context(realm).unwrap().set(), Some(attached)
             if attached.prototype == set.prototype
                 && attached.iterator_prototype == set.iterator_prototype));
     assert_eq!(
@@ -658,7 +658,7 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
     assert!(matches!(
         heap.attach_set_intrinsics(realm, set),
         Err(HeapError::Invariant(
-            "context already has Set intrinsic roots"
+            "context already has these intrinsic roots"
         ))
     ));
 

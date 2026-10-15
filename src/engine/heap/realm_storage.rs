@@ -1,4 +1,5 @@
 use super::*;
+use Intrinsic as I;
 
 impl Heap {
     pub(crate) fn cache_regexp_group_shape(
@@ -135,45 +136,6 @@ impl Heap {
         Ok(())
     }
 
-    /// Publish the realm's shared frozen `%ThrowTypeError%` root after the
-    /// context exists. Its native callable already owns the context, so this
-    /// deliberately closes the same collectable realm cycle as QuickJS.
-    pub(crate) fn attach_throw_type_error(
-        &mut self,
-        realm: ContextId,
-        thrower: ObjectId,
-    ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.throw_type_error.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has a %ThrowTypeError% root",
-            ));
-        }
-        if !matches!(
-            self.object(thrower)?.payload,
-            ObjectPayload::NativeFunction {
-                data: NativeFunctionData {
-                    target: NativeFunctionId::ThrowTypeError,
-                    realm: Some(target_realm),
-                    ..
-                },
-                ..
-            } if target_realm == realm
-        ) {
-            return Err(HeapError::Invariant(
-                "%ThrowTypeError% root is not the realm's poison native function",
-            ));
-        }
-
-        self.retain_raw(RawId::Object(thrower), 1)?;
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining the thrower")
-        };
-        context.throw_type_error = Some(thrower);
-        Ok(())
-    }
-
     /// The realm's cached arguments shape for this kind and count, if any.
     pub(crate) fn arguments_shape(
         &self,
@@ -212,6 +174,130 @@ impl Heap {
         *entry = Some(shape);
         Ok(())
     }
+}
+
+/// One object validated by an intrinsic attach, rooted in `slot` when given.
+#[derive(Clone, Copy)]
+struct IntrinsicRoot {
+    slot: Option<usize>,
+    object: ObjectId,
+    /// Required `[[Prototype]]`, when checked.
+    parent: Option<ObjectId>,
+    /// Required native target and `is_constructor`; otherwise the object must
+    /// be ordinary.
+    native: Option<(NativeFunctionId, bool)>,
+}
+
+const fn ordinary(slot: I, object: ObjectId, parent: Option<ObjectId>) -> IntrinsicRoot {
+    IntrinsicRoot {
+        slot: Some(slot as usize),
+        object,
+        parent,
+        native: None,
+    }
+}
+
+const fn native(
+    slot: Option<I>,
+    object: ObjectId,
+    target: NativeFunctionId,
+    constructor: bool,
+) -> IntrinsicRoot {
+    IntrinsicRoot {
+        slot: match slot {
+            Some(slot) => Some(slot as usize),
+            None => None,
+        },
+        object,
+        parent: None,
+        native: Some((target, constructor)),
+    }
+}
+
+impl Heap {
+    /// Validate and atomically publish one group of realm intrinsic roots.
+    ///
+    /// Every rooted object becomes an owned Context edge, retained as one
+    /// transaction before the Context is mutated; unslotted entries are only
+    /// validated. `regexp_shapes` (the RegExp object shape, then optionally
+    /// its three result shapes) are retained and rooted with them.
+    fn attach_intrinsics(
+        &mut self,
+        realm: ContextId,
+        roots: &[IntrinsicRoot],
+        regexp_shapes: &[ShapeId],
+    ) -> Result<(), HeapError> {
+        let context = self.context(realm)?;
+        if roots.iter().any(|root| {
+            root.slot
+                .is_some_and(|slot| context.intrinsic_roots.get(slot).is_some())
+        }) {
+            return Err(HeapError::Invariant(
+                "context already has these intrinsic roots",
+            ));
+        }
+        let mut edges = Vec::with_capacity(roots.len() + regexp_shapes.len());
+        for root in roots {
+            let object = self.object(root.object)?;
+            let valid = match root.native {
+                None => {
+                    object.kind == ObjectKind::Ordinary
+                        && matches!(object.payload, ObjectPayload::Ordinary)
+                }
+                Some((target, constructor)) => {
+                    object.is_constructor == constructor
+                        && matches!(
+                            &object.payload,
+                            ObjectPayload::NativeFunction { data, internal: None }
+                                if data.target == target && data.realm == Some(realm)
+                        )
+                }
+            };
+            let parent = match root.parent {
+                Some(parent) => self.shape(object.shape)?.prototype() == Some(parent),
+                None => true,
+            };
+            if !valid || !parent {
+                return Err(HeapError::Invariant(
+                    "intrinsic root has an invalid class graph",
+                ));
+            }
+            if root.slot.is_some() {
+                let edge = RawId::Object(root.object);
+                if edges.contains(&edge) {
+                    return Err(HeapError::Invariant("intrinsic roots share an identity"));
+                }
+                edges.push(edge);
+            }
+        }
+        edges.extend(regexp_shapes.iter().copied().map(RawId::Shape));
+        self.retain_edges_transactionally(&edges)?;
+
+        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
+        else {
+            unreachable!("context identity was validated before retaining intrinsic roots")
+        };
+        for root in roots {
+            if let Some(slot) = root.slot {
+                context.intrinsic_roots.set(slot, root.object);
+            }
+        }
+        context.intrinsic_roots.set_regexp_shapes(regexp_shapes);
+        Ok(())
+    }
+
+    /// Publish the realm's shared frozen `%ThrowTypeError%` root after the
+    /// context exists. Its native callable already owns the context, so this
+    /// deliberately closes the same collectable realm cycle as QuickJS.
+    pub(crate) fn attach_throw_type_error(
+        &mut self,
+        realm: ContextId,
+        thrower: ObjectId,
+    ) -> Result<(), HeapError> {
+        let target = NativeFunctionId::ThrowTypeError;
+        let root = native(Some(I::ThrowTypeError), thrower, target, false);
+        self.attach_intrinsics(realm, &[root], &[])
+    }
 
     /// Cache the original realm-local `Array.prototype.values` callable.
     /// This is a distinct Context root because the public prototype property
@@ -222,35 +308,9 @@ impl Heap {
         realm: ContextId,
         values: ObjectId,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.array_prototype_values.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has an Array.prototype.values cache root",
-            ));
-        }
-        if !matches!(
-            self.object(values)?.payload,
-            ObjectPayload::NativeFunction {
-                data: NativeFunctionData {
-                    target: NativeFunctionId::ArrayPrototypeIterator(ArrayIteratorKind::Value),
-                    realm: Some(target_realm),
-                    ..
-                },
-                ..
-            } if target_realm == realm
-        ) {
-            return Err(HeapError::Invariant(
-                "Array.prototype.values cache is not the realm's values native",
-            ));
-        }
-
-        self.retain_raw(RawId::Object(values), 1)?;
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining Array values")
-        };
-        context.array_prototype_values = Some(values);
-        Ok(())
+        let target = NativeFunctionId::ArrayPrototypeIterator(ArrayIteratorKind::Value);
+        let root = native(Some(I::ArrayPrototypeValues), values, target, false);
+        self.attach_intrinsics(realm, &[root], &[])
     }
 
     /// Publish the realm's `%Function%` root after its native callable and
@@ -260,38 +320,9 @@ impl Heap {
         realm: ContextId,
         constructor: ObjectId,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.function_constructor.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has a Function constructor root",
-            ));
-        }
-        let constructor_object = self.object(constructor)?;
-        if !constructor_object.is_constructor
-            || !matches!(
-                constructor_object.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::FunctionConstructor(DynamicFunctionKind::Normal),
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    ..
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "Function constructor root is not the realm's Function native",
-            ));
-        }
-
-        self.retain_raw(RawId::Object(constructor), 1)?;
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining Function")
-        };
-        context.function_constructor = Some(constructor);
-        Ok(())
+        let target = NativeFunctionId::FunctionConstructor(DynamicFunctionKind::Normal);
+        let root = native(Some(I::FunctionConstructor), constructor, target, true);
+        self.attach_intrinsics(realm, &[root], &[])
     }
 
     /// Cache the realm's original `%eval%` callable independently from its
@@ -301,38 +332,9 @@ impl Heap {
         realm: ContextId,
         function: ObjectId,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.eval_function.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has an eval function root",
-            ));
-        }
-        let function_object = self.object(function)?;
-        if function_object.is_constructor
-            || !matches!(
-                function_object.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::GlobalEval,
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    ..
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "eval function root is not the realm's non-constructor eval native",
-            ));
-        }
-
-        self.retain_raw(RawId::Object(function), 1)?;
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining eval")
-        };
-        context.eval_function = Some(function);
-        Ok(())
+        let target = NativeFunctionId::GlobalEval;
+        let root = native(Some(I::EvalFunction), function, target, false);
+        self.attach_intrinsics(realm, &[root], &[])
     }
 
     /// Publish the realm's `%Array%` root after its native callable and
@@ -342,38 +344,9 @@ impl Heap {
         realm: ContextId,
         constructor: ObjectId,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.array_constructor.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has an Array constructor root",
-            ));
-        }
-        let constructor_object = self.object(constructor)?;
-        if !constructor_object.is_constructor
-            || !matches!(
-                constructor_object.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::ArrayConstructor,
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    ..
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "Array constructor root is not the realm's Array native",
-            ));
-        }
-
-        self.retain_raw(RawId::Object(constructor), 1)?;
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining Array")
-        };
-        context.array_constructor = Some(constructor);
-        Ok(())
+        let target = NativeFunctionId::ArrayConstructor;
+        let root = native(Some(I::ArrayConstructor), constructor, target, true);
+        self.attach_intrinsics(realm, &[root], &[])
     }
 
     /// Atomically publish the realm's RegExp intrinsic roots after its native
@@ -383,150 +356,66 @@ impl Heap {
     /// `last_index_atom` is validation-only: the shape already owns its atom
     /// edge. Passing it explicitly lets this heap layer prove that the sole
     /// instance slot really is `lastIndex` without depending on `AtomTable`
-    /// string lookup. The four GC edges are retained as one transaction
-    /// before the Context is mutated.
+    /// string lookup.
     pub(crate) fn attach_regexp_intrinsics(
         &mut self,
         realm: ContextId,
         regexp: RegExpRealmData,
         last_index_atom: Atom,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.regexp.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has RegExp intrinsic roots",
-            ));
-        }
-        let iterator_prototype = context.iterator_prototype;
-
-        let constructor = self.object(regexp.constructor)?;
-        if !constructor.is_constructor
-            || !matches!(
-                constructor.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::RegExp(RegExpNativeKind::Constructor),
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    ..
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "RegExp constructor root is not the realm's RegExp native",
-            ));
-        }
-
-        let prototype = self.object(regexp.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-        {
-            return Err(HeapError::Invariant(
-                "RegExp prototype root is not an ordinary object",
-            ));
-        }
-
-        let string_iterator_prototype = self.object(regexp.string_iterator_prototype)?;
-        if string_iterator_prototype.kind != ObjectKind::Ordinary
-            || !matches!(string_iterator_prototype.payload, ObjectPayload::Ordinary)
-        {
-            return Err(HeapError::Invariant(
-                "RegExp String Iterator prototype root is not an ordinary object",
-            ));
-        }
-        if self.shape(string_iterator_prototype.shape)?.prototype() != Some(iterator_prototype) {
-            return Err(HeapError::Invariant(
-                "RegExp String Iterator prototype does not inherit from the realm's Iterator prototype",
-            ));
-        }
-
+        let iterator_prototype = self.context(realm)?.iterator_prototype;
         let object_shape = self.shape(regexp.object_shape)?;
-        if object_shape.prototype() != Some(regexp.prototype) {
-            return Err(HeapError::Invariant(
-                "RegExp object shape does not inherit from the realm's RegExp prototype",
-            ));
-        }
         let [last_index] = object_shape.entries() else {
             return Err(HeapError::Invariant(
                 "RegExp object shape does not contain exactly one lastIndex property",
             ));
         };
-        if last_index.atom != AtomIdx::from_raw(last_index_atom.raw())
+        if object_shape.prototype() != Some(regexp.prototype)
+            || last_index.atom != AtomIdx::from_raw(last_index_atom.raw())
             || last_index.flags != PropertyFlags::data(true, false, false)
         {
             return Err(HeapError::Invariant(
-                "RegExp object shape has an invalid lastIndex property",
+                "RegExp object shape has an invalid prototype or lastIndex property",
             ));
         }
-
-        let mut edges = vec![
-            RawId::Object(regexp.prototype),
-            RawId::Object(regexp.constructor),
-            RawId::Object(regexp.string_iterator_prototype),
-            RawId::Shape(regexp.object_shape),
-        ];
-        edges.extend(regexp.result_shapes.into_iter().flatten().map(RawId::Shape));
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining RegExp roots")
-        };
-        context.regexp = Some(regexp);
-        Ok(())
+        let mut shapes = vec![regexp.object_shape];
+        shapes.extend(regexp.result_shapes.into_iter().flatten());
+        let target = NativeFunctionId::RegExp(RegExpNativeKind::Constructor);
+        self.attach_intrinsics(
+            realm,
+            &[
+                ordinary(I::RegExpPrototype, regexp.prototype, None),
+                native(Some(I::RegExpConstructor), regexp.constructor, target, true),
+                ordinary(
+                    I::RegExpStringIteratorPrototype,
+                    regexp.string_iterator_prototype,
+                    Some(iterator_prototype),
+                ),
+            ],
+            &shapes,
+        )
     }
 
-    /// Atomically publish the realm's Map constructor, ordinary prototype,
-    /// and Map Iterator prototype roots after all three have been initialized.
+    /// Atomically publish the realm's ordinary Map prototype and Map Iterator
+    /// prototype roots after both have been initialized.
     pub(crate) fn attach_map_intrinsics(
         &mut self,
         realm: ContextId,
         map: MapRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.map.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has Map intrinsic roots",
-            ));
-        }
-        let iterator_prototype = context.iterator_prototype;
-
-        let prototype = self.object(map.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-        {
-            return Err(HeapError::Invariant(
-                "Map prototype root is not an ordinary object",
-            ));
-        }
-
-        let map_iterator_prototype = self.object(map.iterator_prototype)?;
-        if map_iterator_prototype.kind != ObjectKind::Ordinary
-            || !matches!(map_iterator_prototype.payload, ObjectPayload::Ordinary)
-        {
-            return Err(HeapError::Invariant(
-                "Map Iterator prototype root is not an ordinary object",
-            ));
-        }
-        if self.shape(map_iterator_prototype.shape)?.prototype() != Some(iterator_prototype) {
-            return Err(HeapError::Invariant(
-                "Map Iterator prototype does not inherit from the realm's Iterator prototype",
-            ));
-        }
-
-        let edges = [
-            RawId::Object(map.prototype),
-            RawId::Object(map.iterator_prototype),
-        ];
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining Map roots")
-        };
-        context.map = Some(map);
-        Ok(())
+        let iterator_prototype = self.context(realm)?.iterator_prototype;
+        self.attach_intrinsics(
+            realm,
+            &[
+                ordinary(I::MapPrototype, map.prototype, None),
+                ordinary(
+                    I::MapIteratorPrototype,
+                    map.iterator_prototype,
+                    Some(iterator_prototype),
+                ),
+            ],
+            &[],
+        )
     }
 
     /// Atomically publish the realm's ordinary Set prototype and Set Iterator
@@ -536,49 +425,19 @@ impl Heap {
         realm: ContextId,
         set: SetRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.set.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has Set intrinsic roots",
-            ));
-        }
-        let iterator_prototype = context.iterator_prototype;
-
-        let prototype = self.object(set.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-        {
-            return Err(HeapError::Invariant(
-                "Set prototype root is not an ordinary object",
-            ));
-        }
-
-        let set_iterator_prototype = self.object(set.iterator_prototype)?;
-        if set_iterator_prototype.kind != ObjectKind::Ordinary
-            || !matches!(set_iterator_prototype.payload, ObjectPayload::Ordinary)
-        {
-            return Err(HeapError::Invariant(
-                "Set Iterator prototype root is not an ordinary object",
-            ));
-        }
-        if self.shape(set_iterator_prototype.shape)?.prototype() != Some(iterator_prototype) {
-            return Err(HeapError::Invariant(
-                "Set Iterator prototype does not inherit from the realm's Iterator prototype",
-            ));
-        }
-
-        let edges = [
-            RawId::Object(set.prototype),
-            RawId::Object(set.iterator_prototype),
-        ];
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining Set roots")
-        };
-        context.set = Some(set);
-        Ok(())
+        let iterator_prototype = self.context(realm)?.iterator_prototype;
+        self.attach_intrinsics(
+            realm,
+            &[
+                ordinary(I::SetPrototype, set.prototype, None),
+                ordinary(
+                    I::SetIteratorPrototype,
+                    set.iterator_prototype,
+                    Some(iterator_prototype),
+                ),
+            ],
+            &[],
+        )
     }
 
     /// Atomically publish the realm's ordinary WeakMap prototype root.
@@ -587,28 +446,8 @@ impl Heap {
         realm: ContextId,
         weak_map: WeakMapRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.weak_map.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has WeakMap intrinsic roots",
-            ));
-        }
-        let prototype = self.object(weak_map.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-        {
-            return Err(HeapError::Invariant(
-                "WeakMap prototype root is not an ordinary object",
-            ));
-        }
-
-        self.retain_raw(RawId::Object(weak_map.prototype), 1)?;
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining WeakMap roots")
-        };
-        context.weak_map = Some(weak_map);
-        Ok(())
+        let root = ordinary(I::WeakMapPrototype, weak_map.prototype, None);
+        self.attach_intrinsics(realm, &[root], &[])
     }
 
     /// Atomically publish the realm's ordinary WeakSet prototype root.
@@ -617,28 +456,8 @@ impl Heap {
         realm: ContextId,
         weak_set: WeakSetRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.weak_set.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has WeakSet intrinsic roots",
-            ));
-        }
-        let prototype = self.object(weak_set.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-        {
-            return Err(HeapError::Invariant(
-                "WeakSet prototype root is not an ordinary object",
-            ));
-        }
-
-        self.retain_raw(RawId::Object(weak_set.prototype), 1)?;
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining WeakSet roots")
-        };
-        context.weak_set = Some(weak_set);
-        Ok(())
+        let root = ordinary(I::WeakSetPrototype, weak_set.prototype, None);
+        self.attach_intrinsics(realm, &[root], &[])
     }
 
     /// Atomically publish the realm's WeakRef and FinalizationRegistry class
@@ -649,49 +468,23 @@ impl Heap {
         realm: ContextId,
         weak_ref: WeakRefRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.weak_ref.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has WeakRef intrinsic roots",
-            ));
-        }
-        if weak_ref.weak_ref_prototype == weak_ref.finalization_registry_prototype {
-            return Err(HeapError::Invariant(
-                "WeakRef and FinalizationRegistry prototypes share one identity",
-            ));
-        }
-        let object_prototype = context.object_prototype;
-        for (prototype, message) in [
-            (
-                weak_ref.weak_ref_prototype,
-                "WeakRef prototype is not an ordinary child of Object.prototype",
-            ),
-            (
-                weak_ref.finalization_registry_prototype,
-                "FinalizationRegistry prototype is not an ordinary child of Object.prototype",
-            ),
-        ] {
-            let object = self.object(prototype)?;
-            if object.kind != ObjectKind::Ordinary
-                || !matches!(object.payload, ObjectPayload::Ordinary)
-                || self.shape(object.shape)?.prototype() != Some(object_prototype)
-            {
-                return Err(HeapError::Invariant(message));
-            }
-        }
-
-        let edges = [
-            RawId::Object(weak_ref.weak_ref_prototype),
-            RawId::Object(weak_ref.finalization_registry_prototype),
-        ];
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining WeakRef roots")
-        };
-        context.weak_ref = Some(weak_ref);
-        Ok(())
+        let object_prototype = Some(self.context(realm)?.object_prototype);
+        self.attach_intrinsics(
+            realm,
+            &[
+                ordinary(
+                    I::WeakRefPrototype,
+                    weak_ref.weak_ref_prototype,
+                    object_prototype,
+                ),
+                ordinary(
+                    I::FinalizationRegistryPrototype,
+                    weak_ref.finalization_registry_prototype,
+                    object_prototype,
+                ),
+            ],
+            &[],
+        )
     }
 
     /// Atomically publish the realm's `%ArrayBuffer.prototype%` class root
@@ -702,54 +495,20 @@ impl Heap {
         constructor: ObjectId,
         array_buffer: ArrayBufferRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.array_buffer.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has ArrayBuffer intrinsic roots",
-            ));
-        }
-        let object_prototype = context.object_prototype;
-
-        let constructor = self.object(constructor)?;
-        if !constructor.is_constructor
-            || !matches!(
-                constructor.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::ArrayBuffer(
-                            ArrayBufferNativeKind::Constructor
-                        ),
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    internal: None,
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "ArrayBuffer constructor root is not the realm's ArrayBuffer native",
-            ));
-        }
-
-        let prototype = self.object(array_buffer.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-            || self.shape(prototype.shape)?.prototype() != Some(object_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "ArrayBuffer prototype is not an ordinary child of Object.prototype",
-            ));
-        }
-
-        let edges = [RawId::Object(array_buffer.prototype)];
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining ArrayBuffer roots")
-        };
-        context.array_buffer = Some(array_buffer);
-        Ok(())
+        let object_prototype = Some(self.context(realm)?.object_prototype);
+        let target = NativeFunctionId::ArrayBuffer(ArrayBufferNativeKind::Constructor);
+        self.attach_intrinsics(
+            realm,
+            &[
+                native(None, constructor, target, true),
+                ordinary(
+                    I::ArrayBufferPrototype,
+                    array_buffer.prototype,
+                    object_prototype,
+                ),
+            ],
+            &[],
+        )
     }
 
     /// Atomically publish the realm's `%SharedArrayBuffer.prototype%` class
@@ -760,57 +519,24 @@ impl Heap {
         constructor: ObjectId,
         shared_array_buffer: SharedArrayBufferRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.shared_array_buffer.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has SharedArrayBuffer intrinsic roots",
-            ));
-        }
-        let object_prototype = context.object_prototype;
-
-        let constructor = self.object(constructor)?;
-        if !constructor.is_constructor
-            || !matches!(
-                constructor.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::SharedArrayBuffer(
-                            SharedArrayBufferNativeKind::Constructor
-                        ),
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    internal: None,
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "SharedArrayBuffer constructor root is not the realm's SharedArrayBuffer native",
-            ));
-        }
-
-        let prototype = self.object(shared_array_buffer.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-            || self.shape(prototype.shape)?.prototype() != Some(object_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "SharedArrayBuffer prototype is not an ordinary child of Object.prototype",
-            ));
-        }
-
-        let edges = [RawId::Object(shared_array_buffer.prototype)];
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining SharedArrayBuffer roots")
-        };
-        context.shared_array_buffer = Some(shared_array_buffer);
-        Ok(())
+        let object_prototype = Some(self.context(realm)?.object_prototype);
+        let target = NativeFunctionId::SharedArrayBuffer(SharedArrayBufferNativeKind::Constructor);
+        self.attach_intrinsics(
+            realm,
+            &[
+                native(None, constructor, target, true),
+                ordinary(
+                    I::SharedArrayBufferPrototype,
+                    shared_array_buffer.prototype,
+                    object_prototype,
+                ),
+            ],
+            &[],
+        )
     }
 
-    /// Atomically publish the twelve concrete TypedArray class prototypes.
+    /// Atomically publish the twelve concrete TypedArray class prototypes
+    /// after validating the abstract and concrete constructor class graph.
     pub(crate) fn attach_typed_array_intrinsics(
         &mut self,
         realm: ContextId,
@@ -820,92 +546,35 @@ impl Heap {
         typed_array: TypedArrayRealmData,
     ) -> Result<(), HeapError> {
         let context = self.context(realm)?;
-        if context.typed_array.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has TypedArray intrinsic roots",
-            ));
-        }
-        let object_prototype = context.object_prototype;
-        let function_prototype = context.function_prototype;
-
-        let base_constructor_data = self.object(base_constructor)?;
-        if !base_constructor_data.is_constructor
-            || self.shape(base_constructor_data.shape)?.prototype() != Some(function_prototype)
-            || !matches!(
-                base_constructor_data.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::TypedArray(
-                            TypedArrayNativeKind::BaseConstructor
-                        ),
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    internal: None,
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "TypedArray base constructor has an invalid realm or prototype",
-            ));
-        }
-
-        let base_prototype_data = self.object(base_prototype)?;
-        if base_prototype_data.kind != ObjectKind::Ordinary
-            || !matches!(base_prototype_data.payload, ObjectPayload::Ordinary)
-            || self.shape(base_prototype_data.shape)?.prototype() != Some(object_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "TypedArray base prototype is not an ordinary child of Object.prototype",
-            ));
-        }
-
+        let base_target = NativeFunctionId::TypedArray(TypedArrayNativeKind::BaseConstructor);
+        let mut roots = vec![
+            IntrinsicRoot {
+                parent: Some(context.function_prototype),
+                ..native(None, base_constructor, base_target, true)
+            },
+            IntrinsicRoot {
+                slot: None,
+                object: base_prototype,
+                parent: Some(context.object_prototype),
+                native: None,
+            },
+        ];
         for (index, element) in TypedArrayElementKind::ALL.into_iter().enumerate() {
-            let constructor = self.object(constructors[index])?;
-            if !constructor.is_constructor
-                || self.shape(constructor.shape)?.prototype() != Some(base_constructor)
-                || !matches!(
-                    constructor.payload,
-                    ObjectPayload::NativeFunction {
-                        data: NativeFunctionData {
-                            target: NativeFunctionId::TypedArray(
-                                TypedArrayNativeKind::Constructor(target_element)
-                            ),
-                            realm: Some(target_realm),
-                            ..
-                        },
-                        internal: None,
-                    } if target_realm == realm && target_element == element
+            let target = NativeFunctionId::TypedArray(TypedArrayNativeKind::Constructor(element));
+            roots.push(IntrinsicRoot {
+                parent: Some(base_constructor),
+                ..native(None, constructors[index], target, true)
+            });
+            roots.push(IntrinsicRoot {
+                slot: Some(I::TypedArrayPrototypes as usize + index),
+                ..ordinary(
+                    I::TypedArrayPrototypes,
+                    typed_array.prototypes[index],
+                    Some(base_prototype),
                 )
-            {
-                return Err(HeapError::Invariant(
-                    "concrete TypedArray constructor has an invalid class graph",
-                ));
-            }
-            let prototype = self.object(typed_array.prototypes[index])?;
-            if prototype.kind != ObjectKind::Ordinary
-                || !matches!(prototype.payload, ObjectPayload::Ordinary)
-                || self.shape(prototype.shape)?.prototype() != Some(base_prototype)
-            {
-                return Err(HeapError::Invariant(
-                    "concrete TypedArray prototype has an invalid class graph",
-                ));
-            }
+            });
         }
-
-        let edges = typed_array
-            .prototypes
-            .into_iter()
-            .map(RawId::Object)
-            .collect::<Vec<_>>();
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining TypedArray roots")
-        };
-        context.typed_array = Some(typed_array);
-        Ok(())
+        self.attach_intrinsics(realm, &roots, &[])
     }
 
     /// Atomically publish the realm's `%DataView.prototype%` class root after
@@ -916,52 +585,16 @@ impl Heap {
         constructor: ObjectId,
         data_view: DataViewRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.data_view.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has DataView intrinsic roots",
-            ));
-        }
-        let object_prototype = context.object_prototype;
-
-        let constructor = self.object(constructor)?;
-        if !constructor.is_constructor
-            || !matches!(
-                constructor.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::DataView(DataViewNativeKind::Constructor),
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    internal: None,
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "DataView constructor root is not the realm's DataView native",
-            ));
-        }
-
-        let prototype = self.object(data_view.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-            || self.shape(prototype.shape)?.prototype() != Some(object_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "DataView prototype is not an ordinary child of Object.prototype",
-            ));
-        }
-
-        let edges = [RawId::Object(data_view.prototype)];
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining DataView roots")
-        };
-        context.data_view = Some(data_view);
-        Ok(())
+        let object_prototype = Some(self.context(realm)?.object_prototype);
+        let target = NativeFunctionId::DataView(DataViewNativeKind::Constructor);
+        self.attach_intrinsics(
+            realm,
+            &[
+                native(None, constructor, target, true),
+                ordinary(I::DataViewPrototype, data_view.prototype, object_prototype),
+            ],
+            &[],
+        )
     }
 
     /// Atomically publish the synchronous Iterator constructor and the hidden
@@ -971,78 +604,31 @@ impl Heap {
         realm: ContextId,
         iterator: IteratorRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.iterator.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has Iterator intrinsic roots",
-            ));
-        }
-        let iterator_prototype = context.iterator_prototype;
-
-        let constructor = self.object(iterator.constructor)?;
-        if !constructor.is_constructor
-            || !matches!(
-                constructor.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::IteratorConstructor,
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    internal: None,
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "Iterator constructor root is not the realm's Iterator native",
-            ));
-        }
-
-        if iterator.concat_prototype == iterator.helper_prototype
-            || iterator.concat_prototype == iterator.wrap_prototype
-            || iterator.helper_prototype == iterator.wrap_prototype
-        {
-            return Err(HeapError::Invariant(
-                "Iterator hidden prototypes share an identity",
-            ));
-        }
-        for (prototype, message) in [
-            (
-                iterator.concat_prototype,
-                "Iterator Concat prototype is not an ordinary child of the realm's Iterator prototype",
-            ),
-            (
-                iterator.helper_prototype,
-                "Iterator Helper prototype is not an ordinary child of the realm's Iterator prototype",
-            ),
-            (
-                iterator.wrap_prototype,
-                "Iterator Wrap prototype is not an ordinary child of the realm's Iterator prototype",
-            ),
-        ] {
-            let object = self.object(prototype)?;
-            if object.kind != ObjectKind::Ordinary
-                || !matches!(object.payload, ObjectPayload::Ordinary)
-                || self.shape(object.shape)?.prototype() != Some(iterator_prototype)
-            {
-                return Err(HeapError::Invariant(message));
-            }
-        }
-
-        let edges = [
-            RawId::Object(iterator.constructor),
-            RawId::Object(iterator.concat_prototype),
-            RawId::Object(iterator.helper_prototype),
-            RawId::Object(iterator.wrap_prototype),
-        ];
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining Iterator roots")
-        };
-        context.iterator = Some(iterator);
-        Ok(())
+        let parent = Some(self.context(realm)?.iterator_prototype);
+        let target = NativeFunctionId::IteratorConstructor;
+        self.attach_intrinsics(
+            realm,
+            &[
+                native(
+                    Some(I::IteratorConstructor),
+                    iterator.constructor,
+                    target,
+                    true,
+                ),
+                ordinary(
+                    I::IteratorConcatPrototype,
+                    iterator.concat_prototype,
+                    parent,
+                ),
+                ordinary(
+                    I::IteratorHelperPrototype,
+                    iterator.helper_prototype,
+                    parent,
+                ),
+                ordinary(I::IteratorWrapPrototype, iterator.wrap_prototype, parent),
+            ],
+            &[],
+        )
     }
 
     /// Atomically publish the realm's Promise constructor and ordinary
@@ -1052,55 +638,21 @@ impl Heap {
         realm: ContextId,
         promise: PromiseRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.promise.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has Promise intrinsic roots",
-            ));
-        }
-        let object_prototype = context.object_prototype;
-
-        let constructor = self.object(promise.constructor)?;
-        if !constructor.is_constructor
-            || !matches!(
-                constructor.payload,
-                ObjectPayload::NativeFunction {
-                    data: NativeFunctionData {
-                        target: NativeFunctionId::Promise(PromiseNativeKind::Constructor),
-                        realm: Some(target_realm),
-                        ..
-                    },
-                    internal: None,
-                } if target_realm == realm
-            )
-        {
-            return Err(HeapError::Invariant(
-                "Promise constructor root is not the realm's Promise native",
-            ));
-        }
-
-        let prototype = self.object(promise.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-            || self.shape(prototype.shape)?.prototype() != Some(object_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "Promise prototype is not an ordinary child of Object.prototype",
-            ));
-        }
-
-        let edges = [
-            RawId::Object(promise.prototype),
-            RawId::Object(promise.constructor),
-        ];
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining Promise roots")
-        };
-        context.promise = Some(promise);
-        Ok(())
+        let object_prototype = Some(self.context(realm)?.object_prototype);
+        let target = NativeFunctionId::Promise(PromiseNativeKind::Constructor);
+        self.attach_intrinsics(
+            realm,
+            &[
+                ordinary(I::PromisePrototype, promise.prototype, object_prototype),
+                native(
+                    Some(I::PromiseConstructor),
+                    promise.constructor,
+                    target,
+                    true,
+                ),
+            ],
+            &[],
+        )
     }
 
     /// Atomically publish the two realm-local synchronous-generator class
@@ -1111,50 +663,19 @@ impl Heap {
         generator: GeneratorRealmData,
     ) -> Result<(), HeapError> {
         let context = self.context(realm)?;
-        if context.generator.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has Generator intrinsic roots",
-            ));
-        }
-        let iterator_prototype = context.iterator_prototype;
-        let function_prototype = context.function_prototype;
-
-        let prototype = self.object(generator.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-            || self.shape(prototype.shape)?.prototype() != Some(iterator_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "Generator prototype does not inherit from the realm's Iterator prototype",
-            ));
-        }
-
-        let generator_function_prototype = self.object(generator.function_prototype)?;
-        if generator_function_prototype.kind != ObjectKind::Ordinary
-            || !matches!(
-                generator_function_prototype.payload,
-                ObjectPayload::Ordinary
-            )
-            || self.shape(generator_function_prototype.shape)?.prototype()
-                != Some(function_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "GeneratorFunction prototype does not inherit from Function.prototype",
-            ));
-        }
-
-        let edges = [
-            RawId::Object(generator.prototype),
-            RawId::Object(generator.function_prototype),
+        let roots = [
+            ordinary(
+                I::GeneratorPrototype,
+                generator.prototype,
+                Some(context.iterator_prototype),
+            ),
+            ordinary(
+                I::GeneratorFunctionPrototype,
+                generator.function_prototype,
+                Some(context.function_prototype),
+            ),
         ];
-        self.retain_edges_transactionally(&edges)?;
-
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining Generator roots")
-        };
-        context.generator = Some(generator);
-        Ok(())
+        self.attach_intrinsics(realm, &roots, &[])
     }
 
     /// Atomically publish the realm-local `%AsyncFunction.prototype%` root
@@ -1164,31 +685,12 @@ impl Heap {
         realm: ContextId,
         async_function: AsyncFunctionRealmData,
     ) -> Result<(), HeapError> {
-        let context = self.context(realm)?;
-        if context.async_function.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has AsyncFunction intrinsic roots",
-            ));
-        }
-        let function_prototype = context.function_prototype;
-
-        let async_function_prototype = self.object(async_function.function_prototype)?;
-        if async_function_prototype.kind != ObjectKind::Ordinary
-            || !matches!(async_function_prototype.payload, ObjectPayload::Ordinary)
-            || self.shape(async_function_prototype.shape)?.prototype() != Some(function_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "AsyncFunction prototype does not inherit from Function.prototype",
-            ));
-        }
-
-        self.retain_raw(RawId::Object(async_function.function_prototype), 1)?;
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining AsyncFunction roots")
-        };
-        context.async_function = Some(async_function);
-        Ok(())
+        let root = ordinary(
+            I::AsyncFunctionPrototype,
+            async_function.function_prototype,
+            Some(self.context(realm)?.function_prototype),
+        );
+        self.attach_intrinsics(realm, &[root], &[])
     }
 
     /// Atomically publish the realm-local async-iterator/generator graph.
@@ -1198,64 +700,29 @@ impl Heap {
         async_generator: AsyncGeneratorRealmData,
     ) -> Result<(), HeapError> {
         let context = self.context(realm)?;
-        if context.async_generator.is_some() {
-            return Err(HeapError::Invariant(
-                "context already has AsyncGenerator intrinsic roots",
-            ));
-        }
-        let object_prototype = context.object_prototype;
-        let function_prototype = context.function_prototype;
-
-        let async_iterator = self.object(async_generator.async_iterator_prototype)?;
-        if async_iterator.kind != ObjectKind::Ordinary
-            || !matches!(async_iterator.payload, ObjectPayload::Ordinary)
-            || self.shape(async_iterator.shape)?.prototype() != Some(object_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "AsyncIterator prototype does not inherit from Object.prototype",
-            ));
-        }
-        let async_from_sync = self.object(async_generator.async_from_sync_iterator_prototype)?;
-        if async_from_sync.kind != ObjectKind::Ordinary
-            || !matches!(async_from_sync.payload, ObjectPayload::Ordinary)
-            || self.shape(async_from_sync.shape)?.prototype()
-                != Some(async_generator.async_iterator_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "AsyncFromSyncIterator prototype does not inherit from AsyncIterator prototype",
-            ));
-        }
-        let prototype = self.object(async_generator.prototype)?;
-        if prototype.kind != ObjectKind::Ordinary
-            || !matches!(prototype.payload, ObjectPayload::Ordinary)
-            || self.shape(prototype.shape)?.prototype()
-                != Some(async_generator.async_iterator_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "AsyncGenerator prototype does not inherit from AsyncIterator prototype",
-            ));
-        }
-        let function = self.object(async_generator.function_prototype)?;
-        if function.kind != ObjectKind::Ordinary
-            || !matches!(function.payload, ObjectPayload::Ordinary)
-            || self.shape(function.shape)?.prototype() != Some(function_prototype)
-        {
-            return Err(HeapError::Invariant(
-                "AsyncGeneratorFunction prototype does not inherit from Function.prototype",
-            ));
-        }
-
-        self.retain_edges_transactionally(&[
-            RawId::Object(async_generator.async_iterator_prototype),
-            RawId::Object(async_generator.async_from_sync_iterator_prototype),
-            RawId::Object(async_generator.prototype),
-            RawId::Object(async_generator.function_prototype),
-        ])?;
-        let NodeData::Context(context) = &mut self.live_node_mut(RawId::Context(realm))?.data
-        else {
-            unreachable!("context identity was validated before retaining AsyncGenerator roots")
-        };
-        context.async_generator = Some(async_generator);
-        Ok(())
+        let async_iterator = async_generator.async_iterator_prototype;
+        let roots = [
+            ordinary(
+                I::AsyncIteratorPrototype,
+                async_iterator,
+                Some(context.object_prototype),
+            ),
+            ordinary(
+                I::AsyncFromSyncIteratorPrototype,
+                async_generator.async_from_sync_iterator_prototype,
+                Some(async_iterator),
+            ),
+            ordinary(
+                I::AsyncGeneratorPrototype,
+                async_generator.prototype,
+                Some(async_iterator),
+            ),
+            ordinary(
+                I::AsyncGeneratorFunctionPrototype,
+                async_generator.function_prototype,
+                Some(context.function_prototype),
+            ),
+        ];
+        self.attach_intrinsics(realm, &roots, &[])
     }
 }

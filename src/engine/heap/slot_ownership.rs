@@ -32,10 +32,6 @@ impl Heap {
         if !self.zero_queue.is_empty() {
             return Ok(SlotReleaseReadiness::Drain);
         }
-        #[cfg(debug_assertions)]
-        if matches!(id, RawId::String(id) if super::ownership::trace_string_matches(id)) {
-            return self.slot_release_readiness(id);
-        }
         let slot = &self.leaf_slots[index];
         if slot.is_live() {
             if slot.strong.get() > 1 {

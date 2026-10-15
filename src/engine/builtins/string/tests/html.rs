@@ -567,8 +567,8 @@ fn saved_create_html_keeps_its_realm_alive_and_cross_realm_throws_stay_exact() {
         .heap
         .context(defining_realm)
         .expect("saved CreateHTML did not retain its defining realm")
-        .native_error_prototypes[NativeErrorKind::Type.index()]
-    .expect("defining realm had no TypeError prototype");
+        .native_error_prototype(NativeErrorKind::Type)
+        .expect("defining realm had no TypeError prototype");
 
     let mut caller = runtime.new_context().expect("create context");
     let Value::Object(caller_error_prototype) = caller.eval("Error.prototype").unwrap() else {

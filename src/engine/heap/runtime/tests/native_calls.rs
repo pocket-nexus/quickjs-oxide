@@ -267,8 +267,8 @@ fn native_constructor_cproto_adapters_use_defining_realm_and_restore_frames() {
         .heap
         .context(defining_realm)
         .unwrap()
-        .native_error_prototypes[NativeErrorKind::Type.index()]
-    .unwrap();
+        .native_error_prototype(NativeErrorKind::Type)
+        .unwrap();
     assert_eq!(
         runtime
             .get_prototype_of(&exception)

@@ -27,7 +27,11 @@ fn inject_older_invalid_zero_queue(state: &mut RuntimeState, first: ObjectId, la
 }
 
 fn error_prototype(state: &RuntimeState, realm: ContextId) -> ObjectId {
-    state.heap.context(realm).unwrap().native_error_prototypes[NativeErrorKind::Type.index()]
+    state
+        .heap
+        .context(realm)
+        .unwrap()
+        .native_error_prototype(NativeErrorKind::Type)
         .unwrap()
 }
 

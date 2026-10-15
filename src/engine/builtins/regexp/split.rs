@@ -108,8 +108,7 @@ impl Runtime {
         let realm_regexp = state
             .heap
             .context(realm)?
-            .regexp
-            .as_ref()
+            .regexp()
             .ok_or(RuntimeError::Invariant("realm has no RegExp intrinsic"))?;
         let (constructor, prototype) = (realm_regexp.constructor, realm_regexp.prototype);
         match super::replace::raw_regexp_property_slot(

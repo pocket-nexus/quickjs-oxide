@@ -116,7 +116,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .function_constructor
+            .function_constructor()
             .ok_or(RuntimeError::Invariant(
                 "AsyncGenerator initialization requires the Function constructor",
             ))?;

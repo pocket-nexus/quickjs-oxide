@@ -183,7 +183,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .async_generator
+            .async_generator()
             .ok_or(RuntimeError::Invariant(
                 "realm has no AsyncGenerator intrinsics",
             ))?

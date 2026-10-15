@@ -697,17 +697,17 @@ fn data_view_intrinsics_attach_transactionally_once() {
             },
         ),
         Err(HeapError::Invariant(
-            "DataView prototype is not an ordinary child of Object.prototype",
+            "intrinsic root has an invalid class graph",
         )),
     );
     assert_eq!(heap.object_strong_count(object_prototype), Ok(root_strong),);
-    assert!(heap.context(realm).unwrap().data_view.is_none());
+    assert!(heap.context(realm).unwrap().data_view().is_none());
 
     let prototype_strong = heap.object_strong_count(prototype).unwrap();
     heap.attach_data_view_intrinsics(realm, constructor, DataViewRealmData { prototype })
         .unwrap();
     assert!(
-        matches!(heap.context(realm).unwrap().data_view, Some(attached)
+        matches!(heap.context(realm).unwrap().data_view(), Some(attached)
             if attached.prototype == prototype)
     );
     assert_eq!(
@@ -717,7 +717,7 @@ fn data_view_intrinsics_attach_transactionally_once() {
     assert_eq!(
         heap.attach_data_view_intrinsics(realm, constructor, DataViewRealmData { prototype },),
         Err(HeapError::Invariant(
-            "context already has DataView intrinsic roots",
+            "context already has these intrinsic roots",
         )),
     );
     assert_eq!(

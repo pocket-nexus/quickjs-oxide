@@ -64,7 +64,7 @@ impl Runtime {
                 FunctionKind::Normal => context.function_prototype,
                 FunctionKind::Generator => {
                     context
-                        .generator
+                        .generator()
                         .ok_or(RuntimeError::Invariant(
                             "generator closure realm has no Generator intrinsics",
                         ))?
@@ -72,7 +72,7 @@ impl Runtime {
                 }
                 FunctionKind::Async => {
                     context
-                        .async_function
+                        .async_function()
                         .ok_or(RuntimeError::Invariant(
                             "async closure realm has no AsyncFunction intrinsics",
                         ))?
@@ -80,7 +80,7 @@ impl Runtime {
                 }
                 FunctionKind::AsyncGenerator => {
                     context
-                        .async_generator
+                        .async_generator()
                         .ok_or(RuntimeError::Invariant(
                             "async-generator closure realm has no AsyncGenerator intrinsics",
                         ))?
@@ -169,7 +169,7 @@ impl Runtime {
             match function_kind {
                 FunctionKind::Generator => {
                     context
-                        .generator
+                        .generator()
                         .ok_or(RuntimeError::Invariant(
                             "generator function realm has no Generator intrinsics",
                         ))?
@@ -177,7 +177,7 @@ impl Runtime {
                 }
                 FunctionKind::AsyncGenerator => {
                     context
-                        .async_generator
+                        .async_generator()
                         .ok_or(RuntimeError::Invariant(
                             "async-generator function realm has no AsyncGenerator intrinsics",
                         ))?

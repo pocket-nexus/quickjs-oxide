@@ -47,7 +47,6 @@ impl StateRootedProxy {
             handler: data.handler,
         })
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn release_in_state(
         self,
         state: &mut RuntimeState,
@@ -74,7 +73,6 @@ pub(crate) enum StateMethodTarget {
     NonCallableProxy(ObjectId),
 }
 impl StateMethodTarget {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn object(&self) -> ObjectId {
         match self {
             Self::Callable(id) | Self::NonCallableProxy(id) => *id,
@@ -101,7 +99,6 @@ pub(crate) struct StateMethodSelection {
     pub(crate) target: Option<StateMethodTarget>,
 }
 impl StateMethodSelection {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn release_in_state(
         self,
         state: &mut RuntimeState,
@@ -165,7 +162,6 @@ impl StateMethodStep {
         scope.select_proxy(proxy)?;
         scope.drive()
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn release_in_state(
         self,
         runtime: &Runtime,
@@ -241,7 +237,6 @@ impl StateMethodResume {
             }
         }
     }
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn release_in_state(
         self,
         runtime: &Runtime,

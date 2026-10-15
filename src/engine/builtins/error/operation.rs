@@ -226,10 +226,10 @@ impl ErrorResume {
                         let context = state.heap.context(realm)?;
                         match kind {
                             ErrorConstructorKind::Error => context
-                                .error_prototype
+                                .error_prototype()
                                 .ok_or(RuntimeError::Invariant("realm has no Error prototype"))?,
                             ErrorConstructorKind::Native(kind) => {
-                                context.native_error_prototypes[kind.index()].ok_or(
+                                context.native_error_prototype(kind).ok_or(
                                     RuntimeError::Invariant("realm has no native Error prototype"),
                                 )?
                             }

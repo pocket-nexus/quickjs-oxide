@@ -647,7 +647,7 @@ impl Runtime {
             .borrow()
             .heap
             .context(realm)?
-            .array_buffer
+            .array_buffer()
             .ok_or(RuntimeError::Invariant(
                 "realm has no ArrayBuffer intrinsics",
             ))?

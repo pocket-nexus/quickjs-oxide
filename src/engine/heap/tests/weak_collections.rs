@@ -1131,7 +1131,7 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
             root, root, root, root, root, root, root, root,
         ))
         .unwrap();
-    assert!(heap.context(realm).unwrap().weak_ref.is_none());
+    assert!(heap.context(realm).unwrap().weak_ref().is_none());
 
     let intrinsic_shape = heap
         .allocate_shape(Shape::new(Some(root), []).unwrap())
@@ -1159,11 +1159,9 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
                 finalization_registry_prototype: weak_ref_prototype,
             },
         ),
-        Err(HeapError::Invariant(
-            "WeakRef and FinalizationRegistry prototypes share one identity",
-        ))
+        Err(HeapError::Invariant("intrinsic roots share an identity",))
     );
-    assert!(heap.context(realm).unwrap().weak_ref.is_none());
+    assert!(heap.context(realm).unwrap().weak_ref().is_none());
 
     assert_eq!(
         heap.attach_weak_ref_intrinsics(
@@ -1174,10 +1172,10 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
             },
         ),
         Err(HeapError::Invariant(
-            "WeakRef prototype is not an ordinary child of Object.prototype",
+            "intrinsic root has an invalid class graph",
         ))
     );
-    assert!(heap.context(realm).unwrap().weak_ref.is_none());
+    assert!(heap.context(realm).unwrap().weak_ref().is_none());
     assert_eq!(
         heap.object_strong_count(weak_ref_prototype),
         Ok(weak_ref_strong)
@@ -1197,7 +1195,7 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(heap.context(realm).unwrap().weak_ref.is_none());
+    assert!(heap.context(realm).unwrap().weak_ref().is_none());
     assert_eq!(
         heap.object_strong_count(weak_ref_prototype),
         Ok(weak_ref_strong)
@@ -1209,7 +1207,7 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
 
     heap.attach_weak_ref_intrinsics(realm, roots).unwrap();
     assert!(
-        matches!(heap.context(realm).unwrap().weak_ref, Some(attached)
+        matches!(heap.context(realm).unwrap().weak_ref(), Some(attached)
             if attached.weak_ref_prototype == roots.weak_ref_prototype
                 && attached.finalization_registry_prototype
                     == roots.finalization_registry_prototype)
@@ -1225,7 +1223,7 @@ fn weak_reference_intrinsics_attach_atomically_and_root_both_prototypes() {
     assert_eq!(
         heap.attach_weak_ref_intrinsics(realm, roots),
         Err(HeapError::Invariant(
-            "context already has WeakRef intrinsic roots",
+            "context already has these intrinsic roots",
         ))
     );
 

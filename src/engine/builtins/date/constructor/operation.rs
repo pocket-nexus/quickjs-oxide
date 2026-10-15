@@ -313,7 +313,7 @@ impl DateConstructorResume {
                     .borrow()
                     .heap
                     .context(realm)?
-                    .date_prototype
+                    .date_prototype()
                     .ok_or(RuntimeError::Invariant("realm has no Date prototype"))?;
                 ObjectRef::from_borrowed_handle(runtime.clone(), prototype)?
             }
