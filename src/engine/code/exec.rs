@@ -471,6 +471,9 @@ impl ExecCode {
         self.decode(pc).ok().map(|decoded| decoded.opcode)
     }
 
+    // Only the cold `Ret` path asks; inlining it into the interpreter loop
+    // perturbs register allocation for every opcode (+5-7% cycles on M1).
+    #[inline(never)]
     pub(crate) fn opcode_at_exec(&self, exec_pc: usize) -> Option<Opcode> {
         let pc = u32::try_from(exec_pc).ok()?;
         self.boundaries.binary_search(&pc).ok()?;
