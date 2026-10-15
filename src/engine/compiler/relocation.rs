@@ -57,14 +57,6 @@ pub(super) fn insert_hoist_fragment(
                 .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
         }
     }
-    for annex in &mut function.program_annex_functions {
-        if annex.authored_closure >= at {
-            annex.authored_closure = annex
-                .authored_closure
-                .checked_add(fragment.len())
-                .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
-        }
-    }
     for operation in &mut function.ops {
         let Some(target) = ir_target_mut(&mut operation.op) else {
             continue;
@@ -93,12 +85,6 @@ pub(super) fn prepend_hoist_prefix(
         .map_err(|_| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
     for scoped in &mut function.scoped_functions {
         scoped.authored_closure = scoped
-            .authored_closure
-            .checked_add(prefix.len())
-            .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;
-    }
-    for annex in &mut function.program_annex_functions {
-        annex.authored_closure = annex
             .authored_closure
             .checked_add(prefix.len())
             .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?;

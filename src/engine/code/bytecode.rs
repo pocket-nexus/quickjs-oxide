@@ -1,10 +1,6 @@
 use crate::engine::api::Error;
-#[cfg(test)]
-use crate::engine::value::PrimitiveValue as Value;
 use std::collections::VecDeque;
 
-/// QuickJS `JS_STACK_SIZE_MAX` for one bytecode function.
-pub const MAX_STACK_SIZE: u16 = 65_534;
 /// QuickJS `JS_MAX_LOCAL_VARS` for one bytecode function.
 pub const MAX_LOCAL_SLOTS: u16 = 65_534;
 
@@ -60,16 +56,6 @@ pub enum WithObjectSource {
 pub enum DynamicEnvironmentSource {
     Eval(EvalVariableSource),
     With(WithObjectSource),
-}
-
-#[cfg(test)]
-const fn dynamic_environment_local(source: DynamicEnvironmentSource) -> Option<u16> {
-    match source {
-        DynamicEnvironmentSource::Eval(EvalVariableSource::Local(index))
-        | DynamicEnvironmentSource::With(WithObjectSource::Local(index)) => Some(index),
-        DynamicEnvironmentSource::Eval(EvalVariableSource::Closure(_))
-        | DynamicEnvironmentSource::With(WithObjectSource::Closure(_)) => None,
-    }
 }
 
 /// Object-literal function role carried by QuickJS's `OP_define_method`
@@ -726,13 +712,6 @@ impl Instruction {
     pub const fn stack_effect(&self) -> (usize, usize) {
         self.nominal_stack_effect()
     }
-
-    /// Return the linked direct-eval environment carried by either fixed- or
-    /// spread-argument eval bytecode.
-    #[must_use]
-    pub const fn eval_environment(&self) -> Option<u16> {
-        self.operand_contract().eval_environment()
-    }
 }
 
 #[cfg(test)]
@@ -747,931 +726,113 @@ pub struct DetachedBytecode<T> {
 }
 
 #[cfg(test)]
-impl<T: TestConstant> DetachedBytecode<T> {
-    #[must_use]
-    pub fn constant(&self, index: u32) -> Option<&T> {
-        usize::try_from(index)
-            .ok()
-            .and_then(|index| self.constants.get(index))
-    }
-
-    /// Validate control flow, operands, and stack depth before execution.
+impl<T> DetachedBytecode<T> {
+    /// Recompute the reachable stack depth against the declared maximum.
     ///
     /// # Errors
-    /// Returns an internal error when bytecode is malformed. Source compilation
-    /// must never produce such an error; decoders must reject it before use.
+    /// Returns an internal error when the declared maximum is too small.
     pub fn verify(&self) -> Result<VerifiedBytecode, Error> {
-        if self.local_count > MAX_LOCAL_SLOTS {
-            return Err(Error::internal(
-                "declared local count exceeds QuickJS JS_MAX_LOCAL_VARS",
-            ));
-        }
-        for instruction in &self.code {
-            if matches!(instruction, Instruction::RegExp(_)) {
-                // Detached bytecode exposes only `Vec<Value>` constants, so
-                // it cannot structurally represent the compile-once matcher
-                // payload required by this runtime-publication opcode.
-                return Err(Error::internal(
-                    "detached bytecode cannot encode RegExp constants",
-                ));
-            }
-            if matches!(instruction, Instruction::InitializeModuleImportCollision(_)) {
-                return Err(Error::internal(
-                    "detached bytecode cannot encode a module import collision initializer",
-                ));
-            }
-            if matches!(
-                instruction,
-                Instruction::InitializePrivateName(_)
-                    | Instruction::InitializePrivateMethod(_)
-                    | Instruction::InitializePrivateAccessor(_)
-                    | Instruction::GetPrivateField(_)
-                    | Instruction::GetPrivateField2(_)
-                    | Instruction::PutPrivateField(_)
-                    | Instruction::DefinePrivateField(_)
-                    | Instruction::PrivateIn(_)
-            ) {
-                return Err(Error::internal(
-                    "detached bytecode cannot encode authenticated private names",
-                ));
-            }
-            if let Some(index) = instruction.constant_property_key_index()
-                && !self.constant(index).is_some_and(TestConstant::is_string)
-            {
-                return Err(Error::internal(
-                    "string-key opcode referenced a non-string constant",
-                ));
-            }
-            if let Instruction::GetLocal(index)
-            | Instruction::PutLocal(index)
-            | Instruction::SetLocal(index)
-            | Instruction::SetLocalUninitialized(index)
-            | Instruction::GetLocalCheck(index)
-            | Instruction::InitializeLocal(index)
-            | Instruction::InitializeDerivedLocal(index)
-            | Instruction::PutLocalCheck(index)
-            | Instruction::SetLocalCheck(index)
-            | Instruction::CloseLocal(index)
-            | Instruction::ReturnDerived(index) = instruction
-                && *index >= self.local_count
-            {
-                return Err(Error::internal("local bytecode operand is out of bounds"));
-            }
-            if let Instruction::HasEvalVariable {
-                source: EvalVariableSource::Local(index),
-                ..
-            }
-            | Instruction::GetEvalVariable {
-                source: EvalVariableSource::Local(index),
-                ..
-            }
-            | Instruction::PutEvalVariable {
-                source: EvalVariableSource::Local(index),
-                ..
-            }
-            | Instruction::DeleteEvalVariable {
-                source: EvalVariableSource::Local(index),
-                ..
-            }
-            | Instruction::DefineEvalVariable {
-                source: EvalVariableSource::Local(index),
-                ..
-            } = instruction
-                && *index >= self.local_count
-            {
-                return Err(Error::internal(
-                    "eval variable-object local operand is out of bounds",
-                ));
-            }
-            let dynamic_source = match instruction {
-                Instruction::HasDynamicBinding { source, .. }
-                | Instruction::GetDynamicBinding { source, .. }
-                | Instruction::PutDynamicBinding { source, .. }
-                | Instruction::DeleteDynamicBinding { source, .. }
-                | Instruction::DynamicEnvironmentObject(source) => Some(*source),
-                _ => None,
-            };
-            if dynamic_source
-                .and_then(dynamic_environment_local)
-                .is_some_and(|index| index >= self.local_count)
-            {
-                return Err(Error::internal(
-                    "dynamic environment local operand is out of bounds",
-                ));
-            }
-        }
-        verify_parts(&self.code, self.constants.len(), self.max_stack)
+        compute_stack_size(&self.code, self.max_stack)
     }
 }
 
-/// Verify immutable bytecode parts during compiler lowering and detached tests.
+/// QuickJS `compute_stack_size`: the maximum operand-stack depth over every
+/// reachable path, including exception and `gosub` edges. Fails once a
+/// reachable depth exceeds `declared_max_stack`, which lowering reports as
+/// QuickJS's "stack overflow".
 ///
-/// Constant kinds are runtime-owned after linking, but control-flow validation
-/// only needs the pool length. Publication no longer invokes this general
-/// verifier; its remaining checks cover selected published metadata.
-pub fn verify_parts(
+/// Unwind regions are tracked only because `NipCatch` and the iterator
+/// `*Preserve` cleanups truncate the stack to their region's base. The input
+/// is compiler output; malformed bytecode is not diagnosed beyond the errors
+/// needed to keep the walk bounds-safe.
+pub fn compute_stack_size(
     code: &[Instruction],
-    constant_count: usize,
     declared_max_stack: u16,
 ) -> Result<VerifiedBytecode, Error> {
-    verify_parts_with_visits::<CompactVisits>(code, constant_count, declared_max_stack)
-}
+    // Each region records the depth its abrupt cleanup restores: the catch
+    // marker depth for `Catch`, or the iterator record base for for-of.
+    let mut worklist = VecDeque::from([(0_usize, 0_usize, Vec::<usize>::new())]);
+    // usize::MAX marks unvisited PCs; depths are bounded by MAX_STACK_SIZE.
+    let mut visited = vec![usize::MAX; code.len()];
+    let mut maximum = 0_usize;
 
-fn verify_parts_with_visits<V: VerificationVisits>(
-    code: &[Instruction],
-    constant_count: usize,
-    declared_max_stack: u16,
-) -> Result<VerifiedBytecode, Error> {
-    if declared_max_stack > MAX_STACK_SIZE {
-        return Err(Error::internal(
-            "declared bytecode stack exceeds QuickJS JS_STACK_SIZE_MAX",
-        ));
-    }
-    if code.is_empty() {
-        return Err(Error::internal("bytecode function has no instructions"));
-    }
+    while let Some((pc, depth, mut regions)) = worklist.pop_front() {
+        record_maximum_depth(&mut maximum, depth, declared_max_stack)?;
+        let seen = visited
+            .get_mut(pc)
+            .ok_or_else(|| Error::internal("control flow target is out of bounds"))?;
+        if *seen != usize::MAX {
+            continue;
+        }
+        *seen = depth;
 
-    // Validate representation operands for every instruction, including dead
-    // code, before the reachability walk. Later kind-specific verification may
-    // then index the constant pool without malformed unreachable bytecode
-    // panicking the verifier.
-    for (pc, instruction) in code.iter().enumerate() {
+        let instruction = &code[pc];
+        let effect = instruction.stack_contract();
+        let remaining_depth = depth
+            .checked_sub(effect.popped)
+            .ok_or_else(|| Error::internal("bytecode stack underflow"))?;
+        let mut next_depth = remaining_depth + effect.pushed;
+        let missing_region = || Error::internal("bytecode unwind region underflow");
         match instruction {
-            Instruction::PushAtomValueIndex(index)
-                if *index > crate::engine::atom::ATOM_MAX_INT =>
-            {
-                return Err(Error::internal(
-                    "atom-value index exceeds QuickJS JS_ATOM_MAX_INT",
-                ));
+            Instruction::DropCatch | Instruction::IteratorClose => {
+                regions.pop().ok_or_else(missing_region)?;
             }
-            Instruction::PushConst(index)
-            | Instruction::FClosure(index)
-            | Instruction::RegExp(index)
-            | Instruction::SetName(index)
-            | Instruction::ThrowReadOnly(index)
-            | Instruction::ThrowRedeclaration(index)
-            | Instruction::GetField(index)
-            | Instruction::GetField2(index)
-            | Instruction::PutField(index)
-            | Instruction::DefineField(index)
-            | Instruction::DefineMethod { key: index, .. }
-            | Instruction::DefineClass { name: index, .. }
-            | Instruction::HasEvalVariable { name: index, .. }
-            | Instruction::GetEvalVariable { name: index, .. }
-            | Instruction::PutEvalVariable { name: index, .. }
-            | Instruction::DeleteEvalVariable { name: index, .. }
-            | Instruction::DefineEvalVariable { name: index, .. }
-            | Instruction::HasDynamicBinding { name: index, .. }
-            | Instruction::GetDynamicBinding { name: index, .. }
-            | Instruction::PutDynamicBinding { name: index, .. }
-            | Instruction::DeleteDynamicBinding { name: index, .. }
-            | Instruction::GetRefValue(index)
-            | Instruction::GetRefValueUndef(index)
-            | Instruction::PutRefValue(index) => {
-                let is_valid = usize::try_from(*index).is_ok_and(|index| index < constant_count);
-                if !is_valid {
-                    return Err(Error::internal("constant index is out of bounds"));
-                }
+            Instruction::NipCatch => next_depth = regions.pop().ok_or_else(missing_region)?,
+            Instruction::ForOfStart | Instruction::ForAwaitOfStart => {
+                regions.push(remaining_depth);
             }
-            Instruction::Goto(target)
-            | Instruction::IfFalse(target)
-            | Instruction::IfTrue(target)
-            | Instruction::Catch(target)
-            | Instruction::Gosub(target) => {
-                validate_target(*target, code.len())?;
-                if matches!(instruction, Instruction::Gosub(_)) {
-                    let return_pc = pc
-                        .checked_add(1)
-                        .ok_or_else(|| Error::internal("gosub return PC overflow"))?;
-                    i32::try_from(return_pc)
-                        .map_err(|_| Error::internal("gosub return PC does not fit Int"))?;
-                }
+            Instruction::IteratorClosePreserve | Instruction::IteratorDropPreserve => {
+                next_depth = regions.pop().ok_or_else(missing_region)? + 1;
+            }
+            Instruction::IteratorDetachPreserve => {
+                next_depth = regions.pop().ok_or_else(missing_region)? + 2;
             }
             _ => {}
         }
-    }
-
-    let mut states = V::new(code.len());
-    let mut worklist = VecDeque::from([(
-        0_usize,
-        VerificationState {
-            depth: 0,
-            regions: Vec::new(),
-            return_addresses: Vec::new(),
-            super_call_bases: Vec::new(),
-        },
-    )]);
-    let mut maximum = 0_usize;
-
-    while let Some((pc, state)) = worklist.pop_front() {
-        record_maximum_depth(&mut maximum, state.depth, declared_max_stack)?;
-        if !states.visit(pc, &state)? {
-            continue;
-        }
-
-        let instruction = &code[pc];
-        let crate::engine::code::instruction::StackEffect {
-            popped,
-            pushed,
-            state: stack_state,
-        } = instruction.stack_contract();
-        let remaining_depth = state
-            .depth
-            .checked_sub(popped)
-            .ok_or_else(|| Error::internal("bytecode stack underflow"))?;
-        let mut next_depth = remaining_depth
-            .checked_add(pushed)
-            .ok_or_else(|| Error::internal("bytecode stack depth overflow"))?;
-        let mut next_regions = state.regions.clone();
-        let mut next_return_addresses = state.return_addresses.clone();
-        let mut next_super_call_bases = state.super_call_bases.clone();
-
-        if stack_state.preserves_super_pair() {
-            verify_super_call_pair_untouched(&state, remaining_depth, popped)?;
-        }
-
-        match instruction {
-            Instruction::MarkSuperCall => {
-                verify_ordinary_consumption(&state, remaining_depth, popped)?;
-                next_super_call_bases.push(remaining_depth);
-            }
-            Instruction::ConstructSuper(_) | Instruction::ApplySuper => {
-                if next_super_call_bases.last().copied() != Some(remaining_depth) {
-                    return Err(Error::internal(
-                        "typed super construction did not consume its protected pair",
-                    ));
-                }
-                verify_ordinary_consumption(&state, remaining_depth, popped)?;
-                next_super_call_bases.pop();
-            }
-            Instruction::DropCatch => {
-                let region = next_regions
-                    .pop()
-                    .ok_or_else(|| Error::internal("DropCatch has no active catch handler"))?;
-                let UnwindRegionState::Catch { marker_depth, .. } = region else {
-                    return Err(Error::internal(
-                        "DropCatch did not target the innermost unwind region",
-                    ));
-                };
-                if state.depth != marker_depth {
-                    return Err(Error::internal(
-                        "DropCatch did not reach its catch entry depth",
-                    ));
-                }
-            }
-            Instruction::NipCatch => {
-                let region = next_regions
-                    .pop()
-                    .ok_or_else(|| Error::internal("NipCatch has no active catch handler"))?;
-                let UnwindRegionState::Catch { marker_depth, .. } = region else {
-                    return Err(Error::internal(
-                        "NipCatch did not target the innermost unwind region",
-                    ));
-                };
-                if state.depth <= marker_depth {
-                    return Err(Error::internal(
-                        "NipCatch has no value above its catch marker",
-                    ));
-                }
-                if state
-                    .return_addresses
-                    .last()
-                    .is_some_and(|address| *address == state.depth - 1)
-                {
-                    return Err(Error::internal(
-                        "NipCatch cannot preserve a gosub return address",
-                    ));
-                }
-                let marker_index = marker_depth - 1;
-                // QuickJS `OP_nip_catch` deliberately performs a dynamic
-                // truncation: an abrupt completion from a nested finally may
-                // discard the real return PC of a finally subroutine together
-                // with every other value above the catch marker.  Keep an
-                // address below the marker typed, reject preserving one as the
-                // result above, and forget only addresses that the truncation
-                // actually destroys.
-                next_return_addresses.retain(|address| *address < marker_index);
-                next_depth = marker_depth;
-            }
-            Instruction::ForOfStart | Instruction::ForAwaitOfStart => {
-                verify_ordinary_consumption(&state, remaining_depth, popped)?;
-                let record_base = remaining_depth;
-                next_regions.push(UnwindRegionState::Iterator {
-                    record_base,
-                    marker_depth: next_depth,
-                    kind: if matches!(instruction, Instruction::ForOfStart) {
-                        IteratorRegionKind::Sync
-                    } else {
-                        IteratorRegionKind::Async
-                    },
-                    phase: IteratorRegionPhase::Stable,
-                });
-            }
-            Instruction::ForOfNext(offset) => {
-                let Some(UnwindRegionState::Iterator {
-                    record_base,
-                    marker_depth,
-                    kind,
-                    phase,
-                }) = next_regions.last()
-                else {
-                    return Err(Error::internal(
-                        "ForOfNext has no innermost iterator region",
-                    ));
-                };
-                if *kind != IteratorRegionKind::Sync {
-                    return Err(Error::internal(
-                        "ForOfNext requires a synchronous iterator region",
-                    ));
-                }
-                if *phase != IteratorRegionPhase::Stable {
-                    return Err(Error::internal(
-                        "ForOfNext reached an async-next-pending iterator region",
-                    ));
-                }
-                let expected_depth = marker_depth
-                    .checked_add(usize::from(*offset))
-                    .ok_or_else(|| Error::internal("for-of offset overflow"))?;
-                if state.depth != expected_depth {
-                    return Err(Error::internal(
-                        "ForOfNext offset does not reach its iterator record",
-                    ));
-                }
-                if record_base.checked_add(3) != Some(*marker_depth) {
-                    return Err(Error::internal(
-                        "ForOfNext iterator marker has invalid depth",
-                    ));
-                }
-                if state
-                    .super_call_bases
-                    .iter()
-                    .any(|base| *base < *marker_depth && base.saturating_add(2) > *record_base)
-                {
-                    return Err(Error::internal(
-                        "ForOfNext touched a protected super-call pair",
-                    ));
-                }
-            }
-            Instruction::ForAwaitOfNext => {
-                let Some(UnwindRegionState::Iterator {
-                    record_base,
-                    marker_depth,
-                    kind,
-                    phase,
-                }) = next_regions.last_mut()
-                else {
-                    return Err(Error::internal(
-                        "ForAwaitOfNext has no innermost iterator region",
-                    ));
-                };
-                if *kind != IteratorRegionKind::Async {
-                    return Err(Error::internal(
-                        "ForAwaitOfNext requires an asynchronous iterator region",
-                    ));
-                }
-                if *phase != IteratorRegionPhase::Stable {
-                    return Err(Error::internal(
-                        "ForAwaitOfNext repeated before async iterator result completion",
-                    ));
-                }
-                if state.depth != *marker_depth {
-                    return Err(Error::internal(
-                        "ForAwaitOfNext did not reach its iterator record",
-                    ));
-                }
-                if record_base.checked_add(3) != Some(*marker_depth) {
-                    return Err(Error::internal(
-                        "ForAwaitOfNext iterator marker has invalid depth",
-                    ));
-                }
-                if state
-                    .super_call_bases
-                    .iter()
-                    .any(|base| *base < *marker_depth && base.saturating_add(2) > *record_base)
-                {
-                    return Err(Error::internal(
-                        "ForAwaitOfNext touched a protected super-call pair",
-                    ));
-                }
-                *phase = IteratorRegionPhase::AsyncNextPending;
-            }
-            Instruction::IteratorGetValueDone => {
-                let Some(UnwindRegionState::Iterator {
-                    record_base,
-                    marker_depth,
-                    kind,
-                    phase,
-                }) = next_regions.last_mut()
-                else {
-                    return Err(Error::internal(
-                        "IteratorGetValueDone has no innermost iterator region",
-                    ));
-                };
-                if *kind != IteratorRegionKind::Async {
-                    return Err(Error::internal(
-                        "IteratorGetValueDone requires an asynchronous iterator region",
-                    ));
-                }
-                if *phase != IteratorRegionPhase::AsyncNextPending {
-                    return Err(Error::internal(
-                        "IteratorGetValueDone requires a pending async iterator result",
-                    ));
-                }
-                let expected_depth = marker_depth
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("async iterator result depth overflow"))?;
-                if state.depth != expected_depth {
-                    return Err(Error::internal(
-                        "IteratorGetValueDone did not reach its pending iterator result",
-                    ));
-                }
-                if record_base.checked_add(3) != Some(*marker_depth) {
-                    return Err(Error::internal(
-                        "IteratorGetValueDone iterator marker has invalid depth",
-                    ));
-                }
-                if state
-                    .super_call_bases
-                    .iter()
-                    .any(|base| *base < *marker_depth && base.saturating_add(2) > *record_base)
-                {
-                    return Err(Error::internal(
-                        "IteratorGetValueDone touched a protected super-call pair",
-                    ));
-                }
-                *phase = IteratorRegionPhase::Stable;
-            }
-            Instruction::IteratorClose => {
-                let region = next_regions
-                    .pop()
-                    .ok_or_else(|| Error::internal("IteratorClose has no iterator region"))?;
-                let UnwindRegionState::Iterator {
-                    record_base,
-                    marker_depth,
-                    phase,
-                    ..
-                } = region
-                else {
-                    return Err(Error::internal(
-                        "IteratorClose did not target the innermost unwind region",
-                    ));
-                };
-                if phase != IteratorRegionPhase::Stable {
-                    return Err(Error::internal(
-                        "IteratorClose cannot consume an async-next-pending iterator region",
-                    ));
-                }
-                if state.depth != marker_depth || remaining_depth != record_base {
-                    return Err(Error::internal(
-                        "IteratorClose did not reach its iterator record",
-                    ));
-                }
-                if state
-                    .return_addresses
-                    .iter()
-                    .any(|address| *address >= record_base)
-                {
-                    return Err(Error::internal(
-                        "IteratorClose cannot discard a gosub return address",
-                    ));
-                }
-            }
-            Instruction::IteratorClosePreserve
-            | Instruction::IteratorDropPreserve
-            | Instruction::IteratorDetachPreserve => {
-                let operation = match instruction {
-                    Instruction::IteratorClosePreserve => "IteratorClosePreserve",
-                    Instruction::IteratorDropPreserve => "IteratorDropPreserve",
-                    Instruction::IteratorDetachPreserve => "IteratorDetachPreserve",
-                    _ => unreachable!("iterator preserve dispatch lost its instruction"),
-                };
-                let region = next_regions.pop().ok_or_else(|| {
-                    Error::internal(format!("{operation} has no iterator region"))
-                })?;
-                let UnwindRegionState::Iterator {
-                    record_base,
-                    marker_depth,
-                    phase,
-                    ..
-                } = region
-                else {
-                    return Err(Error::internal(format!(
-                        "{operation} did not target the innermost unwind region"
-                    )));
-                };
-                if phase != IteratorRegionPhase::Stable {
-                    return Err(Error::internal(format!(
-                        "{operation} cannot consume an async-next-pending iterator region"
-                    )));
-                }
-                if state.depth <= marker_depth {
-                    return Err(Error::internal(format!(
-                        "{operation} has no value above its iterator marker"
-                    )));
-                }
-                if state
-                    .return_addresses
-                    .last()
-                    .is_some_and(|address| *address == state.depth - 1)
-                {
-                    return Err(Error::internal(format!(
-                        "{operation} cannot preserve a gosub return address"
-                    )));
-                }
-                // Like `NipCatch`, this is a dynamic abrupt-completion
-                // cleanup. A return which crosses nested finally and for-of
-                // regions may have genuine Gosub return PCs among the
-                // intermediate values that are intentionally truncated.
-                // Addresses below the iterator record survive and remain
-                // typed; the preserved top was rejected above if it was an
-                // address itself.
-                next_return_addresses.retain(|address| *address < record_base);
-                next_depth = record_base
-                    .checked_add(
-                        if matches!(instruction, Instruction::IteratorDetachPreserve) {
-                            2
-                        } else {
-                            1
-                        },
-                    )
-                    .ok_or_else(|| Error::internal("bytecode stack depth overflow"))?;
-            }
-            Instruction::Ret | Instruction::DropGosub => {
-                if next_return_addresses.last().copied() != Some(state.depth - 1) {
-                    let name = if matches!(instruction, Instruction::Ret) {
-                        "Ret"
-                    } else {
-                        "DropGosub"
-                    };
-                    return Err(Error::internal(format!(
-                        "{name} did not consume a gosub return address"
-                    )));
-                }
-                next_return_addresses.pop();
-                if state
-                    .regions
-                    .last()
-                    .is_some_and(|region| remaining_depth < region.marker_depth())
-                {
-                    return Err(Error::internal(
-                        "gosub return address crossed an active unwind marker",
-                    ));
-                }
-            }
-            _ => {
-                verify_ordinary_consumption(&state, remaining_depth, popped)?;
-            }
-        }
-
-        if next_super_call_bases
-            .last()
-            .is_some_and(|base| next_depth < base.saturating_add(2))
-        {
-            return Err(Error::internal(
-                "bytecode stack crossed a protected super-call pair",
-            ));
-        }
-
-        if matches!(
-            instruction,
-            Instruction::TailCall(_)
-                | Instruction::TailCallMethod(_)
-                | Instruction::Return
-                | Instruction::ReturnUndefined
-                | Instruction::ReturnDerived(_)
-        ) && state
-            .regions
-            .iter()
-            .any(|region| matches!(region, UnwindRegionState::Iterator { .. }))
-        {
-            return Err(Error::internal("Return bypassed an active iterator close"));
-        }
         record_maximum_depth(&mut maximum, next_depth, declared_max_stack)?;
         // QuickJS `compute_stack_size` stops as soon as a reachable PC crosses
-        // JS_STACK_SIZE_MAX. This must win over diagnostics from later
-        // instructions, including the intentionally truncated call operand in
-        // a template with more than 65,535 arguments.
-        match instruction {
+        // JS_STACK_SIZE_MAX, before any later instruction is considered.
+        match *instruction {
             // QuickJS terminal completion opcodes consume their completion
             // value and abandon the rest of the frame stack. In particular,
             // `return` and `throw` inside a switch leave its discriminant
             // below that value rather than emitting synthetic cleanup.
+            // `OP_throw_error` is likewise terminal: a postfix update may
+            // retain its old value below the replaced immutable write.
             Instruction::TailCall(_)
             | Instruction::TailCallMethod(_)
             | Instruction::Return
             | Instruction::ReturnUndefined
             | Instruction::ReturnDerived(_)
             | Instruction::Throw
-            | Instruction::Ret => {}
-            // QuickJS `OP_throw_error` is terminal and abandons the complete
-            // frame stack. A postfix update can legitimately retain its old
-            // value below the attempted write when immutable-binding
-            // resolution replaces that write with this instruction.
-            Instruction::ThrowReadOnly(_)
+            | Instruction::Ret
+            | Instruction::ThrowReadOnly(_)
             | Instruction::ThrowRedeclaration(_)
             | Instruction::ThrowDeleteSuper
             | Instruction::ThrowIteratorMissingThrow => {}
-            Instruction::Goto(target) => {
-                enqueue_target(
-                    &mut worklist,
-                    *target,
-                    VerificationState {
-                        depth: next_depth,
-                        regions: next_regions,
-                        return_addresses: next_return_addresses,
-                        super_call_bases: next_super_call_bases,
-                    },
-                    code.len(),
-                )?;
-            }
+            Instruction::Goto(target) => worklist.push_back((target as usize, next_depth, regions)),
             Instruction::IfFalse(target) | Instruction::IfTrue(target) => {
-                let next = VerificationState {
-                    depth: next_depth,
-                    regions: next_regions,
-                    return_addresses: next_return_addresses,
-                    super_call_bases: next_super_call_bases,
-                };
-                enqueue_target(&mut worklist, *target, next.clone(), code.len())?;
-                enqueue_fallthrough(&mut worklist, pc, next, code.len())?;
+                worklist.push_back((target as usize, next_depth, regions.clone()));
+                worklist.push_back((pc + 1, next_depth, regions));
             }
             Instruction::Catch(target) => {
-                let exceptional_depth = next_depth;
-                record_maximum_depth(&mut maximum, exceptional_depth, declared_max_stack)?;
-                enqueue_target(
-                    &mut worklist,
-                    *target,
-                    VerificationState {
-                        depth: exceptional_depth,
-                        regions: state.regions.clone(),
-                        return_addresses: state.return_addresses.clone(),
-                        super_call_bases: state.super_call_bases.clone(),
-                    },
-                    code.len(),
-                )?;
-                next_regions.push(UnwindRegionState::Catch {
-                    target: *target,
-                    marker_depth: next_depth,
-                });
-                enqueue_fallthrough(
-                    &mut worklist,
-                    pc,
-                    VerificationState {
-                        depth: next_depth,
-                        regions: next_regions,
-                        return_addresses: next_return_addresses,
-                        super_call_bases: next_super_call_bases,
-                    },
-                    code.len(),
-                )?;
+                worklist.push_back((target as usize, next_depth, regions.clone()));
+                regions.push(next_depth);
+                worklist.push_back((pc + 1, next_depth, regions));
             }
             Instruction::Gosub(target) => {
-                let subroutine_depth = state
-                    .depth
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("bytecode stack depth overflow"))?;
+                let subroutine_depth = depth + 1;
                 record_maximum_depth(&mut maximum, subroutine_depth, declared_max_stack)?;
-                enqueue_target(
-                    &mut worklist,
-                    *target,
-                    VerificationState {
-                        depth: subroutine_depth,
-                        regions: state.regions.clone(),
-                        return_addresses: {
-                            let mut addresses = state.return_addresses.clone();
-                            addresses.push(state.depth);
-                            addresses
-                        },
-                        super_call_bases: state.super_call_bases.clone(),
-                    },
-                    code.len(),
-                )?;
-                enqueue_fallthrough(
-                    &mut worklist,
-                    pc,
-                    VerificationState {
-                        depth: next_depth,
-                        regions: next_regions,
-                        return_addresses: next_return_addresses,
-                        super_call_bases: next_super_call_bases,
-                    },
-                    code.len(),
-                )?;
+                worklist.push_back((target as usize, subroutine_depth, regions.clone()));
+                worklist.push_back((pc + 1, next_depth, regions));
             }
-            _ => enqueue_fallthrough(
-                &mut worklist,
-                pc,
-                VerificationState {
-                    depth: next_depth,
-                    regions: next_regions,
-                    return_addresses: next_return_addresses,
-                    super_call_bases: next_super_call_bases,
-                },
-                code.len(),
-            )?,
+            _ => worklist.push_back((pc + 1, next_depth, regions)),
         }
     }
 
     let maximum =
         u16::try_from(maximum).map_err(|_| Error::internal("bytecode stack exceeds u16::MAX"))?;
     Ok(VerifiedBytecode { max_stack: maximum })
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum IteratorRegionKind {
-    Sync,
-    Async,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum IteratorRegionPhase {
-    Stable,
-    AsyncNextPending,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum UnwindRegionState {
-    Catch {
-        target: u32,
-        marker_depth: usize,
-    },
-    Iterator {
-        record_base: usize,
-        marker_depth: usize,
-        kind: IteratorRegionKind,
-        phase: IteratorRegionPhase,
-    },
-}
-
-impl UnwindRegionState {
-    const fn marker_depth(&self) -> usize {
-        match self {
-            Self::Catch { marker_depth, .. } | Self::Iterator { marker_depth, .. } => *marker_depth,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct VerificationState {
-    depth: usize,
-    regions: Vec<UnwindRegionState>,
-    /// Conceptual operand-stack indexes containing the genuine Int return PCs
-    /// introduced by reachable `Gosub` edges. Ordinary opcodes may neither
-    /// forge nor consume these typed slots.
-    return_addresses: Vec<usize>,
-    /// Operand-stack bases of authenticated `super_constructor, new.target`
-    /// pairs. Nested `super()` argument expressions form a strict LIFO stack.
-    super_call_bases: Vec<usize>,
-}
-
-/// The ordinary state has only a depth. Full unwind/gosub/super histories are
-/// stored lazily, preserving the exact FIFO visitation and join diagnostics.
-trait VerificationVisits {
-    fn new(length: usize) -> Self;
-    /// True means this is the first visit; false means an identical revisit.
-    fn visit(&mut self, pc: usize, state: &VerificationState) -> Result<bool, Error>;
-}
-
-struct CompactVisits {
-    // Depth is bounded by MAX_STACK_SIZE before every visit; usize::MAX is
-    // therefore an unambiguous unvisited sentinel, including on 32-bit hosts.
-    depths: Vec<usize>,
-    exceptional: Option<Vec<Option<VerificationState>>>,
-}
-
-impl VerificationVisits for CompactVisits {
-    fn new(length: usize) -> Self {
-        Self {
-            depths: vec![usize::MAX; length],
-            exceptional: None,
-        }
-    }
-
-    #[inline]
-    fn visit(&mut self, pc: usize, state: &VerificationState) -> Result<bool, Error> {
-        let depth = self
-            .depths
-            .get_mut(pc)
-            .ok_or_else(|| Error::internal("control flow target is out of bounds"))?;
-        if *depth != usize::MAX {
-            if *depth != state.depth {
-                return Err(Error::internal(
-                    "control flow joins with inconsistent stack depth",
-                ));
-            }
-            let previous = self
-                .exceptional
-                .as_ref()
-                .and_then(|states| states[pc].as_ref());
-            if previous.map_or(&[][..], |s| s.regions.as_slice()) != state.regions.as_slice() {
-                return Err(Error::internal(
-                    "control flow joins with inconsistent unwind regions",
-                ));
-            }
-            if previous.map_or(&[][..], |s| s.return_addresses.as_slice())
-                != state.return_addresses.as_slice()
-            {
-                return Err(Error::internal(
-                    "control flow joins with inconsistent gosub return addresses",
-                ));
-            }
-            if previous.map_or(&[][..], |s| s.super_call_bases.as_slice())
-                != state.super_call_bases.as_slice()
-            {
-                return Err(Error::internal(
-                    "control flow joins with inconsistent super-call markers",
-                ));
-            }
-            return Ok(false);
-        }
-        *depth = state.depth;
-        if !state.regions.is_empty()
-            || !state.return_addresses.is_empty()
-            || !state.super_call_bases.is_empty()
-        {
-            let states = self
-                .exceptional
-                .get_or_insert_with(|| vec![None; self.depths.len()]);
-            states[pc] = Some(state.clone());
-        }
-        Ok(true)
-    }
-}
-
-#[cfg(test)]
-struct FullVisits(Vec<Option<VerificationState>>);
-#[cfg(test)]
-impl VerificationVisits for FullVisits {
-    fn new(length: usize) -> Self {
-        Self(vec![None; length])
-    }
-    fn visit(&mut self, pc: usize, state: &VerificationState) -> Result<bool, Error> {
-        let slot = self
-            .0
-            .get_mut(pc)
-            .ok_or_else(|| Error::internal("control flow target is out of bounds"))?;
-        if let Some(previous) = slot {
-            if previous != state {
-                let message = if previous.depth != state.depth {
-                    "control flow joins with inconsistent stack depth"
-                } else if previous.regions != state.regions.as_slice() {
-                    "control flow joins with inconsistent unwind regions"
-                } else if previous.return_addresses != state.return_addresses.as_slice() {
-                    "control flow joins with inconsistent gosub return addresses"
-                } else {
-                    "control flow joins with inconsistent super-call markers"
-                };
-                return Err(Error::internal(message));
-            }
-            return Ok(false);
-        }
-        *slot = Some(state.clone());
-        Ok(true)
-    }
-}
-
-fn verify_super_call_pair_untouched(
-    state: &VerificationState,
-    remaining_depth: usize,
-    popped: usize,
-) -> Result<(), Error> {
-    if popped > 0
-        && state
-            .super_call_bases
-            .last()
-            .is_some_and(|base| remaining_depth < base.saturating_add(2))
-    {
-        return Err(Error::internal(
-            "ordinary bytecode touched a protected super-call pair",
-        ));
-    }
-    Ok(())
-}
-
-fn verify_ordinary_consumption(
-    state: &VerificationState,
-    remaining_depth: usize,
-    popped: usize,
-) -> Result<(), Error> {
-    if popped > 0
-        && state
-            .return_addresses
-            .last()
-            .is_some_and(|address| *address >= remaining_depth)
-    {
-        return Err(Error::internal(
-            "ordinary bytecode consumed a gosub return address",
-        ));
-    }
-    if state
-        .regions
-        .last()
-        .is_some_and(|region| remaining_depth < region.marker_depth())
-    {
-        return Err(Error::internal(
-            "bytecode stack crossed an active unwind marker",
-        ));
-    }
-    Ok(())
 }
 
 fn record_maximum_depth(
@@ -1693,52 +854,6 @@ pub struct VerifiedBytecode {
     pub max_stack: u16,
 }
 
-fn enqueue_target(
-    worklist: &mut VecDeque<(usize, VerificationState)>,
-    target: u32,
-    state: VerificationState,
-    code_len: usize,
-) -> Result<(), Error> {
-    let target = validate_target(target, code_len)?;
-    worklist.push_back((target, state));
-    Ok(())
-}
-
-fn validate_target(target: u32, code_len: usize) -> Result<usize, Error> {
-    let target = usize::try_from(target).map_err(|_| Error::internal("jump target overflow"))?;
-    if target >= code_len {
-        return Err(Error::internal("jump target is out of bounds"));
-    }
-    Ok(target)
-}
-
-fn enqueue_fallthrough(
-    worklist: &mut VecDeque<(usize, VerificationState)>,
-    pc: usize,
-    state: VerificationState,
-    code_len: usize,
-) -> Result<(), Error> {
-    let next = pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("program counter overflow"))?;
-    if next >= code_len {
-        return Err(Error::internal("bytecode ended without return"));
-    }
-    worklist.push_back((next, state));
-    Ok(())
-}
-
-#[cfg(test)]
-pub trait TestConstant {
-    fn is_string(&self) -> bool;
-}
-#[cfg(test)]
-impl TestConstant for Value {
-    fn is_string(&self) -> bool {
-        matches!(self, Value::String(_))
-    }
-}
-
 #[cfg(test)]
 impl<T> Default for DetachedBytecode<T> {
     fn default() -> Self {
@@ -1755,7 +870,7 @@ impl<T> Default for DetachedBytecode<T> {
 mod tests {
     use super::{
         ApplyKind, ArgumentsKind, DefineMethodKind, DetachedBytecode, DynamicEnvironmentSource,
-        EvalVariableSource, Instruction, MAX_LOCAL_SLOTS, WithObjectSource,
+        EvalVariableSource, Instruction, WithObjectSource,
     };
     use crate::engine::api::JsString;
     use crate::engine::value::PrimitiveValue as Value;
@@ -1918,15 +1033,6 @@ mod tests {
         assert_eq!(
             underflow.verify().unwrap_err().message(),
             "bytecode stack underflow"
-        );
-
-        let invalid_name = DetachedBytecode::<Value> {
-            constants: vec![Value::Int(0)],
-            ..function
-        };
-        assert_eq!(
-            invalid_name.verify().unwrap_err().message(),
-            "string-key opcode referenced a non-string constant"
         );
 
         let heritage = DetachedBytecode::<Value> {
@@ -2280,40 +1386,6 @@ mod tests {
             max_stack: 1,
         };
         assert_eq!(function.verify().unwrap().max_stack, 1);
-
-        for instruction in [
-            Instruction::HasEvalVariable { source, name: 0 },
-            Instruction::GetEvalVariable { source, name: 0 },
-            Instruction::PutEvalVariable { source, name: 0 },
-            Instruction::DeleteEvalVariable { source, name: 0 },
-            Instruction::DefineEvalVariable { source, name: 0 },
-        ] {
-            let bad_name = DetachedBytecode::<Value> {
-                code: vec![Instruction::Undefined, Instruction::Return, instruction],
-                constants: vec![Value::Int(0)],
-                local_count: 1,
-                max_stack: 1,
-            };
-            assert_eq!(
-                bad_name.verify().unwrap_err().message(),
-                "string-key opcode referenced a non-string constant"
-            );
-        }
-
-        let bad_local = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Return,
-                Instruction::HasEvalVariable { source, name: 0 },
-            ],
-            constants: vec![Value::String(JsString::from_static("added"))],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert_eq!(
-            bad_local.verify().unwrap_err().message(),
-            "eval variable-object local operand is out of bounds"
-        );
     }
 
     #[test]
@@ -2374,59 +1446,6 @@ mod tests {
             undersized_global_reference.verify().unwrap_err().message(),
             "declared maximum stack is smaller than required"
         );
-
-        for instruction in [
-            Instruction::HasDynamicBinding {
-                source: eval,
-                name: 0,
-            },
-            Instruction::GetDynamicBinding {
-                source: eval,
-                name: 0,
-            },
-            Instruction::PutDynamicBinding {
-                source: eval,
-                name: 0,
-            },
-            Instruction::DeleteDynamicBinding {
-                source: eval,
-                name: 0,
-            },
-            Instruction::GetRefValue(0),
-            Instruction::GetRefValueUndef(0),
-            Instruction::PutRefValue(0),
-        ] {
-            let malformed = DetachedBytecode::<Value> {
-                code: vec![Instruction::Undefined, Instruction::Return, instruction],
-                constants: vec![Value::Int(0)],
-                local_count: 2,
-                max_stack: 1,
-            };
-            assert_eq!(
-                malformed.verify().unwrap_err().message(),
-                "string-key opcode referenced a non-string constant"
-            );
-        }
-
-        for source in [
-            DynamicEnvironmentSource::Eval(EvalVariableSource::Local(2)),
-            DynamicEnvironmentSource::With(WithObjectSource::Local(2)),
-        ] {
-            let malformed = DetachedBytecode::<Value> {
-                code: vec![
-                    Instruction::Undefined,
-                    Instruction::Return,
-                    Instruction::DynamicEnvironmentObject(source),
-                ],
-                constants: vec![],
-                local_count: 2,
-                max_stack: 1,
-            };
-            assert_eq!(
-                malformed.verify().unwrap_err().message(),
-                "dynamic environment local operand is out of bounds"
-            );
-        }
     }
 
     #[test]
@@ -2438,17 +1457,6 @@ mod tests {
             max_stack: 0,
         };
         assert_eq!(function.verify().unwrap().max_stack, 0);
-
-        let malformed = DetachedBytecode::<Value> {
-            code: vec![Instruction::ThrowRedeclaration(0)],
-            constants: vec![Value::Int(0)],
-            local_count: 0,
-            max_stack: 0,
-        };
-        assert_eq!(
-            malformed.verify().unwrap_err().message(),
-            "string-key opcode referenced a non-string constant"
-        );
     }
 
     #[test]
@@ -2460,17 +1468,6 @@ mod tests {
             max_stack: 0,
         };
         assert_eq!(cycle.verify().unwrap().max_stack, 0);
-
-        let reachable_fallthrough = DetachedBytecode::<Value> {
-            code: vec![Instruction::Nop],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 0,
-        };
-        assert_eq!(
-            reachable_fallthrough.verify().unwrap_err().message(),
-            "bytecode ended without return"
-        );
     }
 
     #[test]
@@ -2531,50 +1528,6 @@ mod tests {
         };
         assert_eq!(nip.verify().unwrap().max_stack, 4);
 
-        for code in [
-            vec![
-                Instruction::PushI32(1),
-                Instruction::DropCatch,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::Catch(4),
-                Instruction::PushI32(1),
-                Instruction::DropCatch,
-                Instruction::Return,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::NipCatch,
-                Instruction::Return,
-            ],
-        ] {
-            let malformed = DetachedBytecode::<Value> {
-                code,
-                constants: vec![],
-                local_count: 0,
-                max_stack: 2,
-            };
-            assert!(malformed.verify().is_err());
-        }
-
-        let inconsistent_handlers = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushTrue,
-                Instruction::IfFalse(4),
-                Instruction::Catch(5),
-                Instruction::Goto(5),
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert!(inconsistent_handlers.verify().is_err());
-
         let marker_exceeds_declared_stack = DetachedBytecode::<Value> {
             max_stack: 0,
             ..normal
@@ -2614,57 +1567,6 @@ mod tests {
             max_stack: 2,
         };
         assert_eq!(abrupt_cleanup.verify().unwrap().max_stack, 2);
-
-        let nip_catch_return_address = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Catch(6),
-                Instruction::Undefined,
-                Instruction::Gosub(4),
-                Instruction::Return,
-                Instruction::NipCatch,
-                Instruction::Ret,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 3,
-        };
-        assert_eq!(
-            nip_catch_return_address.verify().unwrap_err().message(),
-            "NipCatch cannot preserve a gosub return address"
-        );
-
-        for code in [
-            vec![Instruction::PushI32(0), Instruction::Ret],
-            vec![
-                Instruction::Catch(3),
-                Instruction::Ret,
-                Instruction::Nop,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::Gosub(3),
-                Instruction::Undefined,
-                Instruction::Return,
-                Instruction::Drop,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(0),
-                Instruction::DropGosub,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-        ] {
-            let forged = DetachedBytecode::<Value> {
-                code,
-                constants: vec![],
-                local_count: 0,
-                max_stack: 1,
-            };
-            assert!(forged.verify().is_err());
-        }
 
         let return_address_exceeds_declared_stack = DetachedBytecode::<Value> {
             max_stack: 1,
@@ -2828,148 +1730,6 @@ mod tests {
     }
 
     #[test]
-    fn verifier_rejects_malformed_for_await_region_protocols() {
-        let malformed = [
-            vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::ForAwaitOfNext,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::ForAwaitOfNext,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForAwaitOfStart,
-                Instruction::ForOfNext(0),
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForAwaitOfStart,
-                Instruction::IteratorGetValueDone,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::Undefined,
-                Instruction::IteratorGetValueDone,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForAwaitOfStart,
-                Instruction::ForAwaitOfNext,
-                Instruction::ForAwaitOfNext,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForAwaitOfStart,
-                Instruction::ForAwaitOfNext,
-                Instruction::Drop,
-                Instruction::IteratorClose,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForAwaitOfStart,
-                Instruction::ForAwaitOfNext,
-                Instruction::IteratorDetachPreserve,
-                Instruction::Drop,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForAwaitOfStart,
-                Instruction::IteratorDetachPreserve,
-                Instruction::Drop,
-                Instruction::Return,
-            ],
-        ];
-        for code in malformed {
-            let function = DetachedBytecode::<Value> {
-                code,
-                constants: vec![],
-                local_count: 0,
-                max_stack: 8,
-            };
-            assert!(function.verify().is_err());
-        }
-
-        let pending_close = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushI32(1),
-                Instruction::ForAwaitOfStart,
-                Instruction::ForAwaitOfNext,
-                Instruction::Drop,
-                Instruction::IteratorClose,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 4,
-        };
-        assert_eq!(
-            pending_close.verify().unwrap_err().message(),
-            "IteratorClose cannot consume an async-next-pending iterator region"
-        );
-    }
-
-    #[test]
-    fn verifier_rejects_for_await_kind_and_phase_join_mismatches() {
-        let kind_mismatch = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushTrue,
-                Instruction::IfFalse(5),
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::Goto(7),
-                Instruction::PushI32(1),
-                Instruction::ForAwaitOfStart,
-                Instruction::IteratorClose,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 3,
-        };
-        assert_eq!(
-            kind_mismatch.verify().unwrap_err().message(),
-            "control flow joins with inconsistent unwind regions"
-        );
-
-        let phase_mismatch = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushI32(1),
-                Instruction::ForAwaitOfStart,
-                Instruction::PushTrue,
-                Instruction::IfFalse(6),
-                Instruction::ForAwaitOfNext,
-                Instruction::Goto(7),
-                Instruction::Undefined,
-                Instruction::Throw,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 4,
-        };
-        assert_eq!(
-            phase_mismatch.verify().unwrap_err().message(),
-            "control flow joins with inconsistent unwind regions"
-        );
-    }
-
-    #[test]
     fn verifier_tracks_for_in_as_one_ordinary_retained_operand() {
         let function = DetachedBytecode::<Value> {
             code: vec![
@@ -3082,387 +1842,6 @@ mod tests {
     }
 
     #[test]
-    fn verifier_rejects_iterator_marker_and_return_address_misuse() {
-        let malformed = [
-            vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::ForOfNext(0),
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::ForOfNext(1),
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::Drop,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::PushI32(2),
-                Instruction::IteratorClose,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::IteratorClosePreserve,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::PushI32(2),
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::DropCatch,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            vec![
-                Instruction::Catch(5),
-                Instruction::Undefined,
-                Instruction::IteratorClose,
-                Instruction::Return,
-                Instruction::Nop,
-                Instruction::Return,
-            ],
-        ];
-        for code in malformed {
-            let function = DetachedBytecode::<Value> {
-                code,
-                constants: vec![],
-                local_count: 0,
-                max_stack: 8,
-            };
-            assert!(function.verify().is_err());
-        }
-
-        let preserve_return_address = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::Gosub(6),
-                Instruction::IteratorClose,
-                Instruction::Undefined,
-                Instruction::Return,
-                Instruction::IteratorClosePreserve,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 4,
-        };
-        assert_eq!(
-            preserve_return_address.verify().unwrap_err().message(),
-            "IteratorClosePreserve cannot preserve a gosub return address"
-        );
-
-        let inconsistent_regions = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushTrue,
-                Instruction::IfFalse(5),
-                Instruction::PushI32(1),
-                Instruction::ForOfStart,
-                Instruction::Goto(8),
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 3,
-        };
-        assert_eq!(
-            inconsistent_regions.verify().unwrap_err().message(),
-            "control flow joins with inconsistent unwind regions"
-        );
-    }
-
-    #[test]
-    fn verifier_rejects_bad_constants_and_stack_joins() {
-        let bad_constant = DetachedBytecode::<Value> {
-            code: vec![Instruction::PushConst(0), Instruction::Return],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert!(bad_constant.verify().is_err());
-
-        let bad_atom_value_index = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Return,
-                Instruction::PushAtomValueIndex(0x8000_0000),
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert_eq!(
-            bad_atom_value_index.verify().unwrap_err().message(),
-            "atom-value index exceeds QuickJS JS_ATOM_MAX_INT"
-        );
-
-        let runtime_regexp_constant = DetachedBytecode::<Value> {
-            code: vec![Instruction::RegExp(0), Instruction::Return],
-            constants: vec![Value::String(JsString::from_static("a"))],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert_eq!(
-            runtime_regexp_constant.verify().unwrap_err().message(),
-            "detached bytecode cannot encode RegExp constants"
-        );
-
-        let bad_join = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushTrue,
-                Instruction::IfFalse(4),
-                Instruction::PushI32(1),
-                Instruction::Goto(5),
-                Instruction::Goto(5),
-                Instruction::PushI32(2),
-                Instruction::Return,
-            ],
-            constants: vec![Value::Undefined],
-            local_count: 0,
-            max_stack: 2,
-        };
-        assert!(bad_join.verify().is_err());
-
-        let excessive_declared_stack = DetachedBytecode::<Value> {
-            code: vec![Instruction::Undefined, Instruction::Return],
-            constants: vec![],
-            local_count: 0,
-            max_stack: u16::MAX,
-        };
-        assert!(excessive_declared_stack.verify().is_err());
-
-        let valid_nip = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushI32(1),
-                Instruction::PushI32(2),
-                Instruction::Nip,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 2,
-        };
-        assert_eq!(valid_nip.verify().unwrap().max_stack, 2);
-
-        let nip_underflow = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushI32(1),
-                Instruction::Nip,
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert!(nip_underflow.verify().is_err());
-
-        let postfix_readonly = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::PushI32(1),
-                Instruction::PostInc,
-                Instruction::ThrowReadOnly(0),
-            ],
-            constants: vec![Value::String(JsString::from_static("binding"))],
-            local_count: 0,
-            max_stack: 2,
-        };
-        assert_eq!(postfix_readonly.verify().unwrap().max_stack, 2);
-
-        let empty_stack_readonly = DetachedBytecode::<Value> {
-            code: vec![Instruction::ThrowReadOnly(0)],
-            constants: vec![Value::String(JsString::from_static("binding"))],
-            local_count: 0,
-            max_stack: 0,
-        };
-        assert_eq!(empty_stack_readonly.verify().unwrap().max_stack, 0);
-    }
-
-    #[test]
-    fn verifier_rejects_malformed_operands_even_in_unreachable_code() {
-        let bad_constant = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Return,
-                Instruction::PushConst(99),
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert!(bad_constant.verify().is_err());
-
-        let bad_set_name = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Return,
-                Instruction::SetName(99),
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert!(bad_set_name.verify().is_err());
-
-        let non_string_set_name = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::SetName(0),
-                Instruction::Return,
-            ],
-            constants: vec![Value::Int(1)],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert!(non_string_set_name.verify().is_err());
-
-        let non_string_read_only_name = DetachedBytecode::<Value> {
-            code: vec![Instruction::PushI32(1), Instruction::ThrowReadOnly(0)],
-            constants: vec![Value::Int(1)],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert!(non_string_read_only_name.verify().is_err());
-
-        let non_string_field = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::GetField(0),
-                Instruction::Return,
-            ],
-            constants: vec![Value::Int(1)],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert!(non_string_field.verify().is_err());
-
-        let non_string_keep_field = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::GetField2(0),
-                Instruction::Drop,
-                Instruction::Return,
-            ],
-            constants: vec![Value::Int(1)],
-            local_count: 0,
-            max_stack: 2,
-        };
-        assert!(non_string_keep_field.verify().is_err());
-
-        let non_string_put_field = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::PutField(0),
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            constants: vec![Value::Int(1)],
-            local_count: 0,
-            max_stack: 2,
-        };
-        assert!(non_string_put_field.verify().is_err());
-
-        let bad_jump = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Return,
-                Instruction::Goto(99),
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert!(bad_jump.verify().is_err());
-
-        for instruction in [Instruction::Catch(99), Instruction::Gosub(99)] {
-            let bad_handler_target = DetachedBytecode::<Value> {
-                code: vec![Instruction::Undefined, Instruction::Return, instruction],
-                constants: vec![],
-                local_count: 0,
-                max_stack: 1,
-            };
-            assert!(bad_handler_target.verify().is_err());
-        }
-    }
-
-    #[test]
-    fn verifier_enforces_the_declared_quickjs_local_frame() {
-        let valid = DetachedBytecode::<Value> {
-            code: vec![Instruction::GetLocal(0), Instruction::Return],
-            constants: vec![],
-            local_count: 1,
-            max_stack: 1,
-        };
-        assert!(valid.verify().is_ok());
-
-        let missing_frame = DetachedBytecode::<Value> {
-            local_count: 0,
-            ..valid.clone()
-        };
-        assert_eq!(
-            missing_frame.verify().unwrap_err().message(),
-            "local bytecode operand is out of bounds"
-        );
-
-        let unreachable = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Return,
-                Instruction::GetLocal(0),
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert_eq!(
-            unreachable.verify().unwrap_err().message(),
-            "local bytecode operand is out of bounds"
-        );
-
-        let last_slot = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::GetLocal(MAX_LOCAL_SLOTS - 1),
-                Instruction::Return,
-            ],
-            constants: vec![],
-            local_count: MAX_LOCAL_SLOTS,
-            max_stack: 1,
-        };
-        assert!(last_slot.verify().is_ok());
-
-        let excessive_frame = DetachedBytecode::<Value> {
-            code: vec![Instruction::Undefined, Instruction::Return],
-            constants: vec![],
-            local_count: u16::MAX,
-            max_stack: 1,
-        };
-        assert_eq!(
-            excessive_frame.verify().unwrap_err().message(),
-            "declared local count exceeds QuickJS JS_MAX_LOCAL_VARS"
-        );
-    }
-
-    #[test]
     fn verifier_models_quickjs_lexical_frame_operations() {
         let initialized_then_updated = DetachedBytecode::<Value> {
             code: vec![
@@ -3530,31 +1909,6 @@ mod tests {
     }
 
     #[test]
-    fn verifier_rejects_every_lexical_local_operand_outside_the_frame() {
-        for instruction in [
-            Instruction::SetLocalUninitialized(0),
-            Instruction::GetLocalCheck(0),
-            Instruction::InitializeLocal(0),
-            Instruction::InitializeDerivedLocal(0),
-            Instruction::PutLocalCheck(0),
-            Instruction::SetLocalCheck(0),
-            Instruction::CloseLocal(0),
-            Instruction::ReturnDerived(0),
-        ] {
-            let function = DetachedBytecode::<Value> {
-                code: vec![Instruction::Undefined, Instruction::Return, instruction],
-                constants: vec![],
-                local_count: 0,
-                max_stack: 1,
-            };
-            assert_eq!(
-                function.verify().unwrap_err().message(),
-                "local bytecode operand is out of bounds"
-            );
-        }
-    }
-
-    #[test]
     fn verifier_models_typed_derived_constructor_operations() {
         let default_derived = DetachedBytecode::<Value> {
             code: vec![
@@ -3608,151 +1962,6 @@ mod tests {
             ..DetachedBytecode::<Value>::default()
         };
         assert_eq!(terminal.verify().unwrap().max_stack, 1);
-    }
-
-    #[test]
-    fn verifier_protects_typed_super_call_pairs_across_control_flow() {
-        let conditional_argument = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::MarkSuperCall,
-                Instruction::PushTrue,
-                Instruction::IfFalse(7),
-                Instruction::PushI32(1),
-                Instruction::Goto(8),
-                Instruction::PushI32(2),
-                Instruction::ConstructSuper(1),
-                Instruction::Return,
-            ],
-            max_stack: 3,
-            ..DetachedBytecode::<Value>::default()
-        };
-        assert_eq!(conditional_argument.verify().unwrap().max_stack, 3);
-
-        let nested = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::MarkSuperCall,
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::MarkSuperCall,
-                Instruction::ConstructSuper(0),
-                Instruction::ConstructSuper(1),
-                Instruction::Return,
-            ],
-            max_stack: 4,
-            ..DetachedBytecode::<Value>::default()
-        };
-        assert_eq!(nested.verify().unwrap().max_stack, 4);
-
-        let spread = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::MarkSuperCall,
-                Instruction::ArrayFrom(0),
-                Instruction::ApplySuper,
-                Instruction::Return,
-            ],
-            max_stack: 3,
-            ..DetachedBytecode::<Value>::default()
-        };
-        assert_eq!(spread.verify().unwrap().max_stack, 3);
-
-        let unmarked = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::ConstructSuper(0),
-                Instruction::Return,
-            ],
-            max_stack: 2,
-            ..DetachedBytecode::<Value>::default()
-        };
-        assert_eq!(
-            unmarked.verify().unwrap_err().message(),
-            "typed super construction did not consume its protected pair"
-        );
-
-        let wrong_arity = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::MarkSuperCall,
-                Instruction::Undefined,
-                Instruction::ConstructSuper(0),
-                Instruction::Return,
-            ],
-            max_stack: 3,
-            ..DetachedBytecode::<Value>::default()
-        };
-        assert_eq!(
-            wrong_arity.verify().unwrap_err().message(),
-            "typed super construction did not consume its protected pair"
-        );
-
-        let generic_apply = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::MarkSuperCall,
-                Instruction::ArrayFrom(0),
-                Instruction::Apply(ApplyKind::Construct),
-                Instruction::Return,
-            ],
-            max_stack: 3,
-            ..DetachedBytecode::<Value>::default()
-        };
-        assert_eq!(
-            generic_apply.verify().unwrap_err().message(),
-            "ordinary bytecode touched a protected super-call pair"
-        );
-
-        for touching in [
-            Instruction::Swap,
-            Instruction::Drop,
-            Instruction::Construct(0),
-        ] {
-            let malformed = DetachedBytecode::<Value> {
-                code: vec![
-                    Instruction::Undefined,
-                    Instruction::Undefined,
-                    Instruction::MarkSuperCall,
-                    touching,
-                    Instruction::Undefined,
-                    Instruction::Return,
-                ],
-                max_stack: 2,
-                ..DetachedBytecode::<Value>::default()
-            };
-            assert_eq!(
-                malformed.verify().unwrap_err().message(),
-                "ordinary bytecode touched a protected super-call pair"
-            );
-        }
-
-        let inconsistent_join = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::PushTrue,
-                Instruction::IfFalse(6),
-                Instruction::MarkSuperCall,
-                Instruction::Goto(7),
-                Instruction::Nop,
-                Instruction::Nop,
-                Instruction::Undefined,
-                Instruction::Return,
-            ],
-            max_stack: 3,
-            ..DetachedBytecode::<Value>::default()
-        };
-        assert_eq!(
-            inconsistent_join.verify().unwrap_err().message(),
-            "control flow joins with inconsistent super-call markers"
-        );
     }
 
     #[test]
@@ -3932,167 +2141,6 @@ mod tests {
                 function.verify().unwrap_err().message(),
                 "bytecode stack underflow"
             );
-        }
-    }
-
-    #[test]
-    fn verifier_rejects_malformed_array_literal_operands() {
-        let non_string_field = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::DefineField(0),
-                Instruction::Return,
-            ],
-            constants: vec![Value::Int(0)],
-            local_count: 0,
-            max_stack: 2,
-        };
-        assert_eq!(
-            non_string_field.verify().unwrap_err().message(),
-            "string-key opcode referenced a non-string constant"
-        );
-
-        let non_string_method = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::DefineMethod {
-                    key: 0,
-                    kind: DefineMethodKind::Method,
-                    enumerable: true,
-                },
-                Instruction::Return,
-            ],
-            constants: vec![Value::Int(0)],
-            local_count: 0,
-            max_stack: 2,
-        };
-        assert_eq!(
-            non_string_method.verify().unwrap_err().message(),
-            "string-key opcode referenced a non-string constant"
-        );
-
-        let array_from_underflow = DetachedBytecode::<Value> {
-            code: vec![Instruction::ArrayFrom(1), Instruction::Return],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 1,
-        };
-        assert_eq!(
-            array_from_underflow.verify().unwrap_err().message(),
-            "bytecode stack underflow"
-        );
-    }
-}
-
-#[cfg(test)]
-mod compact_visit_tests {
-    use super::*;
-
-    #[test]
-    fn compact_visits_match_full_histories_and_join_error_precedence() {
-        let plain = VerificationState {
-            depth: 4,
-            regions: vec![],
-            return_addresses: vec![],
-            super_call_bases: vec![],
-        };
-        let mut histories = vec![plain.clone()];
-        let mut catch = plain.clone();
-        catch.regions.push(UnwindRegionState::Catch {
-            target: 2,
-            marker_depth: 1,
-        });
-        histories.push(catch.clone());
-        let mut nested = catch.clone();
-        nested.regions.push(UnwindRegionState::Catch {
-            target: 3,
-            marker_depth: 2,
-        });
-        nested.return_addresses.push(3);
-        nested.super_call_bases.push(0);
-        histories.push(nested);
-        let mut gosub = plain.clone();
-        gosub.return_addresses.push(2);
-        histories.push(gosub);
-        let mut super_pair = plain.clone();
-        super_pair.super_call_bases.push(1);
-        histories.push(super_pair);
-        let mut deep = plain.clone();
-        deep.depth = 1024;
-        deep.regions = (0..256)
-            .map(|index| UnwindRegionState::Catch {
-                target: index as u32,
-                marker_depth: index,
-            })
-            .collect();
-        deep.return_addresses = (256..512).collect();
-        deep.super_call_bases = (512..768).collect();
-        histories.push(deep);
-        for previous in &histories {
-            for next in &histories {
-                for depth in [next.depth, next.depth + 1] {
-                    let mut compact = CompactVisits::new(3);
-                    let mut full = FullVisits::new(3);
-                    assert_eq!(
-                        compact.visit(0, &plain).unwrap(),
-                        full.visit(0, &plain).unwrap()
-                    );
-                    assert_eq!(
-                        compact.visit(1, previous).unwrap(),
-                        full.visit(1, previous).unwrap()
-                    );
-                    let mut next = next.clone();
-                    next.depth = depth;
-                    let normalize = |r: Result<bool, Error>| r.map_err(|e| e.message().to_owned());
-                    assert_eq!(
-                        normalize(compact.visit(1, &next)),
-                        normalize(full.visit(1, &next))
-                    );
-                    // An earlier plain entry remains plain after allocating the
-                    // exceptional history table for a different PC.
-                    assert_eq!(
-                        normalize(compact.visit(0, &plain)),
-                        normalize(full.visit(0, &plain))
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn compact_visitation_matches_original_verifier_on_flow_and_abrupt_edges() {
-        use Instruction::*;
-        let cases = [
-            vec![PushI32(1), Return],
-            vec![
-                PushTrue,
-                IfFalse(4),
-                PushI32(1),
-                Goto(5),
-                PushI32(2),
-                Return,
-            ],
-            vec![PushTrue, IfFalse(4), PushI32(1), Goto(5), Nop, Return],
-            vec![Catch(4), PushI32(1), Throw, Nop, Drop, ReturnUndefined],
-            vec![Catch(5), Catch(4), PushI32(1), Throw, Throw, Return],
-            vec![Gosub(3), ReturnUndefined, Nop, Ret],
-            vec![Gosub(3), ReturnUndefined, Nop, PushI32(1), Ret],
-            vec![PushI32(1), PushI32(2), MarkSuperCall, Drop, Return],
-            vec![PushI32(1), Return, Goto(99)],
-            vec![PushTrue, IfTrue(0), ReturnUndefined],
-        ];
-        for code in cases {
-            for maximum in [0, 1, 8] {
-                let normalize =
-                    |r: Result<VerifiedBytecode, Error>| r.map_err(|e| e.message().to_owned());
-                assert_eq!(
-                    normalize(verify_parts_with_visits::<CompactVisits>(&code, 0, maximum)),
-                    normalize(verify_parts_with_visits::<FullVisits>(&code, 0, maximum)),
-                    "code={code:?}, maximum={maximum}",
-                );
-            }
         }
     }
 }

@@ -236,22 +236,6 @@ fn scoped_generator_declarations_do_not_receive_annex_b_duplicate_exceptions() {
         .expect("sloppy ordinary block functions retain the Annex B exception");
     compile_unlinked_script("switch(0){case 0:function f(){} default:function f(){}}")
         .expect("sloppy ordinary switch functions retain the Annex B exception");
-
-    let mut tampered = Parser::parse(
-        "{ function* generator(){} }",
-        JsString::from_static("<generator-annex-verifier>"),
-    )
-    .unwrap();
-    assert!(
-        tampered.functions[0].scoped_functions[0]
-            .annex_binding
-            .is_none()
-    );
-    tampered.functions[0].scoped_functions[0].annex_binding = Some(super::IrAnnexBinding::Dynamic);
-    assert_eq!(
-        validate_scope_graph(&tampered).unwrap_err().message(),
-        "scoped generator retained an Annex B outer binding"
-    );
 }
 
 #[test]

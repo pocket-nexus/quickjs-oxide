@@ -35,15 +35,6 @@ pub(crate) enum StackStateEffect {
     ResumeAwait,
 }
 
-impl StackStateEffect {
-    pub(crate) const fn preserves_super_pair(self) -> bool {
-        !matches!(
-            self,
-            Self::ConsumeSuperCall | Self::AdvanceIterator | Self::FinishIteratorValue
-        )
-    }
-}
-
 /// Catchable JavaScript completion, excluding allocation/invariant engine errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum JsExceptionEffect {
@@ -143,17 +134,6 @@ impl OperandContract {
             }) = self.0[index]
             {
                 return Some(constant);
-            }
-            index += 1;
-        }
-        None
-    }
-
-    pub(crate) const fn eval_environment(self) -> Option<u16> {
-        let mut index = 0;
-        while index < self.0.len() {
-            if let Some(Operand::EvalEnvironment(environment)) = self.0[index] {
-                return Some(environment);
             }
             index += 1;
         }

@@ -108,10 +108,6 @@ impl<V> WeakCollectionRecords<V> {
         self.entries.values().map(|record| &record.value)
     }
 
-    pub(super) fn keys(&self) -> impl Iterator<Item = &WeakCollectionKey> {
-        self.entries.keys()
-    }
-
     pub(super) fn first_key(&self) -> Option<WeakCollectionKey> {
         self.head
     }
@@ -261,44 +257,6 @@ impl<V> WeakCollectionRecords<V> {
             self.tail = previous;
         }
         Ok(Some(record.value))
-    }
-
-    pub(super) fn validate_order(&self) -> Result<(), HeapError> {
-        if self.head.is_none() != self.tail.is_none() {
-            return Err(HeapError::Invariant("weak-record list endpoints disagreed"));
-        }
-        if self.entries.is_empty() != self.head.is_none() {
-            return Err(HeapError::Invariant(
-                "weak-record hash occupancy disagreed with its endpoints",
-            ));
-        }
-        let mut current = self.head;
-        let mut previous = None;
-        let mut visited = 0usize;
-        while let Some(key) = current {
-            if visited == self.entries.len() {
-                return Err(HeapError::Invariant(
-                    "weak-record insertion-order list contained a cycle",
-                ));
-            }
-            let record = self.entries.get(&key).ok_or(HeapError::Invariant(
-                "weak-record insertion-order list referenced a missing entry",
-            ))?;
-            if record.prev != previous {
-                return Err(HeapError::Invariant(
-                    "weak-record insertion-order predecessor was inconsistent",
-                ));
-            }
-            previous = Some(key);
-            current = record.next;
-            visited += 1;
-        }
-        if previous != self.tail || visited != self.entries.len() {
-            return Err(HeapError::Invariant(
-                "weak-record insertion-order list did not cover its hash index",
-            ));
-        }
-        Ok(())
     }
 }
 

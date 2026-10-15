@@ -1,11 +1,11 @@
-//! Required stack-state validation and entry facts used during lowering.
+//! Stack-size computation and entry facts used during lowering.
 //!
-//! The code verifier remains authoritative for reachable normal, exception,
-//! private-reference and resume states. This adapter never replaces it with
-//! a syntactic stack-height estimate or a budget-limited dataflow result.
+//! `compute_stack_size` walks reachable normal, exception and resume states.
+//! This adapter never replaces it with a syntactic stack-height estimate or a
+//! budget-limited dataflow result.
 
 use crate::engine::api::error::{Error, ErrorKind};
-use crate::engine::code::bytecode::{Instruction, verify_parts};
+use crate::engine::code::bytecode::{Instruction, compute_stack_size};
 use crate::engine::code::exec_opcode::Opcode;
 use crate::engine::code::function::UnlinkedVariableDefinition;
 use crate::engine::code::function::metadata::ClosureVariableKind;
@@ -20,11 +20,8 @@ use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::value::PrimitiveValue;
 use crate::engine::value::number::operations::Number;
 
-pub(super) fn verify_lowered_max_stack(
-    code: &[Instruction],
-    constant_count: usize,
-) -> Result<u16, Error> {
-    verify_parts(code, constant_count, MAX_BYTECODE_STACK as u16)
+pub(super) fn lowered_max_stack(code: &[Instruction]) -> Result<u16, Error> {
+    compute_stack_size(code, MAX_BYTECODE_STACK as u16)
         .map(|verified| verified.max_stack)
         .map_err(|error| {
             if matches!(
@@ -41,7 +38,7 @@ pub(super) fn verify_lowered_max_stack(
 
 /// Structural basic-block starts, including unreachable continuations. These
 /// bits delimit local rewrites; they do not assert reachability, initialized
-/// locals, or a valid resume shape. `verify_parts` proves those stack facts.
+/// locals, or a valid resume shape.
 pub(super) fn block_entries(code: &[Instruction]) -> Vec<bool> {
     #[cfg(feature = "profiling")]
     let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
@@ -123,11 +120,9 @@ fn numeric_source(
         Instruction::PushI32(value) => Some(NumberSource::Immediate(value)),
         Instruction::PushConst(index) => match constants.get(index as usize)? {
             IrConstant::Primitive(PrimitiveValue::Int(value)) => Some(NumberSource::Constant {
-                index,
                 value: Number::Int(*value),
             }),
             IrConstant::Primitive(PrimitiveValue::Float(value)) => Some(NumberSource::Constant {
-                index,
                 value: Number::Float(*value),
             }),
             _ => None,

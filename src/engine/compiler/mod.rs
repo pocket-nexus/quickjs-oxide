@@ -28,8 +28,6 @@ pub(crate) fn lookahead_probe_counters() -> (u64, u64, u64, u64) {
     parser::lookahead::counters::snapshot()
 }
 
-#[cfg(test)]
-use model::bindings::IrAnnexBinding;
 use parser::context::Parser;
 #[cfg(test)]
 use pseudo_binding::HOME_OBJECT_LOCAL_NAME;
@@ -48,9 +46,6 @@ use model::scope::{IrScope, ScopeId, ScopeKind};
 #[cfg(test)]
 use parser::builder::FunctionBuilder;
 
-mod scope_validation;
-#[cfg(test)]
-use scope_validation::validate_scope_graph;
 mod resolution;
 #[cfg(test)]
 use resolution::ensure_closure_variable;

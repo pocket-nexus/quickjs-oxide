@@ -18,8 +18,7 @@ use crate::engine::code::function::{
 use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::heap::ownership::ConvertedValue;
 use crate::engine::heap::{
-    BytecodeConstant, ContextId, FunctionBytecodeDraft, FunctionDebugInfo, PublishedPrivateBinding,
-    PublishedPrivateBindings, RawValue,
+    BytecodeConstant, ContextId, FunctionBytecodeDraft, FunctionDebugInfo, RawValue,
 };
 use crate::engine::object::ObjectRef;
 use crate::engine::value::{JsString, Value};
@@ -197,14 +196,9 @@ impl Runtime {
         // keep the caller-owned producer edges alive through every failure
         // path.
         let mut converted_constants = converted_constants;
-        let mut private_binding_scanner =
-            bytecode_publish::PrivateBindingScanner::new(local_definitions.len());
-        let mut private_local_roles = Vec::with_capacity(local_definitions.len());
-        let mut private_closure_roles = Vec::with_capacity(closure_variables.len());
         let mut linked_argument_definitions = Vec::with_capacity(argument_definitions.len());
         let mut linked_local_definitions = Vec::with_capacity(local_definitions.len());
         let mut linked_eval_environments = Vec::with_capacity(eval_environments.len());
-        let mut linked_private_bindings = PublishedPrivateBindings::none();
         let mut unlinked_debug = debug;
         let mut linked_debug = None;
         let mut auxiliary_atoms = Vec::new();
@@ -245,14 +239,7 @@ impl Runtime {
                     });
                 }
                 for descriptor in &mut closure_variables {
-                    let is_private = descriptor.kind.is_private();
                     let ClosureVariableName::Constant(index) = descriptor.name else {
-                        if is_private {
-                            return Err(RuntimeError::Invariant(
-                                "verified private closure lost its unlinked source name",
-                            ));
-                        }
-                        private_closure_roles.push(None);
                         continue;
                     };
                     let name = usize::try_from(index)
@@ -268,18 +255,9 @@ impl Runtime {
                             "verified closure name was not a string constant",
                         ))?;
                     let text = state.heap.string(*name)?.clone();
-                    let role = if is_private {
-                        Some(bytecode_publish::private_closure_role(
-                            descriptor.kind,
-                            &text,
-                        )?)
-                    } else {
-                        None
-                    };
                     let atom = state.atoms.intern_property_key_js_string(&text)?;
                     auxiliary_atoms.push(atom);
                     descriptor.name = ClosureVariableName::Atom(atom);
-                    private_closure_roles.push(role);
                 }
                 for definition in argument_definitions {
                     let name = definition
@@ -296,19 +274,13 @@ impl Runtime {
                         kind: definition.kind,
                     });
                 }
-                for (index, definition) in local_definitions.into_iter().enumerate() {
-                    let role = private_binding_scanner.observe_local(
-                        index,
-                        definition.kind,
-                        definition.name.as_ref(),
-                    )?;
+                for definition in local_definitions {
                     let name = definition
                         .name
                         .as_ref()
                         .map(|name| state.atoms.intern_property_key_js_string(name))
                         .transpose()?;
                     auxiliary_atoms.extend(name);
-                    private_local_roles.push(role);
                     linked_local_definitions.push(VariableDefinition {
                         name,
                         is_lexical: definition.is_lexical,
@@ -316,58 +288,6 @@ impl Runtime {
                         is_parameter_initializer: definition.is_parameter_initializer,
                         kind: definition.kind,
                     });
-                }
-                private_binding_scanner.finish()?;
-                if private_local_roles.iter().any(Option::is_some)
-                    || private_closure_roles.iter().any(Option::is_some)
-                {
-                    let locals = private_local_roles
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, role)| {
-                            role.map(|role| {
-                                let atom = linked_local_definitions[index].name.ok_or(
-                                    RuntimeError::Invariant(
-                                        "linked private local lost its atom name",
-                                    ),
-                                )?;
-                                let pair = private_binding_scanner.pair_of(index);
-                                Ok(match role {
-                                    bytecode_publish::PrivateBindingRole::Primary => {
-                                        PublishedPrivateBinding::primary(atom, pair)
-                                    }
-                                    bytecode_publish::PrivateBindingRole::SetterStorage => {
-                                        PublishedPrivateBinding::setter_storage(atom, pair)
-                                    }
-                                })
-                            })
-                            .transpose()
-                        })
-                        .collect::<Result<Vec<_>, RuntimeError>>()?;
-                    let closures = private_closure_roles
-                        .into_iter()
-                        .zip(&closure_variables)
-                        .map(|(role, descriptor)| {
-                            role.map(|role| {
-                                let ClosureVariableName::Atom(atom) = descriptor.name else {
-                                    return Err(RuntimeError::Invariant(
-                                        "linked private closure lost its atom name",
-                                    ));
-                                };
-                                Ok(match role {
-                                    bytecode_publish::PrivateBindingRole::Primary => {
-                                        PublishedPrivateBinding::primary(atom, None)
-                                    }
-                                    bytecode_publish::PrivateBindingRole::SetterStorage => {
-                                        PublishedPrivateBinding::setter_storage(atom, None)
-                                    }
-                                })
-                            })
-                            .transpose()
-                        })
-                        .collect::<Result<Vec<_>, RuntimeError>>()?;
-                    linked_private_bindings =
-                        PublishedPrivateBindings::authenticated(locals, closures);
                 }
                 linked_eval_environments = bytecode_publish::link_eval_environments(
                     &mut state,
@@ -395,7 +315,6 @@ impl Runtime {
                 argument_definitions: linked_argument_definitions.into(),
                 local_definitions: linked_local_definitions.into(),
                 closure_variables: closure_variables.into(),
-                private_bindings: linked_private_bindings,
                 eval_environments: linked_eval_environments.into(),
                 debug: linked_debug,
                 auxiliary_atoms: auxiliary_atoms.into_boxed_slice(),

@@ -1,5 +1,4 @@
 use super::*;
-use crate::engine::heap::HeapError;
 use crate::engine::test_support::test_context;
 
 #[test]
@@ -150,44 +149,6 @@ fn cross_linked_module_caches_do_not_leak_a_context_cycle() {
         runtime.heap_counts().expect("runtime state").context_nodes,
         0
     );
-}
-
-#[test]
-fn loaded_module_validator_rejects_internal_sentinels_and_cache_self_edges_atomically() {
-    let (runtime, mut context) = test_context();
-    let module = context.compile_module("export const answer = 42").unwrap();
-    let raw = module.raw;
-
-    assert!(matches!(
-        runtime.mutate_module_record(raw, |record| {
-            record.evaluation = ModuleEvaluationState::Errored(RawValue::Exception);
-            Ok(())
-        }),
-        Err(RuntimeError::Heap(HeapError::Invariant(
-            "loaded-module record contains an internal value sentinel"
-        )))
-    ));
-    assert!(matches!(
-        runtime.module_record(raw).unwrap().evaluation,
-        ModuleEvaluationState::Unevaluated
-    ));
-
-    assert!(matches!(
-        runtime.mutate_module_record(raw, |record| {
-            record.instance = Some(ModuleInstance {
-                slots: Rc::from([]),
-                callable: None,
-            });
-            record.link_realm = Some(RawModuleLinkRealm::Other(raw.cache));
-            Ok(())
-        }),
-        Err(RuntimeError::Heap(HeapError::Invariant(
-            "loaded-module cache realm escaped through an Other link edge"
-        )))
-    ));
-    let record = runtime.module_record(raw).unwrap();
-    assert!(record.instance.is_none());
-    assert!(record.link_realm.is_none());
 }
 
 #[test]

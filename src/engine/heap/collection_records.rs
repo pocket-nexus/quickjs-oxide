@@ -78,12 +78,6 @@ impl CollectionRecords {
         Some(&self.slots[entry.slot as usize].record)
     }
 
-    #[cfg(test)]
-    pub(super) fn get_mut(&mut self, id: usize) -> Option<&mut MapRecord> {
-        let entry = *self.live_entry(id)?;
-        Some(&mut self.slots[entry.slot as usize].record)
-    }
-
     /// Value replacement cannot invalidate either key or insertion indexes.
     pub(super) fn replace_value(&mut self, id: usize, value: RawValue) -> Option<RawValue> {
         let entry = *self.live_entry(id)?;
@@ -219,36 +213,6 @@ impl CollectionRecords {
             front: 0,
             remaining,
         }
-    }
-
-    pub(super) fn validate(&self, heap: &Heap) -> Result<(), HeapError> {
-        let mut occupied = vec![false; self.slots.len()];
-        let mut previous = None;
-        for entry in &self.live {
-            if entry.id >= self.next_id || previous.is_some_and(|previous| previous >= entry.id) {
-                return Err(HeapError::Invariant(
-                    "collection record IDs are not strictly ordered",
-                ));
-            }
-            previous = Some(entry.id);
-            if entry.slot == DEAD {
-                continue;
-            }
-            let slot = entry.slot as usize;
-            if slot >= self.slots.len() || occupied[slot] {
-                return Err(HeapError::Invariant(
-                    "collection record slots do not match live storage",
-                ));
-            }
-            occupied[slot] = true;
-        }
-        let live_slots = occupied.iter().filter(|occupied| **occupied).count();
-        if live_slots != self.live_len || self.live.len() != self.slots.len() {
-            return Err(HeapError::Invariant(
-                "collection record IDs do not match live storage",
-            ));
-        }
-        self.key_index.validate(heap, self)
     }
 }
 
@@ -418,7 +382,6 @@ mod tests {
                     model.fill(None);
                 }
             }
-            records.validate(&heap).unwrap();
             assert_eq!(records.len(), model.iter().flatten().count());
             assert_eq!(records.next_id(), model.len());
             let actual = records

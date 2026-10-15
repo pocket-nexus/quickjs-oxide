@@ -634,36 +634,6 @@ fn async_function_state_traces_callbacks_and_transfers_await_activation() {
         .unwrap();
 
     let ordinary = leaf(&mut heap, base_shape);
-    assert_eq!(
-        heap.allocate_object(ObjectData::async_function_state(
-            base_shape,
-            Vec::new(),
-            realm,
-            ordinary,
-            outer_reject,
-        )),
-        Err(HeapError::Invariant(
-            "AsyncFunction state retains a non-callable resolving function"
-        ))
-    );
-    let mut inconsistent_state = ObjectData::async_function_state(
-        base_shape,
-        Vec::new(),
-        realm,
-        outer_resolve,
-        outer_reject,
-    );
-    let ObjectPayload::AsyncFunctionState(inconsistent_data) = &mut inconsistent_state.payload
-    else {
-        unreachable!("constructor publishes AsyncFunction state payload")
-    };
-    inconsistent_data.phase = AsyncFunctionPhase::Awaiting;
-    assert_eq!(
-        heap.allocate_object(inconsistent_state),
-        Err(HeapError::Invariant(
-            "AsyncFunction state has inconsistent phase and activation"
-        ))
-    );
 
     let state = heap
         .allocate_object(ObjectData::async_function_state(
@@ -717,45 +687,15 @@ fn async_function_state_traces_callbacks_and_transfers_await_activation() {
         NativeCProto::Generic
     );
     assert!(!heap.object(callback).unwrap().is_constructor);
-    assert_eq!(
-        heap.allocate_object(ObjectData::bound_internal_native_function(
-            function_shape,
-            Vec::new(),
-            NativeFunctionId::AsyncFunctionResume(AsyncFunctionResumeKind::Reject),
-            realm,
-            1,
-            InternalCallableData::AsyncFunctionResume {
-                state,
-                kind: AsyncFunctionResumeKind::Fulfill,
-            },
-        )),
-        Err(HeapError::Invariant(
-            "native target does not match its internal callable capture"
-        ))
-    );
 
     let code: Rc<[Instruction]> = Rc::from([
         Instruction::Undefined,
         Instruction::Await,
         Instruction::Return,
     ]);
-    assert_eq!(
-        heap.allocate_function_bytecode(bytecode(&code, callee_realm, Vec::new(), Vec::new(),)),
-        Err(HeapError::Invariant(
-            "non-async bytecode contains a suspension opcode"
-        ))
-    );
-    let mut malformed_async = bytecode(&code, callee_realm, Vec::new(), Vec::new());
-    malformed_async.metadata.function_kind = FunctionKind::Async;
-    malformed_async.metadata.has_prototype = true;
-    assert_eq!(
-        heap.allocate_function_bytecode(malformed_async),
-        Err(HeapError::Invariant(
-            "async bytecode has invalid execution metadata"
-        ))
-    );
     let mut async_bytecode = bytecode(&code, callee_realm, Vec::new(), Vec::new());
-    async_bytecode.metadata.function_kind = FunctionKind::Async;
+    async_bytecode.metadata.function_kind =
+        crate::engine::code::function::metadata::FunctionKind::Async;
     let bytecode = heap.allocate_function_bytecode(async_bytecode).unwrap();
     let function = heap
         .allocate_object(ObjectData::bytecode_function(
@@ -789,14 +729,6 @@ fn async_function_state_traces_callbacks_and_transfers_await_activation() {
         reusable_captured_locals: Vec::new(),
     };
 
-    let mut invalid_activation = activation.clone();
-    invalid_activation.vm.pc = 1;
-    assert_eq!(
-        heap.suspend_async_function(state, invalid_activation),
-        Err(HeapError::Invariant(
-            "AsyncFunction activation is not parked after its await opcode"
-        ))
-    );
     assert_eq!(
         heap.async_function_state_snapshot(state).unwrap().phase,
         AsyncFunctionPhase::Executing

@@ -162,20 +162,6 @@ pub enum PrimitiveObjectData {
     ShortBigInt(i64),
 }
 
-impl PrimitiveObjectData {
-    #[must_use]
-    #[cfg(test)]
-    pub const fn kind(&self) -> PrimitiveKind {
-        match self {
-            Self::Number(_) => PrimitiveKind::Number,
-            Self::String(_) => PrimitiveKind::String,
-            Self::Boolean(_) => PrimitiveKind::Boolean,
-            Self::Symbol(_) => PrimitiveKind::Symbol,
-            Self::BigInt(_) | Self::ShortBigInt(_) => PrimitiveKind::BigInt,
-        }
-    }
-}
-
 /// Internal payload of one genuine `JS_CLASS_REGEXP` object.
 ///
 /// QuickJS allocates the branded object before compiling its pattern, so the

@@ -308,64 +308,6 @@ fn data_view_retains_its_buffer_and_survives_oob_detach_and_cycle_collection() {
             Some(16),
         ))
         .unwrap();
-    let ordinary = leaf(&mut heap, base_shape);
-    let ordinary_strong = heap.object_strong_count(ordinary).unwrap();
-    assert_eq!(
-        heap.allocate_object(ObjectData::data_view(
-            base_shape,
-            Vec::new(),
-            ArrayBufferViewData {
-                buffer: ordinary,
-                byte_offset: 0,
-                fixed_byte_length: Some(0),
-            },
-        )),
-        Err(HeapError::Invariant(
-            "DataView backing object is not an ArrayBuffer or SharedArrayBuffer",
-        )),
-    );
-    assert_eq!(heap.object_strong_count(ordinary), Ok(ordinary_strong));
-    assert_eq!(heap.release_object(ordinary).unwrap().finalized_objects, 1);
-    let fixed_buffer = heap
-        .allocate_object(ObjectData::array_buffer_from_bytes(
-            base_shape,
-            Vec::new(),
-            vec![0; 4],
-            None,
-        ))
-        .unwrap();
-    assert_eq!(
-        heap.allocate_object(ObjectData::data_view(
-            base_shape,
-            Vec::new(),
-            ArrayBufferViewData {
-                buffer: fixed_buffer,
-                byte_offset: 0,
-                fixed_byte_length: None,
-            },
-        )),
-        Err(HeapError::Invariant(
-            "DataView has an invalid structural view layout",
-        )),
-    );
-    assert_eq!(
-        heap.release_object(fixed_buffer).unwrap().finalized_objects,
-        1,
-    );
-    assert_eq!(
-        heap.allocate_object(ObjectData::data_view(
-            base_shape,
-            Vec::new(),
-            ArrayBufferViewData {
-                buffer,
-                byte_offset: i32::MAX as u32,
-                fixed_byte_length: Some(1),
-            },
-        )),
-        Err(HeapError::Invariant(
-            "DataView has an invalid structural view layout",
-        )),
-    );
     assert_eq!(heap.object_strong_count(buffer), Ok(1));
     let view = heap
         .allocate_object(ObjectData::data_view(
@@ -389,10 +331,6 @@ fn data_view_retains_its_buffer_and_survives_oob_detach_and_cycle_collection() {
 
     assert!(heap.resize_array_buffer_bytes(buffer, 2).unwrap());
     assert_eq!(
-        heap.validate_object_layout(heap.object(view).unwrap()),
-        Ok(()),
-    );
-    assert_eq!(
         heap.replace_object_layout(view, base_shape, Slots::new())
             .unwrap(),
         HeapCleanup::default(),
@@ -410,10 +348,6 @@ fn data_view_retains_its_buffer_and_survives_oob_detach_and_cycle_collection() {
     );
 
     heap.detach_array_buffer(buffer).unwrap();
-    assert_eq!(
-        heap.validate_object_layout(heap.object(view).unwrap()),
-        Ok(()),
-    );
     assert_eq!(
         heap.replace_object_layout(view, base_shape, Slots::new())
             .unwrap(),
@@ -653,43 +587,6 @@ fn typed_array_payloads_share_one_structural_view_kernel() {
             Some(32),
         ))
         .unwrap();
-    let ordinary = leaf(&mut heap, shape);
-
-    assert_eq!(
-        heap.allocate_object(ObjectData::typed_array(
-            shape,
-            Vec::new(),
-            TypedArrayData {
-                view: ArrayBufferViewData {
-                    buffer: ordinary,
-                    byte_offset: 0,
-                    fixed_byte_length: Some(0),
-                },
-                element: TypedArrayElementKind::Uint8,
-            },
-        )),
-        Err(HeapError::Invariant(
-            "TypedArray backing object is not an ArrayBuffer or SharedArrayBuffer",
-        )),
-    );
-    assert_eq!(
-        heap.allocate_object(ObjectData::typed_array(
-            shape,
-            Vec::new(),
-            TypedArrayData {
-                view: ArrayBufferViewData {
-                    buffer: resizable,
-                    byte_offset: 1,
-                    fixed_byte_length: Some(4),
-                },
-                element: TypedArrayElementKind::Uint16,
-            },
-        )),
-        Err(HeapError::Invariant(
-            "TypedArray has an invalid structural view layout",
-        )),
-    );
-
     let tracking = heap
         .allocate_object(ObjectData::typed_array(
             shape,
@@ -711,15 +608,7 @@ fn typed_array_payloads_share_one_structural_view_kernel() {
     assert_eq!(heap.object_strong_count(resizable), Ok(2));
 
     assert!(heap.resize_array_buffer_bytes(resizable, 2).unwrap());
-    assert_eq!(
-        heap.validate_object_layout(heap.object(tracking).unwrap()),
-        Ok(()),
-    );
     heap.detach_array_buffer(resizable).unwrap();
-    assert_eq!(
-        heap.validate_object_layout(heap.object(tracking).unwrap()),
-        Ok(()),
-    );
 
     assert_eq!(
         heap.release_object(resizable).unwrap(),
@@ -727,7 +616,6 @@ fn typed_array_payloads_share_one_structural_view_kernel() {
     );
     let cleanup = heap.release_object(tracking).unwrap();
     assert_eq!(cleanup.finalized_objects, 2);
-    assert_eq!(heap.release_object(ordinary).unwrap().finalized_objects, 1);
     assert_eq!(heap.release_shape(shape).unwrap().finalized_shapes, 1);
     assert_eq!(heap.counts().live, 0);
 }

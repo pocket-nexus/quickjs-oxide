@@ -13,7 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
 
-use super::{CollectionRecords, Heap, HeapError, MapRecord, RawValue, StringId};
+use super::{CollectionRecords, Heap, MapRecord, RawValue, StringId};
 use crate::engine::value::collection_key;
 
 #[derive(Clone, Default)]
@@ -130,13 +130,6 @@ impl CollectionIndex {
             })
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn insert(&mut self, heap: &Heap, key: RawValue, index: usize) -> u64 {
-        let hash = self.hash(heap, &key);
-        self.insert_hashed(hash, index);
-        hash
-    }
-
     /// Index one record under a hash computed before the caller borrowed the
     /// record set mutably.
     pub(super) fn insert_hashed(&mut self, hash: u64, index: usize) {
@@ -181,40 +174,6 @@ impl CollectionIndex {
             self.buckets.capacity(),
             self.buckets.values().map(Vec::capacity).sum(),
         )
-    }
-
-    /// Publication validation; never run this full scan on an ordinary lookup.
-    pub(super) fn validate(
-        &self,
-        heap: &Heap,
-        records: &CollectionRecords,
-    ) -> Result<(), HeapError> {
-        let mut seen = std::collections::HashSet::new();
-        for (&hash, indices) in &self.buckets {
-            if indices.is_empty() {
-                return Err(HeapError::Invariant("collection index has an empty bucket"));
-            }
-            for &index in indices {
-                let key =
-                    records
-                        .get(index)
-                        .map(|record| &record.key)
-                        .ok_or(HeapError::Invariant(
-                            "collection index points outside live records",
-                        ))?;
-                if !seen.insert(index) || self.hash_uncached(heap, key) != hash {
-                    return Err(HeapError::Invariant(
-                        "collection index does not match its records",
-                    ));
-                }
-            }
-        }
-        if seen.len() != records.len() {
-            return Err(HeapError::Invariant(
-                "collection index is missing live records",
-            ));
-        }
-        Ok(())
     }
 }
 
@@ -367,17 +326,5 @@ mod tests {
         index.remove(&heap, RawValue::Int(2), 1);
         assert_eq!(index.find(&heap, &records, &RawValue::Int(2)), None);
         assert_eq!(index.buckets[&hash], vec![0]);
-    }
-
-    #[test]
-    fn publication_rejects_missing_or_stale_index_entries() {
-        let heap = Heap::new();
-        let mut index = CollectionIndex::default();
-        let mut records = record_store(&heap, vec![RawValue::Int(1)]);
-        assert!(index.validate(&heap, &records).is_err());
-        index.insert(&heap, RawValue::Int(1), 0);
-        assert!(index.validate(&heap, &records).is_ok());
-        records.get_mut(0).unwrap().key = RawValue::Int(2);
-        assert!(index.validate(&heap, &records).is_err());
     }
 }

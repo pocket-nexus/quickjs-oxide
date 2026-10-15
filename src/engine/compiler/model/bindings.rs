@@ -248,7 +248,6 @@ pub(in crate::engine::compiler) enum EvalDeclarationMode {
 pub(in crate::engine::compiler) struct IrScopedFunction {
     pub(in crate::engine::compiler) binding: BindingId,
     pub(in crate::engine::compiler) constant: u32,
-    pub(in crate::engine::compiler) annex_binding: Option<IrAnnexBinding>,
     pub(in crate::engine::compiler) authored_closure: usize,
 }
 
@@ -256,17 +255,6 @@ pub(in crate::engine::compiler) struct IrScopedFunction {
 pub(in crate::engine::compiler) enum IrAnnexBinding {
     Static(BindingId),
     Dynamic,
-}
-
-/// A sloppy labelled FunctionDeclaration in ProgramBody. QuickJS deliberately
-/// skips the lexical declaration used by block/body Annex B forms, then writes
-/// the authored closure through both the synthetic root var and the current
-/// global environment at the declaration's source position.
-#[derive(Clone, Copy, Debug)]
-pub(in crate::engine::compiler) struct IrProgramAnnexFunction {
-    pub(in crate::engine::compiler) binding: BindingId,
-    pub(in crate::engine::compiler) constant: u32,
-    pub(in crate::engine::compiler) authored_closure: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

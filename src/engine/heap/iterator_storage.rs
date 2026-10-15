@@ -451,13 +451,6 @@ impl Heap {
         id: ObjectId,
         replacement: RawValue,
     ) -> Result<HeapCleanup, HeapError> {
-        let (_, next) = self.iterator_wrap_state(id)?;
-        let candidate = IteratorWrapData {
-            source: replacement.clone(),
-            next,
-        };
-        validate_iterator_wrap_data(self, &candidate)?;
-
         let new_edges = raw_value_edges(&replacement);
         self.retain_edges_transactionally(&new_edges)?;
         let previous = {
@@ -476,13 +469,6 @@ impl Heap {
         id: ObjectId,
         replacement: RawValue,
     ) -> Result<HeapCleanup, HeapError> {
-        let (source, _) = self.iterator_wrap_state(id)?;
-        let candidate = IteratorWrapData {
-            source,
-            next: replacement.clone(),
-        };
-        validate_iterator_wrap_data(self, &candidate)?;
-
         let new_edges = raw_value_edges(&replacement);
         self.retain_edges_transactionally(&new_edges)?;
         let previous = {

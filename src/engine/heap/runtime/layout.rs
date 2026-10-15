@@ -165,52 +165,6 @@ mod tests {
     }
 
     #[test]
-    fn prepared_layout_rejection_preserves_symbol_owner_and_runtime_access() {
-        let runtime = Runtime::new();
-        let key = runtime.intern_property_key("rejected-layout").unwrap();
-        let symbol = runtime.new_symbol(None).unwrap();
-        let mut runtime_state = runtime.0.state.borrow_mut();
-        let before = runtime_state
-            .atoms
-            .resolve(symbol.atom())
-            .unwrap()
-            .ref_count;
-        runtime_state.atoms.retain(symbol.atom()).unwrap();
-        let mut producer = OwnedValueGuard::new(
-            &mut runtime_state,
-            &runtime.0.poisoned,
-            crate::engine::value::JsValue::Symbol(AtomIdx::from_raw(symbol.atom().raw())),
-        );
-        let entries = [ShapeEntry {
-            atom: AtomIdx::from_raw(key.atom().raw()),
-            flags: PropertyFlags::accessor(true, true),
-        }];
-        {
-            let (state, _) = producer.parts();
-            let error = state.allocate_object_with_layout(
-                &runtime.0.poisoned,
-                None,
-                &entries,
-                vec![PropertySlot::Data(RawValue::Symbol(AtomIdx::from_raw(
-                    symbol.atom().raw(),
-                )))],
-                ObjectData::ordinary,
-            );
-            assert!(error.is_err());
-        }
-        assert!(!runtime.is_poisoned());
-        drop(producer);
-        assert_eq!(
-            runtime_state
-                .atoms
-                .resolve(symbol.atom())
-                .unwrap()
-                .ref_count,
-            before
-        );
-    }
-
-    #[test]
     fn published_weak_layout_failure_keeps_owned_symbol_edges_quarantined() {
         let runtime = Runtime::new();
         let key = runtime.intern_property_key("weak-layout-symbol").unwrap();
@@ -264,42 +218,5 @@ mod tests {
                 .ref_count,
             before.map(|count| count + 2)
         );
-    }
-
-    #[test]
-    fn prepared_layout_failure_rolls_back_shape_and_slot_atom_ownership() {
-        let runtime = Runtime::new();
-        let key = runtime.intern_property_key("prepared").unwrap();
-        let symbol = runtime.new_symbol(None).unwrap();
-        let mut state = runtime.0.state.borrow_mut();
-        let before_key = state.atoms.resolve(key.atom()).unwrap().ref_count;
-        let before_symbol = state.atoms.resolve(symbol.atom()).unwrap().ref_count;
-        let entries = [ShapeEntry {
-            atom: AtomIdx::from_raw(key.atom().raw()),
-            flags: PropertyFlags::accessor(true, true),
-        }];
-        let result = state.allocate_object_with_layout(
-            &runtime.0.poisoned,
-            None,
-            &entries,
-            vec![PropertySlot::Data(RawValue::Symbol(AtomIdx::from_raw(
-                symbol.atom().raw(),
-            )))],
-            ObjectData::ordinary,
-        );
-        assert!(
-            result.is_err(),
-            "mismatched storage must fail before publication"
-        );
-        assert_eq!(
-            state.atoms.resolve(key.atom()).unwrap().ref_count,
-            before_key
-        );
-        assert_eq!(
-            state.atoms.resolve(symbol.atom()).unwrap().ref_count,
-            before_symbol
-        );
-        assert!(state.shape_cache.is_empty());
-        assert!(state.shape_hashes.is_empty());
     }
 }

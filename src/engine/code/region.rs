@@ -14,7 +14,7 @@ pub(crate) enum DirectSource {
 pub(crate) enum NumberSource {
     Direct(DirectSource),
     Immediate(i32),
-    Constant { index: u32, value: Number },
+    Constant { value: Number },
 }
 
 #[derive(Clone, Copy, Debug)]
