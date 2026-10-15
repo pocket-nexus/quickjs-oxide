@@ -564,17 +564,6 @@ pub(crate) fn define_context_accessor(
     );
 }
 
-pub(crate) fn define_global_key(
-    runtime: &Runtime,
-    global: &ObjectRef,
-    name: &str,
-    value: Value,
-) -> PropertyKey {
-    let key = runtime.intern_property_key(name).unwrap();
-    define_data_key_with_flags(runtime, global, &key, value, true, true, true);
-    key
-}
-
 pub(crate) fn define_data_with_flags(
     runtime: &Runtime,
     object: &ObjectRef,
@@ -663,20 +652,6 @@ pub(crate) fn define_accessor_key(
     );
 }
 
-pub(crate) fn object_has_prototype(
-    runtime: &Runtime,
-    value: &Value,
-    prototype: &ObjectRef,
-) -> bool {
-    let Value::Object(object) = value else {
-        return false;
-    };
-    runtime
-        .get_prototype_of(object)
-        .unwrap()
-        .is_some_and(|actual| actual == *prototype)
-}
-
 pub(crate) fn object_property(
     runtime: &Runtime,
     context: &mut Context,
@@ -704,32 +679,6 @@ pub(crate) fn eval_source_callable(
         .as_callable(&object)
         .unwrap()
         .unwrap_or_else(|| panic!("{source:?} was not callable"))
-}
-
-pub(crate) fn named_data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    data_flags_key(runtime, object, &runtime.intern_property_key(name).unwrap())
-}
-
-pub(crate) fn data_flags_key(runtime: &Runtime, object: &ObjectRef, key: &PropertyKey) -> String {
-    let descriptor = runtime
-        .get_own_property(object, key)
-        .unwrap()
-        .expect("property descriptor was absent");
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    } = descriptor
-    else {
-        panic!("property descriptor was not data");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
 }
 
 pub(crate) fn define_global_data(
