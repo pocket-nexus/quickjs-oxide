@@ -396,6 +396,7 @@ pub(crate) fn finish(
 }
 
 mod local;
+pub(crate) use local::dense_next_in_state;
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests;

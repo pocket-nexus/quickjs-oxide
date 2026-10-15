@@ -2388,6 +2388,14 @@ fn execute_admitted_in_state(
                 }
                 continue;
             }
+            VmAction::Environment(super::environment_driver::Operation::Iterator(
+                super::iterator_driver::Operation::Next(offset),
+            )) => {
+                if !for_of::try_next(runtime, state, &mut segment, offset)? {
+                    return Ok(action);
+                }
+                continue;
+            }
             VmAction::ClassInitializer(super::construct_driver::InitializerKind::Instance) => {
                 if !class_initializer::try_skip_absent(runtime, state, &mut segment)? {
                     return Ok(action);
@@ -3910,6 +3918,7 @@ mod array_allocation_tests;
 
 mod array_allocation;
 mod class_initializer;
+mod for_of;
 mod leaf_native;
 mod string_add;
 

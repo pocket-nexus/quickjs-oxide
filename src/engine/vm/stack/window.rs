@@ -621,7 +621,6 @@ impl CheckedOrdinaryCallOperands {
 }
 
 impl FrameTransaction<'_> {
-    #[cfg(feature = "profiling")]
     pub(in crate::engine::vm) fn operand_depth(&self) -> usize {
         self.window.depth
     }
