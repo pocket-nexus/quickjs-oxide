@@ -1,0 +1,355 @@
+function __bit(value){return value?"1":"0"}
+function __bits(object,key){
+    var descriptor=Object.getOwnPropertyDescriptor(object,key);
+    if(descriptor===undefined)return "missing";
+    return __bit(descriptor.writable)+__bit(descriptor.enumerable)+__bit(descriptor.configurable);
+}
+function __isConstructor(value){
+    try{Reflect.construct(function(){},[],value);return true}catch(_error){return false}
+}
+function __completion(thunk){
+    try{return "return:"+String(thunk())}
+    catch(error){
+        if(error!==null&&typeof error==="object")return "throw:"+error.name+":"+error.message;
+        return "throw:"+typeof error+":"+String(error);
+    }
+}
+function __number(value){
+    if(value!==value)return "NaN";
+    if(value===0)return 1/value===-Infinity?"-0":"+0";
+    if(value===Infinity)return "+Infinity";
+    if(value===-Infinity)return "-Infinity";
+    return String(value);
+}
+// case: graph / constructor prototype iterator aliases metadata and descriptors
+(function(){
+            function keys(object){
+                return Reflect.ownKeys(object).map(function(key){return String(key)}).join(",");
+            }
+            function metadata(owner,key){
+                var fn=owner[key];
+                return String(key)+":"+fn.name+":"+fn.length+":"+__isConstructor(fn)+":"+
+                    __bits(owner,key)+":"+__bits(fn,"name")+":"+__bits(fn,"length")+":"+keys(fn);
+            }
+            var methodNames=["set","get","getOrInsert","getOrInsertComputed","has","delete",
+                "clear","forEach","values","keys","entries"],methods=[],index;
+            for(index=0;index<methodNames.length;index++)
+                methods[index]=metadata(Map.prototype,methodNames[index]);
+            var sizeDescriptor=Object.getOwnPropertyDescriptor(Map.prototype,"size");
+            var speciesDescriptor=Object.getOwnPropertyDescriptor(Map,Symbol.species);
+            var sampleIterator=new Map().entries();
+            var iteratorPrototype=Object.getPrototypeOf(sampleIterator);
+            var arrayIteratorPrototype=Object.getPrototypeOf([][Symbol.iterator]());
+            return [
+                "global="+__bits(globalThis,"Map")+":"+
+                    (Object.getOwnPropertyDescriptor(globalThis,"Map").value===Map),
+                "constructor="+Map.name+":"+Map.length+":"+__isConstructor(Map)+":"+keys(Map),
+                "links="+(Object.getPrototypeOf(Map)===Function.prototype)+":"+
+                    (Object.getPrototypeOf(Map.prototype)===Object.prototype)+":"+
+                    (Map.prototype.constructor===Map),
+                "descriptors="+__bits(Map,"prototype")+":"+__bits(Map.prototype,"constructor"),
+                "prototype-keys="+keys(Map.prototype),
+                "prototype-brand="+Object.prototype.toString.call(Map.prototype)+":"+
+                    __completion(function(){return Map.prototype.size}),
+                "methods="+methods.join(";"),
+                "aliases="+(Map.prototype[Symbol.iterator]===Map.prototype.entries)+":"+
+                    Map.prototype[Symbol.iterator].name+":"+__bits(Map.prototype,Symbol.iterator)+":"+
+                    (Map.prototype.keys!==Map.prototype.values),
+                "size="+__bits(Map.prototype,"size")+":"+sizeDescriptor.get.name+":"+
+                    sizeDescriptor.get.length+":"+__isConstructor(sizeDescriptor.get)+":"+
+                    keys(sizeDescriptor.get),
+                "tags="+__bits(Map.prototype,Symbol.toStringTag)+":"+
+                    Map.prototype[Symbol.toStringTag]+":"+
+                    Object.prototype.toString.call(new Map()),
+                "species="+__bits(Map,Symbol.species)+":"+speciesDescriptor.get.name+":"+
+                    speciesDescriptor.get.length+":"+__isConstructor(speciesDescriptor.get)+":"+
+                    keys(speciesDescriptor.get)+":"+(speciesDescriptor.get.call(17)===17),
+                "groupBy="+metadata(Map,"groupBy"),
+                "iterator="+keys(iteratorPrototype)+":"+
+                    metadata(iteratorPrototype,"next")+":"+
+                    __bits(iteratorPrototype,Symbol.toStringTag)+":"+
+                    iteratorPrototype[Symbol.toStringTag]+":"+
+                    (Object.getPrototypeOf(iteratorPrototype)===Object.getPrototypeOf(arrayIteratorPrototype))+":"+
+                    (sampleIterator[Symbol.iterator]()===sampleIterator)
+            ].join("|");
+        })()
+// case: keys / SameValueZero normalizes NaN and negative zero while retaining BigInt identity
+(function(){
+            var firstObject=Object(),secondObject=Object(),map=new Map(),keys=[],step,key;
+            map.set(NaN,"nan-first");
+            map.set(0/0,"nan-second");
+            map.set(-0,"zero-first");
+            map.set(+0,"zero-second");
+            map.set(1n,"bigint-first");
+            map.set(BigInt("1"),"bigint-second");
+            map.set(1,"number");
+            map.set(firstObject,"object-first");
+            map.set(secondObject,"object-second");
+            var iterator=map.keys();
+            while(!(step=iterator.next()).done){
+                key=step.value;
+                if(key===firstObject)keys[keys.length]="firstObject";
+                else if(key===secondObject)keys[keys.length]="secondObject";
+                else if(typeof key==="number")keys[keys.length]=__number(key);
+                else if(typeof key==="bigint")keys[keys.length]=String(key)+"n";
+                else keys[keys.length]=String(key);
+            }
+            return [
+                map.size,
+                map.get(NaN),map.get(-0),map.get(+0),map.get(1n),map.get(1),
+                map.has(0/0),map.has(BigInt("1")),map.has(firstObject),map.has(Object()),
+                keys.join(","),
+                map.delete(0/0),map.has(NaN),map.size
+            ].join("|");
+        })()
+// case: constructor / newTarget prototype adder and iterator observations follow QuickJS order
+(function(){
+            var log="",custom=Object.create(Map.prototype),iterator=Object(),count=0;
+            var originalSet=Map.prototype.set;
+            var NewTarget=(function(){}).bind(null);
+            Object.defineProperty(NewTarget,"prototype",{
+                configurable:true,
+                get:function(){log+="prototype;";return custom}
+            });
+            Object.defineProperty(custom,"set",{
+                configurable:true,
+                get:function(){
+                    log+="set-get;";
+                    return function(key,value){
+                        log+="adder:"+key+":"+value+";";
+                        Object.defineProperty(iterator,"next",{
+                            configurable:true,writable:true,
+                            value:function(){throw "changed-next"}
+                        });
+                        return originalSet.call(this,key,value);
+                    };
+                }
+            });
+            var entry=Object();
+            Object.defineProperty(entry,"0",{get:function(){log+="key;";return "k"}});
+            Object.defineProperty(entry,"1",{get:function(){log+="entry-value;";return 9}});
+            var iterable=Object();
+            Object.defineProperty(iterable,Symbol.iterator,{
+                get:function(){
+                    log+="iterator-get;";
+                    return function(){log+="iterator-call;";return iterator};
+                }
+            });
+            Object.defineProperty(iterator,"next",{
+                configurable:true,
+                get:function(){
+                    log+="next-get;";
+                    return function(){
+                        log+="next-call;";
+                        var result=Object(),done=count++!==0;
+                        Object.defineProperty(result,"done",{
+                            get:function(){log+="done:"+done+";";return done}
+                        });
+                        Object.defineProperty(result,"value",{
+                            get:function(){log+="step-value;";return entry}
+                        });
+                        return result;
+                    };
+                }
+            });
+            var map=Reflect.construct(Map,[iterable],NewTarget);
+            function Fallback(){}Fallback.prototype=17;
+            var fallback=Reflect.construct(Map,[],Fallback);
+            return [log,Object.getPrototypeOf(map)===custom,map.size,map.get("k"),
+                Object.getPrototypeOf(fallback)===Map.prototype,
+                __completion(function(){return Map()})].join("|");
+        })()
+// case: constructor / entry and adder failures close but iterator step failures do not
+(function(){
+            function run(mode){
+                var log="",iterator=Object(),iterable=Object(),count=0;
+                iterable[Symbol.iterator]=function(){log+="iterator;";return iterator};
+                iterator.return=function(){log+="return;";throw "close"};
+                iterator.next=function(){
+                    log+="next;";
+                    if(mode===4)throw "next";
+                    var result=Object();
+                    Object.defineProperty(result,"done",{get:function(){
+                        log+="done;";if(mode===5)throw "done";return count++!==0;
+                    }});
+                    Object.defineProperty(result,"value",{get:function(){
+                        log+="step-value;";
+                        if(mode===6)throw "step-value";
+                        if(mode===0)return 1;
+                        var entry=Object();
+                        Object.defineProperty(entry,"0",{get:function(){
+                            log+="key;";if(mode===1||mode===7)throw "key";return "k";
+                        }});
+                        Object.defineProperty(entry,"1",{get:function(){
+                            log+="entry-value;";if(mode===2)throw "entry-value";return 1;
+                        }});
+                        return entry;
+                    }});
+                    return result;
+                };
+                var target=Map;
+                if(mode===3){
+                    var prototype=Object.create(Map.prototype);
+                    prototype.set=function(){log+="adder;";throw "adder"};
+                    target=function(){};target.prototype=prototype;
+                }
+                try{Reflect.construct(Map,[iterable],target);return log+"missing"}
+                catch(error){
+                    return log+"catch:"+(error!==null&&typeof error==="object"?error.name:String(error));
+                }
+            }
+            var output=[],index;
+            for(index=0;index<8;index++)output[index]=index+":"+run(index);
+            return output.join("|");
+        })()
+// case: iteration / delete clear and re-add remain visible to live insertion-order iterators
+(function(){
+            function entry(step){return step.done?"done":step.value[0]+":"+step.value[1]}
+            var map=new Map(),output=[],iterator;
+            map.set("a",1).set("b",2).set("c",3);
+            iterator=map.entries();
+            output[output.length]=entry(iterator.next());
+            map.delete("b");map.set("d",4);
+            output[output.length]=entry(iterator.next());
+            map.clear();map.set("e",5);
+            output[output.length]=entry(iterator.next());
+            map.delete("e");map.set("e",6);
+            output[output.length]=entry(iterator.next());
+            output[output.length]=entry(iterator.next());
+            map.set("f",7);
+            output[output.length]=entry(iterator.next());
+
+            map=new Map();map.set("a",1).set("b",2).set("c",3);
+            iterator=map.keys();
+            output[output.length]=iterator.next().value;
+            map.delete("b");map.set("b",20);
+            output[output.length]=iterator.next().value;
+            output[output.length]=iterator.next().value;
+            output[output.length]=iterator.next().done;
+            return output.join("|");
+        })()
+// case: iteration / forEach locks the current record and observes reentrant deletion and appends
+(function(){
+            var map=new Map(),receiver={marker:1},log=[];
+            map.set("a",1).set("b",2);
+            map.forEach(function(value,key,observed){
+                log[log.length]="outer:"+key+":"+value+":"+(this===receiver)+":"+(observed===map);
+                if(key==="a"){
+                    observed.delete("b");observed.set("c",3);
+                    observed.forEach(function(innerValue,innerKey,innerMap){
+                        log[log.length]="inner:"+innerKey+":"+innerValue+":"+
+                            (this===receiver)+":"+(innerMap===map);
+                        if(innerKey==="a")innerMap.set("d",4);
+                        if(innerKey==="c")innerMap.delete("c");
+                    },receiver);
+                }
+                if(key==="d"){
+                    observed.delete("d");observed.set("e",5);
+                }
+            },receiver);
+            return log.join(";")+"|"+map.size+"|"+map.has("b")+"|"+
+                map.has("c")+"|"+map.has("d")+"|"+map.get("e");
+        })()
+// case: upsert / getOrInsertComputed deletes callback insertion and appends the computed result
+(function(){
+            function entries(map){
+                var iterator=map.entries(),step,output=[];
+                while(!(step=iterator.next()).done)
+                    output[output.length]=String(step.value[0])+":"+String(step.value[1]);
+                return output.join(",");
+            }
+            var map=new Map(),called=0,callbackThis="unset",callbackKey="unset";
+            map.set("present",undefined).set("stay",1);
+            var present=map.getOrInsert("present",9);
+            var inserted=map.getOrInsert("new",2);
+            var negativeZero=map.getOrInsert(-0,3);
+            var positiveZero=map.getOrInsert(+0,4);
+            var existing=map.getOrInsertComputed("stay",function(){called++;return 10});
+            var computed=map.getOrInsertComputed("computed",function(key){
+                "use strict";
+                called++;callbackThis=this;callbackKey=key;
+                map.set("computed",20);map.set("side",30);
+                return 40;
+            });
+            var sentinel=Object(),sameThrow=false;
+            try{
+                map.getOrInsertComputed("thrown",function(){map.set("thrown",50);throw sentinel});
+            }catch(error){sameThrow=error===sentinel}
+            var validation=__completion(function(){
+                return map.getOrInsertComputed("stay",0);
+            });
+            return [
+                present===undefined,inserted,negativeZero,positiveZero,existing,called,
+                callbackThis===undefined,callbackKey,computed,map.get("computed"),
+                map.get("thrown"),sameThrow,validation,entries(map)
+            ].join("|");
+        })()
+// case: groupBy / groupBy retains SameValueZero keys arrays callback indices and receiver independence
+(function(){
+            var objectKey=Object(),coerced=false,log="";
+            objectKey.toString=function(){coerced=true;throw "coerced"};
+            var values=[-0,+0,NaN,0/0,1n,1,"object"],keys=[];
+            var grouped=Map.groupBy.call(Object(),values,function(value,index){
+                "use strict";
+                log+=(this===globalThis)+":"+index+";";
+                return index===6?objectKey:value;
+            });
+            var iterator=grouped.keys(),step,key;
+            while(!(step=iterator.next()).done){
+                key=step.value;
+                if(key===objectKey)keys[keys.length]="object";
+                else if(typeof key==="number")keys[keys.length]=__number(key);
+                else if(typeof key==="bigint")keys[keys.length]=String(key)+"n";
+                else keys[keys.length]=String(key);
+            }
+            return [
+                Object.getPrototypeOf(grouped)===Map.prototype,
+                grouped.size,keys.join(","),
+                grouped.get(-0).length,grouped.get(NaN).length,
+                grouped.get(1n)[0]===1n,grouped.get(1)[0]===1,
+                grouped.get(objectKey)[0],coerced,log,
+                Array.isArray(grouped.get(-0)),
+                Object.getPrototypeOf(grouped.get(-0))===Array.prototype
+            ].join("|");
+        })()
+// case: groupBy / callback validation and abrupt completion use the pinned iterator-close boundary
+(function(){
+            function invalidCallback(){
+                var log="",iterable=Object();
+                Object.defineProperty(iterable,Symbol.iterator,{get:function(){log+="touched;";throw "iterator"}});
+                try{Map.groupBy(iterable,0);return log+"missing"}
+                catch(error){return log+(error!==null&&typeof error==="object"?error.name:String(error))}
+            }
+            function callbackThrow(){
+                var log="",iterator=Object(),iterable=Object();
+                iterable[Symbol.iterator]=function(){log+="iterator;";return iterator};
+                iterator.next=function(){
+                    log+="next;";var result=Object();result.done=false;result.value=7;return result;
+                };
+                iterator.return=function(){log+="return;";throw "close"};
+                try{Map.groupBy(iterable,function(){log+="callback;";throw "callback"});return log+"missing"}
+                catch(error){return log+String(error)}
+            }
+            function nextThrow(){
+                var log="",iterator=Object(),iterable=Object();
+                iterable[Symbol.iterator]=function(){return iterator};
+                iterator.next=function(){log+="next;";throw "next"};
+                iterator.return=function(){log+="return;"};
+                try{Map.groupBy(iterable,function(){return 0});return log+"missing"}
+                catch(error){return log+String(error)}
+            }
+            return invalidCallback()+"|"+callbackThrow()+"|"+nextThrow()+"|"+
+                __completion(function(){return new Map.groupBy([],function(){return 0})});
+        })()
+// case: brands / prototype methods iterator next and constructors enforce exact brands
+(function(){
+            var iteratorNext=Object.getPrototypeOf(new Map().entries()).next;
+            return [
+                __completion(function(){return Map.prototype.get.call(Object(),1)}),
+                __completion(function(){return Object.getOwnPropertyDescriptor(Map.prototype,"size").get.call(Object())}),
+                __completion(function(){return Map.prototype.forEach.call(Object(),function(){})}),
+                __completion(function(){return iteratorNext.call(Object())}),
+                __completion(function(){return new Map.prototype.get()}),
+                __completion(function(){return Map.prototype.set.call(new Map(),"x",1) instanceof Map})
+            ].join("|");
+        })()
