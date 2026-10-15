@@ -6,6 +6,7 @@ const DIRECTORIES: &[&str] = &[
     "array",
     "control_flow",
     "function_semantics",
+    "global",
     "number",
     "object",
     "primitive_intrinsics",
@@ -31,6 +32,11 @@ fn control_flow() {
 #[test]
 fn function_semantics() {
     run_case_directory("function_semantics");
+}
+
+#[test]
+fn global() {
+    run_case_directory("global");
 }
 
 #[test]

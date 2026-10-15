@@ -272,76 +272,6 @@ pub(crate) fn property_text(
     value_text(get_property(runtime, context, object, name))
 }
 
-pub(crate) fn callable_int_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    callable: &CallableRef,
-    name: &str,
-) -> i32 {
-    let Value::Int(value) = context
-        .get_property(
-            callable.as_object(),
-            &runtime.intern_property_key(name).unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("callable {name} was not an Int");
-    };
-    value
-}
-
-pub(crate) fn callable_string_property(
-    runtime: &Runtime,
-    context: &mut Context,
-    callable: &CallableRef,
-    name: &str,
-) -> String {
-    let Value::String(value) = context
-        .get_property(
-            callable.as_object(),
-            &runtime.intern_property_key(name).unwrap(),
-        )
-        .unwrap()
-    else {
-        panic!("callable {name} was not a String");
-    };
-    value.to_utf8_lossy()
-}
-
-pub(crate) fn joined_own_key_names(runtime: &Runtime, object: &ObjectRef) -> String {
-    runtime
-        .own_property_keys(object)
-        .unwrap()
-        .iter()
-        .map(|key| {
-            runtime
-                .property_key_to_js_string(key)
-                .unwrap()
-                .to_utf8_lossy()
-        })
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-pub(crate) fn data_flags(runtime: &Runtime, object: &ObjectRef, name: &str) -> String {
-    let key = runtime.intern_property_key(name).unwrap();
-    let Some(CompleteOrdinaryPropertyDescriptor::Data {
-        writable,
-        enumerable,
-        configurable,
-        ..
-    }) = runtime.get_own_property(object, &key).unwrap()
-    else {
-        panic!("{name} was not an own data property");
-    };
-    format!(
-        "{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
-}
-
 pub(crate) fn define_checked_builtin_data(
     runtime: &Runtime,
     object: &ObjectRef,
@@ -384,34 +314,6 @@ pub(crate) fn eval_callable(runtime: &Runtime, context: &mut Context, source: &s
         .as_callable(&object)
         .unwrap()
         .unwrap_or_else(|| panic!("source did not produce a callable: {source:?}"))
-}
-
-pub(crate) fn global_object_value(
-    runtime: &Runtime,
-    context: &mut Context,
-    global: &ObjectRef,
-    name: &str,
-) -> Value {
-    context
-        .get_property(global, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-}
-
-pub(crate) fn descriptor_bits(descriptor: &CompleteOrdinaryPropertyDescriptor) -> String {
-    match descriptor {
-        CompleteOrdinaryPropertyDescriptor::Data {
-            writable,
-            enumerable,
-            configurable,
-            ..
-        } => format!(
-            "{}{}{}",
-            u8::from(*writable),
-            u8::from(*enumerable),
-            u8::from(*configurable)
-        ),
-        CompleteOrdinaryPropertyDescriptor::Accessor { .. } => "accessor".to_owned(),
-    }
 }
 
 pub(crate) fn global_string(
