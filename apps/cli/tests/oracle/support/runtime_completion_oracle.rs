@@ -466,6 +466,10 @@ if (__qjo_type === "number") {
     print("string|" + __qjo_value.length + "|" + __qjo_units);
 } else if (__qjo_value === null) {
     print("object|null");
+} else if (__qjo_type === "symbol") {
+    print("symbol|<identity>");
+} else if (__qjo_type === "object" || __qjo_type === "function") {
+    print("object|<identity>");
 } else {
     print(__qjo_type + "|" + String(__qjo_value));
 }

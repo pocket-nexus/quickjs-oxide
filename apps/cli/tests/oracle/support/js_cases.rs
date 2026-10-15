@@ -14,14 +14,19 @@
 //   their `name`.
 // - `completion-array`: like `completion`, but an Array result is rendered
 //   `return|array|<String(element)>,...`.
+// - `completion-units`: like `completion`, but returned values and thrown
+//   primitives render as `<type>|<value>`, keeping signed zero and strings as
+//   `<length>|<UTF-16 hex>`.
 // - `print`: run prelude + case through both `qjs -e` executables and compare
 //   exit status, stdout and stderr. Each leading `// flags: <qjs options>`
 //   line adds one run of every case with those options.
 //
 // Set `ORACLE_CASE=<substring>` to run only matching `dir/file/case` names.
 use crate::quickjs_array_completion_oracle::observe_array_completion;
-use crate::runtime_completion_oracle::{observe_array_aware_eval, observe_eval_completion};
+use crate::runtime_completion_oracle::ORACLE_NORMALIZER;
 use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::normalize_rust_value_units;
+use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -31,6 +36,7 @@ enum Mode {
     Completion,
     CompletionName,
     CompletionArray,
+    CompletionUnits,
     Print,
 }
 
@@ -65,6 +71,7 @@ fn parse_fixture(label: &str, text: &str) -> Vec<Case> {
         Some("// mode: completion") => Mode::Completion,
         Some("// mode: completion-name") => Mode::CompletionName,
         Some("// mode: completion-array") => Mode::CompletionArray,
+        Some("// mode: completion-units") => Mode::CompletionUnits,
         Some(line) if line.starts_with("// mode:") => panic!("{label}: unknown {line:?}"),
         _ => Mode::Completion,
     };
@@ -197,9 +204,98 @@ fn load_directory(directory: &str) -> Vec<Case> {
     cases
 }
 
-fn observe_oxide_completion(case: &Case) -> String {
+// The same formatting the QuickJS observers apply, evaluated by quickjs-oxide
+// after the case so getters and String() conversions run identically.
+const OXIDE_FORMATTER: &str = r"(function (kind, value, arrays) {
+  if (kind === 'throw' && value !== null && typeof value === 'object')
+    return 'throw|object|' + value.name + '|' + value.message;
+  if (arrays && kind === 'return' && Array.isArray(value)) {
+    var text = '';
+    for (var index = 0; index < value.length; index++) {
+      if (index) text += ',';
+      text += String(value[index]);
+    }
+    return 'return|array|' + text;
+  }
+  return kind + '|' + typeof value + '|' + String(value);
+})";
+
+/// Evaluate the case in a fresh runtime and format its completion in JS.
+fn observe_oxide_completion(case: &Case, arrays: bool) -> String {
     let (runtime, mut context) = host_runtime_context();
-    observe_eval_completion(&runtime, &mut context, &case.source, &case.name)
+    let (kind, value) = match context.eval(&case.source) {
+        Ok(value) => ("return", value),
+        Err(RuntimeError::Exception) => (
+            "throw",
+            context
+                .take_exception()
+                .unwrap_or_else(|error| panic!("{}: take exception: {error}", case.name))
+                .unwrap_or_else(|| panic!("{}: exception was missing", case.name)),
+        ),
+        Err(error) => panic!("Rust engine failure for {}: {error}", case.name),
+    };
+    let Ok(Value::Object(formatter)) = context.eval(OXIDE_FORMATTER) else {
+        panic!("{}: formatter did not evaluate", case.name);
+    };
+    let formatter = runtime
+        .as_callable(&formatter)
+        .unwrap()
+        .expect("formatter is callable");
+    let kind = Value::String(JsString::try_from_utf8(kind).unwrap());
+    match context.call(
+        &formatter,
+        Value::Undefined,
+        &[kind, value, Value::Bool(arrays)],
+    ) {
+        Ok(Value::String(text)) => text.to_utf8_lossy(),
+        other => panic!("{}: formatting the completion failed: {other:?}", case.name),
+    }
+}
+
+/// Like [`observe_oxide_completion`], but returned values and thrown
+/// primitives are rendered by `normalize_rust_value_units`.
+fn observe_oxide_units(case: &Case) -> String {
+    let (runtime, mut context) = host_runtime_context();
+    match context.eval(&case.source) {
+        Ok(value) => normalize_rust_value_units(&value),
+        Err(RuntimeError::Exception) => match context.take_exception() {
+            Ok(Some(Value::Object(object))) if runtime.as_callable(&object).unwrap().is_none() => {
+                observe_oxide_completion(case, false)
+            }
+            Ok(Some(value)) => format!("throw|{}", normalize_rust_value_units(&value)),
+            other => panic!("{}: missing exception: {other:?}", case.name),
+        },
+        Err(error) => panic!("Rust engine failure for {}: {error}", case.name),
+    }
+}
+
+const UNITS_OBSERVER: &str = r"
+var __qjo_mode = 0, __qjo_value;
+try { __qjo_value = std.evalScript(std.in.readAsString()); }
+catch (error) {
+  if (error !== null && typeof error === 'object') {
+    __qjo_mode = 2;
+    print('throw|object|' + error.name + '|' + error.message);
+  } else {
+    __qjo_mode = 1;
+    __qjo_value = error;
+    var __qjo_print = print;
+    print = function (text) { __qjo_print('throw|' + text); };
+  }
+}
+";
+
+fn observe_quickjs_units(oracle: &OsStr, case: &Case) -> String {
+    let bootstrap = format!("{UNITS_OBSERVER}if (__qjo_mode !== 2) {{\n{ORACLE_NORMALIZER}}}\n");
+    let output = crate::quickjs_oracle::run_stdin_utf8(
+        oracle,
+        &bootstrap,
+        None,
+        &case.source,
+        &case.name,
+        "units observer",
+    );
+    output.strip_suffix('\n').unwrap_or(&output).to_owned()
 }
 
 fn observe_process(program: &OsStr, case: &Case) -> String {
@@ -257,20 +353,21 @@ fn without_error_message(observation: String) -> String {
 fn compare_case(oracle: &OsStr, case: &Case) -> Option<String> {
     let (oxide, quickjs) = match case.mode {
         Mode::Completion => (
-            observe_oxide_completion(case),
+            observe_oxide_completion(case, false),
             observe_quickjs_completion(oracle, case),
         ),
         Mode::CompletionName => (
-            without_error_message(observe_oxide_completion(case)),
+            without_error_message(observe_oxide_completion(case, false)),
             without_error_message(observe_quickjs_completion(oracle, case)),
         ),
-        Mode::CompletionArray => {
-            let (runtime, mut context) = host_runtime_context();
-            (
-                observe_array_aware_eval(&runtime, &mut context, &case.source, &case.name),
-                observe_array_completion(oracle, &case.source, &case.name),
-            )
-        }
+        Mode::CompletionUnits => (
+            observe_oxide_units(case),
+            observe_quickjs_units(oracle, case),
+        ),
+        Mode::CompletionArray => (
+            observe_oxide_completion(case, true),
+            observe_array_completion(oracle, &case.source, &case.name),
+        ),
         Mode::Print => {
             let oxide = observe_process(env!("CARGO_BIN_EXE_qjs").as_ref(), case);
             let oxide = if case.known_teardown_leak {
@@ -313,7 +410,21 @@ pub(crate) fn run_case_directory(directory: &str) {
                         let Some(case) = cases.get(index) else {
                             break failures;
                         };
-                        if let Some(failure) = compare_case(&oracle, case) {
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            compare_case(&oracle, case)
+                        }));
+                        let failure = result.unwrap_or_else(|panic| {
+                            let message = panic
+                                .downcast_ref::<String>()
+                                .map(String::as_str)
+                                .or_else(|| panic.downcast_ref::<&str>().copied())
+                                .unwrap_or("non-string panic");
+                            Some(format!(
+                                "{}\nsource: {:?}\npanicked: {message}",
+                                case.name, case.source
+                            ))
+                        });
+                        if let Some(failure) = failure {
                             failures.push((index, failure));
                         }
                     }

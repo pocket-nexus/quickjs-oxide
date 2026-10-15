@@ -1,0 +1,89 @@
+// mode: completion-units
+// VALUE_CASES
+// case: empty switch resets completion
+1; switch(0){}
+// case: unmatched switch resets completion
+1; switch(0){case 1:2;}
+// case: default supplies completion
+switch(0){default:3;}
+// case: matching case falls through later bodies
+switch(2){case 1:1;case 2:2;case 3:3;}
+// case: break preserves selected body completion
+switch(2){case 1:1;case 2:2;break;case 3:3;}
+// case: default before cases falls through
+switch(9){default:4;case 1:1;case 2:2;}
+// case: default middle no match enters default
+switch(9){case 1:1;default:4;break;case 2:2;}
+// case: case after default wins before default
+switch(2){case 1:1;default:4;break;case 2:2;}
+// case: case before default falls through it
+switch(1){case 1:1;default:4;case 2:2;}
+// case: no match tests cases after default before entering it
+(function(){var log='';switch(9){case (log+='a',1):log+='A';break;default:log+='D';break;case (log+='b',2):log+='B';}return log;})()
+// case: later match skips the earlier default body
+(function(){var log='';switch(2){case (log+='a',1):log+='A';break;default:log+='D';break;case (log+='b',2):log+='B';}return log;})()
+// case: consecutive case clauses share a body
+switch(2){case 1:case 2:7;break;default:8;}
+// case: selector is evaluated once
+(function(){var log='';var value=(log+='s',2);switch(value){case 2:log+='b';break;}return log;})()
+// case: case tests stop after first match
+(function(){var log='';switch((log+='s',2)){case (log+='a',1):log+='A';break;case (log+='b',2):log+='B';break;case (log+='c',3):log+='C';}return log;})()
+// case: all case tests run on no match
+(function(){var log='';switch((log+='s',9)){case (log+='a',1):break;case (log+='b',2):break;default:log+='d';}return log;})()
+// case: strict comparison does not coerce selector
+(function(){var log='';var value=function(){};value.valueOf=function(){log+='v';return 1;};switch(value){case 1:log+='m';break;default:log+='d';}return log;})()
+// case: strict comparison separates Number and BigInt
+switch(1){case 1n:2;default:3;}
+// case: strict comparison equates signed zero
+switch(-0){case 0:4;break;default:5;}
+// case: strict comparison does not match NaN
+switch(NaN){case NaN:6;break;default:7;}
+// case: strict comparison preserves object identity
+switch(Function){case Function:8;break;default:9;}
+// case: distinct function identities do not match
+switch(function(){}){case function(){}:8;default:9;}
+// case: global symbols compare by identity
+switch(Symbol.for('switch-key')){case Symbol.for('switch-key'):10;break;default:11;}
+// case: unique symbols with equal descriptions do not match
+switch(Symbol('switch-key')){case Symbol('switch-key'):10;default:11;}
+// case: case accepts full comma and in expression
+switch(true){case (0,'prototype' in Function):12;break;default:13;}
+// case: immediate break leaves reset completion
+1; switch(0){default:break;}
+// case: nested switch resets prior case completion
+switch(1){case 1:4;switch(0){case 1:5;}break;}
+// case: unlabeled break selects nearest switch
+(function(){var log='';while(true){log+='w';switch(1){case 1:log+='s';break;}log+='a';break;}return log;})()
+// case: labeled break crosses retained selector
+outer:{switch(1){case 1:2;break outer;default:3;}4;}7
+// case: labeled break crosses nested selectors
+outer:{switch(1){case 1:switch(2){case 2:break outer;}9;}8;}7
+// case: continue crosses switch into outer loop
+(function(){var i=0;var log='';outer:while(i++<2){switch(i){case 1:log+='a';continue outer;default:log+='b';break;}log+='c';}return i+'|'+log;})()
+// case: break to outer loop label crosses switch
+(function(){var i=0;outer:while(true){i++;switch(i){case 1:break outer;}}return i;})()
+// case: line break keeps break label unconsumed
+Function.switchAsi=0;outer:{switch(1){case 1:break
+outer;}Function.switchAsi=1;}Function.switchAsi
+// case: line break keeps continue label unconsumed
+(function(){var i=0;var value=0;outer:while(i++<1){switch(1){case 1:continue
+outer;}value=9;}return i+'|'+value;})()
+// case: unselected var declaration remains hoisted
+(function(){switch(0){case 1:var value=3;}return typeof value+'|'+value;})()
+// case: selected var declaration initializes
+(function(){switch(1){case 1:var value=3;}return value;})()
+// case: return abandons retained selector
+(function(){switch(1){case 1:return 4;default:return 5;}})()
+// case: function fallthrough abandons no temporary
+(function(){switch(1){case 1:2;break;}})()
+// case: switch works in dynamic Function body
+Function('x','switch(x){case 1:return 6;default:return 7;}')(1)
+// THROW_CASES
+// case: explicit body throw
+switch(1){case 1:throw 4;}
+// case: selector throw
+switch((function(){throw 5;})()){case 1:1;}
+// case: case expression throw
+switch(0){case (function(){throw 6;})():1;}
+// case: nested switch throw
+switch(1){case 1:switch(2){case 2:throw Function;}}
