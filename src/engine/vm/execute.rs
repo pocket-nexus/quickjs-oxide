@@ -780,10 +780,7 @@ fn execute_admitted_in_state(
                             if hit { None } else { Some("guard") }
                         ));
                         if hit {
-                            cursor.advance(
-                                (decoded.next_pc + 2 + ((descriptor >> 2) & 1) + (descriptor >> 3))
-                                    as usize,
-                            );
+                            cursor.advance((decoded.next_pc + 2 + (descriptor >> 2)) as usize);
                             continue;
                         }
                         if decoded.opcode == Opcode::UpdateLocalDiscardCheck {

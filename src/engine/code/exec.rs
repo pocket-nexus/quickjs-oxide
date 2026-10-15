@@ -1544,11 +1544,11 @@ fn published_operands(
                 code[source + 2 + usize::from(binary)],
                 Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
             );
-        // Bits 2 and 3 each add one skipped single-word instruction.
+        // Bits 2-3 count the single-word instructions skipped beyond the
+        // two-word base, so execution adds them without decoding the shape.
         let descriptor = u32::from(increment)
             | (u32::from(postfix) << 1)
-            | (u32::from(dropped) << 2)
-            | (u32::from(binary) << 3);
+            | ((u32::from(dropped) + u32::from(binary)) << 2);
         operands[0].bits |= descriptor << 12;
     } else if matches!(
         opcode,
@@ -2462,7 +2462,7 @@ mod tests {
         .unwrap();
         assert_eq!(binary.opcode_at_source(0), Some(Opcode::UpdateLocalDiscard));
         assert_eq!(binary.opcode_at_source(1), Some(Opcode::PushI32));
-        assert_eq!(binary.decode(0).unwrap().operand(0), 0b1101 << 12);
+        assert_eq!(binary.decode(0).unwrap().operand(0), 0b1001 << 12);
         assert_eq!(
             binary.decode(0).unwrap().next_pc + 4,
             binary.exec_pc(5).unwrap()
@@ -2479,7 +2479,7 @@ mod tests {
             decrement.opcode_at_source(0),
             Some(Opcode::UpdateLocalDiscardCheck)
         );
-        assert_eq!(decrement.decode(0).unwrap().operand(0), 0b1000 << 12);
+        assert_eq!(decrement.decode(0).unwrap().operand(0), 0b0100 << 12);
         for step in [Instruction::PushI32(2), Instruction::PushI32(-1)] {
             let other = ExecCode::encode(&[
                 Instruction::GetLocal(0),
