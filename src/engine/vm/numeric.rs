@@ -427,9 +427,22 @@ fn add_strings_in_state(
     prefix: crate::engine::heap::StringId,
     suffix: crate::engine::heap::StringId,
 ) -> Result<JsValue, Error> {
+    add_strings_with_state(
+        &mut runtime.0.state.borrow_mut(),
+        &runtime.0.poisoned,
+        prefix,
+        suffix,
+    )
+}
+
+/// [`add_strings_in_state`] under an access the caller already holds.
+pub(in crate::engine::vm) fn add_strings_with_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    poisoned: &std::cell::Cell<bool>,
+    prefix: crate::engine::heap::StringId,
+    suffix: crate::engine::heap::StringId,
+) -> Result<JsValue, Error> {
     let internal = |error: crate::engine::heap::HeapError| Error::internal(error.to_string());
-    let poisoned = &runtime.0.poisoned;
-    let mut state = runtime.0.state.borrow_mut();
     let result = (|| {
         let tail = state.heap.string(suffix).map_err(internal)?.clone();
         if let Some(string) = state.heap.unique_string_mut(prefix).map_err(internal)?

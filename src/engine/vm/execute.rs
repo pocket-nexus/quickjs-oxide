@@ -2379,6 +2379,15 @@ fn execute_admitted_in_state(
                 profile!(record_owned_execution_event("core.internal_construct"));
                 continue;
             }
+            VmAction::Numeric {
+                kind: super::numeric::operation::NumericKind::Add,
+                fallthrough,
+            } => {
+                if !string_add::try_complete(runtime, state, &mut segment, fallthrough)? {
+                    return Ok(action);
+                }
+                continue;
+            }
             VmAction::ClassInitializer(super::construct_driver::InitializerKind::Instance) => {
                 if !class_initializer::try_skip_absent(runtime, state, &mut segment)? {
                     return Ok(action);
@@ -3902,5 +3911,6 @@ mod array_allocation_tests;
 mod array_allocation;
 mod class_initializer;
 mod leaf_native;
+mod string_add;
 
 pub(super) mod named_read;
