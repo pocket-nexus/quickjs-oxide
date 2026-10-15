@@ -9,6 +9,7 @@ const DIRECTORIES: &[&str] = &[
     "binary_data",
     "collections",
     "control_flow",
+    "errors",
     "eval",
     "function_semantics",
     "global",
@@ -58,6 +59,11 @@ fn collections() {
 #[test]
 fn control_flow() {
     run_case_directory("control_flow");
+}
+
+#[test]
+fn errors() {
+    run_case_directory("errors");
 }
 
 #[test]

@@ -162,15 +162,6 @@ pub(crate) fn require_object(value: Value, description: &str) -> ObjectRef {
     object
 }
 
-pub(crate) fn bits(writable: bool, enumerable: bool, configurable: bool) -> String {
-    format!(
-        "{},{},{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable)
-    )
-}
-
 pub(crate) fn function(runtime: &Runtime, context: &mut Context, source: &str) -> CallableRef {
     let Value::Object(object) = context.eval(source).unwrap() else {
         panic!("function probe did not return an object: {source}");
