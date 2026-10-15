@@ -1001,6 +1001,9 @@ opcode_table! {
         NumericArrayUpdateElement = 232, 3;
         NumericArrayCompareBranch = 233, 3;
         BorrowedFieldThis = 234, 3;
+        /// `PushThis; GetField; GetLocal|GetArg; GetArrayEl` read without
+        /// retaining `this` or the field. On a miss the word acts as PushThis.
+        BorrowedFieldThisElement = 235, 3;
     }
 }
 

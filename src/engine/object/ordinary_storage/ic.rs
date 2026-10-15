@@ -26,6 +26,32 @@ fn record_selection_reason(_reason: &'static str) {
 }
 
 impl RuntimeState {
+    /// `base.field[index]` through a cached data hit at `pc`, retaining
+    /// neither the receiver nor the field. The element is a snapshot like
+    /// [`Self::try_array_value_read`]; the frame consumer copies it. Every
+    /// miss is free of cache side effects.
+    #[inline(always)]
+    pub(crate) fn peek_linked_field_element(
+        &mut self,
+        domain_id: u64,
+        base: &JsValue,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        index: u32,
+    ) -> Option<JsValue> {
+        let JsValue::Object(receiver) = base else {
+            return None;
+        };
+        if !executable.belongs_to_domain(domain_id) {
+            return None;
+        }
+        let field = executable
+            .property_read_ic
+            .site(pc)?
+            .peek_object(&self.heap, *receiver)?;
+        self.try_array_value_read(&JsValue::Object(field), index)
+    }
+
     /// Return an owned data value directly; only a declined read writes the
     /// small cold outcome. Selection and promotion still happen once under the
     /// same heap borrow for both ordinary and borrowed-receiver consumers.

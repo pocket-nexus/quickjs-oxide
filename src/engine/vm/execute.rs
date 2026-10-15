@@ -567,11 +567,29 @@ fn execute_admitted_in_state(
                             ));
                         }
                     },
-                    Opcode::PushThis | Opcode::BorrowedFieldThis => {
+                    Opcode::PushThis
+                    | Opcode::BorrowedFieldThis
+                    | Opcode::BorrowedFieldThisElement => {
                         let normalized = owners
                             .rare
                             .get()
                             .and_then(|rare| rare.normalized_this.as_ref());
+                        // A miss continues as PushThis through the generic words.
+                        if decoded.opcode == Opcode::BorrowedFieldThisElement
+                            && borrowed_this_element(
+                                &mut cursor,
+                                state,
+                                runtime,
+                                executable,
+                                normalized.unwrap_or(&owners.input.this_value),
+                                pc,
+                                next,
+                                operand,
+                            )?
+                        {
+                            cursor.advance(decoded.operand(2) as usize);
+                            continue;
+                        }
                         if decoded.opcode == Opcode::BorrowedFieldThis {
                             let base = normalized.unwrap_or(&owners.input.this_value);
                             // Capture only the field key: capturing PublishedDecoded here
@@ -734,8 +752,8 @@ fn execute_admitted_in_state(
                         continue;
                     }
                     Opcode::UpdateLocalDiscard | Opcode::UpdateLocalDiscardCheck => {
-                        let index = published_u16(operand & 0x1fff);
-                        let descriptor = operand >> 13;
+                        let index = published_u16(operand & 0xfff);
+                        let descriptor = operand >> 12;
                         profile!(record_execution_dispatch(runtime, executable, pc, true));
                         let hit = cursor.with_slots(|slots| {
                             if !slots.has_operand_capacity(if descriptor & 2 != 0 { 2 } else { 1 })
@@ -762,10 +780,7 @@ fn execute_admitted_in_state(
                             if hit { None } else { Some("guard") }
                         ));
                         if hit {
-                            cursor.advance(
-                                (decoded.next_pc + if descriptor & 4 != 0 { 3 } else { 2 })
-                                    as usize,
-                            );
+                            cursor.advance((decoded.next_pc + 2 + (descriptor >> 2)) as usize);
                             continue;
                         }
                         if decoded.opcode == Opcode::UpdateLocalDiscardCheck {
@@ -3409,6 +3424,60 @@ fn binary_number_value(opcode: Opcode, left: Number, right: Number) -> JsValue {
     }
 }
 
+/// `this.field[key]` for [`Opcode::BorrowedFieldThisElement`]. Only the
+/// element is retained; `this` keeps the field and its storage alive.
+#[inline(never)]
+#[expect(clippy::too_many_arguments)]
+fn borrowed_this_element(
+    cursor: &mut FrameCursor<'_>,
+    state: &mut RuntimeState,
+    runtime: &Runtime,
+    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+    base: &JsValue,
+    #[cfg_attr(not(feature = "profiling"), expect(unused_variables))] pc: usize,
+    site: usize,
+    key: u32,
+) -> Result<bool, Error> {
+    if !borrowed_this_read_ready_in_state(state, base) {
+        return Ok(false);
+    }
+    let key = if key & 0x8000 != 0 {
+        DirectSlot::Argument((key & 0x7fff) as u16)
+    } else {
+        DirectSlot::Local((key & 0x7fff) as u16)
+    };
+    let value = cursor.with_slots(|slots| {
+        if !slots.has_operand_capacity(1) {
+            return Ok(None);
+        }
+        let Some(Number::Int(index)) = slots.direct_value(key).and_then(JsValue::as_number_repr)
+        else {
+            return Ok(None);
+        };
+        let Ok(index) = u32::try_from(index) else {
+            return Ok(None);
+        };
+        let Some(element) =
+            state.peek_linked_field_element(runtime.domain_id(), base, executable, site, index)
+        else {
+            return Ok(None);
+        };
+        copy_value_in_state(state, &element).map(Some)
+    })?;
+    profile!(record_execution_outcome(
+        runtime,
+        executable,
+        pc,
+        "borrowed_this_element",
+        if value.is_some() { None } else { Some("guard") }
+    ));
+    let Some(value) = value else {
+        return Ok(false);
+    };
+    cursor.commit_owned_hot(state, value)?;
+    Ok(true)
+}
+
 fn borrowed_this_read_ready_in_state(state: &RuntimeState, base: &JsValue) -> bool {
     let JsValue::Object(id) = base else {
         return false;
@@ -3497,6 +3566,61 @@ mod execution_span_tests {
         assert!(
             (0..executable.exec.instruction_len()).any(|pc| executable.exec.opcode_at_source(pc)
                 == Some(crate::engine::code::exec_opcode::Opcode::BorrowedFieldThis))
+        );
+    }
+
+    #[test]
+    fn borrowed_this_element_matches_generic_reads_on_every_miss() {
+        let (runtime, mut context) = test_context();
+        assert_script_true(
+            &mut context,
+            r#"(() => {
+            function at(i) { return this.items[i]; }
+            function first(k) { let i = k; return this.items[i]; }
+            let objectValue = {}, holder = {items: [1, objectValue, 'x', , 2.5]};
+            for (let n = 0; n < 20; n++) {
+                if (at.call(holder, 0) !== 1 || at.call(holder, 1) !== objectValue) return false;
+                if (first.call(holder, 2) !== 'x' || at.call(holder, 4) !== 2.5) return false;
+            }
+            Array.prototype[3] = 'proto';
+            if (at.call(holder, 3) !== 'proto') return false;
+            delete Array.prototype[3];
+            if (at.call(holder, 3) !== undefined || at.call(holder, 9) !== undefined) return false;
+            if (at.call(holder, -1) !== undefined || at.call(holder, 1.5) !== undefined) return false;
+            if (at.call(holder, '1') !== objectValue) return false;
+            holder.items = new Int8Array([7, 8]);
+            if (at.call(holder, 1) !== 8) return false;
+            holder.items = 'str';
+            if (at.call(holder, 1) !== 't') return false;
+            holder.items = {0: 'plain'};
+            if (at.call(holder, 0) !== 'plain') return false;
+            let calls = 0, backing = [5];
+            Object.defineProperty(holder, 'items', {get() { calls++; return backing; }});
+            if (at.call(holder, 0) !== 5 || calls !== 1) return false;
+            let other = {pad: 0, items: [6]};
+            if (at.call(other, 0) !== 6) return false;
+            // The element may alias the receiver; the field may be its owner.
+            let self = {items: []};
+            self.items[0] = self;
+            if (at.call(self, 0) !== self) return false;
+            try { at.call({}, 0); return false; } catch (e) { if (!(e instanceof TypeError)) return false; }
+            return true;
+        })()"#,
+        );
+        let Value::Object(function) = context.eval("(function(i){return this.items[i]})").unwrap()
+        else {
+            panic!("function");
+        };
+        let callable = runtime.as_callable(&function).unwrap().unwrap();
+        let crate::engine::vm::call::CallableExecution::Bytecode { bytecode, .. } =
+            runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("bytecode");
+        };
+        let executable = runtime.snapshot_function_bytecode(&bytecode).unwrap();
+        assert!(
+            (0..executable.exec.instruction_len()).any(|pc| executable.exec.opcode_at_source(pc)
+                == Some(crate::engine::code::exec_opcode::Opcode::BorrowedFieldThisElement))
         );
     }
 

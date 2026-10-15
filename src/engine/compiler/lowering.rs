@@ -40,7 +40,7 @@ use crate::engine::code::function::metadata::ParameterEnvironmentLayout;
 use crate::engine::code::function::metadata::ParameterPatternCopy;
 use crate::engine::compiler::flow::{lowered_max_stack, plan_numeric_regions};
 use crate::engine::compiler::optimize::{
-    apply_quickjs_late_throw_sites, fold_quickjs_constant_branches,
+    apply_quickjs_late_throw_sites, elide_initialized_local_checks, fold_quickjs_constant_branches,
 };
 use crate::engine::compiler::relocation::relocate_lowered_instruction;
 use crate::engine::value::JsString;
@@ -490,7 +490,12 @@ pub(super) fn lower_unlinked_tree(
                 })
             })
             .transpose()?;
-        let code = lowered_ops.code;
+        let mut code = lowered_ops.code;
+        elide_initialized_local_checks(
+            &mut code,
+            &local_definitions,
+            parameter_initialization_end.map_or(0, |end| end as usize),
+        );
         let dynamic_bindings = !function.eval_environments.is_empty()
             || code.iter().any(|op| {
                 matches!(

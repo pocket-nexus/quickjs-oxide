@@ -267,6 +267,7 @@ fn record_execution_static_with(
                 | Opcode::BorrowedFieldLocal
                 | Opcode::BorrowedFieldArg
                 | Opcode::BorrowedFieldThis
+                | Opcode::BorrowedFieldThisElement
                 | Opcode::FieldAccSetDrop
         ));
         cost.dense_array_read_sites += u64::from(matches!(

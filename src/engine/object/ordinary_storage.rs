@@ -2775,6 +2775,7 @@ impl RuntimeState {
             .try_replace_dense_number_value(*id, index, replacement)
     }
 
+    #[inline(always)]
     fn try_array_value_read_kind(
         &mut self,
         base: &JsValue,
@@ -2820,6 +2821,9 @@ impl RuntimeState {
 
     /// A snapshot borrowed from the live receiver's dense storage. This does
     /// not retain an edge: the frame consumer copies it while holding State.
+    /// Always inlined, with its body, so the dense `GetArrayEl` dispatch keeps
+    /// the read in line; the borrowed field-element read is a second caller.
+    #[inline(always)]
     pub(crate) fn try_array_value_read(&mut self, base: &JsValue, index: u32) -> Option<JsValue> {
         self.try_array_value_read_kind(base, index, true)
     }

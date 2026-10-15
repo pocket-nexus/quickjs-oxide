@@ -7,6 +7,9 @@
 
 use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::function::UnlinkedVariableDefinition;
+use crate::engine::code::function::metadata::ClosureVariableKind;
+use crate::engine::code::initialization::definite_initialization_entries;
 use crate::source::SourceOffset;
 
 /// QuickJS `resolve_labels` folds this deliberately narrow constant set before
@@ -55,6 +58,66 @@ pub(super) fn fold_quickjs_constant_branches(code: &mut [Instruction]) {
             Instruction::Nop
         };
         code[pc + 1] = Instruction::Nop;
+    }
+}
+
+/// Drop the TDZ check from lexical local accesses that every ordinary path
+/// has already initialized. The facts are the conservative ones used for
+/// numeric regions: exception, `finally` and resume entries start with no
+/// initialized lexical, and only `SetLocalUninitialized` clears a slot.
+/// An unproven access keeps its check; the rewrite never changes slots.
+/// Parameter-initializer code before `body_start` keeps its authenticated
+/// checked form: the parameter-environment validator only admits that.
+pub(super) fn elide_initialized_local_checks(
+    code: &mut [Instruction],
+    locals: &[UnlinkedVariableDefinition],
+    body_start: usize,
+) {
+    let eligible = |index: u16| {
+        locals
+            .get(usize::from(index))
+            .is_some_and(|local| local.is_lexical && local.kind == ClosureVariableKind::Normal)
+    };
+    if !code.iter().any(|instruction| match instruction {
+        Instruction::GetLocalCheck(index)
+        | Instruction::PutLocalCheck(index)
+        | Instruction::SetLocalCheck(index) => eligible(*index),
+        _ => false,
+    }) {
+        return;
+    }
+    let initialization = definite_initialization_entries(code, locals.len());
+    let entries = crate::engine::compiler::flow::block_entries(code);
+    let mut initialized: Option<Vec<bool>> = None;
+    for (pc, instruction) in code.iter_mut().enumerate() {
+        if entries[pc] {
+            initialized.clone_from(&initialization[pc]);
+        }
+        // Unreachable blocks have no facts and keep every check.
+        let Some(initialized) = initialized.as_mut() else {
+            continue;
+        };
+        match *instruction {
+            Instruction::InitializeLocal(index) | Instruction::SetLocalUninitialized(index) => {
+                if let Some(slot) = initialized.get_mut(usize::from(index)) {
+                    *slot = matches!(instruction, Instruction::InitializeLocal(_));
+                }
+            }
+            Instruction::GetLocalCheck(index)
+            | Instruction::PutLocalCheck(index)
+            | Instruction::SetLocalCheck(index)
+                if pc >= body_start
+                    && eligible(index)
+                    && initialized.get(usize::from(index)).copied() == Some(true) =>
+            {
+                *instruction = match *instruction {
+                    Instruction::GetLocalCheck(_) => Instruction::GetLocal(index),
+                    Instruction::PutLocalCheck(_) => Instruction::PutLocal(index),
+                    _ => Instruction::SetLocal(index),
+                };
+            }
+            _ => {}
+        }
     }
 }
 
