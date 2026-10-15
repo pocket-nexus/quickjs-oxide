@@ -362,19 +362,6 @@ pub(crate) fn show_exception(runtime: &Runtime, context: &mut Context, exception
     }
 }
 
-pub(crate) fn value_text(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined".to_owned(),
-        Value::Null => "null".to_owned(),
-        Value::Bool(value) => value.to_string(),
-        Value::Int(value) => value.to_string(),
-        Value::Float(value) => value.to_string(),
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.to_utf8_lossy(),
-        Value::Object(_) | Value::Symbol(_) => panic!("unexpected observation value"),
-    }
-}
-
 pub(crate) fn error_text(
     runtime: &Runtime,
     context: &mut Context,
@@ -418,20 +405,6 @@ pub(crate) fn array_value_text(
         })
         .collect::<Vec<_>>()
         .join(",")
-}
-
-pub(crate) fn show(value: Value) -> String {
-    match value {
-        Value::Undefined => "undefined:undefined".to_owned(),
-        Value::Null => "object:null".to_owned(),
-        Value::Bool(value) => format!("boolean:{value}"),
-        Value::Int(value) => format!("number:{value}"),
-        Value::Float(value) => format!("number:{value}"),
-        Value::BigInt(value) => format!("bigint:{value}"),
-        Value::String(value) => format!("string:{}", value.to_utf8_lossy()),
-        Value::Symbol(_) => "symbol:<symbol>".to_owned(),
-        Value::Object(_) => "object:<object>".to_owned(),
-    }
 }
 
 pub(crate) fn error_name(

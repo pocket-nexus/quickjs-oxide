@@ -27,6 +27,7 @@ const DIRECTORIES: &[&str] = &[
     "regexp",
     "string",
     "typed_array",
+    "update",
 ];
 
 #[test]
@@ -152,4 +153,9 @@ fn string() {
 #[test]
 fn typed_array() {
     run_case_directory("typed_array");
+}
+
+#[test]
+fn update() {
+    run_case_directory("update");
 }

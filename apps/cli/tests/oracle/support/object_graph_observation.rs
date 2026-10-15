@@ -1,6 +1,5 @@
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_observation::property_callable;
-use crate::runtime_observation::value_text;
 use quickjs_oxide::engine::api::AccessorValue;
 use quickjs_oxide::engine::api::DescriptorField;
 use quickjs_oxide::engine::api::OrdinaryPropertyDescriptor;
@@ -254,15 +253,6 @@ pub(crate) fn get_property(
     context.get_property(object, &key).unwrap()
 }
 
-pub(crate) fn property_text(
-    runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    name: &str,
-) -> String {
-    value_text(get_property(runtime, context, object, name))
-}
-
 pub(crate) fn define_checked_builtin_data(
     runtime: &Runtime,
     object: &ObjectRef,
@@ -367,89 +357,10 @@ pub(crate) fn own_data_descriptor(
     (value, writable, enumerable, configurable)
 }
 
-pub(crate) fn function_probe(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-) -> CallableRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("function probe did not return an object: {source}");
-    };
-    runtime.as_callable(&object).unwrap().unwrap()
-}
-
-pub(crate) fn define_global_flagged(
-    runtime: &Runtime,
-    context: &mut Context,
-    name: &str,
-    value: Value,
-) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    define_context_data_with_flags(context, &global, &key, value, true, true);
-}
-
 pub(crate) fn set_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
     let global = context.global_object().unwrap();
     let key = runtime.intern_property_key(name).unwrap();
     assert!(context.set_property(&global, &key, value).unwrap());
-}
-
-pub(crate) fn string_global(runtime: &Runtime, context: &mut Context, name: &str) -> String {
-    let Value::String(value) = global_value(runtime, context, name) else {
-        panic!("global {name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
-pub(crate) fn define_context_data_with_flags(
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    value: Value,
-    writable: bool,
-    configurable: bool,
-) {
-    assert!(
-        context
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(writable),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-pub(crate) fn define_context_accessor(
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    get: AccessorValue,
-    set: AccessorValue,
-    configurable: bool,
-) {
-    assert!(
-        context
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(get),
-                    set: DescriptorField::Present(set),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
 }
 
 pub(crate) fn define_data_with_flags(
