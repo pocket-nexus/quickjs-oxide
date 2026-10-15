@@ -2,572 +2,193 @@
 use super::JsValue;
 use super::{Completion, DirectCallTarget, Resume, Step};
 
-impl TryFrom<crate::engine::builtins::IteratorCloseStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::IteratorCloseStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorCloseStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read {
-                    object,
-                    key,
-                    resume,
-                } => Self::Read {
-                    receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                    object: Some(object),
-                    key: Some(key),
-                    resume: Some(Resume::IteratorClose(resume)),
-                },
-                T::Call {
-                    callable,
-                    iterator,
-                    resume,
-                } => Self::Call {
-                    target: Some(DirectCallTarget::Callable(callable)),
-                    receiver: Some(JsValue::Object(iterator.into_handle())),
-                    arguments: Some(Vec::new()),
-                    resume: Some(Resume::IteratorClose(resume)),
-                },
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorCloseStep => IteratorClose;
+    Read { object, key } => read;
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
+        T::Call {
+            callable,
+            iterator,
+            resume,
+        } => Self::Call {
+            target: Some(DirectCallTarget::Callable(callable)),
+            receiver: Some(JsValue::Object(iterator.into_handle())),
+            arguments: Some(Vec::new()),
+            resume: Some(Resume::IteratorClose(resume)),
+        },
     }
 }
 
-impl TryFrom<crate::engine::builtins::IteratorNextStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::IteratorNextStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorNextStep as T;
-            match step {
-                T::Complete(result) => Self::IteratorNextComplete(Some(result)),
-                T::Read {
-                    object,
-                    key,
-                    resume,
-                } => Self::Read {
-                    receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                    object: Some(object),
-                    key: Some(key),
-                    resume: Some(Resume::IteratorNext(resume)),
-                },
-                T::Call {
-                    callable,
-                    iterator,
-                    resume,
-                } => Self::IteratorCall {
-                    callable: Some(callable),
-                    iterator: Some(iterator),
-                    resume: Some(resume),
-                },
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorNextStep => IteratorNext;
+    Read { object, key } => read;
+    raw {
+        T::Complete(result) => Self::IteratorNextComplete(Some(result)),
+        T::Call {
+            callable,
+            iterator,
+            resume,
+        } => Self::IteratorCall {
+            callable: Some(callable),
+            iterator: Some(iterator),
+            resume: Some(resume),
+        },
     }
 }
 
-impl TryFrom<crate::engine::builtins::IteratorConsumeStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::IteratorConsumeStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorConsumeStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    Self::Read {
-                        receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::IteratorConsume(resume)),
-                    }
-                }
-                T::Next { mut resume } => {
-                    let iterator = resume.take_next_iterator();
-                    let method = resume.take_next_method();
-                    Self::IteratorNext {
-                        iterator: Some(iterator),
-                        method: Some(method),
-                        resume: Some(Resume::IteratorConsume(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(JsValue::Undefined),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::IteratorConsume(resume)),
-                    }
-                }
-                T::Close {
-                    iterator,
-                    completion,
-                } => Self::IteratorClose {
-                    iterator: Some(iterator),
-                    completion: Some(completion),
-                },
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorConsumeStep => IteratorConsume;
+    Read => read(take_read_object, take_read_key);
+    Next => IteratorNext { iterator: take_next_iterator, method: take_next_method };
+    Call => Call { target: take_call_callable as DirectCallTarget::Callable,
+        arguments: take_call_arguments; receiver: JsValue::Undefined };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
+        T::Close {
+            iterator,
+            completion,
+        } => Self::IteratorClose {
+            iterator: Some(iterator),
+            completion: Some(completion),
+        },
     }
 }
 
-impl TryFrom<crate::engine::builtins::IteratorHelperStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::IteratorHelperStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorHelperStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    Self::Read {
-                        receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::IteratorHelper(resume)),
-                    }
-                }
-                T::Next { mut resume } => {
-                    let iterator = resume.take_next_iterator();
-                    let method = resume.take_next_method();
-                    Self::IteratorNext {
-                        iterator: Some(iterator),
-                        method: Some(method),
-                        resume: Some(Resume::IteratorHelper(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::IteratorHelper(resume)),
-                    }
-                }
-                T::Close { mut resume } => {
-                    let iterator = resume.take_close_iterator();
-                    let completion = resume.take_close_completion();
-                    Self::IteratorCloseWithResume {
-                        iterator: Some(iterator),
-                        completion: Some(completion),
-                        resume: Some(Resume::IteratorHelper(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorHelperStep => IteratorHelper;
+    Read => read(take_read_object, take_read_key);
+    Next => IteratorNext { iterator: take_next_iterator, method: take_next_method };
+    Call => call(take_call_callable, take_call_receiver, take_call_arguments);
+    Close => IteratorCloseWithResume { iterator: take_close_iterator,
+        completion: take_close_completion };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::IteratorCreateStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::IteratorCreateStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorCreateStep as T;
-            match step {
-                T::CloseInvalidCount { iterator, resume } => Self::IteratorCloseWithResume {
-                    iterator: Some(iterator),
-                    completion: Some(Completion::Throw(JsValue::Undefined)),
-                    resume: Some(Resume::IteratorInvalidCount(resume)),
-                },
-
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read {
-                    object,
-                    key,
-                    resume,
-                } => Self::Read {
-                    receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                    object: Some(object),
-                    key: Some(key),
-                    resume: Some(Resume::IteratorCreate(resume)),
-                },
-                T::Number { value, resume } => Self::Number {
-                    value: Some(value),
-                    resume: Some(Resume::IteratorCreate(resume)),
-                },
-                T::Close {
-                    iterator,
-                    completion,
-                } => Self::IteratorClose {
-                    iterator: Some(iterator),
-                    completion: Some(completion),
-                },
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorCreateStep => IteratorCreate;
+    CloseInvalidCount { iterator } => IteratorCloseWithResume {
+        completion: Completion::Throw(JsValue::Undefined) } @ IteratorInvalidCount;
+    Read { object, key } => read;
+    Number { value } => Number;
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
+        T::Close {
+            iterator,
+            completion,
+        } => Self::IteratorClose {
+            iterator: Some(iterator),
+            completion: Some(completion),
+        },
     }
 }
 
-impl TryFrom<crate::engine::builtins::IteratorFromStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::IteratorFromStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorFromStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    Self::ReadValue {
-                        receiver: Some(receiver),
-                        key: Some(key),
-                        resume: Some(Resume::IteratorFrom(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(Vec::new()),
-                        resume: Some(Resume::IteratorFrom(resume)),
-                    }
-                }
-                T::Instance { mut resume } => {
-                    let constructor = resume.take_instance_constructor();
-                    let value = resume.take_instance_value();
-                    Self::OrdinaryInstance {
-                        constructor: Some(constructor),
-                        value: Some(value),
-                        resume: Some(Resume::IteratorFrom(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorFromStep => IteratorFrom;
+    Read => ReadValue { receiver: take_read_receiver, key: take_read_key };
+    Call => call(take_call_callable, take_call_receiver);
+    Instance => OrdinaryInstance { constructor: take_instance_constructor,
+        value: take_instance_value };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::IteratorWrapStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::IteratorWrapStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorWrapStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    Self::ReadValue {
-                        receiver: Some(receiver),
-                        key: Some(key),
-                        resume: Some(Resume::IteratorWrap(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(Vec::new()),
-                        resume: Some(Resume::IteratorWrap(resume)),
-                    }
-                }
-                T::Next { mut resume } => {
-                    let iterator = resume.take_next_iterator();
-                    let method = resume.take_next_method();
-                    Self::IteratorNext {
-                        iterator: Some(iterator),
-                        method: Some(method),
-                        resume: Some(Resume::IteratorWrap(resume)),
-                    }
-                }
-                T::Parse { mut resume } => {
-                    let result = resume.take_parse_result();
-                    Self::ParseIterator {
-                        result: Some(result),
-                        resume: Some(Resume::IteratorWrap(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorWrapStep => IteratorWrap;
+    Read => ReadValue { receiver: take_read_receiver, key: take_read_key };
+    Call => call(take_call_callable, take_call_receiver);
+    Next => IteratorNext { iterator: take_next_iterator, method: take_next_method };
+    Parse => ParseIterator { result: take_parse_result };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::IteratorConcatStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::IteratorConcatStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorConcatStep as T;
-            match step {
-                T::Complete(result) => Self::NativeRawComplete(Some(result)),
-                T::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    Self::Read {
-                        receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::IteratorConcat(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(Vec::new()),
-                        resume: Some(Resume::IteratorConcat(resume)),
-                    }
-                }
-                T::Next { mut resume } => {
-                    let iterator = resume.take_next_iterator();
-                    let method = resume.take_next_method();
-                    Self::IteratorNext {
-                        iterator: Some(iterator),
-                        method: Some(method),
-                        resume: Some(Resume::IteratorConcat(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorConcatStep => IteratorConcat;
+    Read => read(take_read_object, take_read_key);
+    Call => call(take_call_callable, take_call_receiver);
+    Next => IteratorNext { iterator: take_next_iterator, method: take_next_method };
+    raw {
+        T::Complete(result) => Self::NativeRawComplete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::IteratorConstructorStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(
-        step: crate::engine::builtins::IteratorConstructorStep,
-    ) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorConstructorStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Prototype { new_target, resume } => Self::ConstructorSource {
-                    new_target: Some(new_target),
-                    resume: Some(Resume::IteratorConstructor(resume)),
-                },
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorConstructorStep => IteratorConstructor;
+    Prototype { new_target } => ConstructorSource;
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::IteratorTagStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::IteratorTagStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::IteratorTagStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Own { mut resume } => {
-                    let object = resume.take_own_object();
-                    let key = resume.take_own_key();
-                    Self::OwnFlag {
-                        object: Some(object),
-                        key: Some(key),
-                        enumerable: Some(false),
-                        resume: Some(Resume::IteratorTag(resume)),
-                    }
-                }
-                T::Define { mut resume } => {
-                    let object = resume.take_define_object();
-                    let key = resume.take_define_key();
-                    let descriptor = resume.take_define_descriptor();
-                    Self::Define {
-                        object: Some(object),
-                        key: Some(key),
-                        descriptor: Some(descriptor.into()),
-                        resume: Some(Resume::IteratorTag(resume)),
-                    }
-                }
-                T::Set { mut resume } => {
-                    let object = resume.take_set_object();
-                    let key = resume.take_set_key();
-                    let value = resume.take_set_value();
-                    let receiver = match object.try_clone() {
-                        Ok(receiver) => receiver,
-                        Err(error) => {
-                            let _ = object.runtime().release_jsvalue(value);
-                            return Err(error);
-                        }
-                    };
-                    Self::Set {
-                        receiver: Some(JsValue::Object(receiver.into_handle())),
-                        object: Some(object),
-                        key: Some(key),
-                        value: Some(value),
-                        resume: Some(Resume::IteratorTag(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::IteratorTagStep => IteratorTag;
+    Own => OwnFlag { object: take_own_object, key: take_own_key; enumerable: false };
+    Define => Define { object: take_define_object, key: take_define_key,
+        descriptor: take_define_descriptor as Into::into };
+    Set => set(take_set_object, take_set_key, take_set_value);
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::MapCallbackStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::MapCallbackStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::MapCallbackStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::MapCallback(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::MapCallbackStep => MapCallback;
+    Call => call(take_call_callable, take_call_receiver, take_call_arguments);
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::SetEachStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::SetEachStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::SetEachStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::SetEach(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::SetEachStep => SetEach;
+    Call => call(take_call_callable, take_call_receiver, take_call_arguments);
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::WeakComputedStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::WeakComputedStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::WeakComputedStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Call {
-                    callable,
-                    arguments,
-                    resume,
-                } => Self::Call {
-                    target: Some(DirectCallTarget::Callable(callable)),
-                    receiver: Some(JsValue::Undefined),
-                    arguments: Some(arguments),
-                    resume: Some(Resume::WeakComputed(resume)),
-                },
-            }
-        })
+step_from! {
+    crate::engine::builtins::WeakComputedStep => WeakComputed;
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
+        T::Call {
+            callable,
+            arguments,
+            resume,
+        } => Self::Call {
+            target: Some(DirectCallTarget::Callable(callable)),
+            receiver: Some(JsValue::Undefined),
+            arguments: Some(arguments),
+            resume: Some(Resume::WeakComputed(resume)),
+        },
     }
 }
 
-impl TryFrom<crate::engine::builtins::SetOperationStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::SetOperationStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::SetOperationStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    Self::ReadValue {
-                        receiver: Some(receiver),
-                        key: Some(key),
-                        resume: Some(Resume::SetOperation(resume)),
-                    }
-                }
-                T::Number { mut resume } => {
-                    let value = resume.take_number_value();
-                    Self::Number {
-                        value: Some(value),
-                        resume: Some(Resume::SetOperation(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::SetOperation(resume)),
-                    }
-                }
-                T::Parse { mut resume } => {
-                    let result = resume.take_parse_result();
-                    Self::ParseIterator {
-                        result: Some(result),
-                        resume: Some(Resume::SetOperation(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::SetOperationStep => SetOperation;
+    Read => ReadValue { receiver: take_read_receiver, key: take_read_key };
+    Number => Number { value: take_number_value };
+    Call => call(take_call_callable, take_call_receiver, take_call_arguments);
+    Parse => ParseIterator { result: take_parse_result };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::CollectionStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::CollectionStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::CollectionStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Prototype { mut resume } => {
-                    let new_target = resume.take_prototype_new_target();
-                    Self::ConstructorSource {
-                        new_target: Some(new_target),
-                        resume: Some(Resume::Collection(resume)),
-                    }
-                }
-                T::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    Self::ReadValue {
-                        receiver: Some(receiver),
-                        key: Some(key),
-                        resume: Some(Resume::Collection(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::Collection(resume)),
-                    }
-                }
-                T::Next { mut resume } => {
-                    let iterator = resume.take_next_iterator();
-                    let method = resume.take_next_method();
-                    Self::IteratorNext {
-                        iterator: Some(iterator),
-                        method: Some(method),
-                        resume: Some(Resume::Collection(resume)),
-                    }
-                }
-                T::Close { mut resume } => {
-                    let iterator = resume.take_close_iterator();
-                    let completion = resume.take_close_completion();
-                    Self::IteratorCloseWithResume {
-                        iterator: Some(iterator),
-                        completion: Some(completion),
-                        resume: Some(Resume::Collection(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::CollectionStep => Collection;
+    Prototype => ConstructorSource { new_target: take_prototype_new_target };
+    Read => ReadValue { receiver: take_read_receiver, key: take_read_key };
+    Call => call(take_call_callable, take_call_receiver, take_call_arguments);
+    Next => IteratorNext { iterator: take_next_iterator, method: take_next_method };
+    Close => IteratorCloseWithResume { iterator: take_close_iterator,
+        completion: take_close_completion };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }

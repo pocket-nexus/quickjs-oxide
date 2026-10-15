@@ -1,564 +1,147 @@
 //! Mechanical adapters for object builtins domain requests.
-use super::{DirectCallTarget, JsValue, Resume, Step};
+use super::{JsValue, Resume, Step};
 
-impl TryFrom<crate::engine::builtins::BuiltinPrototypeStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::BuiltinPrototypeStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::BuiltinPrototypeStep;
-            match step {
-                BuiltinPrototypeStep::Complete(result) => Self::Complete(Some(result)),
-                BuiltinPrototypeStep::Get { object, resume } => Self::GetPrototype {
-                    object: Some(object),
-                    resume: Some(Resume::BuiltinPrototype(resume)),
-                },
-                BuiltinPrototypeStep::Set {
-                    object,
-                    prototype,
-                    resume,
-                } => Self::SetPrototype {
-                    object: Some(object),
-                    prototype: Some(prototype),
-                    resume: Some(Resume::BuiltinPrototype(resume)),
-                },
-            }
-        })
+step_from! {
+    crate::engine::builtins::BuiltinPrototypeStep => BuiltinPrototype;
+    Get { object } => GetPrototype;
+    Set { object, prototype } => SetPrototype;
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::PropertyStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::PropertyStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::PropertyStep;
-            match step {
-                PropertyStep::Complete(result) => Self::Complete(Some(result)),
-                PropertyStep::Keys { mut resume } => {
-                    let object = resume.take_keys_object();
-                    Self::Keys {
-                        object: Some(object),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-                PropertyStep::Key { mut resume } => {
-                    let value = resume.take_key_value();
-                    Self::Primitive {
-                        value: Some(value),
-                        hint: Some(crate::engine::vm::ToPrimitiveHint::String),
-                        resume: Some(Resume::PropertyKey(resume)),
-                    }
-                }
-                PropertyStep::Convert { mut resume } => {
-                    let value = resume.take_convert_value();
-                    Self::Convert {
-                        value: Some(value),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-                PropertyStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    let receiver = resume.take_read_receiver();
-                    Self::Read {
-                        object: Some(object),
-                        key: Some(key),
-                        receiver: Some(receiver),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-                PropertyStep::Set { mut resume } => {
-                    let object = resume.take_set_object();
-                    let key = resume.take_set_key();
-                    let value = resume.take_set_value();
-                    let receiver = resume.take_set_receiver();
-                    Self::Set {
-                        object: Some(object),
-                        key: Some(key),
-                        value: Some(value),
-                        receiver: Some(receiver),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-                PropertyStep::Has { mut resume } => {
-                    let object = resume.take_has_object();
-                    let key = resume.take_has_key();
-                    Self::Has {
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-                PropertyStep::Delete { mut resume } => {
-                    let object = resume.take_delete_object();
-                    let key = resume.take_delete_key();
-                    Self::Delete {
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-                PropertyStep::Define { mut resume } => {
-                    let object = resume.take_define_object();
-                    let key = resume.take_define_key();
-                    let descriptor = resume.take_define_descriptor();
-                    Self::Define {
-                        object: Some(object),
-                        key: Some(key),
-                        descriptor: Some(descriptor.into()),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-                PropertyStep::Descriptor { mut resume } => {
-                    let object = resume.take_descriptor_object();
-                    let key = resume.take_descriptor_key();
-                    Self::Descriptor {
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-                PropertyStep::Extensible { mut resume } => {
-                    let object = resume.take_extensible_object();
-                    Self::Extensible {
-                        object: Some(object),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-                PropertyStep::Prevent { mut resume } => {
-                    let object = resume.take_prevent_object();
-                    Self::PreventExtensions {
-                        object: Some(object),
-                        resume: Some(Resume::Property(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::PropertyStep => Property;
+    Keys => Keys { object: take_keys_object };
+    Key => Primitive { value: take_key_value;
+        hint: crate::engine::vm::ToPrimitiveHint::String } @ PropertyKey;
+    Convert => Convert { value: take_convert_value };
+    Read => Read { object: take_read_object, key: take_read_key, receiver: take_read_receiver };
+    Set => Set { object: take_set_object, key: take_set_key, value: take_set_value,
+        receiver: take_set_receiver };
+    Has => Has { object: take_has_object, key: take_has_key };
+    Delete => Delete { object: take_delete_object, key: take_delete_key };
+    Define => Define { object: take_define_object, key: take_define_key,
+        descriptor: take_define_descriptor as Into::into };
+    Descriptor => Descriptor { object: take_descriptor_object, key: take_descriptor_key };
+    Extensible => Extensible { object: take_extensible_object };
+    Prevent => PreventExtensions { object: take_prevent_object };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::PredicateStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::PredicateStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::PredicateStep;
-            match step {
-                PredicateStep::Complete(result) => Self::Complete(Some(result)),
-                PredicateStep::Descriptor { mut resume } => {
-                    let object = resume.take_descriptor_object();
-                    let key = resume.take_descriptor_key();
-                    Self::Descriptor {
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::Predicate(resume)),
-                    }
-                }
-                PredicateStep::Prototype { mut resume } => {
-                    let object = resume.take_prototype_object();
-                    Self::GetPrototype {
-                        object: Some(object),
-                        resume: Some(Resume::Predicate(resume)),
-                    }
-                }
-                PredicateStep::Define { mut resume } => {
-                    let object = resume.take_define_object();
-                    let key = resume.take_define_key();
-                    let descriptor = resume.take_define_descriptor();
-                    Self::Define {
-                        object: Some(object),
-                        key: Some(key),
-                        descriptor: Some(descriptor.into()),
-                        resume: Some(Resume::Predicate(resume)),
-                    }
-                }
-                PredicateStep::Key { mut resume } => {
-                    let value = resume.take_key_value();
-                    Self::Primitive {
-                        value: Some(value),
-                        hint: Some(crate::engine::vm::ToPrimitiveHint::String),
-                        resume: Some(Resume::PredicateKey(resume)),
-                    }
-                }
-                PredicateStep::Own { mut resume } => {
-                    let object = resume.take_own_object();
-                    let key = resume.take_own_key();
-                    let enumerable = resume.take_own_enumerable();
-                    Self::OwnFlag {
-                        object: Some(object),
-                        key: Some(key),
-                        enumerable: Some(enumerable),
-                        resume: Some(Resume::Predicate(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::PredicateStep => Predicate;
+    Descriptor => Descriptor { object: take_descriptor_object, key: take_descriptor_key };
+    Prototype => GetPrototype { object: take_prototype_object };
+    Define => Define { object: take_define_object, key: take_define_key,
+        descriptor: take_define_descriptor as Into::into };
+    Key => Primitive { value: take_key_value;
+        hint: crate::engine::vm::ToPrimitiveHint::String } @ PredicateKey;
+    Own => OwnFlag { object: take_own_object, key: take_own_key, enumerable: take_own_enumerable };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::DefinitionsStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::DefinitionsStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::DefinitionsStep;
-            match step {
-                DefinitionsStep::Complete(result) => Self::Complete(Some(result)),
-                DefinitionsStep::Keys { mut resume } => {
-                    let object = resume.take_keys_object();
-                    Self::Keys {
-                        object: Some(object),
-                        resume: Some(Resume::Definitions(resume)),
-                    }
-                }
-                DefinitionsStep::Enumerable { mut resume } => {
-                    let object = resume.take_enumerable_object();
-                    let key = resume.take_enumerable_key();
-                    Self::SnapshotEnumerable {
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::Definitions(resume)),
-                    }
-                }
-                DefinitionsStep::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    Self::Read {
-                        receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::Definitions(resume)),
-                    }
-                }
-                DefinitionsStep::Convert { mut resume } => {
-                    let value = resume.take_convert_value();
-                    Self::Convert {
-                        value: Some(value),
-                        resume: Some(Resume::Definitions(resume)),
-                    }
-                }
-                DefinitionsStep::Define { mut resume } => {
-                    let object = resume.take_define_object();
-                    let key = resume.take_define_key();
-                    let descriptor = resume.take_define_descriptor();
-                    Self::Define {
-                        object: Some(object),
-                        key: Some(key),
-                        descriptor: Some(descriptor.into()),
-                        resume: Some(Resume::Definitions(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::DefinitionsStep => Definitions;
+    Keys => Keys { object: take_keys_object };
+    Enumerable => SnapshotEnumerable { object: take_enumerable_object, key: take_enumerable_key };
+    Read => read(take_read_object, take_read_key);
+    Convert => Convert { value: take_convert_value };
+    Define => Define { object: take_define_object, key: take_define_key,
+        descriptor: take_define_descriptor as Into::into };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::ObjectStringStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::ObjectStringStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::ObjectStringStep;
-            match step {
-                ObjectStringStep::Complete(result) => Self::Complete(Some(result)),
-                ObjectStringStep::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    Self::ReadValue {
-                        receiver: Some(receiver),
-                        key: Some(key),
-                        resume: Some(Resume::ObjectString(resume)),
-                    }
-                }
-                ObjectStringStep::Call { mut resume } => {
-                    let target = resume.take_call_target();
-                    let receiver = resume.take_call_receiver();
-                    Self::Call {
-                        target: Some(target),
-                        receiver: Some(receiver),
-                        arguments: Some(Vec::new()),
-                        resume: Some(Resume::ObjectString(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::ObjectStringStep => ObjectString;
+    Read => ReadValue { receiver: take_read_receiver, key: take_read_key };
+    Call => Call { target: take_call_target, receiver: take_call_receiver; arguments: Vec::new() };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::ObjectIterationStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::ObjectIterationStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::ObjectIterationStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    Self::ReadValue {
-                        receiver: Some(receiver),
-                        key: Some(key),
-                        resume: Some(Resume::ObjectIteration(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::ObjectIteration(resume)),
-                    }
-                }
-                T::Next { mut resume } => {
-                    let iterator = resume.take_next_iterator();
-                    let method = resume.take_next_method();
-                    Self::IteratorNext {
-                        iterator: Some(iterator),
-                        method: Some(method),
-                        resume: Some(Resume::ObjectIteration(resume)),
-                    }
-                }
-                T::Key { mut resume } => {
-                    let value = resume.take_key_value();
-                    Self::Primitive {
-                        value: Some(value),
-                        hint: Some(crate::engine::vm::ToPrimitiveHint::String),
-                        resume: Some(Resume::ObjectIterationKey(resume)),
-                    }
-                }
-                T::Define { mut resume } => {
-                    let object = resume.take_define_object();
-                    let key = resume.take_define_key();
-                    let descriptor = resume.take_define_descriptor();
-                    Self::Define {
-                        object: Some(object),
-                        key: Some(key),
-                        descriptor: Some(descriptor.into()),
-                        resume: Some(Resume::ObjectIteration(resume)),
-                    }
-                }
-                T::Push { mut resume } => {
-                    let object = resume.take_push_object();
-                    let value = resume.take_push_value();
-                    Self::ArrayPush {
-                        object: Some(object),
-                        value: Some(value),
-                        resume: Some(Resume::ObjectIteration(resume)),
-                    }
-                }
-                T::Close {
-                    iterator,
-                    completion,
-                } => Self::IteratorClose {
-                    iterator: Some(iterator),
-                    completion: Some(completion),
-                },
-            }
-        })
+step_from! {
+    crate::engine::builtins::ObjectIterationStep => ObjectIteration;
+    Read => ReadValue { receiver: take_read_receiver, key: take_read_key };
+    Call => call(take_call_callable, take_call_receiver, take_call_arguments);
+    Next => IteratorNext { iterator: take_next_iterator, method: take_next_method };
+    Key => Primitive { value: take_key_value;
+        hint: crate::engine::vm::ToPrimitiveHint::String } @ ObjectIterationKey;
+    Define => Define { object: take_define_object, key: take_define_key,
+        descriptor: take_define_descriptor as Into::into };
+    Push => ArrayPush { object: take_push_object, value: take_push_value };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
+        T::Close {
+            iterator,
+            completion,
+        } => Self::IteratorClose {
+            iterator: Some(iterator),
+            completion: Some(completion),
+        },
     }
 }
 
-impl TryFrom<crate::engine::builtins::ObjectCopyStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::ObjectCopyStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::ObjectCopyStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
+step_from! {
+    crate::engine::builtins::ObjectCopyStep => ObjectCopy;
+    Read { object, key } => read;
+    Keys { object } => Keys;
+    Enumerable { object, key } => SnapshotEnumerable;
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
 
-                T::PreparedRead(prepared) => {
-                    let (read, key, resume) = prepared.into_parts();
-                    Self::PreparedRead {
-                        read: Some(read),
-                        key: Some(key),
-                        resume: Some(Resume::ObjectCopy(resume)),
-                    }
-                }
-                T::Read {
-                    object,
-                    key,
-                    resume,
-                } => Self::Read {
-                    receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                    object: Some(object),
-                    key: Some(key),
-                    resume: Some(Resume::ObjectCopy(resume)),
-                },
-                T::Keys { object, resume } => Self::Keys {
-                    object: Some(object),
-                    resume: Some(Resume::ObjectCopy(resume)),
-                },
-                T::Enumerable {
-                    object,
-                    key,
-                    resume,
-                } => Self::SnapshotEnumerable {
-                    object: Some(object),
-                    key: Some(key),
-                    resume: Some(Resume::ObjectCopy(resume)),
-                },
+        T::PreparedRead(prepared) => {
+            let (read, key, resume) = prepared.into_parts();
+            Self::PreparedRead {
+                read: Some(read),
+                key: Some(key),
+                resume: Some(Resume::ObjectCopy(resume)),
             }
-        })
+        }
     }
 }
 
-impl TryFrom<crate::engine::builtins::ObjectConstructorStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::ObjectConstructorStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::ObjectConstructorStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Prototype { new_target, resume } => Self::ConstructorSource {
-                    new_target: Some(new_target),
-                    resume: Some(Resume::ObjectConstructor(resume)),
-                },
-            }
-        })
+step_from! {
+    crate::engine::builtins::ObjectConstructorStep => ObjectConstructor;
+    Prototype { new_target } => ConstructorSource;
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::JsonParseStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::JsonParseStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::JsonParseStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read { mut resume } => {
-                    let object = resume.take_read_object();
-                    let key = resume.take_read_key();
-                    Self::Read {
-                        receiver: Some(JsValue::Object(object.try_clone()?.into_handle())),
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::JsonParse(resume)),
-                    }
-                }
-                T::String { mut resume } => {
-                    let value = resume.take_string_value();
-                    Self::String {
-                        value: Some(value),
-                        resume: Some(Resume::JsonParse(resume)),
-                    }
-                }
-                T::Number { mut resume } => {
-                    let value = resume.take_number_value();
-                    Self::Number {
-                        value: Some(value),
-                        resume: Some(Resume::JsonParse(resume)),
-                    }
-                }
-                T::Keys { mut resume } => {
-                    let object = resume.take_keys_object();
-                    Self::Keys {
-                        object: Some(object),
-                        resume: Some(Resume::JsonParse(resume)),
-                    }
-                }
-                T::Enumerable { mut resume } => {
-                    let object = resume.take_enumerable_object();
-                    let key = resume.take_enumerable_key();
-                    Self::SnapshotEnumerable {
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::JsonParse(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::JsonParse(resume)),
-                    }
-                }
-                T::Delete { mut resume } => {
-                    let object = resume.take_delete_object();
-                    let key = resume.take_delete_key();
-                    Self::Delete {
-                        object: Some(object),
-                        key: Some(key),
-                        resume: Some(Resume::JsonParse(resume)),
-                    }
-                }
-                T::Define { mut resume } => {
-                    let object = resume.take_define_object();
-                    let key = resume.take_define_key();
-                    let descriptor = resume.take_define_descriptor();
-                    Self::Define {
-                        object: Some(object),
-                        key: Some(key),
-                        descriptor: Some(descriptor.into()),
-                        resume: Some(Resume::JsonParse(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::JsonParseStep => JsonParse;
+    Read => read(take_read_object, take_read_key);
+    String => String { value: take_string_value };
+    Number => Number { value: take_number_value };
+    Keys => Keys { object: take_keys_object };
+    Enumerable => SnapshotEnumerable { object: take_enumerable_object, key: take_enumerable_key };
+    Call => call(take_call_callable, take_call_receiver, take_call_arguments);
+    Delete => Delete { object: take_delete_object, key: take_delete_key };
+    Define => Define { object: take_define_object, key: take_define_key,
+        descriptor: take_define_descriptor as Into::into };
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
 
-impl TryFrom<crate::engine::builtins::JsonStringifyStep> for Step {
-    type Error = crate::engine::api::RuntimeError;
-    fn try_from(step: crate::engine::builtins::JsonStringifyStep) -> Result<Self, Self::Error> {
-        Ok({
-            use crate::engine::builtins::JsonStringifyStep as T;
-            match step {
-                T::Complete(result) => Self::Complete(Some(result)),
-                T::Read { mut resume } => {
-                    let receiver = resume.take_read_receiver();
-                    let key = resume.take_read_key();
-                    Self::ReadValue {
-                        receiver: Some(receiver),
-                        key: Some(key),
-                        resume: Some(Resume::JsonStringify(resume)),
-                    }
-                }
-                T::String { mut resume } => {
-                    let value = resume.take_string_value();
-                    Self::String {
-                        value: Some(value),
-                        resume: Some(Resume::JsonStringify(resume)),
-                    }
-                }
-                T::Number { mut resume } => {
-                    let value = resume.take_number_value();
-                    Self::Number {
-                        value: Some(value),
-                        resume: Some(Resume::JsonStringify(resume)),
-                    }
-                }
-                T::Keys { mut resume } => {
-                    let object = resume.take_keys_object();
-                    Self::Keys {
-                        object: Some(object),
-                        resume: Some(Resume::JsonStringify(resume)),
-                    }
-                }
-                T::Enumerable { mut resume } => {
-                    let object = resume.take_enumerable_object();
-                    let key = resume.take_enumerable_key();
-                    Self::OwnFlag {
-                        object: Some(object),
-                        key: Some(key),
-                        enumerable: Some(true),
-                        resume: Some(Resume::JsonStringify(resume)),
-                    }
-                }
-                T::Call { mut resume } => {
-                    let callable = resume.take_call_callable();
-                    let receiver = resume.take_call_receiver();
-                    let arguments = resume.take_call_arguments();
-                    Self::Call {
-                        target: Some(DirectCallTarget::Callable(callable)),
-                        receiver: Some(receiver),
-                        arguments: Some(arguments),
-                        resume: Some(Resume::JsonStringify(resume)),
-                    }
-                }
-            }
-        })
+step_from! {
+    crate::engine::builtins::JsonStringifyStep => JsonStringify;
+    Read => ReadValue { receiver: take_read_receiver, key: take_read_key };
+    String => String { value: take_string_value };
+    Number => Number { value: take_number_value };
+    Keys => Keys { object: take_keys_object };
+    Enumerable => OwnFlag { object: take_enumerable_object, key: take_enumerable_key;
+        enumerable: true };
+    Call => call(take_call_callable, take_call_receiver, take_call_arguments);
+    raw {
+        T::Complete(result) => Self::Complete(Some(result)),
     }
 }
