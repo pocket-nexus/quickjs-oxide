@@ -267,6 +267,9 @@ execution_opcodes! {
     NumericArrayUpdateElement = 232,
     NumericArrayCompareBranch = 233,
     BorrowedFieldThis = 234,
+    /// `PushThis; GetField; GetLocal|GetArg; GetArrayEl` read without
+    /// retaining `this` or the field. On a miss the word acts as PushThis.
+    BorrowedFieldThisElement = 235,
 }
 
 impl Opcode {
@@ -695,6 +698,7 @@ impl Opcode {
             | Self::BorrowedFieldLocal
             | Self::BorrowedFieldArg
             | Self::BorrowedFieldThis
+            | Self::BorrowedFieldThisElement
             | Self::CompareBranchLocal
             | Self::CompareBranchArg
             | Self::CompareBranchLocalLt
@@ -728,9 +732,9 @@ mod tests {
             match Opcode::from_raw(raw) {
                 Some(opcode) => {
                     assert_eq!(opcode as u16, raw);
-                    assert!(raw <= 234);
+                    assert!(raw <= 235);
                 }
-                None => assert!(raw > 234),
+                None => assert!(raw > 235),
             }
         }
     }

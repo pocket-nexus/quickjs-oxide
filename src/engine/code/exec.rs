@@ -1650,6 +1650,21 @@ fn select_opcodes(
                 }
                 Instruction::PushThis
                     if matches!(code.get(pc + 1), Some(Instruction::GetField(_)))
+                        && code.get(pc + 2).is_some_and(|key| {
+                            direct_source(key)
+                                && matches!(
+                                    key,
+                                    Instruction::GetLocal(index) | Instruction::GetArg(index)
+                                        if *index < 0x8000
+                                )
+                        })
+                        && matches!(code.get(pc + 3), Some(Instruction::GetArrayEl))
+                        && (1..4).all(|offset| !entries.contains(&(pc + offset))) =>
+                {
+                    Opcode::BorrowedFieldThisElement
+                }
+                Instruction::PushThis
+                    if matches!(code.get(pc + 1), Some(Instruction::GetField(_)))
                         && !entries.contains(&(pc + 1)) =>
                 {
                     Opcode::BorrowedFieldThis
@@ -2002,6 +2017,30 @@ fn published_operands(
                 target: true,
             },
         ];
+    } else if opcode == Opcode::BorrowedFieldThisElement {
+        let key = match code[source + 2] {
+            Instruction::GetLocal(index) => u32::from(index),
+            Instruction::GetArg(index) => u32::from(index) | 0x8000,
+            _ => unreachable!("borrowed element selected without direct key"),
+        };
+        let Instruction::GetField(index) = code[source + 1] else {
+            unreachable!("borrowed element selected without static field read")
+        };
+        operands.push(EncodedOperand {
+            bits: key,
+            short: true,
+            target: false,
+        });
+        operands.push(EncodedOperand {
+            bits: index,
+            short: false,
+            target: false,
+        });
+        operands.push(EncodedOperand {
+            bits: u32::try_from(source + 4).expect("execution source exceeds u32"),
+            short: false,
+            target: true,
+        });
     } else if matches!(
         opcode,
         Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg | Opcode::BorrowedFieldThis

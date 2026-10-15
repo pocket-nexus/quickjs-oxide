@@ -167,6 +167,29 @@ impl PropertyReadCache {
         self.read_inline(heap, receiver)
     }
 
+    /// A monomorphic hit whose data value is an object, without counting a
+    /// hit, advancing a cooldown or recording an event. Every other state
+    /// declines, so a caller that then runs the ordinary read probes once.
+    #[inline(always)]
+    pub(crate) fn peek_monomorphic_object(
+        &self,
+        heap: &Heap,
+        receiver: ObjectId,
+    ) -> Option<ObjectId> {
+        if !matches!(self.kind.get(), Kind::Monomorphic) {
+            return None;
+        }
+        let location = self.entry(0);
+        let object = heap.object_fast(receiver);
+        if location.shape != object.shape {
+            return None;
+        }
+        match Self::read_matched(location, heap, object)? {
+            RawValue::Object(field) => Some(*field),
+            _ => None,
+        }
+    }
+
     /// The same probe for the one field-read hit path, which inlines it as
     /// its only hot copy. The receiver is loaded once; each live entry is
     /// compared by shape first and only a matching entry checks the
