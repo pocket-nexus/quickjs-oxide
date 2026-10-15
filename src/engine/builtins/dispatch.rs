@@ -550,7 +550,7 @@ impl Runtime {
                 this_value: native_invocation_input(invocation),
             },
             (
-                NativeCProto::Setter | NativeCProto::SetterMagic,
+                NativeCProto::Setter,
                 invocation @ (NativeInvocation::Call { .. } | NativeInvocation::Construct { .. }),
             ) => NativeInvocation::Setter {
                 this_value: native_invocation_input(invocation),

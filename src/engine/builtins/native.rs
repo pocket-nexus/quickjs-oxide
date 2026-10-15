@@ -1462,11 +1462,6 @@ pub enum NativeCProto {
     Getter,
     Setter,
     GetterMagic,
-    #[allow(
-        dead_code,
-        reason = "Recognized by validation; current producers do not emit this form."
-    )]
-    SetterMagic,
     IteratorNext,
 }
 
