@@ -300,6 +300,208 @@
           </div>
         </div>
       </section>
+
+      <section class="performance" aria-labelledby="performance-title">
+        <p class="section-index">03 / Performance</p>
+        <div class="performance-grid">
+          <div class="performance-copy">
+            <h2 id="performance-title">Faster than Boa, in safe Rust.</h2>
+            <p class="performance-figure">
+              <strong>1.54×</strong>
+              <span>
+                geometric-mean speedup over Boa across all eight items of the
+                V8 benchmark suite v7.
+              </span>
+            </p>
+          </div>
+
+          <figure class="benchmark-chart" aria-labelledby="benchmark-chart-title">
+            <figcaption id="benchmark-chart-title">
+              Speedup over Boa
+              <span>Score ratio per benchmark · Boa = 1×</span>
+            </figcaption>
+
+            <ol class="benchmark-rows">
+              <li class="benchmark-row" tabindex="0" style="--speedup: 5.92"
+                aria-label="RegExp: quickjs-oxide 436, Boa 74, 5.92 times the Boa score">
+                <span class="benchmark-name">RegExp</span>
+                <span class="benchmark-track" aria-hidden="true">
+                  <span class="benchmark-fill"></span>
+                </span>
+                <span class="benchmark-value" aria-hidden="true">5.92×</span>
+                <span class="benchmark-tip" aria-hidden="true">
+                  <strong>5.92×</strong> quickjs-oxide 436 · Boa 74
+                </span>
+              </li>
+              <li class="benchmark-row" tabindex="0" style="--speedup: 1.59"
+                aria-label="NavierStokes: quickjs-oxide 969, Boa 610, 1.59 times the Boa score">
+                <span class="benchmark-name">NavierStokes</span>
+                <span class="benchmark-track" aria-hidden="true">
+                  <span class="benchmark-fill"></span>
+                </span>
+                <span class="benchmark-value" aria-hidden="true">1.59×</span>
+                <span class="benchmark-tip" aria-hidden="true">
+                  <strong>1.59×</strong> quickjs-oxide 969 · Boa 610
+                </span>
+              </li>
+              <li class="benchmark-row" tabindex="0" style="--speedup: 1.43"
+                aria-label="Splay: quickjs-oxide 1408, Boa 986, 1.43 times the Boa score">
+                <span class="benchmark-name">Splay</span>
+                <span class="benchmark-track" aria-hidden="true">
+                  <span class="benchmark-fill"></span>
+                </span>
+                <span class="benchmark-value" aria-hidden="true">1.43×</span>
+                <span class="benchmark-tip" aria-hidden="true">
+                  <strong>1.43×</strong> quickjs-oxide 1408 · Boa 986
+                </span>
+              </li>
+              <li class="benchmark-row" tabindex="0" style="--speedup: 1.25"
+                aria-label="Crypto: quickjs-oxide 381, Boa 305, 1.25 times the Boa score">
+                <span class="benchmark-name">Crypto</span>
+                <span class="benchmark-track" aria-hidden="true">
+                  <span class="benchmark-fill"></span>
+                </span>
+                <span class="benchmark-value" aria-hidden="true">1.25×</span>
+                <span class="benchmark-tip" aria-hidden="true">
+                  <strong>1.25×</strong> quickjs-oxide 381 · Boa 305
+                </span>
+              </li>
+              <li class="benchmark-row" tabindex="0" style="--speedup: 1.21"
+                aria-label="RayTrace: quickjs-oxide 599, Boa 495, 1.21 times the Boa score">
+                <span class="benchmark-name">RayTrace</span>
+                <span class="benchmark-track" aria-hidden="true">
+                  <span class="benchmark-fill"></span>
+                </span>
+                <span class="benchmark-value" aria-hidden="true">1.21×</span>
+                <span class="benchmark-tip" aria-hidden="true">
+                  <strong>1.21×</strong> quickjs-oxide 599 · Boa 495
+                </span>
+              </li>
+              <li class="benchmark-row" tabindex="0" style="--speedup: 1.21"
+                aria-label="Richards: quickjs-oxide 348, Boa 288, 1.21 times the Boa score">
+                <span class="benchmark-name">Richards</span>
+                <span class="benchmark-track" aria-hidden="true">
+                  <span class="benchmark-fill"></span>
+                </span>
+                <span class="benchmark-value" aria-hidden="true">1.21×</span>
+                <span class="benchmark-tip" aria-hidden="true">
+                  <strong>1.21×</strong> quickjs-oxide 348 · Boa 288
+                </span>
+              </li>
+              <li class="benchmark-row" tabindex="0" style="--speedup: 1.16"
+                aria-label="EarleyBoyer: quickjs-oxide 640, Boa 552, 1.16 times the Boa score">
+                <span class="benchmark-name">EarleyBoyer</span>
+                <span class="benchmark-track" aria-hidden="true">
+                  <span class="benchmark-fill"></span>
+                </span>
+                <span class="benchmark-value" aria-hidden="true">1.16×</span>
+                <span class="benchmark-tip" aria-hidden="true">
+                  <strong>1.16×</strong> quickjs-oxide 640 · Boa 552
+                </span>
+              </li>
+              <li class="benchmark-row" tabindex="0" style="--speedup: 1.13"
+                aria-label="DeltaBlue: quickjs-oxide 285, Boa 252, 1.13 times the Boa score">
+                <span class="benchmark-name">DeltaBlue</span>
+                <span class="benchmark-track" aria-hidden="true">
+                  <span class="benchmark-fill"></span>
+                </span>
+                <span class="benchmark-value" aria-hidden="true">1.13×</span>
+                <span class="benchmark-tip" aria-hidden="true">
+                  <strong>1.13×</strong> quickjs-oxide 285 · Boa 252
+                </span>
+              </li>
+            </ol>
+
+            <div class="benchmark-axis" aria-hidden="true">
+              <span class="benchmark-axis-spacer"></span>
+              <div class="benchmark-ticks">
+                <span style="--tick: 0">0×</span>
+                <span style="--tick: 1">1×</span>
+                <span style="--tick: 2">2×</span>
+                <span style="--tick: 3">3×</span>
+                <span style="--tick: 4">4×</span>
+                <span style="--tick: 5">5×</span>
+                <span style="--tick: 6">6×</span>
+              </div>
+              <span class="benchmark-axis-spacer"></span>
+            </div>
+
+            <details class="benchmark-table">
+              <summary>Scores</summary>
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Benchmark</th>
+                    <th scope="col">quickjs-oxide</th>
+                    <th scope="col">Boa</th>
+                    <th scope="col">Speedup</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">RegExp</th>
+                    <td>436</td>
+                    <td>74</td>
+                    <td>5.92×</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">NavierStokes</th>
+                    <td>969</td>
+                    <td>610</td>
+                    <td>1.59×</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Splay</th>
+                    <td>1408</td>
+                    <td>986</td>
+                    <td>1.43×</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Crypto</th>
+                    <td>381</td>
+                    <td>305</td>
+                    <td>1.25×</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">RayTrace</th>
+                    <td>599</td>
+                    <td>495</td>
+                    <td>1.21×</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Richards</th>
+                    <td>348</td>
+                    <td>288</td>
+                    <td>1.21×</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">EarleyBoyer</th>
+                    <td>640</td>
+                    <td>552</td>
+                    <td>1.16×</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">DeltaBlue</th>
+                    <td>285</td>
+                    <td>252</td>
+                    <td>1.13×</td>
+                  </tr>
+                </tbody>
+              </table>
+            </details>
+
+            <p class="benchmark-note">
+              V8 benchmark suite v7 scores, higher is better; median of three
+              runs per engine. quickjs-oxide 0.2.1 and Boa main
+              <code>f0789a2</code> (2026-10-13), both release builds with fat
+              LTO, on an AMD Ryzen 7 7840HS under Linux, pinned to one core.
+              <a href="https://gist.github.com/Eric-Song-Nop/25ac31f71682babbc827a7881c76c953" rel="noreferrer">
+                Scripts and raw results <span aria-hidden="true">↗</span>
+              </a>
+            </p>
+          </figure>
+        </div>
+      </section>
     </main>
 
     <footer class="site-footer">
