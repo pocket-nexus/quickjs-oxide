@@ -70,10 +70,9 @@ impl RuntimeState {
             && table.has_fact(AppendKind::Store, pc)
             && self.try_site_append(poisoned, domain, object, input, table, pc)?
         {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_owned_field_append_site_hit",
-            );
+            profile!(record_owned_execution_event(
+                "ordinary_owned_field_append_site_hit"
+            ));
             return Ok(FieldStore::LayoutPublished);
         }
         let prototype = match select_set_slot(self, object, atom)? {
@@ -194,10 +193,9 @@ impl RuntimeState {
                 self.heap.object(object)?.shape,
             );
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "ordinary_owned_field_append_in_state",
-        );
+        profile!(record_owned_execution_event(
+            "ordinary_owned_field_append_in_state"
+        ));
         Ok(FieldStore::LayoutPublished)
     }
 
@@ -274,10 +272,9 @@ impl RuntimeState {
             && table.has_fact(AppendKind::Definition, pc)
             && self.try_site_append(poisoned, domain, object, input, table, pc)?
         {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_owned_field_define_site_hit",
-            );
+            profile!(record_owned_execution_event(
+                "ordinary_owned_field_define_site_hit"
+            ));
             return Ok(FieldStore::LayoutPublished);
         }
         let data = self.heap.object(object)?;
@@ -346,10 +343,9 @@ impl RuntimeState {
                 self.heap.object(object)?.shape,
             );
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "ordinary_owned_field_define_in_state",
-        );
+        profile!(record_owned_execution_event(
+            "ordinary_owned_field_define_in_state"
+        ));
         Ok(FieldStore::LayoutPublished)
     }
 

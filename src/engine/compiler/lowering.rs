@@ -254,10 +254,9 @@ pub(super) fn lower_unlinked_tree(
     tree: FunctionTree,
     debug_info: DebugInfoMode,
 ) -> Result<UnlinkedFunction, Error> {
-    #[cfg(feature = "profiling")]
-    let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Lowering,
-    );
+    profile!(let _phase_timer = PhaseTimer::start(
+        crate::engine::api::profiling::CompilePhase::Lowering
+    ));
 
     let FunctionTree {
         functions: tree_functions,
@@ -655,8 +654,7 @@ pub(super) fn lower_unlinked_tree(
             )?),
             DebugInfoMode::StripDebug => None,
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_lowered_function(&code, max_stack);
+        profile!(record_lowered_function(&code, max_stack));
         let unlinked = UnlinkedFunction::new(
             code,
             constants,

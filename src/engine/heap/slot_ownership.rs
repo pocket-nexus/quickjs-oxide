@@ -186,12 +186,11 @@ impl Runtime {
         if self.slot_value_release_readiness(value)? != SlotReleaseReadiness::Ready {
             return Ok(false);
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_storage(
+        profile!(record_owned_storage(
             crate::engine::api::profiling::OwnedStorageEvent::HotRelease {
                 heap_root: matches!(value, Value::Object(_) | Value::Symbol(_)),
-            },
-        );
+            }
+        ));
         let old = std::mem::replace(value, Value::Undefined);
         drop(old);
         Ok(true)
@@ -207,12 +206,11 @@ impl Runtime {
         if self.slot_value_release_readiness_jsvalue(value)? != SlotReleaseReadiness::Ready {
             return Ok(false);
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_storage(
+        profile!(record_owned_storage(
             crate::engine::api::profiling::OwnedStorageEvent::HotRelease {
                 heap_root: matches!(value, JsValue::Object(_) | JsValue::Symbol(_)),
-            },
-        );
+            }
+        ));
         let old = std::mem::replace(value, JsValue::Undefined);
         self.release_jsvalue(old)?;
         Ok(true)

@@ -2159,8 +2159,7 @@ pub fn string_to_number(value: &JsString) -> f64 {
     if let StringData::Latin1(bytes) = value.0.data()
         && bytes.is_ascii()
     {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("number_parse.ascii_borrowed");
+        profile!(record_owned_execution_event("number_parse.ascii_borrowed"));
         // ASCII Latin-1 is already the parser's byte representation. Borrow it
         // rather than allocate UTF-16 and then a second UTF-8 buffer. Neither
         // the representation nor the parsed result is cached or changed.
@@ -2168,8 +2167,7 @@ pub fn string_to_number(value: &JsString) -> f64 {
         let text = text.trim_matches(|character: char| is_ecmascript_whitespace(character as u16));
         return parse_number_text(text);
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("number_parse.utf16_fallback");
+    profile!(record_owned_execution_event("number_parse.utf16_fallback"));
     string_to_number_utf16(value)
 }
 

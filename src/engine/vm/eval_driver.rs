@@ -270,8 +270,7 @@ fn prepare_and_enter(
         let entry = request.prepare(runtime, &mut execution.call_storage)?;
         push_frame(runtime, execution, entry)?;
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     Ok(CallStep::Entered)
 }
 
@@ -410,8 +409,7 @@ pub(super) fn apply(
     let depth = execution.slots.depth(&frame.window);
     let entry = request.prepare(runtime, &mut execution.call_storage)?;
     push_frame(runtime, execution, entry)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     Ok(CallStep::Entered)
 }
 

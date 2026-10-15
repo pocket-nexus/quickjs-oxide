@@ -64,8 +64,7 @@ fn public_field_local_completion_preserves_alias_owners_pc_and_identity() {
         let key = runtime.intern_property_key("self").unwrap();
         let next_pc = execution.frames.current_mut(id).unwrap().next_pc().unwrap();
         assert!(!execution.frames.can_push_with_continuations(0));
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         let result = start_public_field(
             &runtime,
             &mut execution,
@@ -169,8 +168,7 @@ fn public_field_proxy_budget_still_precedes_getter_trap_and_mutation() {
     };
     let (mut execution, id) = fixture(&runtime, &mut context, &caller, 1);
     let marker = runtime.new_object(None).unwrap();
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let result = start_public_field(
         &runtime,
         &mut execution,

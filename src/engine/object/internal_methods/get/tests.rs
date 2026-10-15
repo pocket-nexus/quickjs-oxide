@@ -12,8 +12,7 @@ fn get_invariant_consumes_empty_own_proxy_prefix_without_descriptor_request() {
         panic!()
     };
     let key = runtime.intern_property_key("x").unwrap();
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let ProxyGetStep::Effect(StateReadEffect::Get(ProxyGetEffect::Call(mut resume))) =
         ProxyGetStep::start_in_state(
             &runtime,
@@ -95,8 +94,7 @@ fn synchronous_forwarding_owns_no_runtime_or_resume() {
     };
     let key = runtime.intern_property_key("x").unwrap();
     let owners = std::rc::Rc::strong_count(&runtime.0);
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let mut state = runtime.0.state.borrow_mut();
     let step = ProxyGetStep::start_in_state(
         &runtime,

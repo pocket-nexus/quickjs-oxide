@@ -108,8 +108,7 @@ impl ArgumentsResume {
             }
             Phase::Item { length, mut values } => {
                 values.push(value);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_call_buffer_moves("apply.indexed", 1);
+                profile!(record_call_buffer_moves("apply.indexed", 1));
                 self.next(runtime, length, values)
             }
             Phase::Number => {
@@ -162,13 +161,12 @@ impl ArgumentsResume {
             .map_err(|_| HeapError::Allocation {
                 operation: "reserving the argument-list snapshot",
             })?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "apply.indexed",
             0,
             values.capacity(),
-            size_of::<JsValue>(),
-        );
+            size_of::<JsValue>()
+        ));
         self.next(runtime, length, values)
     }
     fn next(

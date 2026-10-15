@@ -42,8 +42,7 @@ impl OwnedSuspension {
         id: FrameId,
         kind: VmSuspendKind,
     ) -> Result<Self, Error> {
-        #[cfg(feature = "profiling")]
-        let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("freeze.detach");
+        profile!(let _profile_phase = PhaseTimer::start_vm("freeze.detach"));
         execution.frames.materialize(runtime)?;
         let frame = execution.frames.current_mut(id)?;
         if frame.cold.has_pending_query()
@@ -97,9 +96,7 @@ impl OwnedSuspension {
         self: Box<Self>,
         runtime: Runtime,
     ) -> Result<VmRunOutcome, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        let _profile_phase =
-            crate::engine::api::profiling::PhaseTimer::start_vm("freeze.owned_export");
+        profile!(let _profile_phase = PhaseTimer::start_vm("freeze.owned_export"));
         let mut this = *self;
         let pc = this.pc;
         let kind = this.kind;

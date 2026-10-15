@@ -315,12 +315,11 @@ impl InvokeResume {
             }
             NativeConversion::Value(arguments) => arguments,
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_observed(
+        profile!(record_call_buffer_observed(
             "invoke.argv_carrier",
             arguments.capacity(),
-            size_of::<JsValue>(),
-        );
+            size_of::<JsValue>()
+        ));
         self.0.arguments = arguments;
         let target = std::mem::replace(
             &mut self.0.target,

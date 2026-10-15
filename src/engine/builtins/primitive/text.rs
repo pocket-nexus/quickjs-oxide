@@ -106,16 +106,14 @@ impl ScalarTextStep {
             )));
         }
         if let Some(result) = complete_primitive(runtime, realm, kind, this_value, arguments)? {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "string_scalar_completed_without_state",
-            );
+            profile!(record_owned_execution_event(
+                "string_scalar_completed_without_state"
+            ));
             return Ok(Self::Complete(result));
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "string_scalar_resident_allocated",
-        );
+        profile!(record_owned_execution_event(
+            "string_scalar_resident_allocated"
+        ));
         let arguments = match kind {
             ScalarTextKind::Concat => {
                 let mut values = Vec::new();

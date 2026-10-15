@@ -38,11 +38,10 @@ impl ObjectRef {
     /// that `id` is live in `runtime`; it deliberately does not retain again.
     #[must_use]
     pub(crate) fn from_owned_handle(runtime: Runtime, id: ObjectId) -> Self {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_runtime_event(
+        profile!(record_runtime_event(
             "runtime.object_root.adopt",
-            "core.object_root.adopt",
-        );
+            "core.object_root.adopt"
+        ));
         Self {
             runtime: Some(runtime),
             id,
@@ -51,11 +50,10 @@ impl ObjectRef {
 
     /// Promote a borrowed raw heap edge to a public owning root.
     pub(crate) fn from_borrowed_handle(runtime: Runtime, id: ObjectId) -> Result<Self, HeapError> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_runtime_event(
+        profile!(record_runtime_event(
             "runtime.object_root.promote",
-            "core.object_root.promote",
-        );
+            "core.object_root.promote"
+        ));
         runtime.retain_object_handle(id)?;
         Ok(Self {
             runtime: Some(runtime),
@@ -74,11 +72,10 @@ impl ObjectRef {
         // Checked retention and Rc cloning do not unwind; diagnostics can.
         #[cfg(any(debug_assertions, feature = "profiling"))]
         let _unwind = self.runtime().unwind_guard();
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_runtime_event(
+        profile!(record_runtime_event(
             "runtime.object_root.clone",
-            "core.object_root.clone",
-        );
+            "core.object_root.clone"
+        ));
         self.runtime().retain_object_handle(self.id)?;
         Ok(Self {
             runtime: Some(self.runtime().clone()),
@@ -223,11 +220,10 @@ impl AtomOwner {
         // Checked retention and Rc cloning do not unwind; diagnostics can.
         #[cfg(any(debug_assertions, feature = "profiling"))]
         let _unwind = self.runtime().unwind_guard();
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_runtime_event(
+        profile!(record_runtime_event(
             "runtime.atom_root.clone",
-            "core.atom_root.clone",
-        );
+            "core.atom_root.clone"
+        ));
         {
             let state = self.runtime().0.state.try_borrow().map_err(|_| {
                 RuntimeError::Invariant("atom root retained during a runtime state borrow")

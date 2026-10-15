@@ -217,10 +217,9 @@ pub(super) fn complete_primitives(
             }
         }
     };
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "conversion_completed_without_task",
-    );
+    profile!(record_owned_execution_event(
+        "conversion_completed_without_task"
+    ));
     Ok(match completion {
         Completion::Return(value) => {
             let mut pending = Some(value);
@@ -229,8 +228,7 @@ pub(super) fn complete_primitives(
                 slots.push_pending(&mut pending)?;
             }
             frame.resume_pc = frame.next_pc()?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
+            profile!(record_owned_instruction(depth));
             PrimitiveCompletion::Completed
         }
         Completion::Throw(value) => PrimitiveCompletion::Throw(value),
@@ -246,8 +244,7 @@ impl ConversionTask {
         identity: u64,
         step: PrimitiveStep,
     ) -> Self {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("conversion_task_allocated");
+        profile!(record_owned_execution_event("conversion_task_allocated"));
         Self(Some(Box::new(ConversionState {
             runtime: runtime.clone(),
             finish,
@@ -298,8 +295,7 @@ impl ConversionTask {
             let depth = execution.slots.depth(&parent.window) + 1;
             execution.slots.push(&mut parent.window, value)?;
             parent.resume_pc = parent.next_pc()?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
+            profile!(record_owned_instruction(depth));
             return Ok(Self(None));
         }
         let (value, finish, hint) = if addition {
@@ -507,10 +503,9 @@ impl ConversionTask {
                             Finish::AddLeft(right) => {
                                 let right = std::mem::replace(right, JsValue::Undefined);
                                 if !matches!(right, JsValue::Object(_)) {
-                                    #[cfg(feature = "profiling")]
-                                    crate::engine::api::profiling::record_owned_execution_event(
-                                        "add_completed_with_primitive_rhs",
-                                    );
+                                    profile!(record_owned_execution_event(
+                                        "add_completed_with_primitive_rhs"
+                                    ));
                                     return Ok(Progress::Complete(add_completion(
                                         runtime, realm, value, right,
                                     )?));

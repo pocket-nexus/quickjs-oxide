@@ -115,8 +115,7 @@ fn resident_array_from_publishes_aliases_symbols_and_fault_metadata_before_press
     );
     let owners = std::rc::Rc::strong_count(&runtime.0);
     runtime.0.gc_pressure.remaining.set(1);
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     let array;
     {
         let mut state = runtime.0.state.borrow_mut();

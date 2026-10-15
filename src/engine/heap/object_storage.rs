@@ -1586,10 +1586,9 @@ impl Heap {
             object.slots.push(replacement);
             std::mem::replace(&mut object.shape, shape)
         };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "shape_append_existing_owners_preserved",
-        );
+        profile!(record_owned_execution_event(
+            "shape_append_existing_owners_preserved"
+        ));
         self.release_reference(RawId::Shape(previous_shape))
             .map_err(|error| SlotReplacementError {
                 error,

@@ -328,8 +328,7 @@ fn repeated_append_transition_keeps_one_reverse_edge() {
     };
     let target = state.append_transition(parent, entry).unwrap();
     let initial_capacity = state.shape_transition_parents[&target].capacity();
-    #[cfg(feature = "profiling")]
-    let profile = crate::engine::api::profiling::CostProfile::start();
+    profile!(let profile = CostProfile::start());
     for _ in 0..10_000 {
         let repeated = state.append_transition(parent, entry).unwrap();
         assert_eq!(repeated, target);

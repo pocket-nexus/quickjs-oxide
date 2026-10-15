@@ -255,8 +255,7 @@ pub(super) fn step(
     match result {
         Ok(()) => {
             frame.resume_pc = frame.next_pc()?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
+            profile!(record_owned_instruction(depth));
             Ok(Outcome::Done)
         }
         Err(error) => {
@@ -326,8 +325,7 @@ fn enter_accessor(
             .map_err(runtime_error_to_vm_error)?;
     }
     frame.resume_pc = frame.next_pc()?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
+    profile!(record_owned_instruction(depth));
     match super::proxy_get_driver::start_vm_call(
         runtime,
         execution,

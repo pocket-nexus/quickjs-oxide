@@ -17,10 +17,9 @@ pub(super) fn advance(
     // A completed native next reply carries only ObjectIteratorStep. Extract
     // that payload in place before moving any wide generic scheduler state.
     if let Step::IteratorNextComplete(result) = pending {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "dispatch_iteration.advance.visit",
-        );
+        profile!(record_owned_execution_event(
+            "dispatch_iteration.advance.visit"
+        ));
         let result = result.take().expect("selected Step field");
         if let Some(result) = complete_next(runtime, execution, query, result, pending)? {
             return Ok(Next::Done(Progress::Call(result)));
@@ -28,10 +27,9 @@ pub(super) fn advance(
     }
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "dispatch_iteration.advance.visit",
-        );
+        profile!(record_owned_execution_event(
+            "dispatch_iteration.advance.visit"
+        ));
         let realm = query.realm;
         match &mut *step {
             Step::RegExpSpecies { regexp, resume } => {

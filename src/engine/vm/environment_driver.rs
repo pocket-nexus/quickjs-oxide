@@ -417,8 +417,7 @@ pub(super) fn step(
                 );
             }
             frame.resume_pc = frame.next_pc()?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(depth);
+            profile!(record_owned_instruction(depth));
             if let Some((callable, receiver, arguments, value_use)) = request {
                 return super::proxy_get_driver::start_vm_call(
                     runtime, execution, id, callable, receiver, arguments, value_use,

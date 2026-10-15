@@ -120,10 +120,9 @@ impl MathStep {
                             .arguments
                             .push_back(runtime.dup_jsvalue(remaining_value)?);
                     }
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "math_remaining_arguments_owned",
-                    );
+                    profile!(record_owned_execution_event(
+                        "math_remaining_arguments_owned"
+                    ));
                     return MathResume(Box::new(resume)).next();
                 }
                 // Object arguments above retain the shared waiting protocol.
@@ -131,17 +130,15 @@ impl MathStep {
                 // the same conversion kernel used by NumberStep completion.
                 let result = runtime.number_from_primitive_jsvalue(realm, value)?;
                 if let Some(completion) = resume.accept_number(runtime, result)? {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "math_completed_without_argument_storage",
-                    );
+                    profile!(record_owned_execution_event(
+                        "math_completed_without_argument_storage"
+                    ));
                     return Ok(Self::Complete(completion));
                 }
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "math_completed_without_argument_storage",
-            );
+            profile!(record_owned_execution_event(
+                "math_completed_without_argument_storage"
+            ));
             resume.finish()
         }
     }

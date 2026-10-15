@@ -54,13 +54,12 @@ impl ColdFrame {
             window: Default::default(),
             owners: frame,
         }));
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "cold.frame_box",
             0,
             1,
-            size_of::<FrameBody>(),
-        );
+            size_of::<FrameBody>()
+        ));
         cold
     }
     #[cfg(test)]
@@ -127,13 +126,12 @@ impl CallStorage {
         self.empty_frames
             .try_reserve(depth.saturating_sub(self.empty_frames.len()))
             .map_err(|_| Error::internal("cold frame recycler allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "cold.empty_pool",
             before,
             self.empty_frames.capacity(),
-            size_of::<Box<FrameBody>>(),
-        );
+            size_of::<Box<FrameBody>>()
+        ));
         self.rare_frames
             .try_reserve(depth.saturating_sub(self.rare_frames.len()))
             .map_err(|_| Error::internal("cold frame recycler allocation failed"))?;
@@ -142,25 +140,23 @@ impl CallStorage {
         self.capture_flags
             .try_reserve(depth.saturating_sub(self.capture_flags.len()))
             .map_err(|_| Error::internal("capture recycler allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "cold.capture_pool",
             before,
             self.capture_flags.capacity(),
-            size_of::<Vec<bool>>(),
-        );
+            size_of::<Vec<bool>>()
+        ));
         #[cfg(feature = "profiling")]
         let before = self.regions.capacity();
         self.regions
             .try_reserve(depth.saturating_sub(self.regions.len()))
             .map_err(|_| Error::internal("region recycler allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "cold.region_pool",
             before,
             self.regions.capacity(),
-            size_of::<Vec<crate::engine::vm::VmUnwindRegion>>(),
-        );
+            size_of::<Vec<crate::engine::vm::VmUnwindRegion>>()
+        ));
         self.prepared_depth = depth;
         Ok(())
     }
@@ -173,13 +169,12 @@ impl CallStorage {
         flags
             .try_reserve(count)
             .map_err(|_| Error::internal("capture flags allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "cold.capture_flags",
             before,
             flags.capacity(),
-            size_of::<bool>(),
-        );
+            size_of::<bool>()
+        ));
         flags.resize(count, false);
         let grown = if flags.capacity() > before {
             flags.capacity()
@@ -201,10 +196,7 @@ impl CallStorage {
             && regions.capacity() > rare.regions.capacity()
         {
             rare.regions = regions;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "call_region_buffer_reused",
-            );
+            profile!(record_owned_execution_event("call_region_buffer_reused"));
         }
         // Only empty bodies wrap the installed owners; a rare shell never
         // attaches itself to a frame whose installer (vacant/vacant_rare)
@@ -212,14 +204,10 @@ impl CallStorage {
         // rare_frames, ordinary frames stay rare-free for release_owned.
         if let Some(mut empty) = self.empty_frames.pop() {
             empty.owners = frame;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("call_cold_frame_reused");
+            profile!(record_owned_execution_event("call_cold_frame_reused"));
             (ColdFrame(empty), 0)
         } else {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "call_cold_frame_allocated",
-            );
+            profile!(record_owned_execution_event("call_cold_frame_allocated"));
             (ColdFrame::new(frame), size_of::<FrameBody>())
         }
     }
@@ -489,14 +477,10 @@ impl CallStorage {
                     "call_region_buffer_reused",
                 );
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("call_cold_frame_reused");
+            profile!(record_owned_execution_event("call_cold_frame_reused"));
             (ColdFrame(frame), 0)
         } else {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "call_cold_frame_allocated",
-            );
+            profile!(record_owned_execution_event("call_cold_frame_allocated"));
             (
                 ColdFrame::new(FrameCold {
                     rare: Default::default(),

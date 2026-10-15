@@ -73,10 +73,9 @@ impl InstanceStep {
             try_ordinary_instanceof(runtime, &candidate, target.object_id(), intrinsic_budget)
         {
             runtime.release_jsvalue(candidate)?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "instanceof.completed_without_continuation",
-            );
+            profile!(record_owned_execution_event(
+                "instanceof.completed_without_continuation"
+            ));
             return Ok(Self::Complete(Completion::Return(JsValue::Bool(found))));
         }
         Self::method(runtime, realm, candidate, target, false)

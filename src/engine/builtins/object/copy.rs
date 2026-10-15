@@ -14,8 +14,7 @@ use crate::engine::{heap::ContextId, value::Value};
 fn clone_copy_object(value: &ObjectRef) -> Result<ObjectRef, crate::engine::api::RuntimeError> {
     Ok({
         let copy = value.try_clone()?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("copy_owner_clone.ObjectRef");
+        profile!(record_owned_execution_event("copy_owner_clone.ObjectRef"));
         copy
     })
 }
@@ -23,8 +22,7 @@ fn clone_copy_object(value: &ObjectRef) -> Result<ObjectRef, crate::engine::api:
 fn clone_copy_key(value: &PropertyKey) -> Result<PropertyKey, crate::engine::api::RuntimeError> {
     Ok({
         let copy = value.try_clone()?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("copy_owner_clone.PropertyKey");
+        profile!(record_owned_execution_event("copy_owner_clone.PropertyKey"));
         copy
     })
 }
@@ -139,8 +137,7 @@ impl CopyStep {
             key: None,
             rejection,
         }));
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("copy_cursor_created");
+        profile!(record_owned_execution_event("copy_cursor_created"));
         Ok(Self::Keys {
             object: clone_copy_object(&resume.source)?,
             resume,
@@ -151,8 +148,7 @@ impl CopyStep {
     pub(crate) fn advance_without_callback(self, runtime: &Runtime) -> Result<Self, RuntimeError> {
         match self {
             Self::Keys { object: _, resume } if resume.snapshot => {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event("copy_local_own_keys");
+                profile!(record_owned_execution_event("copy_local_own_keys"));
                 let keys = runtime.own_property_keys(&resume.source)?;
                 resume.keys(runtime, NativeConversion::Value(keys))
             }
@@ -217,8 +213,7 @@ impl CopyResume {
             }
 
             if self.0.snapshot {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event("copy_local_live_read");
+                profile!(record_owned_execution_event("copy_local_live_read"));
                 let read = runtime.prepare_ordinary_read_selected(
                     &self.0.source,
                     &key,
@@ -230,18 +225,14 @@ impl CopyResume {
                         self.0.key = Some(key);
                         let value = value.unwrap_or(JsValue::Undefined);
                         self.define_value(runtime, value)?;
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "object_copy_value_completed_locally",
-                        );
+                        profile!(record_owned_execution_event(
+                            "object_copy_value_completed_locally"
+                        ));
                         continue;
                     }
                     read => {
                         self.0.key = Some(clone_copy_key(&key)?);
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "copy_selected_read_publish",
-                        );
+                        profile!(record_owned_execution_event("copy_selected_read_publish"));
                         return Ok(CopyStep::PreparedRead(Box::new(PreparedCopyRead {
                             read: Some(read),
                             key: Some(key),
@@ -275,8 +266,7 @@ impl CopyResume {
                 .key
                 .as_ref()
                 .ok_or(RuntimeError::Invariant("Object copy key missing"))?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event("copy_define_attempt");
+            profile!(record_owned_execution_event("copy_define_attempt"));
             match runtime.define_selected_set_data(&self.0.target, key, &value, false)? {
                 crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => Ok(()),
                 _ => Err(RuntimeError::Invariant(self.0.rejection)),
@@ -377,8 +367,7 @@ mod recovery_tests {
         let source = context
             .eval("globalThis.copyTrace=0;({a:1,get b(){copyTrace++;return 2}})")
             .unwrap();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         let source = runtime.into_jsvalue(source).unwrap();
         let step = CopyStep::start(
             &runtime,

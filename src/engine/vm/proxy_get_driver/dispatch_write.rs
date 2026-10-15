@@ -15,8 +15,7 @@ pub(super) fn keys(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("dispatch_write.keys.visit");
+        profile!(record_owned_execution_event("dispatch_write.keys.visit"));
         let realm = query.realm;
         match &mut *step {
             Step::SnapshotEnumerable {
@@ -179,8 +178,7 @@ pub(super) fn set(
 ) -> Result<Next, Error> {
     let step = pending;
     loop {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("dispatch_write.set.visit");
+        profile!(record_owned_execution_event("dispatch_write.set.visit"));
         let realm = query.realm;
         match &mut *step {
             Step::PreparedSet {

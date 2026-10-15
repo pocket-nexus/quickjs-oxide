@@ -43,10 +43,9 @@ pub(super) fn verify_lowered_max_stack(
 /// bits delimit local rewrites; they do not assert reachability, initialized
 /// locals, or a valid resume shape. `verify_parts` proves those stack facts.
 pub(super) fn block_entries(code: &[Instruction]) -> Vec<bool> {
-    #[cfg(feature = "profiling")]
-    let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Blocks,
-    );
+    profile!(let _phase_timer = PhaseTimer::start(
+        crate::engine::api::profiling::CompilePhase::Blocks
+    ));
     let mut entries = vec![false; code.len()];
     if let Some(entry) = entries.first_mut() {
         *entry = true;

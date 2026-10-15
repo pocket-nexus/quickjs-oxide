@@ -358,13 +358,12 @@ impl SlotStore {
         self.native_argument_buffers
             .try_reserve(depth.saturating_sub(self.native_argument_buffers.len()))
             .map_err(|_| Error::internal("native argument recycler allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "call.native_pool",
             _before,
             self.native_argument_buffers.capacity(),
-            size_of::<Vec<JsValue>>(),
-        );
+            size_of::<Vec<JsValue>>()
+        ));
         Ok(())
     }
 
@@ -378,13 +377,12 @@ impl SlotStore {
         arguments
             .try_reserve_exact(count)
             .map_err(|_| Error::internal("native call arguments allocation failed"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "call.native_argv",
             _before,
             arguments.capacity(),
-            size_of::<JsValue>(),
-        );
+            size_of::<JsValue>()
+        ));
         Ok(arguments)
     }
 
@@ -718,16 +716,15 @@ impl SlotStore {
                 };
                 self.slots[parameters_end + index] = Some(binding);
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_call_preparation(
+            profile!(record_call_preparation(
                 parameter_count,
                 0,
                 local_count,
                 0,
                 actual_count,
                 root_copies,
-                1 + usize::from(function_name.is_some()),
-            );
+                1 + usize::from(function_name.is_some())
+            ));
             if let Some((parent, count, method)) = source {
                 let start = source_start.unwrap();
                 for index in 0..count {
@@ -756,10 +753,9 @@ impl SlotStore {
                     self.argument_buffer = storage.original_arguments;
                 }
             }
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "call_bindings_initialized_in_window",
-            );
+            profile!(record_owned_execution_event(
+                "call_bindings_initialized_in_window"
+            ));
         } else {
             for (index, value) in storage.original_arguments.into_iter().enumerate() {
                 self.slots[base + index] = Some(FrameBinding::Direct(value));
@@ -818,8 +814,7 @@ impl SlotStore {
     }
 
     fn check_current(&self, window: &FrameWindow) -> Result<(), Error> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("slot_authentication");
+        profile!(record_owned_execution_event("slot_authentication"));
         if self.owner != window.owner
             || self.windows.last() != Some(&window.id)
             || self.active_end != window.whole().end
@@ -881,8 +876,7 @@ impl SlotStore {
         count: usize,
         method: bool,
     ) -> Result<bool, Error> {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
+        profile!(record_owned_execution_event("call_value_domain_validation"));
         // An ordinary zero-argument call had no domain-check reads at all.
         if count == 0 && !method {
             return Ok(true);
@@ -2857,8 +2851,7 @@ mod tests {
         let marker = runtime.new_object(None).unwrap();
         let marker_id = marker.object_id();
         let mut slots = SlotStore::new(16);
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         let mut capacity = None;
         for _ in 0..20 {
             let mut windows = Vec::new();

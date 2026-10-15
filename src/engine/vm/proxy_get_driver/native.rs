@@ -78,10 +78,9 @@ pub(super) fn finish_result(
 pub(super) fn identity_completion(result: NativeInvokeOutcome) -> Result<Completion, Error> {
     let completion =
         Runtime::ordinary_native_completion(result).map_err(runtime_error_to_vm_error)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "native_identity_completed_in_place",
-    );
+    profile!(record_owned_execution_event(
+        "native_identity_completed_in_place"
+    ));
     Ok(completion)
 }
 
@@ -97,10 +96,9 @@ fn apply_into(
         match next.raw_completion(runtime, result) {
             Ok(Ok(result)) => {
                 *output = Step::IteratorNextComplete(Some(result));
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "native_iterator_completed_in_place",
-                );
+                profile!(record_owned_execution_event(
+                    "native_iterator_completed_in_place"
+                ));
             }
             Ok(Err(result)) => {
                 *output = std::mem::replace(resume, Resume::Identity)
@@ -371,10 +369,9 @@ fn capture_native_step(
             };
             return match result {
                 LocalNativeResult::Complete(result) => {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "string_replace_protocol_completed_locally",
-                    );
+                    profile!(record_owned_execution_event(
+                        "string_replace_protocol_completed_locally"
+                    ));
                     match resume
                         .resume(runtime, result)
                         .map_err(runtime_error_to_vm_error)?
@@ -728,10 +725,9 @@ fn begin_unmigrated(
             storage.recycle_native_wait(records);
         }
         let result = finish_result(runtime, slots, call, result).and_then(identity_completion);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "native_completed_without_waiting_scope",
-        );
+        profile!(record_owned_execution_event(
+            "native_completed_without_waiting_scope"
+        ));
         return result.map(LocalNativeResult::Complete);
     }
     let mut records = pending.expect("native waiting output");
@@ -740,10 +736,9 @@ fn begin_unmigrated(
     } else {
         records[0].call = Some(call);
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "native_activation_transported_to_wait",
-    );
+    profile!(record_owned_execution_event(
+        "native_activation_transported_to_wait"
+    ));
     Ok(LocalNativeResult::Waiting(records))
 }
 
@@ -818,8 +813,7 @@ pub(super) fn start_selected_into(
         }
     };
     let Some(kind) = kind else {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("native_leaf_completion");
+        profile!(record_owned_execution_event("native_leaf_completion"));
         let native_realm = if matches!(mode, super::super::call::NativeInvokeMode::IteratorNextRaw)
             || target.uses_calling_realm()
         {
@@ -1083,10 +1077,9 @@ pub(super) fn begin_selected_into(
         return finish_result(runtime, slots, call, result).map(Some);
     }
     *waiting_call = Some(call);
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "native_activation_transported_to_wait",
-    );
+    profile!(record_owned_execution_event(
+        "native_activation_transported_to_wait"
+    ));
     Ok(None)
 }
 
@@ -1153,16 +1146,14 @@ pub(super) fn compact_array_next_into(
         Ok(None) => Some(Err(Error::internal("Array-next omitted its waiting step"))),
     };
     if let Some(result) = immediate {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "native_raw_completed_without_waiting_scope",
-        );
+        profile!(record_owned_execution_event(
+            "native_raw_completed_without_waiting_scope"
+        ));
         return finish_result(runtime, slots, call, result).map(Some);
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "native_activation_transported_to_wait",
-    );
+    profile!(record_owned_execution_event(
+        "native_activation_transported_to_wait"
+    ));
     *waiting_call = Some(call);
     Ok(None)
 }
@@ -1493,8 +1484,7 @@ mod array_next_small_entry_tests {
     #[test]
     fn array_next_small_entry_preserves_cached_loop_and_ordinary_native_calls() {
         let (runtime, mut context) = test_context();
-        #[cfg(feature = "profiling")]
-        let profile = crate::engine::api::profiling::CostProfile::start();
+        profile!(let profile = CostProfile::start());
         assert_script_true(
             &mut context,
             r#"(function () {

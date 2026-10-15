@@ -14,10 +14,9 @@ pub(super) fn deliver<T: InitialOutput>(
 ) -> Option<NativeInvokeOutcome> {
     match step.split() {
         Ok(result) => {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "native_domain_completed_without_waiting_payload",
-            );
+            profile!(record_owned_execution_event(
+                "native_domain_completed_without_waiting_payload"
+            ));
             Some(result)
         }
         Err(step) => {

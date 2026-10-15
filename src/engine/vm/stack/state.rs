@@ -137,8 +137,7 @@ impl FrameSlots<'_> {
             _ => return None,
         };
         self.store.discard_top_pair_current(self.window);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("nullish_comparison.local");
+        profile!(record_owned_execution_event("nullish_comparison.local"));
         Some(equal)
     }
 
@@ -179,8 +178,7 @@ impl FrameSlots<'_> {
         state
             .release_owned_jsvalue(poisoned, right)
             .map_err(runtime_error_to_vm_error)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("nullish_comparison.local");
+        profile!(record_owned_execution_event("nullish_comparison.local"));
         Ok(Some(equal))
     }
 
@@ -274,8 +272,7 @@ impl FrameSlots<'_> {
             FrameBinding::Uninitialized => {}
             _ => unreachable!("admitted direct destination"),
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("local_completion.store");
+        profile!(record_owned_execution_event("local_completion.store"));
         Ok(super::StoreProgress::Committed)
     }
 
@@ -560,10 +557,9 @@ impl FrameSlots<'_> {
         poisoned: &std::cell::Cell<bool>,
     ) -> Result<(), Error> {
         if self.discard_top_pair_nonfinal(state) {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_owned_field_write_in_execute",
-            );
+            profile!(record_owned_execution_event(
+                "ordinary_owned_field_write_in_execute"
+            ));
             return Ok(());
         }
         self.retire_field_write_general(state, poisoned)
@@ -623,10 +619,9 @@ impl FrameSlots<'_> {
         state
             .release_owned_jsvalue(poisoned, self.pop()?)
             .map_err(runtime_error_to_vm_error)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "ordinary_owned_field_write_in_execute",
-        );
+        profile!(record_owned_execution_event(
+            "ordinary_owned_field_write_in_execute"
+        ));
         Ok(())
     }
 
@@ -733,12 +728,11 @@ impl FrameSlots<'_> {
         state
             .release_owned_jsvalue(poisoned, self.pop()?)
             .map_err(runtime_error_to_vm_error)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(if dense {
+        profile!(record_owned_execution_event(if dense {
             "dense_array_owned_write_in_execute"
         } else {
             "typed_array_number_write_in_execute"
-        });
+        }));
         Ok(true)
     }
 }

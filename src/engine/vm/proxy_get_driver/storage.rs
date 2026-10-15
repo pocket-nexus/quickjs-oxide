@@ -16,13 +16,12 @@ pub(super) fn reserve<T>(
     #[cfg(feature = "profiling")]
     let before = values.capacity();
     values.try_reserve(additional)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_call_buffer_capacity(
+    profile!(record_call_buffer_capacity(
         _name,
         before,
         values.capacity(),
-        size_of::<T>(),
-    );
+        size_of::<T>()
+    ));
     Ok(())
 }
 
@@ -57,13 +56,12 @@ impl QueryStorage {
             std::mem::replace(&mut pending.resume, resume).release_owned(runtime);
             return pending;
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_capacity(
+        profile!(record_call_buffer_capacity(
             "query.pending_box",
             0,
             1,
-            size_of::<super::PendingProxyGet>(),
-        );
+            size_of::<super::PendingProxyGet>()
+        ));
         Box::new(super::PendingProxyGet {
             identity,
             query,
@@ -170,12 +168,11 @@ impl QueryStorage {
     ) -> QueryScope<'a> {
         let reused = !self.free.is_empty();
         let mut buffers = self.free.pop().unwrap_or_default();
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(if reused {
+        profile!(record_owned_execution_event(if reused {
             "query_storage_reused"
         } else {
             "query_storage_new"
-        });
+        }));
         #[cfg(not(feature = "profiling"))]
         let _ = reused;
         if !parents.is_empty() {

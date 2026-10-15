@@ -38,10 +38,7 @@ impl RuntimeState {
     ) -> Result<Option<JsValue>, RuntimeError> {
         *boundary = None;
         loop {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_read.state_probe",
-            );
+            profile!(record_owned_execution_event("ordinary_read.state_probe"));
             let mut selection = self.select_own_read(object, atom, false)?;
             if let OwnReadSelection::Special(kind) = selection {
                 selection = match kind {

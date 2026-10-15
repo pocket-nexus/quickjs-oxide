@@ -231,11 +231,9 @@ pub(in crate::engine::vm) fn try_read_captured_in_state(
             return None;
         }
         state.heap.retain_object_fast(object);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("captured_object.read");
+        profile!(record_owned_execution_event("captured_object.read"));
     } else {
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("captured_scalar.read");
+        profile!(record_owned_execution_event("captured_scalar.read"));
     }
     Some(value)
 }

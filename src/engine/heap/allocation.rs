@@ -1428,10 +1428,9 @@ impl Heap {
                 }
             }
         }
-        #[cfg(feature = "profiling")]
-        let _encode_timer = crate::engine::api::profiling::PhaseTimer::start(
-            crate::engine::api::profiling::CompilePhase::Encode,
-        );
+        profile!(let _encode_timer = PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Encode
+        ));
         let exec = crate::engine::code::exec::ExecCode::encode_with_locals(
             &bytecode.code,
             &bytecode.local_definitions,

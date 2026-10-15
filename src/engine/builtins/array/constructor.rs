@@ -529,10 +529,9 @@ impl crate::engine::heap::runtime::RuntimeState {
                 }
             }
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "array_constructor_completed_in_state",
-        );
+        profile!(record_owned_execution_event(
+            "array_constructor_completed_in_state"
+        ));
         Ok(Some(Completion::Return(
             result_owner.take().expect("Array result owner"),
         )))
