@@ -1,6 +1,5 @@
 use crate::oracle_cases::GroupedCase as Case;
 use crate::runtime_observation::property_callable;
-use quickjs_oxide::engine::api::AccessorValue;
 use quickjs_oxide::engine::api::DescriptorField;
 use quickjs_oxide::engine::api::OrdinaryPropertyDescriptor;
 use quickjs_oxide::engine::api::WellKnownSymbol;
@@ -88,15 +87,6 @@ pub(crate) fn int_property(
     value
 }
 
-pub(crate) fn data_bits(writable: bool, enumerable: bool, configurable: bool) -> String {
-    format!(
-        "D:{}{}{}",
-        u8::from(writable),
-        u8::from(enumerable),
-        u8::from(configurable),
-    )
-}
-
 // Helpers shared verbatim by several oracle modules.
 
 pub(crate) fn object(value: Value) -> ObjectRef {
@@ -169,78 +159,6 @@ pub(crate) fn function(runtime: &Runtime, context: &mut Context, source: &str) -
         .as_callable(&object)
         .unwrap()
         .unwrap_or_else(|| panic!("function probe was not callable: {source}"))
-}
-
-pub(crate) fn define_global_via_data(
-    runtime: &Runtime,
-    context: &mut Context,
-    name: &str,
-    value: Value,
-) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    define_context_data(runtime, context, &global, &key, value);
-}
-
-pub(crate) fn global_value(runtime: &Runtime, context: &mut Context, name: &str) -> Value {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    context.get_property(&global, &key).unwrap()
-}
-
-pub(crate) fn define_context_data(
-    _runtime: &Runtime,
-    context: &mut Context,
-    object: &ObjectRef,
-    key: &PropertyKey,
-    value: Value,
-) {
-    assert!(
-        context
-            .define_own_property(
-                object,
-                key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
-pub(crate) fn getter_descriptor(getter: CallableRef) -> OrdinaryPropertyDescriptor {
-    OrdinaryPropertyDescriptor {
-        get: DescriptorField::Present(AccessorValue::Callable(getter)),
-        set: DescriptorField::Present(AccessorValue::Undefined),
-        enumerable: DescriptorField::Present(true),
-        configurable: DescriptorField::Present(true),
-        ..OrdinaryPropertyDescriptor::new()
-    }
-}
-
-pub(crate) fn complete_data_descriptor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-) -> (Value, bool, bool, bool) {
-    let Some(CompleteOrdinaryPropertyDescriptor::Data {
-        value,
-        writable,
-        enumerable,
-        configurable,
-    }) = runtime.get_own_property(object, key).unwrap()
-    else {
-        panic!("expected a complete data descriptor");
-    };
-    (value, writable, enumerable, configurable)
-}
-
-pub(crate) const fn bit(value: bool) -> u8 {
-    value as u8
 }
 
 pub(crate) fn get_property(
@@ -334,33 +252,6 @@ pub(crate) fn error_string_property(
         );
     };
     value.to_utf8_lossy()
-}
-
-pub(crate) fn own_data_descriptor(
-    runtime: &Runtime,
-    object: &ObjectRef,
-    key: &PropertyKey,
-) -> (Value, bool, bool, bool) {
-    let descriptor = runtime
-        .get_own_property(object, key)
-        .unwrap()
-        .expect("expected own property descriptor");
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        value,
-        writable,
-        enumerable,
-        configurable,
-    } = descriptor
-    else {
-        panic!("expected a data property descriptor");
-    };
-    (value, writable, enumerable, configurable)
-}
-
-pub(crate) fn set_global(runtime: &Runtime, context: &mut Context, name: &str, value: Value) {
-    let global = context.global_object().unwrap();
-    let key = runtime.intern_property_key(name).unwrap();
-    assert!(context.set_property(&global, &key, value).unwrap());
 }
 
 pub(crate) fn define_data_with_flags(

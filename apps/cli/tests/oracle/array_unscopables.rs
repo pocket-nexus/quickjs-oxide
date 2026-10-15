@@ -5,11 +5,8 @@ use crate::runtime_oracle::value_type;
 use quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 
 use quickjs_oxide::engine::api::{
-    CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, PropertyKey, Runtime, Value,
-    WellKnownSymbol,
+    Context, ObjectRef, PropertyKey, Runtime, Value, WellKnownSymbol,
 };
-use std::ffi::OsStr;
-use std::process::Command;
 
 // This target pins QuickJS 2026-06-04 `js_array_unscopables_funcs` and the
 // Symbol.unscopables-specific null-prototype `JS_DEF_OBJECT` autoinit path.
@@ -75,41 +72,6 @@ const VALUE_CASES: &[(&str, &str)] = &[
     ),
 ];
 
-const GRAPH_ORACLE: &str = r#"
-var prototype=Array.prototype,own=Reflect.ownKeys(prototype),symbols=[];
-for(var i=0;i<own.length;i++) {
-  if(own[i]===Symbol.iterator)symbols[symbols.length]='iterator';
-  if(own[i]===Symbol.unscopables)symbols[symbols.length]='unscopables';
-}
-function bits(descriptor) {
-  return 'D'+Number(descriptor.writable)+Number(descriptor.enumerable)+Number(descriptor.configurable);
-}
-var outer=Object.getOwnPropertyDescriptor(prototype,Symbol.unscopables),value=outer.value;
-var keys=Reflect.ownKeys(value),entries=[];
-for(var i=0;i<keys.length;i++) {
-  var descriptor=Object.getOwnPropertyDescriptor(value,keys[i]);
-  entries[entries.length]=keys[i]+':'+descriptor.value+':'+bits(descriptor);
-}
-print('symbols='+symbols.join(',')+':own='+own.length);
-print('outer='+bits(outer)+':null-proto='+(Object.getPrototypeOf(value)===null)+
-      ':array='+Array.isArray(value));
-print('keys='+keys.join(','));
-print('entries='+entries.join('|'));
-"#;
-
-#[test]
-fn array_unscopables_oracle_vectors_self_check() {
-    let oracle = require_qjs_oracle!("Array unscopables oracle self-check");
-    for &(description, source) in VALUE_CASES {
-        let observation = observe_oracle(&oracle, source, description);
-        assert!(
-            observation.starts_with("return|"),
-            "unscopables oracle vector did not return for {description}: {observation:?}",
-        );
-    }
-    assert_eq!(oracle_graph_observations(&oracle).len(), 4);
-}
-
 #[test]
 fn array_unscopables_values_identity_and_mutation_match_pinned_quickjs() {
     let oracle = require_qjs_oracle!("Array unscopables values");
@@ -121,16 +83,6 @@ fn array_unscopables_values_identity_and_mutation_match_pinned_quickjs() {
             "Array unscopables behavior drifted for {description}",
         );
     }
-}
-
-#[test]
-fn array_unscopables_graph_matches_pinned_quickjs() {
-    let oracle = require_qjs_oracle!("Array unscopables graph");
-    assert_eq!(
-        rust_graph_observations(),
-        oracle_graph_observations(&oracle),
-        "Array unscopables graph or descriptor table drifted",
-    );
 }
 
 #[test]
@@ -177,114 +129,6 @@ fn observe_rust_eval(
         value_type(runtime, &value),
         primitive_value_text(value),
     )
-}
-
-fn rust_graph_observations() -> Vec<String> {
-    let (runtime, context) = host_runtime_context();
-    let prototype = context.array_prototype().unwrap();
-    let iterator = PropertyKey::from(
-        runtime
-            .well_known_symbol(WellKnownSymbol::Iterator)
-            .expect("well-known symbol"),
-    );
-    let unscopables = PropertyKey::from(
-        runtime
-            .well_known_symbol(WellKnownSymbol::Unscopables)
-            .expect("well-known symbol"),
-    );
-    let own_keys = runtime.own_property_keys(&prototype).unwrap();
-    let own_key_count = own_keys.len();
-    let symbols = own_keys
-        .into_iter()
-        .filter_map(|key| {
-            if key == iterator {
-                Some("iterator")
-            } else if key == unscopables {
-                Some("unscopables")
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    let descriptor = runtime
-        .get_own_property(&prototype, &unscopables)
-        .unwrap()
-        .expect("missing Array.prototype[Symbol.unscopables]");
-    let CompleteOrdinaryPropertyDescriptor::Data {
-        value: Value::Object(value),
-        writable,
-        enumerable,
-        configurable,
-    } = descriptor
-    else {
-        panic!("Array.prototype[Symbol.unscopables] was not an object data property");
-    };
-    let keys = runtime
-        .own_property_keys(&value)
-        .unwrap()
-        .into_iter()
-        .map(|key| {
-            runtime
-                .property_key_to_js_string(&key)
-                .unwrap()
-                .to_utf8_lossy()
-        })
-        .collect::<Vec<_>>();
-    let entries = keys
-        .iter()
-        .map(|name| {
-            let key = runtime.intern_property_key(name).unwrap();
-            let descriptor = runtime
-                .get_own_property(&value, &key)
-                .unwrap()
-                .unwrap_or_else(|| panic!("missing unscopables.{name}"));
-            let CompleteOrdinaryPropertyDescriptor::Data {
-                value: Value::Bool(entry),
-                writable,
-                enumerable,
-                configurable,
-            } = descriptor
-            else {
-                panic!("unscopables.{name} was not a boolean data property");
-            };
-            format!(
-                "{name}:{entry}:D{}{}{}",
-                u8::from(writable),
-                u8::from(enumerable),
-                u8::from(configurable),
-            )
-        })
-        .collect::<Vec<_>>();
-    vec![
-        format!("symbols={}:own={own_key_count}", symbols.join(",")),
-        format!(
-            "outer=D{}{}{}:null-proto={}:array={}",
-            u8::from(writable),
-            u8::from(enumerable),
-            u8::from(configurable),
-            runtime.get_prototype_of(&value).unwrap().is_none(),
-            runtime.is_array_object(&value).unwrap(),
-        ),
-        format!("keys={}", keys.join(",")),
-        format!("entries={}", entries.join("|")),
-    ]
-}
-
-fn oracle_graph_observations(oracle: &OsStr) -> Vec<String> {
-    let output = Command::new(oracle)
-        .args(["--std", "-e", GRAPH_ORACLE])
-        .output()
-        .unwrap_or_else(|error| panic!("could not run QuickJS unscopables graph: {error}"));
-    assert!(
-        output.status.success(),
-        "QuickJS unscopables graph failed: {}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    String::from_utf8(output.stdout)
-        .expect("QuickJS unscopables graph output was not UTF-8")
-        .lines()
-        .map(str::to_owned)
-        .collect()
 }
 
 fn bool_property(runtime: &Runtime, context: &mut Context, object: &ObjectRef, name: &str) -> bool {

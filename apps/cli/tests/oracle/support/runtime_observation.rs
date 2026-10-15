@@ -44,20 +44,6 @@ pub(crate) fn checked_value_type(runtime: &Runtime, value: &Value) -> &'static s
     }
 }
 
-/// Classify a value without inspecting object callability.
-pub(crate) fn plain_value_type(value: &Value) -> &'static str {
-    match value {
-        Value::Undefined => "undefined",
-        Value::Null => "object",
-        Value::Bool(_) => "boolean",
-        Value::Int(_) | Value::Float(_) => "number",
-        Value::BigInt(_) => "bigint",
-        Value::String(_) => "string",
-        Value::Object(_) => "object",
-        Value::Symbol(_) => "symbol",
-    }
-}
-
 /// Render an observed completion value using ECMAScript number formatting.
 pub(crate) fn primitive_value_text(value: Value) -> String {
     match value {

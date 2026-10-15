@@ -1,16 +1,4 @@
-//! Differential coverage for the non-shared `Atomics` core.
-//!
-//! The 90-path / 180-variant focused Test262 cohort combines 43 namespace and
-//! method-metadata paths, 41 explicitly named non-shared/nonshared paths, five
-//! remaining pause/isLockFree semantics paths, and the staging detached-buffer
-//! path. A source audit excludes every path that evaluates SharedArrayBuffer as
-//! well as waitAsync. This selection deliberately avoids broad `Atomics`
-//! admission; one safe isLockFree path still carries conservative SAB metadata.
-
-use std::ffi::OsStr;
-use std::process::Output;
-
-const MATRIX_SOURCE: &str = r#"
+// mode: print
 function value(value) {
     if (typeof value === "bigint") return String(value) + "n";
     if (typeof value === "number" && Object.is(value, -0)) return "-0";
@@ -417,55 +405,3 @@ emit("pause", (function () {
             });
         }).join(",");
 })());
-"#;
-
-const EXPECTED_STDOUT: &str = r#"namespace=add,and,or,sub,xor,exchange,compareExchange,load,store,isLockFree,pause,wait,notify,Symbol(Symbol.toStringTag)|101|true|[object Atomics]
-metadata=add:add:3:true:101:false:length,name;and:and:3:true:101:false:length,name;or:or:3:true:101:false:length,name;sub:sub:3:true:101:false:length,name;xor:xor:3:true:101:false:length,name;exchange:exchange:3:true:101:false:length,name;compareExchange:compareExchange:4:true:101:false:length,name;load:load:2:true:101:false:length,name;store:store:3:true:101:false:length,name;isLockFree:isLockFree:1:true:101:false:length,name;pause:pause:0:true:101:false:length,name;wait:wait:4:true:101:false:length,name;notify:notify:3:true:101:false:length,name
-tag=Atomics:001
-number-rmw=add:6>11|and:11>2|or:2>10|xor:10>9|sub:9>5|exchange:5>-7|compare-hit:-7>19|compare-miss:19>19|load:19
-bigint-rmw=add:6n>11n|and:11n>2n|or:2n>10n|xor:10n>9n|sub:9n>5n|exchange:5n>-7n|compare-hit:-7n>19n|compare-miss:19n>19n|load:19n
-unsigned-rmw=18446744073709551615n>1n|1n>18446744073709551615n
-uint32-return=number:4294967295>number:0
-store-return=257>1|65535>-1|0>0|Infinity>0|-Infinity>0|0>0|36893488147419103235n>3n
-invalid-views=throw:TypeError,throw:TypeError,throw:TypeError,throw:TypeError,throw:TypeError,throw:TypeError,throw:TypeError
-invalid-order=throw:TypeError:|throw:TypeError|throw:TypeError
-detach-index=load:throw:TypeError:ArrayBuffer is detached or resized:index|add:throw:TypeError:ArrayBuffer is detached or resized:index|store:throw:TypeError:ArrayBuffer is detached or resized:index
-detach-value=add:throw:TypeError:ArrayBuffer is detached:index>value|store:throw:TypeError:ArrayBuffer is detached:index>value
-detach-compare=expected:throw:TypeError:ArrayBuffer is detached:expected>replacement|replacement:throw:TypeError:ArrayBuffer is detached:expected>replacement|expected-throws:throw:RangeError:expected
-rab-revalidate=throw:RangeError:out-of-bound access:index:1|throw:RangeError:out-of-bound access:index:0|throw:TypeError:ArrayBuffer is detached or resized:index:0|throw:RangeError:out-of-bound access:value:0|throw:TypeError:ArrayBuffer is detached:value:0
-notify=return:0:index>count|return:0:index>count|throw:TypeError:
-notify-old-length=throw:RangeError:index|return:0:index>count|return:0:index>count
-wait=throw:TypeError:not a SharedArrayBuffer TypedArray:|throw:TypeError:not a SharedArrayBuffer TypedArray:|throw:TypeError:integer TypedArray expected
-is-lock-free=undefined:return:false|null:return:false|false:return:false|true:return:true|-1:return:false|0:return:false|1:return:true|2:return:true|3:return:false|4:return:true|8:return:true|16:return:false|1.9:return:true|Infinity:return:false|-Infinity:return:false|NaN:return:false|4:return:true|object:true:value|bigint:throw:TypeError|symbol:throw:TypeError|wrap-positive:return:false|wrap-negative:return:false|huge-positive:return:false|huge-negative:return:false
-pause=return:undefined|undefined:return:undefined,0:return:undefined,-0:return:undefined,42:return:undefined,-42:return:undefined,42:return:undefined,9007199254740991:return:undefined|0.5:throw:TypeError,NaN:throw:TypeError,Infinity:throw:TypeError,-Infinity:throw:TypeError,1:throw:TypeError,null:throw:TypeError,true:throw:TypeError,1n:throw:TypeError,1:throw:TypeError
-"#;
-
-#[test]
-fn non_shared_atomics_matches_pinned_quickjs() {
-    if let Some(oracle) = std::env::var_os("QJS_ORACLE") {
-        let quickjs = run(&oracle);
-        assert_success("pinned QuickJS", &quickjs);
-    } else {
-        eprintln!("SKIP non-shared Atomics oracle: set QJS_ORACLE to pinned upstream qjs");
-    }
-
-    let oxide = run(env!("CARGO_BIN_EXE_qjs").as_ref());
-    assert_success("quickjs-oxide", &oxide);
-}
-
-fn assert_success(engine: &str, output: &Output) {
-    assert!(
-        output.status.success(),
-        "{engine} rejected the non-shared Atomics matrix: {}\nsource:\n{MATRIX_SOURCE}",
-        String::from_utf8_lossy(&output.stderr),
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        EXPECTED_STDOUT,
-        "{engine} output drifted for the non-shared Atomics matrix"
-    );
-}
-
-fn run(executable: &OsStr) -> Output {
-    crate::runtime_completion_oracle::run(executable, MATRIX_SOURCE)
-}

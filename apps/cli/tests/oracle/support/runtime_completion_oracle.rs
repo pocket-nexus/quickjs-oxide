@@ -2,18 +2,14 @@ use crate::object_graph_observation::error_string_property as error_string_prope
 use crate::oracle_cases::CompileCase;
 use crate::oracle_cases::GroupedCase as Case;
 use crate::oracle_cases::StartMatchCase as MatchCase;
-use crate::quickjs_argv_completion_oracle::observe_completion_argv_strip_one_lf;
-use crate::quickjs_argv_completion_oracle::observe_completion_argv_trim_end;
-use crate::quickjs_array_completion_oracle::observe_array_completion;
 use crate::runtime_observation::array_value_text;
 use crate::runtime_observation::error_name;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::take_rust_error;
 use crate::runtime_observation::{
-    checked_value_type, error_string_property, plain_value_type, primitive_value_text,
+    checked_value_type, error_string_property, primitive_value_text,
     primitive_value_text_with_rust_float, string_property, string_property_with_read_context,
 };
-use crate::runtime_oracle::run_cli;
 use crate::runtime_oracle::{error_string_property as runtime_error_string_property, value_type};
 use quickjs_oxide::engine::api::JsString;
 use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
@@ -29,7 +25,6 @@ use std::process::Output;
 pub(crate) enum ErrorPropertyStyle {
     Compact,
     ReadContext,
-    CaseContext,
     RuntimeCaseContext,
 }
 
@@ -49,24 +44,6 @@ pub(crate) fn observe_eval_completion(
         value_type,
         primitive_value_text,
         ErrorPropertyStyle::Compact,
-    )
-}
-
-/// Observe a completion whose Error-property failures include the case name.
-pub(crate) fn observe_eval_completion_with_error_context(
-    runtime: &Runtime,
-    context: &mut Context,
-    source: &str,
-    description: &str,
-) -> String {
-    observe_eval_completion_with(
-        runtime,
-        context,
-        source,
-        description,
-        value_type,
-        primitive_value_text,
-        ErrorPropertyStyle::CaseContext,
     )
 }
 
@@ -175,9 +152,6 @@ fn observed_error_string_property(
         ErrorPropertyStyle::ReadContext => {
             string_property_with_read_context(runtime, context, error, name)
         }
-        ErrorPropertyStyle::CaseContext => {
-            error_string_property(runtime, context, error, name, description)
-        }
         ErrorPropertyStyle::RuntimeCaseContext => {
             runtime_error_string_property(runtime, context, error, name, description)
         }
@@ -186,61 +160,6 @@ fn observed_error_string_property(
 
 fn source_with_prelude(prelude: &str, source: &str) -> String {
     format!("{prelude}\n{source}")
-}
-
-/// Exercise the shared observation contracts from an existing oracle test so
-/// helper extraction cannot silently change every downstream vector at once.
-pub(crate) fn assert_runtime_completion_helper_contracts() {
-    assert_eq!(primitive_value_text(Value::Float(f64::NAN)), "NaN");
-    assert_eq!(primitive_value_text(Value::Float(-0.0)), "0");
-    assert_eq!(
-        primitive_value_text(Value::Float(f64::INFINITY)),
-        "Infinity"
-    );
-    assert_eq!(primitive_value_text(Value::Float(1.5)), "1.5");
-    assert_eq!(
-        primitive_value_text_with_rust_float(Value::Float(-0.0)),
-        "-0"
-    );
-
-    let (runtime, mut context) = host_runtime_context();
-    let callable = context.eval("(function(){})").unwrap();
-    let ordinary = context.eval("({})").unwrap();
-    assert_eq!(checked_value_type(&runtime, &callable), "function");
-    assert_eq!(checked_value_type(&runtime, &ordinary), "object");
-    assert_eq!(plain_value_type(&callable), "object");
-
-    assert_eq!(
-        observe_eval_completion(
-            &runtime,
-            &mut context,
-            "throw 42",
-            "thrown primitive canary"
-        ),
-        "throw|number|42"
-    );
-    assert_eq!(
-        observe_eval_completion(
-            &runtime,
-            &mut context,
-            "throw new Error('boom')",
-            "Error object canary",
-        ),
-        "throw|object|Error|boom"
-    );
-
-    let joined = source_with_prelude("var marker = 1;", "marker + 41");
-    assert_eq!(joined, "var marker = 1;\nmarker + 41");
-    assert_eq!(
-        observe_read_context_eval_completion_with_prelude(
-            &runtime,
-            &mut context,
-            "var marker = 1;",
-            "marker + 41",
-            "prelude identity canary",
-        ),
-        "return|number|42"
-    );
 }
 
 /// Compare prefixed vectors while collecting every completion mismatch in the
@@ -281,56 +200,6 @@ pub(crate) fn compare_read_context_eval_completion_cases_with_prelude(
 
 // Helpers shared verbatim by several oracle modules.
 
-pub(crate) fn compare_argv_cases(group: &str, cases: &[(&str, &str)]) {
-    let oracle = require_qjs_oracle!("{group} differential");
-    for &(description, source) in cases {
-        let (runtime, mut context) = host_runtime_context();
-        assert_eq!(
-            observe_legacy_float_eval_completion(&runtime, &mut context, source, description),
-            observe_completion_argv_strip_one_lf(&oracle, source, description),
-            "{group} drifted for {description}: {source:?}",
-        );
-    }
-}
-
-pub(crate) fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let oracle = require_qjs_oracle!("{group} differential");
-    for &(description, source) in cases {
-        let expected = observe_completion_argv_trim_end(&oracle, source, description);
-        let (runtime, mut context) = host_runtime_context();
-        assert_eq!(
-            observe_eval_completion_with_error_context(&runtime, &mut context, source, description),
-            expected,
-            "{group} drifted for {description}: {source:?}",
-        );
-    }
-}
-
-pub(crate) fn compare_cli(oracle: &OsStr, options: &[&str], source: &str, description: &str) {
-    let rust = run_cli(
-        env!("CARGO_BIN_EXE_qjs").as_ref(),
-        options,
-        source,
-        description,
-    );
-    let quickjs = run_cli(oracle, options, source, description);
-    assert_eq!(rust.status.code(), quickjs.status.code(), "{description}");
-    assert_eq!(rust.stdout, quickjs.stdout, "{description}");
-    assert_eq!(rust.stderr, quickjs.stderr, "{description}");
-}
-
-const SCRIPT_CASE_OBSERVER: &str = r#"
-try {
-  var value = std.evalScript(scriptArgs[0]);
-  print('return|' + typeof value + '|' + String(value));
-} catch (error) {
-  if (error !== null && typeof error === 'object')
-    print('throw|object|' + error.name + '|' + error.message);
-  else
-    print('throw|' + typeof error + '|' + String(error));
-}
-"#;
-
 const SCRIPT_CASE_NAME_OBSERVER: &str = r#"
 try {
   var value = std.evalScript(scriptArgs[0]);
@@ -342,10 +211,6 @@ try {
     print('throw|' + typeof error + '|' + String(error));
 }
 "#;
-
-pub(crate) fn oracle_script_case_observation(oracle: &OsStr, case: &Case) -> String {
-    observe_script_case(oracle, SCRIPT_CASE_OBSERVER, case)
-}
 
 /// Like [`oracle_script_case_observation`], but a thrown object reports only
 /// its `name`.
@@ -467,19 +332,6 @@ pub(crate) fn rust_case_observation(case: &Case) -> String {
             "Rust engine failure for {} / {} ({:?}): {error}",
             case.group, case.description, case.source,
         ),
-    }
-}
-
-pub(crate) fn compare_array_value_cases(group: &str, cases: &[(&str, &str)]) {
-    let oracle = require_qjs_oracle!("{group} differential");
-    for &(description, source) in cases {
-        let expected = observe_array_completion(&oracle, source, description);
-        let (runtime, mut context) = host_runtime_context();
-        assert_eq!(
-            observe_array_aware_eval(&runtime, &mut context, source, description),
-            expected,
-            "{group} drifted for {description}: {source:?}",
-        );
     }
 }
 
@@ -647,45 +499,6 @@ pub(crate) fn observe_rust_compile(case: &CompileCase) -> String {
         Err(error) if matches!(error.kind(), CompileErrorKind::Syntax) => "SyntaxError".to_owned(),
         Err(error) => format!("CompileError|{:?}", error.kind()),
     }
-}
-
-/// Compare prelude-prefixed completion vectors, collecting every drift before
-/// failing. The caller owns the prelude, value spelling and Error reader.
-pub(crate) fn compare_prelude_cases_collecting_failures(
-    prelude: &str,
-    group: &str,
-    cases: &[(&str, &str)],
-    value_text: fn(Value) -> String,
-    error_property_style: ErrorPropertyStyle,
-    oracle_completion: fn(&OsStr, &str, &str) -> String,
-) {
-    let oracle = require_qjs_oracle!("{group}");
-    let mut failures = Vec::new();
-    for &(description, source) in cases {
-        let (runtime, mut context) = host_runtime_context();
-        let prefixed = source_with_prelude(prelude, source);
-        let actual = observe_eval_completion_with(
-            &runtime,
-            &mut context,
-            &prefixed,
-            description,
-            value_type,
-            value_text,
-            error_property_style,
-        );
-        let expected = oracle_completion(&oracle, &prefixed, description);
-        if actual != expected {
-            failures.push(format!(
-                "{description}\nsource: {source:?}\noxide: {actual:?}\noracle: {expected:?}",
-            ));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "{group} drifted in {} case(s):\n\n{}",
-        failures.len(),
-        failures.join("\n\n"),
-    );
 }
 
 pub(crate) const REGEXP_REPLACE_PRELUDE: &str = r#"

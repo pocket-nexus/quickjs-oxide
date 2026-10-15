@@ -7,24 +7,29 @@ const DIRECTORIES: &[&str] = &[
     "array",
     "async_functions",
     "async_methods",
+    "atomics_non_shared",
     "binary_data",
     "class_initialization",
     "collections",
     "control_flow",
+    "date",
     "errors",
     "eval",
+    "for_await_of",
     "function_declarations",
     "function_semantics",
     "global",
     "iterator",
     "json",
     "lexical",
+    "math",
     "member_access",
     "number",
     "object",
     "operators",
     "parameters",
     "primitive_intrinsics",
+    "primitives",
     "program_declarations",
     "proxy_reflect",
     "regexp",
@@ -32,6 +37,7 @@ const DIRECTORIES: &[&str] = &[
     "typed_array",
     "unicode_lexical",
     "update",
+    "vm_object_coercion",
 ];
 
 #[test]
@@ -60,6 +66,11 @@ fn async_methods() {
 }
 
 #[test]
+fn atomics_non_shared() {
+    run_case_directory("atomics_non_shared");
+}
+
+#[test]
 fn binary_data() {
     run_case_directory("binary_data");
 }
@@ -80,6 +91,11 @@ fn control_flow() {
 }
 
 #[test]
+fn date() {
+    run_case_directory("date");
+}
+
+#[test]
 fn errors() {
     run_case_directory("errors");
 }
@@ -87,6 +103,11 @@ fn errors() {
 #[test]
 fn eval() {
     run_case_directory("eval");
+}
+
+#[test]
+fn for_await_of() {
+    run_case_directory("for_await_of");
 }
 
 #[test]
@@ -120,6 +141,11 @@ fn lexical() {
 }
 
 #[test]
+fn math() {
+    run_case_directory("math");
+}
+
+#[test]
 fn member_access() {
     run_case_directory("member_access");
 }
@@ -147,6 +173,11 @@ fn parameters() {
 #[test]
 fn primitive_intrinsics() {
     run_case_directory("primitive_intrinsics");
+}
+
+#[test]
+fn primitives() {
+    run_case_directory("primitives");
 }
 
 #[test]
@@ -182,4 +213,9 @@ fn unicode_lexical() {
 #[test]
 fn update() {
     run_case_directory("update");
+}
+
+#[test]
+fn vm_object_coercion() {
+    run_case_directory("vm_object_coercion");
 }
