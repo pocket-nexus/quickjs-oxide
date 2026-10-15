@@ -2379,6 +2379,12 @@ fn execute_admitted_in_state(
                 profile!(record_owned_execution_event("core.internal_construct"));
                 continue;
             }
+            VmAction::ClassInitializer(super::construct_driver::InitializerKind::Instance) => {
+                if !class_initializer::try_skip_absent(runtime, state, &mut segment)? {
+                    return Ok(action);
+                }
+                continue;
+            }
             VmAction::Complete => match segment.finish_ordinary(runtime, state)? {
                 super::driver::ordinary::ReturnProgress::Returned => {
                     profile!(record_owned_execution_event("core.internal_return"));
@@ -3894,6 +3900,7 @@ mod named_native_fact_tests;
 mod array_allocation_tests;
 
 mod array_allocation;
+mod class_initializer;
 mod leaf_native;
 
 pub(super) mod named_read;
