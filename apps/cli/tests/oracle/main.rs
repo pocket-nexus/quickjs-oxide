@@ -26,6 +26,7 @@ mod async_functions;
 mod async_methods;
 mod atomics_non_shared;
 mod binary_data;
+mod cases;
 mod class_base;
 mod class_initialization;
 mod collections;

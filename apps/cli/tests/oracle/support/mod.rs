@@ -32,6 +32,7 @@ macro_rules! require_pinned_qjs_oracle {
 }
 
 pub(crate) mod grouped_case_oracle;
+pub(crate) mod js_cases;
 pub(crate) mod object_graph_observation;
 pub(crate) mod oracle_cases;
 pub(crate) mod primitive_probe;
