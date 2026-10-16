@@ -25,6 +25,8 @@
 
 mod analysis;
 #[cfg(test)]
+mod run_tests;
+#[cfg(test)]
 mod tests;
 
 use std::collections::{HashMap, HashSet};

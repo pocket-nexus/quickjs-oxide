@@ -1,6 +1,7 @@
 //! The `Runtime`: the heap, the code store and the realm. Every operation is
 //! `fn(&mut Runtime, …)`; there is no shared interior mutability.
 
+use crate::PropertyKey;
 use crate::bytecode::{self, CodeStore, CodeUnit, CodeUnitId, ValidateError};
 use crate::heap::BytecodeTemplate;
 use crate::heap::atom::KeyKind;
@@ -8,20 +9,88 @@ use crate::heap::gc::{Handle, HeapLimits};
 use crate::heap::hash::FxHashMap;
 use crate::heap::object::ObjectKind;
 use crate::heap::{Heap, HeapError};
-use crate::value::{ObjectId, ScopeId, Value};
+use crate::value::{ObjectId, ScopeId, StringId, Value};
+use crate::vm::{Cx, ErrorKind, Host, Output, Throw, VmStack};
 
-/// Intrinsic objects held by the realm. Phase 1 creates only the prototypes
-/// the object kinds need; builtins are ported in phase 4.
+/// Intrinsic objects held by the realm. Phase 1 created the prototypes the
+/// object kinds need; phase 2 adds the error prototypes the loop throws
+/// with. Builtins are ported in phase 4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Intrinsic {
     ObjectPrototype,
     FunctionPrototype,
     ArrayPrototype,
+    ErrorPrototype,
+    EvalErrorPrototype,
+    RangeErrorPrototype,
+    ReferenceErrorPrototype,
+    SyntaxErrorPrototype,
+    TypeErrorPrototype,
+    InternalErrorPrototype,
+    /// A preallocated `InternalError: out of memory`, thrown when the heap
+    /// cannot allocate the error itself.
+    OutOfMemoryError,
 }
 
 impl Intrinsic {
-    pub const COUNT: usize = 3;
+    pub const COUNT: usize = 11;
+}
+
+/// Atoms the loop names: property names it reads itself and the `typeof`
+/// results. Atoms are strong roots, so they stay valid.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Names {
+    pub length: StringId,
+    pub prototype: StringId,
+    pub constructor: StringId,
+    pub message: StringId,
+    pub name: StringId,
+    pub value_of: StringId,
+    pub to_string: StringId,
+    pub undefined: StringId,
+    pub null: StringId,
+    pub true_: StringId,
+    pub false_: StringId,
+    pub object: StringId,
+    pub boolean: StringId,
+    pub number: StringId,
+    pub string: StringId,
+    pub symbol: StringId,
+    pub function: StringId,
+    pub bigint: StringId,
+    pub empty: StringId,
+}
+
+impl Names {
+    fn new(heap: &mut Heap) -> Result<Names, HeapError> {
+        Ok(Names {
+            length: heap.intern("length")?,
+            prototype: heap.intern("prototype")?,
+            constructor: heap.intern("constructor")?,
+            message: heap.intern("message")?,
+            name: heap.intern("name")?,
+            value_of: heap.intern("valueOf")?,
+            to_string: heap.intern("toString")?,
+            undefined: heap.intern("undefined")?,
+            null: heap.intern("null")?,
+            true_: heap.intern("true")?,
+            false_: heap.intern("false")?,
+            object: heap.intern("object")?,
+            boolean: heap.intern("boolean")?,
+            number: heap.intern("number")?,
+            string: heap.intern("string")?,
+            symbol: heap.intern("symbol")?,
+            function: heap.intern("function")?,
+            bigint: heap.intern("bigint")?,
+            empty: heap.intern("")?,
+        })
+    }
+
+    #[inline]
+    pub fn key(id: StringId) -> PropertyKey {
+        PropertyKey::atom(id)
+    }
 }
 
 /// The single realm of a runtime (phase 0, section 2). Its objects are fixed
@@ -29,6 +98,19 @@ impl Intrinsic {
 pub struct Realm {
     global: ObjectId,
     intrinsics: [ObjectId; Intrinsic::COUNT],
+    pub(crate) names: Names,
+}
+
+impl Realm {
+    #[inline]
+    pub fn global(&self) -> ObjectId {
+        self.global
+    }
+
+    #[inline]
+    pub fn intrinsic(&self, intrinsic: Intrinsic) -> ObjectId {
+        self.intrinsics[intrinsic as usize]
+    }
 }
 
 pub struct Runtime {
@@ -37,29 +119,122 @@ pub struct Runtime {
     /// code across heap calls (phase 2, section 2).
     code: CodeStore,
     realm: Realm,
+    host: Host,
 }
 
 impl Runtime {
     pub fn new(limits: HeapLimits) -> Result<Runtime, HeapError> {
         let mut heap = Heap::new(limits);
+        let root = |heap: &mut Heap, object: ObjectId| {
+            heap.add_fixed_root(Value::object(object));
+            object
+        };
         let object_prototype = heap.alloc_object(ObjectKind::Ordinary, None, 4)?;
-        heap.add_fixed_root(Value::object(object_prototype));
+        let object_prototype = root(&mut heap, object_prototype);
         let function_prototype =
             heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
-        heap.add_fixed_root(Value::object(function_prototype));
+        let function_prototype = root(&mut heap, function_prototype);
         let array_prototype = heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
-        heap.add_fixed_root(Value::object(array_prototype));
+        let array_prototype = root(&mut heap, array_prototype);
         let global = heap.alloc_object(ObjectKind::GlobalObject, Some(object_prototype), 16)?;
-        heap.add_fixed_root(Value::object(global));
+        let global = root(&mut heap, global);
+        let names = Names::new(&mut heap)?;
+        let mut intrinsics = [object_prototype; Intrinsic::COUNT];
+        intrinsics[Intrinsic::FunctionPrototype as usize] = function_prototype;
+        intrinsics[Intrinsic::ArrayPrototype as usize] = array_prototype;
+        let error_prototype = heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
+        intrinsics[Intrinsic::ErrorPrototype as usize] = root(&mut heap, error_prototype);
+        for kind in ErrorKind::ALL {
+            if kind != ErrorKind::Error {
+                let prototype =
+                    heap.alloc_object(ObjectKind::Ordinary, Some(error_prototype), 4)?;
+                intrinsics[kind.prototype() as usize] = root(&mut heap, prototype);
+            }
+        }
         let realm = Realm {
             global,
-            intrinsics: [object_prototype, function_prototype, array_prototype],
+            intrinsics,
+            names,
         };
-        Ok(Runtime {
+        let mut runtime = Runtime {
             heap,
             code: CodeStore::default(),
             realm,
-        })
+            host: Host::default(),
+        };
+        let out_of_memory = crate::vm::native::install_globals(&mut runtime.cx())?;
+        runtime.set_intrinsic(Intrinsic::OutOfMemoryError, out_of_memory);
+        Ok(runtime)
+    }
+
+    /// The loop's view of the runtime.
+    #[inline]
+    pub(crate) fn cx(&mut self) -> Cx<'_> {
+        Cx {
+            heap: &mut self.heap,
+            code: &self.code,
+            realm: &self.realm,
+            host: &mut self.host,
+        }
+    }
+
+    pub(crate) fn set_intrinsic(&mut self, intrinsic: Intrinsic, object: ObjectId) {
+        self.heap.add_fixed_root(Value::object(object));
+        self.realm.intrinsics[intrinsic as usize] = object;
+    }
+
+    pub fn realm(&self) -> &Realm {
+        &self.realm
+    }
+
+    pub fn host(&mut self) -> &mut Host {
+        &mut self.host
+    }
+
+    /// Sends `print` output to a buffer; [`Runtime::take_output`] returns it.
+    pub fn capture_output(&mut self) {
+        self.host.output = Output::Capture(String::new());
+    }
+
+    /// The output captured since the last call.
+    pub fn take_output(&mut self) -> String {
+        match &mut self.host.output {
+            Output::Capture(text) => std::mem::take(text),
+            Output::Stdout => String::new(),
+        }
+    }
+
+    /// Defines the qjs `print` host function on the global object.
+    pub fn install_print(&mut self) -> Result<(), HeapError> {
+        crate::vm::native::install_print(&mut self.cx())
+    }
+
+    /// Runs a script function (from [`Runtime::instantiate`]) with the
+    /// global object as `this`. The result is unrooted.
+    pub fn run_script(&mut self, script: ObjectId) -> Result<Value, Throw> {
+        let global = Value::object(self.realm.global);
+        self.call(Value::object(script), global, &[])
+    }
+
+    /// Calls `function`; the result or the thrown value is unrooted. The
+    /// caller keeps `function` alive (a handle or a rooted object).
+    pub fn call(&mut self, function: Value, this: Value, args: &[Value]) -> Result<Value, Throw> {
+        crate::vm::call(&mut self.cx(), function, this, args)
+    }
+
+    /// `ToString(value)` as Rust text, for hosts printing a result or an
+    /// uncaught exception. Calls back into JavaScript for objects.
+    pub fn display(&mut self, value: Value) -> Result<String, Throw> {
+        crate::vm::ops::display(&mut self.cx(), value)
+    }
+
+    /// The register file and frame table.
+    pub fn vm_stack(&self) -> &VmStack {
+        &self.heap.vm
+    }
+
+    pub fn set_stack_limit(&mut self, registers: u32) {
+        self.heap.vm.limit = registers;
     }
 
     #[inline]
@@ -149,7 +324,7 @@ impl Runtime {
     }
 
     pub fn intrinsic(&self, intrinsic: Intrinsic) -> ObjectId {
-        self.realm.intrinsics[intrinsic as usize]
+        self.realm.intrinsic(intrinsic)
     }
 
     /// An ordinary object inheriting from `%Object.prototype%`.

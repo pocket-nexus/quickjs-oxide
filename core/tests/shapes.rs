@@ -241,7 +241,7 @@ fn many_properties_enter_dictionary_mode() {
 fn global_object_is_a_dictionary() {
     let mut runtime = Runtime::new(HeapLimits::default()).unwrap();
     let global = runtime.global_object();
-    let name = runtime.heap_mut().property_key("globalThis").unwrap();
+    let name = runtime.heap_mut().property_key("selfReference").unwrap();
     assert!(runtime.heap().is_dictionary(global));
     runtime
         .heap_mut()
