@@ -14,6 +14,8 @@ expected_packages = {
     "quickjs-oxide", "quickjs-oxide-web-host",
     "quickjs-oxide-host", "quickjs-oxide-cli",
     "quickjs-oxide-web", "quickjs-oxide-test262",
+    # The new core (#122); nothing depends on it before phase 2.
+    "oxide-core",
 }
 if set(packages) != expected_packages:
     fail("workspace package set drifted from the reviewed engine/app split")
@@ -25,6 +27,7 @@ expected_dependencies = {
     "quickjs-oxide-cli": {"quickjs-oxide", "quickjs-oxide-host"},
     "quickjs-oxide-web": {"quickjs-oxide", "quickjs-oxide-web-host"},
     "quickjs-oxide-test262": {"quickjs-oxide", "quickjs-oxide-host"},
+    "oxide-core": set(),
 }
 for name, expected in expected_dependencies.items():
     actual = {

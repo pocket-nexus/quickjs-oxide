@@ -109,6 +109,8 @@ jobs:
           cargo test --locked --features test262-host \
             --test oracle test262_
           ./scripts/checks/check-oracle-registry.sh --compiled
+          # New core: the whole suite again with a collection at every allocation.
+          cargo test --locked -p oxide-core --features gc-stress
 
       - name: Lint targets
         run: |

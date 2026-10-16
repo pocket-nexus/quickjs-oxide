@@ -36,7 +36,7 @@ name = "main_thread_stack_probe"
 harness = false
 
 [workspace]
-members = ["adapters/native", "adapters/web", ".", "apps/cli", "apps/web", "conformance/test262"]
+members = ["adapters/native", "adapters/web", ".", "apps/cli", "apps/web", "conformance/test262", "core"]
 default-members = [".", "apps/cli"]
 resolver = "3"
 

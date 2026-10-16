@@ -44,3 +44,13 @@ python3 docs/performance/probes/runtime/probes.py --qjs "$CANDIDATE_QJS" \
 python3 docs/performance/probes/runtime/classify.py "$OUTPUT/probes/probes.json"
 python3 docs/performance/probes/runtime/ic_events.py "$PROFILING_QJS" "$V8_V7_DIR" "$OUTPUT/ic"
 ```
+
+## New-core probes
+
+[`new-core/phase1.py`](new-core/phase1.py) runs the Rust heap workloads of the new core (`core/examples/workloads.rs`) and their current-core JavaScript counterparts at N and 2N under `perf stat -e instructions:u`, subtracts each engine's empty loop and reports the per-iteration slope. The results are in [New core, phase 1 results](../new-core-phase1-results.md).
+
+```sh
+cargo build --release -p oxide-core --example workloads
+python3 docs/performance/probes/new-core/phase1.py \
+    --workloads target/release/examples/workloads --qjs "$CANDIDATE_QJS" --cpu 2 --repeat 5
+```
