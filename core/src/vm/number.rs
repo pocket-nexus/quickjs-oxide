@@ -33,50 +33,16 @@ pub(crate) fn to_uint32(value: f64) -> u32 {
     modulo as u32
 }
 
-/// `Number::toString(x)` in radix 10: the shortest digits that round-trip,
-/// placed as ECMA-262 section 6.1.6.1.20 specifies.
+/// `Number::toString(x)` in radix 10, as QuickJS formats it: a safe
+/// integer prints its digits; anything else takes the exact shortest digits
+/// of `radix` (Rust's formatter differs from QuickJS on ties and on some
+/// powers of two).
 pub(crate) fn to_string(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".into();
+    if value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
+        // `-0` prints as `0`.
+        return (value as i64).to_string();
     }
-    if value == 0.0 {
-        return "0".into();
-    }
-    if value.is_infinite() {
-        return if value > 0.0 { "Infinity" } else { "-Infinity" }.into();
-    }
-    let mut out = String::new();
-    if value < 0.0 {
-        out.push('-');
-    }
-    // `{:e}` prints the shortest round-trip digits as `d.ddde[-]x`.
-    let scientific = format!("{:e}", value.abs());
-    let (mantissa, exponent) = scientific.split_once('e').expect("exponent");
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let k = digits.len() as i32;
-    let n = exponent.parse::<i32>().expect("exponent") + 1;
-    if k <= n && n <= 21 {
-        out.push_str(&digits);
-        out.extend(std::iter::repeat_n('0', (n - k) as usize));
-    } else if 0 < n && n <= 21 {
-        out.push_str(&digits[..n as usize]);
-        out.push('.');
-        out.push_str(&digits[n as usize..]);
-    } else if -6 < n && n <= 0 {
-        out.push_str("0.");
-        out.extend(std::iter::repeat_n('0', (-n) as usize));
-        out.push_str(&digits);
-    } else {
-        out.push_str(&digits[..1]);
-        if k > 1 {
-            out.push('.');
-            out.push_str(&digits[1..]);
-        }
-        out.push('e');
-        out.push(if n - 1 < 0 { '-' } else { '+' });
-        out.push_str(&(n - 1).abs().to_string());
-    }
-    out
+    super::radix::to_string_radix(value, 10)
 }
 
 /// The JavaScript white space and line terminators `StringToNumber` trims.

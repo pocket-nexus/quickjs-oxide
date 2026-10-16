@@ -38,6 +38,35 @@ impl Big {
         Big::new(value < 0, vec![value.unsigned_abs()])
     }
 
+    pub fn from_u64(value: u64) -> Big {
+        Big::new(false, vec![value])
+    }
+
+    /// The double nearest the exact value, ties to even; `±Infinity` past
+    /// `f64::MAX`. The top 64 bits round once, with every lower bit folded
+    /// into a sticky low bit.
+    pub fn to_f64(&self) -> f64 {
+        let bits = bit_length(&self.limbs);
+        let magnitude = if bits <= 64 {
+            self.limbs.first().copied().unwrap_or(0) as f64
+        } else if bits > 1024 + 64 {
+            f64::INFINITY
+        } else {
+            let shift = bits - 64;
+            let (words, rest) = ((shift / 64) as usize, shift % 64);
+            let sticky = self.limbs[..words].iter().any(|&limb| limb != 0)
+                || (rest != 0 && self.limbs[words] & ((1u64 << rest) - 1) != 0);
+            let top = shr_mag(&self.limbs, shift)[0] | u64::from(sticky);
+            let scale = if shift <= 1023 {
+                f64::from_bits((1023 + shift) << 52)
+            } else {
+                f64::INFINITY
+            };
+            top as f64 * scale
+        };
+        if self.negative { -magnitude } else { magnitude }
+    }
+
     pub fn is_zero(&self) -> bool {
         self.limbs.is_empty()
     }

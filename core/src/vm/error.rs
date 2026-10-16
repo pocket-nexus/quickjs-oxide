@@ -54,14 +54,6 @@ impl ErrorKind {
             ErrorKind::Internal => Intrinsic::InternalErrorPrototype,
         }
     }
-
-    pub(crate) const fn index(self) -> u32 {
-        self as u32
-    }
-
-    pub(crate) fn from_index(index: u32) -> Option<ErrorKind> {
-        ErrorKind::ALL.get(index as usize).copied()
-    }
 }
 
 /// A new error object of `kind`; `message` must be rooted (or not a heap
@@ -77,6 +69,7 @@ pub(crate) fn new_error(
     heap.roots().push(message);
     let result = (|| {
         let object = heap.alloc_object(crate::ObjectKind::Ordinary, Some(prototype), 1)?;
+        heap.set_object_flag(object, crate::heap::object::flags::ERROR);
         if !message.is_undefined() {
             let key = Names::key(cx.realm.names.message);
             heap.add_property(object, key, PropertyFlags::data(true, false, true), message)?;

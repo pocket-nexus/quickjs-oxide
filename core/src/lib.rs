@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod builtins;
 pub mod bytecode;
 pub mod heap;
 pub mod runtime;

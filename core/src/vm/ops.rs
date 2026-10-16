@@ -12,8 +12,8 @@ use super::property;
 use super::{Cx, Throw};
 use crate::heap::Heap;
 use crate::heap::atom::PropertyKey;
-use crate::heap::object::{NONE, ObjectKind, flags};
-use crate::runtime::{Intrinsic, Names};
+use crate::heap::object::{NONE, flags};
+use crate::runtime::Names;
 use crate::value::{Kind, ObjectId, StringId, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,7 +114,7 @@ fn alloc_text(cx: &mut Cx<'_>, text: &str) -> Result<Value, Throw> {
         .map_err(|error| heap_error(cx, error))
 }
 
-fn alloc_units(cx: &mut Cx<'_>, units: &[u16]) -> Result<Value, Throw> {
+pub(crate) fn alloc_units(cx: &mut Cx<'_>, units: &[u16]) -> Result<Value, Throw> {
     cx.heap
         .alloc_string_units(units)
         .map(Value::string)
@@ -138,11 +138,8 @@ pub(crate) fn concat(cx: &mut Cx<'_>, a: StringId, b: StringId) -> Result<Value,
 
 // ---- conversions ----
 
-/// `ToPrimitive`. Phase 2 has no builtins, so where the lookup of `toString`
-/// finds nothing the conversion stands in for the builtin it would have
-/// found: `Object.prototype.toString`, `Array.prototype.toString` or
-/// `Error.prototype.toString`. A missing `valueOf` is skipped, as the
-/// builtin one returns the object.
+/// `ToPrimitive`: `valueOf` then `toString` (or the reverse for a string
+/// hint), the first that returns a primitive.
 pub(crate) fn to_primitive(cx: &mut Cx<'_>, value: Value, hint: Hint) -> Result<Value, Throw> {
     let Some(object) = value.as_object() else {
         return Ok(value);
@@ -172,69 +169,13 @@ fn to_primitive_object(cx: &mut Cx<'_>, object: ObjectId, hint: Hint) -> Result<
             if result.as_object().is_none() {
                 return Ok(result);
             }
-        } else if name == names.to_string && method.is_undefined() {
-            // Where `Object.prototype.toString` would be found.
-            return default_to_string(cx, object);
         }
     }
     Err(error::type_error(cx, "toPrimitive"))
 }
 
-/// The builtin `toString` results phase 2 stands in for.
-fn default_to_string(cx: &mut Cx<'_>, object: ObjectId) -> Result<Value, Throw> {
-    match cx.heap.object_kind(object) {
-        ObjectKind::Array => join(cx, object),
-        ObjectKind::Function => alloc_text(cx, "function () {\n    [native code]\n}"),
-        ObjectKind::Arguments => alloc_text(cx, "[object Arguments]"),
-        ObjectKind::RegExp => {
-            // `RegExp.prototype.toString` until M4 ports it.
-            let record = cx.regexps.get(cx.heap.header(object).payload);
-            let mut text: Vec<u16> = vec![u16::from(b'/')];
-            text.extend(units(cx.heap, record.source));
-            text.push(u16::from(b'/'));
-            text.extend(units(cx.heap, record.flags));
-            alloc_units(cx, &text)
-        }
-        _ if is_error(cx, object) => error_text(cx, object),
-        _ => alloc_text(cx, "[object Object]"),
-    }
-}
-
-fn is_error(cx: &Cx<'_>, object: ObjectId) -> bool {
-    let error = cx.realm.intrinsic(Intrinsic::ErrorPrototype);
-    let mut current = Some(object);
-    while let Some(object) = current {
-        if object == error {
-            return true;
-        }
-        current = cx.heap.prototype_of(object);
-    }
-    false
-}
-
-/// `Array.prototype.join` with `,`.
-fn join(cx: &mut Cx<'_>, array: ObjectId) -> Result<Value, Throw> {
-    let mut joined: Vec<u16> = Vec::new();
-    let length = cx.heap.array_length(array);
-    for index in 0..length {
-        if index > 0 {
-            joined.push(u16::from(b','));
-        }
-        let element = match PropertyKey::index(index) {
-            Some(key) => property::get_value(cx, array, key)?,
-            None => Value::UNDEFINED,
-        };
-        if element.is_undefined() || element.is_null() {
-            continue;
-        }
-        let text = to_string(cx, element)?;
-        joined.extend(cx.heap.string(text.as_string().unwrap()).repr.units());
-    }
-    alloc_units(cx, &joined)
-}
-
 /// `Error.prototype.toString`.
-fn error_text(cx: &mut Cx<'_>, object: ObjectId) -> Result<Value, Throw> {
+pub(crate) fn error_text(cx: &mut Cx<'_>, object: ObjectId) -> Result<Value, Throw> {
     let names = cx.realm.names;
     let part = |cx: &mut Cx<'_>, key: StringId, default: &str| -> Result<Vec<u16>, Throw> {
         let value = property::get_value(cx, object, Names::key(key))?;

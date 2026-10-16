@@ -130,7 +130,7 @@ fn collection_under_200_frames_preserves_registers() {
     let iterations = if cfg!(feature = "new-core-gc-stress") {
         3
     } else {
-        20000
+        80000
     };
     let source = "function deep(n) { \
                     var o = { v: n }, s = 'k' + n, f = () => n * 2, a = [n, o]; \

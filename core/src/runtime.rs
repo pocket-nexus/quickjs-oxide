@@ -27,6 +27,8 @@ pub enum Intrinsic {
     StringPrototype,
     /// The prototype of regular-expression objects.
     RegExpPrototype,
+    NumberPrototype,
+    BooleanPrototype,
     ErrorPrototype,
     EvalErrorPrototype,
     RangeErrorPrototype,
@@ -40,7 +42,7 @@ pub enum Intrinsic {
 }
 
 impl Intrinsic {
-    pub const COUNT: usize = 13;
+    pub const COUNT: usize = 15;
 }
 
 /// Atoms the loop names: property names it reads itself and the `typeof`
@@ -144,8 +146,12 @@ impl Runtime {
         };
         let object_prototype = heap.alloc_object(ObjectKind::Ordinary, None, 4)?;
         let object_prototype = root(&mut heap, object_prototype);
-        let function_prototype =
-            heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
+        // `%Function.prototype%` is itself a function that returns
+        // `undefined`.
+        let function_prototype = heap.alloc_native_function(
+            Some(object_prototype),
+            crate::builtins::Native::FunctionPrototype.index(),
+        )?;
         let function_prototype = root(&mut heap, function_prototype);
         let array_prototype = heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
         let array_prototype = root(&mut heap, array_prototype);
@@ -155,6 +161,12 @@ impl Runtime {
         let regexp_prototype =
             heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
         let regexp_prototype = root(&mut heap, regexp_prototype);
+        let number_prototype =
+            heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
+        let number_prototype = root(&mut heap, number_prototype);
+        let boolean_prototype =
+            heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
+        let boolean_prototype = root(&mut heap, boolean_prototype);
         let global = heap.alloc_object(ObjectKind::GlobalObject, Some(object_prototype), 16)?;
         let global = root(&mut heap, global);
         let names = Names::new(&mut heap)?;
@@ -163,6 +175,8 @@ impl Runtime {
         intrinsics[Intrinsic::ArrayPrototype as usize] = array_prototype;
         intrinsics[Intrinsic::StringPrototype as usize] = string_prototype;
         intrinsics[Intrinsic::RegExpPrototype as usize] = regexp_prototype;
+        intrinsics[Intrinsic::NumberPrototype as usize] = number_prototype;
+        intrinsics[Intrinsic::BooleanPrototype as usize] = boolean_prototype;
         let error_prototype = heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
         intrinsics[Intrinsic::ErrorPrototype as usize] = root(&mut heap, error_prototype);
         for kind in ErrorKind::ALL {
@@ -184,7 +198,7 @@ impl Runtime {
             host: Host::default(),
             regexps: RegExpStore::default(),
         };
-        let out_of_memory = crate::vm::native::install_globals(&mut runtime.cx())?;
+        let out_of_memory = crate::builtins::install(&mut runtime.cx())?;
         runtime.set_intrinsic(Intrinsic::OutOfMemoryError, out_of_memory);
         Ok(runtime)
     }
@@ -233,7 +247,7 @@ impl Runtime {
 
     /// Defines the qjs `print` host function on the global object.
     pub fn install_print(&mut self) -> Result<(), HeapError> {
-        crate::vm::native::install_print(&mut self.cx())
+        crate::builtins::install_print(&mut self.cx())
     }
 
     /// Runs a script function (from [`Runtime::instantiate`]) with the

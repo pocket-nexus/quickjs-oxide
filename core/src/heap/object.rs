@@ -42,6 +42,9 @@ pub mod flags {
     pub const CALLABLE: u8 = 1 << 2;
     pub const CONSTRUCTOR: u8 = 1 << 3;
     pub const DICTIONARY: u8 = 1 << 4;
+    /// An error object (`new_error` sets it), so `Object.prototype.toString`
+    /// and the error checks need no prototype walk.
+    pub const ERROR: u8 = 1 << 5;
 }
 
 /// One fixed-size record per object (20 bytes).

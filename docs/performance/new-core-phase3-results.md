@@ -213,3 +213,73 @@ The 4–5% increases come from the larger `run`. `literal` has no call in
 its loop yet grows by the same share, so the increase is code generation
 (spills in a bigger function) rather than a path that runs. M5 reads the
 profiles before changing anything.
+
+## M4: the realm and the regular-expression crate
+
+**The eight programs run.** With the builtins of section 6.2 and the
+`oxide-regexp` crate (#144), every V8 v7 program of the suite build runs to
+its completion line on `oxide-run` and prints the manifest's exact stdout.
+The benchmarks check their own results and throw on a wrong one.
+
+A first, indicative timing: one process each, the full fixed work, pinned
+to one CPU, against the current core's `qjs` from the same tree. M6 takes
+the reference measurement of section 9 (three engines interleaved, medians
+of five).
+
+| Program | New core s | Current core s | Current / new |
+| --- | ---: | ---: | ---: |
+| richards | 1.18 | 4.17 | 3.53 |
+| deltablue | 1.15 | 4.90 | 4.26 |
+| crypto | 0.91 | 3.43 | 3.77 |
+| raytrace | 1.00 | 5.21 | 5.21 |
+| earley-boyer | 0.81 | 4.72 | 5.83 |
+| regexp | 1.20 | 1.83 | 1.53 |
+| splay | 2.25 | 5.61 | 2.49 |
+| navier-stokes | 1.12 | 3.15 | 2.81 |
+
+The geometric mean of the ratios is about 3.4, against the gate's 3.0.
+Splay sits just under the 2.5 per-program floor, and NavierStokes is the
+second lowest.
+
+**`ic-stats` on the eight**, one `run()` each, read before M5 touches
+anything:
+
+| Program | Get hit % | Set hit % | Global hit % | Construct hit % | Largest miss sources |
+| --- | ---: | ---: | ---: | ---: | --- |
+| richards | 99.9 | 99.8 | 99.7 | 30 | none hot |
+| deltablue | 94.4 | 99.3 | 99.5 | 97.8 | array `length` (18,027 at one site) |
+| crypto | 88.1 | 97.7 | 99.5 | 85 | `this.am` and other `BigInteger.prototype` methods, unfilled |
+| raytrace | 91.5 | 95.4 | 99.8 | 99.9 | `this.initialize` in `Class.create` (megamorphic, 66,590); array `length` |
+| earley-boyer | 99.9 | 99.98 | 99.9 | 99.3 | none hot |
+| regexp | 91.0 | — | 99.8 | — | string `length` (2 × 16,479); `replace`/`split` method reads |
+| splay | 99.99 (90% through polymorphic rows) | 94.9 | 99.99 | 99.98 | `left`/`right` transitions at the full range (24,550 fills) |
+| navier-stokes | (few) | (few) | (few) | — | the hot loops are element accesses and arithmetic |
+
+Each row points at an M5 candidate:
+- **`length`**: cache array and string `length` (phase 1's in-arm path
+  was lost to the `GetField` cache).
+- **Crypto**: cache prototype hits whose holder is in dictionary mode.
+  `BigInteger.prototype` has more than 64 methods, and its changes clear
+  the cell like any prototype's.
+- **RayTrace**: the megamorphic site.
+- **Splay**: the slots reserved for constructed objects, which later grow
+  `left`/`right`.
+
+**The loop.** `vm::interp::run` is 13,833 bytes. The probe slopes are
+unchanged from M3.
+
+**Correctness.**
+- One corpus program per row of section 6.2's table, printing identically
+  on both cores with and without stress:
+  - `builtins_global.js`, `builtins_object.js`, `builtins_function.js`,
+    `builtins_array.js`, `builtins_string.js`, `builtins_number.js`,
+    `builtins_boolean.js`, `builtins_math.js`, `builtins_error.js`,
+    `builtins_regexp.js`
+  - edge cases include radix bounds, negative and fractional indices,
+    `NaN` and `±0` through `Math`, empty-string splits, `lastIndex` with
+    and without `g` and `y`, replacement patterns with named groups,
+    captures in `split`, and Unicode case mapping.
+- `check-new-core-stress.py` passes with 39 corpus programs.
+- The radix port has a differential test against the current engine
+  (`radix_tests`): about 340,000 formatting cases and 240,000 parsing
+  cases, with no difference.
