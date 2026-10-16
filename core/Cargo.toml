@@ -16,3 +16,5 @@ workspace = true
 default = []
 # Collects before every allocation (new-core phase 0, section 3).
 gc-stress = []
+# Counts inline-cache hits and misses per kind and site (phase 3, section 2.6).
+ic-stats = []

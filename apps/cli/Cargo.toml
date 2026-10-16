@@ -34,6 +34,8 @@ test262-host = ["quickjs-oxide/test262-host"]
 profiling = ["quickjs-oxide/profiling"]
 # `oxide-run --gc-stress=N`: the new core's stress collector.
 new-core-gc-stress = ["quickjs-oxide/new-core-gc-stress"]
+# `oxide-run --ic-stats`: the new core's inline-cache report at exit.
+new-core-ic-stats = ["quickjs-oxide/new-core-ic-stats"]
 
 # `cargo binstall` fetches the archives that .github/workflows/release.yml
 # attaches to each `v*` GitHub Release.

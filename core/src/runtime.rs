@@ -319,6 +319,82 @@ impl Runtime {
             .alloc_bytecode_function(Some(prototype), None, &tree)
     }
 
+    /// The inline-cache report of section 2.6, when the counters exist (the
+    /// `ic-stats` feature or a debug build): hits and misses per cache kind,
+    /// the site states, and the `worst` sites with the most misses (unit
+    /// name, instruction index, key).
+    pub fn ic_report(&self, worst: usize) -> Option<String> {
+        use std::fmt::Write;
+
+        use crate::vm::ic::IcKind;
+        let ics = self.heap.ics();
+        let stats = ics.stats()?;
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "{:<10}{:>14}{:>14}{:>14}{:>14}{:>9}",
+            "ic", "mono hits", "poly hits", "fills", "unfilled", "hit %"
+        );
+        let kinds = [IcKind::Get, IcKind::Set, IcKind::Global, IcKind::Construct];
+        for kind in kinds {
+            let k = kind as usize;
+            let hits = stats.mono_hits[k] + stats.poly_hits[k];
+            let total = hits + stats.fills[k] + stats.unfilled[k];
+            let rate = if total == 0 {
+                0.0
+            } else {
+                100.0 * hits as f64 / total as f64
+            };
+            let _ = writeln!(
+                out,
+                "{:<10}{:>14}{:>14}{:>14}{:>14}{:>8.2}%",
+                kind.name(),
+                stats.mono_hits[k],
+                stats.poly_hits[k],
+                stats.fills[k],
+                stats.unfilled[k],
+                rate
+            );
+        }
+        let (mono, poly, mega) = ics.site_states();
+        let _ = writeln!(
+            out,
+            "sites: {} entries, {mono} monomorphic, {poly} polymorphic, {mega} megamorphic",
+            ics.len()
+        );
+        let mut sites = Vec::new();
+        for (id, unit) in self.code.units() {
+            for (pc, insn) in unit.code.iter().enumerate() {
+                if let Some(site) = insn.site() {
+                    let entry = (unit.ic_base + site) as usize;
+                    let misses = stats.site_misses[entry];
+                    if misses > 0 {
+                        sites.push((misses, id, pc, *insn));
+                    }
+                }
+            }
+        }
+        sites.sort_by_key(|&(misses, id, pc, _)| (std::cmp::Reverse(misses), id, pc));
+        for &(misses, id, pc, insn) in sites.iter().take(worst) {
+            let unit = self.code.get(id);
+            let name = if unit.debug.name.is_empty() {
+                "<anonymous>"
+            } else {
+                &unit.debug.name
+            };
+            let key = match insn.op {
+                crate::bytecode::Opcode::New => String::new(),
+                _ => crate::vm::property::key_text(&self.heap, insn.key()),
+            };
+            let _ = writeln!(
+                out,
+                "  {misses:>10} misses  {name} @{pc} {} {key}",
+                insn.op.name()
+            );
+        }
+        Some(out)
+    }
+
     /// The disassembly of `unit`, with atom keys spelled out.
     pub fn disassemble(&self, unit: CodeUnitId) -> String {
         let heap = &self.heap;

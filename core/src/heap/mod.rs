@@ -125,6 +125,10 @@ pub struct Heap {
     /// The inline caches (phase 3, section 2.1): beside the code store in
     /// spirit, inside the heap so that every collection prunes them.
     pub(crate) ics: IcStore,
+    /// The global object's dictionary generation (phase 3, section 2.4):
+    /// bumped by every insert, remove and reflag of its properties, never by
+    /// a value write. A global cache entry hits while it is unchanged.
+    pub(crate) global_generation: u32,
 }
 
 impl Default for Heap {
@@ -152,6 +156,7 @@ impl Heap {
             gc: GcState::new(limits),
             vm: VmStack::default(),
             ics: IcStore::default(),
+            global_generation: 0,
         };
         let cell = heap.cells.alloc(ValidityCell { valid: true });
         debug_assert_eq!(cell, STATIC_CELL.0);
@@ -224,6 +229,25 @@ impl Heap {
 
     pub fn ics(&self) -> &IcStore {
         &self.ics
+    }
+
+    pub fn ics_mut(&mut self) -> &mut IcStore {
+        &mut self.ics
+    }
+
+    pub fn global_generation(&self) -> u32 {
+        self.global_generation
+    }
+
+    /// A new global generation. The value an empty entry holds is skipped:
+    /// on wrapping to it every global entry is cleared, so no entry filled
+    /// 2^32 generations ago can hit.
+    pub(crate) fn bump_global_generation(&mut self) {
+        self.global_generation = self.global_generation.wrapping_add(1);
+        if self.global_generation == crate::vm::ic::EMPTY_TAG {
+            self.global_generation = 0;
+            self.ics.clear_kind(crate::vm::ic::IcKind::Global);
+        }
     }
 
     pub fn value_heap(&self) -> &ValueHeap {

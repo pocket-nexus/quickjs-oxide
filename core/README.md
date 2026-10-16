@@ -182,3 +182,32 @@ check nothing.
   `%Object.prototype%`); M4 fills it. A string-receiver entry is guarded by
   the cell of `%String.prototype%`'s own chain (`Heap::chain_cell`), which
   any change to it or to `%Object.prototype%` clears.
+
+### Stores, globals, constructors, accessors (M2)
+
+- The global generation lives in the `Heap` (`global_generation`), not in
+  the global object's `Dictionary`: every insert, remove and reflag of the
+  global object's dictionary bumps it, so a global hit is one load and one
+  compare against the entry. On wrapping to the empty entry's tag the
+  generation restarts at 0 and every global entry is cleared.
+- A `SetField` transition hit also requires the object to be extensible and
+  not used as a prototype: extensibility and prototype use are object flags,
+  not shape properties, and a prototype's shape change must invalidate.
+  An in-place entry carries the static cell; only transitions consult the
+  chain's cell, which the fill takes only when no prototype has the key as
+  an accessor or a read-only property (decided before the write runs, since
+  a setter may add the key itself).
+- A `New` site learns its receiver size at the constructor's return from the
+  `New` instruction before the caller's resume point, so `Frame` carries no
+  site. The learned size is the receiver shape's slot width, capped at
+  twice the dictionary threshold.
+- Shapes count slots (`width`) apart from properties (`count`): an accessor
+  is two slots. A reflag never changes a property between data and
+  accessor; the literal paths delete and re-add instead.
+- `DefineGetter` and `DefineSetter` are core opcodes from M2, and the
+  lowering accepts `get`/`set` in object literals from M2 rather than M3, so
+  the two-core corpus covers accessors (`core/tests/corpus/accessors.js`).
+- The `ic-stats` counters exist with the feature and in debug builds, so
+  tests see hits; release builds without the feature carry none.
+  `Runtime::ic_report` prints them, and `oxide-run --ic-stats` (CLI feature
+  `new-core-ic-stats`) prints the report to stderr at exit.

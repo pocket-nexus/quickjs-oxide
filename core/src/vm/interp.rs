@@ -7,7 +7,7 @@
 use std::cmp::Ordering;
 
 use super::error::{self, ErrorKind};
-use super::ic::{self, FIELD_NO_SITE};
+use super::ic::{self, FIELD_NO_SITE, GLOBAL_NO_SITE, IcEntry, IcKind};
 use super::native::{self, CallSite, Native};
 use super::number;
 use super::ops::{self, Arith, Relation, Unary};
@@ -219,32 +219,170 @@ fn make_closure(
     result
 }
 
-/// `New`'s receiver: an ordinary object inheriting from the constructor's
-/// `prototype`, with room for its `this.x =` properties.
+/// `New`'s receiver (phase 3, section 2.5): an ordinary object inheriting
+/// from the constructor's `prototype`, sized by the site's learned slot count.
+/// A hit is a shape compare on the constructor and a load of its `prototype`
+/// slot, read live; a miss looks it up and refills the entry with the
+/// constructor's static `this.x =` count.
 #[inline(never)]
-fn construct_receiver(cx: &mut Cx<'_>, constructor: ObjectId, slots: u16) -> Result<Value, Throw> {
-    let names = cx.realm.names;
-    let prototype = property::get_from(cx.heap, &names, constructor, Names::key(names.prototype));
+fn construct_receiver(
+    cx: &mut Cx<'_>,
+    constructor: ObjectId,
+    this_slots: u16,
+    site: usize,
+) -> Result<Value, Throw> {
+    let entry = cx.heap.ics.entries[site];
+    let heap = &*cx.heap;
+    let shape = heap.shape_of(constructor).index();
+    let (prototype, slots) = if shape == entry.w0 {
+        let prototype = heap.get_slot(constructor, entry.w1);
+        cx.heap.ics.count_hit(IcKind::Construct);
+        (prototype, entry.w2)
+    } else {
+        let names = cx.realm.names;
+        let key = Names::key(names.prototype);
+        let slots = u32::from(this_slots);
+        match heap.lookup_own(constructor, key) {
+            Some((slot, property))
+                if !property.has(PropertyFlags::ACCESSOR) && !heap.is_dictionary(constructor) =>
+            {
+                let prototype = heap.get_slot(constructor, slot);
+                let fill = IcEntry {
+                    w0: shape,
+                    w1: slot,
+                    w2: slots,
+                    w3: NONE,
+                };
+                let filled = cx.heap.ics.record(site, fill);
+                cx.heap.ics.count_miss(site, filled);
+                (prototype, slots)
+            }
+            _ => {
+                cx.heap.ics.count_miss(site, false);
+                (property::get_value(cx, constructor, key)?, slots)
+            }
+        }
+    };
     let prototype = prototype
         .as_object()
         .unwrap_or_else(|| cx.realm.intrinsic(Intrinsic::ObjectPrototype));
     cx.heap
-        .alloc_object(ObjectKind::Ordinary, Some(prototype), u32::from(slots))
+        .alloc_object(ObjectKind::Ordinary, Some(prototype), slots)
         .map(Value::object)
         .map_err(|error| error::heap_error(cx, error))
 }
 
-/// A global's value along the global object's prototype chain.
-#[inline]
-fn global_lookup(cx: &Cx<'_>, key: PropertyKey) -> Option<Value> {
-    let mut current = Some(cx.realm.global());
-    while let Some(object) = current {
-        if let Some(value) = property::own(cx.heap, &cx.realm.names, object, key) {
-            return Some(value);
-        }
-        current = cx.heap.prototype_of(object);
+/// The most receiver slots a construct entry learns: an object past the
+/// dictionary threshold leaves the transition tree anyway.
+const MAX_LEARNED_SLOTS: u32 = 2 * crate::shape::DICTIONARY_THRESHOLD;
+
+/// Section 2.5's learning: when a constructor's frame returns to the `New`
+/// that entered it, the site's entry keeps the larger of its slot count and
+/// the slots the receiver grew to, so the next construction reserves what
+/// chained constructors added.
+#[inline(never)]
+fn learn_receiver_size(cx: &mut Cx<'_>, done: &Frame) {
+    if done.flags & frame_flags::ENTRY != 0 {
+        return;
     }
-    None
+    let caller = cx.heap.vm.frames.last().expect("a caller");
+    let unit = cx.code.get(caller.unit);
+    let insn = unit.code[done.return_pc as usize - 1];
+    if insn.op != Opcode::New {
+        return;
+    }
+    let site = unit.ic_base as usize + insn.imm as usize;
+    let mut entry = cx.heap.ics.entries[site];
+    let Some(receiver) = cx.heap.vm.registers[done.base as usize].as_object() else {
+        return;
+    };
+    if !entry.is_filled() || cx.heap.is_dictionary(receiver) {
+        return;
+    }
+    let width = cx.heap.shape(cx.heap.shape_of(receiver)).width;
+    if width > entry.w2 {
+        entry.w2 = width.min(MAX_LEARNED_SLOTS);
+        cx.heap.ics.entries[site] = entry;
+    }
+}
+
+/// `GetGlobal` and `GetGlobalOrUndefined` past the cache (section 2.4): an
+/// own data property of the global object fills the entry with the global
+/// generation; anything else (an accessor, a global found on
+/// `%Object.prototype%`) is read uncached.
+#[inline(never)]
+fn get_global(cx: &mut Cx<'_>, insn: Insn, site: usize) -> Result<Value, Throw> {
+    let key = insn.key();
+    let global = cx.realm.global();
+    let heap = &*cx.heap;
+    if let Some((slot, property)) = heap.lookup_own(global, key)
+        && !property.has(PropertyFlags::ACCESSOR)
+    {
+        let value = heap.get_slot(global, slot);
+        let entry = global_entry(heap, slot, property);
+        let filled = insn.site() != Some(GLOBAL_NO_SITE) && cx.heap.ics.record(site, entry);
+        cx.heap.ics.count_miss(site, filled);
+        return Ok(value);
+    }
+    cx.heap.ics.count_miss(site, false);
+    match property::find(cx.heap, &cx.realm.names, global, key) {
+        Some(found) => property::value_of(cx, Some(found), Value::object(global)),
+        None if insn.op == Opcode::GetGlobalOrUndefined => Ok(Value::UNDEFINED),
+        None => Err(key_error(
+            cx,
+            ErrorKind::Reference,
+            insn,
+            "'",
+            "' is not defined",
+        )),
+    }
+}
+
+/// `SetGlobal` past the cache: the uncached write, then a fill when the
+/// global is an own writable data property of the global object.
+#[inline(never)]
+fn set_global(
+    cx: &mut Cx<'_>,
+    insn: Insn,
+    value: Value,
+    strict: bool,
+    site: usize,
+) -> Result<(), Throw> {
+    let key = insn.key();
+    let global = cx.realm.global();
+    if strict && !property::has(cx.heap, &cx.realm.names, global, key) {
+        return Err(key_error(
+            cx,
+            ErrorKind::Reference,
+            insn,
+            "'",
+            "' is not defined",
+        ));
+    }
+    property::set_on(cx, global, key, value, strict)?;
+    let heap = &mut *cx.heap;
+    let filled = match heap.lookup_own(global, key) {
+        Some((slot, property))
+            if insn.site() != Some(GLOBAL_NO_SITE)
+                && property.has(PropertyFlags::WRITABLE)
+                && !property.has(PropertyFlags::ACCESSOR) =>
+        {
+            let entry = global_entry(heap, slot, property);
+            heap.ics.record(site, entry)
+        }
+        _ => false,
+    };
+    heap.ics.count_miss(site, filled);
+    Ok(())
+}
+
+fn global_entry(heap: &Heap, slot: u32, property: PropertyFlags) -> IcEntry {
+    IcEntry {
+        w0: heap.global_generation,
+        w1: slot,
+        w2: u32::from(property.bits()),
+        w3: NONE,
+    }
 }
 
 /// Defines a script-level declaration on the global object.
@@ -265,6 +403,12 @@ fn define_global(
     }
     heap.add_property(global, key, PropertyFlags::data(true, true, false), value)
         .map_err(|error| error::heap_error(cx, error))
+}
+
+/// The cache site of a global form, in `b | c << 8`.
+#[inline(always)]
+fn global_site(insn: Insn) -> usize {
+    insn.b as usize | (insn.c as usize) << 8
 }
 
 /// The running frame's registers. The register file keeps [`SPAN`] values
@@ -677,27 +821,42 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                         ic::get_hit(heap, &cx.heap.cells, &cx.heap.values, entry, object)
                     {
                         reg!(insn.a) = value;
+                        cx.heap.ics.count_hit(IcKind::Get);
                         continue 'dispatch;
                     }
                     let fill = insn.c != FIELD_NO_SITE;
                     write!('dispatch, insn.a, property::get_cached(cx, object, insn.key(), site, fill))
                 }
                 Opcode::SetField => {
+                    // Section 2.3, with the arenas borrowed as in `GetField`.
                     let (object, value) = (reg!(insn.a), reg!(insn.b));
-                    if let Some(object) = object.as_object()
-                        && let Some((slot, property)) = cx.heap.lookup_own(object, insn.key())
-                        && property.has(PropertyFlags::WRITABLE)
-                    {
-                        cx.heap.set_slot(object, slot, value);
-                        regs = window!();
+                    let site = ic_base + insn.c as usize;
+                    let entry = cx.heap.ics.entries[site];
+                    if ic::set_hit(
+                        &mut cx.heap.objects,
+                        &cx.heap.cells,
+                        &mut cx.heap.values,
+                        entry,
+                        object,
+                        value,
+                    ) {
+                        cx.heap.ics.count_hit(IcKind::Set);
                         continue 'dispatch;
                     }
-                    property::set(cx, object, insn.key(), value, strict)
+                    let fill = insn.c != FIELD_NO_SITE;
+                    property::set_cached(cx, object, insn.key(), value, strict, site, fill)
                 }
                 Opcode::DefineField => {
                     let (object, value) = (reg!(insn.a), reg!(insn.b));
                     let object = object.as_object().expect("a literal object");
                     property::define(cx, object, insn.key(), value)
+                }
+                Opcode::DefineGetter | Opcode::DefineSetter => {
+                    let (object, function) = (reg!(insn.a), reg!(insn.b));
+                    let object = object.as_object().expect("a literal object");
+                    let setter = insn.op == Opcode::DefineSetter;
+                    let flags = PropertyFlags::accessor(true, true);
+                    property::define_accessor(cx, object, insn.key(), function, setter, flags)
                 }
                 Opcode::DeleteField => {
                     let object = reg!(insn.b);
@@ -754,35 +913,33 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                 }
 
                 // ---- globals ----
-                Opcode::GetGlobal => match global_lookup(cx, insn.key()) {
-                    Some(value) => set!('dispatch, insn.a, value),
-                    None => Err(key_error(
-                        cx,
-                        ErrorKind::Reference,
-                        insn,
-                        "'",
-                        "' is not defined",
-                    )),
-                },
-                Opcode::GetGlobalOrUndefined => {
-                    set!('dispatch, insn.a,
-                        global_lookup(cx, insn.key()).unwrap_or(Value::UNDEFINED)
-                    )
+                Opcode::GetGlobal | Opcode::GetGlobalOrUndefined => {
+                    // Section 2.4: one generation compare and a load.
+                    let site = ic_base + global_site(insn);
+                    let entry = cx.heap.ics.entries[site];
+                    if entry.w0 == cx.heap.global_generation {
+                        let global = cx.realm.global();
+                        let start = cx.heap.objects.get(global.index()).slots_start;
+                        reg!(insn.a) = cx.heap.values.get_at(start + entry.w1);
+                        cx.heap.ics.count_hit(IcKind::Global);
+                        continue 'dispatch;
+                    }
+                    write!('dispatch, insn.a, get_global(cx, insn, site))
                 }
                 Opcode::SetGlobal => {
                     let value = reg!(insn.a);
-                    let global = cx.realm.global();
-                    if strict && global_lookup(cx, insn.key()).is_none() {
-                        Err(key_error(
-                            cx,
-                            ErrorKind::Reference,
-                            insn,
-                            "'",
-                            "' is not defined",
-                        ))
-                    } else {
-                        property::set_on(cx, global, insn.key(), value, strict)
+                    let site = ic_base + global_site(insn);
+                    let entry = cx.heap.ics.entries[site];
+                    if entry.w0 == cx.heap.global_generation
+                        && entry.w2 & u32::from(PropertyFlags::WRITABLE) != 0
+                    {
+                        let global = cx.realm.global();
+                        let start = cx.heap.objects.get(global.index()).slots_start;
+                        cx.heap.values.set_at(start + entry.w1, value);
+                        cx.heap.ics.count_hit(IcKind::Global);
+                        continue 'dispatch;
                     }
+                    set_global(cx, insn, value, strict, site)
                 }
                 Opcode::DefineGlobal => {
                     let value = reg!(insn.a);
@@ -887,7 +1044,9 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                                     break 'op Err(error::type_error(cx, "not a constructor"));
                                 }
                                 Opcode::New => {
-                                    match construct_receiver(cx, object, callee_unit.this_slots) {
+                                    let site = ic_base + insn.imm as usize;
+                                    let slots = callee_unit.this_slots;
+                                    match construct_receiver(cx, object, slots, site) {
                                         Ok(this) => this,
                                         Err(throw) => break 'op Err(throw),
                                     }
@@ -1234,8 +1393,11 @@ enum Returned {
 fn finish_return(cx: &mut Cx<'_>, mut value: Value) -> Returned {
     loop {
         let done = cx.heap.vm.frames.pop().expect("a frame");
-        if done.flags & frame_flags::CONSTRUCT != 0 && value.as_object().is_none() {
-            value = cx.heap.vm.registers[done.base as usize];
+        if done.flags & frame_flags::CONSTRUCT != 0 {
+            learn_receiver_size(cx, &done);
+            if value.as_object().is_none() {
+                value = cx.heap.vm.registers[done.base as usize];
+            }
         }
         if done.flags & frame_flags::ENTRY != 0 {
             return Returned::Exit(value);

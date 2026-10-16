@@ -166,7 +166,7 @@ fn to_primitive_object(cx: &mut Cx<'_>, object: ObjectId, hint: Hint) -> Result<
         [names.value_of, names.to_string]
     };
     for name in order {
-        let method = property::get_from(cx.heap, &names, object, Names::key(name));
+        let method = property::get_value(cx, object, Names::key(name))?;
         if is_callable(cx.heap, method) {
             let result = super::call(cx, method, Value::object(object), &[])?;
             if result.as_object().is_none() {
@@ -211,7 +211,7 @@ fn join(cx: &mut Cx<'_>, array: ObjectId) -> Result<Value, Throw> {
             joined.push(u16::from(b','));
         }
         let element = match PropertyKey::index(index) {
-            Some(key) => property::get_from(cx.heap, &cx.realm.names, array, key),
+            Some(key) => property::get_value(cx, array, key)?,
             None => Value::UNDEFINED,
         };
         if element.is_undefined() || element.is_null() {
@@ -227,7 +227,7 @@ fn join(cx: &mut Cx<'_>, array: ObjectId) -> Result<Value, Throw> {
 fn error_text(cx: &mut Cx<'_>, object: ObjectId) -> Result<Value, Throw> {
     let names = cx.realm.names;
     let part = |cx: &mut Cx<'_>, key: StringId, default: &str| -> Result<Vec<u16>, Throw> {
-        let value = property::get_from(cx.heap, &names, object, Names::key(key));
+        let value = property::get_value(cx, object, Names::key(key))?;
         if value.is_undefined() {
             return Ok(default.encode_utf16().collect());
         }
@@ -717,12 +717,7 @@ pub(crate) fn instance_of(cx: &mut Cx<'_>, x: Value, f: Value) -> Result<bool, T
         return Ok(false);
     };
     let names = cx.realm.names;
-    let prototype = property::get_from(
-        cx.heap,
-        &names,
-        f.as_object().unwrap(),
-        Names::key(names.prototype),
-    );
+    let prototype = property::get_value(cx, f.as_object().unwrap(), Names::key(names.prototype))?;
     let Some(prototype) = prototype.as_object() else {
         return Err(error::type_error(
             cx,

@@ -207,6 +207,11 @@ opcodes! {
     DefineField: ABKey,
     /// `a = delete b.imm`.
     DeleteField: ABKey,
+    /// Defines the getter of own accessor `imm` of `a` as function `b`
+    /// (`get x() {}` in a literal), keeping an existing setter.
+    DefineGetter: ABKey,
+    /// Defines the setter of own accessor `imm` of `a` as function `b`.
+    DefineSetter: ABKey,
     /// `a = b[c]`.
     GetElem: ABC,
     /// `a[b] = c`.

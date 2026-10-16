@@ -68,6 +68,12 @@ impl PropertyFlags {
     pub const fn has(self, flag: u8) -> bool {
         self.0 & flag != 0
     }
+
+    /// The slots a property with these flags occupies: two for an accessor
+    /// (getter, then setter), one for a data property.
+    pub const fn width(self) -> u32 {
+        if self.has(Self::ACCESSOR) { 2 } else { 1 }
+    }
 }
 
 impl fmt::Debug for PropertyFlags {
@@ -171,7 +177,7 @@ impl Dictionary {
         for (key, flags, slot) in entries {
             dictionary.map.insert(key, dictionary.entries.len() as u32);
             dictionary.entries.push(DictEntry { key, flags, slot });
-            dictionary.next_slot = dictionary.next_slot.max(slot + 1);
+            dictionary.next_slot = dictionary.next_slot.max(slot + flags.width());
         }
         dictionary
     }
@@ -182,17 +188,22 @@ impl Dictionary {
         Some((entry.slot, entry.flags))
     }
 
-    /// The slot the next insertion will use.
-    fn next_slot(&self) -> u32 {
-        self.free_slots.last().copied().unwrap_or(self.next_slot)
+    /// The slot the next insertion with `flags` will use. An accessor takes
+    /// two fresh slots; a data property reuses a freed one first.
+    fn next_slot(&self, flags: PropertyFlags) -> u32 {
+        match self.free_slots.last() {
+            Some(&slot) if flags.width() == 1 => slot,
+            _ => self.next_slot,
+        }
     }
 
     fn insert(&mut self, key: PropertyKey, flags: PropertyFlags) -> u32 {
         let slot = match self.free_slots.pop() {
-            Some(slot) => slot,
-            None => {
-                self.next_slot += 1;
-                self.next_slot - 1
+            Some(slot) if flags.width() == 1 => slot,
+            free => {
+                self.free_slots.extend(free);
+                self.next_slot += flags.width();
+                self.next_slot - flags.width()
             }
         };
         self.map.insert(key, self.entries.len() as u32);
@@ -205,7 +216,7 @@ impl Dictionary {
         let entry = &mut self.entries[index as usize];
         let slot = entry.slot;
         entry.slot = NONE;
-        self.free_slots.push(slot);
+        self.free_slots.extend(slot..slot + entry.flags.width());
         if self.entries.len() > 16 && self.entries.len() > 2 * self.map.len() {
             self.entries.retain(|entry| entry.slot != NONE);
             for (index, entry) in self.entries.iter().enumerate() {
@@ -248,6 +259,9 @@ pub struct Shape {
     pub slot: u32,
     /// Properties up to and including this node.
     pub count: u32,
+    /// Slots used up to and including this node: `count` plus one per
+    /// accessor, whose getter and setter take two.
+    pub width: u32,
     pub prototype: Option<ObjectId>,
     pub kind: ObjectKind,
     pub transitions: Transitions,
@@ -267,6 +281,7 @@ impl Shape {
             flags: PropertyFlags::DEFAULT,
             slot: NONE,
             count: 0,
+            width: 0,
             prototype,
             kind,
             transitions: Transitions::None,
@@ -369,8 +384,9 @@ impl Heap {
         child.parent = Some(shape);
         child.key = key;
         child.flags = flags;
-        child.slot = parent.count;
+        child.slot = parent.width;
         child.count = parent.count + 1;
+        child.width = parent.width + flags.width();
         let child = ShapeId(self.shapes.alloc(child));
         self.shapes
             .get_mut(shape.0)
@@ -499,7 +515,7 @@ impl Heap {
         }
     }
 
-    /// Adds a new own property. `DuplicateKey` if it already exists.
+    /// Adds a new own data property. `DuplicateKey` if it already exists.
     #[inline]
     pub fn add_property(
         &mut self,
@@ -508,28 +524,58 @@ impl Heap {
         flags: PropertyFlags,
         value: Value,
     ) -> Result<(), HeapError> {
-        // Fast path: a known transition and a free slot. A transition for
+        debug_assert!(!flags.has(PropertyFlags::ACCESSOR), "add_accessor");
+        self.add_slots(object, key, flags, [value, Value::UNDEFINED])
+    }
+
+    /// Adds a new own accessor property: `getter` and `setter` take two
+    /// consecutive slots, `undefined` for an absent half. `lookup_own`
+    /// reports the getter's slot.
+    pub fn add_accessor(
+        &mut self,
+        object: ObjectId,
+        key: PropertyKey,
+        flags: PropertyFlags,
+        getter: Value,
+        setter: Value,
+    ) -> Result<(), HeapError> {
+        debug_assert!(flags.has(PropertyFlags::ACCESSOR));
+        self.add_slots(object, key, flags, [getter, setter])
+    }
+
+    #[inline]
+    fn add_slots(
+        &mut self,
+        object: ObjectId,
+        key: PropertyKey,
+        flags: PropertyFlags,
+        values: [Value; 2],
+    ) -> Result<(), HeapError> {
+        // Fast path: a known transition and free slots. A transition for
         // `key` proves the current shape lacks it (shapes are immutable), so
         // no duplicate check, and nothing is allocated.
         let header = self.objects.get(object.0);
         if !header.has(flags::DICTIONARY) {
             let slots = header.slots();
             let shape = self.shapes.get(header.shape.0);
-            let count = shape.count;
-            if count < slots.len
+            let width = shape.width;
+            if width + flags.width() <= slots.len
                 && let Some(next) = shape.transitions.find(key, flags)
             {
                 let header = self.objects.get_mut(object.0);
                 header.shape = next;
                 let prototype = header.has(flags::USED_AS_PROTOTYPE);
-                self.values.set_at(slots.start + count, value);
+                self.values.set_at(slots.start + width, values[0]);
+                if flags.width() == 2 {
+                    self.values.set_at(slots.start + width + 1, values[1]);
+                }
                 if prototype {
                     self.invalidate(object);
                 }
                 return Ok(());
             }
         }
-        self.add_property_slow(object, key, flags, value)
+        self.add_property_slow(object, key, flags, values)
     }
 
     #[inline(never)]
@@ -538,34 +584,36 @@ impl Heap {
         object: ObjectId,
         key: PropertyKey,
         flags: PropertyFlags,
-        value: Value,
+        values: [Value; 2],
     ) -> Result<(), HeapError> {
         let header = *self.objects.get(object.0);
         if header.has(flags::DICTIONARY) {
-            return self.dictionary_add(object, key, flags, value);
+            return self.dictionary_add(object, key, flags, values);
         }
         let shape = self.shapes.get(header.shape.0);
-        let count = shape.count;
+        let (count, width) = (shape.count, shape.width);
         let known = shape.transitions.find(key, flags);
         // A known transition proves the key is absent; otherwise check.
         if known.is_none() && self.shape_lookup(header.shape, key).is_some() {
             return Err(HeapError::DuplicateKey);
         }
+        let keep = [Value::object(object), key.to_value(), values[0], values[1]];
         if count >= DICTIONARY_THRESHOLD {
-            self.enter_dictionary(object, &[key.to_value(), value])?;
-            return self.dictionary_add(object, key, flags, value);
+            self.enter_dictionary(object, &keep[1..])?;
+            return self.dictionary_add(object, key, flags, values);
         }
         let slots = header.slots();
-        let grow = count >= slots.len;
+        let needed = width + flags.width();
+        let grow = needed > slots.len;
+        let new_len = (slots.len * 2).max(needed).max(4);
         let collections = self.gc.stats.collections;
         if grow || known.is_none() {
-            let new_len = if grow { (slots.len * 2).max(4) } else { 0 };
             let need = Need {
                 shapes: 1,
-                values: [new_len, 0],
+                values: [if grow { new_len } else { 0 }, 0],
                 ..Need::default()
             };
-            self.safepoint(&need, &[Value::object(object), key.to_value(), value])?;
+            self.safepoint(&need, &keep)?;
         }
         // The object was rooted, so its shape and ranges are unchanged. A
         // known child is reused only if no collection ran: it is reachable
@@ -576,13 +624,16 @@ impl Heap {
         };
         let mut slots = slots;
         if grow {
-            slots = self.values.grow(slots, (slots.len * 2).max(4));
+            slots = self.values.grow(slots, new_len);
         }
         let header = self.objects.get_mut(object.0);
         header.shape = next;
         header.set_slots(slots);
         let prototype = header.has(flags::USED_AS_PROTOTYPE);
-        self.values.set(slots, count, value);
+        self.values.set(slots, width, values[0]);
+        if flags.width() == 2 {
+            self.values.set(slots, width + 1, values[1]);
+        }
         if prototype {
             self.invalidate(object);
         }
@@ -594,7 +645,7 @@ impl Heap {
         object: ObjectId,
         key: PropertyKey,
         flags: PropertyFlags,
-        value: Value,
+        values: [Value; 2],
     ) -> Result<(), HeapError> {
         let header = *self.objects.get(object.0);
         let dictionary = self
@@ -606,15 +657,17 @@ impl Heap {
         if dictionary.find(key).is_some() {
             return Err(HeapError::DuplicateKey);
         }
-        let slot = dictionary.next_slot();
+        let slot = dictionary.next_slot(flags);
+        let end = slot + flags.width();
         let mut slots = header.slots();
-        if slot >= slots.len {
-            let new_len = (slots.len * 2).max(slot + 1).max(4);
+        if end > slots.len {
+            let new_len = (slots.len * 2).max(end).max(4);
             let need = Need {
                 values: [new_len, 0],
                 ..Need::default()
             };
-            self.safepoint(&need, &[Value::object(object), key.to_value(), value])?;
+            let keep = [Value::object(object), key.to_value(), values[0], values[1]];
+            self.safepoint(&need, &keep)?;
             slots = self.values.grow(slots, new_len);
             self.objects.get_mut(object.0).set_slots(slots);
         }
@@ -626,11 +679,25 @@ impl Heap {
             .expect("dictionary shape");
         let used = dictionary.insert(key, flags);
         debug_assert_eq!(used, slot);
-        self.values.set(slots, slot, value);
+        self.values.set(slots, slot, values[0]);
+        if flags.width() == 2 {
+            self.values.set(slots, slot + 1, values[1]);
+        }
+        self.dictionary_changed(object);
         if header.has(flags::USED_AS_PROTOTYPE) {
             self.invalidate(object);
         }
         Ok(())
+    }
+
+    /// Bumps the global generation (phase 3, section 2.4) when `object` is the
+    /// global object: an insert, remove or reflag of its dictionary moves a
+    /// slot or a flag that a global cache entry may hold.
+    #[inline]
+    fn dictionary_changed(&mut self, object: ObjectId) {
+        if self.objects.get(object.0).kind == ObjectKind::GlobalObject {
+            self.bump_global_generation();
+        }
     }
 
     /// Moves `object` to an unshared dictionary shape. `keep` are extra values
@@ -680,8 +747,12 @@ impl Heap {
             .dictionary
             .as_deref_mut()
             .expect("dictionary shape");
+        let (_, flags) = dictionary.find(key).expect("present key");
         let slot = dictionary.remove(key).expect("present key");
-        self.values.set(header.slots(), slot, Value::EMPTY);
+        for slot in slot..slot + flags.width() {
+            self.values.set(header.slots(), slot, Value::EMPTY);
+        }
+        self.dictionary_changed(object);
         if header.has(flags::USED_AS_PROTOTYPE) {
             self.invalidate(object);
         }
@@ -702,6 +773,7 @@ impl Heap {
         if old == flags {
             return Ok(true);
         }
+        debug_assert_eq!(old.width(), flags.width(), "a data/accessor change");
         let header = *self.objects.get(object.0);
         if header.has(flags::DICTIONARY) {
             let dictionary = self
@@ -711,6 +783,7 @@ impl Heap {
                 .as_deref_mut()
                 .expect("dictionary shape");
             dictionary.set_flags(key, flags);
+            self.dictionary_changed(object);
         } else {
             let mut entries = self.shape_entries(header.shape);
             for entry in &mut entries {
@@ -745,7 +818,7 @@ impl Heap {
         let kind = self.shapes.get(self.objects.get(object.0).shape.0).kind;
         let mut shape = self.root_shape(prototype, kind);
         for &(key, flags, slot) in entries {
-            debug_assert_eq!(slot, self.shapes.get(shape.0).count);
+            debug_assert_eq!(slot, self.shapes.get(shape.0).width);
             shape = self.transition(shape, key, flags);
         }
         self.objects.get_mut(object.0).shape = shape;

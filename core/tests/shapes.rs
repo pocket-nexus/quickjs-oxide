@@ -90,9 +90,11 @@ fn reflag_keeps_slot_delete_and_readd_moves_to_end() {
         "shapes are shared"
     );
 
-    let accessor = PropertyFlags::accessor(false, true);
-    assert!(heap.set_property_flags(object, alpha, accessor).unwrap());
-    assert_eq!(heap.lookup_own(object, alpha), Some((0, accessor)));
+    // A reflag keeps the slot's width; data and accessor properties take
+    // one and two slots, so a change between them is a delete and an add.
+    let read_only = PropertyFlags::data(false, false, true);
+    assert!(heap.set_property_flags(object, alpha, read_only).unwrap());
+    assert_eq!(heap.lookup_own(object, alpha), Some((0, read_only)));
     assert_eq!(
         heap.lookup_own(twin, alpha),
         Some((0, DEFAULT)),
@@ -389,4 +391,62 @@ fn cells_and_prototype_infos_die_with_their_objects() {
     heap.collect();
     assert!(!heap.is_live(Value::object(prototype)));
     assert_eq!(heap.live_cells(), 1, "only the static cell is left");
+}
+
+/// Phase 3, section 3: an accessor takes two consecutive slots (getter,
+/// setter) in the transition tree and in dictionary mode, and the properties
+/// after it keep their own.
+#[test]
+fn accessors_take_two_slots() {
+    let mut heap = Heap::default();
+    let a = heap.property_key("a").unwrap();
+    let get = heap.property_key("get").unwrap();
+    let b = heap.property_key("b").unwrap();
+    let c = heap.property_key("c").unwrap();
+    let accessor = PropertyFlags::accessor(true, true);
+    let object = held(&mut heap, None);
+    heap.add_property(object, a, DEFAULT, Value::int32(1))
+        .unwrap();
+    heap.add_accessor(object, get, accessor, Value::int32(10), Value::int32(11))
+        .unwrap();
+    heap.add_property(object, b, DEFAULT, Value::int32(2))
+        .unwrap();
+    assert_eq!(heap.lookup_own(object, get), Some((1, accessor)));
+    assert_eq!(heap.lookup_own(object, b), Some((3, DEFAULT)));
+    assert_eq!(heap.get_slot(object, 1), Value::int32(10));
+    assert_eq!(heap.get_slot(object, 2), Value::int32(11));
+    assert_eq!(heap.get_slot(object, 3), Value::int32(2));
+    let shape = heap.shape_of(object);
+    assert_eq!((heap.shape(shape).count, heap.shape(shape).width), (3, 4));
+    // A twin reaches the same shape through the shared transitions.
+    let twin = held(&mut heap, None);
+    heap.add_property(twin, a, DEFAULT, Value::int32(1))
+        .unwrap();
+    heap.add_accessor(twin, get, accessor, Value::UNDEFINED, Value::UNDEFINED)
+        .unwrap();
+    heap.add_property(twin, b, DEFAULT, Value::int32(2))
+        .unwrap();
+    assert_eq!(heap.shape_of(twin), shape);
+
+    // Dictionary mode keeps the layout; a delete frees both slots and a
+    // later accessor takes two fresh ones.
+    assert!(heap.delete_property(object, a).unwrap());
+    assert!(heap.is_dictionary(object));
+    assert_eq!(heap.lookup_own(object, get), Some((1, accessor)));
+    assert_eq!(heap.lookup_own(object, b), Some((3, DEFAULT)));
+    assert!(heap.delete_property(object, get).unwrap());
+    heap.add_accessor(object, get, accessor, Value::int32(20), Value::int32(21))
+        .unwrap();
+    assert_eq!(heap.lookup_own(object, get), Some((4, accessor)));
+    assert_eq!(heap.get_slot(object, 4), Value::int32(20));
+    assert_eq!(heap.get_slot(object, 5), Value::int32(21));
+    heap.add_property(object, c, DEFAULT, Value::int32(3))
+        .unwrap();
+    let (slot, _) = heap.lookup_own(object, c).unwrap();
+    assert!(slot < 3, "a data property reuses a freed slot");
+    assert_eq!(heap.get_slot(object, 3), Value::int32(2));
+    for _ in 0..2 {
+        heap.collect();
+    }
+    assert_eq!(heap.get_slot(object, 5), Value::int32(21));
 }

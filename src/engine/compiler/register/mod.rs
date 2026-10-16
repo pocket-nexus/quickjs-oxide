@@ -25,6 +25,8 @@
 
 mod analysis;
 #[cfg(test)]
+mod ic_tests;
+#[cfg(test)]
 mod run_tests;
 #[cfg(test)]
 mod tests;
@@ -39,7 +41,7 @@ use oxide_core::bytecode::{
 use oxide_core::{HeapError, ObjectId, PropertyKey, Runtime, Value as CoreValue};
 
 use self::analysis::{Analysis, analyze};
-use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::bytecode::{DefineMethodKind, Instruction};
 use crate::engine::code::function::UnlinkedFunction;
 use crate::engine::code::function::metadata::{
     ClosureSource, ClosureVariableName, ConstructorKind, EvalKind, FunctionKind,
@@ -1060,6 +1062,21 @@ impl<'a> Lowerer<'a> {
                 let index = self.operand(self.stack.len() - 1)?;
                 let object = self.operand(self.stack.len() - 2)?;
                 self.emit(|b| b.abc(Opcode::DefineElem, object, index, value));
+            }
+            I::DefineMethod {
+                key,
+                kind: kind @ (DefineMethodKind::Getter | DefineMethodKind::Setter),
+                ..
+            } => {
+                let key = self.name_key(key)?;
+                let (_, [function]) = self.pop_operands::<1>()?;
+                let object = self.operand(self.stack.len() - 1)?;
+                let op = if kind == DefineMethodKind::Getter {
+                    Opcode::DefineGetter
+                } else {
+                    Opcode::DefineSetter
+                };
+                self.emit(|b| b.ab_key(op, object, function, key));
             }
             I::Delete => {
                 let (_, [object, key]) = self.pop_operands::<2>()?;

@@ -18,8 +18,15 @@ use crate::engine::compiler::register::{LowerError, lower_script};
 /// (`new-core-gc-stress`), which `--gc-stress` needs.
 pub const GC_STRESS_AVAILABLE: bool = cfg!(feature = "new-core-gc-stress");
 
+/// Whether this build counts inline-cache hits (`new-core-ic-stats`), which
+/// `--ic-stats` needs.
+pub const IC_STATS_AVAILABLE: bool = cfg!(feature = "new-core-ic-stats");
+
 #[derive(Clone, Debug, Default)]
 pub struct NewCoreOptions {
+    /// Print the inline-cache report to stderr at exit (`--ic-stats`); needs
+    /// [`IC_STATS_AVAILABLE`].
+    pub ic_stats: bool,
     /// Collect before every N-th allocating operation (`--gc-stress=N`);
     /// needs [`GC_STRESS_AVAILABLE`].
     pub gc_stress: Option<u32>,
@@ -39,6 +46,8 @@ pub enum NewCoreError {
     Uncaught(String),
     /// `gc_stress` was asked of a build without the stress collector.
     StressUnavailable,
+    /// `ic_stats` was asked of a build without the cache counters.
+    IcStatsUnavailable,
 }
 
 impl fmt::Display for NewCoreError {
@@ -50,6 +59,9 @@ impl fmt::Display for NewCoreError {
             NewCoreError::Uncaught(text) => f.write_str(text),
             NewCoreError::StressUnavailable => {
                 f.write_str("--gc-stress needs a build with the new-core-gc-stress feature")
+            }
+            NewCoreError::IcStatsUnavailable => {
+                f.write_str("--ic-stats needs a build with the new-core-ic-stats feature")
             }
         }
     }
@@ -109,12 +121,20 @@ fn lower(
 
 /// Compiles, lowers and runs `source`; `print` writes to stdout.
 pub fn run(source: &[u8], filename: &str, options: &NewCoreOptions) -> Result<(), NewCoreError> {
+    if options.ic_stats && !IC_STATS_AVAILABLE {
+        return Err(NewCoreError::IcStatsUnavailable);
+    }
     let mut runtime = runtime(options)?;
     let lowered = lower(&mut runtime, source, filename)?;
     let function = oxide_core::Value::object(lowered.function);
     let handle = runtime.hold(function);
     let result = runtime.run_script(lowered.function);
     runtime.release(handle);
+    if options.ic_stats
+        && let Some(report) = runtime.ic_report(10)
+    {
+        eprint!("{report}");
+    }
     match result {
         Ok(_) => Ok(()),
         Err(thrown) => {
