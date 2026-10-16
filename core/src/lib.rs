@@ -4,8 +4,17 @@
 
 #![forbid(unsafe_code)]
 
+pub mod heap;
+pub mod runtime;
+pub mod shape;
 pub mod value;
 
+pub use heap::atom::{KeyKind, PropertyKey};
+pub use heap::gc::{Handle, HeapLimits, RootMark};
+pub use heap::object::ObjectKind;
+pub use heap::{Heap, HeapError};
+pub use runtime::{Intrinsic, Runtime};
+pub use shape::PropertyFlags;
 pub use value::{
     BigIntId, Kind, ObjectId, ScopeId, ShapeId, StringId, SymbolId, ValidityCellId, Value,
 };
