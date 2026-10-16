@@ -203,7 +203,9 @@ impl Runtime {
                     group_names.and_then(|names| names.get(capture_index - 1))
             {
                 named.record(
-                    self.intern_property_key_js_string(group_name)?,
+                    self.intern_property_key_js_string(&JsString::try_from_utf16(
+                        group_name.iter().copied(),
+                    )?)?,
                     capture_index,
                     range.is_some(),
                 );

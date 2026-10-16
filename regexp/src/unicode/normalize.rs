@@ -6,9 +6,8 @@
 //! particular Unicode release, and ECMAScript strings must preserve lone
 //! UTF-16 surrogates that Rust scalar-value APIs cannot represent.
 
-use super::index_position;
-use crate::engine::value::{JsString, JsStringError};
-#[cfg(test)]
+use super::{CodeUnitBuf, CodeUnits, MAX_STRING_LEN, StringError, index_position};
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::cmp::Ordering;
 
@@ -55,7 +54,7 @@ impl NormalizationForm {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static FAIL_NEXT_NORMALIZE_RESERVATION: Cell<bool> = const { Cell::new(false) };
 }
@@ -63,7 +62,7 @@ thread_local! {
 /// Force the next normalization buffer reservation to fail. The hook is
 /// thread-local so concurrently running tests cannot consume one another's
 /// injected failure.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn fail_next_normalize_reservation_for_test() {
     FAIL_NEXT_NORMALIZE_RESERVATION.with(|armed| {
         assert!(
@@ -73,17 +72,17 @@ pub fn fail_next_normalize_reservation_for_test() {
     });
 }
 
-fn try_reserve_exact<T>(values: &mut Vec<T>, additional: usize) -> Result<(), JsStringError> {
-    #[cfg(test)]
+fn try_reserve_exact<T>(values: &mut Vec<T>, additional: usize) -> Result<(), StringError> {
+    #[cfg(any(test, feature = "test-hooks"))]
     if FAIL_NEXT_NORMALIZE_RESERVATION.with(|armed| armed.replace(false)) {
-        return Err(JsStringError::OutOfMemory);
+        return Err(StringError::OutOfMemory);
     }
     values
         .try_reserve_exact(additional)
-        .map_err(|_| JsStringError::OutOfMemory)
+        .map_err(|_| StringError::OutOfMemory)
 }
 
-fn push_fallible<T>(values: &mut Vec<T>, value: T) -> Result<(), JsStringError> {
+fn push_fallible<T>(values: &mut Vec<T>, value: T) -> Result<(), StringError> {
     if values.len() == values.capacity() {
         // Match QuickJS DynBuf's 1.5x growth policy. Reserving exactly one
         // element here would make repeated compatibility decompositions such
@@ -275,7 +274,7 @@ fn append_decomposed(
     output: &mut Vec<u32>,
     code_point: u32,
     compatibility: bool,
-) -> Result<(), JsStringError> {
+) -> Result<(), StringError> {
     if (0xac00..0xd7a4).contains(&code_point) {
         let syllable = code_point - 0xac00;
         push_fallible(output, 0x1100 + syllable / 588)?;
@@ -456,18 +455,18 @@ fn compose(code_points: &mut Vec<u32>) {
     code_points.truncate(output_len);
 }
 
-fn next_code_point(input: &JsString, index: &mut usize) -> u32 {
+fn next_code_point<U: CodeUnits + ?Sized>(input: &U, index: &mut usize) -> u32 {
     let first = input
-        .code_unit_at(*index)
+        .unit_at(*index)
         .expect("normalization advanced past its input");
     *index += 1;
     if (0xd800..=0xdbff).contains(&first)
         && input
-            .code_unit_at(*index)
+            .unit_at(*index)
             .is_some_and(|second| (0xdc00..=0xdfff).contains(&second))
     {
         let second = input
-            .code_unit_at(*index)
+            .unit_at(*index)
             .expect("checked trail surrogate disappeared");
         *index += 1;
         0x1_0000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00)
@@ -476,20 +475,28 @@ fn next_code_point(input: &JsString, index: &mut usize) -> u32 {
     }
 }
 
-pub fn normalize_code_points(
-    input: &JsString,
+/// Normalize to code points: valid surrogate pairs are decoded, lone
+/// surrogates are kept as their code units.
+pub fn normalize_code_points<U: CodeUnits + ?Sized>(
+    input: &U,
     form: NormalizationForm,
-) -> Result<Vec<u32>, JsStringError> {
+) -> Result<Vec<u32>, StringError> {
     let mut output = Vec::new();
-    try_reserve_exact(&mut output, input.len())?;
+    try_reserve_exact(&mut output, input.unit_len())?;
 
-    if form == NormalizationForm::Nfc && input.utf16_units().all(|unit| unit < 0x100) {
-        output.extend(input.utf16_units().map(u32::from));
+    if form == NormalizationForm::Nfc && input.all_latin1() {
+        output.extend((0..input.unit_len()).map(|index| {
+            u32::from(
+                input
+                    .unit_at(index)
+                    .expect("Latin-1 scan stayed inside the input"),
+            )
+        }));
         return Ok(output);
     }
 
     let mut index = 0;
-    while index < input.len() {
+    while index < input.unit_len() {
         let code_point = next_code_point(input, &mut index);
         append_decomposed(&mut output, code_point, form.is_compatibility())?;
     }
@@ -503,8 +510,8 @@ pub fn normalize_code_points(
 fn string_from_code_points_with_limit(
     code_points: &[u32],
     max_len: usize,
-) -> Result<JsString, JsStringError> {
-    let max_len = max_len.min(JsString::MAX_LEN);
+) -> Result<CodeUnitBuf, StringError> {
+    let max_len = max_len.min(MAX_STRING_LEN);
     let mut utf16_len = 0_usize;
     let mut wide = false;
     for code_point in code_points {
@@ -512,7 +519,7 @@ fn string_from_code_points_with_limit(
         utf16_len = utf16_len
             .checked_add(usize::from(*code_point >= 0x1_0000) + 1)
             .filter(|length| *length <= max_len)
-            .ok_or(JsStringError::TooLong)?;
+            .ok_or(StringError::TooLong)?;
         wide |= *code_point >= 0x100;
     }
 
@@ -520,7 +527,7 @@ fn string_from_code_points_with_limit(
         let mut output = Vec::new();
         try_reserve_exact(&mut output, utf16_len)?;
         output.extend(code_points.iter().map(|code_point| *code_point as u8));
-        return Ok(JsString::from_owned_latin1(output));
+        return Ok(CodeUnitBuf::Latin1(output));
     }
 
     let mut output = Vec::new();
@@ -534,15 +541,17 @@ fn string_from_code_points_with_limit(
             output.push(0xdc00 | (adjusted & 0x3ff) as u16);
         }
     }
-    Ok(JsString::from_owned_utf16(output))
+    Ok(CodeUnitBuf::Utf16(output))
 }
 
-pub fn normalize_with_limit(
-    input: &JsString,
+/// [`normalize`] with a UTF-16 output length limit (clamped to
+/// [`MAX_STRING_LEN`]).
+pub fn normalize_with_limit<U: CodeUnits + ?Sized>(
+    input: &U,
     form: NormalizationForm,
     max_len: usize,
-) -> Result<JsString, JsStringError> {
-    if max_len >= JsString::MAX_LEN {
+) -> Result<CodeUnitBuf, StringError> {
+    if max_len >= MAX_STRING_LEN {
         return normalize(input, form);
     }
     let output = normalize_code_points(input, form)?;
@@ -552,9 +561,12 @@ pub fn normalize_with_limit(
 /// Normalize an ECMAScript UTF-16 string with QuickJS 2026-06-04's Unicode 17
 /// data. Valid surrogate pairs are decoded and re-encoded; lone surrogates are
 /// intentionally preserved as lone code units.
-pub fn normalize(input: &JsString, form: NormalizationForm) -> Result<JsString, JsStringError> {
+pub fn normalize<U: CodeUnits + ?Sized>(
+    input: &U,
+    form: NormalizationForm,
+) -> Result<CodeUnitBuf, StringError> {
     let output = normalize_code_points(input, form)?;
-    string_from_code_points_with_limit(&output, JsString::MAX_LEN)
+    string_from_code_points_with_limit(&output, MAX_STRING_LEN)
 }
 
 #[cfg(test)]
@@ -564,16 +576,18 @@ mod tests {
         decomposition_entry, fail_next_normalize_reservation_for_test, normalize,
         normalize_code_points, normalize_with_limit, push_fallible, tables,
     };
-    use crate::engine::value::{JsString, JsStringError};
+    use crate::unicode::{CodeUnitBuf, StringError};
 
-    fn units(value: &JsString) -> Vec<u16> {
-        value.utf16_units().collect()
+    fn js(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+
+    fn text(output: &CodeUnitBuf) -> String {
+        String::from_utf16_lossy(&output.to_utf16())
     }
 
     fn normalized(source: &str, form: NormalizationForm) -> String {
-        normalize(&JsString::try_from_utf8(source).unwrap(), form)
-            .unwrap()
-            .to_utf8_lossy()
+        text(&normalize(&js(source)[..], form).unwrap())
     }
 
     #[test]
@@ -629,84 +643,63 @@ mod tests {
 
     #[test]
     fn valid_pairs_are_decoded_while_lone_surrogates_are_preserved() {
-        let input = JsString::try_from_utf16([0xd800, 0x65, 0x301, 0xdc00, 0xd83d, 0xde00, 0xdfff])
-            .unwrap();
-        let output = normalize(&input, NormalizationForm::Nfc).unwrap();
+        let input = [0xd800_u16, 0x65, 0x301, 0xdc00, 0xd83d, 0xde00, 0xdfff];
+        let output = normalize(&input[..], NormalizationForm::Nfc).unwrap();
         assert_eq!(
-            units(&output),
+            output.to_utf16(),
             [0xd800, 0xe9, 0xdc00, 0xd83d, 0xde00, 0xdfff]
         );
         assert_eq!(
-            normalize_code_points(&input, NormalizationForm::Nfc).unwrap(),
+            normalize_code_points(&input[..], NormalizationForm::Nfc).unwrap(),
             [0xd800, 0xe9, 0xdc00, 0x1f600, 0xdfff]
         );
     }
 
     #[test]
     fn output_uses_quickjs_narrow_or_wide_storage_from_content() {
-        let narrow = normalize(
-            &JsString::try_from_utf8("plain latin-1 ÿ").unwrap(),
-            NormalizationForm::Nfc,
-        )
-        .unwrap();
-        assert!(!narrow.is_wide());
+        let narrow = normalize(&js("plain latin-1 ÿ")[..], NormalizationForm::Nfc).unwrap();
+        assert!(matches!(narrow, CodeUnitBuf::Latin1(_)));
 
-        let narrowed = normalize(
-            &JsString::try_from_utf8("\u{a0}").unwrap(),
-            NormalizationForm::Nfkc,
-        )
-        .unwrap();
-        assert_eq!(narrowed.to_utf8_lossy(), " ");
-        assert!(!narrowed.is_wide());
+        let narrowed = normalize(&js("\u{a0}")[..], NormalizationForm::Nfkc).unwrap();
+        assert_eq!(text(&narrowed), " ");
+        assert!(matches!(narrowed, CodeUnitBuf::Latin1(_)));
 
-        let composed_narrow = normalize(
-            &JsString::try_from_utf8("e\u{301}").unwrap(),
-            NormalizationForm::Nfc,
-        )
-        .unwrap();
-        assert!(!composed_narrow.is_wide());
+        let composed_narrow = normalize(&js("e\u{301}")[..], NormalizationForm::Nfc).unwrap();
+        assert!(matches!(composed_narrow, CodeUnitBuf::Latin1(_)));
 
-        let wide = normalize(
-            &JsString::try_from_utf8("a\u{304}").unwrap(),
-            NormalizationForm::Nfc,
-        )
-        .unwrap();
-        assert!(wide.is_wide());
+        let wide = normalize(&js("a\u{304}")[..], NormalizationForm::Nfc).unwrap();
+        assert!(matches!(wide, CodeUnitBuf::Utf16(_)));
     }
 
     #[test]
     fn normalization_reports_the_utf16_output_length_limit() {
-        let expands = JsString::try_from_utf8("\u{fd}ﬃ").unwrap();
+        let expands = js("\u{fd}ﬃ");
         assert_eq!(
-            normalize_with_limit(&expands, NormalizationForm::Nfkd, 4),
-            Err(JsStringError::TooLong)
+            normalize_with_limit(&expands[..], NormalizationForm::Nfkd, 4),
+            Err(StringError::TooLong)
         );
         assert_eq!(
-            normalize_with_limit(&expands, NormalizationForm::Nfkd, 5)
-                .unwrap()
-                .to_utf8_lossy(),
+            text(&normalize_with_limit(&expands[..], NormalizationForm::Nfkd, 5).unwrap()),
             "y\u{301}ffi"
         );
 
-        let astral = JsString::try_from_utf8("😀").unwrap();
+        let astral = js("😀");
         assert_eq!(
-            normalize_with_limit(&astral, NormalizationForm::Nfc, 1),
-            Err(JsStringError::TooLong)
+            normalize_with_limit(&astral[..], NormalizationForm::Nfc, 1),
+            Err(StringError::TooLong)
         );
     }
 
     #[test]
     fn normalization_reservation_failure_is_recoverable() {
-        let input = JsString::try_from_utf8("e\u{301}").unwrap();
+        let input = js("e\u{301}");
         fail_next_normalize_reservation_for_test();
         assert_eq!(
-            normalize(&input, NormalizationForm::Nfc),
-            Err(JsStringError::OutOfMemory)
+            normalize(&input[..], NormalizationForm::Nfc),
+            Err(StringError::OutOfMemory)
         );
         assert_eq!(
-            normalize(&input, NormalizationForm::Nfc)
-                .unwrap()
-                .to_utf8_lossy(),
+            text(&normalize(&input[..], NormalizationForm::Nfc).unwrap()),
             "é"
         );
     }
@@ -729,9 +722,9 @@ mod tests {
         }
         assert!(growths < 32, "normalization output grew {growths} times");
 
-        let source = JsString::try_from_utf8(&"\u{fdFA}".repeat(1_024)).unwrap();
-        let output = normalize(&source, NormalizationForm::Nfkd).unwrap();
-        assert_eq!(output.len(), 18 * 1_024);
+        let source = js(&"\u{fdFA}".repeat(1_024));
+        let output = normalize(&source[..], NormalizationForm::Nfkd).unwrap();
+        assert_eq!(output.to_utf16().len(), 18 * 1_024);
     }
 
     #[test]
@@ -749,7 +742,7 @@ mod tests {
 
     #[test]
     fn exhaustive_table_readers_match_pinned_quickjs_c_fingerprints() {
-        use crate::source::unicode::tests::hash_u32;
+        use crate::unicode::tests::hash_u32;
 
         let mut decomposition_hash = 14_695_981_039_346_656_037_u64;
         let mut class_hash = 14_695_981_039_346_656_037_u64;

@@ -111,7 +111,8 @@ npm ci && npx playwright install chromium && npm run test:browser
 ```
 
 `rust-toolchain.toml` pins the toolchain. The engine lives in `src/`
-(`source/`, `regexp/` and `engine/`), host adapters in `adapters/`, the CLI
+(`source/` and `engine/`), its regular-expression engine and Unicode tables in
+the `oxide-regexp` crate (`regexp/`), host adapters in `adapters/`, the CLI
 and WebAssembly apps in `apps/`, and the Test262 runner in
 `conformance/test262`; the [architecture guide](docs/architecture.md)
 describes each module's responsibilities.

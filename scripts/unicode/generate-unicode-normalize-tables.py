@@ -34,8 +34,8 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         type=pathlib.Path,
         default=pathlib.Path(__file__).resolve().parent.parent.parent
+        / "regexp"
         / "src"
-        / "source"
         / "unicode"
         / "generated"
         / "unicode"

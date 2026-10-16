@@ -12,6 +12,10 @@ homepage.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+# The regular-expression engine both cores use (phase 3, section 6.1).
+oxide-regexp = { workspace = true }
+
 [features]
 default = []
 # Collects before every allocation (new-core phase 0, section 3).

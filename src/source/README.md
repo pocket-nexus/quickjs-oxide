@@ -12,7 +12,9 @@ shares the string carrier in value.
 - [coordinates.rs](coordinates.rs): byte offsets and QuickJS source-coordinate mapping.
 - [mod.rs](mod.rs): module entry, shared interfaces and submodule declarations.
 - [text.rs](text.rs): byte-exact carrier text for dynamically supplied ECMAScript source.
-- [unicode/](unicode/README.md): Unicode text rules.
+- [unicode.rs](unicode.rs): the Unicode tables of the `oxide-regexp` crate
+  (`regexp/src/unicode`) at their historical path, with `JsString` wrappers
+  for case conversion and normalization.
 
 `QuickJsSourceLocator` serves one-off diagnostics without allocating; bulk
 position queries use the `QuickJsSourceIndex` built by its `index()`. The

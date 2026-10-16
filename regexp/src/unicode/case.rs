@@ -6,9 +6,8 @@
 //! coupled to the toolchain and whose scalar-only API cannot preserve lone
 //! UTF-16 surrogates.
 
-use super::is_in_table;
-use crate::engine::value::{JsString, JsStringError};
-#[cfg(test)]
+use super::{CodeUnitBuf, CodeUnits, MAX_STRING_LEN, StringError, is_in_table};
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 
 mod tables {
@@ -30,7 +29,7 @@ const RUN_TYPE_UF_EXT2: u32 = 11;
 const RUN_TYPE_LF_EXT2: u32 = 12;
 const RUN_TYPE_UF_EXT3: u32 = 13;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static FAIL_CASE_RESERVATION_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
 }
@@ -38,12 +37,12 @@ thread_local! {
 /// Force the next QuickJS-equivalent case buffer allocation to fail. The hook
 /// is thread-local so parallel test binaries cannot consume one another's
 /// injected failure.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn fail_next_case_reservation_for_test() {
     fail_case_reservation_after_for_test(0);
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn fail_case_reservation_after_for_test(successful_reservations: usize) {
     FAIL_CASE_RESERVATION_AFTER.with(|armed| {
         assert!(
@@ -53,8 +52,8 @@ fn fail_case_reservation_after_for_test(successful_reservations: usize) {
     });
 }
 
-fn try_reserve_exact<T>(values: &mut Vec<T>, additional: usize) -> Result<(), JsStringError> {
-    #[cfg(test)]
+fn try_reserve_exact<T>(values: &mut Vec<T>, additional: usize) -> Result<(), StringError> {
+    #[cfg(any(test, feature = "test-hooks"))]
     if FAIL_CASE_RESERVATION_AFTER.with(|armed| match armed.get() {
         None => false,
         Some(0) => {
@@ -66,11 +65,11 @@ fn try_reserve_exact<T>(values: &mut Vec<T>, additional: usize) -> Result<(), Js
             false
         }
     }) {
-        return Err(JsStringError::OutOfMemory);
+        return Err(StringError::OutOfMemory);
     }
     values
         .try_reserve_exact(additional)
-        .map_err(|_| JsStringError::OutOfMemory)
+        .map_err(|_| StringError::OutOfMemory)
 }
 
 enum CaseStorage {
@@ -88,8 +87,8 @@ struct CaseStringBuffer {
 }
 
 impl CaseStringBuffer {
-    fn new(initial_size: usize, limit: usize) -> Result<Self, JsStringError> {
-        let limit = limit.min(JsString::MAX_LEN);
+    fn new(initial_size: usize, limit: usize) -> Result<Self, StringError> {
+        let limit = limit.min(MAX_STRING_LEN);
         let size = initial_size.min(limit);
         let mut values = Vec::new();
         try_reserve_exact(&mut values, size)?;
@@ -107,20 +106,20 @@ impl CaseStringBuffer {
         }
     }
 
-    fn grow_size(&self, new_len: usize) -> Result<usize, JsStringError> {
+    fn grow_size(&self, new_len: usize) -> Result<usize, StringError> {
         if new_len > self.limit {
-            return Err(JsStringError::TooLong);
+            return Err(StringError::TooLong);
         }
         Ok(new_len.max(self.size.saturating_mul(3) / 2).min(self.limit))
     }
 
-    fn reserve_to<T>(values: &mut Vec<T>, size: usize) -> Result<(), JsStringError> {
+    fn reserve_to<T>(values: &mut Vec<T>, size: usize) -> Result<(), StringError> {
         // Enter the reservation path even if the host allocator previously
         // returned spare capacity: QuickJS tracks its own logical `size`.
         try_reserve_exact(values, size.saturating_sub(values.len()))
     }
 
-    fn widen(&mut self, size: usize) -> Result<(), JsStringError> {
+    fn widen(&mut self, size: usize) -> Result<(), StringError> {
         let CaseStorage::Latin1(narrow) =
             std::mem::replace(&mut self.storage, CaseStorage::Latin1(Vec::new()))
         else {
@@ -137,11 +136,11 @@ impl CaseStringBuffer {
         Ok(())
     }
 
-    fn push_code_unit(&mut self, unit: u16) -> Result<(), JsStringError> {
+    fn push_code_unit(&mut self, unit: u16) -> Result<(), StringError> {
         let len = self.len();
-        let new_len = len.checked_add(1).ok_or(JsStringError::TooLong)?;
+        let new_len = len.checked_add(1).ok_or(StringError::TooLong)?;
         if new_len > self.limit {
-            return Err(JsStringError::TooLong);
+            return Err(StringError::TooLong);
         }
 
         if len >= self.size {
@@ -170,7 +169,7 @@ impl CaseStringBuffer {
         Ok(())
     }
 
-    fn push_code_point(&mut self, code_point: u32) -> Result<(), JsStringError> {
+    fn push_code_point(&mut self, code_point: u32) -> Result<(), StringError> {
         debug_assert!(code_point <= 0x10_ffff);
         if code_point < 0x1_0000 {
             self.push_code_unit(code_point as u16)
@@ -181,10 +180,10 @@ impl CaseStringBuffer {
         }
     }
 
-    fn finish(self) -> JsString {
+    fn finish(self) -> CodeUnitBuf {
         match self.storage {
-            CaseStorage::Latin1(values) => JsString::from_owned_latin1(values),
-            CaseStorage::Utf16(values) => JsString::from_owned_utf16(values),
+            CaseStorage::Latin1(values) => CodeUnitBuf::Latin1(values),
+            CaseStorage::Utf16(values) => CodeUnitBuf::Utf16(values),
         }
     }
 }
@@ -572,18 +571,18 @@ fn is_case_ignorable(code_point: u32) -> bool {
     )
 }
 
-fn next_code_point(input: &JsString, index: &mut usize) -> u32 {
+fn next_code_point<U: CodeUnits + ?Sized>(input: &U, index: &mut usize) -> u32 {
     let first = input
-        .code_unit_at(*index)
+        .unit_at(*index)
         .expect("case conversion advanced past the input");
     *index += 1;
     if (0xd800..=0xdbff).contains(&first)
         && input
-            .code_unit_at(*index)
+            .unit_at(*index)
             .is_some_and(|second| (0xdc00..=0xdfff).contains(&second))
     {
         let second = input
-            .code_unit_at(*index)
+            .unit_at(*index)
             .expect("checked trail surrogate disappeared");
         *index += 1;
         0x1_0000 + ((u32::from(first) - 0xd800) << 10) + (u32::from(second) - 0xdc00)
@@ -593,17 +592,17 @@ fn next_code_point(input: &JsString, index: &mut usize) -> u32 {
 }
 
 /// Return zero before the first character, matching QuickJS `string_prevc`.
-fn previous_code_point(input: &JsString, index: &mut usize) -> u32 {
+fn previous_code_point<U: CodeUnits + ?Sized>(input: &U, index: &mut usize) -> u32 {
     if *index == 0 {
         return 0;
     }
     *index -= 1;
     let second = input
-        .code_unit_at(*index)
+        .unit_at(*index)
         .expect("case conversion retreated past the input");
     if (0xdc00..=0xdfff).contains(&second) && *index > 0 {
         let first = input
-            .code_unit_at(*index - 1)
+            .unit_at(*index - 1)
             .expect("checked lead surrogate disappeared");
         if (0xd800..=0xdbff).contains(&first) {
             *index -= 1;
@@ -613,7 +612,7 @@ fn previous_code_point(input: &JsString, index: &mut usize) -> u32 {
     u32::from(second)
 }
 
-fn is_final_sigma(input: &JsString, sigma_position: usize) -> bool {
+fn is_final_sigma<U: CodeUnits + ?Sized>(input: &U, sigma_position: usize) -> bool {
     let mut index = sigma_position;
     let previous = loop {
         let code_point = previous_code_point(input, &mut index);
@@ -627,7 +626,7 @@ fn is_final_sigma(input: &JsString, sigma_position: usize) -> bool {
 
     let mut index = sigma_position + 1;
     loop {
-        if index >= input.len() {
+        if index >= input.unit_len() {
             return true;
         }
         let code_point = next_code_point(input, &mut index);
@@ -640,19 +639,22 @@ fn is_final_sigma(input: &JsString, sigma_position: usize) -> bool {
 /// Convert one raw UTF-16 string using the exact Unicode tables and contextual
 /// lowercase rule bundled by QuickJS 2026-06-04. `upper = true` selects upper
 /// case. Locale arguments are intentionally outside this kernel because
-/// QuickJS's four String methods ignore them completely.
-pub fn convert_case_with_limit(
-    input: &JsString,
+/// QuickJS's four String methods ignore them completely. `max_len` is
+/// clamped to [`MAX_STRING_LEN`]. An empty input returns empty Latin-1
+/// storage without reserving (callers that keep string identity return the
+/// input itself instead).
+pub fn convert_case_with_limit<U: CodeUnits + ?Sized>(
+    input: &U,
     upper: bool,
     max_len: usize,
-) -> Result<JsString, JsStringError> {
-    if input.is_empty() {
-        return Ok(input.clone());
+) -> Result<CodeUnitBuf, StringError> {
+    if input.unit_len() == 0 {
+        return Ok(CodeUnitBuf::Latin1(Vec::new()));
     }
 
-    let mut output = CaseStringBuffer::new(input.len(), max_len)?;
+    let mut output = CaseStringBuffer::new(input.unit_len(), max_len)?;
     let mut index = 0;
-    while index < input.len() {
+    while index < input.unit_len() {
         let position = index;
         let code_point = next_code_point(input, &mut index);
         let mapping = if !upper && code_point == 0x3a3 && is_final_sigma(input, position) {
@@ -675,14 +677,18 @@ mod tests {
         normalize_half_open_ranges, regexp_canonicalize, regexp_canonicalize_range_pairs,
         regexp_case_change_mask, tables,
     };
-    use crate::engine::value::{JsString, JsStringError};
+    use crate::unicode::{CodeUnitBuf, MAX_STRING_LEN, StringError};
 
-    fn convert(input: &JsString, upper: bool) -> JsString {
-        convert_case_with_limit(input, upper, JsString::MAX_LEN).unwrap()
+    fn js(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
     }
 
-    fn units(input: &JsString) -> Vec<u16> {
-        input.utf16_units().collect()
+    fn convert(input: &[u16], upper: bool) -> CodeUnitBuf {
+        convert_case_with_limit(input, upper, MAX_STRING_LEN).unwrap()
+    }
+
+    fn text(output: &CodeUnitBuf) -> String {
+        String::from_utf16_lossy(&output.to_utf16())
     }
 
     #[test]
@@ -813,15 +819,12 @@ mod tests {
 
     #[test]
     fn conversion_ports_ascii_simple_extended_and_multicodepoint_runs() {
-        let input = JsString::try_from_utf8("aZ ß ﬃ ŉ İ 𐐀𐐨").unwrap();
-        assert_eq!(convert(&input, true).to_utf8_lossy(), "AZ SS FFI ʼN İ 𐐀𐐀");
-        assert_eq!(
-            convert(&input, false).to_utf8_lossy(),
-            "az ß ﬃ ŉ i\u{307} 𐐨𐐨"
-        );
+        let input = js("aZ ß ﬃ ŉ İ 𐐀𐐨");
+        assert_eq!(text(&convert(&input, true)), "AZ SS FFI ʼN İ 𐐀𐐀");
+        assert_eq!(text(&convert(&input, false)), "az ß ﬃ ŉ i\u{307} 𐐨𐐨");
 
-        let greek = JsString::try_from_utf8("ΐ").unwrap();
-        assert_eq!(convert(&greek, true).to_utf8_lossy(), "Ι\u{308}\u{301}");
+        let greek = js("ΐ");
+        assert_eq!(text(&convert(&greek, true)), "Ι\u{308}\u{301}");
     }
 
     #[test]
@@ -836,84 +839,79 @@ mod tests {
             ("AΣ'", "aς'"),
             ("AΣ'B", "aσ'b"),
         ] {
-            let source = JsString::try_from_utf8(source).unwrap();
-            assert_eq!(convert(&source, false).to_utf8_lossy(), expected);
+            let source = js(source);
+            assert_eq!(text(&convert(&source, false)), expected);
         }
     }
 
     #[test]
     fn raw_utf16_surrogates_are_preserved_while_pairs_are_decoded() {
-        let input =
-            JsString::try_from_utf16([0xd800, 0x61, 0xdc00, 0xd801, 0xdc00, 0x5a, 0xdfff]).unwrap();
+        let input = [0xd800, 0x61, 0xdc00, 0xd801, 0xdc00, 0x5a, 0xdfff];
         assert_eq!(
-            units(&convert(&input, true)),
+            convert(&input, true).to_utf16(),
             [0xd800, 0x41, 0xdc00, 0xd801, 0xdc00, 0x5a, 0xdfff]
         );
         assert_eq!(
-            units(&convert(&input, false)),
+            convert(&input, false).to_utf16(),
             [0xd800, 0x61, 0xdc00, 0xd801, 0xdc28, 0x7a, 0xdfff]
         );
     }
 
     #[test]
     fn buffer_starts_narrow_then_widens_or_stays_narrow_from_content() {
-        let narrows = JsString::try_from_utf8("Ÿ").unwrap();
+        let narrows = js("Ÿ");
         let narrowed = convert(&narrows, false);
-        assert_eq!(narrowed.to_utf8_lossy(), "ÿ");
-        assert!(!narrowed.is_wide());
+        assert_eq!(text(&narrowed), "ÿ");
+        assert!(matches!(narrowed, CodeUnitBuf::Latin1(_)));
 
-        let widens = JsString::try_from_utf8("ÿ").unwrap();
-        let widened = convert(&widens, true);
-        assert_eq!(widened.to_utf8_lossy(), "Ÿ");
-        assert!(widened.is_wide());
+        let widens = [0xff_u8];
+        let widened = convert_case_with_limit(&widens[..], true, MAX_STRING_LEN).unwrap();
+        assert_eq!(text(&widened), "Ÿ");
+        assert!(matches!(widened, CodeUnitBuf::Utf16(_)));
     }
 
     #[test]
     fn empty_identity_length_limit_and_reservation_failure_match_string_buffer() {
-        let empty = JsString::from_static("");
+        let empty: [u16; 0] = [];
         fail_next_case_reservation_for_test();
-        let converted_empty = convert_case_with_limit(&empty, true, 0).unwrap();
-        assert!(converted_empty.same_representation(&empty));
+        let converted_empty = convert_case_with_limit(&empty[..], true, 0).unwrap();
+        assert_eq!(converted_empty, CodeUnitBuf::Latin1(Vec::new()));
 
         // The empty fast path did not consume the injected allocation failure.
-        let ascii = JsString::from_static("a");
+        let ascii = js("a");
         assert_eq!(
-            convert_case_with_limit(&ascii, true, 1),
-            Err(JsStringError::OutOfMemory)
+            convert_case_with_limit(&ascii[..], true, 1),
+            Err(StringError::OutOfMemory)
         );
 
-        let sharp_s = JsString::try_from_utf8("ß").unwrap();
+        let sharp_s = js("ß");
         assert_eq!(
-            convert_case_with_limit(&sharp_s, true, 1),
-            Err(JsStringError::TooLong)
+            convert_case_with_limit(&sharp_s[..], true, 1),
+            Err(StringError::TooLong)
         );
         assert_eq!(
-            convert_case_with_limit(&sharp_s, false, 1)
-                .unwrap()
-                .to_utf8_lossy(),
+            text(&convert_case_with_limit(&sharp_s[..], false, 1).unwrap()),
             "ß"
         );
     }
 
     #[test]
     fn widening_and_growth_reservation_failures_are_recoverable() {
-        let widens = JsString::try_from_utf8("ÿ").unwrap();
+        let widens = js("ÿ");
         fail_case_reservation_after_for_test(1);
         assert_eq!(
-            convert_case_with_limit(&widens, true, JsString::MAX_LEN),
-            Err(JsStringError::OutOfMemory)
+            convert_case_with_limit(&widens[..], true, MAX_STRING_LEN),
+            Err(StringError::OutOfMemory)
         );
 
-        let expands = JsString::try_from_utf8("ß").unwrap();
+        let expands = js("ß");
         fail_case_reservation_after_for_test(1);
         assert_eq!(
-            convert_case_with_limit(&expands, true, JsString::MAX_LEN),
-            Err(JsStringError::OutOfMemory)
+            convert_case_with_limit(&expands[..], true, MAX_STRING_LEN),
+            Err(StringError::OutOfMemory)
         );
         assert_eq!(
-            convert_case_with_limit(&expands, true, JsString::MAX_LEN)
-                .unwrap()
-                .to_utf8_lossy(),
+            text(&convert_case_with_limit(&expands[..], true, MAX_STRING_LEN).unwrap()),
             "SS"
         );
     }
@@ -946,7 +944,7 @@ mod tests {
 
     #[test]
     fn exhaustive_kernel_fingerprint_matches_pinned_quickjs_c() {
-        use crate::source::unicode::tests::hash_u32;
+        use crate::unicode::tests::hash_u32;
 
         let mut case_hash = 14_695_981_039_346_656_037_u64;
         let mut property_hash = 14_695_981_039_346_656_037_u64;

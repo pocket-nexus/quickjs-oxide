@@ -1,4 +1,5 @@
-//! Checksum-pinned Unicode 17 primitives used by the JavaScript lexer.
+//! Checksum-pinned Unicode 17 primitives used by the JavaScript lexer, the
+//! regular-expression compiler and the String intrinsics.
 //!
 //! QuickJS stores binary Unicode properties as alternating run lengths with a
 //! sparse 32-byte-block index. Keeping that representation avoids silently
@@ -7,6 +8,81 @@
 
 mod ident_tables {
     include!("generated/unicode/unicode_ident_tables.rs");
+}
+
+/// QuickJS reserves 30 bits for a string's UTF-16 code-unit length; case
+/// conversion and normalization never produce a longer result.
+pub const MAX_STRING_LEN: usize = (1 << 30) - 1;
+
+/// Why case conversion or normalization produced no string.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StringError {
+    /// The result would exceed the caller's length limit.
+    TooLong,
+    /// A buffer reservation failed.
+    OutOfMemory,
+}
+
+/// A produced string in its narrowest storage, as QuickJS's `StringBuffer`
+/// leaves it: Latin-1 bytes until a wider code unit arrives, then UTF-16.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CodeUnitBuf {
+    Latin1(Vec<u8>),
+    Utf16(Vec<u16>),
+}
+
+impl CodeUnitBuf {
+    /// The UTF-16 code units, widening Latin-1 storage.
+    #[must_use]
+    pub fn to_utf16(&self) -> Vec<u16> {
+        match self {
+            Self::Latin1(units) => units.iter().copied().map(u16::from).collect(),
+            Self::Utf16(units) => units.clone(),
+        }
+    }
+}
+
+/// String input as UTF-16 code units: `[u16]`, or `[u8]` holding Latin-1
+/// code units (each byte is one code unit below U+0100).
+pub trait CodeUnits {
+    /// The number of UTF-16 code units.
+    fn unit_len(&self) -> usize;
+    /// The code unit at `index`, or `None` past the end.
+    fn unit_at(&self, index: usize) -> Option<u16>;
+    /// Whether every code unit is below U+0100.
+    fn all_latin1(&self) -> bool;
+}
+
+impl CodeUnits for [u16] {
+    #[inline]
+    fn unit_len(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn unit_at(&self, index: usize) -> Option<u16> {
+        self.get(index).copied()
+    }
+
+    fn all_latin1(&self) -> bool {
+        self.iter().all(|unit| *unit < 0x100)
+    }
+}
+
+impl CodeUnits for [u8] {
+    #[inline]
+    fn unit_len(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
+    fn unit_at(&self, index: usize) -> Option<u16> {
+        self.get(index).copied().map(u16::from)
+    }
+
+    fn all_latin1(&self) -> bool {
+        true
+    }
 }
 
 const INDEX_BLOCK_LEN: usize = 32;

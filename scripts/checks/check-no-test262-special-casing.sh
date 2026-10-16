@@ -22,7 +22,7 @@ trap 'rm -rf -- "$tmp"' EXIT
 # Production modules must remain under the scanned source tree. Internal
 # module tests use the normal cfg(test) child-module layout below src/.
 external_module_paths=$(rg --with-filename --no-heading --color never \
-    --glob '*.rs' --glob '!**/tests/**' -- '^#\[path[[:space:]]*=[[:space:]]*"\.\./' src apps adapters conformance examples || true)
+    --glob '*.rs' --glob '!**/tests/**' -- '^#\[path[[:space:]]*=[[:space:]]*"\.\./' src regexp apps adapters conformance examples || true)
 [[ -z "$external_module_paths" ]] \
     || die 'production sources contain an unauthenticated external module path'
 rg --quiet --multiline --pcre2 -- \
@@ -31,7 +31,7 @@ rg --quiet --multiline --pcre2 -- \
 [[ -f src/engine/modules/tests.rs && ! -L src/engine/modules/tests.rs ]] \
     || die 'runtime module unit tests must be a regular source file'
 
-scan_roots=(src apps adapters conformance examples Cargo.toml)
+scan_roots=(src regexp apps adapters conformance examples Cargo.toml)
 while IFS= read -r build_script; do
     scan_roots+=("$build_script")
 done < <(find . -path './target' -prune -o -name build.rs -print | LC_ALL=C sort)
@@ -161,7 +161,7 @@ case $hash_status in
         : > "$unexpected_hashes"
         while IFS= read -r occurrence; do
             case $occurrence in
-                src/source/unicode/case.rs*"$unicode_source_sha"*|src/source/unicode/normalize.rs*"$unicode_source_sha"*|src/source/unicode/generated/unicode/unicode_*"$unicode_source_sha"*) ;;
+                regexp/src/unicode/case.rs*"$unicode_source_sha"*|regexp/src/unicode/normalize.rs*"$unicode_source_sha"*|regexp/src/unicode/generated/unicode/unicode_*"$unicode_source_sha"*) ;;
                 *) printf '%s\n' "$occurrence" >> "$unexpected_hashes" ;;
             esac
         done <<< "$hash_output"

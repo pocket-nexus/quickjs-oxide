@@ -67,6 +67,13 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "oxide-core"
 version = "0.2.1"
+dependencies = [
+ "oxide-regexp",
+]
+
+[[package]]
+name = "oxide-regexp"
+version = "0.2.1"
 
 [[package]]
 name = "proc-macro2"
@@ -84,6 +91,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "oxide-core",
+ "oxide-regexp",
  "quickjs-oxide-host",
 ]
 
