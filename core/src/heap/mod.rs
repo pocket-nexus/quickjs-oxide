@@ -300,9 +300,12 @@ impl Heap {
         slot_capacity: u32,
     ) -> Result<ObjectId, HeapError> {
         match kind {
-            ObjectKind::Ordinary | ObjectKind::Array | ObjectKind::Native => {
-                self.alloc_plain(kind, prototype, slot_capacity, 0)
-            }
+            ObjectKind::Ordinary
+            | ObjectKind::Array
+            | ObjectKind::Native
+            | ObjectKind::Arguments
+            | ObjectKind::RegExp
+            | ObjectKind::ForInIterator => self.alloc_plain(kind, prototype, slot_capacity, 0),
             ObjectKind::Scope | ObjectKind::GlobalObject => {
                 self.alloc_object_with(kind, prototype, slot_capacity, 0, NONE, Need::default())
             }
@@ -382,6 +385,40 @@ impl Heap {
         self.objects.get(object.0)
     }
 
+    /// An object with room for `slot_capacity` named properties and
+    /// `element_capacity` elements, for the kinds without a side record.
+    pub fn alloc_object_with_elements(
+        &mut self,
+        kind: ObjectKind,
+        prototype: Option<ObjectId>,
+        slot_capacity: u32,
+        element_capacity: u32,
+    ) -> Result<ObjectId, HeapError> {
+        debug_assert!(matches!(
+            kind,
+            ObjectKind::Ordinary | ObjectKind::Arguments | ObjectKind::ForInIterator
+        ));
+        self.alloc_plain(kind, prototype, slot_capacity, element_capacity)
+    }
+
+    /// Sets the inline payload of an object of a kind that keeps one (a
+    /// mapped `arguments` object's scope, a `for-in` cursor, a regular
+    /// expression's program). The caller keeps anything it names alive.
+    pub(crate) fn set_payload(&mut self, object: ObjectId, payload: u32) {
+        self.objects.get_mut(object.0).payload = payload;
+    }
+
+    /// A slot of the range itself, below any shape (the raw slots of a
+    /// `for-in` iterator).
+    pub(crate) fn set_raw_slot(&mut self, object: ObjectId, slot: u32, value: Value) {
+        let slots = self.objects.get(object.0).slots();
+        self.values.set(slots, slot, value);
+    }
+
+    pub(crate) fn raw_slot(&self, object: ObjectId, slot: u32) -> Value {
+        self.values.get(self.objects.get(object.0).slots(), slot)
+    }
+
     // ---- arrays and elements ----
 
     /// A dense array with room for `capacity` elements; length 0.
@@ -430,7 +467,14 @@ impl Heap {
         let header = *self.objects.get(object.0);
         let mut elements = header.elements();
         if index >= elements.len {
-            let new_len = (elements.len * 2).max(index + 1).max(4);
+            // Doubling until 1,024 elements, then 1.5× (phase 3, section 3):
+            // the value heap rounds each range up to a power of two anyway.
+            let grown = if elements.len < 1024 {
+                elements.len * 2
+            } else {
+                elements.len + elements.len / 2
+            };
+            let new_len = grown.max(index + 1).max(4);
             self.safepoint(
                 &Need {
                     values: [new_len, 0],

@@ -9,8 +9,10 @@ use crate::heap::atom::{KeyKind, PropertyKey};
 /// Names register `r` of `unit` by its role in the frame layout.
 pub fn register_name(unit: &CodeUnit, r: u32) -> String {
     let parameters = unit.parameter_count as u32;
-    let locals = unit.local_count as u32;
-    if r == 0 {
+    let locals = unit.temp_base() - 1 - parameters;
+    if unit.spill_register != super::NO_SPILL && r == unit.spill_register as u32 {
+        "spill".to_owned()
+    } else if r == 0 {
         "this".to_owned()
     } else if r <= parameters {
         format!("p{}", r - 1)
@@ -110,6 +112,7 @@ pub fn disassemble(unit: &CodeUnit, key_name: &mut dyn FnMut(PropertyKey) -> Str
             Capture::None => "none".to_owned(),
             Capture::Register(r) => format!("parent {}", r),
             Capture::Outer(i) => format!("parent c{i}"),
+            Capture::Slot(i) => format!("parent slot {i}"),
         };
         let _ = writeln!(out, "  capture c{index} <- {source}");
     }

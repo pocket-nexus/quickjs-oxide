@@ -139,6 +139,10 @@ pub mod flags {
     pub const ARROW: u8 = 1 << 2;
     /// A script body.
     pub const SCRIPT: u8 = 1 << 3;
+    /// The function reads its actual arguments past its parameters
+    /// (`arguments` or a rest parameter): entering it keeps the extra
+    /// arguments above its registers.
+    pub const ARGUMENTS: u8 = 1 << 4;
 }
 
 /// Where a closure created by `MakeClosure` gets one captured cell, read in
@@ -151,7 +155,13 @@ pub enum Capture {
     Register(u16),
     /// The creating function's own capture at this index.
     Outer(u16),
+    /// The cell in this slot of the creating frame's spill scope (a local
+    /// past the register window).
+    Slot(u16),
 }
+
+/// [`CodeUnit::spill_register`] of a unit without a spill scope.
+pub const NO_SPILL: u16 = u16::MAX;
 
 /// Source information kept for the disassembler and error messages.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -179,6 +189,12 @@ pub struct CodeUnit {
     pub this_slots: u16,
     /// The length of the constant table attached on the heap.
     pub constant_count: u32,
+    /// The register holding the frame's spill scope, or [`NO_SPILL`]: a
+    /// function with more locals than the register window holds keeps the
+    /// rest in the slots of one scope object, created by `NewSpill`.
+    pub spill_register: u16,
+    /// The slots of the spill scope.
+    pub spill_slots: u16,
     /// The unit's first entry in the cache store, set by
     /// [`CodeStore::publish`].
     pub ic_base: u32,
@@ -193,10 +209,15 @@ pub struct CodeUnit {
 }
 
 impl CodeUnit {
-    /// The first operand temporary, `T(0)`.
+    /// The first operand temporary, `T(0)`: after the locals, or after the
+    /// spill register when the locals do not all fit in the window.
     #[inline]
     pub const fn temp_base(&self) -> u32 {
-        1 + self.parameter_count as u32 + self.local_count as u32
+        if self.spill_register != NO_SPILL {
+            self.spill_register as u32 + 1
+        } else {
+            1 + self.parameter_count as u32 + self.local_count as u32
+        }
     }
 
     #[inline]

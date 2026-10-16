@@ -308,9 +308,12 @@ fn unsupported_constructs_are_reported_not_mislowered() {
         ("function* g() { yield 1; }", "generators"),
         ("class C {}", "classes"),
         ("for (const x of [1]) {}", "iterators"),
-        ("function f(...r) { return r; }", "rest parameters"),
-        ("var re = /a/;", "RegExp"),
-        ("function f() { return arguments; }", "Arguments"),
+        ("var o = { ...{ a: 1 } };", "object spread"),
+        ("function f({ a }) { return a; }", "non-simple parameters"),
+        (
+            "var f = function () { return { m() {} }; };",
+            "object literal methods",
+        ),
     ] {
         match lower(source) {
             Err(LowerError::Unsupported(found)) => {

@@ -47,7 +47,9 @@ fn every_opcode_round_trips_through_the_disassembler() {
     let key = PropertyKey::index(7).unwrap();
     let mut builder = CodeBuilder::new();
     let mut expected = Vec::new();
-    for &op in Opcode::ALL {
+    // The spill opcodes need a spill scope: `spill_scope_accesses_validate`.
+    let spill = [Opcode::NewSpill, Opcode::LoadSlot, Opcode::StoreSlot];
+    for &op in Opcode::ALL.iter().filter(|op| !spill.contains(op)) {
         // Registers: this, p0, p1, l0, l1, t0 = 5, t1 = 6, ...
         let operands = match op.format() {
             Format::None => {
@@ -138,7 +140,7 @@ fn every_opcode_round_trips_through_the_disassembler() {
         register_count: 400,
         parameter_count: 2,
         local_count: 2,
-        constant_count: 2,
+        constant_count: 3,
         children: Vec::new(),
         captures: vec![Capture::None],
         name: "every".into(),
@@ -159,7 +161,7 @@ fn every_opcode_round_trips_through_the_disassembler() {
     assert_eq!(
         lines.next(),
         Some(
-            "every: params 2, locals 2, registers 400, constants 2, children 1, this slots 0, \
+            "every: params 2, locals 2, registers 400, constants 3, children 1, this slots 0, \
              cache sites 6"
         )
     );
@@ -588,4 +590,48 @@ fn publication_reserves_cache_entries() {
     assert_eq!(runtime.code().get(second).ic_base as usize, before + 2);
     assert_eq!(runtime.heap().ics().len(), before + 4);
     assert_eq!(runtime.heap().ics().filled(), 0);
+}
+
+/// A function with more locals than the window keeps the rest in a spill
+/// scope: its accesses must name the unit's spill register and a slot.
+#[test]
+fn spill_scope_accesses_validate() {
+    let spilled = |build: &dyn Fn(&mut CodeBuilder)| {
+        let mut builder = CodeBuilder::new();
+        build(&mut builder);
+        builder.op(Opcode::ReturnUndefined);
+        builder.finish(UnitLayout {
+            register_count: 8,
+            parameter_count: 1,
+            local_count: 4,
+            spill_register: Some(4),
+            spill_slots: 2,
+            ..UnitLayout::default()
+        })
+    };
+    let unit = spilled(&|b| {
+        b.a_count(Opcode::NewSpill, 4, 2);
+        b.ab_int(Opcode::StoreSlot, 5, 4, 1);
+        b.ab_int(Opcode::LoadSlot, 6, 4, 0);
+    });
+    assert_eq!(validate(&unit), Ok(()));
+    assert_eq!(unit.temp_base(), 5);
+    let text = oxide_core::bytecode::disassemble(
+        &unit,
+        &mut oxide_core::bytecode::disasm::key_placeholder,
+    );
+    assert!(text.contains("StoreSlot           t0, spill, 1"), "{text}");
+    for bad in [
+        spilled(&|b| {
+            b.ab_int(Opcode::LoadSlot, 6, 4, 2);
+        }),
+        spilled(&|b| {
+            b.ab_int(Opcode::LoadSlot, 6, 5, 0);
+        }),
+        spilled(&|b| {
+            b.a_count(Opcode::NewSpill, 4, 3);
+        }),
+    ] {
+        assert_eq!(validate(&bad), Err(ValidateErrorKind::Spill));
+    }
 }

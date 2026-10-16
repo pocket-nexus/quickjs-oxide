@@ -8,6 +8,7 @@
 //! argument is copied. Both tables live inside the [`Heap`] as fixed roots:
 //! a safepoint marks `registers[..top]` and every frame's function.
 
+pub(crate) mod arguments;
 pub(crate) mod bigint;
 pub(crate) mod error;
 pub mod ic;
@@ -16,6 +17,7 @@ pub mod native;
 pub(crate) mod number;
 pub(crate) mod ops;
 pub(crate) mod property;
+pub mod regexp;
 
 use std::fmt;
 
@@ -56,8 +58,13 @@ pub(crate) struct Frame {
     pub base: u32,
     pub return_pc: u32,
     pub return_dst: u32,
+    /// The actual argument count, which `arguments`, rest parameters and the
+    /// extra arguments kept above the registers read.
+    pub argc: u32,
     pub flags: u8,
 }
+
+const _: () = assert!(size_of::<Frame>() == 32);
 
 /// Registers a frame addresses without a bounds check: an 8-bit operand, or
 /// a call's `b + 1` (see `interp::window`).
@@ -78,6 +85,11 @@ pub struct VmStack {
     /// `registers[..top]` are roots: the running frame's window and
     /// everything below it.
     pub(crate) top: u32,
+    /// Registers from here up may name records freed by a collection that
+    /// ran while they were above `top`: each collection lowers it to `top`,
+    /// and a frame that resumes clears its registers from here before they
+    /// become roots again (see `interp::raise_top`).
+    pub(crate) stale_from: u32,
     pub(crate) limit: u32,
     /// Rust-level re-entries in progress: a slow path calling back into
     /// JavaScript, or a conversion recursing through an array.
@@ -93,6 +105,7 @@ impl Default for VmStack {
             registers: Vec::new(),
             frames: Vec::new(),
             top: 0,
+            stale_from: u32::MAX,
             limit: DEFAULT_STACK_LIMIT,
             nesting: 0,
             native_base: 0,
@@ -179,6 +192,7 @@ pub(crate) struct Cx<'a> {
     pub code: &'a CodeStore,
     pub realm: &'a Realm,
     pub host: &'a mut Host,
+    pub regexps: &'a mut regexp::RegExpStore,
 }
 
 /// Calls `function` with `this` and `args` and runs it to completion. The

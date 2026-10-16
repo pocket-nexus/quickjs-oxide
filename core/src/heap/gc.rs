@@ -332,6 +332,7 @@ impl Heap {
         // Registers above `top` belong to returned frames and may name freed
         // records; a call clears its window before it can be marked again.
         let top = self.vm.top as usize;
+        self.vm.stale_from = self.vm.stale_from.min(self.vm.top);
         push_heap_values(&mut stack, &self.vm.registers[..top]);
         stack.extend(
             self.vm
@@ -371,7 +372,7 @@ impl Heap {
                     push_heap_values(stack, self.values.slice(header.slots()));
                     push_heap_values(stack, self.values.slice(header.elements()));
                     match header.kind {
-                        ObjectKind::Scope if header.payload != NONE => {
+                        ObjectKind::Scope | ObjectKind::Arguments if header.payload != NONE => {
                             stack.push(Value::object(crate::ObjectId(header.payload)));
                         }
                         ObjectKind::Function => {

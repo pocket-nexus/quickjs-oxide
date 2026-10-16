@@ -17,6 +17,19 @@ pub enum ObjectKind {
     /// parent scope (or [`NONE`]).
     Scope,
     GlobalObject,
+    /// An `arguments` object (phase 3, section 5.1). Its elements hold the
+    /// values of unmapped indices; a mapped one's `payload` is a scope object
+    /// whose slot 0 is the mapped count and slots 1.. the parameters' cells,
+    /// `Value::EMPTY` once an index is unmapped. An unmapped one's payload is
+    /// [`NONE`].
+    Arguments,
+    /// A regular expression: `payload` indexes the runtime's program store;
+    /// `lastIndex` is an own data property.
+    RegExp,
+    /// A `for-in` enumeration (section 5.4), never exposed to JavaScript: the
+    /// elements are the key snapshot, slot 0 the object, slot 1 the key
+    /// count, `payload` the cursor.
+    ForInIterator,
     /// Placeholder for the builtin kinds ported in phase 4.
     Native,
     /// Poison written over a freed header.

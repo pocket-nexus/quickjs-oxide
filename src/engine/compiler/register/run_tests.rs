@@ -215,6 +215,8 @@ const NOT_EMITTED: &[Opcode] = &[
     Opcode::TypeOfIsFunction,
     Opcode::DeleteField,
     Opcode::JUndefinedOrNull,
+    // Emitted only for a direct `eval` call, which the current core runs.
+    Opcode::ThrowInternal,
 ];
 
 /// The corpus and probes lower to every opcode the lowering can emit, so the
@@ -269,13 +271,16 @@ fn lowering_census() {
 
     fn walk<'a>(
         function: &'a UnlinkedFunction,
-        parent: Option<u16>,
-        out: &mut Vec<(&'a UnlinkedFunction, Option<u16>)>,
+        parent: Option<super::Layout>,
+        out: &mut Vec<(&'a UnlinkedFunction, Option<super::Layout>)>,
     ) {
         out.push((function, parent));
+        let layout = super::analysis::analyze(function.code())
+            .ok()
+            .and_then(|analysis| super::Layout::of(function, &analysis).ok());
         for constant in function.constants() {
             if let Some(child) = constant.as_child() {
-                walk(child, Some(function.metadata().argument_count), out);
+                walk(child, layout, out);
             }
         }
     }
@@ -352,4 +357,39 @@ fn lowering_census() {
             wide.join(", ")
         );
     }
+}
+
+/// Development hook: prints the stack code of every function of the script
+/// in `DUMP_SOURCE`, the lowering's input. Ignored in ordinary runs.
+#[test]
+#[ignore = "development hook"]
+fn dump_stack_code() {
+    use crate::engine::code::function::UnlinkedFunction;
+
+    fn dump(function: &UnlinkedFunction, depth: usize) {
+        let metadata = function.metadata();
+        println!(
+            "{:indent$}function {:?}: args {}, locals {}",
+            "",
+            function.func_name().map(|name| name.to_utf8_lossy()),
+            metadata.argument_count,
+            metadata.local_count,
+            indent = depth * 2
+        );
+        for (pc, instruction) in function.code().iter().enumerate() {
+            println!(
+                "{:indent$}  {pc:4}  {instruction:?}",
+                "",
+                indent = depth * 2
+            );
+        }
+        for constant in function.constants() {
+            if let Some(child) = constant.as_child() {
+                dump(child, depth + 1);
+            }
+        }
+    }
+
+    let source = std::env::var("DUMP_SOURCE").expect("DUMP_SOURCE");
+    dump(&compile_unlinked_script(&source).unwrap(), 0);
 }

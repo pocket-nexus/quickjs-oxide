@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use super::{Capture, CodeUnit, Format, Opcode, flags};
+use super::{Capture, CodeUnit, Format, NO_SPILL, Opcode, flags};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidateErrorKind {
@@ -39,6 +39,9 @@ pub enum ValidateErrorKind {
     Flags,
     /// A cache site at or past the unit's `ic_count`.
     Site(u32),
+    /// A spill access that does not name the unit's spill register and one
+    /// of its slots.
+    Spill,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,7 +97,8 @@ pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateE
                 Capture::None => {}
                 Capture::Register(r) if (r as u32) < registers => {}
                 Capture::Outer(i) if (i as usize) < unit.captures.len() => {}
-                Capture::Register(r) | Capture::Outer(r) => {
+                Capture::Slot(i) if unit.spill_register != NO_SPILL && i < unit.spill_slots => {}
+                Capture::Register(r) | Capture::Outer(r) | Capture::Slot(r) => {
                     return fail(Some(index as u32), E::ChildCapture(r as u32));
                 }
             }
@@ -139,7 +143,9 @@ pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateE
             }
             Format::AConst => {
                 register(insn.a)?;
-                if insn.imm >= unit.constant_count {
+                // A regular expression reads its source and its flags.
+                let last = insn.imm as u64 + u64::from(insn.op == Opcode::NewRegExp);
+                if last >= u64::from(unit.constant_count) {
                     return fail(at, E::Constant(insn.imm));
                 }
             }
@@ -161,6 +167,7 @@ pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateE
                 // or callee, then callee or new.target, then arguments.
                 let operands = match insn.op {
                     Opcode::Call | Opcode::TailCall => 1,
+                    Opcode::CallSpread | Opcode::NewSpread => 3,
                     _ => 2,
                 };
                 if insn.b as u32 + operands + insn.c as u32 > registers {
@@ -182,6 +189,29 @@ pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateE
                 if insn.imm >= registers {
                     return fail(at, E::WideRegister(insn.imm));
                 }
+            }
+        }
+        // A spill access names the unit's spill register and one of its slots.
+        if matches!(
+            insn.op,
+            Opcode::LoadSlot | Opcode::StoreSlot | Opcode::NewSpill
+        ) {
+            let spill = if insn.op == Opcode::NewSpill {
+                insn.a
+            } else {
+                insn.b
+            };
+            let slot = if insn.op == Opcode::NewSpill {
+                u32::from(unit.spill_slots).saturating_sub(1)
+            } else {
+                insn.imm
+            };
+            if unit.spill_register == NO_SPILL
+                || u16::from(spill) != unit.spill_register
+                || (insn.op != Opcode::NewSpill && slot >= u32::from(unit.spill_slots))
+                || (insn.op == Opcode::NewSpill && insn.imm != u32::from(unit.spill_slots))
+            {
+                return fail(at, E::Spill);
             }
         }
         if let Some(site) = insn.site()

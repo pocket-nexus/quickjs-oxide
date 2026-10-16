@@ -6,12 +6,14 @@
 
 use std::cmp::Ordering;
 
+use super::arguments;
 use super::error::{self, ErrorKind};
 use super::ic::{self, FIELD_NO_SITE, GLOBAL_NO_SITE, IcEntry, IcKind};
 use super::native::{self, CallSite, Native};
 use super::number;
 use super::ops::{self, Arith, Relation, Unary};
 use super::property;
+use super::regexp;
 use super::{Cx, Frame, SPAN, Throw, frame_flags};
 use crate::bytecode::{Capture, CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, flags};
 use crate::heap::Heap;
@@ -48,19 +50,28 @@ fn callee(heap: &Heap, value: Value) -> Callee {
 }
 
 /// Pushes a frame for a bytecode function whose window starts at `base`,
-/// where `this` and `argc` arguments already are. Clears the rest of the
-/// window (missing parameters, locals, temporaries) and coerces a sloppy
-/// function's `undefined` or `null` receiver to the global object.
+/// where `this` and `frame.argc` arguments already are. Clears the rest of
+/// the window (missing parameters, locals, temporaries) and coerces a sloppy
+/// function's `undefined` or `null` receiver to the global object. A
+/// function that reads its actual arguments keeps the ones past its
+/// parameters above its registers, where `NewArguments` and `Rest` find
+/// them (section 5.1).
 #[inline]
-fn enter(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame, argc: usize) -> Result<(), Throw> {
+fn enter(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
     let base = frame.base as usize;
-    let end = base + unit.register_count as usize;
+    let argc = frame.argc as usize;
+    let parameters = unit.parameter_count as usize;
+    let registers_end = base + unit.register_count as usize;
+    let end = frame_end(&frame, unit) as usize;
     if !cx.heap.vm.reserve(end) {
         return Err(error::stack_overflow(cx));
     }
+    if end > registers_end {
+        keep_extra_arguments(cx, base + 1 + parameters..base + 1 + argc, registers_end);
+    }
     let registers = &mut cx.heap.vm.registers;
-    let first = base + 1 + argc.min(unit.parameter_count as usize);
-    registers[first..end].fill(Value::UNDEFINED);
+    let first = base + 1 + argc.min(parameters);
+    registers[first..registers_end].fill(Value::UNDEFINED);
     if !unit.has(flags::STRICT) {
         let this = registers[base];
         if this.is_undefined() || this.is_null() {
@@ -70,6 +81,163 @@ fn enter(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame, argc: usize) -> Result<
     cx.heap.vm.frames.push(frame);
     cx.heap.vm.top = end as u32;
     Ok(())
+}
+
+/// Sets `top` for a frame that resumes after a return or an unwind. The
+/// registers between the finished frame's end and the resuming frame's are
+/// dead (they lie above the call's base) but were not roots while the frame
+/// ran, so a collection since may have freed what they name: the part at or
+/// above `stale_from` is cleared before it becomes roots again.
+#[inline]
+fn raise_top(cx: &mut Cx<'_>, end: u32) {
+    let vm = &mut cx.heap.vm;
+    if end > vm.top && vm.stale_from < end {
+        let from = vm.top.max(vm.stale_from);
+        clear_registers(cx, from as usize..end as usize);
+        cx.heap.vm.stale_from = end;
+    }
+    cx.heap.vm.top = end;
+}
+
+#[inline(never)]
+fn clear_registers(cx: &mut Cx<'_>, range: std::ops::Range<usize>) {
+    cx.heap.vm.registers[range].fill(Value::UNDEFINED);
+}
+
+/// Moves the arguments past a function's parameters above its registers.
+#[cold]
+#[inline(never)]
+fn keep_extra_arguments(cx: &mut Cx<'_>, extras: std::ops::Range<usize>, to: usize) {
+    cx.heap.vm.registers.copy_within(extras, to);
+}
+
+/// The end of a frame's registers: its window, plus the extra arguments a
+/// function that reads them keeps above it.
+#[inline]
+pub(super) fn frame_end(frame: &Frame, unit: &CodeUnit) -> u32 {
+    let mut end = frame.base + u32::from(unit.register_count);
+    if unit.has(flags::ARGUMENTS) {
+        end += frame.argc.saturating_sub(u32::from(unit.parameter_count));
+    }
+    end
+}
+
+/// The opcodes of the phase 3 surface that no hot path runs: accessor and
+/// spill-scope accesses, `arguments`, rest parameters, `new.target`,
+/// regular-expression literals, `for-in` setup, spread elements and
+/// unsupported constructs. Kept out of the loop, which they would otherwise
+/// grow past its size gate; each writes its own result register.
+#[inline(never)]
+fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Result<(), Throw> {
+    let base = frame.base as usize;
+    let reg = |cx: &Cx<'_>, register: u8| cx.heap.vm.registers[base + register as usize];
+    let (register, value) = match insn.op {
+        Opcode::DefineGetter | Opcode::DefineSetter => {
+            let object = reg(cx, insn.a).as_object().expect("a literal object");
+            let function = reg(cx, insn.b);
+            let setter = insn.op == Opcode::DefineSetter;
+            let flags = PropertyFlags::accessor(true, true);
+            return property::define_accessor(cx, object, insn.key(), function, setter, flags);
+        }
+        Opcode::NewSpill => (insn.a, new_spill(cx, insn.imm)?),
+        Opcode::LoadSlot => {
+            let spill = cell(reg(cx, insn.b));
+            (insn.a, cx.heap.scope_get(spill, 0, insn.imm))
+        }
+        Opcode::StoreSlot => {
+            let (value, spill) = (reg(cx, insn.a), cell(reg(cx, insn.b)));
+            cx.heap.scope_set(spill, 0, insn.imm, value);
+            return Ok(());
+        }
+        Opcode::NewArguments => {
+            let mapped = insn.imm != 0;
+            (insn.a, arguments::new_arguments(cx, frame, unit, mapped)?)
+        }
+        Opcode::Rest => (insn.a, arguments::rest(cx, frame, unit, insn.imm as usize)?),
+        Opcode::LoadNewTarget => {
+            let target = if frame.flags & frame_flags::CONSTRUCT != 0 {
+                Value::object(frame.function)
+            } else {
+                Value::UNDEFINED
+            };
+            (insn.a, target)
+        }
+        Opcode::NewRegExp => (insn.a, regexp::new_regexp(cx, frame.bytecode, insn.imm)?),
+        Opcode::ForInStart => {
+            let value = reg(cx, insn.b);
+            (insn.a, property::for_in_start(cx, value)?)
+        }
+        Opcode::AppendSpread => {
+            let (array, index, source) = (reg(cx, insn.a), reg(cx, insn.b), reg(cx, insn.c));
+            (insn.b, arguments::append_spread(cx, array, index, source)?)
+        }
+        Opcode::ThrowInternal => {
+            let message = property::key_text(cx.heap, insn.key());
+            return Err(error::throw(cx, ErrorKind::Internal, &message));
+        }
+        _ => unreachable!("{} is not a rare form", insn.op.name()),
+    };
+    cx.heap.vm.registers[base + register as usize] = value;
+    Ok(())
+}
+
+/// Rewrites a call of `Function.prototype.call` or `apply` (section 5.2):
+/// the receiver `function` becomes the callee, the window moves onto the
+/// `thisArg`, and `apply`'s list replaces it from the next register. Repeats
+/// while the new callee is one of the two. Returns the callee, the window,
+/// `this` and the argument count.
+#[inline(never)]
+fn rewrite_call(
+    cx: &mut Cx<'_>,
+    base: usize,
+    mut window: usize,
+    mut function: Value,
+    mut this: Value,
+    mut argc: usize,
+) -> Result<(Callee, usize, Value, usize), Throw> {
+    loop {
+        let target = callee(cx.heap, function);
+        let Callee::Native(native @ (Native::FunctionCall | Native::FunctionApply)) = target else {
+            return Ok((target, window, this, argc));
+        };
+        function = this;
+        window += 1;
+        let at = base + window;
+        argc = if native == Native::FunctionCall {
+            arguments::call_window(cx, at, argc)?
+        } else {
+            arguments::apply_window(cx, at, argc)?
+        };
+        this = cx.heap.vm.registers[at];
+    }
+}
+
+/// Calls a native with its `this` in register `at` and its arguments after
+/// it. The arguments may reach past the caller's registers (an `apply`), so
+/// they are made roots for the call; the caller restores `top`.
+#[inline(never)]
+fn call_native(
+    cx: &mut Cx<'_>,
+    native: Native,
+    at: usize,
+    this: Value,
+    argc: usize,
+    construct: bool,
+) -> Result<Value, Throw> {
+    if !construct {
+        cx.heap.vm.registers[at] = this;
+    }
+    let end = (at + 1 + argc) as u32;
+    cx.heap.vm.top = cx.heap.vm.top.max(end);
+    native::call(
+        cx,
+        native,
+        CallSite {
+            this: at,
+            args: at + 1,
+            argc,
+        },
+    )
 }
 
 /// Runs `function` with `this` in `registers[base]` and `argc` arguments
@@ -92,12 +260,13 @@ pub(super) fn call_from_rust(
                 base: base as u32,
                 return_pc: 0,
                 return_dst: 0,
+                argc: argc as u32,
                 flags: frame_flags::ENTRY,
             };
             if !cx.heap.vm.enter_native() {
                 return Err(error::stack_overflow(cx));
             }
-            let result = enter(cx, unit, frame, argc).and_then(|()| run(cx));
+            let result = enter(cx, unit, frame).and_then(|()| run(cx));
             cx.heap.vm.leave_native();
             result
         }
@@ -105,6 +274,7 @@ pub(super) fn call_from_rust(
             cx,
             native,
             CallSite {
+                this: base,
                 args: base + 1,
                 argc,
             },
@@ -131,6 +301,20 @@ fn new_cell(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw> {
         .map_err(|error| error::heap_error(cx, error))?;
     cx.heap.scope_set(cell, 0, 0, value);
     Ok(Value::object(cell.object()))
+}
+
+/// `NewSpill`: a scope whose slots hold the locals past the window, all
+/// `undefined` as a frame's locals start.
+#[inline(never)]
+fn new_spill(cx: &mut Cx<'_>, slots: u32) -> Result<Value, Throw> {
+    let spill = cx
+        .heap
+        .alloc_scope(None, slots)
+        .map_err(|error| error::heap_error(cx, error))?;
+    for slot in 0..slots {
+        cx.heap.scope_set(spill, 0, slot, Value::UNDEFINED);
+    }
+    Ok(Value::object(spill.object()))
 }
 
 #[inline]
@@ -174,6 +358,11 @@ fn make_closure(
                     Capture::None => Value::UNDEFINED,
                     Capture::Register(register) => {
                         cx.heap.vm.registers[frame.base as usize + register as usize]
+                    }
+                    Capture::Slot(slot) => {
+                        let spill = cx.heap.vm.registers
+                            [frame.base as usize + unit.spill_register as usize];
+                        cx.heap.scope_get(cell(spill), 0, u32::from(slot))
                     }
                     Capture::Outer(outer) => {
                         let captures = cx.heap.function_scope(frame.function).expect("captures");
@@ -229,8 +418,13 @@ fn construct_receiver(
     cx: &mut Cx<'_>,
     constructor: ObjectId,
     this_slots: u16,
-    site: usize,
+    site: Option<usize>,
 ) -> Result<Value, Throw> {
+    let Some(site) = site else {
+        let names = cx.realm.names;
+        let prototype = property::get_value(cx, constructor, Names::key(names.prototype))?;
+        return alloc_receiver(cx, prototype, u32::from(this_slots));
+    };
     let entry = cx.heap.ics.entries[site];
     let heap = &*cx.heap;
     let shape = heap.shape_of(constructor).index();
@@ -263,6 +457,12 @@ fn construct_receiver(
             }
         }
     };
+    alloc_receiver(cx, prototype, slots)
+}
+
+/// An ordinary object inheriting from `prototype` (`%Object.prototype%`
+/// when it is not an object) with room for `slots` properties.
+fn alloc_receiver(cx: &mut Cx<'_>, prototype: Value, slots: u32) -> Result<Value, Throw> {
     let prototype = prototype
         .as_object()
         .unwrap_or_else(|| cx.realm.intrinsic(Intrinsic::ObjectPrototype));
@@ -851,13 +1051,6 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     let object = object.as_object().expect("a literal object");
                     property::define(cx, object, insn.key(), value)
                 }
-                Opcode::DefineGetter | Opcode::DefineSetter => {
-                    let (object, function) = (reg!(insn.a), reg!(insn.b));
-                    let object = object.as_object().expect("a literal object");
-                    let setter = insn.op == Opcode::DefineSetter;
-                    let flags = PropertyFlags::accessor(true, true);
-                    property::define_accessor(cx, object, insn.key(), function, setter, flags)
-                }
                 Opcode::DeleteField => {
                     let object = reg!(insn.b);
                     write!('dispatch, insn.a,
@@ -885,10 +1078,13 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     {
                         let header = cx.heap.header(target);
                         let elements = header.elements();
-                        let length = if header.kind == ObjectKind::Array {
-                            header.payload
-                        } else {
-                            elements.len
+                        // An `arguments` object's mapped indices go through
+                        // its cells: only arrays and ordinary objects take the
+                        // dense write.
+                        let length = match header.kind {
+                            ObjectKind::Array => header.payload,
+                            ObjectKind::Ordinary => elements.len,
+                            _ => 0,
                         };
                         if (index as u32) < elements.len.min(length) {
                             cx.heap.values.set(elements, index as u32, value);
@@ -1000,6 +1196,31 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     continue 'dispatch;
                 }
 
+                // ---- the phase 3 surface: rare forms, out of line ----
+                Opcode::DefineGetter
+                | Opcode::DefineSetter
+                | Opcode::NewSpill
+                | Opcode::LoadSlot
+                | Opcode::StoreSlot
+                | Opcode::NewArguments
+                | Opcode::Rest
+                | Opcode::LoadNewTarget
+                | Opcode::NewRegExp
+                | Opcode::ForInStart
+                | Opcode::AppendSpread
+                | Opcode::ThrowInternal => rare_op(cx, &frame, unit, insn),
+                Opcode::ForInNext => {
+                    let iterator = reg!(insn.b);
+                    match property::for_in_next(cx, iterator) {
+                        Ok(Some(key)) => {
+                            pc = insn.imm as usize;
+                            set!('dispatch, insn.a, key)
+                        }
+                        Ok(None) => Ok(()),
+                        Err(throw) => Err(throw),
+                    }
+                }
+
                 // ---- allocation ----
                 Opcode::NewObject => {
                     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
@@ -1022,37 +1243,59 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                 | Opcode::CallMethod
                 | Opcode::TailCall
                 | Opcode::TailCallMethod
-                | Opcode::New => {
+                | Opcode::New
+                | Opcode::CallSpread
+                | Opcode::NewSpread => {
                     let b = insn.b as usize;
-                    let (callee_register, window) = match insn.op {
+                    let (callee_register, mut window) = match insn.op {
                         Opcode::Call | Opcode::TailCall => (b, b),
-                        Opcode::New => (b, b + 1),
+                        Opcode::New | Opcode::CallSpread | Opcode::NewSpread => (b, b + 1),
                         _ => (b + 1, b + 1),
                     };
                     let function = reg!(callee_register);
-                    let receiver = reg!(b);
-                    let argc = insn.c as usize;
+                    let mut this = match insn.op {
+                        Opcode::CallMethod | Opcode::TailCallMethod => reg!(b),
+                        Opcode::CallSpread => reg!(b + 1),
+                        _ => Value::UNDEFINED,
+                    };
+                    let mut argc = insn.c as usize;
                     let tail = matches!(insn.op, Opcode::TailCall | Opcode::TailCallMethod);
-                    let construct = insn.op == Opcode::New;
-                    match callee(cx.heap, function) {
+                    let construct = matches!(insn.op, Opcode::New | Opcode::NewSpread);
+                    if matches!(insn.op, Opcode::CallSpread | Opcode::NewSpread) {
+                        match arguments::spread(cx, base + window) {
+                            Ok(count) => argc = count,
+                            Err(throw) => break 'op Err(throw),
+                        }
+                    }
+                    // Section 5.2: `f.call(…)` and `f.apply(…)` move the window
+                    // onto their `thisArg` and dispatch on `f`.
+                    let mut target = callee(cx.heap, function);
+                    if let Callee::Native(Native::FunctionCall | Native::FunctionApply) = target
+                        && !construct
+                    {
+                        match rewrite_call(cx, base, window, function, this, argc) {
+                            Ok(rewritten) => {
+                                (target, window, this, argc) = rewritten;
+                            }
+                            Err(throw) => break 'op Err(throw),
+                        }
+                    }
+                    match target {
                         Callee::Bytecode(object, bytecode) => {
                             let unit_id: CodeUnitId = cx.heap.bytecode_unit(bytecode);
                             let callee_unit = store.get(unit_id);
-                            let this = match insn.op {
-                                Opcode::Call | Opcode::TailCall => Value::UNDEFINED,
-                                Opcode::New if !callee_unit.has(flags::CONSTRUCTOR) => {
+                            if construct {
+                                if !callee_unit.has(flags::CONSTRUCTOR) {
                                     break 'op Err(error::type_error(cx, "not a constructor"));
                                 }
-                                Opcode::New => {
-                                    let site = ic_base + insn.imm as usize;
-                                    let slots = callee_unit.this_slots;
-                                    match construct_receiver(cx, object, slots, site) {
-                                        Ok(this) => this,
-                                        Err(throw) => break 'op Err(throw),
-                                    }
+                                let site =
+                                    (insn.op == Opcode::New).then(|| ic_base + insn.imm as usize);
+                                let slots = callee_unit.this_slots;
+                                match construct_receiver(cx, object, slots, site) {
+                                    Ok(receiver) => this = receiver,
+                                    Err(throw) => break 'op Err(throw),
                                 }
-                                _ => receiver,
-                            };
+                            }
                             cx.heap.vm.registers[base + window] = this;
                             let mut frame_flags = 0;
                             if construct {
@@ -1068,9 +1311,10 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                                 base: (base + window) as u32,
                                 return_pc: pc as u32,
                                 return_dst: (base + insn.a as usize) as u32,
+                                argc: argc as u32,
                                 flags: frame_flags,
                             };
-                            if let Err(throw) = enter(cx, callee_unit, callee_frame, argc) {
+                            if let Err(throw) = enter(cx, callee_unit, callee_frame) {
                                 break 'op Err(throw);
                             }
                             load_frame!();
@@ -1079,11 +1323,10 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                             continue 'dispatch;
                         }
                         Callee::Native(native) if !construct || native.is_constructor() => {
-                            let site = CallSite {
-                                args: base + window + 1,
-                                argc,
-                            };
-                            match native::call(cx, native, site) {
+                            let result =
+                                call_native(cx, native, base + window, this, argc, construct);
+                            cx.heap.vm.top = frame_end(&frame, unit);
+                            match result {
                                 Ok(value) if tail => match finish_return(cx, value) {
                                     Returned::Exit(value) => return Ok(value),
                                     Returned::Resume(resume) => {
@@ -1149,7 +1392,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                 return Err(Throw(thrown));
             }
             load_frame!();
-            cx.heap.vm.top = (base + unit.register_count as usize) as u32;
+            raise_top(cx, frame_end(&frame, unit));
             at = done.return_pc as usize - 1;
         }
         regs = window!();
@@ -1405,10 +1648,10 @@ fn finish_return(cx: &mut Cx<'_>, mut value: Value) -> Returned {
         if done.flags & frame_flags::TAIL != 0 {
             continue;
         }
-        cx.heap.vm.registers[done.return_dst as usize] = value;
         let caller = *cx.heap.vm.frames.last().expect("a caller");
         let unit = cx.code.get(caller.unit);
-        cx.heap.vm.top = caller.base + u32::from(unit.register_count);
+        raise_top(cx, frame_end(&caller, unit));
+        cx.heap.vm.registers[done.return_dst as usize] = value;
         return Returned::Resume(done.return_pc);
     }
 }
