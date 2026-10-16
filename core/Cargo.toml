@@ -1,0 +1,18 @@
+[package]
+name = "oxide-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "The new quickjs-oxide core: 8-byte values, typed arenas and a mark-sweep heap"
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Collects before every allocation (new-core phase 0, section 3).
+gc-stress = []
