@@ -12,6 +12,7 @@ use super::object::{NONE, ObjectKind};
 use super::{Heap, HeapError, Need};
 use crate::shape::STATIC_CELL;
 use crate::value::{Kind, ShapeId, Value};
+use crate::vm::ic::Record;
 
 /// A position on the [`RootStack`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -288,6 +289,7 @@ impl Heap {
         let before = self.used_bytes();
         self.mark_from_roots();
         self.process_weak();
+        self.prune_caches();
         let freed = self.sweep();
         let live = self.used_bytes();
         let gc = &mut self.gc;
@@ -493,6 +495,17 @@ impl Heap {
         }
     }
 
+    /// Clears the cache entries that name a record about to be swept, before
+    /// its index can be recycled (phase 3, section 2.1).
+    fn prune_caches(&mut self) {
+        let (objects, shapes, cells) = (&self.objects, &self.shapes, &self.cells);
+        self.ics.prune(|record| match record {
+            Record::Shape(index) => shapes.is_marked(index),
+            Record::Object(index) => objects.is_marked(index),
+            Record::Cell(index) => cells.is_marked(index),
+        });
+    }
+
     fn sweep(&mut self) -> usize {
         let values = &mut self.values;
         let mut freed = self.objects.sweep(|_, header| {
@@ -566,6 +579,16 @@ impl Heap {
         }
         for block in self.values.free_blocks() {
             claim(block, "free block");
+        }
+
+        // Every filled cache entry names live records.
+        for record in self.ics.named_records() {
+            let live = match record {
+                Record::Shape(index) => self.shapes.is_live(index),
+                Record::Object(index) => self.objects.is_live(index),
+                Record::Cell(index) => self.cells.is_live(index),
+            };
+            assert!(live, "gc verify: a cache entry names freed {record:?}");
         }
         self.clear_marks();
     }

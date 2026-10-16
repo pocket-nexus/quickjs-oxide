@@ -37,6 +37,8 @@ pub enum ValidateErrorKind {
     LineTable,
     /// An arrow function marked as a constructor.
     Flags,
+    /// A cache site at or past the unit's `ic_count`.
+    Site(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,6 +183,11 @@ pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateE
                     return fail(at, E::WideRegister(insn.imm));
                 }
             }
+        }
+        if let Some(site) = insn.site()
+            && site >= unit.ic_count
+        {
+            return fail(at, E::Site(site));
         }
     }
 

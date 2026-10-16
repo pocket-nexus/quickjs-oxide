@@ -191,7 +191,7 @@ fn calls_overlap_the_callee_window() {
     );
     // `sum` stays in its register at depth 0, so the callee lands in t1.
     assert!(
-        code.contains(&"GetGlobal t1, .unit".to_owned()),
+        code.contains(&"GetGlobal t1, .unit, ic0".to_owned()),
         "{code:#?}"
     );
     assert!(code.contains(&"Call t1, t1, 0".to_owned()), "{code:#?}");
@@ -202,7 +202,7 @@ fn calls_overlap_the_callee_window() {
     assert_eq!(
         code[..5],
         [
-            "GetField t1, p0, .f".to_owned(),
+            "GetField t1, p0, .f, ic0".to_owned(),
             "Mov t0, p0".to_owned(),
             "LoadInt t2, 1".to_owned(),
             "LoadInt t3, 2".to_owned(),
@@ -219,7 +219,7 @@ fn constructors_record_their_this_slots() {
     let root = &units[0];
     // The result of the statement retargets into the script's completion
     // local.
-    assert!(root.contains("New                 l0, t0, 1"), "{root}");
+    assert!(root.contains("New                 l0, t0, 1, ic"), "{root}");
 }
 
 #[test]

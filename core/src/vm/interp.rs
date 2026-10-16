@@ -7,6 +7,7 @@
 use std::cmp::Ordering;
 
 use super::error::{self, ErrorKind};
+use super::ic::{self, FIELD_NO_SITE};
 use super::native::{self, CallSite, Native};
 use super::number;
 use super::ops::{self, Arith, Relation, Unary};
@@ -289,6 +290,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
     let mut code: &[Insn] = &unit.code;
     let mut base = frame.base as usize;
     let mut strict = unit.has(flags::STRICT);
+    let mut ic_base = unit.ic_base as usize;
     let mut pc = 0usize;
 
     macro_rules! window {
@@ -310,6 +312,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
             code = &unit.code;
             base = frame.base as usize;
             strict = unit.has(flags::STRICT);
+            ic_base = unit.ic_base as usize;
         }};
     }
     // Writes a value computed from the heap, then continues.
@@ -664,13 +667,20 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
 
                 // ---- properties ----
                 Opcode::GetField => {
+                    // Section 2.2. The hit reads the heap's arenas as fields,
+                    // disjoint from the register file, so the window stays.
                     let object = reg!(insn.b);
-                    if let Some(object) = object.as_object() {
-                        set!('dispatch, insn.a,
-                            property::get_from(cx.heap, &cx.realm.names, object, insn.key())
-                        )
+                    let site = ic_base + insn.c as usize;
+                    let entry = cx.heap.ics.entries[site];
+                    let heap = &cx.heap.objects;
+                    if let Some(value) =
+                        ic::get_hit(heap, &cx.heap.cells, &cx.heap.values, entry, object)
+                    {
+                        reg!(insn.a) = value;
+                        continue 'dispatch;
                     }
-                    write!('dispatch, insn.a, property::get(cx, object, insn.key()))
+                    let fill = insn.c != FIELD_NO_SITE;
+                    write!('dispatch, insn.a, property::get_cached(cx, object, insn.key(), site, fill))
                 }
                 Opcode::SetField => {
                     let (object, value) = (reg!(insn.a), reg!(insn.b));

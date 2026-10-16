@@ -33,6 +33,7 @@ use crate::bytecode::CodeUnitId;
 use crate::shape::{Dictionary, PrototypeInfo, STATIC_CELL, Shape, ValidityCell};
 use crate::value::{BigIntId, BytecodeId, ObjectId, ScopeId, ShapeId, StringId, SymbolId, Value};
 use crate::vm::VmStack;
+use crate::vm::ic::IcStore;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeapError {
@@ -121,6 +122,9 @@ pub struct Heap {
     /// The register file and the frame table (phase 2, section 4.1): fixed
     /// roots, so a safepoint marks the running frames with no parameter.
     pub(crate) vm: VmStack,
+    /// The inline caches (phase 3, section 2.1): beside the code store in
+    /// spirit, inside the heap so that every collection prunes them.
+    pub(crate) ics: IcStore,
 }
 
 impl Default for Heap {
@@ -147,6 +151,7 @@ impl Heap {
             roots: Roots::default(),
             gc: GcState::new(limits),
             vm: VmStack::default(),
+            ics: IcStore::default(),
         };
         let cell = heap.cells.alloc(ValidityCell { valid: true });
         debug_assert_eq!(cell, STATIC_CELL.0);
@@ -215,6 +220,10 @@ impl Heap {
             + self.payloads.functions.used_bytes()
             + self.payloads.bytecode.used_bytes()
             + self.values.used_slots() * 8
+    }
+
+    pub fn ics(&self) -> &IcStore {
+        &self.ics
     }
 
     pub fn value_heap(&self) -> &ValueHeap {

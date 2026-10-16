@@ -10,6 +10,7 @@
 
 pub(crate) mod bigint;
 pub(crate) mod error;
+pub mod ic;
 mod interp;
 pub mod native;
 pub(crate) mod number;
