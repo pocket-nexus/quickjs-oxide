@@ -5,7 +5,9 @@ engine. Phase 1 is the value and heap layer; phase 2 adds register bytecode
 and its main loop. As of phase 2 M4 the instruction set, code units, their
 validator, the lowering from the current compiler's stack code
 (`src/engine/compiler/register` in the root crate) and the loop that runs it
-exist; the only natives are `print` and the error constructors. The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
+exist; the only natives are `print` and the error constructors. The CLI
+crate's `oxide-run` binary runs a script file on it (`oxide-run --help` for
+the options). The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
 the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/performance/new-core-phase1-results.md);
 phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md).
 

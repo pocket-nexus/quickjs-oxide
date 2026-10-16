@@ -23,10 +23,17 @@ quickjs-oxide = { workspace = true }
 name = "qjs"
 path = "src/main.rs"
 
+# The new core's driver (#122, phase 2): runs a script on oxide-core.
+[[bin]]
+name = "oxide-run"
+path = "src/oxide_run.rs"
+
 [features]
 default = []
 test262-host = ["quickjs-oxide/test262-host"]
 profiling = ["quickjs-oxide/profiling"]
+# `oxide-run --gc-stress=N`: the new core's stress collector.
+new-core-gc-stress = ["quickjs-oxide/new-core-gc-stress"]
 
 # `cargo binstall` fetches the archives that .github/workflows/release.yml
 # attaches to each `v*` GitHub Release.
