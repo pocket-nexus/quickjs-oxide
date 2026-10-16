@@ -32,6 +32,7 @@ use self::values::{Range, ValueHeap};
 use crate::bytecode::CodeUnitId;
 use crate::shape::{Dictionary, PrototypeInfo, STATIC_CELL, Shape, ValidityCell};
 use crate::value::{BigIntId, BytecodeId, ObjectId, ScopeId, ShapeId, StringId, SymbolId, Value};
+use crate::vm::VmStack;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeapError {
@@ -117,6 +118,9 @@ pub struct Heap {
     pub(crate) prototypes: FxHashMap<ObjectId, PrototypeInfo>,
     pub(crate) roots: Roots,
     pub(crate) gc: GcState,
+    /// The register file and the frame table (phase 2, section 4.1): fixed
+    /// roots, so a safepoint marks the running frames with no parameter.
+    pub(crate) vm: VmStack,
 }
 
 impl Default for Heap {
@@ -142,6 +146,7 @@ impl Heap {
             prototypes: FxHashMap::default(),
             roots: Roots::default(),
             gc: GcState::new(limits),
+            vm: VmStack::default(),
         };
         let cell = heap.cells.alloc(ValidityCell { valid: true });
         debug_assert_eq!(cell, STATIC_CELL.0);
@@ -490,6 +495,7 @@ impl Heap {
         let record = FunctionRecord {
             scope: scope.map_or(NONE, |scope| scope.0),
             bytecode: NONE,
+            native: NONE,
         };
         let payload = self.payloads.functions.alloc(record);
         self.objects.get_mut(object.0).payload = payload;
@@ -601,6 +607,26 @@ impl Heap {
         let payload = self.objects.get(function.0).payload;
         self.payloads.functions.get_mut(payload).bytecode = bytecode.0;
         Ok(function)
+    }
+
+    /// A host function object: `native` indexes the runtime's native table.
+    pub fn alloc_native_function(
+        &mut self,
+        prototype: Option<ObjectId>,
+        native: u32,
+    ) -> Result<ObjectId, HeapError> {
+        let function = self.alloc_function(prototype, None)?;
+        let payload = self.objects.get(function.0).payload;
+        self.payloads.functions.get_mut(payload).native = native;
+        Ok(function)
+    }
+
+    /// The function record of a `Function` object.
+    #[inline]
+    pub fn function_record(&self, function: ObjectId) -> FunctionRecord {
+        let header = self.objects.get(function.0);
+        debug_assert_eq!(header.kind, ObjectKind::Function);
+        *self.payloads.functions.get(header.payload)
     }
 
     pub fn function_bytecode(&self, function: ObjectId) -> Option<BytecodeId> {

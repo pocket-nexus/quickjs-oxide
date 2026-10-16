@@ -327,6 +327,16 @@ impl Heap {
         stack.extend_from_slice(self.roots.stack.values());
         stack.extend(self.roots.handles.values());
         stack.extend_from_slice(&self.roots.fixed);
+        // Registers above `top` belong to returned frames and may name freed
+        // records; a call clears its window before it can be marked again.
+        let top = self.vm.top as usize;
+        push_heap_values(&mut stack, &self.vm.registers[..top]);
+        stack.extend(
+            self.vm
+                .frames
+                .iter()
+                .map(|frame| Value::object(frame.function)),
+        );
         for id in self.atoms.ids() {
             self.strings.mark(id.0);
         }

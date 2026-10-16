@@ -1,0 +1,26 @@
+var a = [1, 2, 3];
+print(a.length, a[0], a[2], a[3], a);
+a[5] = 6;
+print(a.length, a[4], a);
+a.length = 2;
+print(a.length, a[2], a);
+var b = [];
+for (var i = 0; i < 20; i++) b[i] = i * i;
+print(b.length, b[19], b[10]);
+var nested = [[1, 2], [3, [4, 5]]];
+print(nested[1][1][0], nested, nested.length);
+var mixed = [1, 'two', null, undefined, true, { x: 1 }];
+print(mixed);
+var sparse = [];
+sparse[1000000] = 'far';
+print(sparse.length, sparse[1000000], sparse[5]);
+var idx = '2';
+print(a[idx - 1], [10, 20, 30]['1'], [1, 2][-1]);
+var sum = 0, arr = [4, 5, 6];
+for (var j = 0; j < arr.length; j++) sum += arr[j];
+print(sum);
+var grid = [];
+for (var r = 0; r < 3; r++) { grid[r] = []; for (var c = 0; c < 3; c++) grid[r][c] = r * 3 + c; }
+print(grid);
+var s = 'str';
+print(s.length, s[0], s[2], s[3], 'x' + [1, 2] + 'y', [] + []);

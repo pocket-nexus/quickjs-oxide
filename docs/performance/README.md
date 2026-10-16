@@ -15,6 +15,7 @@ The engine uses a single `ExecCode` word stream and a stack VM. The compiler pub
 - [New core, phase 1](new-core-phase1.md): value and heap plan for the new core tracked in #122, with milestones and acceptance checks.
 - [New core, phase 1 results](new-core-phase1-results.md): `Value` and property-hit assembly, atom-table size, heap micro-workloads against the current core, churn under a heap cap.
 - [New core, phase 2](new-core-phase2.md): register bytecode, lowering from the resolved stack IR, the main loop, calls and scopes, with milestones and the exit tables.
+- [New core, phase 2 results](new-core-phase2-results.md): probe slopes of both cores, the loop's size and cost per dispatch, the two-core corpus record.
 
 ## Tools
 

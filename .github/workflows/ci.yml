@@ -111,6 +111,8 @@ jobs:
           ./scripts/checks/check-oracle-registry.sh --compiled
           # New core: the whole suite again with a collection at every allocation.
           cargo test --locked -p oxide-core --features gc-stress
+          # The lowering and the two-core corpus on the new core under stress.
+          cargo test --locked -p quickjs-oxide --features new-core-gc-stress --lib compiler::register
 
       - name: Lint targets
         run: |

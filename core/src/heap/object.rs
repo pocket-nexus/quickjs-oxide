@@ -117,6 +117,9 @@ pub struct FunctionRecord {
     pub scope: u32,
     /// A [`FunctionBytecode`] index, or [`NONE`].
     pub bytecode: u32,
+    /// A [`Native`](crate::vm::native::Native) index for a host function, or
+    /// [`NONE`].
+    pub native: u32,
 }
 
 impl Record for FunctionRecord {
@@ -124,6 +127,7 @@ impl Record for FunctionRecord {
         FunctionRecord {
             scope: NONE,
             bytecode: NONE,
+            native: NONE,
         }
     }
 }

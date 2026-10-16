@@ -1,0 +1,14 @@
+print(typeof 1, typeof 1.5, typeof 'x', typeof true, typeof undefined, typeof null);
+print(typeof {}, typeof [], typeof function () {}, typeof (() => 1), typeof 1n, typeof notDeclared);
+print(typeof print, typeof Error, void 0, void 'x');
+var o = { a: 1, b: 2 };
+print(delete o.a, o.a, 'a' in o, 'b' in o, delete o.missing);
+var arr = [1, 2, 3];
+print(delete arr[1], arr[1], arr.length, 1 in arr, 2 in arr);
+var k = 'b';
+print(delete o[k], o.b, typeof o.b);
+implicitGlobal = 5;
+print(delete implicitGlobal, typeof implicitGlobal);
+var declared = 1;
+print(delete declared, typeof declared);
+print(!0, !1, !'', !'a', !null, !{}, !!NaN);

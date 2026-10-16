@@ -2,10 +2,10 @@
 
 The new core of quickjs-oxide (issue #122), built in phases next to the current
 engine. Phase 1 is the value and heap layer; phase 2 adds register bytecode
-and its main loop. As of phase 2 M2 the instruction set, code units, their
-validator and the lowering from the current compiler's stack code exist
-(`src/engine/compiler/register` in the root crate); nothing runs them yet, and
-no builtin exists. The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
+and its main loop. As of phase 2 M4 the instruction set, code units, their
+validator, the lowering from the current compiler's stack code
+(`src/engine/compiler/register` in the root crate) and the loop that runs it
+exist; the only natives are `print` and the error constructors. The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
 the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/performance/new-core-phase1-results.md);
 phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md).
 
@@ -25,7 +25,8 @@ reverse.
 | `heap::gc` | root stack, handles, mark-sweep, trigger, stress mode, heap cap |
 | `shape` | transition tree, dictionary mode, validity cells |
 | `bytecode` | `Insn` (8 bytes), `Opcode` and its operand formats, `CodeUnit`, `CodeStore`, the builder, the publication validator, the disassembler |
-| `runtime` | `Runtime`: the heap, the code store beside it, and the single realm |
+| `vm` | the register file and frame table, the main loop (`interp`), conversions and operators (`ops`, `number`, `bigint`), property access (`property`), errors and the leaf-native ABI (`error`, `native`) |
+| `runtime` | `Runtime`: the heap, the code store beside it, the single realm and the host output |
 
 ## The rooting rule
 
@@ -119,3 +120,36 @@ check nothing.
 - Functions with more than 256 registers are reported unsupported by the
   lowering for now: `LoadWide`/`StoreWide` exist, but the shuttle placement
   comes with the first program that needs it (phase 3).
+
+### The loop (M3, M4)
+
+- A `Frame` is 32 bytes, not 24: it keeps the running function's bytecode
+  record next to its unit, and the caller's destination as an absolute
+  register index. There is no scope field (captures are cells, above).
+- Entering a frame clears the window past the arguments to `undefined`:
+  locals need it anyway, and a register above a returned frame's `top` may
+  name a record freed since, which must not be marked once the window covers
+  it again. Temporaries below `top` are still marked conservatively.
+- The register file holds at most `DEFAULT_STACK_LIMIT` (2^20) values;
+  a call past it throws `InternalError: stack overflow`, QuickJS's error,
+  rather than the plan's `RangeError`.
+- A conversion may call back into JavaScript (`valueOf`, `toString`) through
+  a nested loop on the frames above its own; such re-entries share a 1 MiB
+  native-stack budget measured from stack addresses, as QuickJS's
+  `js_check_stack_overflow` does. Natives stay leaf functions.
+- Without builtins, `ToPrimitive` stands in for the builtin a missing
+  `toString` lookup would have found: `Object.prototype.toString`,
+  `Array.prototype.toString` (a `,` join) or `Error.prototype.toString`. The
+  realm defines the error constructors and prototypes, `globalThis`,
+  `undefined`, `NaN` and `Infinity`; `Runtime::install_print` adds `print`.
+  Functions have no `name` or `length`; a constructor gets its `prototype`
+  object at `MakeClosure`. Property reads on primitives other than a
+  string's `length` and indices go to `%Object.prototype%`.
+- Index keys live in the element range while an index stays within four
+  times its capacity; a farther index is a named property with an index key,
+  and reads check the elements first.
+- `TailCall` does not reuse the frame: the callee's frame is marked so its
+  result is also its caller's. The compiler emits no tail call.
+- A thrown value travels as an unrooted `Throw`; the unwinder stores it in
+  the handler's register (or returns it to the embedder) before anything
+  allocates.

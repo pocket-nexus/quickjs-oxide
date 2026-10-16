@@ -54,3 +54,10 @@ cargo build --release -p oxide-core --example workloads
 python3 docs/performance/probes/new-core/phase1.py \
     --workloads target/release/examples/workloads --qjs "$CANDIDATE_QJS" --cpu 2 --repeat 5
 ```
+
+[`new-core/phase2.py`](new-core/phase2.py) runs the fixed probes and the phase 1 workloads as JavaScript on both cores from the root crate's release test binary (its ignored `run_probe_file` test) at N and 2N and reports the per-iteration slopes, nothing subtracted. [`core/examples/loop_probe.rs`](../../../core/examples/loop_probe.rs) runs `empty_loop` and `numeric_local_loop` as hand-built units, for the loop's size and assembly. The results are in [New core, phase 2 results](../new-core-phase2-results.md).
+
+```sh
+cargo test --release --lib --no-run   # prints the test binary
+python3 docs/performance/probes/new-core/phase2.py --binary "$TEST_BINARY" --cpu 2 --repeat 3
+```

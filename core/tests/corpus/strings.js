@@ -1,0 +1,14 @@
+var s = 'hello';
+var t = s + ' ' + 'world';
+print(t, t.length, t[4], t === 'hello world', t == 'hello world');
+print('a' + 1 + 2, 1 + 2 + 'a', 'n=' + null + ',' + undefined + ',' + true);
+print('' + 1.5, '' + -0, '' + 1e21, '' + 1 / 3, '' + 255, '' + -1e-7);
+print('abc' < 'abd', 'abc' < 'ab', 'Z' < 'a', 'é' > 'z');
+var built = '';
+for (var i = 0; i < 10; i++) built = built + i;
+print(built, built.length);
+print('café'.length, '\u{1F600}'.length);
+var u = 'αβ';
+print(u + u, u.length);
+print('5' * 1 + 1, '5' - - '5', '1e2' * 1, '  7  ' * 2, 'x' * 1);
+print('abc' == 'abc', 'abc' === 'ab' + 'c', 'a' != 'b');
