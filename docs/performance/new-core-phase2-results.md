@@ -4,8 +4,9 @@ This page records the measurements of [phase 2](new-core-phase2.md) of the new
 core (#122) as its milestones land: register bytecode, the lowering from the
 compiler's stack code, and the main loop in `oxide-core`
 ([`core/`](../../core/README.md)). M3 and M4 record the arithmetic, call and
-closure probes and the loop's size; M6 repeats the full tables of section 9
-with the driver and the fixed runner.
+closure probes and the loop's size; M5 runs the fixed probes through the
+`oxide-run` driver and the baseline's runner; M6 repeats the full tables of
+section 9.
 
 ## Identity (M3, M4)
 
@@ -110,6 +111,64 @@ of Table C are M6's.
   stack budget, checked from stack addresses as QuickJS's
   `js_check_stack_overflow` does.
 
+## M5: the fixed probes through the runner
+
+`oxide-run` (the CLI crate's second binary, section 5) runs each probe as
+`qjs` does, so `fixed.py` measures it with the [baseline](baseline.md)'s
+method: same machine and CPU, `--repeat 5 --cpu 2 --linux-counters --timeout
+900`, whole-process wall time and `instructions:u` including startup and
+compilation, medians of 5. All 100 samples produced the manifest's exact
+stdout. The QuickJS and current-core columns are the baseline's, recorded
+earlier the same day; the new core ran alone, not interleaved with them, so
+its times are indicative and M6 repeats the run interleaved.
+
+| Workload | QuickJS ms | current ms | new ms | QuickJS G instr | current G instr | new G instr | new / QuickJS instr |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| numeric_local_loop | 47 | 143 | 31 | 0.50 | 3.03 | 0.48 | 0.96 |
+| numeric_coercion_loop | 21 | 231 | 22 | 0.15 | 2.62 | 0.21 | 1.39 |
+| local_read_with_setup | 54 | 123 | 41 | 0.39 | 2.50 | 0.52 | 1.34 |
+| local_read | 53 | 123 | 41 | 0.39 | 2.50 | 0.52 | 1.34 |
+| bigint_32 | 16 | 55 | 50 | 0.06 | 0.60 | 0.71 | 11.89 |
+| bigint_64 | 21 | 62 | 45 | 0.19 | 0.76 | 0.60 | 3.15 |
+| bigint_256 | 16 | 35 | 27 | 0.08 | 0.32 | 0.25 | 3.11 |
+| prop_read | 30 | 59 | 37 | 0.40 | 1.09 | 0.59 | 1.48 |
+| prop_write | 28 | 97 | 31 | 0.33 | 1.92 | 0.44 | 1.34 |
+| array_read | 32 | 57 | 36 | 0.46 | 1.02 | 0.59 | 1.28 |
+| array_write | 30 | 139 | 37 | 0.39 | 2.82 | 0.56 | 1.43 |
+| call0 | 30 | 115 | 43 | 0.31 | 1.79 | 0.55 | 1.79 |
+| string_bridge | 19 | 51 | 25 | 0.14 | 0.70 | 0.22 | 1.58 |
+| type_error | 21 | 46 | 15 | 0.17 | 0.45 | 0.03 | 0.17 |
+| tdz | 21 | 49 | 15 | 0.17 | 0.50 | 0.04 | 0.26 |
+| local_move | 55 | 206 | 61 | 0.80 | 4.08 | 0.97 | 1.21 |
+| argument_move | 54 | 132 | 50 | 0.70 | 2.75 | 0.81 | 1.16 |
+| number_owner_fallback | 24 | 58 | 20 | 0.15 | 1.01 | 0.16 | 1.08 |
+| object_move | 20 | 45 | 19 | 0.12 | 0.69 | 0.14 | 1.13 |
+| empty_loop | 52 | 145 | 59 | 0.90 | 2.96 | 1.09 | 1.21 |
+
+Geometric means over the 20 probes: the new core executes **1.32×** QuickJS's
+instructions (the current core 5.02×) in **1.11×** its time (2.90×), and
+**3.79×** fewer instructions than the current core.
+
+- Under QuickJS: `numeric_local_loop`, and `tdz` and `type_error` by a wide
+  margin, because a phase 2 error object has no backtrace; QuickJS builds one
+  for every throw.
+- Within 1.1–1.5× of QuickJS: the moves, local reads and the uncached
+  property and element probes.
+- `call0` (1.79×) pays an uncached global lookup per call; `bigint_32`
+  (11.9×) and the other BigInt probes allocate a heap record per operation,
+  where QuickJS has short BigInts (phase 4).
+- `numeric_coercion_loop` and `string_bridge`, which the plan recorded only
+  if the lowering accepted them, run: the first calls a user `valueOf` from
+  the `+` slow path through a nested loop, the second concatenates flat
+  strings.
+
+```sh
+cargo build --release -p quickjs-oxide-cli --bin oxide-run
+python3 scripts/benchmark/fixed.py --manifest docs/performance/probes/fixed/manifest.json \
+  --workload-dir docs/performance/probes/fixed --engine new=target/release/oxide-run \
+  --repeat 5 --cpu 2 --linux-counters --timeout 900 --output $R
+```
+
 ## Correctness record
 
 - The corpus in [`core/tests/corpus`](../../core/tests/corpus) (20 programs:
@@ -126,3 +185,7 @@ of Table C are M6's.
   [`core/tests/vm.rs`](../../core/tests/vm.rs).
 - A collection with 200 frames live preserves every frame's registers, and
   `cargo test -p oxide-core --features gc-stress` passes.
+- (M5) `scripts/checks/check-new-core-stress.py` runs `oxide-run
+  --gc-stress=1` (built with `new-core-gc-stress`) over the fixed probes at
+  smoke size against the manifest and over the corpus against the unstressed
+  run; CI's fast job runs it.

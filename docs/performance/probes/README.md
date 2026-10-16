@@ -61,3 +61,5 @@ python3 docs/performance/probes/new-core/phase1.py \
 cargo test --release --lib --no-run   # prints the test binary
 python3 docs/performance/probes/new-core/phase2.py --binary "$TEST_BINARY" --cpu 2 --repeat 3
 ```
+
+`target/release/oxide-run` (`cargo build --release -p quickjs-oxide-cli --bin oxide-run`) runs a probe file on the new core as `qjs` runs it on the current one, so `fixed.py` takes it as an engine.

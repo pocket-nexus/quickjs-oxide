@@ -113,6 +113,9 @@ jobs:
           cargo test --locked -p oxide-core --features gc-stress
           # The lowering and the two-core corpus on the new core under stress.
           cargo test --locked -p quickjs-oxide --features new-core-gc-stress --lib compiler::register
+          # The driver under stress: the fixed probes at smoke size and the corpus.
+          cargo build --locked -p quickjs-oxide-cli --features new-core-gc-stress --bin oxide-run
+          python3 scripts/checks/check-new-core-stress.py --oxide-run target/debug/oxide-run
 
       - name: Lint targets
         run: |
