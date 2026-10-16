@@ -161,6 +161,7 @@ pub struct GcState {
     pub pauses: Vec<Duration>,
     mark_stack: Vec<Value>,
     shape_stack: Vec<ShapeId>,
+    bytecode_stack: Vec<u32>,
     #[cfg(feature = "gc-stress")]
     pub stress: bool,
     /// Collect before every N-th allocating operation.
@@ -185,6 +186,7 @@ impl GcState {
             pauses: Vec::new(),
             mark_stack: Vec::new(),
             shape_stack: Vec::new(),
+            bytecode_stack: Vec::new(),
             #[cfg(feature = "gc-stress")]
             stress: true,
             #[cfg(feature = "gc-stress")]
@@ -276,6 +278,7 @@ impl Heap {
             + self.bigints.growth_bytes(need.bigints)
             + self.cells.growth_bytes(need.cells)
             + self.payloads.functions.growth_bytes(need.functions)
+            + self.payloads.bytecode.growth_bytes(need.bytecodes)
             + values
     }
 
@@ -365,12 +368,8 @@ impl Heap {
                                 if record.scope != NONE {
                                     stack.push(Value::object(crate::ObjectId(record.scope)));
                                 }
-                                if record.bytecode != NONE
-                                    && self.payloads.bytecode.mark(record.bytecode)
-                                {
-                                    let constants =
-                                        self.payloads.bytecode.get(record.bytecode).constants;
-                                    push_heap_values(stack, self.values.slice(constants));
+                                if record.bytecode != NONE {
+                                    self.mark_bytecode(record.bytecode, stack);
                                 }
                             }
                         }
@@ -396,6 +395,27 @@ impl Heap {
             }
         }
         self.gc.shape_stack = shapes;
+    }
+
+    /// Marks a bytecode record and the records of its children; pushes their
+    /// constants.
+    fn mark_bytecode(&mut self, root: u32, stack: &mut Vec<Value>) {
+        let mut pending = mem::take(&mut self.gc.bytecode_stack);
+        pending.push(root);
+        while let Some(index) = pending.pop() {
+            if !self.payloads.bytecode.mark(index) {
+                continue;
+            }
+            let record = *self.payloads.bytecode.get(index);
+            push_heap_values(stack, self.values.slice(record.constants));
+            let children = &self.values.slice(record.children)[..record.child_count as usize];
+            pending.extend(
+                children
+                    .iter()
+                    .map(|child| child.as_int32().expect("child link") as u32),
+            );
+        }
+        self.gc.bytecode_stack = pending;
     }
 
     /// Marks shapes and their parent chains; pushes the keys and prototypes
@@ -469,10 +489,10 @@ impl Heap {
             values.free(header.slots());
             values.free(header.elements());
         });
-        freed += self
-            .payloads
-            .bytecode
-            .sweep(|_, bytecode| values.free(bytecode.constants));
+        freed += self.payloads.bytecode.sweep(|_, bytecode| {
+            values.free(bytecode.constants);
+            values.free(bytecode.children);
+        });
         freed += self.payloads.functions.sweep(|_, _| {});
         freed += self.shapes.sweep(|_, _| {});
         freed += self.strings.sweep(|_, _| {});
@@ -530,10 +550,9 @@ impl Heap {
             claim(header.elements(), "object elements");
         }
         for index in self.payloads.bytecode.live_indices() {
-            claim(
-                self.payloads.bytecode.get(index).constants,
-                "bytecode constants",
-            );
+            let record = self.payloads.bytecode.get(index);
+            claim(record.constants, "bytecode constants");
+            claim(record.children, "bytecode children");
         }
         for block in self.values.free_blocks() {
             claim(block, "free block");

@@ -1,12 +1,16 @@
 # oxide-core
 
 The new core of quickjs-oxide (issue #122), built in phases next to the current
-engine. Phase 1 is the value and heap layer: no bytecode runs and no builtin
-exists yet. The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
+engine. Phase 1 is the value and heap layer; phase 2 adds register bytecode
+and its main loop. As of phase 2 M1 the instruction set, code units and their
+validator exist, but nothing lowers to them or runs them yet, and no builtin
+exists. The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
 the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/performance/new-core-phase1-results.md);
 phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md).
 
-The crate has `#![forbid(unsafe_code)]` and no dependency on the root crate.
+The crate has `#![forbid(unsafe_code)]` and no dependencies. From phase 2 the
+root crate depends on it (the register lowering lives there); never the
+reverse.
 
 ## Layout
 
@@ -19,7 +23,8 @@ The crate has `#![forbid(unsafe_code)]` and no dependency on the root crate.
 | `heap::string`, `atom`, `symbol`, `bigint` | leaf records, interning, `PropertyKey` |
 | `heap::gc` | root stack, handles, mark-sweep, trigger, stress mode, heap cap |
 | `shape` | transition tree, dictionary mode, validity cells |
-| `runtime` | `Runtime` and its single realm |
+| `bytecode` | `Insn` (8 bytes), `Opcode` and its operand formats, `CodeUnit`, `CodeStore`, the builder, the publication validator, the disassembler |
+| `runtime` | `Runtime`: the heap, the code store beside it, and the single realm |
 
 ## The rooting rule
 
@@ -66,3 +71,26 @@ check nothing.
   `Result`: entering dictionary mode or replaying a shape allocates.
 - Array indices from 2^31 to 2^32 − 2 are atoms whose record caches the index,
   as in the current core.
+
+## Phase 2 departures
+
+- Compare-jumps against a literal (`JLtI` and friends) carry an `i16` in
+  `b | c << 8` and the absolute target in `imm`: an `i32` literal and an
+  absolute target do not both fit. The lowering materializes a literal outside
+  the `i16` range. The arithmetic immediates (`AddI`, …) keep an `i32` in `imm`.
+- The relational compare-jumps come with negated forms (`JNlt`, `JNlte`,
+  `JNgt`, `JNgte`): `if (!(a < b))` is not `a >= b` when an operand is NaN.
+- A handler entry stores the register the thrown value lands in (`T(depth)`)
+  rather than the depth.
+- `CheckInit` carries the binding's key for the `ReferenceError` message.
+- `NewArray a, b, imm` takes its elements from the `imm` registers starting at
+  `b`, where the stack code's `ArrayFrom` left them, instead of a
+  `DefineElem` per element.
+- There is one `FunctionBytecode` record per published code unit, shared by
+  every closure over it. It holds the constant table and the child records'
+  indices (as `Int32` values in a second value-heap range), so a live function
+  keeps alive every function it can create. A tree is created under one
+  safepoint by `Heap::alloc_bytecode_function` (via `Runtime::instantiate`),
+  because a record is not a value the root stack can hold; `MakeClosure` uses
+  `Heap::alloc_closure`, whose record is reachable through the running
+  function. This replaces phase 1's `attach_bytecode`.

@@ -331,6 +331,11 @@ identifier!(
     /// Index of a validity cell.
     ValidityCellId
 );
+identifier!(
+    /// Index of a [`FunctionBytecode`](crate::heap::object::FunctionBytecode)
+    /// record: the heap side of one published code unit.
+    BytecodeId
+);
 
 impl ScopeId {
     #[inline]

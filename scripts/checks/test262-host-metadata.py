@@ -14,14 +14,15 @@ expected_packages = {
     "quickjs-oxide", "quickjs-oxide-web-host",
     "quickjs-oxide-host", "quickjs-oxide-cli",
     "quickjs-oxide-web", "quickjs-oxide-test262",
-    # The new core (#122); nothing depends on it before phase 2.
+    # The new core (#122); the engine depends on it from phase 2 on.
     "oxide-core",
 }
 if set(packages) != expected_packages:
     fail("workspace package set drifted from the reviewed engine/app split")
 # Candidate A: providers depend on the complete engine, never the reverse.
+# The engine's one edge is to the new core, which depends on nothing.
 expected_dependencies = {
-    "quickjs-oxide": set(),
+    "quickjs-oxide": {"oxide-core"},
     "quickjs-oxide-host": {"quickjs-oxide"},
     "quickjs-oxide-web-host": {"quickjs-oxide"},
     "quickjs-oxide-cli": {"quickjs-oxide", "quickjs-oxide-host"},

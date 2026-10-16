@@ -128,17 +128,28 @@ impl Record for FunctionRecord {
     }
 }
 
-/// Reserved for phase 2: compiled code whose constant table is a value-heap
-/// range, so it is traced like everything else.
+/// The heap side of one published code unit, shared by every closure over
+/// it: the constant table, and the records of the unit's children (as
+/// `Int32` record indices) so that a live function keeps every function it
+/// can create alive. Both are value-heap ranges, traced like everything else.
 #[derive(Clone, Copy, Debug)]
 pub struct FunctionBytecode {
+    /// The [`CodeUnitId`](crate::bytecode::CodeUnitId) index.
+    pub unit: u32,
     pub constants: Range,
+    pub constant_count: u32,
+    pub children: Range,
+    pub child_count: u32,
 }
 
 impl Record for FunctionBytecode {
     fn vacant() -> Self {
         FunctionBytecode {
+            unit: NONE,
             constants: Range::EMPTY,
+            constant_count: 0,
+            children: Range::EMPTY,
+            child_count: 0,
         }
     }
 }

@@ -72,6 +72,13 @@ impl PropertyKey {
         self.0
     }
 
+    /// The key whose [`raw`](Self::raw) bits are `bits`: an instruction's
+    /// `imm` field. Every bit pattern decodes to some key.
+    #[inline]
+    pub const fn from_raw(bits: u32) -> PropertyKey {
+        PropertyKey(bits)
+    }
+
     /// The key as a value: an Int32 for an index, else the string or symbol.
     #[inline]
     pub const fn to_value(self) -> Value {

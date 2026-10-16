@@ -1,0 +1,211 @@
+//! The construction API the lowering emits through: one method per operand
+//! format, forward jumps patched by index, and `finish` into a [`CodeUnit`].
+//!
+//! Each method asserts (in debug builds) that the opcode has the format it is
+//! built with; the publication validator checks the operand values.
+
+use super::{CodeUnit, CodeUnitId, DebugInfo, Format, Handler, Insn, Opcode};
+use crate::heap::atom::PropertyKey;
+
+#[derive(Default)]
+pub struct CodeBuilder {
+    code: Vec<Insn>,
+    handlers: Vec<Handler>,
+    lines: Vec<u32>,
+    line: u32,
+}
+
+impl CodeBuilder {
+    pub fn new() -> CodeBuilder {
+        CodeBuilder::default()
+    }
+
+    /// The index the next instruction gets.
+    #[inline]
+    pub fn pc(&self) -> u32 {
+        self.code.len() as u32
+    }
+
+    /// The source line recorded for instructions emitted from now on.
+    pub fn set_line(&mut self, line: u32) {
+        self.line = line;
+    }
+
+    #[track_caller]
+    fn push(&mut self, format: Format, insn: Insn) -> u32 {
+        debug_assert_eq!(
+            insn.op.format(),
+            format,
+            "{} built with the wrong format",
+            insn.op.name()
+        );
+        let pc = self.pc();
+        self.code.push(insn);
+        self.lines.push(self.line);
+        pc
+    }
+
+    /// Any instruction, without the format check.
+    pub fn raw(&mut self, insn: Insn) -> u32 {
+        let format = insn.op.format();
+        self.push(format, insn)
+    }
+
+    #[track_caller]
+    pub fn op(&mut self, op: Opcode) -> u32 {
+        self.push(Format::None, Insn::new(op, 0, 0, 0, 0))
+    }
+
+    #[track_caller]
+    pub fn a(&mut self, op: Opcode, a: u8) -> u32 {
+        self.push(Format::A, Insn::new(op, a, 0, 0, 0))
+    }
+
+    #[track_caller]
+    pub fn ab(&mut self, op: Opcode, a: u8, b: u8) -> u32 {
+        self.push(Format::AB, Insn::new(op, a, b, 0, 0))
+    }
+
+    #[track_caller]
+    pub fn abc(&mut self, op: Opcode, a: u8, b: u8, c: u8) -> u32 {
+        self.push(Format::ABC, Insn::new(op, a, b, c, 0))
+    }
+
+    #[track_caller]
+    pub fn a_int(&mut self, op: Opcode, a: u8, value: i32) -> u32 {
+        self.push(Format::AInt, Insn::new(op, a, 0, 0, value as u32))
+    }
+
+    #[track_caller]
+    pub fn ab_int(&mut self, op: Opcode, a: u8, b: u8, value: i32) -> u32 {
+        self.push(Format::ABInt, Insn::new(op, a, b, 0, value as u32))
+    }
+
+    #[track_caller]
+    pub fn a_const(&mut self, op: Opcode, a: u8, index: u32) -> u32 {
+        self.push(Format::AConst, Insn::new(op, a, 0, 0, index))
+    }
+
+    #[track_caller]
+    pub fn key(&mut self, op: Opcode, key: PropertyKey) -> u32 {
+        self.push(Format::Key, Insn::new(op, 0, 0, 0, key.raw()))
+    }
+
+    #[track_caller]
+    pub fn a_key(&mut self, op: Opcode, a: u8, key: PropertyKey) -> u32 {
+        self.push(Format::AKey, Insn::new(op, a, 0, 0, key.raw()))
+    }
+
+    #[track_caller]
+    pub fn ab_key(&mut self, op: Opcode, a: u8, b: u8, key: PropertyKey) -> u32 {
+        self.push(Format::ABKey, Insn::new(op, a, b, 0, key.raw()))
+    }
+
+    #[track_caller]
+    pub fn a_scope(&mut self, op: Opcode, a: u8, depth: u16, index: u16) -> u32 {
+        let imm = (depth as u32) << 16 | index as u32;
+        self.push(Format::AScope, Insn::new(op, a, 0, 0, imm))
+    }
+
+    #[track_caller]
+    pub fn count(&mut self, op: Opcode, count: u32) -> u32 {
+        self.push(Format::Count, Insn::new(op, 0, 0, 0, count))
+    }
+
+    #[track_caller]
+    pub fn a_count(&mut self, op: Opcode, a: u8, count: u32) -> u32 {
+        self.push(Format::ACount, Insn::new(op, a, 0, 0, count))
+    }
+
+    #[track_caller]
+    pub fn ab_range(&mut self, op: Opcode, a: u8, first: u8, count: u32) -> u32 {
+        self.push(Format::ABRange, Insn::new(op, a, first, 0, count))
+    }
+
+    #[track_caller]
+    pub fn a_child(&mut self, op: Opcode, a: u8, child: u32) -> u32 {
+        self.push(Format::AChild, Insn::new(op, a, 0, 0, child))
+    }
+
+    #[track_caller]
+    pub fn call(&mut self, op: Opcode, dst: u8, callee: u8, argc: u8) -> u32 {
+        self.push(Format::Call, Insn::new(op, dst, callee, argc, 0))
+    }
+
+    #[track_caller]
+    pub fn jump(&mut self, op: Opcode, target: u32) -> u32 {
+        self.push(Format::Jump, Insn::new(op, 0, 0, 0, target))
+    }
+
+    #[track_caller]
+    pub fn a_jump(&mut self, op: Opcode, a: u8, target: u32) -> u32 {
+        self.push(Format::AJump, Insn::new(op, a, 0, 0, target))
+    }
+
+    #[track_caller]
+    pub fn ab_jump(&mut self, op: Opcode, a: u8, b: u8, target: u32) -> u32 {
+        self.push(Format::ABJump, Insn::new(op, a, b, 0, target))
+    }
+
+    #[track_caller]
+    pub fn a_short_jump(&mut self, op: Opcode, a: u8, value: i16, target: u32) -> u32 {
+        let [b, c] = value.to_le_bytes();
+        self.push(Format::AShortJump, Insn::new(op, a, b, c, target))
+    }
+
+    #[track_caller]
+    pub fn a_wide(&mut self, op: Opcode, a: u8, register: u32) -> u32 {
+        self.push(Format::AWide, Insn::new(op, a, 0, 0, register))
+    }
+
+    /// Sets the target of the jump at `pc`, emitted before its target was
+    /// known.
+    #[track_caller]
+    pub fn patch_target(&mut self, pc: u32, target: u32) {
+        let insn = &mut self.code[pc as usize];
+        assert!(insn.has_target(), "{} has no jump target", insn.op.name());
+        insn.imm = target;
+    }
+
+    /// Adds a handler; nested handlers are added before the ones enclosing
+    /// them.
+    pub fn handler(&mut self, handler: Handler) {
+        self.handlers.push(handler);
+    }
+
+    pub fn code(&self) -> &[Insn] {
+        &self.code
+    }
+
+    /// The unit, with the layout and counts the lowering decided.
+    pub fn finish(self, layout: UnitLayout) -> CodeUnit {
+        CodeUnit {
+            code: self.code.into(),
+            handlers: self.handlers.into(),
+            register_count: layout.register_count,
+            parameter_count: layout.parameter_count,
+            local_count: layout.local_count,
+            flags: layout.flags,
+            this_slots: layout.this_slots,
+            constant_count: layout.constant_count,
+            children: layout.children.into(),
+            debug: DebugInfo {
+                name: layout.name.into(),
+                lines: self.lines.into(),
+            },
+        }
+    }
+}
+
+/// The parts of a [`CodeUnit`] that are not instructions.
+#[derive(Clone, Debug, Default)]
+pub struct UnitLayout {
+    pub register_count: u16,
+    pub parameter_count: u16,
+    pub local_count: u16,
+    pub flags: u8,
+    pub this_slots: u16,
+    pub constant_count: u32,
+    pub children: Vec<CodeUnitId>,
+    pub name: String,
+}
