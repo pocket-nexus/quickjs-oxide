@@ -283,3 +283,85 @@ unchanged from M3.
 - The radix port has a differential test against the current engine
   (`radix_tests`): about 340,000 formatting cases and 240,000 parsing
   cases, with no difference.
+
+## M5: profile and tune
+
+Every change below is justified by whole-program `instructions:u`, the
+median of three runs of the full fixed work, pinned to one CPU. The profiles
+are `perf record` on the same binaries, and the cache data is the `ic-stats`
+report of M4. Cycles are shown too, but they swing with code layout: two
+builds with identical instruction counts differed by up to 7% in cycles on
+NavierStokes, which is the sensitivity phase 2's layout experiment measured.
+
+| Change | Evidence | Program | Before | After |
+| --- | --- | --- | ---: | ---: |
+| Exact radix-10 number formatting without `Big` (a walk down from 17 digits by format and parse), and one-byte string concatenation as bytes | Splay: 2.8% in `Big::pow`, 10% in widening and narrowing concatenated strings | splay | 25.77G | 19.76G |
+| `Mul` and `Div` on doubles inline in the arm; a double product stays a double; `captured_cell` inlined | NavierStokes: 13% in `number_op`, 7% in `captured_cell` | navier-stokes | 23.83G | 22.43G |
+| A `length` entry for arrays and strings; prototype hits on dictionary-mode holders cached | DeltaBlue: 18,027 `length` misses at one site; Crypto: about 70,000 unfilled `this.am` misses | crypto, deltablue | 16.44G, 18.95G | 16.21G, 18.64G |
+| A shared megamorphic table (4,096 entries keyed by shape and key) | RayTrace: 66,590 misses at `this.initialize` | raytrace | 16.85G | 16.16G |
+| At least four slots for constructed receivers and empty literals | Splay: 24,550 full-range transition misses on `left`/`right` | raytrace, splay | 16.16G, 19.88G | 15.78G, 19.50G |
+| `instanceof` reads the constructor's `prototype` slot directly; the receiver-size learning exits first when nothing grew; `==`/`===` against `null`, `undefined` and identical bits decided before the general algorithm | Earley-Boyer: 11% in `instance_of`, `own` and `slot_value`, and 3.9% in `learn_receiver_size`; Richards: 5.6% in `loose_eq` | richards, earley-boyer | 20.31G, 13.91G | 19.24G, 13.15G |
+| `index`, `input` and `groups` as realm atoms | RegExp: interning on every match | regexp | 20.98G | 20.69G |
+
+The equality shortcut first went into the comparison arms. That grew every
+compare-jump, and Crypto lost 7.5% in cycles while losing instructions. It
+now runs at the top of the out-of-line slow path instead, which keeps the
+arms unchanged.
+
+**M4 against M5**, whole program:
+
+| Program | M4 G instr | M5 G instr | Change |
+| --- | ---: | ---: | ---: |
+| richards | 20.25 | 19.24 | −5.0% |
+| deltablue | 18.96 | 18.63 | −1.7% |
+| crypto | 16.34 | 16.21 | −0.8% |
+| raytrace | 17.07 | 15.67 | −8.2% |
+| earley-boyer | 13.87 | 13.16 | −5.1% |
+| regexp | 21.04 | 20.68 | −1.7% |
+| splay | 25.77 | 19.48 | −24.4% |
+| navier-stokes | 23.83 | 22.43 | −5.9% |
+
+Indicative time against the current core's `qjs` (pinned, medians of
+three, not interleaved):
+
+| Program | Current / new |
+| --- | ---: |
+| richards | 3.86 |
+| deltablue | 4.16 |
+| crypto | 3.67 |
+| raytrace | 5.62 |
+| earley-boyer | 5.72 |
+| regexp | 1.57 |
+| splay | 3.22 |
+| navier-stokes | 3.03 |
+
+The geometric mean is 3.61. M6 takes the reference measurement.
+
+**The open decisions of section 10**, now settled:
+
+- **A complete-miss cache for `GetField`: not added.** Neither RayTrace
+  nor Earley-Boyer shows a hot complete-miss site in `ic-stats`.
+- **Megamorphic sites re-recording after a cooldown: superseded.** A
+  megamorphic site probes the shared table instead, and its misses fill
+  it. The table is weak like every entry and pruned at sweep.
+- **A lazily created `prototype` for closures: not added.** `MakeClosure`
+  is below 1% of Splay and Earley-Boyer.
+- **A cached `prototype` slot for `instanceof`: done**, as a direct read of
+  the constructor's own data slot. A cache site would need an operand that
+  `InstanceOf`'s format does not have.
+- **The GC trigger: kept at a 4 MiB minimum and growth 2.** Only Splay is
+  above section 9's 10% threshold: 9 collections, 572 ms of pauses, a
+  76 MB live set at the end. Growth 3 saves 100 ms for about 170 MB more
+  reserved heap, and growth 4 saves 280 ms for about 230 MB more. The
+  marking is memory-bound: inline marking of strings and BigInts was 16%
+  slower, so it was dropped. Splay is at 3.2× the current core with
+  growth 2.
+- **The `bool` fast path for `JTrue`/`JFalse` after `In`/`InstanceOf`: no
+  change needed.** The jump arm already tests a boolean inline.
+- **Ropes (section 11's trigger): not pulled forward.** String work is
+  about 12% of Splay's instructions, but almost all of it is allocating
+  records and contents; copying is 2%. Splay builds each string with two
+  concatenations and never reads it, so ropes would still allocate one node
+  per concatenation.
+
+**The loop.** `vm::interp::run` is 14,600 bytes, under the 16 KB gate.

@@ -27,6 +27,10 @@ pub struct NewCoreOptions {
     /// Print the inline-cache report to stderr at exit (`--ic-stats`); needs
     /// [`IC_STATS_AVAILABLE`].
     pub ic_stats: bool,
+    /// Print the collector's statistics to stderr at exit (`--gc-stats`):
+    /// collections, total and maximum pause, pause percentiles, live bytes
+    /// and the heap reserved.
+    pub gc_stats: bool,
     /// Collect before every N-th allocating operation (`--gc-stress=N`);
     /// needs [`GC_STRESS_AVAILABLE`].
     pub gc_stress: Option<u32>,
@@ -85,6 +89,7 @@ fn runtime(options: &NewCoreOptions) -> Result<Runtime, NewCoreError> {
     let mut runtime =
         Runtime::new(limits).map_err(|error| NewCoreError::Internal(error.to_string()))?;
     configure_stress(&mut runtime, options.gc_stress)?;
+    runtime.heap_mut().gc_mut().record_pauses = options.gc_stats;
     runtime
         .install_print()
         .map_err(|error| NewCoreError::Internal(error.to_string()))?;
@@ -135,6 +140,9 @@ pub fn run(source: &[u8], filename: &str, options: &NewCoreOptions) -> Result<()
     {
         eprint!("{report}");
     }
+    if options.gc_stats {
+        eprint!("{}", gc_report(&runtime));
+    }
     match result {
         Ok(_) => Ok(()),
         Err(thrown) => {
@@ -146,6 +154,30 @@ pub fn run(source: &[u8], filename: &str, options: &NewCoreOptions) -> Result<()
             Err(NewCoreError::Uncaught(text))
         }
     }
+}
+
+/// The collector's statistics: Table D of the phase 3 plan.
+fn gc_report(runtime: &Runtime) -> String {
+    let gc = runtime.heap().gc();
+    let stats = gc.stats;
+    let mut pauses = gc.pauses.clone();
+    pauses.sort();
+    let percentile = |p: usize| {
+        pauses
+            .get((pauses.len() * p / 100).min(pauses.len().saturating_sub(1)))
+            .map_or(0.0, |pause| pause.as_secs_f64() * 1e3)
+    };
+    format!(
+        "gc: {} collections, total pause {:.1} ms, p50 {:.3} ms, p99 {:.3} ms, max {:.3} ms, \
+         live {} KiB, reserved {} KiB\n",
+        stats.collections,
+        stats.total_pause.as_secs_f64() * 1e3,
+        percentile(50),
+        percentile(99),
+        stats.max_pause.as_secs_f64() * 1e3,
+        stats.live_bytes / 1024,
+        runtime.heap().bytes() / 1024,
+    )
 }
 
 /// The disassembly of every unit `source` lowers to, root first.

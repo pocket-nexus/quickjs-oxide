@@ -292,3 +292,21 @@ check nothing.
   phase 4's). `new String`, `new Number`, `new Boolean`, primitive
   wrappers, `new Function` and a function replacement in `replace` throw
   `InternalError: unsupported: …`.
+
+### Tuning (M5)
+
+- `GetField` has a `length` entry (`LENGTH_TAG`) that reads an array's
+  stored length or a string's unit count.
+- A prototype hit on a dictionary-mode holder is cached: any change to a
+  prototype clears the cell, dictionary or not. A dictionary-mode receiver
+  is still never cached.
+- A megamorphic `GetField` site probes a shared table of 4,096 entries,
+  keyed by receiver shape and property key, and fills it from its misses.
+- Constructed receivers and empty object literals reserve at least four
+  slots; a constructor site learns sizes only past that.
+- `Mul` on doubles keeps a double result, as `Add` and `Sub` do. `Div`
+  still gives an `Int32` when the quotient is one.
+- Radix-10 formatting of a non-integer walks down from 17 digits with
+  Rust's exactly rounded fixed-precision formatting, which is QuickJS's
+  rounding, instead of big-integer arithmetic.
+- `oxide-run --gc-stats` prints the collector's statistics (Table D).

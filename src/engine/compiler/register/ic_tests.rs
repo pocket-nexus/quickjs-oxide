@@ -125,8 +125,8 @@ fn transitions_and_in_place_writes_hit() {
     assert_eq!(write.w0, write.w1, "an in-place entry");
 }
 
-/// A literal `{}` reserves no slots, so a transition on it misses at the
-/// full range, still completes the add, and keeps its entry.
+/// A literal with one property reserves one slot, so a transition on it
+/// misses at the full range, still completes the add, and keeps its entry.
 #[test]
 fn a_full_range_transition_misses_and_completes() {
     let mut session = Session::new();
@@ -134,7 +134,7 @@ fn a_full_range_transition_misses_and_completes() {
     let output = session.run(
         "function f(o, v) { o.x = v; return o; }
          var total = 0;
-         for (var i = 0; i < 10; i++) total += f({}, i).x;
+         for (var i = 0; i < 10; i++) total += f({ y: 0 }, i).x;
          print(total);",
     );
     assert_eq!(output, "45\n");
@@ -232,13 +232,14 @@ fn a_global_function_call_hits() {
     counted(hits(&before, &after, IcKind::Global), |count| count >= 50);
 }
 
-/// A constructor that grows its receiver through a helper learns the size:
-/// the second construction's receiver has room for every property.
+/// A constructor that grows its receiver past the four slots every receiver
+/// gets learns the size: the second construction's receiver has room for
+/// every property.
 #[test]
 fn a_chained_constructor_teaches_the_receiver_size() {
     let mut session = Session::new();
     let output = session.run(
-        "function init(o) { o.c = 3; o.d = 4; o.e = 5; }
+        "function init(o) { o.c = 3; o.d = 4; o.e = 5; o.f = 6; o.g = 7; }
          function P() { this.a = 1; init(this); }
          function make() { return new P(); }
          var p = make();
@@ -248,8 +249,8 @@ fn a_chained_constructor_teaches_the_receiver_size() {
     let site = session.site("make", Opcode::New, 0);
     let entry = session.entry(site);
     assert_eq!(
-        entry.w2, 4,
-        "the static count was 1, the receiver grew to 4"
+        entry.w2, 6,
+        "the static count was 1, the receiver grew to 6"
     );
     let before = session.stats();
     assert_eq!(session.run("p = make(); print(p.d);"), "4\n");

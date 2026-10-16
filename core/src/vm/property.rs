@@ -177,10 +177,37 @@ pub(crate) fn get_cached(
     site: usize,
     fill: bool,
 ) -> Result<Value, Throw> {
+    if cx.heap.ics.is_megamorphic(site)
+        && let Some(object) = receiver.as_object()
+    {
+        let shape = cx.heap.shape_of(object).index();
+        if let Some(entry) = cx.heap.ics.mega_entry(shape, key.raw()) {
+            let heap = &*cx.heap;
+            let hit = super::ic::get_hit(
+                &heap.objects,
+                &heap.cells,
+                &heap.values,
+                &heap.strings,
+                entry,
+                receiver,
+            );
+            if let Some(value) = hit {
+                cx.heap.ics.count_poly_hit(IcKind::Get);
+                return Ok(value);
+            }
+        }
+    }
     if let Some(row) = cx.heap.ics.poly_row(site) {
         let heap = &*cx.heap;
         for &entry in row {
-            let hit = super::ic::get_hit(&heap.objects, &heap.cells, &heap.values, entry, receiver);
+            let hit = super::ic::get_hit(
+                &heap.objects,
+                &heap.cells,
+                &heap.values,
+                &heap.strings,
+                entry,
+                receiver,
+            );
             if let Some(value) = hit {
                 cx.heap.ics.count_poly_hit(IcKind::Get);
                 return Ok(value);
@@ -190,6 +217,27 @@ pub(crate) fn get_cached(
     let names = cx.realm.names;
     let named = matches!(key.kind(), KeyKind::String(id) if id != names.length)
         || matches!(key.kind(), KeyKind::Symbol(_));
+    // An array's or a string's `length` caches as the `LENGTH_TAG` entry.
+    if fill && matches!(key.kind(), KeyKind::String(id) if id == names.length) {
+        let length = match receiver.kind() {
+            Kind::String => Some(cx.heap.string(receiver.as_string().unwrap()).repr.len()),
+            Kind::Object
+                if cx.heap.object_kind(receiver.as_object().unwrap()) == ObjectKind::Array =>
+            {
+                Some(cx.heap.array_length(receiver.as_object().unwrap()) as usize)
+            }
+            _ => None,
+        };
+        if let Some(length) = length {
+            let entry = IcEntry {
+                w0: super::ic::LENGTH_TAG,
+                ..IcEntry::EMPTY
+            };
+            let filled = cx.heap.ics.record(site, entry);
+            cx.heap.ics.count_miss(site, filled);
+            return Ok(length_value(length as u32));
+        }
+    }
     let (start, string) = match receiver.kind() {
         Kind::Object if fill && !matches!(key.kind(), KeyKind::Index(_)) => {
             (receiver.as_object().unwrap(), false)
@@ -207,8 +255,11 @@ pub(crate) fn get_cached(
             break Err(Some(Found::Data(length_value(heap.array_length(holder)))));
         }
         if let Some((slot, property)) = heap.lookup_own(holder, key) {
+            // A dictionary-mode prototype is cacheable: any change to it
+            // clears the cell like any prototype's. A dictionary receiver is
+            // not (its shape does not change with its properties).
             if property.has(PropertyFlags::ACCESSOR)
-                || heap.is_dictionary(holder)
+                || (heap.is_dictionary(holder) && holder == start)
                 || (!string && heap.is_dictionary(start))
             {
                 break Err(Some(slot_value(heap, holder, slot, property)));
@@ -251,15 +302,18 @@ pub(crate) fn get_cached(
         } else {
             holder.index()
         };
-        filled = heap.ics.record(
-            site,
-            IcEntry {
-                w0: shape,
-                w1: holder,
-                w2: slot,
-                w3: cell.index(),
-            },
-        );
+        let fill = IcEntry {
+            w0: shape,
+            w1: holder,
+            w2: slot,
+            w3: cell.index(),
+        };
+        if heap.ics.is_megamorphic(site) && !string {
+            heap.ics.record_mega(key.raw(), fill);
+            filled = true;
+        } else {
+            filled = heap.ics.record(site, fill);
+        }
     }
     heap.ics.count_miss(site, filled);
     Ok(heap.get_slot(holder, slot))

@@ -13,6 +13,7 @@ use super::{Cx, Throw};
 use crate::heap::Heap;
 use crate::heap::atom::PropertyKey;
 use crate::heap::object::{NONE, flags};
+use crate::heap::string::StringRepr;
 use crate::runtime::Names;
 use crate::value::{Kind, ObjectId, StringId, Value};
 
@@ -129,6 +130,17 @@ pub(crate) fn concat(cx: &mut Cx<'_>, a: StringId, b: StringId) -> Result<Value,
     }
     if left.is_empty() {
         return Ok(Value::string(b));
+    }
+    // Two one-byte strings join as bytes; the result is canonical as is.
+    if let (StringRepr::OneByte(left), StringRepr::OneByte(right)) = (left, right) {
+        let mut joined = Vec::with_capacity(left.len() + right.len());
+        joined.extend_from_slice(left);
+        joined.extend_from_slice(right);
+        return cx
+            .heap
+            .alloc_string_repr(StringRepr::OneByte(joined.into()))
+            .map(Value::string)
+            .map_err(|error| heap_error(cx, error));
     }
     let mut joined = Vec::with_capacity(left.len() + right.len());
     joined.extend(left.units());
@@ -668,7 +680,15 @@ pub(crate) fn instance_of(cx: &mut Cx<'_>, x: Value, f: Value) -> Result<bool, T
         return Ok(false);
     };
     let names = cx.realm.names;
-    let prototype = property::get_value(cx, f.as_object().unwrap(), Names::key(names.prototype))?;
+    let function = f.as_object().unwrap();
+    // The constructor's own data `prototype` is read straight from its slot
+    // (phase 3 M5, on Earley-Boyer's `instanceof` tests).
+    let prototype = match cx.heap.lookup_own(function, Names::key(names.prototype)) {
+        Some((slot, flags)) if !flags.has(crate::shape::PropertyFlags::ACCESSOR) => {
+            cx.heap.get_slot(function, slot)
+        }
+        _ => property::get_value(cx, function, Names::key(names.prototype))?,
+    };
     let Some(prototype) = prototype.as_object() else {
         return Err(error::type_error(
             cx,
