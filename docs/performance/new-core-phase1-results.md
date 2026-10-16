@@ -99,8 +99,7 @@ What the columns contain:
   besides the loop: the constructor call and return, `this` handling, the
   closure instantiation. The new core runs no bytecode in phase 1, so its
   numbers are heap operations only. The ratio is an upper bound on what the
-  heap alone buys; the share of the current core's count that is interpreter
-  overhead is phase 2's to measure.
+  heap alone buys; the ledger comparison below separates the heap share.
 - The new-core numbers include the amortized collector at the default trigger
   (4 MiB minimum, growth factor 2). With the trigger out of reach
   (`--min-heap-mib 8000`) the allocation workloads cost 0–4% *more*
@@ -109,9 +108,41 @@ What the columns contain:
 - The closures counterpart is an arrow function because it has no `prototype`
   object, like the Rust workload. A `function` expression costs the current
   core 22,614 instructions per iteration.
-- The Callgrind-based allocation ledger (`probes/allocation/ledger.py`) was not
-  used: Valgrind is not installed on the reference machine. The comparison is
-  per probe, not per ledger phase.
+
+**Against the allocation ledger** (the comparison the plan specifies). The
+Callgrind ledger ([`probes/allocation/ledger.py`](probes/allocation/ledger.py),
+Valgrind 3.25.1, N = 10⁵, the 2N→4N slope agreeing within 4 instructions)
+splits the current core's two-property probes into mutually exclusive phases.
+The new core runs the same shapes of work with `--props 2`, counted with
+Cachegrind at N = 10⁶ (Ir per iteration, its 7-instruction empty loop
+subtracted).
+
+| Current-core phase (Ir/iteration) | `{a:i,b:i}` | `new P(i)`, two `this.x =` |
+| --- | ---: | ---: |
+| A object allocation | 314 | 328 |
+| L literal field define / W field append | 668 | 206 |
+| F release of the overwritten object (reference counting) | 675 | 675 |
+| **Heap phases, total** | **1,657** | **1,209** |
+| C constructor call and return | | 1,492 |
+| R interpreter loop exit and re-entry | 758 | 2,230 |
+| I interpreter loop self | 145 | 257 |
+| S local write and value copy | 129 | 300 |
+| **Whole probe** (ledger total) | 2,689 | 5,488 |
+| **New core, same work** (collector included) | **415** (`literal --props 2`) | **602** (`constructor --props 2`) |
+| Heap phases ÷ new core | **4.0×** | **2.0×** |
+
+- On heap work alone the new core does 4.0× fewer instructions for the literal
+  and 2.0× for the constructor. Most of the per-probe ratios in the table above
+  come from the interpreter phases: 78% of the current core's constructor probe
+  is the call, the loop exit and re-entry, the loop itself and local copies,
+  which phase 2 replaces.
+- Reference counting is the largest single heap item: releasing the
+  overwritten object costs 675 instructions per iteration. The new core has no
+  release; its collector is amortized into the 415 and 602.
+- The new constructor is the weaker case because its object starts with no
+  reserved slots, so the first `this.x =` takes the slow path and grows the
+  range. Reserving the slots up front (the literal case, and the
+  constructor-sized ranges phase 3 plans) removes most of that difference.
 
 **Collector load** (10⁷ iterations, default trigger):
 

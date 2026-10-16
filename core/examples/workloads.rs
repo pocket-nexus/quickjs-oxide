@@ -1,6 +1,6 @@
 //! Phase 1, M5 and M6: Rust-driven micro-workloads for the new heap.
 //!
-//! `workloads <name> <iterations> [--cap-mib N] [--min-heap-mib N] [--ring N] [--report]`
+//! `workloads <name> <iterations> [--cap-mib N] [--min-heap-mib N] [--ring N] [--props 1..4] [--report]`
 //!
 //! Each workload does fixed work per iteration and prints a checksum, so
 //! instruction counts at N and 2N give the per-iteration slope with setup
@@ -10,8 +10,8 @@
 //! | name | per iteration |
 //! | --- | --- |
 //! | `empty` | the loop and the checksum only |
-//! | `constructor` | new object with no reserved slots, four property adds |
-//! | `literal` | new object with four reserved slots, four property adds |
+//! | `constructor` | new object with no reserved slots, four property adds (`--props`) |
+//! | `literal` | new object with as many reserved slots as property adds (`--props`, default 4) |
 //! | `alloc-only` | new object with four reserved slots, no property |
 //! | `closures` | one scope (parent: a fixed outer scope) and one function holding it |
 //! | `proto-read` | uncached read of a property found three prototypes up |
@@ -33,6 +33,7 @@ struct Options {
     cap: Option<usize>,
     min_heap: Option<usize>,
     ring: u32,
+    props: u32,
     report: bool,
 }
 
@@ -50,6 +51,7 @@ fn options() -> Options {
         cap: None,
         min_heap: None,
         ring: 4096,
+        props: 4,
         report: false,
     };
     while let Some(arg) = args.next() {
@@ -59,6 +61,7 @@ fn options() -> Options {
                 options.min_heap = Some(args.next().unwrap().parse::<usize>().unwrap() << 20)
             }
             "--ring" => options.ring = args.next().unwrap().parse().unwrap(),
+            "--props" => options.props = args.next().unwrap().parse().unwrap(),
             "--report" => options.report = true,
             other => panic!("unknown option {other}"),
         }
@@ -227,8 +230,8 @@ fn main() {
     let n = options.iterations;
     let checksum = match options.name.as_str() {
         "empty" => (0..n).map(|i| black_box(i as i64) & 1).sum(),
-        "constructor" => allocation(&mut runtime, n, 0, 4),
-        "literal" => allocation(&mut runtime, n, 4, 4),
+        "constructor" => allocation(&mut runtime, n, 0, options.props as usize),
+        "literal" => allocation(&mut runtime, n, options.props, options.props as usize),
         "alloc-only" => allocation(&mut runtime, n, 4, 0),
         "closures" => closures(&mut runtime, n),
         "proto-read" => proto_read(&mut runtime, n),
