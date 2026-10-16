@@ -1,7 +1,8 @@
 //! Phase 3 M2 acceptance: the `SetField`, global and constructor caches and
 //! polymorphic sites, on lowered programs. Debug builds count cache hits, so
-//! each test checks that the path it names was taken as well as what the
-//! program printed.
+//! there each test checks that the path it names was taken as well as what
+//! the program printed and the entries it left; a release test run (no
+//! counters) checks the latter two.
 
 use oxide_core::bytecode::Opcode;
 use oxide_core::heap::gc::HeapLimits;
@@ -41,13 +42,9 @@ impl Session {
         output
     }
 
-    fn stats(&self) -> IcStats {
-        self.runtime
-            .heap()
-            .ics()
-            .stats()
-            .expect("debug builds count cache hits")
-            .clone()
+    /// The counters, in a build that keeps them (debug, or `ic-stats`).
+    fn stats(&self) -> Option<IcStats> {
+        self.runtime.heap().ics().stats().cloned()
     }
 
     /// The store index of the `nth` instruction `op` of the unit named `unit`
@@ -80,13 +77,28 @@ impl Session {
     }
 }
 
-fn hits(before: &IcStats, after: &IcStats, kind: IcKind) -> u64 {
-    after.mono_hits[kind as usize] - before.mono_hits[kind as usize]
+fn hits(before: &Option<IcStats>, after: &Option<IcStats>, kind: IcKind) -> Option<u64> {
+    let (before, after) = (before.as_ref()?, after.as_ref()?);
+    Some(after.mono_hits[kind as usize] - before.mono_hits[kind as usize])
 }
 
-fn misses(before: &IcStats, after: &IcStats, kind: IcKind) -> u64 {
+fn poly_hits(before: &Option<IcStats>, after: &Option<IcStats>, kind: IcKind) -> Option<u64> {
+    let (before, after) = (before.as_ref()?, after.as_ref()?);
+    Some(after.poly_hits[kind as usize] - before.poly_hits[kind as usize])
+}
+
+fn misses(before: &Option<IcStats>, after: &Option<IcStats>, kind: IcKind) -> Option<u64> {
+    let (before, after) = (before.as_ref()?, after.as_ref()?);
     let k = kind as usize;
-    after.fills[k] + after.unfilled[k] - before.fills[k] - before.unfilled[k]
+    Some(after.fills[k] + after.unfilled[k] - before.fills[k] - before.unfilled[k])
+}
+
+/// Checks a count where the build keeps the counters.
+#[track_caller]
+fn counted(count: Option<u64>, holds: impl FnOnce(u64) -> bool) {
+    if let Some(count) = count {
+        assert!(holds(count), "count {count}");
+    }
 }
 
 /// `this.a = …; this.b = …` in a constructor with reserved slots are
@@ -107,8 +119,8 @@ fn transitions_and_in_place_writes_hit() {
     assert_eq!(session.run("p = work(100); print(p.a, p.b);"), "7 100\n");
     let after = session.stats();
     // Two transitions and one in-place write per iteration, all hits.
-    assert_eq!(hits(&before, &after, IcKind::Set), 300);
-    assert_eq!(misses(&before, &after, IcKind::Set), 0);
+    counted(hits(&before, &after, IcKind::Set), |count| count == 300);
+    counted(misses(&before, &after, IcKind::Set), |count| count == 0);
     let write = session.entry(session.site("work", Opcode::SetField, 0));
     assert_eq!(write.w0, write.w1, "an in-place entry");
 }
@@ -127,7 +139,7 @@ fn a_full_range_transition_misses_and_completes() {
     );
     assert_eq!(output, "45\n");
     let after = session.stats();
-    assert_eq!(misses(&before, &after, IcKind::Set), 10);
+    counted(misses(&before, &after, IcKind::Set), |count| count == 10);
     let entry = session.entry(session.site("f", Opcode::SetField, 0));
     assert!(entry.is_filled() && entry.w0 != entry.w1, "{entry:?}");
 }
@@ -151,7 +163,9 @@ fn a_setter_added_after_fill_runs() {
     // Three properties reserve four slots: the add is a transition hit.
     let before = session.stats();
     assert_eq!(session.run("print(f({ y: 0, z: 0, w: 0 }, 9).x);"), "9\n");
-    assert_eq!(hits(&before, &session.stats(), IcKind::Set), 1);
+    counted(hits(&before, &session.stats(), IcKind::Set), |count| {
+        count == 1
+    });
     let setter = session.global("setter");
     let runtime = &mut session.runtime;
     let x = runtime.heap_mut().property_key("x").unwrap();
@@ -189,7 +203,7 @@ fn deleting_a_global_bumps_the_generation() {
     let before = session.stats();
     assert_eq!(session.run("write(8); print(read());"), "8\n");
     let after = session.stats();
-    assert!(hits(&before, &after, IcKind::Global) >= 2);
+    counted(hits(&before, &after, IcKind::Global), |count| count >= 2);
     let generation = session.runtime.heap().global_generation();
     assert_eq!(
         session.run("print(delete globalThis.g); try { read(); } catch (e) { print(e.name); }"),
@@ -215,7 +229,7 @@ fn a_global_function_call_hits() {
     let before = session.stats();
     assert_eq!(session.run("print(work(50));"), "50\n");
     let after = session.stats();
-    assert!(hits(&before, &after, IcKind::Global) >= 50);
+    counted(hits(&before, &after, IcKind::Global), |count| count >= 50);
 }
 
 /// A constructor that grows its receiver through a helper learns the size:
@@ -240,9 +254,9 @@ fn a_chained_constructor_teaches_the_receiver_size() {
     let before = session.stats();
     assert_eq!(session.run("p = make(); print(p.d);"), "4\n");
     let after = session.stats();
-    assert_eq!(hits(&before, &after, IcKind::Construct), 1);
+    counted(hits(&before, &after, IcKind::Construct), |count| count == 1);
     // With the room reserved, init's stores are transition hits.
-    assert_eq!(misses(&before, &after, IcKind::Set), 0);
+    counted(misses(&before, &after, IcKind::Set), |count| count == 0);
     // A replaced `prototype` is read live.
     assert_eq!(
         session.run("P.prototype = { tag: 't' }; print(make().tag);"),
@@ -266,10 +280,7 @@ fn polymorphic_rows_and_the_megamorphic_mark() {
     let before = session.stats();
     assert_eq!(session.run("print(getX(a) + getX(b));"), "3\n");
     let after = session.stats();
-    assert_eq!(
-        after.poly_hits[IcKind::Get as usize] - before.poly_hits[IcKind::Get as usize],
-        2
-    );
+    counted(poly_hits(&before, &after, IcKind::Get), |count| count == 2);
     assert_eq!(session.run("print(getX(c) + getX(d));"), "7\n");
     assert_eq!(session.entry(site).w0, POLY_TAG);
     assert_eq!(session.run("print(getX(e), getX(a));"), "5 1\n");
