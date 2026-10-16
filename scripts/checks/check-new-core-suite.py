@@ -16,6 +16,11 @@ import sys
 import time
 from pathlib import Path
 
+# Programs whose live set makes a collection at every allocation take hours:
+# Splay's one run() under --gc-stress=1 did not finish in 55 minutes; at 100
+# it takes about 15 minutes (phase 3 M6).
+INTERVALS = {"v8-v7-splay": "100"}
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -34,10 +39,11 @@ def main():
     failures = 0
     for workload in workloads:
         path = args.suite / Path(workload["path"]).name
+        interval = INTERVALS.get(workload["case"], args.gc_stress) if args.gc_stress == "1" else args.gc_stress
         start = time.monotonic()
         try:
             result = subprocess.run(
-                [str(args.oxide_run), f"--gc-stress={args.gc_stress}", str(path)],
+                [str(args.oxide_run), f"--gc-stress={interval}", str(path)],
                 capture_output=True, text=True, timeout=args.timeout)
             stdout, detail = result.stdout, result.stderr.strip()[-400:]
         except subprocess.TimeoutExpired:
@@ -45,7 +51,7 @@ def main():
         elapsed = time.monotonic() - start
         ok = stdout == workload["expected"]
         failures += not ok
-        print(f"{workload['case']:28} {'ok' if ok else 'FAIL':4} {elapsed:8.1f}s")
+        print(f"{workload['case']:28} {'ok' if ok else 'FAIL':4} {elapsed:8.1f}s  --gc-stress={interval}")
         if not ok:
             print(f"  expected {workload['expected']!r}\n  got      {stdout[-200:]!r}\n  {detail}")
     if failures:

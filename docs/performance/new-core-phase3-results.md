@@ -365,3 +365,153 @@ The geometric mean is 3.61. M6 takes the reference measurement.
   per concatenation.
 
 **The loop.** `vm::interp::run` is 14,600 bytes, under the 16 KB gate.
+
+## M6: exit tables and the go/no-go
+
+### Identity
+
+| Item | Value |
+| --- | --- |
+| Machine | eric-83am, AMD Ryzen 7 7840HS, Linux 7.2.9, measured processes pinned to CPU 2: the [baseline](baseline.md)'s reference machine |
+| New core | `oxide-run` from `core/phase3-m5` (`a25e812d`), `cargo build --release -p quickjs-oxide-cli --bin oxide-run`, rustc 1.99.0, sha256 `b6644338628cbed9…` |
+| Current core | the baseline's `qjs` (main `8e16f672`), sha256 `3cc9c95d597af1bd…` |
+| QuickJS | the baseline's 2026-06-04 oracle build, sha256 `3fd16c25ae63a7cb…` |
+| Programs | `suite_matrix.py build` at the pinned sources (V8 v7 `2034d98f`, Octane `570ad1cc`, AWFY `74306fec`); the manifest's sha256 differs from the baseline's only by the absolute paths it records, and the program bytes are checked against it before every sample |
+| Whole-process runs | `fixed.py --repeat 5 --cpu 2 --linux-counters --timeout 900`, the three engines interleaved in rotating order, medians of 5; all 120 suite samples and 300 probe samples printed the manifest's stdout |
+| Slopes | `phase2.py --engine … --cpu 2 --repeat 5` |
+
+Raw samples stay outside the repository (`target/m6p3/` of the measuring tree).
+
+### Table A: the eight V8 v7 programs
+
+| Program | QuickJS ms | Current ms | New ms | QuickJS G instr | Current G instr | New G instr | Current / new time | New / QuickJS time |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| richards | 1,069 | 4,170 | 1,089 | 14.12 | 74.60 | 19.24 | 3.83 | 1.02 |
+| deltablue | 1,095 | 4,738 | 1,130 | 13.32 | 71.89 | 18.63 | 4.19 | 1.03 |
+| crypto | 991 | 3,420 | 892 | 13.86 | 69.15 | 16.21 | 3.83 | 0.90 |
+| raytrace | 1,076 | 5,003 | 882 | 15.88 | 65.72 | 15.67 | 5.67 | 0.82 |
+| earley-boyer | 1,027 | 4,444 | 773 | 14.23 | 62.68 | 13.16 | 5.75 | 0.75 |
+| regexp | 1,191 | 1,815 | 1,168 | 20.57 | 28.15 | 20.68 | 1.55 | 0.98 |
+| splay | 1,784 | 5,670 | 1,774 | 15.89 | 60.74 | 19.48 | 3.20 | 0.99 |
+| navier-stokes | 1,051 | 3,080 | 1,010 | 14.44 | 65.68 | 22.43 | 3.05 | 0.96 |
+| geometric mean | | | | | | | **3.63** | **0.93** |
+
+Against QuickJS, the current core is at 3.37× time (the baseline recorded
+3.38×) and the new core at 0.93×. The new core executes 1.22× QuickJS's
+instructions, in less time on five of the eight programs.
+
+### Table B: the fixed probes and the phase 1 workloads
+
+Instructions per iteration (slopes):
+
+| Probe | QuickJS | Current | New | New / QuickJS |
+| --- | ---: | ---: | ---: | ---: |
+| `empty_loop` | 90 | 295 | 108 | 1.20 |
+| `numeric_local_loop` | 167 | 1,007 | 159 | 0.95 |
+| `local_read` | 130 | 830 | 172 | 1.32 |
+| `local_move` | 133 | 679 | 156 | 1.17 |
+| `argument_move` | 117 | 457 | 132 | 1.13 |
+| `call0` | 388 | 2,231 | 622 | 1.60 |
+| `prop_read` | 201 | 543 | 222 | 1.10 |
+| `prop_write` | 163 | 958 | 177 | 1.09 |
+| `array_read` | 227 | 505 | 301 | 1.33 |
+| `array_write` | 193 | 1,406 | 287 | 1.49 |
+| `tdz` | 13,604 | 36,758 | 3,279 | 0.24 |
+| `type_error` | 13,615 | 32,957 | 2,347 | 0.17 |
+| `bigint_64` | 1,843 | 7,488 | 6,096 | 3.31 |
+| `{a:i,b:i}` (`literal`) | 1,294 | 2,680 | 943 | 0.73 |
+| `new P(i)` (`constructor`) | 1,874 | 5,479 | 1,164 | 0.62 |
+| closure | 2,072 | 18,881 | 1,828 | 0.88 |
+| depth-3 prototype read | 243 | 1,194 | 288 | 1.19 |
+
+Whole process over the 20 fixed probes: the new core is at **1.09×**
+QuickJS's time (phase 2: 1.12×) and the current core at 2.89×. Against
+phase 2's exit tables, the cached paths moved as follows:
+- `prop_read`: 295 → 222
+- `prop_write`: 220 → 177
+- `proto_read_3`: 683 → 288
+- `constructor`: 2,041 → 1,164
+- `call0`: 691 → 622
+
+`call0` is the largest remaining gap, and it is in the call sequence
+itself, not in a cache.
+
+### Table C: the loop and the caches
+
+`vm::interp::run` is 14,600 bytes, against the 16 KB gate (12,684 at the
+end of phase 2). `ic-stats`, one `run()` per program:
+
+| Program | Get hit % | Set hit % | Global hit % | Construct hit % | Polymorphic sites | Megamorphic sites |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| richards | 99.91 | 99.77 | 99.67 | 30.4 | 1 | 0 |
+| deltablue | 99.87 | 99.29 | 99.50 | 97.8 | 69 | 0 |
+| crypto | 99.93 | 98.20 | 99.46 | 85.0 | 36 | 0 |
+| raytrace | 99.93 | 99.53 | 99.81 | 99.9 | 39 | 1 |
+| earley-boyer | 99.98 | 99.98 | 99.86 | 99.3 | 0 | 0 |
+| regexp | 98.95 | — | 99.83 | — | 0 | 0 |
+| splay | 99.99 | 99.98 | 99.99 | 99.98 | 56 | 0 |
+| navier-stokes | (few) | (few) | (few) | — | 0 | 0 |
+
+The low construct rates of Richards and Crypto come from setup
+constructors that run a handful of times. RegExp's misses are its
+`runBlock11`, whose named-property sites past the 255th share the no-cache
+site. Splay reads mostly through polymorphic rows: its tree nodes gain
+`left` and `right` in either order. The layout spread of #119's experiment
+is not repeated, because Table A's medians and the instruction counts
+agree.
+
+### Table D: the collector
+
+At the default trigger (4 MiB minimum, growth 2):
+
+| Program | Collections | Total pause ms | p50 ms | p99 ms | Max ms | Live at exit | Heap reserved | Peak RSS QuickJS / current / new |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| richards | 0 | 0 | | | | | 1.4 MiB | 15 / 15 / 15 MiB |
+| deltablue | 8 | 4.9 | 0.57 | 0.86 | 0.86 | 95 KiB | 6.6 MiB | 15 / 18 / 15 MiB |
+| crypto | 0 | 0 | | | | | 1.4 MiB | 15 / 15 / 15 MiB |
+| raytrace | 72 | 27.6 | 0.37 | 0.62 | 0.62 | 59 KiB | 7.6 MiB | 15 / 15 / 15 MiB |
+| earley-boyer | 40 | 55.9 | 1.40 | 2.71 | 2.71 | 3.2 MiB | 16.8 MiB | 15 / 39 / 23 MiB |
+| regexp | 19 | 26.3 | 1.39 | 2.01 | 2.01 | 2.9 MiB | 10.8 MiB | 15 / 16 / 15 MiB |
+| splay | 9 | 582.5 | 87.0 | 106.8 | 106.8 | 74.9 MiB | 294 MiB | 144 / 310 / 259 MiB |
+| navier-stokes | 0 | 0 | | | | | 4.5 MiB | 15 / 15 / 15 MiB |
+
+Only Splay is above the 10% threshold, at about a third of its time. M5
+measured growth 3 and 4 and kept growth 2 for memory; the numbers are in
+the M5 section. Splay holds a 75 MiB live set and its peak RSS is 1.8×
+QuickJS's, which refcounts.
+
+### Stress
+
+- The two-core corpus (39 programs) passes under `--gc-stress=1`.
+- The eight programs pass at one `run()` each under the stress collector
+  (`check-new-core-suite.py`): seven at `--gc-stress=1`, Splay at
+  `--gc-stress=100` (879 s).
+- Splay at interval 1 did not finish in 55 minutes, because every
+  allocation marks its live set. The nightly tier uses interval 100 for it.
+
+### The decision
+
+Section 9's gate is two conditions:
+- the geometric mean over the eight of current-core time over new-core
+  time is at least 3.0;
+- no program other than RegExp is below 2.5.
+
+The measured values are **3.63** and a lowest non-RegExp program of
+**3.05** (NavierStokes). Both conditions hold: **go**. Phase 4 starts on
+the design as built.
+
+The per-program floor was this plan's addition to #122's one-line gate,
+and the plan asks the maintainer to confirm or change it before M6. Both
+conditions also hold with any floor up to 3.05.
+
+Notes for phase 4:
+- The new core retires 1.22× QuickJS's instructions in 0.93× its time.
+  The interpreter header is not the limit on these programs.
+- The remaining gaps against QuickJS are:
+  - the call sequence (`call0` at 1.6×);
+  - element access (`array_write` at 1.49×);
+  - Splay's collector (a third of its time), where a generational or
+    incremental collector is the lever, not the trigger.
+- The current core's Test262 numbers are unchanged (focused 6,844 of 6,844,
+  full 83,304 of 83,354, run on the crate move, #144), and no later PR
+  touches code the current engine runs.
