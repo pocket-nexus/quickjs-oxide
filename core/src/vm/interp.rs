@@ -9,12 +9,13 @@ use std::cmp::Ordering;
 use super::arguments;
 use super::error::{self, ErrorKind};
 use super::ic::{self, FIELD_NO_SITE, GLOBAL_NO_SITE, IcEntry, IcKind};
-use super::native::{self, CallSite, Native};
+use super::native::{self, CallSite};
 use super::number;
 use super::ops::{self, Arith, Relation, Unary};
 use super::property;
 use super::regexp;
 use super::{Cx, Frame, SPAN, Throw, frame_flags};
+use crate::builtins::Native;
 use crate::bytecode::{Capture, CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, flags};
 use crate::heap::Heap;
 use crate::heap::atom::PropertyKey;
@@ -236,6 +237,7 @@ fn call_native(
             this: at,
             args: at + 1,
             argc,
+            construct,
         },
     )
 }
@@ -277,6 +279,7 @@ pub(super) fn call_from_rust(
                 this: base,
                 args: base + 1,
                 argc,
+                construct: false,
             },
         ),
         Callee::NotCallable => Err(error::type_error(cx, "not a function")),

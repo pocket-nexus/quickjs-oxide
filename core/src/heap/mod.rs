@@ -755,6 +755,16 @@ impl Heap {
         Ok(StringId(self.strings.alloc(record)))
     }
 
+    /// A string with a representation the caller made canonical.
+    pub fn alloc_string_repr(&mut self, repr: StringRepr) -> Result<StringId, HeapError> {
+        self.alloc_string_record(StringRecord::new(repr))
+    }
+
+    /// Sets an object flag (`flags::ERROR`).
+    pub(crate) fn set_object_flag(&mut self, object: ObjectId, flag: u8) {
+        self.objects.get_mut(object.0).flags |= flag;
+    }
+
     /// A string that is not an atom.
     pub fn alloc_string(&mut self, text: &str) -> Result<StringId, HeapError> {
         self.alloc_string_record(StringRecord::new(StringRepr::from_text(text)))

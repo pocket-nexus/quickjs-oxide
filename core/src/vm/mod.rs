@@ -181,9 +181,40 @@ pub enum Output {
 }
 
 /// Host state the natives reach.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Host {
     pub output: Output,
+    /// `Math.random`'s xorshift64* state; never zero.
+    random_state: u64,
+}
+
+impl Default for Host {
+    fn default() -> Self {
+        // QuickJS seeds from the clock; programs that compare output replace
+        // `Math.random`, as the benchmark harness does.
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |elapsed| elapsed.as_nanos() as u64);
+        Host {
+            output: Output::default(),
+            random_state: seed.max(1),
+        }
+    }
+}
+
+impl Host {
+    pub(crate) fn random_state(&self) -> u64 {
+        self.random_state
+    }
+
+    pub(crate) fn set_random_state(&mut self, state: u64) {
+        self.random_state = state;
+    }
+
+    /// Seeds `Math.random` (zero is replaced by one).
+    pub fn seed_random(&mut self, seed: u64) {
+        self.random_state = seed.max(1);
+    }
 }
 
 /// What the loop and its slow paths borrow from the [`Runtime`]: the heap

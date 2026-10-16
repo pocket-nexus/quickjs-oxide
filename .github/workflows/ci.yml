@@ -20,6 +20,7 @@ on:
           - quickjs-differential
           - test262-full
           - test262-receipt
+          - new-core-suite
 
 permissions:
   contents: read
@@ -171,6 +172,49 @@ jobs:
 
       - name: Replay the frozen focused Test262 vector
         run: ./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --focused
+
+  # New core, phase 3 section 7: the V8 v7 programs at one run() per
+  # benchmark under the stress collector, against a one-run suite manifest.
+  # The suite build needs the pinned upstream checkouts, so it is nightly.
+  new-core-suite:
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '23 9 * * *') ||
+      (github.event_name == 'workflow_dispatch' && inputs.tier == 'new-core-suite')
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+
+      - name: Check out the pinned benchmark sources
+        run: |
+          fetch() {
+            git init --quiet "$1"
+            git -C "$1" fetch --quiet --depth 1 "$2" "$3"
+            git -C "$1" checkout --quiet FETCH_HEAD
+          }
+          fetch "$RUNNER_TEMP/v8" https://github.com/ahaoboy/js-engine-benchmark.git 2034d98fc8c5f8044e186267593f5d5ea5232caf
+          fetch "$RUNNER_TEMP/octane" https://github.com/chromium/octane.git 570ad1ccfe86e3eecba0636c8f932ac08edec517
+          fetch "$RUNNER_TEMP/awfy" https://github.com/smarr/are-we-fast-yet.git 74306fec151070fd07157cefeacf19e7e0bcdc89
+
+      - name: Build the one-run suite
+        run: |
+          python3 scripts/benchmark/suite_matrix.py build --pilot 1 \
+            --v8-source "$RUNNER_TEMP/v8" --octane-source "$RUNNER_TEMP/octane" \
+            --awfy-source "$RUNNER_TEMP/awfy" --output "$RUNNER_TEMP/suite"
+
+      - name: Run the V8 v7 programs under the stress collector
+        run: |
+          cargo build --locked --release -p quickjs-oxide-cli --features new-core-gc-stress --bin oxide-run
+          python3 scripts/checks/check-new-core-suite.py \
+            --oxide-run target/release/oxide-run --suite "$RUNNER_TEMP/suite"
 
   quickjs-differential:
     if: >-

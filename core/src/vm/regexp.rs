@@ -1,11 +1,13 @@
 //! Regular-expression objects (phase 3, section 5.3): the program store and
 //! the `RegExp` object kind. A literal allocates a new object on every
-//! evaluation, as the specification requires, over one program per distinct
-//! `(source, flags)`; `new RegExp(source, flags)` shares the store, so a
-//! program built in a loop does not grow it without bound. The store is
-//! append-only, like the code store. M4 compiles the programs.
+//! evaluation, as the specification requires, over one compiled program per
+//! distinct `(source, flags)`, compiled on first use; `new RegExp(source,
+//! flags)` shares the store, so a program built in a loop does not grow it
+//! without bound. The store is append-only, like the code store.
 
-use super::error;
+use oxide_regexp::CompiledRegExp;
+
+use super::error::{self, ErrorKind};
 use super::{Cx, Throw};
 use crate::heap::hash::FxHashMap;
 use crate::heap::object::ObjectKind;
@@ -24,20 +26,39 @@ pub struct RegExpRecord {
 #[derive(Default)]
 pub struct RegExpStore {
     records: Vec<RegExpRecord>,
+    programs: Vec<CompiledRegExp>,
     index: FxHashMap<(StringId, StringId), u32>,
 }
 
 impl RegExpStore {
-    /// The record for `(source, flags)`, appended on first use.
-    pub fn intern(&mut self, source: StringId, flags: StringId) -> u32 {
-        *self.index.entry((source, flags)).or_insert_with(|| {
-            self.records.push(RegExpRecord { source, flags });
-            (self.records.len() - 1) as u32
-        })
+    /// The record for `(source, flags)`, compiled and appended on first use;
+    /// the compiler's diagnostic when the pattern or the flags are invalid.
+    pub(crate) fn intern(
+        &mut self,
+        heap: &crate::Heap,
+        source: StringId,
+        flags: StringId,
+    ) -> Result<u32, String> {
+        if let Some(&index) = self.index.get(&(source, flags)) {
+            return Ok(index);
+        }
+        let pattern: Vec<u16> = heap.string(source).repr.units().collect();
+        let flag_units: Vec<u16> = heap.string(flags).repr.units().collect();
+        let program = oxide_regexp::compile(&pattern, &flag_units)
+            .map_err(|error| oxide_regexp::javascript_compile_error_message(&error).to_owned())?;
+        self.records.push(RegExpRecord { source, flags });
+        self.programs.push(program);
+        let index = (self.records.len() - 1) as u32;
+        self.index.insert((source, flags), index);
+        Ok(index)
     }
 
     pub fn get(&self, index: u32) -> RegExpRecord {
         self.records[index as usize]
+    }
+
+    pub fn program(&self, index: u32) -> &CompiledRegExp {
+        &self.programs[index as usize]
     }
 
     pub fn len(&self) -> usize {
@@ -62,7 +83,20 @@ pub(crate) fn new_regexp(
     let flags = cx.heap.bytecode_constant(bytecode, constant + 1);
     let source = source.as_string().expect("a source atom");
     let flags = flags.as_string().expect("a flags atom");
-    let program = cx.regexps.intern(source, flags);
+    regexp_object(cx, source, flags)
+}
+
+/// A new `RegExp` object over `(source, flags)` (atoms), compiling them on
+/// first use: a `SyntaxError` for an invalid pattern or flags.
+pub(crate) fn regexp_object(
+    cx: &mut Cx<'_>,
+    source: StringId,
+    flags: StringId,
+) -> Result<Value, Throw> {
+    let program = match cx.regexps.intern(cx.heap, source, flags) {
+        Ok(program) => program,
+        Err(message) => return Err(error::throw(cx, ErrorKind::Syntax, &message)),
+    };
     let prototype = cx.realm.intrinsic(Intrinsic::RegExpPrototype);
     let names = cx.realm.names;
     let heap = &mut *cx.heap;

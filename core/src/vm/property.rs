@@ -142,6 +142,8 @@ pub(crate) fn get(cx: &mut Cx<'_>, receiver: Value, key: PropertyKey) -> Result<
                 _ => cx.realm.intrinsic(Intrinsic::StringPrototype),
             }
         }
+        Kind::Number | Kind::Int32 => cx.realm.intrinsic(Intrinsic::NumberPrototype),
+        Kind::Bool => cx.realm.intrinsic(Intrinsic::BooleanPrototype),
         Kind::Undefined | Kind::Null => {
             let message = format!(
                 "cannot read property '{}' of {}",
@@ -410,10 +412,11 @@ pub(crate) fn set(
         }
         _ => {
             // A setter on the primitive's prototype chain still runs.
-            let prototype = if receiver.as_string().is_some() {
-                cx.realm.intrinsic(Intrinsic::StringPrototype)
-            } else {
-                cx.realm.intrinsic(Intrinsic::ObjectPrototype)
+            let prototype = match receiver.kind() {
+                Kind::String => cx.realm.intrinsic(Intrinsic::StringPrototype),
+                Kind::Number | Kind::Int32 => cx.realm.intrinsic(Intrinsic::NumberPrototype),
+                Kind::Bool => cx.realm.intrinsic(Intrinsic::BooleanPrototype),
+                _ => cx.realm.intrinsic(Intrinsic::ObjectPrototype),
             };
             if let Some(Found::Accessor(_, setter)) = find(cx.heap, &cx.realm.names, prototype, key)
             {
@@ -770,6 +773,8 @@ pub(crate) fn for_in_start(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw
             }
             Some(cx.realm.intrinsic(Intrinsic::StringPrototype))
         }
+        Kind::Number | Kind::Int32 => Some(cx.realm.intrinsic(Intrinsic::NumberPrototype)),
+        Kind::Bool => Some(cx.realm.intrinsic(Intrinsic::BooleanPrototype)),
         _ => Some(cx.realm.intrinsic(Intrinsic::ObjectPrototype)),
     };
     let mut current = start;

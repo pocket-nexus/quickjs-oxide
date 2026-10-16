@@ -809,18 +809,19 @@ mod tests {
     }
 
     #[test]
-    fn decimal_keeps_quickjs_rules_where_number_to_string_differs() {
-        // Radix 10 cannot reuse `number::to_string`: QuickJS rounds the
-        // exact value to nearest-even at each digit count, so it keeps one
-        // more digit at some powers of two (whose round-trip interval is
-        // asymmetric) and rounds an exact digit tie to even.
+    fn decimal_keeps_quickjs_rules_where_rust_formatting_differs() {
+        // QuickJS rounds the exact value to nearest-even at each digit
+        // count, so it keeps one more digit at some powers of two (whose
+        // round-trip interval is asymmetric) and rounds an exact digit tie
+        // to even, where Rust's shortest formatting does not;
+        // `number::to_string` takes this path for them.
         for (value, quickjs) in [
             (2f64.powi(-1017), "7.1202363472230444e-307"),
             // 192181864906432.125 exactly.
             (f64::from_bits(0x42e5_d93a_7947_d804), "192181864906432.12"),
         ] {
             assert_eq!(to_string_radix(value, 10), quickjs);
-            assert_ne!(super::super::number::to_string(value), quickjs);
+            assert_eq!(super::super::number::to_string(value), quickjs);
         }
     }
 

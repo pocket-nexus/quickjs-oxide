@@ -32,6 +32,7 @@ lowering lives there); never the reverse.
 | `shape` | transition tree, dictionary mode, validity cells |
 | `bytecode` | `Insn` (8 bytes), `Opcode` and its operand formats, `CodeUnit`, `CodeStore`, the builder, the publication validator, the disassembler |
 | `vm` | the register file and frame table, the main loop (`interp`), conversions and operators (`ops`, `number`, `bigint`), property access (`property`), errors and the leaf-native ABI (`error`, `native`) |
+| `builtins` | the realm's constructors, prototypes and globals as leaf natives (phase 3 M4), one file per builtin object |
 | `runtime` | `Runtime`: the heap, the code store beside it, the single realm and the host output |
 
 ## The rooting rule
@@ -260,3 +261,34 @@ check nothing.
   `arguments`, rest, `new.target`, regular-expression literals, `for-in`
   setup, spread elements, unsupported constructs) share one loop arm that
   calls an out-of-line `rare_op`, which keeps `vm::run` under its size gate.
+
+### The realm (M4)
+
+- Natives are one `Native` enum generated with its table of entry points and
+  constructor flags (`builtins::natives!`), indexed from the function record;
+  `vm::native` keeps only `CallSite` (receiver, arguments, and whether `new`
+  called) and the dispatch, which cuts the root stack back after every
+  native so natives root intermediate values on it freely.
+- `%Function.prototype%` is a native function returning `undefined`;
+  `%Number.prototype%` and `%Boolean.prototype%` join the intrinsics, and
+  number and boolean receivers read through them.
+- Errors carry an `ERROR` object flag set at creation, read by
+  `Object.prototype.toString`.
+- Phase 2's `ToPrimitive` stand-ins are gone: `toString` and `valueOf` are
+  the builtins.
+- `Number.prototype.toString(radix)`, `parseInt` and `parseFloat` are ports
+  of the current engine's exact algorithms onto the core's own `Big`
+  (`vm::radix`); radix-10 formatting of non-integers uses them too, since
+  Rust's shortest formatting differs from QuickJS on ties and on some powers
+  of two.
+- Regular expressions compile when a literal is first evaluated or
+  `RegExp` is called, into the program store, and run on a string's own
+  one-byte or two-byte storage. `split` with a regular expression searches
+  forward from each position instead of running the specification's sticky
+  copy, which finds the same matches and leaves the user's `lastIndex`
+  alone.
+- Function objects have no `name` or `length`, and `Function.prototype.toString`
+  prints every function as QuickJS prints a native one (source text is
+  phase 4's). `new String`, `new Number`, `new Boolean`, primitive
+  wrappers, `new Function` and a function replacement in `replace` throw
+  `InternalError: unsupported: …`.
