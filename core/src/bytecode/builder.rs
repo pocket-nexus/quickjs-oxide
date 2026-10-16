@@ -6,6 +6,7 @@
 
 use super::{Capture, CodeUnit, CodeUnitId, DebugInfo, Format, Handler, Insn, Opcode};
 use crate::heap::atom::PropertyKey;
+use crate::vm::ic::{FIELD_NO_SITE, GLOBAL_NO_SITE, IcKind};
 
 #[derive(Default)]
 pub struct CodeBuilder {
@@ -177,8 +178,11 @@ impl CodeBuilder {
         &self.code
     }
 
-    /// The unit, with the layout and counts the lowering decided.
-    pub fn finish(self, layout: UnitLayout) -> CodeUnit {
+    /// The unit, with the layout and counts the lowering decided, and its
+    /// cache sites numbered (section 2.1 of phase 3): the named-property
+    /// sites first, in instruction order, then the global and `new` sites.
+    pub fn finish(mut self, layout: UnitLayout) -> CodeUnit {
+        let ic_count = number_sites(&mut self.code);
         CodeUnit {
             code: self.code.into(),
             handlers: self.handlers.into(),
@@ -188,6 +192,8 @@ impl CodeBuilder {
             flags: layout.flags,
             this_slots: layout.this_slots,
             constant_count: layout.constant_count,
+            ic_base: 0,
+            ic_count,
             children: layout.children.into(),
             captures: layout.captures.into(),
             debug: DebugInfo {
@@ -196,6 +202,44 @@ impl CodeBuilder {
             },
         }
     }
+}
+
+/// Writes each cache site's index into its instruction and returns the
+/// number of entries the unit needs. `GetField` and `SetField` get 0 to 254
+/// in `c`; past 255 sites they share [`FIELD_NO_SITE`], whose entry is
+/// reserved and never filled. The global forms follow in `b | c << 8`, with
+/// the same rule at [`GLOBAL_NO_SITE`]; `New` sites come last, in `imm`.
+fn number_sites(code: &mut [Insn]) -> u32 {
+    let is_field = |insn: &Insn| matches!(IcKind::of(insn.op), Some(IcKind::Get | IcKind::Set));
+    let is_global = |insn: &Insn| IcKind::of(insn.op) == Some(IcKind::Global);
+    let fields = code.iter().filter(|insn| is_field(insn)).count() as u32;
+    let reserved = u32::from(FIELD_NO_SITE);
+    let mut next = 0u32;
+    for insn in code.iter_mut().filter(|insn| is_field(insn)) {
+        insn.c = next.min(reserved) as u8;
+        next += 1;
+    }
+    next = if fields > reserved {
+        reserved + 1
+    } else {
+        fields
+    };
+    let globals = code.iter().filter(|insn| is_global(insn)).count() as u32;
+    let first_global = next;
+    for insn in code.iter_mut().filter(|insn| is_global(insn)) {
+        let site = next.min(GLOBAL_NO_SITE);
+        insn.b = site as u8;
+        insn.c = (site >> 8) as u8;
+        next += 1;
+    }
+    if first_global + globals > GLOBAL_NO_SITE {
+        next = GLOBAL_NO_SITE + 1;
+    }
+    for insn in code.iter_mut().filter(|insn| insn.op == Opcode::New) {
+        insn.imm = next;
+        next += 1;
+    }
+    next
 }
 
 /// The parts of a [`CodeUnit`] that are not instructions.

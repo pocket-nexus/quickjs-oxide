@@ -41,7 +41,7 @@ pub fn operands(
 ) -> String {
     let r = |r: u8| register_name(unit, r as u32);
     let target = |t: u32| format!("@{t}");
-    match insn.op.format() {
+    let text = match insn.op.format() {
         Format::None => String::new(),
         Format::A => r(insn.a),
         Format::AB => format!("{}, {}", r(insn.a), r(insn.b)),
@@ -74,6 +74,10 @@ pub fn operands(
         Format::ABJump => format!("{}, {}, {}", r(insn.a), r(insn.b), target(insn.imm)),
         Format::AShortJump => format!("{}, {}, {}", r(insn.a), insn.short(), target(insn.imm)),
         Format::AWide => format!("{}, {}", r(insn.a), register_name(unit, insn.imm)),
+    };
+    match insn.site() {
+        Some(site) => format!("{text}, ic{site}"),
+        None => text,
     }
 }
 
@@ -87,13 +91,14 @@ pub fn disassemble(unit: &CodeUnit, key_name: &mut dyn FnMut(PropertyKey) -> Str
     };
     let _ = writeln!(
         out,
-        "{name}: params {}, locals {}, registers {}, constants {}, children {}, this slots {}",
+        "{name}: params {}, locals {}, registers {}, constants {}, children {}, this slots {}, cache sites {}",
         unit.parameter_count,
         unit.local_count,
         unit.register_count,
         unit.constant_count,
         unit.children.len(),
-        unit.this_slots
+        unit.this_slots,
+        unit.ic_count
     );
     for (pc, &insn) in unit.code.iter().enumerate() {
         let operands = operands(unit, insn, key_name);

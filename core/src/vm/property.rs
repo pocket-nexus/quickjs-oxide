@@ -1,18 +1,20 @@
-//! Property access without inline caches (phase 3 adds them): own lookup and
-//! the prototype walk. Phase 2 objects have data properties only.
+//! Property access: own lookup, the prototype walk, and the miss paths that
+//! fill the inline caches of `vm::ic`. Phase 2 objects have data properties
+//! only.
 //!
 //! Index keys live in the element range while it stays dense (an index at
 //! most a few times past the range); a far index becomes a named property
 //! with an index key, and every read checks the elements first.
 
 use super::error;
+use super::ic::{IcEntry, STRING_RECEIVER_TAG};
 use super::{Cx, Throw};
 use crate::heap::Heap;
 use crate::heap::atom::{KeyKind, PropertyKey};
-use crate::heap::object::{ObjectKind, flags};
+use crate::heap::object::{NONE, ObjectKind, flags};
 use crate::runtime::{Intrinsic, Names};
 use crate::shape::PropertyFlags;
-use crate::value::{Kind, ObjectId, Value};
+use crate::value::{Kind, ObjectId, ValidityCellId, Value};
 
 /// The value of `key` on `object` or its prototypes, `undefined` if absent.
 #[inline]
@@ -77,7 +79,7 @@ pub(crate) fn get(cx: &mut Cx<'_>, receiver: Value, key: PropertyKey) -> Result<
                         .map_err(|_| error::oom(cx.realm))?;
                     return Ok(Value::string(string));
                 }
-                _ => cx.realm.intrinsic(Intrinsic::ObjectPrototype),
+                _ => cx.realm.intrinsic(Intrinsic::StringPrototype),
             }
         }
         Kind::Undefined | Kind::Null => {
@@ -95,6 +97,88 @@ pub(crate) fn get(cx: &mut Cx<'_>, receiver: Value, key: PropertyKey) -> Result<
         _ => cx.realm.intrinsic(Intrinsic::ObjectPrototype),
     };
     Ok(get_from(cx.heap, &cx.realm.names, object, key))
+}
+
+/// `GetField`'s miss path (phase 3, section 2.2): the uncached read, and a
+/// fill of cache entry `site` when it ends in a data property of an object
+/// in transition-tree mode, found on the receiver itself, on its prototype
+/// chain, or on `%String.prototype%`'s chain for a string receiver.
+/// Accessors, dictionary-mode receivers and holders, index keys and complete
+/// misses leave the entry as it was. `fill` is false for the reserved
+/// no-cache site.
+#[inline(never)]
+pub(crate) fn get_cached(
+    cx: &mut Cx<'_>,
+    receiver: Value,
+    key: PropertyKey,
+    site: usize,
+    fill: bool,
+) -> Result<Value, Throw> {
+    let names = cx.realm.names;
+    let named = matches!(key.kind(), KeyKind::String(id) if id != names.length)
+        || matches!(key.kind(), KeyKind::Symbol(_));
+    let (start, string) = match receiver.kind() {
+        Kind::Object if fill && !matches!(key.kind(), KeyKind::Index(_)) => {
+            (receiver.as_object().unwrap(), false)
+        }
+        Kind::String if fill && named => (cx.realm.intrinsic(Intrinsic::StringPrototype), true),
+        _ => return get(cx, receiver, key),
+    };
+    let heap = &*cx.heap;
+    let mut holder = start;
+    let (slot, property) = loop {
+        if !named && heap.object_kind(holder) == ObjectKind::Array {
+            return Ok(length_value(heap.array_length(holder)));
+        }
+        if let Some(found) = heap.lookup_own(holder, key) {
+            break found;
+        }
+        match heap.prototype_of(holder) {
+            Some(prototype) => holder = prototype,
+            None => return Ok(Value::UNDEFINED),
+        }
+    };
+    let value = heap.get_slot(holder, slot);
+    if property.has(PropertyFlags::ACCESSOR)
+        || heap.is_dictionary(holder)
+        || (!string && heap.is_dictionary(start))
+    {
+        return Ok(value);
+    }
+    // The receiver is in a register and the holder on its chain (or the
+    // chain of an intrinsic), so both survive the cell's allocation; the
+    // value is read again after it.
+    let cell = if string {
+        cx.heap.chain_cell(start)
+    } else if holder == start {
+        Ok(ValidityCellId(NONE))
+    } else {
+        cx.heap.validity_cell(start)
+    };
+    let heap = &mut *cx.heap;
+    if let Ok(cell) = cell {
+        let shape = if string {
+            STRING_RECEIVER_TAG
+        } else {
+            heap.shape_of(start).index()
+        };
+        // A string entry always names its holder; an own entry names none.
+        let holder = if holder == start && !string {
+            NONE
+        } else {
+            holder.index()
+        };
+        heap.ics.set(
+            site,
+            IcEntry {
+                w0: shape,
+                w1: holder,
+                w2: slot,
+                w3: cell.index(),
+            },
+        );
+    }
+    Ok(heap.get_slot(holder, slot))
 }
 
 /// Whether an element write at `index` stays in the dense range.

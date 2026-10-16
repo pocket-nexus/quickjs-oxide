@@ -890,8 +890,28 @@ impl Heap {
         if shape.validity.0 != NONE && self.cells.get(shape.validity.0).valid {
             return Ok(shape.validity);
         }
+        let cell = self.chain_cell_keeping(prototype, Value::object(object))?;
+        // The object was rooted, so its shape is unchanged.
+        self.shapes.get_mut(shape_id.0).validity = cell;
+        Ok(cell)
+    }
+
+    /// The cell guarding the chain that starts at `prototype`: valid until
+    /// `prototype` or any object above it changes. It is the cell
+    /// [`Heap::validity_cell`] gives an object whose prototype is
+    /// `prototype`; the string-receiver cache (phase 3, section 2.2) uses it
+    /// for `%String.prototype%`, which no object inherits from.
+    pub fn chain_cell(&mut self, prototype: ObjectId) -> Result<ValidityCellId, HeapError> {
+        self.chain_cell_keeping(prototype, Value::UNDEFINED)
+    }
+
+    fn chain_cell_keeping(
+        &mut self,
+        prototype: ObjectId,
+        keep: Value,
+    ) -> Result<ValidityCellId, HeapError> {
+        self.ensure_prototype(prototype);
         if let Some(cell) = self.prototypes.get(&prototype).and_then(|info| info.cell) {
-            self.shapes.get_mut(shape_id.0).validity = cell;
             return Ok(cell);
         }
         self.safepoint(
@@ -899,11 +919,10 @@ impl Heap {
                 cells: 1,
                 ..Need::default()
             },
-            &[Value::object(object)],
+            &[Value::object(prototype), keep],
         )?;
         let cell = ValidityCellId(self.cells.alloc(ValidityCell { valid: true }));
         self.prototypes.entry(prototype).or_default().cell = Some(cell);
-        self.shapes.get_mut(shape_id.0).validity = cell;
         Ok(cell)
     }
 

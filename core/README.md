@@ -9,7 +9,10 @@ exist; the only natives are `print` and the error constructors. The CLI
 crate's `oxide-run` binary runs a script file on it (`oxide-run --help` for
 the options). The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
 the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/performance/new-core-phase1-results.md);
-phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md).
+phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md)
+and measured in [`docs/performance/new-core-phase2-results.md`](../docs/performance/new-core-phase2-results.md);
+phase 3 (inline caches, the V8 v7 slice and the go/no-go) is planned in
+[`docs/performance/new-core-phase3.md`](../docs/performance/new-core-phase3.md).
 
 The crate has `#![forbid(unsafe_code)]` and no dependencies. From phase 2 the
 root crate depends on it (the register lowering lives there); never the
@@ -146,7 +149,8 @@ check nothing.
   `undefined`, `NaN` and `Infinity`; `Runtime::install_print` adds `print`.
   Functions have no `name` or `length`; a constructor gets its `prototype`
   object at `MakeClosure`. Property reads on primitives other than a
-  string's `length` and indices go to `%Object.prototype%`.
+  string's `length` and indices go to `%Object.prototype%` (from phase 3 M1,
+  a string's go to `%String.prototype%`).
 - Index keys live in the element range while an index stays within four
   times its capacity; a farther index is a named property with an index key,
   and reads check the elements first.
@@ -155,3 +159,26 @@ check nothing.
 - A thrown value travels as an unrooted `Throw`; the unwinder stores it in
   the handler's register (or returns it to the embedder) before anything
   allocates.
+
+## Phase 3 departures
+
+### Inline caches (M1)
+
+- The `IcStore` lives inside the `Heap`, beside the register file, rather
+  than as a third field of `Runtime`: collection happens inside heap
+  safepoints, and the store must be pruned after every marking before an
+  index is recycled. The loop still reads it as `cx.heap.ics`, and the
+  code store stays outside the heap.
+- Cache sites are numbered by `CodeBuilder::finish`, so units built by hand
+  and lowered units are numbered alike: the named-property sites first in
+  instruction order (0 to 254 in `c`, the rest sharing the reserved site
+  255), then the global forms (`b | c << 8`), then `New` (`imm`).
+  `CodeStore::publish` assigns `ic_base` and `Runtime::publish` reserves the
+  entries, with each site's kind for pruning.
+- The `GetField` hit reads the object, cell and value arenas as fields of
+  the heap, disjoint from the register file, so the loop keeps its register
+  window across a hit instead of retaking it.
+- The realm gains an empty `%String.prototype%` (inheriting from
+  `%Object.prototype%`); M4 fills it. A string-receiver entry is guarded by
+  the cell of `%String.prototype%`'s own chain (`Heap::chain_cell`), which
+  any change to it or to `%Object.prototype%` clears.

@@ -158,10 +158,17 @@ fn every_opcode_round_trips_through_the_disassembler() {
     let mut lines = text.lines();
     assert_eq!(
         lines.next(),
-        Some("every: params 2, locals 2, registers 400, constants 2, children 1, this slots 0")
+        Some(
+            "every: params 2, locals 2, registers 400, constants 2, children 1, this slots 0, \
+             cache sites 6"
+        )
     );
     for (pc, (op, operands)) in expected.iter().enumerate() {
         let line = lines.next().unwrap();
+        let operands = match store.get(id).code[pc].site() {
+            Some(site) => format!("{operands}, ic{site}"),
+            None => operands.clone(),
+        };
         let wanted = format!("  {pc:04}  {:<20}{operands}", op.name());
         assert_eq!(line, wanted.trim_end(), "{}", op.name());
     }
@@ -517,4 +524,68 @@ fn runtime_disassembly_spells_atom_keys() {
         text.contains("GetField            t0, p0, .length"),
         "{text}"
     );
+}
+
+/// Phase 3, section 2.1: field sites first in instruction order, then the
+/// global forms, then `new`; one entry per site.
+#[test]
+fn cache_sites_are_numbered_per_unit() {
+    let key = PropertyKey::index(7).unwrap();
+    let unit = unit(8, |b| {
+        b.call(Opcode::New, 5, 5, 0);
+        b.a_key(Opcode::GetGlobal, 5, key);
+        b.ab_key(Opcode::GetField, 5, 5, key);
+        b.a_key(Opcode::SetGlobal, 5, key);
+        b.ab_key(Opcode::SetField, 5, 5, key);
+        b.op(Opcode::ReturnUndefined);
+    });
+    let sites: Vec<Option<u32>> = unit.code.iter().map(|insn| insn.site()).collect();
+    assert_eq!(sites, [Some(4), Some(2), Some(0), Some(3), Some(1), None]);
+    assert_eq!(unit.ic_count, 5);
+    assert_eq!(validate(&unit), Ok(()));
+
+    let mut bad = unit.clone();
+    bad.code[2].c = 5;
+    assert_eq!(validate(&bad), Err(ValidateErrorKind::Site(5)));
+    let mut bad = unit;
+    bad.code[0].imm = 9;
+    assert_eq!(validate(&bad), Err(ValidateErrorKind::Site(9)));
+}
+
+/// Past 255 named-property sites the rest share the reserved site 255.
+#[test]
+fn field_sites_past_255_share_the_reserved_site() {
+    let key = PropertyKey::index(7).unwrap();
+    let unit = unit(8, |b| {
+        for _ in 0..300 {
+            b.ab_key(Opcode::GetField, 5, 5, key);
+        }
+        b.a_key(Opcode::GetGlobal, 5, key);
+        b.op(Opcode::ReturnUndefined);
+    });
+    assert_eq!(unit.code[254].site(), Some(254));
+    assert_eq!(unit.code[255].site(), Some(255));
+    assert_eq!(unit.code[299].site(), Some(255));
+    assert_eq!(unit.code[300].site(), Some(256));
+    assert_eq!(unit.ic_count, 257);
+    assert_eq!(validate(&unit), Ok(()));
+}
+
+/// Publication gives each unit its own range of the cache store.
+#[test]
+fn publication_reserves_cache_entries() {
+    let key = PropertyKey::index(7).unwrap();
+    let mut runtime = Runtime::new(HeapLimits::default()).unwrap();
+    let before = runtime.heap().ics().len();
+    let two = |b: &mut CodeBuilder| {
+        b.ab_key(Opcode::GetField, 5, 5, key);
+        b.ab_key(Opcode::GetField, 5, 5, key);
+        b.op(Opcode::ReturnUndefined);
+    };
+    let first = runtime.publish(unit(8, two)).unwrap();
+    let second = runtime.publish(unit(8, two)).unwrap();
+    assert_eq!(runtime.code().get(first).ic_base as usize, before);
+    assert_eq!(runtime.code().get(second).ic_base as usize, before + 2);
+    assert_eq!(runtime.heap().ics().len(), before + 4);
+    assert_eq!(runtime.heap().ics().filled(), 0);
 }

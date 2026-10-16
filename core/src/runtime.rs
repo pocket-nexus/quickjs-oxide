@@ -21,6 +21,9 @@ pub enum Intrinsic {
     ObjectPrototype,
     FunctionPrototype,
     ArrayPrototype,
+    /// The prototype of string receivers (phase 3 fills it with the
+    /// `String.prototype` methods in M4).
+    StringPrototype,
     ErrorPrototype,
     EvalErrorPrototype,
     RangeErrorPrototype,
@@ -34,7 +37,7 @@ pub enum Intrinsic {
 }
 
 impl Intrinsic {
-    pub const COUNT: usize = 11;
+    pub const COUNT: usize = 12;
 }
 
 /// Atoms the loop names: property names it reads itself and the `typeof`
@@ -136,12 +139,16 @@ impl Runtime {
         let function_prototype = root(&mut heap, function_prototype);
         let array_prototype = heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
         let array_prototype = root(&mut heap, array_prototype);
+        let string_prototype =
+            heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
+        let string_prototype = root(&mut heap, string_prototype);
         let global = heap.alloc_object(ObjectKind::GlobalObject, Some(object_prototype), 16)?;
         let global = root(&mut heap, global);
         let names = Names::new(&mut heap)?;
         let mut intrinsics = [object_prototype; Intrinsic::COUNT];
         intrinsics[Intrinsic::FunctionPrototype as usize] = function_prototype;
         intrinsics[Intrinsic::ArrayPrototype as usize] = array_prototype;
+        intrinsics[Intrinsic::StringPrototype as usize] = string_prototype;
         let error_prototype = heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
         intrinsics[Intrinsic::ErrorPrototype as usize] = root(&mut heap, error_prototype);
         for kind in ErrorKind::ALL {
@@ -262,7 +269,9 @@ impl Runtime {
     /// Validates `unit` and appends it to the code store. Its children must
     /// be published first.
     pub fn publish(&mut self, unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
-        self.code.publish(unit)
+        let id = self.code.publish(unit)?;
+        self.heap.ics.reserve(self.code.get(id));
+        Ok(id)
     }
 
     /// A function object for the published unit `root`, with a bytecode

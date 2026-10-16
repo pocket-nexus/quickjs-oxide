@@ -62,6 +62,22 @@ impl Insn {
         PropertyKey::from_raw(self.imm)
     }
 
+    /// The cache site of an instruction that has one (phase 3, section 2.1):
+    /// `c` for `GetField` and `SetField`, `b | c << 8` for the global forms,
+    /// `imm` for `New`. An index into the unit's entries of the
+    /// [`IcStore`](crate::vm::ic::IcStore).
+    #[inline]
+    pub const fn site(self) -> Option<u32> {
+        match self.op {
+            Opcode::GetField | Opcode::SetField => Some(self.c as u32),
+            Opcode::GetGlobal | Opcode::GetGlobalOrUndefined | Opcode::SetGlobal => {
+                Some(self.b as u32 | (self.c as u32) << 8)
+            }
+            Opcode::New => Some(self.imm),
+            _ => None,
+        }
+    }
+
     /// Whether `imm` is a jump target.
     #[inline]
     pub const fn has_target(self) -> bool {
@@ -163,6 +179,11 @@ pub struct CodeUnit {
     pub this_slots: u16,
     /// The length of the constant table attached on the heap.
     pub constant_count: u32,
+    /// The unit's first entry in the cache store, set by
+    /// [`CodeStore::publish`].
+    pub ic_base: u32,
+    /// Cache sites, numbered by [`CodeBuilder::finish`](builder::CodeBuilder::finish).
+    pub ic_count: u32,
     /// Inner functions, by `MakeClosure` index. Published before the unit.
     pub children: Box<[CodeUnitId]>,
     /// The cells a closure over this unit captures, from the frame that
@@ -190,15 +211,28 @@ impl CodeUnit {
 #[derive(Default)]
 pub struct CodeStore {
     units: Vec<CodeUnit>,
+    /// Cache entries reserved by the units so far.
+    ic_len: u32,
 }
 
 impl CodeStore {
-    /// Validates `unit` and appends it.
-    pub fn publish(&mut self, unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
+    /// Validates `unit`, gives it the next `ic_count` cache entries and
+    /// appends it.
+    pub fn publish(&mut self, mut unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
         validate::validate(&unit, &self.units)?;
         let id = u32::try_from(self.units.len()).expect("code store overflow");
+        unit.ic_base = self.ic_len;
+        self.ic_len = self
+            .ic_len
+            .checked_add(unit.ic_count)
+            .expect("cache store overflow");
         self.units.push(unit);
         Ok(CodeUnitId(id))
+    }
+
+    /// Cache entries the published units hold.
+    pub fn ic_len(&self) -> u32 {
+        self.ic_len
     }
 
     #[inline]
