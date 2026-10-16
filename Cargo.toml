@@ -18,6 +18,8 @@ workspace = true
 [dependencies]
 # The new core (#122); only the phase 2 register lowering and its driver use it.
 oxide-core = { workspace = true }
+# The regular-expression engine and Unicode tables (phase 3, section 6.1).
+oxide-regexp = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
 
@@ -35,6 +37,7 @@ new-core-gc-stress = ["oxide-core/gc-stress"]
 new-core-ic-stats = ["oxide-core/ic-stats"]
 [dev-dependencies]
 quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
+oxide-regexp = { workspace = true, features = ["test-hooks"] }
 
 # Real-main-thread stack-guard matrix; its fn main is the test body so Cargo
 # always builds the probe it spawns (no pre-built example artifact required).
@@ -43,7 +46,7 @@ name = "main_thread_stack_probe"
 harness = false
 
 [workspace]
-members = ["adapters/native", "adapters/web", ".", "apps/cli", "apps/web", "conformance/test262", "core"]
+members = ["adapters/native", "adapters/web", ".", "apps/cli", "apps/web", "conformance/test262", "core", "regexp"]
 default-members = [".", "apps/cli"]
 resolver = "3"
 
@@ -62,6 +65,7 @@ quickjs-oxide-web-host = { path = "adapters/web" }
 quickjs-oxide-host = { path = "adapters/native" }
 quickjs-oxide = { path = ".", default-features = false }
 oxide-core = { path = "core" }
+oxide-regexp = { path = "regexp" }
 num-bigint = "=0.5.1"
 num-traits = "=0.2.19"
 tz-rs = "=0.7.3"

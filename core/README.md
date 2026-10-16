@@ -14,9 +14,10 @@ and measured in [`docs/performance/new-core-phase2-results.md`](../docs/performa
 phase 3 (inline caches, the V8 v7 slice and the go/no-go) is planned in
 [`docs/performance/new-core-phase3.md`](../docs/performance/new-core-phase3.md).
 
-The crate has `#![forbid(unsafe_code)]` and no dependencies. From phase 2 the
-root crate depends on it (the register lowering lives there); never the
-reverse.
+The crate has `#![forbid(unsafe_code)]` and one dependency, the
+regular-expression crate `oxide-regexp` (`regexp/`, phase 3 section 6.1),
+which has none. From phase 2 the root crate depends on it (the register
+lowering lives there); never the reverse.
 
 ## Layout
 

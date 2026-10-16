@@ -8,9 +8,9 @@
 
 use super::RegExpFlags;
 use super::flags::{FlagParseErrorKind, parse_flags};
+use super::group_name::GroupName;
 use super::group_name::{self, CaptureSummary};
 use super::opcode::{CharacterRange, Instruction};
-use crate::engine::value::JsString;
 use std::collections::BTreeSet;
 
 const INFINITE_REPETITION: u32 = i32::MAX as u32;
@@ -33,7 +33,7 @@ struct Program {
     /// Capture names aligned to captures 1..N. Capture zero is deliberately
     /// absent. `None` for the whole field means the pattern has no named
     /// captures and matches QuickJS's absent group-name trailer.
-    group_names: Option<Box<[Option<JsString>]>>,
+    group_names: Option<Box<[Option<GroupName>]>>,
 }
 
 impl CompiledRegExp {
@@ -58,7 +58,7 @@ impl CompiledRegExp {
         capture_count: u8,
         register_count: u8,
         instructions: Vec<Instruction>,
-        group_names: Option<Box<[Option<JsString>]>>,
+        group_names: Option<Box<[Option<GroupName>]>>,
     ) -> Result<Self, CompileError> {
         debug_assert!(group_names.as_ref().is_none_or(|names| {
             names.len() == usize::from(capture_count).saturating_sub(1)
@@ -104,7 +104,7 @@ impl CompiledRegExp {
     /// Names aligned to captures 1..N, or `None` when this program has no
     /// named captures. Capture `i` corresponds to `names[i - 1]`.
     #[must_use]
-    pub fn group_names(&self) -> Option<&[Option<JsString>]> {
+    pub fn group_names(&self) -> Option<&[Option<GroupName>]> {
         self.0.group_names.as_deref()
     }
 
@@ -418,8 +418,8 @@ struct Parser<'a> {
     next_capture: u16,
     total_capture_count: u32,
     has_named_captures: bool,
-    capture_names: Vec<Option<JsString>>,
-    parsed_group_names: Vec<(JsString, u8, u8)>,
+    capture_names: Vec<Option<GroupName>>,
+    parsed_group_names: Vec<(GroupName, u8, u8)>,
     group_name_scope: u8,
     group_depth: usize,
 }
@@ -427,7 +427,7 @@ struct Parser<'a> {
 struct ParsedPattern {
     expression: Expression,
     capture_count: u8,
-    group_names: Option<Box<[Option<JsString>]>>,
+    group_names: Option<Box<[Option<GroupName>]>>,
 }
 
 impl<'a> Parser<'a> {
@@ -666,7 +666,7 @@ impl<'a> Parser<'a> {
     fn allocate_capture(
         &mut self,
         position: usize,
-        name: Option<JsString>,
+        name: Option<GroupName>,
     ) -> Result<u8, CompileError> {
         if self.next_capture >= u16::from(u8::MAX) {
             return Err(CompileError::too_many_captures(position));
@@ -861,20 +861,20 @@ impl<'a> Parser<'a> {
 
         let endpoints = match name.as_str() {
             "Script" | "sc" => Some(
-                crate::source::unicode::property::script(&value, false)
+                crate::unicode::property::script(&value, false)
                     .ok_or_else(|| CompileError::syntax(position, "unknown unicode script"))?,
             ),
             "Script_Extensions" | "scx" => Some(
-                crate::source::unicode::property::script(&value, true)
+                crate::unicode::property::script(&value, true)
                     .ok_or_else(|| CompileError::syntax(position, "unknown unicode script"))?,
             ),
             "General_Category" | "gc" => Some(
-                crate::source::unicode::property::general_category(&value).ok_or_else(|| {
+                crate::unicode::property::general_category(&value).ok_or_else(|| {
                     CompileError::syntax(position, "unknown unicode general category")
                 })?,
             ),
-            _ if value.is_empty() => crate::source::unicode::property::general_category(&name)
-                .or_else(|| crate::source::unicode::property::binary_property(&name)),
+            _ if value.is_empty() => crate::unicode::property::general_category(&name)
+                .or_else(|| crate::unicode::property::binary_property(&name)),
             _ => None,
         };
 
@@ -887,7 +887,7 @@ impl<'a> Parser<'a> {
             }
         } else if value.is_empty() && !inverted && self.flags.contains(RegExpFlags::UNICODE_SETS) {
             let mut set = UnicodeSet::default();
-            crate::source::unicode::property::sequence_property(&name, |sequence| {
+            crate::unicode::property::sequence_property(&name, |sequence| {
                 add_unicode_set_sequence(&mut set, sequence);
             })
             .ok_or_else(|| CompileError::syntax(position, "unknown unicode property name"))?;
@@ -1560,8 +1560,7 @@ impl<'a> Parser<'a> {
             }
             if self.modifiers.ignore_case {
                 for character in &mut sequence {
-                    *character =
-                        crate::source::unicode::case::regexp_canonicalize(*character, true);
+                    *character = crate::unicode::case::regexp_canonicalize(*character, true);
                 }
             }
             add_unicode_set_sequence(&mut set, &sequence);
@@ -1822,7 +1821,7 @@ impl CodeBuilder {
         match atom {
             Atom::Literal(value) => {
                 let value = if self.ignore_case {
-                    crate::source::unicode::case::regexp_canonicalize(*value, self.unicode)
+                    crate::unicode::case::regexp_canonicalize(*value, self.unicode)
                 } else {
                     *value
                 };
@@ -2358,7 +2357,7 @@ fn unicode_set_from_class_atom(atom: ClassAtom, ignore_case: bool, unicode: bool
         }
         ClassAtom::Single(mut value) => {
             if ignore_case {
-                value = crate::source::unicode::case::regexp_canonicalize(value, unicode);
+                value = crate::unicode::case::regexp_canonicalize(value, unicode);
             }
             UnicodeSet {
                 ranges: vec![CharacterRange::new(value, value)],
@@ -2399,7 +2398,7 @@ fn canonicalize_unicode_set(set: &mut UnicodeSet, unicode: bool) {
     let strings = std::mem::take(&mut set.strings);
     for mut string in strings {
         for character in &mut string {
-            *character = crate::source::unicode::case::regexp_canonicalize(*character, unicode);
+            *character = crate::unicode::case::regexp_canonicalize(*character, unicode);
         }
         add_unicode_set_sequence(set, &string);
     }
@@ -2477,7 +2476,7 @@ fn subtract_ranges(left: &[CharacterRange], right: &[CharacterRange]) -> Vec<Cha
 }
 
 fn canonicalize_ranges(ranges: &[CharacterRange], unicode: bool) -> Vec<CharacterRange> {
-    crate::source::unicode::case::regexp_canonicalize_range_pairs(
+    crate::unicode::case::regexp_canonicalize_range_pairs(
         &ranges
             .iter()
             .map(|range| (range.start, range.end))
@@ -3264,7 +3263,7 @@ mod tests {
         assert_eq!(
             names
                 .iter()
-                .map(|name| name.as_ref().map(JsString::to_utf8_lossy))
+                .map(|name| name.as_deref().map(String::from_utf16_lossy))
                 .collect::<Vec<_>>(),
             vec![
                 Some("plain".to_owned()),
@@ -3424,7 +3423,7 @@ mod tests {
                     .iter()
                     .filter(|name| name
                         .as_ref()
-                        .is_some_and(|name| name.to_utf8_lossy() == "x"))
+                        .is_some_and(|name| String::from_utf16_lossy(name) == "x"))
                     .count(),
                 2,
                 "{pattern}",
@@ -3667,10 +3666,7 @@ mod tests {
         let named = compile_ascii(r"\1(?<x>a)", "u").unwrap();
         assert_eq!(named.capture_count(), 2);
         assert_eq!(
-            named.group_names().unwrap()[0]
-                .as_ref()
-                .unwrap()
-                .to_utf8_lossy(),
+            String::from_utf16_lossy(named.group_names().unwrap()[0].as_ref().unwrap()),
             "x",
         );
         assert!(compile_ascii(r"[](a)\1", "u").is_ok());

@@ -10,7 +10,7 @@ running generators.
 
 ## Regeneration
 
-The handwritten algorithms in `src/source/unicode/` include the tables in
+The handwritten algorithms in `regexp/src/unicode/` include the tables in
 `unicode/` in private table modules; generated files add no public API.
 
 Regenerate with the corresponding `scripts/unicode/generate-unicode-*-tables`

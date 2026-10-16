@@ -11,7 +11,7 @@ use std::fmt;
 use std::ops::Range;
 
 use super::{CharacterRange, CompiledRegExp, Instruction, RegExpFlags};
-use crate::source::unicode::case::regexp_canonicalize as canonicalize;
+use crate::unicode::case::regexp_canonicalize as canonicalize;
 
 const INTERRUPT_POLL_INTERVAL: u32 = 10_000;
 

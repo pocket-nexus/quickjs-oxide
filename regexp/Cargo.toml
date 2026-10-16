@@ -1,0 +1,19 @@
+[package]
+name = "oxide-regexp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "The quickjs-oxide regular-expression engine and Unicode tables, over UTF-16 code units"
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Exposes the thread-local allocation-failure hooks of the case and
+# normalization buffers, for the root crate's String tests.
+test-hooks = []

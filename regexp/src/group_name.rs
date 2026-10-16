@@ -4,7 +4,8 @@
 //! JavaScript identifier lexer: group names always use Unicode identifier
 //! semantics, accept only `\u` escapes, and are normalized before comparison.
 
-use crate::engine::value::JsString;
+/// A normalized group name: its UTF-16 code units.
+pub type GroupName = Box<[u16]>;
 
 const GROUP_NAME_BUFFER_SIZE: usize = 128;
 const UTF8_CHAR_LEN_MAX: usize = 6;
@@ -24,7 +25,7 @@ pub(super) struct CaptureSummary {
 /// The returned cursor is immediately after `>`. Failure never advances the
 /// caller's cursor, which is required by the non-Unicode Annex-B `\k`
 /// fallback.
-pub(super) fn parse(units: &[u16], start: usize) -> Option<(JsString, usize)> {
+pub(super) fn parse(units: &[u16], start: usize) -> Option<(GroupName, usize)> {
     let mut position = start;
     let mut normalized = Vec::new();
     let mut normalized_utf8_len = 0_usize;
@@ -35,9 +36,7 @@ pub(super) fn parse(units: &[u16], start: usize) -> Option<(JsString, usize)> {
             if normalized.is_empty() {
                 return None;
             }
-            let name = JsString::try_from_utf16(normalized)
-                .expect("a bounded RegExp group name exceeded the String limit");
-            return Some((name, position + 1));
+            return Some((normalized.into_boxed_slice(), position + 1));
         }
 
         let code_point = if unit == u16::from(b'\\') {
@@ -133,7 +132,7 @@ pub(super) fn capture_summary(units: &[u16]) -> CaptureSummary {
 /// This intentionally mirrors the rough second scan in QuickJS, including
 /// its cursor movement after a successfully parsed name. It is used only when
 /// a named backreference has no already-parsed matching capture.
-pub(super) fn matching_capture_indices(units: &[u16], name: &JsString) -> Vec<u8> {
+pub(super) fn matching_capture_indices(units: &[u16], name: &[u16]) -> Vec<u8> {
     let mut captures = Vec::new();
     let mut capture_index = 1_u32;
     let mut position = 0_usize;
@@ -147,7 +146,7 @@ pub(super) fn matching_capture_indices(units: &[u16], name: &JsString) -> Vec<u8
                     && !matches!(units.get(position + 3).copied(), Some(0x3d | 0x21));
                 if named {
                     if let Some((candidate, after_name)) = parse(units, position + 3) {
-                        if candidate == *name {
+                        if *candidate == *name {
                             captures.push(
                                 u8::try_from(capture_index)
                                     .expect("capture prepass exceeded QuickJS's u8 limit"),
@@ -250,7 +249,7 @@ fn is_identifier_start(code_point: u32) -> bool {
     if code_point < 0x80 {
         matches!(code_point, 0x24 | 0x41..=0x5a | 0x5f | 0x61..=0x7a)
     } else {
-        crate::source::unicode::is_id_start(code_point)
+        crate::unicode::is_id_start(code_point)
     }
 }
 
@@ -258,7 +257,7 @@ fn is_identifier_continue(code_point: u32) -> bool {
     if code_point < 0x80 {
         is_identifier_start(code_point) || (0x30..=0x39).contains(&code_point)
     } else {
-        matches!(code_point, 0x200c | 0x200d) || crate::source::unicode::is_id_continue(code_point)
+        matches!(code_point, 0x200c | 0x200d) || crate::unicode::is_id_continue(code_point)
     }
 }
 
@@ -309,24 +308,20 @@ const fn combine_surrogates_u32(high: u32, low: u32) -> u32 {
 mod tests {
     use super::*;
 
-    fn parsed(source: &str) -> Option<JsString> {
+    fn parsed(source: &str) -> Option<String> {
         let units = source.encode_utf16().collect::<Vec<_>>();
         parse(&units, 0).map(|(name, after)| {
             assert_eq!(after, units.len());
-            name
+            String::from_utf16_lossy(&name)
         })
     }
 
     #[test]
     fn group_names_normalize_raw_and_escaped_unicode() {
         for source in ["a$𐒤_\u{200C}>", r"\u0061$\uD801\uDCA4_\u200C>"] {
-            assert_eq!(
-                parsed(source).unwrap().to_utf8_lossy(),
-                "a$𐒤_\u{200c}",
-                "{source}",
-            );
+            assert_eq!(parsed(source).unwrap(), "a$𐒤_\u{200c}", "{source}",);
         }
-        assert_eq!(parsed(r"\u{41}>").unwrap().to_utf8_lossy(), "A");
+        assert_eq!(parsed(r"\u{41}>").unwrap(), "A");
     }
 
     #[test]
@@ -365,7 +360,7 @@ mod tests {
                 has_named_captures: true,
             },
         );
-        let name = JsString::try_from_utf8("a").unwrap();
+        let name = "a".encode_utf16().collect::<Vec<_>>();
         assert_eq!(matching_capture_indices(&units, &name), vec![1, 3]);
     }
 }

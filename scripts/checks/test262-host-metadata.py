@@ -16,19 +16,25 @@ expected_packages = {
     "quickjs-oxide-web", "quickjs-oxide-test262",
     # The new core (#122); the engine depends on it from phase 2 on.
     "oxide-core",
+    # The regular-expression engine and Unicode tables both cores use
+    # (phase 3, section 6.1).
+    "oxide-regexp",
 }
 if set(packages) != expected_packages:
     fail("workspace package set drifted from the reviewed engine/app split")
 # Candidate A: providers depend on the complete engine, never the reverse.
-# The engine's one edge is to the new core, which depends on nothing.
+# The engine's edges are to the new core and the regular-expression crate;
+# the new core's single edge is to the regular-expression crate, which
+# depends on nothing.
 expected_dependencies = {
-    "quickjs-oxide": {"oxide-core"},
+    "quickjs-oxide": {"oxide-core", "oxide-regexp"},
     "quickjs-oxide-host": {"quickjs-oxide"},
     "quickjs-oxide-web-host": {"quickjs-oxide"},
     "quickjs-oxide-cli": {"quickjs-oxide", "quickjs-oxide-host"},
     "quickjs-oxide-web": {"quickjs-oxide", "quickjs-oxide-web-host"},
     "quickjs-oxide-test262": {"quickjs-oxide", "quickjs-oxide-host"},
-    "oxide-core": set(),
+    "oxide-core": {"oxide-regexp"},
+    "oxide-regexp": set(),
 }
 for name, expected in expected_dependencies.items():
     actual = {

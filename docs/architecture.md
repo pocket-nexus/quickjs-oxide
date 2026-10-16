@@ -6,8 +6,8 @@
 
 ```text
 src/
-  source/          source bytes, positions, strings and Unicode data
-  regexp/          pattern compilation and matching
+  source/          source bytes and positions; `unicode` wraps oxide-regexp's tables
+  regexp.rs        oxide-regexp at its historical path, with `JsString` wrappers
   engine/
     compiler/      parsing, resolution, lowering and local operation selection
     code/          instruction encoding and publication
@@ -24,7 +24,9 @@ src/
     api/           public Runtime, Context and embedding operations
 ```
 
-Adapters and applications depend on the root package, whose production dependencies are `num-bigint` and `num-traits`. Applications supply input and module-loading policy, output, diagnostics and job driving. `Runtime::new_with_host_services` receives the host capability provider.
+The regular-expression engine (pattern compilation and matching) and the Unicode tables live in the `oxide-regexp` workspace crate (`regexp/`), which has no dependencies and works over UTF-16 code units; the root package and `oxide-core` both depend on it.
+
+Adapters and applications depend on the root package, whose production dependencies are `oxide-core`, `oxide-regexp`, `num-bigint` and `num-traits`. Applications supply input and module-loading policy, output, diagnostics and job driving. `Runtime::new_with_host_services` receives the host capability provider.
 
 ## Compilation and publication
 

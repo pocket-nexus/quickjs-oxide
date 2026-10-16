@@ -1,8 +1,12 @@
-//! Pure Rust RegExp engine foundation for pinned QuickJS 2026-06-04.
+//! Pure Rust RegExp engine for pinned QuickJS 2026-06-04, and the
+//! checksum-pinned Unicode 17 tables it and the String intrinsics use.
 //!
-//! This module is runtime independent: it owns typed flags, compiler errors,
-//! and instruction IR, while heap objects and ECMAScript intrinsics are wired
-//! by later layers.
+//! The crate is runtime independent: it owns typed flags, compiler errors,
+//! instruction IR and the executor, all over UTF-16 code units (`&[u16]`) and
+//! plain `u32` code points. Heap objects and ECMAScript intrinsics are wired
+//! by the engines that depend on it (the root crate and `oxide-core`).
+
+#![forbid(unsafe_code)]
 
 mod compiler;
 mod executor;
@@ -18,30 +22,15 @@ pub use executor::{
     execute_with_interrupt,
 };
 pub use flags::RegExpFlags;
+pub use group_name::GroupName;
 pub use opcode::{CharacterRange, Instruction};
 
-use crate::engine::api::error::ErrorKind;
-use crate::engine::value::JsString;
+pub mod unicode;
 
-/// Compile exact UTF-16 pattern and flag strings without consulting runtime
-/// objects or host regular-expression facilities.
-pub fn compile(pattern: &JsString, flags: &JsString) -> Result<CompiledRegExp, CompileError> {
-    compiler::compile_units(
-        &pattern.utf16_units().collect::<Vec<_>>(),
-        &flags.utf16_units().collect::<Vec<_>>(),
-    )
-}
-
-/// Classify a pure-Rust compiler failure at the JavaScript compilation
-/// boundary.
-#[must_use]
-pub const fn javascript_compile_error_kind(error: &CompileError) -> ErrorKind {
-    match error.kind() {
-        CompileErrorKind::Internal => ErrorKind::JsInternal,
-        CompileErrorKind::Syntax
-        | CompileErrorKind::TooManyCaptures
-        | CompileErrorKind::TooManyRegisters => ErrorKind::Syntax,
-    }
+/// Compile exact UTF-16 pattern and flag code units without consulting
+/// runtime objects or host regular-expression facilities.
+pub fn compile(pattern: &[u16], flags: &[u16]) -> Result<CompiledRegExp, CompileError> {
+    compiler::compile_units(pattern, flags)
 }
 
 /// Return the short diagnostic exposed by pinned QuickJS `lre_compile`.

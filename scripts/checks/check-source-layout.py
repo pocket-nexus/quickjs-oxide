@@ -86,10 +86,12 @@ src = root / "src"
 errors = []
 expected = {"compiler", "code", "value", "object", "atom", "heap", "vm",
             "realm", "builtins", "modules", "jobs", "host", "api"}
-if {p.name for p in src.glob("*.rs")} != {"lib.rs"}:
-    errors.append("src must contain only lib.rs as a top-level Rust source")
-if {p.name for p in src.iterdir() if p.is_dir()} != {"engine", "source", "regexp"}:
-    errors.append("src directories must be engine, source and regexp")
+# The regular-expression engine lives in the `oxide-regexp` crate (`regexp/`);
+# `regexp.rs` only keeps its historical path and the engine-typed wrappers.
+if {p.name for p in src.glob("*.rs")} != {"lib.rs", "regexp.rs"}:
+    errors.append("src must contain only lib.rs and the regexp.rs shim as top-level Rust sources")
+if {p.name for p in src.iterdir() if p.is_dir()} != {"engine", "source"}:
+    errors.append("src directories must be engine and source")
 if {p.name for p in (src / "engine").iterdir() if p.is_dir()} != expected:
     errors.append("engine directories must match the declared responsibilities")
 

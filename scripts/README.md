@@ -21,8 +21,8 @@ report validation, host metadata checks and playground assertions. Helpers stay
 with their owner. Admission generators share `test262/test262-admission-data.mjs`. Avoid a generic shared
 utilities directory until unrelated owners actually need the same contract.
 
-Handwritten Unicode algorithms live in `src/source/unicode/`; generated production
-tables live in `src/source/unicode/generated/unicode/`. Product builds consume those checked-in
+Handwritten Unicode algorithms live in `regexp/src/unicode/`; generated production
+tables live in `regexp/src/unicode/generated/unicode/`. Product builds consume those checked-in
 tables without running generators or compiling the QuickJS reference. Test262
 generated evidence remains in `dev-support/test262/generated/`.
 

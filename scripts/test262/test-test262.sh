@@ -351,7 +351,7 @@ done
     && "$(spec_value full_eligible)" == "$(spec_value full_runnable)" ]] \
     || die 'unsupported Test262 gate spec contract'
 expected_engine_semantics_files='Cargo.lock,Cargo.toml,compat/test262-oxide.conf,compat/upstream.toml,rust-toolchain.toml,scripts/test262/prepare-test262.sh,scripts/test262/test-test262.sh,scripts/test262/verify-report.cjs'
-expected_engine_semantics_trees='adapters,apps,conformance,core,examples,src,tests'
+expected_engine_semantics_trees='adapters,apps,conformance,core,examples,regexp,src,tests'
 [[ "$(spec_value engine_fingerprint_tool)" == scripts/test262/test262-engine-fingerprint.mjs \
     && "$(spec_value engine_semantics_files)" == "$expected_engine_semantics_files" \
     && "$(spec_value engine_semantics_trees)" == "$expected_engine_semantics_trees" ]] \
@@ -463,7 +463,7 @@ check_file "$manifest" "$(spec_value manifest_lines)" \
 workspace_engine_fingerprint() {
     node "$engine_fingerprint_tool" --root "$root" \
         --worktree --files "Cargo.lock,Cargo.toml,compat/test262-oxide.conf,compat/upstream.toml,rust-toolchain.toml,scripts/test262/prepare-test262.sh,scripts/test262/test-test262.sh,scripts/test262/verify-report.cjs" \
-        --trees "adapters,apps,conformance,core,examples,src,tests"
+        --trees "adapters,apps,conformance,core,examples,regexp,src,tests"
 }
 
 assert_workspace_engine_unchanged() {
