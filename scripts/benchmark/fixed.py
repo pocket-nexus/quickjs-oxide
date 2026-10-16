@@ -35,6 +35,34 @@ def parse_darwin_counters(raw):
     return values
 
 
+LINUX_EVENTS = ('instructions:u', 'cycles:u', 'task-clock')
+
+
+def parse_linux_counters(raw):
+    """Parse `perf stat -x,` output for the user-space events of one process."""
+    values = {}
+    for line in raw.splitlines():
+        fields = line.split(',')
+        if len(fields) < 3:
+            continue
+        # perf reports task-clock as task-clock:u when the other events are user-only.
+        event = 'task-clock' if fields[2] == 'task-clock:u' else fields[2]
+        if event not in LINUX_EVENTS:
+            continue
+        key = {'instructions:u': 'instructions', 'cycles:u': 'cycles', 'task-clock': 'task_clock_ms'}[event]
+        if key in values:
+            raise ValueError(f'duplicate Linux counter: {key}')
+        try:
+            values[key] = float(fields[0]) if key == 'task_clock_ms' else int(fields[0])
+        except ValueError:
+            raise ValueError(f'Linux counter {key} not counted: {fields[0]}') from None
+    if len(values) != len(LINUX_EVENTS):
+        raise ValueError('missing Linux counters')
+    if any(value <= 0 for value in values.values()):
+        raise ValueError('Linux counters must be positive for a measured process')
+    return values
+
+
 def load_workloads(report, directory=None, cases=None):
     workloads = json.loads(Path(report).read_text())["metadata"]["workloads"]["workloads"]
     names = set()
@@ -73,6 +101,8 @@ def main():
     parser.add_argument('--cpu', type=int)
     parser.add_argument('--darwin-counters', action='store_true',
                         help='wrap each sample in /usr/bin/time -l and retain whole-process counters')
+    parser.add_argument('--linux-counters', action='store_true',
+                        help='wrap each sample in perf stat and retain user-space instructions and cycles')
     parser.add_argument('--callgrind', type=Path, help='Valgrind executable; instrument fixed work instead of timing it')
     parser.add_argument('--callgrind-cache-config', type=Path,
                         help='frozen JSON with I1/D1/LL [bytes, associativity, line_bytes]')
@@ -86,6 +116,8 @@ def main():
         parser.error('--darwin-counters requires macOS /usr/bin/time')
     if args.darwin_counters and args.cpu is not None:
         parser.error('--cpu uses taskset and cannot be combined with --darwin-counters')
+    if args.linux_counters and (platform.system() != 'Linux' or args.darwin_counters or args.callgrind):
+        parser.error('--linux-counters requires Linux perf and excludes the other counter modes')
     if bool(args.callgrind) != bool(args.callgrind_cache_config):
         parser.error('--callgrind and --callgrind-cache-config must be used together')
     if args.callgrind_instructions and not args.callgrind:
@@ -116,7 +148,9 @@ def main():
         timeout_seconds=args.timeout,
         cpu=args.cpu,
         darwin_counters=args.darwin_counters,
-        counter_scope='whole process including startup and teardown' if args.darwin_counters else None,
+        linux_counters=list(LINUX_EVENTS) if args.linux_counters else None,
+        counter_scope='whole process including startup and teardown'
+        if args.darwin_counters or args.linux_counters else None,
         callgrind=instrument,
         metric='Callgrind whole-process event counts; instrumented times are not speed evidence'
         if instrument else 'whole-process wall nanoseconds; not adaptive scores',
@@ -149,6 +183,9 @@ def main():
                     counters_path = prefix.with_suffix('.time-l.txt')
                     if args.darwin_counters:
                         cmd = ['/usr/bin/time', '-l', '-o', str(counters_path), *cmd]
+                    perf_path = prefix.with_suffix('.perf-stat.txt')
+                    if args.linux_counters:
+                        cmd = ['perf', 'stat', '-x,', '-e', ','.join(LINUX_EVENTS), '-o', str(perf_path), '--', *cmd]
                     sample = run_sample(cmd, output, prefix, args.timeout)
                     semantic_status = admit(sample, workload['expected'].encode())
                     if semantic_status == 'ok' and Path(sample['stderr']).read_bytes():
@@ -174,6 +211,17 @@ def main():
                         try:
                             counter_record['raw_sha256'] = digest(counters_path)
                             counter_record['values'] = parse_darwin_counters(counters_path.read_text())
+                        except (OSError, ValueError) as error:
+                            counter_record['error'] = str(error)
+                            if status == 'ok':
+                                status = 'invalid-hardware-counters'
+                        sample['hardware_counters'] = counter_record
+                    if args.linux_counters:
+                        counter_record = {'scope': 'whole process including startup and teardown',
+                                          'raw_path': str(perf_path)}
+                        try:
+                            counter_record['raw_sha256'] = digest(perf_path)
+                            counter_record['values'] = parse_linux_counters(perf_path.read_text())
                         except (OSError, ValueError) as error:
                             counter_record['error'] = str(error)
                             if status == 'ok':

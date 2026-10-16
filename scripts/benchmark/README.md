@@ -379,6 +379,12 @@ instructions, elapsed cycles, maximum resident set size and peak memory
 footprint. Missing fields invalidate the counter measurement while preserving
 the program's stdout/stderr and the raw time output.
 
+On Linux, `--linux-counters` wraps each sample with
+`perf stat -x, -e instructions:u,cycles:u,task-clock -o <raw-file>` and
+records user-space instructions, cycles and task-clock milliseconds for the
+whole process. It needs `perf` and a `perf_event_paranoid` setting that allows
+counting one's own processes (2 or lower).
+
 `--callgrind /path/to/valgrind --callgrind-cache-config cache.json` runs each
 sample under Callgrind (`callgrind.py`) instead of timing it. The cache config
 is a JSON object with exactly `I1`, `D1` and `LL`, each
@@ -387,6 +393,36 @@ the summary reports per-case median `Ir`, `Dr`, `Dw`, cache-miss and branch
 counters for the whole process. `--callgrind-instructions` also keeps
 instruction positions and jumps for code-generation attribution. These are
 simulated counters, not native timings.
+
+## Fixed-work V8 v7, Octane and AWFY matrix
+
+`suite_matrix.py build` generates one program per item of V8 v7 (8), Octane 2.0
+(15) and AWFY (14) from pinned upstream checkouts (js-engine-benchmark
+`2034d98f`, octane `570ad1cc`, are-we-fast-yet `74306fec`) and writes a
+`fixed.py` manifest. V8 and Octane programs concatenate `base.js` and the
+benchmark files unchanged, then a driver that resets the RNG, calls `Setup`,
+calls `run()` a frozen number of times and calls `TearDown` for every
+Benchmark; AWFY programs bundle the CommonJS modules and call
+`innerBenchmarkLoop` with the harness's default inner iterations, so the
+benchmark's own result check runs. No program reads a clock, and each prints
+one completion line naming its run counts. `--pilot N` replaces the frozen
+counts for choosing new ones; a pilot manifest is not a baseline.
+
+```sh
+python3 scripts/benchmark/suite_matrix.py build \
+  --v8-source /path/to/js-engine-benchmark --octane-source /path/to/octane \
+  --awfy-source /path/to/are-we-fast-yet --output target/suite-matrix
+python3 scripts/benchmark/fixed.py --manifest target/suite-matrix/manifest.json \
+  --engine quickjs=/path/to/quickjs/qjs --engine oxide=/path/to/qjs \
+  --repeat 5 --cpu 2 --linux-counters --timeout 900 --output target/suite-results
+python3 scripts/benchmark/suite_matrix.py table target/suite-results/results.json \
+  --reference quickjs --instructions
+```
+
+`table` prints the median wall time and instructions per workload and engine,
+each engine's time ratio to the reference, and their geometric mean; a
+workload with any failed sample shows `fail`. The [new core baseline](../../docs/performance/baseline.md)
+is this table on the reference machine.
 
 ## Profile-guided optimization
 
