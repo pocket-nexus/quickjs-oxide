@@ -3,7 +3,8 @@
 The new core of quickjs-oxide (issue #122), built in phases next to the current
 engine. Phase 1 is the value and heap layer: no bytecode runs and no builtin
 exists yet. The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
-the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/performance/new-core-phase1-results.md).
+the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/performance/new-core-phase1-results.md);
+phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md).
 
 The crate has `#![forbid(unsafe_code)]` and no dependency on the root crate.
 

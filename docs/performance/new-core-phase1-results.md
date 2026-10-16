@@ -211,4 +211,5 @@ stale access hit a live record.
 
 Phase 1's exit condition is met: the table above and the M6 result are
 recorded. They support starting phase 2 on the #122 design; the go/no-go gate
-of #122 is in phase 3.
+of #122 is in phase 3. The [phase 2 plan](new-core-phase2.md) starts from the
+ledger split above.
