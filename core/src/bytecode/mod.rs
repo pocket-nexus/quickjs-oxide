@@ -62,12 +62,6 @@ impl Insn {
         PropertyKey::from_raw(self.imm)
     }
 
-    /// The `(depth, index)` pair of an [`Format::AScope`] instruction.
-    #[inline]
-    pub const fn scope_slot(self) -> (u32, u32) {
-        (self.imm >> 16, self.imm & 0xFFFF)
-    }
-
     /// Whether `imm` is a jump target.
     #[inline]
     pub const fn has_target(self) -> bool {
@@ -131,6 +125,18 @@ pub mod flags {
     pub const SCRIPT: u8 = 1 << 3;
 }
 
+/// Where a closure created by `MakeClosure` gets one captured cell, read in
+/// the frame that runs the `MakeClosure`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Capture {
+    /// A slot with no cell (a global the closure reads by name).
+    None,
+    /// The cell in this register of the creating frame.
+    Register(u16),
+    /// The creating function's own capture at this index.
+    Outer(u16),
+}
+
 /// Source information kept for the disassembler and error messages.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DebugInfo {
@@ -159,6 +165,9 @@ pub struct CodeUnit {
     pub constant_count: u32,
     /// Inner functions, by `MakeClosure` index. Published before the unit.
     pub children: Box<[CodeUnitId]>,
+    /// The cells a closure over this unit captures, from the frame that
+    /// creates it; `LoadCaptured` indexes them.
+    pub captures: Box<[Capture]>,
     pub debug: DebugInfo,
 }
 
@@ -186,7 +195,7 @@ pub struct CodeStore {
 impl CodeStore {
     /// Validates `unit` and appends it.
     pub fn publish(&mut self, unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
-        validate::validate(&unit, self.units.len())?;
+        validate::validate(&unit, &self.units)?;
         let id = u32::try_from(self.units.len()).expect("code store overflow");
         self.units.push(unit);
         Ok(CodeUnitId(id))
@@ -227,6 +236,7 @@ impl CodeStore {
                     + unit.code.len() * size_of::<Insn>()
                     + unit.handlers.len() * size_of::<Handler>()
                     + unit.children.len() * 4
+                    + unit.captures.len() * size_of::<Capture>()
             })
             .sum()
     }

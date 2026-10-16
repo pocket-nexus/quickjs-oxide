@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use super::{CodeUnit, Format, flags};
+use super::{Capture, CodeUnit, Format, Opcode, flags};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidateErrorKind {
@@ -16,7 +16,7 @@ pub enum ValidateErrorKind {
     LayoutOverflow,
     Register(u32),
     WideRegister(u32),
-    /// The call window `b ..= b + 1 + c` reaches past `register_count`.
+    /// A call's callee, receiver or arguments reach past `register_count`.
     CallWindow,
     /// The element range of `NewArray` reaches past `register_count`.
     RegisterRange,
@@ -25,6 +25,9 @@ pub enum ValidateErrorKind {
     Child(u32),
     /// A child id that is not yet published.
     UnpublishedChild(u32),
+    Capture(u32),
+    /// A child captures a register this unit does not have.
+    ChildCapture(u32),
     /// `start < end <= code.len()` does not hold.
     HandlerRange,
     /// Two handler ranges overlap without nesting, or an enclosing handler
@@ -59,9 +62,9 @@ fn fail<T>(at: Option<u32>, kind: ValidateErrorKind) -> Result<T, ValidateError>
     Err(ValidateError { at, kind })
 }
 
-/// Checks every operand of `unit`. `published` is the number of units already
-/// in the store; children must be among them.
-pub fn validate(unit: &CodeUnit, published: usize) -> Result<(), ValidateError> {
+/// Checks every operand of `unit`. `published` are the units already in the
+/// store; children must be among them.
+pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateError> {
     use ValidateErrorKind as E;
     let len = unit.code.len() as u32;
     let registers = unit.register_count as u32;
@@ -81,8 +84,18 @@ pub fn validate(unit: &CodeUnit, published: usize) -> Result<(), ValidateError> 
         return fail(None, E::LineTable);
     }
     for (index, &child) in unit.children.iter().enumerate() {
-        if child.0 as usize >= published {
+        let Some(child_unit) = published.get(child.0 as usize) else {
             return fail(Some(index as u32), E::UnpublishedChild(child.0));
+        };
+        for capture in &child_unit.captures {
+            match *capture {
+                Capture::None => {}
+                Capture::Register(r) if (r as u32) < registers => {}
+                Capture::Outer(i) if (i as usize) < unit.captures.len() => {}
+                Capture::Register(r) | Capture::Outer(r) => {
+                    return fail(Some(index as u32), E::ChildCapture(r as u32));
+                }
+            }
         }
     }
 
@@ -103,9 +116,15 @@ pub fn validate(unit: &CodeUnit, published: usize) -> Result<(), ValidateError> 
             }
         };
         match insn.op.format() {
-            Format::None | Format::Key | Format::Count => {}
-            Format::A | Format::AInt | Format::AKey | Format::AScope | Format::ACount => {
+            Format::None | Format::Key => {}
+            Format::A | Format::AInt | Format::AKey | Format::ACount => {
                 register(insn.a)?;
+            }
+            Format::ACapture => {
+                register(insn.a)?;
+                if insn.imm as usize >= unit.captures.len() {
+                    return fail(at, E::Capture(insn.imm));
+                }
             }
             Format::AB | Format::ABInt | Format::ABKey => {
                 register(insn.a)?;
@@ -136,7 +155,13 @@ pub fn validate(unit: &CodeUnit, published: usize) -> Result<(), ValidateError> 
             }
             Format::Call => {
                 register(insn.a)?;
-                if insn.b as u32 + 1 + insn.c as u32 >= registers {
+                // Call and TailCall: callee, arguments. The others: receiver
+                // or callee, then callee or new.target, then arguments.
+                let operands = match insn.op {
+                    Opcode::Call | Opcode::TailCall => 1,
+                    _ => 2,
+                };
+                if insn.b as u32 + operands + insn.c as u32 > registers {
                     return fail(at, E::CallWindow);
                 }
             }
