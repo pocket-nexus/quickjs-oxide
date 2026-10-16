@@ -3,7 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from fixed import load_workloads, parse_darwin_counters
+from fixed import load_workloads, parse_darwin_counters, parse_linux_counters
 from run import digest
 
 
@@ -22,6 +22,20 @@ class ManifestTests(unittest.TestCase):
             parse_darwin_counters(raw.replace('9,876 cycles elapsed\n', ''))
         with self.assertRaisesRegex(ValueError, 'must be positive'):
             parse_darwin_counters(raw.replace('9,876 cycles elapsed', '0 cycles elapsed'))
+
+    def test_linux_perf_stat_counter_fixture(self):
+        raw = ("# started on Fri Oct 16 08:00:00 2026\n\n"
+               "1234.56,msec,task-clock,1234560000,100.00,0.999,CPUs utilized\n"
+               "5678901234,,cycles:u,1234000000,100.00,,\n"
+               "9876543210,,instructions:u,1234000000,100.00,1.74,insn per cycle\n")
+        self.assertEqual(parse_linux_counters(raw), {
+            'task_clock_ms': 1234.56, 'cycles': 5678901234, 'instructions': 9876543210})
+        self.assertEqual(parse_linux_counters(raw.replace(',task-clock,', ',task-clock:u,'))['task_clock_ms'],
+                         1234.56)
+        with self.assertRaisesRegex(ValueError, 'not counted'):
+            parse_linux_counters(raw.replace('5678901234,,cycles:u', '<not counted>,,cycles:u'))
+        with self.assertRaisesRegex(ValueError, 'missing Linux counters'):
+            parse_linux_counters(raw.replace('instructions:u', 'branches:u'))
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

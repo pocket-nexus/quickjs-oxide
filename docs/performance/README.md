@@ -10,6 +10,9 @@ The engine uses a single `ExecCode` word stream and a stack VM. The compiler pub
 - [Typed storage](typed-arenas.md): captured variables, shapes and collection.
 - [Measurement method](measurement.md): build identity, fixed workloads, profiles and resource costs.
 - [GC policy](../cycle-collection.md): budget and service points for automatic cycle collection.
+- [New core, phase 0](new-core-phase0.md): comparison base, language surface not carried over, collector stress mode.
+- [Baseline](baseline.md): fixed-work V8 v7, Octane, AWFY and probe table against QuickJS on the reference machine.
+- [New core, phase 1](new-core-phase1.md): value and heap plan for the new core tracked in #122, with milestones and acceptance checks.
 
 ## Tools
 
