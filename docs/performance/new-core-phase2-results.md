@@ -5,8 +5,8 @@ core (#122) as its milestones land: register bytecode, the lowering from the
 compiler's stack code, and the main loop in `oxide-core`
 ([`core/`](../../core/README.md)). M3 and M4 record the arithmetic, call and
 closure probes and the loop's size; M5 runs the fixed probes through the
-`oxide-run` driver and the baseline's runner; M6 repeats the full tables of
-section 9.
+`oxide-run` driver and the baseline's runner; M6 records the exit tables of
+section 9 ([below](#m6-exit-tables)).
 
 ## Identity (M3, M4)
 
@@ -189,3 +189,177 @@ python3 scripts/benchmark/fixed.py --manifest docs/performance/probes/fixed/mani
   --gc-stress=1` (built with `new-core-gc-stress`) over the fixed probes at
   smoke size against the manifest and over the corpus against the unstressed
   run; CI's fast job runs it.
+
+## M6: exit tables
+
+### Identity
+
+| Item | Value |
+| --- | --- |
+| Machine | eric-83am, AMD Ryzen 7 7840HS, Linux 7.2.9, measured processes pinned to CPU 2: the [baseline](baseline.md)'s reference machine |
+| New core | `oxide-run` from `core/phase2-m6` (engine code as of `0eb02dd7`), `cargo build --release -p quickjs-oxide-cli --bin oxide-run`, rustc 1.99.0, sha256 `02948bbe04fbe605…` |
+| Current core | the baseline's `qjs` (main `8e16f672`), sha256 `3cc9c95d597af1bd…` |
+| QuickJS | the baseline's 2026-06-04 oracle build, sha256 `3fd16c25ae63a7cb…` |
+| Programs | `docs/performance/probes/fixed/manifest.json` (unchanged since the baseline); Table B and the loop probes from [`probes/new-core/phase2.py`](probes/new-core/phase2.py) |
+| Whole-process runs | `fixed.py --repeat 5 --cpu 2 --linux-counters --timeout 900`, the three engines interleaved in rotating order; all 300 samples printed the manifest's stdout |
+| Slopes | `phase2.py --engine … --repeat 5 --cpu 2`: (I(2N) − I(N)) / N, medians, N = 2·10⁵ (2·10⁴ for `tdz`, `type_error`, `bigint_64`) |
+
+Raw samples stay outside the repository (`target/m6/` of the measuring tree).
+
+### Table A: the fixed probes
+
+Instructions per iteration (slopes, so startup and compilation cancel; the
+QuickJS column is within 1.5% of section 9's whole-process figures):
+
+| Probe | QuickJS | Current core | New core | New / QuickJS | Current / new |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `empty_loop` | 90 | 295 | 109 | 1.21 | 2.7 |
+| `numeric_local_loop` | 167 | 1,007 | 160 | 0.96 | 6.3 |
+| `local_read` | 130 | 830 | 174 | 1.34 | 4.8 |
+| `local_read_with_setup` | 130 | 830 | 174 | 1.34 | 4.8 |
+| `local_move` | 133 | 679 | 161 | 1.21 | 4.2 |
+| `argument_move` | 117 | 457 | 135 | 1.15 | 3.4 |
+| `call0` | 388 | 2,231 | 691 | 1.78 | 3.2 |
+| `prop_read` | 201 | 543 | 295 | 1.47 | 1.8 |
+| `prop_write` | 163 | 958 | 220 | 1.35 | 4.4 |
+| `array_read` | 227 | 505 | 294 | 1.30 | 1.7 |
+| `array_write` | 193 | 1,406 | 279 | 1.45 | 5.0 |
+| `tdz` | 13,612 | 36,758 | 3,716 | 0.27 | 9.9 |
+| `type_error` | 13,623 | 32,948 | 2,542 | 0.19 | 13.0 |
+| `bigint_64` | 1,843 | 7,488 | 6,109 | 3.31 | 1.2 |
+
+Whole process, the three engines interleaved (time is wall time, median of
+5; instructions include startup and compilation):
+
+| Workload | QuickJS ms | current ms | new ms | QuickJS G instr | current G instr | new G instr | new / QuickJS time | new / QuickJS instr |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| numeric_local_loop | 47 | 140 | 32 | 0.50 | 3.03 | 0.48 | 0.69 | 0.96 |
+| numeric_coercion_loop | 19 | 233 | 22 | 0.15 | 2.62 | 0.21 | 1.15 | 1.37 |
+| local_read_with_setup | 53 | 123 | 40 | 0.39 | 2.50 | 0.52 | 0.76 | 1.34 |
+| local_read | 54 | 123 | 41 | 0.39 | 2.50 | 0.52 | 0.76 | 1.34 |
+| bigint_32 | 16 | 52 | 50 | 0.06 | 0.60 | 0.71 | 3.17 | 11.80 |
+| bigint_64 | 21 | 62 | 45 | 0.19 | 0.76 | 0.60 | 2.12 | 3.22 |
+| bigint_256 | 16 | 33 | 26 | 0.08 | 0.32 | 0.25 | 1.63 | 3.13 |
+| prop_read | 31 | 60 | 37 | 0.40 | 1.09 | 0.59 | 1.20 | 1.46 |
+| prop_write | 28 | 96 | 32 | 0.33 | 1.92 | 0.44 | 1.14 | 1.35 |
+| array_read | 32 | 57 | 36 | 0.46 | 1.02 | 0.59 | 1.12 | 1.29 |
+| array_write | 30 | 140 | 38 | 0.39 | 2.82 | 0.56 | 1.24 | 1.44 |
+| call0 | 31 | 116 | 43 | 0.31 | 1.79 | 0.55 | 1.41 | 1.78 |
+| string_bridge | 18 | 50 | 25 | 0.14 | 0.70 | 0.22 | 1.38 | 1.63 |
+| type_error | 20 | 47 | 15 | 0.17 | 0.47 | 0.03 | 0.71 | 0.17 |
+| tdz | 21 | 50 | 15 | 0.18 | 0.53 | 0.04 | 0.71 | 0.25 |
+| local_move | 55 | 200 | 61 | 0.80 | 4.08 | 0.97 | 1.11 | 1.21 |
+| argument_move | 53 | 134 | 50 | 0.70 | 2.75 | 0.81 | 0.95 | 1.15 |
+| number_owner_fallback | 24 | 58 | 20 | 0.15 | 1.01 | 0.16 | 0.85 | 1.07 |
+| object_move | 19 | 45 | 19 | 0.12 | 0.69 | 0.14 | 1.00 | 1.09 |
+| empty_loop | 52 | 147 | 60 | 0.90 | 2.96 | 1.09 | 1.16 | 1.21 |
+
+Geometric means over the 20 probes against QuickJS: the current core
+**2.89×** time and **5.03×** instructions (the baseline recorded 2.90× and
+5.02×), the new core **1.12×** time and **1.32×** instructions.
+
+### Table B: the phase 1 workloads as JavaScript
+
+Instructions per iteration, slopes:
+
+| Workload | QuickJS | Current core | New core | Phase 1, Rust heap work only |
+| --- | ---: | ---: | ---: | ---: |
+| `{a:i,b:i}` | 1,298 | 2,680 | 904 | 415 |
+| `new P(i)`, two `this.x =` | 1,878 | 5,479 | 2,041 | 602 |
+| `let j = i; s = () => j` | 2,072 | 18,881 | 1,827 | |
+| depth-3 prototype read | 243 | 1,194 | 683 | |
+
+Heap and interpreter together, the literal and the closure are below
+QuickJS and the constructor is 9% above it. Over phase 1's heap-only Rust
+numbers, the interpreter adds about 490 instructions to the literal and about
+1,440 to the constructor. This page does not split them further; the
+constructor's share includes the uncached `prototype` lookup in `New` and two
+uncached `this.x =` stores, which phase 3's constructor and store caches
+target. The prototype read walks three shapes uncached per iteration (2.8×
+QuickJS).
+
+### Table C: the loop
+
+1. **Size.** `oxide_core::vm::interp::run` is 12,684 bytes; the measured
+   current core's `execute_admitted_in_state` is 46,232 bytes (31,810 in the
+   M3/M4 test binary; #119 measured about 64 KB on another build). The new
+   loop is well below the current one.
+2. **Instructions per register instruction.** `empty_loop` executes three
+   register instructions per iteration (`JNlt`, `Inc`, `Jmp`) at 109
+   instructions, 36 each; `numeric_local_loop` four (`JNgtI`, `AddI`, `SubI`,
+   `Jmp`) at 160, 40 each. The current core's dispatch costs 61–82. Of the
+   36, 19 are the shared dispatch header: the `code[pc]` check, loading the
+   8-byte instruction, decoding its four operand fields and the jump-table
+   branch (`pc` and the code pointer live on the stack). The rest is the arm.
+3. **Layout.** As in #119, one saved LTO build of `oxide-run` was relinked
+   at `.text` offsets of 16, 32, 48, 64, 128, 192, 256, 1024 and 4096 bytes
+   ([`probes/new-core/relink.py`](probes/new-core/relink.py)): byte-identical
+   machine code at different addresses, plus the default placement. Seven
+   repeats per variant, interleaved:
+
+   | Probe | Cycles, best / median / worst (G) | Spread of cycles | Spread of time |
+   | --- | --- | ---: | ---: |
+   | `empty_loop` | 0.192 / 0.211 / 0.256 | 30% | 22% |
+   | `numeric_local_loop` | 0.085 / 0.094 / 0.116 | 33% | 21% |
+   | `call0` | 0.144 / 0.145 / 0.145 | 0.9% | 2.1% |
+
+   Every 64-byte-aligned offset runs exactly like the default; only the
+   16-, 32- and 48-byte shifts move: about +22% cycles at 16 and −9% at 32
+   on both loop probes. The tight loops are sensitive to where the dispatch header and
+   the hot arms fall within 64-byte lines; `call0`, whose iteration crosses
+   more code, is not. Instruction counts are identical in every variant.
+4. **Bounds checks** on the hot paths, counted in the disassembly of the
+   default variant: the `Add` arm (Int32 path: two tag checks, the overflow
+   branch, the store) and the compare-jump arm (two tag checks, the mask
+   test) contain none. The register window is a `&mut [Value; 512]` indexed
+   by 8-bit operands, so register reads and writes need no check. The one
+   remaining bounds check per dispatch is `code[pc]` in the header. Section
+   11's `get_unchecked` experiment therefore has a single candidate site, worth
+   at most one compare and branch per register instruction.
+
+### The benchmark programs
+
+Every function of the baseline's suite programs, lowered on its own
+(`lowering_census`, an ignored test in
+`src/engine/compiler/register/run_tests.rs`, over the baseline's
+`suite_matrix.py` build):
+
+| Programs | Functions lowered | Declined, by construct |
+| --- | ---: | --- |
+| V8 v7 crypto, deltablue, navier-stokes, richards, splay | all but one each | the harness's `print` shim (rest parameters) |
+| V8 v7 raytrace, earley-boyer | 83/86, 398/435 | `arguments` (1, 34), for-in, `eval` |
+| V8 v7 regexp | 29/43 | RegExp literals (12), one function over 256 registers |
+| Octane (15) | box2d 877/1013, pdfjs 940/980, typescript 1784/1811, mandreel 1494/1507, … | `arguments` (box2d 135), RegExp literals, for-in, object literal methods (pdfjs), `eval` |
+| AWFY (14 bundles) | 396/493 each | classes (81), `ToObject` (14), iterators |
+
+- **The register window.** One function in the whole suite exceeds 256
+  registers: `RegExpBenchmark` in V8 v7 and Octane regexp (315 and 316). It
+  is a straight-line setup function, not a hot loop. Mandreel and PdfJS,
+  which section 11 expected to need the wide shuttles, fit the window, so the
+  window layout needs no revisiting in phase 3.
+- **What the V8 v7 programs need next.** With the harness's `print` shim
+  removed, the five programs that lower completely run until their first
+  builtin (`Math`); raytrace and earley-boyer need `arguments`, regexp needs
+  RegExp literals. Builtins, `arguments` and RegExp are the phase 3 surface
+  the go/no-go needs.
+
+### Exit
+
+- Tables A–C and the M2 corpus result (above, M3/M4) are recorded here.
+- `gc-stress` is green on everything section 6 lists: `cargo test -p
+  oxide-core --features gc-stress`, the lowering and two-core corpus under
+  `new-core-gc-stress`, and `oxide-run --gc-stress=1` over the fixed probes
+  and the corpus in CI.
+- The current engine's Test262 is unchanged: `test-test262.sh --check`
+  authenticates the spec and receipts, `--focused` matches the frozen vector
+  (6,844 of 6,844 variants), and `--full` replays the complete result body
+  (83,304 passes of 83,354 eligible variants, 102,037 total, as frozen).
+- **The two design checks of section 9 pass.** `vm::run` is 12.7 KB against
+  the current loop's 46 KB, and `call0` beats the current core by 3.2× in
+  instructions and 2.7× in time. Phase 2 goes forward to phase 3.
+- **Superinstructions** (section 10): none of the current core's
+  execution-only superinstructions or numeric regions is wanted back. The
+  probes they served (`numeric_local_loop`, the moves) are at or near
+  QuickJS without them. What remains is the dispatch header and code
+  alignment (Table C), plus the uncached global, property and constructor
+  paths that phase 3's inline caches replace.

@@ -252,3 +252,104 @@ fn run_probe_file() {
     };
     print!("{output}");
 }
+
+/// Measurement hook for M6 (section 11): lowers every function of every
+/// `.js` file in `CENSUS_DIR` on its own and prints, per file, the
+/// functions lowered, every reason a function was declined, and the
+/// functions whose register count (`1 + params + locals + max depth`)
+/// exceeds the 256-register window. Ignored in ordinary runs.
+#[test]
+#[ignore = "measurement hook"]
+fn lowering_census() {
+    use oxide_core::bytecode::CodeBuilder;
+    use oxide_core::bytecode::builder::UnitLayout;
+
+    use super::{LowerError, lower_function};
+    use crate::engine::code::function::UnlinkedFunction;
+
+    fn walk<'a>(
+        function: &'a UnlinkedFunction,
+        parent: Option<u16>,
+        out: &mut Vec<(&'a UnlinkedFunction, Option<u16>)>,
+    ) {
+        out.push((function, parent));
+        for constant in function.constants() {
+            if let Some(child) = constant.as_child() {
+                walk(child, Some(function.metadata().argument_count), out);
+            }
+        }
+    }
+
+    let directory = std::env::var("CENSUS_DIR").expect("CENSUS_DIR");
+    let mut files: Vec<_> = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "js"))
+        .collect();
+    files.sort();
+    for path in files {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let source = std::fs::read_to_string(&path).unwrap();
+        let script = match compile_unlinked_script(&source) {
+            Ok(script) => script,
+            Err(error) => {
+                println!("{name}\tcompile error: {error}");
+                continue;
+            }
+        };
+        let mut runtime = Runtime::new(HeapLimits::default()).unwrap();
+        let mut builder = CodeBuilder::new();
+        builder.op(Opcode::ReturnUndefined);
+        let placeholder = runtime
+            .publish(builder.finish(UnitLayout {
+                register_count: 1,
+                ..UnitLayout::default()
+            }))
+            .unwrap();
+        let mut functions = Vec::new();
+        walk(&script, None, &mut functions);
+        let (mut lowered, mut reasons, mut wide) =
+            (0, std::collections::BTreeMap::new(), Vec::new());
+        for (function, parent) in &functions {
+            let metadata = function.metadata();
+            let depth =
+                crate::engine::code::bytecode::compute_stack_size(function.code(), u16::MAX)
+                    .map_or(0, |size| u32::from(size.max_stack));
+            let registers =
+                1 + u32::from(metadata.argument_count) + u32::from(metadata.local_count) + depth;
+            if registers > 256 {
+                let label = function
+                    .func_name()
+                    .map(|name| name.to_utf8_lossy())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| "<anonymous>".into());
+                wide.push(format!("{label} ({registers})"));
+            }
+            let children = function
+                .constants()
+                .iter()
+                .filter(|constant| constant.as_child().is_some())
+                .map(|_| placeholder)
+                .collect();
+            match lower_function(&mut runtime, function, *parent, children) {
+                Ok(_) => lowered += 1,
+                Err(LowerError::Unsupported(construct)) => {
+                    *reasons.entry(construct).or_insert(0) += 1;
+                }
+                Err(error) => {
+                    *reasons.entry(format!("error: {error}")).or_insert(0) += 1;
+                }
+            }
+        }
+        let reasons: Vec<String> = reasons
+            .into_iter()
+            .map(|(reason, count)| format!("{reason} ×{count}"))
+            .collect();
+        println!(
+            "{name}\t{lowered}/{}\t{}\t{}",
+            functions.len(),
+            reasons.join(", "),
+            wide.join(", ")
+        );
+    }
+}
