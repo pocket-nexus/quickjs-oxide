@@ -70,3 +70,72 @@ sweep not hitting a stale entry (with pruning disabled the test fails). The
 stress verifier checks after every collection that every filled entry names
 live records. All of it passes with and without `gc-stress`, and the
 two-core corpus and `check-new-core-stress.py` are unchanged.
+
+## M2: stores, globals, constructors, polymorphism, accessors
+
+Instructions per iteration (slopes), the three binaries measured together:
+
+| Probe | QuickJS | Phase 2 | M1 | M2 | Phase 2 / M2 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `prop_write` | 163 | 220 | 224 | 169 | 1.30 |
+| `call0` | 388 | 691 | 696 | 596 | 1.16 |
+| `new P(i)`, two `this.x =` (`constructor`) | 1,878 | 2,041 | 2,064 | 1,177 | 1.73 |
+| `{a:i,b:i}` (`literal`) | 1,298 | 904 | 915 | 905 | 1.00 |
+| `prop_read` | 201 | 295 | 218 | 212 | 1.39 |
+| depth-3 prototype read (`proto_read_3`) | 243 | 683 | 394 | 271 | 2.52 |
+| `empty_loop` | 90 | 109 | 108 | 105 | |
+| `tdz` | 13,612 | 3,819 | 3,694 | 3,496 | |
+
+- **`prop_write`** is an in-place `SetField` hit, level with QuickJS.
+- **`call0`** reads its callee with a cached `GetGlobal` (a generation
+  compare and a load). The rest of the gap to QuickJS is the call itself.
+- **`constructor`** is now 37% below QuickJS. The `New` site reads
+  `prototype` from the constructor's cached slot, and both `this.x =`
+  stores are transition hits into the slots the receiver reserved.
+- **`literal`** has no cache site: `NewObject` and `DefineField` were
+  already exact-sized in phase 2.
+- **`proto_read_3`** gains the cached `GetGlobal o` and is 12% above
+  QuickJS.
+- `tdz` and the other probes run global lookups in their setup or error
+  paths, and drop with the global cache.
+
+**The loop.** `vm::interp::run` is 11,268 bytes, smaller than at the end of
+phase 2 (12,684). The global lookup, which phase 2 inlined into
+`GetGlobal`, is now an out-of-line miss path. The `SetField` and global
+hits read the heap's arenas as fields, as `GetField` does.
+
+**`ic-stats` on the corpus** (`oxide-run --ic-stats` on
+`core/tests/corpus/caches.js`, a program written to miss) shows four
+things:
+
+- Every kind fills and hits.
+- The polymorphic sites keep their rows, and a site that sees six shapes
+  goes megamorphic and stops recording.
+- Transitions on `{}` literals always miss at the full range, because a
+  literal reserves exactly its `DefineField` count.
+- A string's `length` goes through the miss path every time.
+
+The last two are M5 candidates, to be weighed against the V8 v7 profiles.
+
+**Correctness.**
+
+- `src/engine/compiler/register/ic_tests.rs` uses the debug-build hit
+  counters to check:
+  - transition and in-place `SetField` hits;
+  - a full-range transition miss that still completes and keeps its entry;
+  - a setter added to `%Object.prototype%` after a transition fill, which
+    then runs;
+  - the global generation bump after `delete globalThis.g`, a refill after
+    re-adding `g`, and cached global function calls;
+  - a `New` site that learns four slots from a constructor whose helper
+    adds three properties to `this`; the next construction hits and its
+    stores are all transition hits;
+  - a polymorphic row, its hits, and the megamorphic mark.
+- Removing the cell test from the `SetField` hit, or the generation
+  compare from `GetGlobal`, fails these tests.
+- `core/tests/shapes.rs` checks the two-slot accessor layout in the
+  transition tree and in dictionary mode.
+- The corpus gains `accessors.js` (getters and setters in literals,
+  inherited accessors, a strict write to a getter-only property, a throwing
+  getter) and `caches.js`, both printing identically on both cores with and
+  without stress.

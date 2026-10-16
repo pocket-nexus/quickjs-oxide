@@ -244,6 +244,14 @@ impl CodeStore {
         self.units.len()
     }
 
+    /// Every unit with its id, in publication order.
+    pub fn units(&self) -> impl Iterator<Item = (CodeUnitId, &CodeUnit)> {
+        self.units
+            .iter()
+            .enumerate()
+            .map(|(index, unit)| (CodeUnitId(index as u32), unit))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.units.is_empty()
     }

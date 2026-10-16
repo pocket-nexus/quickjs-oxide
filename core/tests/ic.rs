@@ -53,6 +53,28 @@ impl Reader {
         self.runtime.heap().ics().entry(self.site)
     }
 
+    /// The filled entries of the site, monomorphic or in its polymorphic row.
+    fn entries(&self) -> Vec<IcEntry> {
+        let ics = self.runtime.heap().ics();
+        match ics.poly_row(self.site) {
+            Some(row) => row.iter().copied().filter(IcEntry::is_filled).collect(),
+            None => Some(ics.entry(self.site))
+                .filter(IcEntry::is_filled)
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    /// The entry filled for `object`'s current shape.
+    fn entry_for(&self, object: ObjectId) -> IcEntry {
+        let shape = self.shape(object);
+        let entries = self.entries();
+        *entries
+            .iter()
+            .find(|entry| entry.w0 == shape)
+            .unwrap_or_else(|| panic!("no entry for shape {shape} in {entries:?}"))
+    }
+
     /// A held ordinary object inheriting from `prototype`.
     fn object(&mut self, prototype: Option<ObjectId>) -> ObjectId {
         let heap = self.runtime.heap_mut();
@@ -111,7 +133,7 @@ fn a_shape_change_on_the_receiver_misses_and_refills() {
     reader.add(object, "y", 2);
     assert_ne!(reader.shape(object), before);
     assert_eq!(reader.read(Value::object(object)), Value::int32(1));
-    assert_eq!(reader.entry().w0, reader.shape(object));
+    assert_eq!(reader.entry_for(object).w1, u32::MAX);
     // An object of another layout with the same key reads its own slot.
     let other = reader.object(None);
     reader.add(other, "z", 3);
@@ -127,8 +149,7 @@ fn chain(reader: &mut Reader) -> (ObjectId, ObjectId, ObjectId) {
     reader.add(middle, "m", 0);
     let object = reader.object(Some(middle));
     assert_eq!(reader.read(Value::object(object)), Value::int32(1));
-    let entry = reader.entry();
-    assert_eq!(entry.w0, reader.shape(object));
+    let entry = reader.entry_for(object);
     assert_eq!(entry.w1, top.index());
     assert!(reader.runtime.heap().cell_is_valid(cell(entry)));
     (object, middle, top)
@@ -142,9 +163,9 @@ fn cell(entry: IcEntry) -> oxide_core::ValidityCellId {
 fn a_prototype_read_hits_through_the_cell() {
     let mut reader = Reader::new("x");
     let (object, _, top) = chain(&mut reader);
-    let filled = reader.entry();
+    let filled = reader.entry_for(object);
     assert_eq!(reader.read(Value::object(object)), Value::int32(1));
-    assert_eq!(reader.entry(), filled);
+    assert_eq!(reader.entry_for(object), filled);
     // The holder's slot is read live.
     let x = key(&mut reader.runtime, "x");
     let (slot, _) = reader.runtime.heap().lookup_own(top, x).unwrap();
@@ -159,17 +180,22 @@ fn a_prototype_read_hits_through_the_cell() {
 fn adding_to_any_prototype_invalidates() {
     let mut reader = Reader::new("x");
     let (object, middle, _) = chain(&mut reader);
-    let old = reader.entry();
+    let old = reader.entry_for(object);
     // A shadowing property on the middle prototype.
     reader.add(middle, "x", 2);
     assert!(!reader.runtime.heap().cell_is_valid(cell(old)));
     assert_eq!(reader.read(Value::object(object)), Value::int32(2));
-    assert_eq!(reader.entry().w1, middle.index());
+    assert_eq!(reader.entry_for(object).w1, middle.index());
     // An unrelated property on the top prototype.
     let (object, _, top) = chain(&mut reader);
     reader.add(top, "unrelated", 3);
     assert_eq!(reader.read(Value::object(object)), Value::int32(1));
-    assert!(reader.runtime.heap().cell_is_valid(cell(reader.entry())));
+    assert!(
+        reader
+            .runtime
+            .heap()
+            .cell_is_valid(cell(reader.entry_for(object)))
+    );
 }
 
 #[test]
@@ -185,7 +211,7 @@ fn deleting_from_a_prototype_invalidates() {
 fn reflagging_a_prototype_property_invalidates() {
     let mut reader = Reader::new("x");
     let (object, middle, _) = chain(&mut reader);
-    let old = reader.entry();
+    let old = reader.entry_for(object);
     let m = key(&mut reader.runtime, "m");
     reader
         .runtime
@@ -194,7 +220,12 @@ fn reflagging_a_prototype_property_invalidates() {
         .unwrap();
     assert!(!reader.runtime.heap().cell_is_valid(cell(old)));
     assert_eq!(reader.read(Value::object(object)), Value::int32(1));
-    assert!(reader.runtime.heap().cell_is_valid(cell(reader.entry())));
+    assert!(
+        reader
+            .runtime
+            .heap()
+            .cell_is_valid(cell(reader.entry_for(object)))
+    );
 }
 
 #[test]
@@ -209,7 +240,7 @@ fn set_prototype_on_the_chain_invalidates() {
         .set_prototype(middle, Some(other))
         .unwrap();
     assert_eq!(reader.read(Value::object(object)), Value::int32(9));
-    assert_eq!(reader.entry().w1, other.index());
+    assert_eq!(reader.entry_for(object).w1, other.index());
     // And on the receiver itself, which changes its shape.
     let (object, _, _) = chain(&mut reader);
     reader

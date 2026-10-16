@@ -31,6 +31,8 @@ checked-handles = []
 # The new core's stress mode (collect before every allocation), for the
 # register lowering's tests and the new-core driver.
 new-core-gc-stress = ["oxide-core/gc-stress"]
+# `oxide-run --ic-stats`: the new core's inline-cache counters.
+new-core-ic-stats = ["oxide-core/ic-stats"]
 [dev-dependencies]
 quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
 
