@@ -17,6 +17,10 @@ pub mod native;
 pub(crate) mod number;
 pub(crate) mod ops;
 pub(crate) mod property;
+// Not called yet: `Number.prototype.toString` and the parsers land with the
+// phase 3 builtins. Public for the root crate's differential test.
+#[doc(hidden)]
+pub mod radix;
 pub mod regexp;
 
 use std::fmt;

@@ -27,6 +27,8 @@ mod analysis;
 #[cfg(test)]
 mod ic_tests;
 #[cfg(test)]
+mod radix_tests;
+#[cfg(test)]
 mod run_tests;
 #[cfg(test)]
 mod tests;
