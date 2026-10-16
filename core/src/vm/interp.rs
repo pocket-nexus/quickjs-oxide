@@ -326,7 +326,7 @@ fn cell(value: Value) -> ScopeId {
 }
 
 /// The cell of capture `index` of the running function.
-#[inline]
+#[inline(always)]
 fn captured_cell(heap: &Heap, function: ObjectId, index: u32) -> ScopeId {
     let captures = heap
         .function_scope(function)
@@ -470,10 +470,20 @@ fn alloc_receiver(cx: &mut Cx<'_>, prototype: Value, slots: u32) -> Result<Value
         .as_object()
         .unwrap_or_else(|| cx.realm.intrinsic(Intrinsic::ObjectPrototype));
     cx.heap
-        .alloc_object(ObjectKind::Ordinary, Some(prototype), slots)
+        .alloc_object(
+            ObjectKind::Ordinary,
+            Some(prototype),
+            slots.max(MIN_OPEN_SLOTS),
+        )
         .map(Value::object)
         .map_err(|error| error::heap_error(cx, error))
 }
+
+/// The slots a constructed receiver or an empty literal reserves at least:
+/// such objects usually gain properties after creation (a tree node's
+/// children), and a transition into a free slot is a cache hit where a full
+/// range is a miss and a copy (phase 3 M5, on Splay).
+const MIN_OPEN_SLOTS: u32 = 4;
 
 /// The most receiver slots a construct entry learns: an object past the
 /// dictionary threshold leaves the transition tree anyway.
@@ -488,6 +498,15 @@ fn learn_receiver_size(cx: &mut Cx<'_>, done: &Frame) {
     if done.flags & frame_flags::ENTRY != 0 {
         return;
     }
+    // A receiver that fits the slots every receiver gets teaches nothing:
+    // checked first, so a constructor that stays small pays only this.
+    let Some(receiver) = cx.heap.vm.registers[done.base as usize].as_object() else {
+        return;
+    };
+    let width = cx.heap.shape(cx.heap.shape_of(receiver)).width;
+    if width <= MIN_OPEN_SLOTS {
+        return;
+    }
     let caller = cx.heap.vm.frames.last().expect("a caller");
     let unit = cx.code.get(caller.unit);
     let insn = unit.code[done.return_pc as usize - 1];
@@ -496,13 +515,9 @@ fn learn_receiver_size(cx: &mut Cx<'_>, done: &Frame) {
     }
     let site = unit.ic_base as usize + insn.imm as usize;
     let mut entry = cx.heap.ics.entries[site];
-    let Some(receiver) = cx.heap.vm.registers[done.base as usize].as_object() else {
-        return;
-    };
     if !entry.is_filled() || cx.heap.is_dictionary(receiver) {
         return;
     }
-    let width = cx.heap.shape(cx.heap.shape_of(receiver)).width;
     if width > entry.w2 {
         entry.w2 = width.min(MAX_LEARNED_SLOTS);
         cx.heap.ics.entries[site] = entry;
@@ -1020,9 +1035,14 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     let site = ic_base + insn.c as usize;
                     let entry = cx.heap.ics.entries[site];
                     let heap = &cx.heap.objects;
-                    if let Some(value) =
-                        ic::get_hit(heap, &cx.heap.cells, &cx.heap.values, entry, object)
-                    {
+                    if let Some(value) = ic::get_hit(
+                        heap,
+                        &cx.heap.cells,
+                        &cx.heap.values,
+                        &cx.heap.strings,
+                        entry,
+                        object,
+                    ) {
                         reg!(insn.a) = value;
                         cx.heap.ics.count_hit(IcKind::Get);
                         continue 'dispatch;
@@ -1227,9 +1247,14 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                 // ---- allocation ----
                 Opcode::NewObject => {
                     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
-                    let object =
-                        cx.heap
-                            .alloc_object(ObjectKind::Ordinary, Some(prototype), insn.imm);
+                    let slots = if insn.imm == 0 {
+                        MIN_OPEN_SLOTS
+                    } else {
+                        insn.imm
+                    };
+                    let object = cx
+                        .heap
+                        .alloc_object(ObjectKind::Ordinary, Some(prototype), slots);
                     write!('dispatch, insn.a,
                         object
                             .map(Value::object)
@@ -1499,8 +1524,45 @@ enum Test {
 }
 
 impl Test {
+    /// `==` and `===` decided from the bits, before the general algorithms:
+    /// the same
+    /// value that is not a double (`NaN` is not equal to itself), and
+    /// `null` or `undefined` against anything (phase 3 M5, on Richards'
+    /// `x == null` tests). `None` for the rest.
+    #[inline(always)]
+    fn quick(self, x: Value, y: Value) -> Option<bool> {
+        // Kept out of the comparison arms (it is called from `slow`), whose
+        // size the hot numeric loops are sensitive to.
+        if matches!(self, Test::Relation(_)) {
+            return None;
+        }
+        if x == y && !x.is_double() {
+            return Some(true);
+        }
+        let nullish = |value: Value| value.is_undefined() || value.is_null();
+        match self {
+            Test::Loose if nullish(x) || nullish(y) => Some(nullish(x) && nullish(y)),
+            // Different bits: equal only between numbers, strings or
+            // BigInts of equal value.
+            Test::Strict
+                if nullish(x)
+                    || nullish(y)
+                    || x.as_bool().is_some()
+                    || y.as_bool().is_some()
+                    || x.as_object().is_some()
+                    || y.as_object().is_some() =>
+            {
+                Some(false)
+            }
+            _ => None,
+        }
+    }
+
     #[inline(never)]
     fn slow(self, cx: &mut Cx<'_>, x: Value, y: Value) -> Result<bool, Throw> {
+        if let Some(holds) = self.quick(x, y) {
+            return Ok(holds);
+        }
         match self {
             Test::Relation(relation) => ops::relation(cx, relation, x, y),
             Test::Loose => ops::loose_eq(cx, x, y),
@@ -1602,7 +1664,15 @@ fn arith_fast(op: Arith, x: Value, y: Value) -> Option<Value> {
         }
     }
     if x.is_number() && y.is_number() && op != Arith::Pow {
-        return Some(ops::number_op(op, x.as_f64()?, y.as_f64()?));
+        let (f, g) = (x.as_f64()?, y.as_f64()?);
+        // The double forms of the hottest operators stay in the arm. A
+        // product stays a double, as a sum does; a quotient becomes an
+        // `Int32` when it is one, since it is often an index.
+        return Some(match op {
+            Arith::Mul => Value::number(f * g),
+            Arith::Div => number::number(f / g),
+            _ => ops::number_op(op, f, g),
+        });
     }
     None
 }

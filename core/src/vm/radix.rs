@@ -58,6 +58,8 @@ pub fn to_string_radix(value: f64, radix: u32) -> String {
         // Every integer below 2^53 is a double, so no shorter digit string
         // can round-trip: the shortest digits are the exact ones.
         u64_digits(magnitude as u64, radix)
+    } else if radix == 10 {
+        place_free(decimal_sequence(magnitude), 10)
     } else {
         free_big(magnitude, radix)
     };
@@ -290,9 +292,45 @@ struct DigitSequence {
 /// The reference FREE formatter on exact rationals.
 fn free_big(value: f64, radix: u32) -> String {
     let sequence = shortest_sequence(value, radix);
-    let exponential =
-        radix == 10 && (sequence.exponent <= -6 || sequence.exponent > DTOA_MAX_DIGITS[8] + 4);
     let digits = padded_digits(&sequence, radix);
+    place_free((digits, sequence.exponent), radix)
+}
+
+/// [`shortest_sequence`] in radix 10 without big integers: Rust's
+/// fixed-precision formatting rounds the exact value to nearest-even, which
+/// is the rounding QuickJS applies at each digit count, so the walk down
+/// from 17 digits is a format and a parse per count. Returns the digits
+/// (trailing zeros removed) and the decimal point's position.
+fn decimal_sequence(value: f64) -> (String, i32) {
+    let mut best: Option<(String, i32)> = None;
+    let mut digits = DTOA_MAX_DIGITS[8];
+    loop {
+        let text = format!("{:.*e}", (digits - 1) as usize, value);
+        if best.is_some() && text.parse::<f64>() != Ok(value) {
+            break;
+        }
+        let (mantissa, exponent) = text.split_once('e').expect("an exponent");
+        let exponent: i32 = exponent.parse().expect("a decimal exponent");
+        let mut kept: String = mantissa.chars().filter(|c| *c != '.').collect();
+        while kept.len() > 1 && kept.ends_with('0') {
+            kept.pop();
+        }
+        digits = kept.len() as i32;
+        best = Some((kept, exponent + 1));
+        if digits == 1 {
+            break;
+        }
+        digits -= 1;
+    }
+    best.expect("17 digits always round-trip")
+}
+
+/// Places FREE-format digits: radix 10 switches to exponential notation
+/// outside QuickJS's thresholds; other radices never do.
+fn place_free((digits, exponent): (String, i32), radix: u32) -> String {
+    let sequence_exponent = exponent;
+    let exponential =
+        radix == 10 && (sequence_exponent <= -6 || sequence_exponent > DTOA_MAX_DIGITS[8] + 4);
     if exponential {
         let mut out = String::with_capacity(digits.len() + 8);
         out.push_str(&digits[..1]);
@@ -300,13 +338,13 @@ fn free_big(value: f64, radix: u32) -> String {
             out.push('.');
             out.push_str(&digits[1..]);
         }
-        let exponent = sequence.exponent - 1;
+        let exponent = sequence_exponent - 1;
         out.push('e');
         out.push(if exponent < 0 { '-' } else { '+' });
         out.push_str(&exponent.abs().to_string());
         return out;
     }
-    let exponent = sequence.exponent;
+    let exponent = sequence_exponent;
     if exponent <= 0 {
         let mut out = String::with_capacity(2 + (-exponent) as usize + digits.len());
         out.push_str("0.");

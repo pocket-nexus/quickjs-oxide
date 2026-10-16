@@ -15,7 +15,8 @@
 
 use crate::bytecode::{CodeUnit, Opcode};
 use crate::heap::arena::Arena;
-use crate::heap::object::{NONE, ObjectHeader, flags};
+use crate::heap::object::{NONE, ObjectHeader, ObjectKind, flags};
+use crate::heap::string::StringRecord;
 use crate::heap::values::ValueHeap;
 use crate::shape::{STATIC_CELL, ValidityCell};
 use crate::value::{ShapeId, ValidityCellId, Value};
@@ -91,8 +92,15 @@ pub const POLY_TAG: u32 = NONE - 2;
 /// `w0` of a megamorphic site: it saw more than [`POLY`] receiver shapes and
 /// records nothing more.
 pub const MEGA_TAG: u32 = NONE - 3;
+/// `w0` of a `GetField` entry for `length` read on an array or a string: the
+/// array's length or the string's unit count, with no shape to compare.
+pub const LENGTH_TAG: u32 = NONE - 4;
 /// Entries a polymorphic site probes, in order, on the out-of-line path.
 pub const POLY: usize = 4;
+/// Entries of the table megamorphic `GetField` sites share (phase 3 M5): a
+/// direct-mapped cache keyed by receiver shape and property key, as V8's
+/// megamorphic stub cache is.
+pub const MEGA_ENTRIES: usize = 4096;
 
 impl IcEntry {
     pub const EMPTY: IcEntry = IcEntry {
@@ -111,7 +119,7 @@ impl IcEntry {
     /// polymorphic link or the megamorphic mark.
     #[inline]
     pub fn is_filled(&self) -> bool {
-        self.w0 < MEGA_TAG || self.w0 == STRING_RECEIVER_TAG
+        self.w0 < LENGTH_TAG || self.w0 == STRING_RECEIVER_TAG || self.w0 == LENGTH_TAG
     }
 
     /// The validity cell of a filled `GetField` or `SetField` entry.
@@ -129,27 +137,45 @@ pub(crate) fn get_hit(
     objects: &Arena<ObjectHeader>,
     cells: &Arena<ValidityCell>,
     values: &ValueHeap,
+    strings: &Arena<StringRecord>,
     entry: IcEntry,
     receiver: Value,
 ) -> Option<Value> {
     let holder = if let Some(object) = receiver.as_object() {
         let header = objects.get(object.0);
         if header.shape.0 != entry.w0 {
+            if entry.w0 == LENGTH_TAG && header.kind == ObjectKind::Array {
+                return Some(length_value(header.payload as usize));
+            }
             return None;
         }
         if entry.w1 == NONE {
             return Some(values.get_at(header.slots_start + entry.w2));
         }
         entry.w1
-    } else if entry.w0 == STRING_RECEIVER_TAG && receiver.as_string().is_some() {
-        entry.w1
     } else {
-        return None;
+        let string = receiver.as_string()?;
+        if entry.w0 == LENGTH_TAG {
+            return Some(length_value(strings.get(string.index()).repr.len()));
+        }
+        if entry.w0 != STRING_RECEIVER_TAG {
+            return None;
+        }
+        entry.w1
     };
     if !cells.get(entry.w3).valid {
         return None;
     }
     Some(values.get_at(objects.get(holder).slots_start + entry.w2))
+}
+
+/// A length as a value: an `Int32` below 2^31.
+#[inline(always)]
+fn length_value(length: usize) -> Value {
+    match i32::try_from(length) {
+        Ok(length) => Value::int32(length),
+        Err(_) => Value::number(length as f64),
+    }
 }
 
 /// A `SetField` hit (section 2.3): a write to an existing own data property
@@ -214,6 +240,9 @@ pub struct IcStore {
     pub(crate) poly: Vec<[IcEntry; POLY]>,
     /// The kind of each row's site.
     poly_kinds: Vec<IcKind>,
+    /// The megamorphic table: `(shape, key)` and a `GetField` entry for that
+    /// shape; empty until a site goes megamorphic.
+    mega: Vec<(u32, u32, IcEntry)>,
     #[cfg(any(feature = "ic-stats", debug_assertions))]
     stats: IcStats,
 }
@@ -305,6 +334,35 @@ impl IcStore {
                 false
             }
         }
+    }
+
+    #[inline]
+    fn mega_index(shape: u32, key: u32) -> usize {
+        let hash = shape.wrapping_mul(0x9E37_79B9) ^ key.wrapping_mul(0x85EB_CA6B);
+        (hash >> 20) as usize & (MEGA_ENTRIES - 1)
+    }
+
+    /// The megamorphic table's entry for a receiver shape and a key.
+    #[inline]
+    pub(crate) fn mega_entry(&self, shape: u32, key: u32) -> Option<IcEntry> {
+        let &(entry_shape, entry_key, entry) = self.mega.get(Self::mega_index(shape, key))?;
+        (entry_shape == shape && entry_key == key).then_some(entry)
+    }
+
+    /// Records a megamorphic site's fill in the shared table.
+    pub(crate) fn record_mega(&mut self, key: u32, fill: IcEntry) {
+        if self.mega.is_empty() {
+            self.mega
+                .resize(MEGA_ENTRIES, (EMPTY_TAG, NONE, IcEntry::EMPTY));
+        }
+        let index = Self::mega_index(fill.w0, key);
+        self.mega[index] = (fill.w0, key, fill);
+    }
+
+    /// Whether site `index` is megamorphic.
+    #[inline]
+    pub(crate) fn is_megamorphic(&self, index: usize) -> bool {
+        self.entries[index].w0 == MEGA_TAG
     }
 
     /// Empties every entry of `kind` (the global generation wrapped).
@@ -400,7 +458,12 @@ impl IcStore {
                     .filter(|entry| entry.is_filled())
                     .flat_map(move |&entry| records(kind, entry))
             });
-        mono.chain(poly)
+        let mega = self
+            .mega
+            .iter()
+            .filter(|(_, _, entry)| entry.is_filled())
+            .flat_map(|&(_, _, entry)| records(IcKind::Get, entry));
+        mono.chain(poly).chain(mega)
     }
 
     /// Clears every entry that names a record `live` rejects: one linear pass
@@ -410,7 +473,17 @@ impl IcStore {
         let mut cleared = 0;
         let rows = self.poly.iter_mut().zip(&self.poly_kinds);
         let poly = rows.flat_map(|(row, kind)| row.iter_mut().map(move |entry| (entry, kind)));
-        for (entry, &kind) in self.entries.iter_mut().zip(&self.kinds).chain(poly) {
+        let mega = self
+            .mega
+            .iter_mut()
+            .map(|(_, _, entry)| (entry, &IcKind::Get));
+        for (entry, &kind) in self
+            .entries
+            .iter_mut()
+            .zip(&self.kinds)
+            .chain(poly)
+            .chain(mega)
+        {
             if entry.is_filled() && !records(kind, *entry).all(&mut live) {
                 *entry = IcEntry::EMPTY;
                 cleared += 1;
@@ -431,6 +504,7 @@ pub(crate) enum Record {
 fn records(kind: IcKind, entry: IcEntry) -> impl Iterator<Item = Record> {
     let mut found = [None; 3];
     match kind {
+        IcKind::Get if entry.w0 == LENGTH_TAG => {}
         IcKind::Get => {
             if entry.w0 != STRING_RECEIVER_TAG {
                 found[0] = Some(Record::Shape(entry.w0));

@@ -355,16 +355,13 @@ fn match_array(
         None => Value::UNDEFINED,
     };
     let start = captures[0].as_ref().map_or(0, |range| range.start);
+    let names = cx.realm.names;
     for (name, value) in [
-        ("index", Value::int32(start as i32)),
-        ("input", Value::string(string)),
-        ("groups", groups),
+        (names.index, Value::int32(start as i32)),
+        (names.input, Value::string(string)),
+        (names.groups, groups),
     ] {
-        let key = cx
-            .heap
-            .property_key(name)
-            .map_err(|error| error::heap_error(cx, error))?;
-        property::define(cx, array, key, value)?;
+        property::define(cx, array, Names::key(name), value)?;
     }
     Ok(Value::object(array))
 }

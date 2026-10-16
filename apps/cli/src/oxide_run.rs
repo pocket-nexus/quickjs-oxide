@@ -1,7 +1,7 @@
 //! `oxide-run`: runs a script on the new core (#122, phase 2, section 5).
 //!
 //! ```text
-//! oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] FILE
+//! oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] FILE
 //! ```
 //!
 //! The script is compiled with the engine's front end, lowered to register
@@ -10,13 +10,13 @@
 //! prints `unsupported: <construct>`; both exit with status 1. `--gc-stress`
 //! needs a build with the `new-core-gc-stress` feature; `--ic-stats`, which
 //! prints the inline-cache report to stderr at exit, `new-core-ic-stats`.
+//! `--gc-stats` prints the collector's statistics to stderr at exit.
 
 use std::process::ExitCode;
 
 use quickjs_oxide::engine::api::new_core::{self, NewCoreOptions};
 
-const USAGE: &str =
-    "usage: oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] FILE";
+const USAGE: &str = "usage: oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] FILE";
 
 struct Arguments {
     file: String,
@@ -40,6 +40,8 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Arguments, String> {
             options.gc_stress = Some(1);
         } else if arg == "--ic-stats" {
             options.ic_stats = true;
+        } else if arg == "--gc-stats" {
+            options.gc_stats = true;
         } else if arg == "--heap-cap-mib" {
             let value = args.next().ok_or("--heap-cap-mib needs a value")?;
             let mib: usize = value

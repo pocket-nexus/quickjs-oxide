@@ -5,7 +5,7 @@
 use oxide_core::bytecode::builder::UnitLayout;
 use oxide_core::bytecode::{CodeBuilder, Opcode, flags};
 use oxide_core::heap::gc::HeapLimits;
-use oxide_core::vm::ic::{IcEntry, STRING_RECEIVER_TAG};
+use oxide_core::vm::ic::{IcEntry, LENGTH_TAG, STRING_RECEIVER_TAG};
 use oxide_core::{
     Handle, Intrinsic, ObjectId, ObjectKind, PropertyFlags, PropertyKey, Runtime, Value,
 };
@@ -332,11 +332,13 @@ fn string_receivers_cache_their_prototype_chain() {
     assert_eq!(reader.entry().w1, object_prototype.index());
     reader.add(string_prototype, "shared", 4);
     assert_eq!(reader.read(Value::string(text)), Value::int32(4));
-    // `length` on a string keeps its own path.
+    // `length` on a string caches as the length entry (phase 3 M5).
     let mut reader = Reader::new("length");
     let text = reader.runtime.heap_mut().intern("abcd").unwrap();
     assert_eq!(reader.read(Value::string(text)), Value::int32(4));
-    assert!(reader.entry().is_empty());
+    assert_eq!(reader.entry().w0, LENGTH_TAG);
+    let other = reader.runtime.heap_mut().intern("xy").unwrap();
+    assert_eq!(reader.read(Value::string(other)), Value::int32(2));
 }
 
 fn object_prototype_of(reader: &Reader) -> ObjectId {
@@ -399,4 +401,59 @@ fn a_recycled_shape_does_not_hit_a_stale_entry() {
     if !cfg!(feature = "gc-stress") {
         assert!(reused, "the dead shape's index was not reused");
     }
+}
+
+/// Phase 3 M5: an array's `length` is a length entry that reads each
+/// array's current length; an ordinary object's `length` stays a slot.
+#[test]
+fn array_length_reads_through_the_length_entry() {
+    let mut reader = Reader::new("length");
+    let array = reader.runtime.new_array(4).unwrap();
+    reader
+        .runtime
+        .heap_mut()
+        .handles()
+        .create(Value::object(array));
+    assert_eq!(reader.read(Value::object(array)), Value::int32(0));
+    assert_eq!(reader.entry().w0, LENGTH_TAG);
+    reader
+        .runtime
+        .heap_mut()
+        .push_element(array, Value::int32(1))
+        .unwrap();
+    assert_eq!(reader.read(Value::object(array)), Value::int32(1));
+    let object = reader.object(None);
+    reader.add(object, "length", 9);
+    assert_eq!(reader.read(Value::object(object)), Value::int32(9));
+    assert_eq!(reader.read(Value::object(array)), Value::int32(1));
+}
+
+/// Phase 3 M5: a prototype in dictionary mode (more than 64 properties, or
+/// a deletion) is a cacheable holder; its changes clear the cell.
+#[test]
+fn a_dictionary_prototype_is_a_cacheable_holder() {
+    let mut reader = Reader::new("x");
+    let top = reader.object(None);
+    for index in 0..70 {
+        reader.add(top, &format!("p{index}"), index);
+    }
+    reader.add(top, "x", 1);
+    assert!(reader.runtime.heap().is_dictionary(top));
+    let object = reader.object(Some(top));
+    assert_eq!(reader.read(Value::object(object)), Value::int32(1));
+    let entry = reader.entry_for(object);
+    assert_eq!(entry.w1, top.index());
+    // The slot is read live, and a change to the dictionary clears the cell.
+    let x = key(&mut reader.runtime, "x");
+    let (slot, _) = reader.runtime.heap().lookup_own(top, x).unwrap();
+    reader
+        .runtime
+        .heap_mut()
+        .set_slot(top, slot, Value::int32(2));
+    assert_eq!(reader.read(Value::object(object)), Value::int32(2));
+    reader.runtime.heap_mut().delete_property(top, x).unwrap();
+    assert!(!reader.runtime.heap().cell_is_valid(entry.cell()));
+    assert_eq!(reader.read(Value::object(object)), Value::UNDEFINED);
+    reader.add(top, "x", 3);
+    assert_eq!(reader.read(Value::object(object)), Value::int32(3));
 }
