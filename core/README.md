@@ -2,9 +2,10 @@
 
 The new core of quickjs-oxide (issue #122), built in phases next to the current
 engine. Phase 1 is the value and heap layer; phase 2 adds register bytecode
-and its main loop. As of phase 2 M1 the instruction set, code units and their
-validator exist, but nothing lowers to them or runs them yet, and no builtin
-exists. The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
+and its main loop. As of phase 2 M2 the instruction set, code units, their
+validator and the lowering from the current compiler's stack code exist
+(`src/engine/compiler/register` in the root crate); nothing runs them yet, and
+no builtin exists. The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
 the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/performance/new-core-phase1-results.md);
 phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md).
 
@@ -94,3 +95,27 @@ check nothing.
   because a record is not a value the root stack can hold; `MakeClosure` uses
   `Heap::alloc_closure`, whose record is reachable through the running
   function. This replaces phase 1's `attach_bytecode`.
+- Bindings captured by an inner function live in *cells* (one-slot scope
+  objects) rather than in one scope object per activation and per block
+  (plan section 3.1). The lowering consumes the compiler's finished stack code,
+  where block structure is already expanded into QuickJS's `close_loc`
+  discipline; cells reproduce that discipline exactly. The binding's register
+  holds its cell (`NewCell`, `LoadCell`, `StoreCell`), `CloseLocal` becomes
+  `CloseCell` (a fresh cell holding the current value: a `for (let …)`
+  iteration), and a closure holds one cell per captured binding, listed by the
+  child unit's `captures` and read with `LoadCaptured`/`StoreCaptured`. The
+  scope-chain opcodes (`LoadScope`, `EnterScope`, …) are gone, and so is the
+  frame's scope field: a function reaches its captures through its function
+  object. No compiler change is needed to mark captured bindings.
+- Calls follow the stack code's operand order rather than reserving a receiver
+  slot: `Call a, b, c` has the callee in `b` and the arguments from `b + 1`,
+  so the callee's window starts at `b` (its `this`, written by the call);
+  `CallMethod` and `New` have receiver or callee and new.target in `b`,
+  `b + 1`, and the window starts at `b + 1`. No argument moves either way.
+- `Swap` exchanges two registers, for cyclic stack shuffles; `DeclareGlobal`
+  instantiates a script's `var` and function declarations.
+- Script-level `let` and `const` are global object properties without a TDZ
+  in phase 2; the global lexical environment comes with the global IC.
+- Functions with more than 256 registers are reported unsupported by the
+  lowering for now: `LoadWide`/`StoreWide` exist, but the shuttle placement
+  comes with the first program that needs it (phase 3).

@@ -4,7 +4,7 @@
 //! Each method asserts (in debug builds) that the opcode has the format it is
 //! built with; the publication validator checks the operand values.
 
-use super::{CodeUnit, CodeUnitId, DebugInfo, Format, Handler, Insn, Opcode};
+use super::{Capture, CodeUnit, CodeUnitId, DebugInfo, Format, Handler, Insn, Opcode};
 use crate::heap::atom::PropertyKey;
 
 #[derive(Default)]
@@ -102,14 +102,8 @@ impl CodeBuilder {
     }
 
     #[track_caller]
-    pub fn a_scope(&mut self, op: Opcode, a: u8, depth: u16, index: u16) -> u32 {
-        let imm = (depth as u32) << 16 | index as u32;
-        self.push(Format::AScope, Insn::new(op, a, 0, 0, imm))
-    }
-
-    #[track_caller]
-    pub fn count(&mut self, op: Opcode, count: u32) -> u32 {
-        self.push(Format::Count, Insn::new(op, 0, 0, 0, count))
+    pub fn a_capture(&mut self, op: Opcode, a: u8, capture: u32) -> u32 {
+        self.push(Format::ACapture, Insn::new(op, a, 0, 0, capture))
     }
 
     #[track_caller]
@@ -158,6 +152,12 @@ impl CodeBuilder {
         self.push(Format::AWide, Insn::new(op, a, 0, 0, register))
     }
 
+    /// Changes the destination register of the instruction at `pc` (the
+    /// lowering's retargeting of a temporary into a local).
+    pub fn retarget(&mut self, pc: u32, a: u8) {
+        self.code[pc as usize].a = a;
+    }
+
     /// Sets the target of the jump at `pc`, emitted before its target was
     /// known.
     #[track_caller]
@@ -189,6 +189,7 @@ impl CodeBuilder {
             this_slots: layout.this_slots,
             constant_count: layout.constant_count,
             children: layout.children.into(),
+            captures: layout.captures.into(),
             debug: DebugInfo {
                 name: layout.name.into(),
                 lines: self.lines.into(),
@@ -207,5 +208,6 @@ pub struct UnitLayout {
     pub this_slots: u16,
     pub constant_count: u32,
     pub children: Vec<CodeUnitId>,
+    pub captures: Vec<Capture>,
     pub name: String,
 }

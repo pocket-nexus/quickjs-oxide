@@ -5,7 +5,7 @@
 
 use oxide_core::bytecode::builder::UnitLayout;
 use oxide_core::bytecode::{
-    CodeBuilder, CodeUnit, Format, Handler, Insn, Opcode, ValidateErrorKind, flags,
+    Capture, CodeBuilder, CodeUnit, Format, Handler, Insn, Opcode, ValidateErrorKind, flags,
 };
 use oxide_core::heap::gc::HeapLimits;
 use oxide_core::{CodeStore, PropertyKey, Runtime, Value};
@@ -27,7 +27,7 @@ fn unit(registers: u16, build: impl FnOnce(&mut CodeBuilder)) -> CodeUnit {
 }
 
 fn validate(unit: &CodeUnit) -> Result<(), ValidateErrorKind> {
-    oxide_core::bytecode::validate::validate(unit, 0).map_err(|error| error.kind)
+    oxide_core::bytecode::validate::validate(unit, &[]).map_err(|error| error.kind)
 }
 
 #[test]
@@ -90,13 +90,9 @@ fn every_opcode_round_trips_through_the_disassembler() {
                 builder.ab_key(op, 5, 0, key);
                 "t0, this, [7]".into()
             }
-            Format::AScope => {
-                builder.a_scope(op, 4, 2, 9);
-                "l1, s2.9".into()
-            }
-            Format::Count => {
-                builder.count(op, 3);
-                "3".into()
+            Format::ACapture => {
+                builder.a_capture(op, 4, 0);
+                "l1, c0".into()
             }
             Format::ACount => {
                 builder.a_count(op, 5, 2);
@@ -144,6 +140,7 @@ fn every_opcode_round_trips_through_the_disassembler() {
         local_count: 2,
         constant_count: 2,
         children: Vec::new(),
+        captures: vec![Capture::None],
         name: "every".into(),
         ..UnitLayout::default()
     });
@@ -161,7 +158,7 @@ fn every_opcode_round_trips_through_the_disassembler() {
     let mut lines = text.lines();
     assert_eq!(
         lines.next(),
-        Some("every: params 2, locals 2, registers 400, constants 2, children 1")
+        Some("every: params 2, locals 2, registers 400, constants 2, children 1, this slots 0")
     );
     for (pc, (op, operands)) in expected.iter().enumerate() {
         let line = lines.next().unwrap();
@@ -169,6 +166,7 @@ fn every_opcode_round_trips_through_the_disassembler() {
         assert_eq!(line, wanted.trim_end(), "{}", op.name());
     }
     assert!(lines.next().unwrap().contains("ReturnUndefined"));
+    assert_eq!(lines.next(), Some("  capture c0 <- none"));
     assert_eq!(lines.next(), None);
 }
 
@@ -186,7 +184,7 @@ fn builder_patches_forward_jumps_and_decodes_operands() {
     let mut builder = CodeBuilder::new();
     let exit = builder.a_short_jump(Opcode::JNltI, 3, -2, 0);
     builder.ab_int(Opcode::AddI, 3, 3, i32::MIN);
-    builder.a_scope(Opcode::LoadScope, 5, 0xFFFF, 0xFFFF);
+    builder.a_capture(Opcode::LoadCaptured, 5, 0);
     let end = builder.pc();
     builder.patch_target(exit, end);
     builder.a(Opcode::Return, 3);
@@ -194,8 +192,9 @@ fn builder_patches_forward_jumps_and_decodes_operands() {
     assert_eq!(code[0].imm, 3);
     assert_eq!(code[0].short(), -2);
     assert_eq!(code[1].int(), i32::MIN);
-    assert_eq!(code[2].scope_slot(), (0xFFFF, 0xFFFF));
-    let unit = builder.finish(layout(6));
+    assert_eq!(code[2].imm, 0);
+    let mut unit = builder.finish(layout(6));
+    unit.captures = vec![Capture::None].into();
     assert_eq!(validate(&unit), Ok(()));
     assert_eq!(unit.temp_base(), 5);
     assert_eq!(unit.debug.lines.len(), unit.code.len());
@@ -304,10 +303,26 @@ fn validator_rejects_each_malformation() {
         (
             "call window",
             unit(6, |b| {
-                b.call(Opcode::Call, 5, 4, 1);
+                b.call(Opcode::Call, 5, 4, 2);
                 ret(b);
             }),
             E::CallWindow,
+        ),
+        (
+            "method call window",
+            unit(6, |b| {
+                b.call(Opcode::CallMethod, 5, 5, 0);
+                ret(b);
+            }),
+            E::CallWindow,
+        ),
+        (
+            "capture",
+            unit(6, |b| {
+                b.a_capture(Opcode::LoadCaptured, 5, 0);
+                ret(b);
+            }),
+            E::Capture(0),
         ),
         (
             "array range",
@@ -333,12 +348,26 @@ fn validator_rejects_each_malformation() {
     let mut unpublished = unit_returning();
     unpublished.children = vec![CodeStore::default().publish(unit_returning()).unwrap()].into();
     assert_eq!(
-        oxide_core::bytecode::validate::validate(&unpublished, 0).map_err(|e| e.kind),
+        oxide_core::bytecode::validate::validate(&unpublished, &[]).map_err(|e| e.kind),
         Err(E::UnpublishedChild(0))
     );
     assert_eq!(
-        oxide_core::bytecode::validate::validate(&unpublished, 1),
+        oxide_core::bytecode::validate::validate(&unpublished, &[unit_returning()]),
         Ok(())
+    );
+    let mut capturing = unit_returning();
+    capturing.captures = vec![Capture::Register(1)].into();
+    assert_eq!(
+        oxide_core::bytecode::validate::validate(&unpublished, &[capturing.clone()])
+            .map_err(|e| e.kind),
+        Err(E::ChildCapture(1)),
+        "the parent has one register"
+    );
+    capturing.captures = vec![Capture::Outer(0)].into();
+    assert_eq!(
+        oxide_core::bytecode::validate::validate(&unpublished, &[capturing]).map_err(|e| e.kind),
+        Err(E::ChildCapture(0)),
+        "the parent has no captures"
     );
 
     let mut lines = unit_returning();

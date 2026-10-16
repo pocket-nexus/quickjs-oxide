@@ -10,6 +10,8 @@ pub enum Format {
     A,
     /// `a`, `b` registers.
     AB,
+    /// `a` register, `imm` an index into the running function's captures.
+    ACapture,
     /// `a`, `b`, `c` registers.
     ABC,
     /// `a` register, `imm` an `i32` literal.
@@ -24,11 +26,6 @@ pub enum Format {
     AKey,
     /// `a`, `b` registers, `imm` a `PropertyKey`.
     ABKey,
-    /// `a` register, `imm` a scope slot: depth in the high 16 bits, index in
-    /// the low 16.
-    AScope,
-    /// `imm` a count (scope slots).
-    Count,
     /// `a` register, `imm` a count (object slots).
     ACount,
     /// `a` register, `b` the first of `imm` consecutive registers.
@@ -87,6 +84,8 @@ opcodes! {
     // ---- moves and constants ----
     /// `a = b`.
     Mov: AB,
+    /// Exchanges `a` and `b` (cyclic stack shuffles).
+    Swap: AB,
     /// `a = register imm`, for a register above the window.
     LoadWide: AWide,
     /// `register imm = a`.
@@ -225,32 +224,55 @@ opcodes! {
     /// A `var` or function declaration at script level.
     DefineGlobal: AKey,
     DeleteGlobal: AKey,
+    /// A script-level declaration: defines global `imm` as `undefined` unless
+    /// it exists.
+    DeclareGlobal: Key,
 
-    // ---- scopes ----
-    LoadScope: AScope,
-    StoreScope: AScope,
-    /// Pushes a scope of `imm` slots whose parent is the frame's scope.
-    EnterScope: Count,
-    LeaveScope: None,
-    /// Replaces the frame's scope with a copy of it (a `for (let …)`
-    /// iteration).
-    CopyScope: None,
+    // ---- captured bindings ----
+    // A binding captured by an inner function lives in a cell (a one-slot
+    // scope object); its register holds the cell. A closure holds the cells it
+    // captures, by index.
+    /// `a` = a new cell holding the value of `b`.
+    NewCell: AB,
+    /// `a` = a new cell in the TDZ (a lexical binding entering scope).
+    NewCellEmpty: A,
+    /// `a` = a new cell holding a copy of cell `a`'s value: the binding is
+    /// detached from closures created so far (a `for (let …)` iteration).
+    CloseCell: A,
+    /// `a` = the value in cell `b`.
+    LoadCell: AB,
+    /// Cell `a` = `b`.
+    StoreCell: AB,
+    /// Throws `ReferenceError` naming key `imm` when cell `a` is in the TDZ.
+    CheckCellInit: AKey,
+    /// `a` = the value of the running function's capture `imm`.
+    LoadCaptured: ACapture,
+    /// The running function's capture `imm` = `a`.
+    StoreCaptured: ACapture,
 
     // ---- allocation ----
     /// `a = {}` with room for `imm` properties.
     NewObject: ACount,
     /// `a = [b, b + 1, …]` of `imm` elements.
     NewArray: ABRange,
-    /// `a` = a closure over the frame's scope for child unit `imm`.
+    /// `a` = a closure for child unit `imm`, capturing what the child's
+    /// capture list names.
     MakeClosure: AChild,
 
     // ---- calls ----
+    /// `a = b(b + 1, …, b + c)` with an `undefined` receiver: the callee's
+    /// window starts at `b`, so `b` becomes its `this`.
     Call: Call,
-    /// As `Call`, with the receiver left in `b + 1` by the property read.
+    /// `a = (b + 1)(b + 2, …)` with receiver `b`: the window starts at
+    /// `b + 1`, which receives the receiver.
     CallMethod: Call,
-    /// Reuses the frame's window; `a` is ignored.
+    /// `Call` that returns the callee's result from this frame; `a` is
+    /// ignored.
     TailCall: Call,
-    /// As `Call`; `b + 1` receives the constructed object.
+    /// `TailCall` with a receiver, as `CallMethod`.
+    TailCallMethod: Call,
+    /// `a = new b(b + 2, …)` with new.target in `b + 1`: the window starts at
+    /// `b + 1`, which receives the constructed object.
     New: Call,
     Return: A,
     ReturnUndefined: None,
@@ -265,6 +287,7 @@ impl Opcode {
             Opcode::Jmp
                 | Opcode::Ret
                 | Opcode::TailCall
+                | Opcode::TailCallMethod
                 | Opcode::Return
                 | Opcode::ReturnUndefined
                 | Opcode::Throw

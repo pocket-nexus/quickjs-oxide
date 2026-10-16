@@ -57,6 +57,8 @@ mod diagnostics;
 mod flow;
 mod lowering;
 mod optimize;
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) mod register;
 mod relocation;
 use crate::engine::api::error::{Error, ErrorKind};
 

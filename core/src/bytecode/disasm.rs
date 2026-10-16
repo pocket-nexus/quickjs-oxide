@@ -3,7 +3,7 @@
 
 use std::fmt::Write;
 
-use super::{CodeUnit, Format, Insn};
+use super::{Capture, CodeUnit, Format, Insn};
 use crate::heap::atom::{KeyKind, PropertyKey};
 
 /// Names register `r` of `unit` by its role in the frame layout.
@@ -52,11 +52,7 @@ pub fn operands(
         Format::Key => key_name(insn.key()),
         Format::AKey => format!("{}, {}", r(insn.a), key_name(insn.key())),
         Format::ABKey => format!("{}, {}, {}", r(insn.a), r(insn.b), key_name(insn.key())),
-        Format::AScope => {
-            let (depth, index) = insn.scope_slot();
-            format!("{}, s{depth}.{index}", r(insn.a))
-        }
-        Format::Count => format!("{}", insn.imm),
+        Format::ACapture => format!("{}, c{}", r(insn.a), insn.imm),
         Format::ACount => format!("{}, {}", r(insn.a), insn.imm),
         Format::ABRange => {
             if insn.imm == 0 {
@@ -91,17 +87,26 @@ pub fn disassemble(unit: &CodeUnit, key_name: &mut dyn FnMut(PropertyKey) -> Str
     };
     let _ = writeln!(
         out,
-        "{name}: params {}, locals {}, registers {}, constants {}, children {}",
+        "{name}: params {}, locals {}, registers {}, constants {}, children {}, this slots {}",
         unit.parameter_count,
         unit.local_count,
         unit.register_count,
         unit.constant_count,
-        unit.children.len()
+        unit.children.len(),
+        unit.this_slots
     );
     for (pc, &insn) in unit.code.iter().enumerate() {
         let operands = operands(unit, insn, key_name);
         let line = format!("  {pc:04}  {:<20}{operands}", insn.op.name());
         let _ = writeln!(out, "{}", line.trim_end());
+    }
+    for (index, capture) in unit.captures.iter().enumerate() {
+        let source = match *capture {
+            Capture::None => "none".to_owned(),
+            Capture::Register(r) => format!("parent {}", r),
+            Capture::Outer(i) => format!("parent c{i}"),
+        };
+        let _ = writeln!(out, "  capture c{index} <- {source}");
     }
     for handler in &unit.handlers {
         let _ = writeln!(

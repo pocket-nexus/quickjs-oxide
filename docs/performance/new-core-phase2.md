@@ -225,3 +225,8 @@ Open, with the milestone that decides them:
 ## 12. Seam with phase 3 (preview, not phase 2 work)
 
 Phase 3 attaches inline caches to `GetField`, `SetField`, `GetGlobal` and `New` as a side table indexed by instruction index, so no operand is reserved for them now. The validity cells and the IC check of phase 1 M3 (32 instructions in Rust) are what those caches test. `CodeUnit::this_slots` is replaced by the shape-based constructor cache when it exists. Dense-array and typed-array fast paths land in the same loop, which is why its size is gated from the first milestone.
+
+## 13. Implementation record
+
+- **M1** (#136): as section 2, with the departures listed in [`core/README.md`](../../core/README.md#phase-2-departures) (literal compare-jumps carry an `i16`; negated relational jumps; handler entries name their register).
+- **M2**: the lowering consumes the [`UnlinkedFunction`](../../src/engine/code/function.rs) tree, the compiler's finished stack code, instead of the resolved `FunctionIr`, so the shared compiler is not changed at all and the current engine's Test262 cannot move. Captured bindings are cells, not block scopes; call windows follow the stack operand order. Both are in [`core/README.md`](../../core/README.md#phase-2-departures). The acceptance corpus runs through the lowering and the publication validator; the two-core output comparison needs the loop and moves to M4, where it becomes the M4 acceptance.
