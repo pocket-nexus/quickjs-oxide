@@ -139,3 +139,77 @@ The last two are M5 candidates, to be weighed against the V8 v7 profiles.
   inherited accessors, a strict write to a getter-only property, a throwing
   getter) and `caches.js`, both printing identically on both cores with and
   without stress.
+
+## M3: the language surface
+
+**The census.** `lowering_census` over the baseline's suite build
+(`suite_matrix.py build` at the pinned sources, rebuilt for this record)
+lowers every function of the eight V8 v7 programs:
+
+| Program | Functions lowered | Declined before M3 |
+| --- | ---: | --- |
+| richards | 63/63 | rest parameters (the `print` shim) |
+| deltablue | 99/99 | rest parameters |
+| crypto | 157/157 | rest parameters |
+| raytrace | 86/86 | `arguments`, for-in, rest parameters |
+| earley-boyer | 435/435 | `arguments` ×34, eval, for-in, rest parameters |
+| regexp | 43/43 | RegExp literals ×12, a function over 256 registers, rest parameters |
+| splay | 43/43 | rest parameters |
+| navier-stokes | 59/59 | rest parameters |
+
+All fifteen Octane programs lower completely as well. Of the AWFY programs,
+classes still decline (phase 4).
+
+The programs do not yet run to completion: the builtins they call first
+(`Math`, `String`, `Array` methods) are M4's.
+
+**Corpus.** Each item of section 5.5 has a program in `core/tests/corpus`,
+printing identically on both cores with and without stress:
+
+- `arguments.js`: mapped and unmapped `arguments`, with:
+  - writes in both directions;
+  - `length`, extras, missing parameters;
+  - `delete`, captured parameters;
+  - `callee`, nested functions.
+- `rest_spread.js`: rest parameters, spread in calls, `new` and array
+  literals, spread of `arguments`, holes.
+- `apply_call.js`: `call` and `apply` with arrays, `arguments` objects,
+  array-likes, `null` and `undefined`, sloppy and strict `this`, chained
+  constructors, `call.call`, native callees, and 300-element argument lists.
+- `for_in.js`: arrays, sparse arrays, plain objects, prototype chains with
+  shadowing, integer keys, deleted and added keys, dictionary objects,
+  `arguments`, `break`.
+- `regexp_literals.js`: identity per evaluation, `lastIndex`, and the
+  string form.
+- `new_target.js`: `new.target`, including through an arrow function.
+- `accessors.js` (M2): getters and setters in literals.
+- `wide.js`: a function with 250 locals plus closures, `let` bindings in
+  the TDZ, and per-iteration bindings, past the register window.
+
+**Stress.** Running the new programs under stress found one phase 2 bug.
+A caller's dead temporaries above a smaller callee's frame were not roots
+during the call, so a collection could free what they named, and they
+became roots again on return. A resuming frame now clears them when a
+collection ran since. The new programs also found two M3 bugs before
+commit: the unmapped `arguments` payload and the tracing of the mapped
+scope.
+
+**The loop and the probes.** `vm::interp::run` is 13,769 bytes. The first
+M3 build was 17,003, over the gate. The rare opcodes then moved into one
+out-of-line arm, as did the `call`/`apply` rewrite loop and the copy of
+extra arguments.
+
+Slopes against M2 (instructions per iteration):
+
+| Probe | M2 | M3 |
+| --- | ---: | ---: |
+| `call0` | 596 | 625 |
+| `constructor` | 1,177 | 1,234 |
+| `literal` | 905 | 946 |
+| `prop_write` | 169 | 175 |
+| `empty_loop` | 105 | 107 |
+
+The 4–5% increases come from the larger `run`. `literal` has no call in
+its loop yet grows by the same share, so the increase is code generation
+(spills in a bigger function) rather than a path that runs. M5 reads the
+profiles before changing anything.

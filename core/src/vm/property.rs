@@ -36,6 +36,9 @@ pub(crate) fn own(heap: &Heap, names: &Names, object: ObjectId, key: PropertyKey
             if !value.is_empty() {
                 return Some(Found::Data(value));
             }
+            if let Some(cell) = super::arguments::mapped_cell(heap, object, index) {
+                return Some(Found::Data(heap.scope_get(cell, 0, 0)));
+            }
         }
         KeyKind::String(id) if id == names.length => {
             if heap.object_kind(object) == ObjectKind::Array {
@@ -436,6 +439,10 @@ pub(crate) fn set_on(
     let heap = &mut *cx.heap;
     match key.kind() {
         KeyKind::Index(index) => {
+            if let Some(cell) = super::arguments::mapped_cell(heap, object, index) {
+                heap.scope_set(cell, 0, 0, value);
+                return Ok(());
+            }
             if heap.lookup_own(object, key).is_none() && dense(heap, object, index) {
                 // An inherited setter or read-only index on a prototype is
                 // phase 4's: elements are written directly.
@@ -673,6 +680,10 @@ pub(crate) fn delete(
     let heap = &mut *cx.heap;
     match key.kind() {
         KeyKind::Index(index) => {
+            if super::arguments::mapped_cell(heap, object, index).is_some() {
+                super::arguments::unmap(heap, object, index);
+                return Ok(true);
+            }
             if !heap.get_element(object, index).is_empty() {
                 heap.set_element(object, index, Value::EMPTY)
                     .map_err(|_| error::oom(cx.realm))?;
@@ -729,5 +740,126 @@ pub(crate) fn key_text(heap: &Heap, key: PropertyKey) -> String {
             Some(description) => format!("Symbol({})", heap.string_text(description)),
             None => "Symbol()".into(),
         },
+    }
+}
+
+// ---- for-in (phase 3, section 5.4) ----
+
+/// `ForInStart`: an enumeration of `value`'s enumerable string keys in the
+/// order of `EnumerateObjectProperties`: each object's own index keys
+/// ascending, then its own named keys in insertion order, then its
+/// prototype's, skipping keys seen at an earlier level (enumerable or not)
+/// and symbols. A string's indices come first; `undefined` and `null`
+/// enumerate nothing. Index keys are kept as `Int32` and named keys as their
+/// atoms; `ForInNext` turns an index into a string as it yields it.
+#[inline(never)]
+pub(crate) fn for_in_start(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw> {
+    let heap = &*cx.heap;
+    let mut keys: Vec<Value> = Vec::new();
+    let mut seen = crate::heap::hash::FxHashSet::default();
+    let start = match value.kind() {
+        Kind::Undefined | Kind::Null => None,
+        Kind::Object => value.as_object(),
+        Kind::String => {
+            let length = heap.string(value.as_string().unwrap()).repr.len();
+            for index in 0..length.min(i32::MAX as usize) {
+                keys.push(Value::int32(index as i32));
+                if let Some(key) = PropertyKey::index(index as u32) {
+                    seen.insert(key);
+                }
+            }
+            Some(cx.realm.intrinsic(Intrinsic::StringPrototype))
+        }
+        _ => Some(cx.realm.intrinsic(Intrinsic::ObjectPrototype)),
+    };
+    let mut current = start;
+    while let Some(object) = current {
+        for key in own_keys_with_arguments(heap, object) {
+            if !seen.insert(key) {
+                continue;
+            }
+            let enumerable = match heap.lookup_own(object, key) {
+                Some((_, property)) => property.has(PropertyFlags::ENUMERABLE),
+                // Elements and mapped arguments are enumerable data.
+                None => true,
+            };
+            if !enumerable {
+                continue;
+            }
+            match key.kind() {
+                KeyKind::Index(index) => keys.push(Value::int32(index as i32)),
+                KeyKind::String(id) => keys.push(Value::string(id)),
+                KeyKind::Symbol(_) => {}
+            }
+        }
+        current = heap.prototype_of(object);
+    }
+    let count = keys.len() as u32;
+    let iterator = cx
+        .heap
+        .alloc_object_with_elements(ObjectKind::ForInIterator, None, 2, count)
+        .map_err(|error| error::heap_error(cx, error))?;
+    // Keys are Int32 or atoms, and `value` is in a register: nothing to root.
+    let heap = &mut *cx.heap;
+    let elements = heap.header(iterator).elements();
+    for (index, &key) in keys.iter().enumerate() {
+        heap.values.set(elements, index as u32, key);
+    }
+    heap.set_raw_slot(iterator, 0, value);
+    heap.set_raw_slot(iterator, 1, Value::int32(count as i32));
+    heap.set_payload(iterator, 0);
+    Ok(Value::object(iterator))
+}
+
+/// Own keys in `[[OwnPropertyKeys]]` order, with the mapped indices of an
+/// `arguments` object, whose elements are holes there.
+fn own_keys_with_arguments(heap: &Heap, object: ObjectId) -> Vec<PropertyKey> {
+    let mut keys = heap.own_keys(object);
+    if heap.object_kind(object) == ObjectKind::Arguments && heap.header(object).payload != NONE {
+        let mut mapped: Vec<PropertyKey> = (0..heap.header(object).elements().len)
+            .filter(|&index| super::arguments::mapped_cell(heap, object, index).is_some())
+            .filter_map(PropertyKey::index)
+            .collect();
+        if !mapped.is_empty() {
+            mapped.extend(keys);
+            mapped.sort_by_key(|key| match key.kind() {
+                KeyKind::Index(index) => (0, index),
+                _ => (1, 0),
+            });
+            keys = mapped;
+        }
+    }
+    keys
+}
+
+/// `ForInNext`: the next key of `iterator` whose property still exists (a
+/// key deleted during the loop is skipped, as QuickJS does), as a string;
+/// `None` when the enumeration is exhausted.
+#[inline(never)]
+pub(crate) fn for_in_next(cx: &mut Cx<'_>, iterator: Value) -> Result<Option<Value>, Throw> {
+    let iterator = iterator.as_object().expect("a for-in enumeration");
+    loop {
+        let heap = &mut *cx.heap;
+        let cursor = heap.header(iterator).payload;
+        let count = heap.raw_slot(iterator, 1).as_int32().unwrap_or(0) as u32;
+        if cursor >= count {
+            return Ok(None);
+        }
+        heap.set_payload(iterator, cursor + 1);
+        let key = heap.get_element(iterator, cursor);
+        let object = heap.raw_slot(iterator, 0);
+        let property_key = match key.as_int32() {
+            Some(index) => PropertyKey::index(index as u32).expect("an index key"),
+            None => PropertyKey::atom(key.as_string().expect("a key atom")),
+        };
+        if let Some(object) = object.as_object()
+            && !has(heap, &cx.realm.names, object, property_key)
+        {
+            continue;
+        }
+        return match key.as_int32() {
+            Some(_) => super::ops::to_string(cx, key).map(Some),
+            None => Ok(Some(key)),
+        };
     }
 }

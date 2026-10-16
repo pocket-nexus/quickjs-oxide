@@ -22,13 +22,24 @@ pub enum Native {
     Print,
     /// `Error`, `TypeError`, …: called or constructed, a new error.
     ErrorConstructor(ErrorKind),
+    /// `Function.prototype.call`. The loop rewrites a call of it into a call
+    /// of its receiver (phase 3, section 5.2); this native runs only where no
+    /// call site is rewritten.
+    FunctionCall,
+    /// `Function.prototype.apply`, rewritten by the loop as `call` is.
+    FunctionApply,
 }
+
+/// Natives before the error constructors in the index space.
+const FIXED: u32 = 3;
 
 impl Native {
     pub(crate) const fn index(self) -> u32 {
         match self {
             Native::Print => 0,
-            Native::ErrorConstructor(kind) => 1 + kind.index(),
+            Native::FunctionCall => 1,
+            Native::FunctionApply => 2,
+            Native::ErrorConstructor(kind) => FIXED + kind.index(),
         }
     }
 
@@ -36,7 +47,9 @@ impl Native {
         match index {
             NONE => None,
             0 => Some(Native::Print),
-            _ => ErrorKind::from_index(index - 1).map(Native::ErrorConstructor),
+            1 => Some(Native::FunctionCall),
+            2 => Some(Native::FunctionApply),
+            _ => ErrorKind::from_index(index - FIXED).map(Native::ErrorConstructor),
         }
     }
 
@@ -45,14 +58,21 @@ impl Native {
     }
 }
 
-/// Where a native finds its arguments: `argc` registers from `args`.
+/// Where a native finds its receiver (register `this`) and its arguments
+/// (`argc` registers from `args`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CallSite {
+    pub this: usize,
     pub args: usize,
     pub argc: usize,
 }
 
 impl CallSite {
+    #[inline]
+    pub fn this(&self, cx: &Cx<'_>) -> Value {
+        cx.heap.vm.registers[self.this]
+    }
+
     #[inline]
     pub fn arg(&self, cx: &Cx<'_>, index: usize) -> Value {
         if index < self.argc {
@@ -75,6 +95,24 @@ pub(crate) fn call(cx: &mut Cx<'_>, native: Native, site: CallSite) -> Result<Va
                 ops::to_string(cx, message)?
             };
             error::new_error(cx, kind, message).map_err(|error| error::heap_error(cx, error))
+        }
+        Native::FunctionCall => {
+            let function = site.this(cx);
+            let this = site.arg(cx, 0);
+            let args: Vec<Value> = (1..site.argc).map(|index| site.arg(cx, index)).collect();
+            super::call(cx, function, this, &args)
+        }
+        Native::FunctionApply => {
+            let function = site.this(cx);
+            let this = site.arg(cx, 0);
+            let list = site.arg(cx, 1);
+            let mark = cx.heap.roots().mark();
+            let result = super::arguments::list_from_array_like(cx, list).and_then(|args| {
+                let args = &cx.heap.roots().values()[args..].to_vec();
+                super::call(cx, function, this, args)
+            });
+            cx.heap.roots().truncate(mark);
+            result
         }
     }
 }
@@ -185,6 +223,20 @@ fn install_globals_rooted(cx: &mut Cx<'_>) -> Result<ObjectId, HeapError> {
             global,
             kind.name(),
             Value::object(constructor),
+            hidden(),
+        )?;
+    }
+    let function_prototype = cx.realm.intrinsic(Intrinsic::FunctionPrototype);
+    for (name, native) in [
+        ("call", Native::FunctionCall),
+        ("apply", Native::FunctionApply),
+    ] {
+        let function = native_function(cx, native)?;
+        define(
+            cx,
+            function_prototype,
+            name,
+            Value::object(function),
             hidden(),
         )?;
     }

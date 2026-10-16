@@ -122,9 +122,8 @@ check nothing.
   instantiates a script's `var` and function declarations.
 - Script-level `let` and `const` are global object properties without a TDZ
   in phase 2; the global lexical environment comes with the global IC.
-- Functions with more than 256 registers are reported unsupported by the
-  lowering for now: `LoadWide`/`StoreWide` exist, but the shuttle placement
-  comes with the first program that needs it (phase 3).
+- Functions with more than 256 registers were reported unsupported by the
+  lowering in phase 2; phase 3 M3 gives them a spill scope (below).
 
 ### The loop (M3, M4)
 
@@ -211,3 +210,52 @@ check nothing.
   tests see hits; release builds without the feature carry none.
   `Runtime::ic_report` prints them, and `oxide-run --ic-stats` (CLI feature
   `new-core-ic-stats`) prints the report to stderr at exit.
+
+### The language surface (M3)
+
+- A mapped `arguments` object keeps its parameters' cells in a scope object
+  named by its `payload` (slot 0 the mapped count, then one cell per mapped
+  parameter, `Value::EMPTY` once unmapped) rather than in a new payload
+  arena. An unmapped one's payload is `NONE`.
+- A function that reads its actual arguments (the `ARGUMENTS` unit flag,
+  for `arguments` and rest parameters) keeps the ones past its parameters
+  above its registers when it is entered; `Frame` carries `argc` in its
+  padding and stays 32 bytes. `new.target` needs no frame slot: it is the
+  running function in a `CONSTRUCT` frame, since phase 3 has no
+  `Reflect.construct` or `super`.
+- Captured parameters are cells, so `NewArguments` and `Rest` read a
+  parameter register through its cell when it holds one: cells are scope
+  objects, which are never JavaScript values.
+- `Function.prototype.call` and `apply` are natives that the `Call` arm
+  rewrites (an out-of-line `rewrite_call`) into a call of their receiver;
+  natives now receive `this` through `CallSite`.
+- `ForInNext` jumps to the loop body with a key and falls through when the
+  enumeration is exhausted, the shape of the stack code's `ForInNext` and
+  its `IfFalse`. The enumeration is a `ForInIterator` object: the key
+  snapshot in its elements (index keys as `Int32`, turned into strings as
+  they are yielded), the object and the count in two raw slots, the cursor
+  in its payload.
+- Regular-expression literals and `new RegExp` share one append-only store
+  keyed by the `(source, flags)` atoms, beside the code store in `Runtime`
+  and reached from the loop through `Cx`; M4 compiles the programs.
+- A direct `eval` lowers: the call throws `InternalError: unsupported: eval`
+  (`ThrowInternal`), so the function around it has no dynamic bindings, and
+  `HasDynamicBinding` is `false`. Earley-Boyer's never-called `sc_jsNew` is
+  the one such function in the V8 v7 programs.
+- A function whose locals do not fit the 256-register window keeps the rest
+  in the slots of a spill scope (`NewSpill`, `LoadSlot`, `StoreSlot`, and
+  `Capture::Slot` for a child capturing one), held in the register after the
+  window's locals, with the temporaries above it. Locals placed past the
+  temporaries would be overwritten by every call, whose window starts at a
+  temporary. RegExp's `RegExpBenchmark` (300 locals) is the one such
+  function in the suite.
+- The register file's dead registers above a returned frame are cleared
+  when a frame resumes over them if a collection has run since they were
+  last above `top` (`VmStack::stale_from`). Phase 2 cleared only a callee's
+  own window, so a caller's dead temporaries above a smaller callee could
+  name freed records when they became roots again; the M3 corpus under
+  stress found it.
+- The opcodes no hot path runs (accessors in literals, the spill scope,
+  `arguments`, rest, `new.target`, regular-expression literals, `for-in`
+  setup, spread elements, unsupported constructs) share one loop arm that
+  calls an out-of-line `rare_op`, which keeps `vm::run` under its size gate.

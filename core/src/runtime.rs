@@ -10,6 +10,7 @@ use crate::heap::hash::FxHashMap;
 use crate::heap::object::ObjectKind;
 use crate::heap::{Heap, HeapError};
 use crate::value::{ObjectId, ScopeId, StringId, Value};
+use crate::vm::regexp::RegExpStore;
 use crate::vm::{Cx, ErrorKind, Host, Output, Throw, VmStack};
 
 /// Intrinsic objects held by the realm. Phase 1 created the prototypes the
@@ -24,6 +25,8 @@ pub enum Intrinsic {
     /// The prototype of string receivers (phase 3 fills it with the
     /// `String.prototype` methods in M4).
     StringPrototype,
+    /// The prototype of regular-expression objects.
+    RegExpPrototype,
     ErrorPrototype,
     EvalErrorPrototype,
     RangeErrorPrototype,
@@ -37,7 +40,7 @@ pub enum Intrinsic {
 }
 
 impl Intrinsic {
-    pub const COUNT: usize = 12;
+    pub const COUNT: usize = 13;
 }
 
 /// Atoms the loop names: property names it reads itself and the `typeof`
@@ -45,6 +48,8 @@ impl Intrinsic {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Names {
     pub length: StringId,
+    pub callee: StringId,
+    pub last_index: StringId,
     pub prototype: StringId,
     pub constructor: StringId,
     pub message: StringId,
@@ -69,6 +74,8 @@ impl Names {
     fn new(heap: &mut Heap) -> Result<Names, HeapError> {
         Ok(Names {
             length: heap.intern("length")?,
+            callee: heap.intern("callee")?,
+            last_index: heap.intern("lastIndex")?,
             prototype: heap.intern("prototype")?,
             constructor: heap.intern("constructor")?,
             message: heap.intern("message")?,
@@ -123,6 +130,9 @@ pub struct Runtime {
     code: CodeStore,
     realm: Realm,
     host: Host,
+    /// The regular-expression programs (phase 3, section 5.3): append-only,
+    /// beside the heap like the code store.
+    regexps: RegExpStore,
 }
 
 impl Runtime {
@@ -142,6 +152,9 @@ impl Runtime {
         let string_prototype =
             heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
         let string_prototype = root(&mut heap, string_prototype);
+        let regexp_prototype =
+            heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
+        let regexp_prototype = root(&mut heap, regexp_prototype);
         let global = heap.alloc_object(ObjectKind::GlobalObject, Some(object_prototype), 16)?;
         let global = root(&mut heap, global);
         let names = Names::new(&mut heap)?;
@@ -149,6 +162,7 @@ impl Runtime {
         intrinsics[Intrinsic::FunctionPrototype as usize] = function_prototype;
         intrinsics[Intrinsic::ArrayPrototype as usize] = array_prototype;
         intrinsics[Intrinsic::StringPrototype as usize] = string_prototype;
+        intrinsics[Intrinsic::RegExpPrototype as usize] = regexp_prototype;
         let error_prototype = heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
         intrinsics[Intrinsic::ErrorPrototype as usize] = root(&mut heap, error_prototype);
         for kind in ErrorKind::ALL {
@@ -168,6 +182,7 @@ impl Runtime {
             code: CodeStore::default(),
             realm,
             host: Host::default(),
+            regexps: RegExpStore::default(),
         };
         let out_of_memory = crate::vm::native::install_globals(&mut runtime.cx())?;
         runtime.set_intrinsic(Intrinsic::OutOfMemoryError, out_of_memory);
@@ -182,12 +197,17 @@ impl Runtime {
             code: &self.code,
             realm: &self.realm,
             host: &mut self.host,
+            regexps: &mut self.regexps,
         }
     }
 
     pub(crate) fn set_intrinsic(&mut self, intrinsic: Intrinsic, object: ObjectId) {
         self.heap.add_fixed_root(Value::object(object));
         self.realm.intrinsics[intrinsic as usize] = object;
+    }
+
+    pub fn regexps(&self) -> &RegExpStore {
+        &self.regexps
     }
 
     pub fn realm(&self) -> &Realm {

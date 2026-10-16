@@ -317,3 +317,21 @@ fn error_kinds_have_their_prototypes() {
         runtime.release(handle);
     }
 }
+
+/// `ThrowInternal` (a direct `eval` reached at run time) throws
+/// `InternalError` with its key's text.
+#[test]
+fn throw_internal_names_the_construct() {
+    let mut runtime = runtime();
+    let message = key(&mut runtime, "unsupported: eval");
+    let root = publish(&mut runtime, layout(1), |b| {
+        b.key(Opcode::ThrowInternal, message);
+    });
+    let thrown = run(&mut runtime, root).unwrap_err();
+    let handle = runtime.hold(thrown.0);
+    assert_eq!(
+        runtime.display(thrown.0).unwrap(),
+        "InternalError: unsupported: eval"
+    );
+    runtime.release(handle);
+}

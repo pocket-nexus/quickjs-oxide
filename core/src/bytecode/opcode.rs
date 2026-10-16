@@ -255,6 +255,40 @@ opcodes! {
     /// The running function's capture `imm` = `a`.
     StoreCaptured: ACapture,
 
+    // ---- the spill scope of a function with more locals than the window ----
+    /// `a` = a scope of `imm` slots, all `undefined`.
+    NewSpill: ACount,
+    /// `a` = slot `imm` of the spill scope in `b`.
+    LoadSlot: ABInt,
+    /// Slot `imm` of the spill scope in `b` = `a`.
+    StoreSlot: ABInt,
+
+    // ---- the phase 3 surface ----
+    /// `a` = a new `arguments` object of the running frame: `imm` 1 for the
+    /// mapped form (the parameters' registers hold their cells), 0 for the
+    /// unmapped one.
+    NewArguments: AInt,
+    /// `a` = an array of the arguments from index `imm` (a rest parameter).
+    Rest: AInt,
+    /// `a` = new.target: the running function in a `new` call, else
+    /// `undefined`.
+    LoadNewTarget: A,
+    /// `a` = a new regular expression over constants `imm` (the source) and
+    /// `imm + 1` (the flags).
+    NewRegExp: AConst,
+    /// `a` = a `for-in` enumeration of `b`'s enumerable string keys.
+    ForInStart: AB,
+    /// The next key of enumeration `b` that still exists goes to `a` and
+    /// control to `imm`; an exhausted enumeration falls through.
+    ForInNext: ABJump,
+    /// Appends the elements of the array or `arguments` object in `c` to the
+    /// array in `a` from index `b`, leaving the next index in `b` (a spread
+    /// element).
+    AppendSpread: ABC,
+    /// Throws `InternalError` whose message is the atom `imm` (a construct
+    /// outside the surface, reached at run time).
+    ThrowInternal: Key,
+
     // ---- allocation ----
     /// `a = {}` with room for `imm` properties.
     NewObject: ACount,
@@ -279,6 +313,13 @@ opcodes! {
     /// `a = new b(b + 2, …)` with new.target in `b + 1`: the window starts at
     /// `b + 1`, which receives the constructed object.
     New: Call,
+    /// `a = b(...)` with receiver `b + 1` and the elements of the array in
+    /// `b + 2` as the arguments (a spread call): the window starts at
+    /// `b + 1`; `c` is unused.
+    CallSpread: Call,
+    /// `a = new b(...)` with new.target in `b + 1` and the elements of the
+    /// array in `b + 2` as the arguments.
+    NewSpread: Call,
     Return: A,
     ReturnUndefined: None,
     Throw: A,
@@ -297,6 +338,7 @@ impl Opcode {
                 | Opcode::ReturnUndefined
                 | Opcode::Throw
                 | Opcode::ThrowConstAssign
+                | Opcode::ThrowInternal
         )
     }
 }

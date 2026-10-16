@@ -185,6 +185,16 @@ fn default_to_string(cx: &mut Cx<'_>, object: ObjectId) -> Result<Value, Throw> 
     match cx.heap.object_kind(object) {
         ObjectKind::Array => join(cx, object),
         ObjectKind::Function => alloc_text(cx, "function () {\n    [native code]\n}"),
+        ObjectKind::Arguments => alloc_text(cx, "[object Arguments]"),
+        ObjectKind::RegExp => {
+            // `RegExp.prototype.toString` until M4 ports it.
+            let record = cx.regexps.get(cx.heap.header(object).payload);
+            let mut text: Vec<u16> = vec![u16::from(b'/')];
+            text.extend(units(cx.heap, record.source));
+            text.push(u16::from(b'/'));
+            text.extend(units(cx.heap, record.flags));
+            alloc_units(cx, &text)
+        }
         _ if is_error(cx, object) => error_text(cx, object),
         _ => alloc_text(cx, "[object Object]"),
     }

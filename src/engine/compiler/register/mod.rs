@@ -41,7 +41,7 @@ use oxide_core::bytecode::{
 use oxide_core::{HeapError, ObjectId, PropertyKey, Runtime, Value as CoreValue};
 
 use self::analysis::{Analysis, analyze};
-use crate::engine::code::bytecode::{DefineMethodKind, Instruction};
+use crate::engine::code::bytecode::{ApplyKind, ArgumentsKind, DefineMethodKind, Instruction};
 use crate::engine::code::function::UnlinkedFunction;
 use crate::engine::code::function::metadata::{
     ClosureSource, ClosureVariableName, ConstructorKind, EvalKind, FunctionKind,
@@ -117,41 +117,96 @@ pub(crate) fn lower_script(
     result
 }
 
-/// Lowers and publishes `function` after its children. `parent_arguments` is
-/// the parent's parameter count (`None` for the script), which places the
-/// parent's locals for this function's captures.
+/// Lowers and publishes `function` after its children. `parent` is the
+/// parent's layout (`None` for the script), which places the parent's locals
+/// for this function's captures.
 fn lower_tree(
     runtime: &mut Runtime,
     function: &UnlinkedFunction,
-    parent_arguments: Option<u16>,
+    parent: Option<Layout>,
     constants: &mut HashMap<CodeUnitId, Vec<CoreValue>>,
 ) -> Result<CodeUnitId, LowerError> {
-    let arguments = function.metadata().argument_count;
+    let layout = Layout::of(function, &analyze(function.code())?)?;
     let mut children = Vec::new();
     for constant in function.constants() {
         if let Some(child) = constant.as_child() {
-            children.push(lower_tree(runtime, child, Some(arguments), constants)?);
+            children.push(lower_tree(runtime, child, Some(layout), constants)?);
         }
     }
-    let (unit, pool) = lower_function(runtime, function, parent_arguments, children)?;
+    let (unit, pool) = lower_function(runtime, function, parent, children)?;
     let id = runtime.publish(unit)?;
     constants.insert(id, pool);
     Ok(id)
 }
 
 /// Lowers one function whose children are already published.
-pub(super) fn lower_function(
+fn lower_function(
     runtime: &mut Runtime,
     function: &UnlinkedFunction,
-    parent_arguments: Option<u16>,
+    parent: Option<Layout>,
     children: Vec<CodeUnitId>,
 ) -> Result<(CodeUnit, Vec<CoreValue>), LowerError> {
     check_surface(function)?;
     let analysis = analyze(function.code())?;
-    let mut lowerer = Lowerer::new(runtime, function, analysis, parent_arguments.is_none())?;
+    let mut lowerer = Lowerer::new(runtime, function, analysis, parent.is_none())?;
     lowerer.prologue()?;
     lowerer.body()?;
-    lowerer.finish(parent_arguments, children)
+    lowerer.finish(parent, children)
+}
+
+/// Where a function's locals and temporaries live. The window of 256
+/// registers holds `this`, the parameters, the locals and the temporaries in
+/// that order. A function whose locals do not all fit keeps the ones past
+/// `window_locals` in the slots of a spill scope, held in the register after
+/// the window's locals; its temporaries stay above every local, so a call's
+/// window never covers one.
+#[derive(Clone, Copy, Debug)]
+struct Layout {
+    first_local: u32,
+    window_locals: u32,
+    spill: Option<(u32, u32)>,
+    temp_base: u32,
+}
+
+/// Local registers past the window are named from here: `SPILLED + slot`.
+const SPILLED: u32 = 1 << 20;
+
+impl Layout {
+    fn of(function: &UnlinkedFunction, analysis: &Analysis) -> Result<Layout, LowerError> {
+        let metadata = function.metadata();
+        let first_local = 1 + u32::from(metadata.argument_count);
+        let locals = u32::from(metadata.local_count);
+        // One temporary above the deepest stack for scratch values.
+        let temps = analysis.max_depth + 1;
+        let window = oxide_core::bytecode::WINDOW;
+        if first_local + locals + temps <= window {
+            return Ok(Layout {
+                first_local,
+                window_locals: locals,
+                spill: None,
+                temp_base: first_local + locals,
+            });
+        }
+        let window_locals = window
+            .checked_sub(first_local + 1 + temps)
+            .ok_or_else(|| LowerError::unsupported("functions with more than 256 registers"))?;
+        let spill = first_local + window_locals;
+        Ok(Layout {
+            first_local,
+            window_locals,
+            spill: Some((spill, locals - window_locals)),
+            temp_base: spill + 1,
+        })
+    }
+
+    fn local(&self, local: u16) -> u32 {
+        let local = u32::from(local);
+        if local < self.window_locals {
+            self.first_local + local
+        } else {
+            SPILLED + local - self.window_locals
+        }
+    }
 }
 
 /// Rejects whole-function features outside the phase 2 surface.
@@ -165,14 +220,14 @@ fn check_surface(function: &UnlinkedFunction) -> Result<(), LowerError> {
         || metadata.needs_home_object
     {
         Some("classes")
-    } else if metadata.rest_parameter.is_some() || metadata.rest_pattern_start.is_some() {
-        Some("rest parameters")
+    } else if metadata.rest_pattern_start.is_some() {
+        Some("destructuring")
     } else if function.parameter_environment().is_some() || metadata.pattern_argument_count > 0 {
         Some("non-simple parameters")
-    } else if metadata.eval_kind != EvalKind::None
-        || metadata.eval_variable_object_local.is_some()
-        || !function.eval_environments().is_empty()
-    {
+    } else if metadata.eval_kind != EvalKind::None {
+        // Eval code itself. A function that only contains a direct `eval`
+        // lowers: the call throws (section 5.5), so no dynamic binding can
+        // ever exist in its environment.
         Some("eval")
     } else if metadata.is_module {
         Some("modules")
@@ -335,15 +390,10 @@ fn unsupported_instruction(instruction: &Instruction) -> LowerError {
         | I::GetSuperValue
         | I::GetSuperValueForCall
         | I::PutSuperValue => "classes",
-        I::RegExp(_) => "RegExp literals",
-        I::Arguments(_) => "Arguments objects",
-        I::Rest(_) => "rest parameters",
-        I::Append | I::Apply(_) | I::CopyDataProperties => "spread",
+        I::CopyDataProperties | I::CopyDataPropertiesExcluded { .. } => "object spread",
         I::ForInStart | I::ForInNext => "for-in",
         I::DefineMethod { .. } | I::DefineMethodComputed { .. } => "object literal methods",
-        I::Eval { .. } | I::ApplyEval { .. } => "eval",
         I::Import => "modules",
-        I::PushNewTarget => "new.target",
         _ => {
             let text = format!("{instruction:?}");
             let end = text.find(['(', ' ', '{']).unwrap_or(text.len());
@@ -370,8 +420,8 @@ struct Lowerer<'a> {
     is_script: bool,
     builder: CodeBuilder,
     stack: Vec<Entry>,
-    arguments: u32,
     temp_base: u32,
+    layout: Layout,
     captured_arguments: Vec<bool>,
     captured_locals: Vec<bool>,
     /// Register PC of each stack PC that starts a label.
@@ -404,6 +454,7 @@ impl<'a> Lowerer<'a> {
         let metadata = function.metadata();
         let arguments = u32::from(metadata.argument_count);
         let locals = u32::from(metadata.local_count);
+        let layout = Layout::of(function, &analysis)?;
         let mut captured_arguments = vec![false; arguments as usize];
         let mut captured_locals = vec![false; locals as usize];
         let mut child_ordinal = HashMap::new();
@@ -424,6 +475,14 @@ impl<'a> Lowerer<'a> {
             }
         }
         let code = function.code();
+        // Section 5.1: a mapped `arguments` object aliases the parameters
+        // through cells, so every parameter of such a function is one.
+        if code
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::Arguments(ArgumentsKind::Mapped)))
+        {
+            captured_arguments.fill(true);
+        }
         Ok(Lowerer {
             runtime,
             function,
@@ -431,8 +490,8 @@ impl<'a> Lowerer<'a> {
             is_script,
             builder: CodeBuilder::new(),
             stack: Vec::new(),
-            arguments,
-            temp_base: 1 + arguments + locals,
+            temp_base: layout.temp_base,
+            layout,
             captured_arguments,
             captured_locals,
             labels: vec![None; code.len()],
@@ -462,7 +521,55 @@ impl<'a> Lowerer<'a> {
     }
 
     fn local_register(&self, local: u16) -> u32 {
-        1 + self.arguments + u32::from(local)
+        self.layout.local(local)
+    }
+
+    /// A local past the window, in a slot of the spill scope.
+    fn is_wide(register: u32) -> bool {
+        register >= SPILLED
+    }
+
+    /// The spill register and the slot of a spilled local.
+    fn spill_slot(&self, register: u32) -> Result<(u8, i32), LowerError> {
+        let (spill, _) = self
+            .layout
+            .spill
+            .ok_or_else(|| LowerError::Internal("a spilled local without a spill scope".into()))?;
+        Ok((Self::r8(spill)?, (register - SPILLED) as i32))
+    }
+
+    /// A temporary above the stack, for shuttling a wide local.
+    fn scratch(&mut self) -> Result<u8, LowerError> {
+        let depth = self.stack.len();
+        self.max_scratch = self.max_scratch.max(depth as u32 + 1);
+        Self::r8(self.temp(depth))
+    }
+
+    /// Emits `build` on local register `register`: directly in the window,
+    /// or past it on a scratch temporary loaded from it (`load`) and stored
+    /// back to it (`store`).
+    fn on_local(
+        &mut self,
+        register: u32,
+        load: bool,
+        store: bool,
+        build: impl FnOnce(&mut CodeBuilder, u8) -> u32,
+    ) -> Result<(), LowerError> {
+        if !Self::is_wide(register) {
+            let a = Self::r8(register)?;
+            self.emit(|b| build(b, a));
+            return Ok(());
+        }
+        let scratch = self.scratch()?;
+        let (spill, slot) = self.spill_slot(register)?;
+        if load {
+            self.emit(|b| b.ab_int(Opcode::LoadSlot, scratch, spill, slot));
+        }
+        self.emit(|b| build(b, scratch));
+        if store {
+            self.emit(|b| b.ab_int(Opcode::StoreSlot, scratch, spill, slot));
+        }
+        Ok(())
     }
 
     fn r8(register: u32) -> Result<u8, LowerError> {
@@ -632,16 +739,18 @@ impl<'a> Lowerer<'a> {
 
     fn check_init(&mut self, register: u32, name: PropertyKey) -> Result<(), LowerError> {
         if self.checked.insert(register) {
-            let a = Self::r8(register)?;
-            self.emit(|b| b.a_key(Opcode::CheckInit, a, name));
+            self.on_local(register, true, false, |b, a| {
+                b.a_key(Opcode::CheckInit, a, name)
+            })?;
         }
         Ok(())
     }
 
     fn check_cell_init(&mut self, cell: u32, name: PropertyKey) -> Result<(), LowerError> {
         if self.checked.insert(cell) {
-            let a = Self::r8(cell)?;
-            self.emit(|b| b.a_key(Opcode::CheckCellInit, a, name));
+            self.on_local(cell, true, false, |b, a| {
+                b.a_key(Opcode::CheckCellInit, a, name)
+            })?;
         }
         Ok(())
     }
@@ -771,6 +880,10 @@ impl<'a> Lowerer<'a> {
     // ---- function entry ----
 
     fn prologue(&mut self) -> Result<(), LowerError> {
+        if let Some((spill, slots)) = self.layout.spill {
+            let spill = Self::r8(spill)?;
+            self.emit(|b| b.a_count(Opcode::NewSpill, spill, slots));
+        }
         if self.is_script {
             for index in 0..self.function.closure_variables().len() {
                 let variable = self.function.closure_variables()[index];
@@ -786,8 +899,8 @@ impl<'a> Lowerer<'a> {
         }
         let metadata = self.function.metadata();
         if let Some(local) = metadata.function_name_local {
-            let register = Self::r8(self.local_register(local))?;
-            self.emit(|b| b.a(Opcode::LoadFunction, register));
+            let register = self.local_register(local);
+            self.on_local(register, false, true, |b, a| b.a(Opcode::LoadFunction, a))?;
         }
         for argument in 0..self.captured_arguments.len() {
             if self.captured_arguments[argument] {
@@ -796,12 +909,18 @@ impl<'a> Lowerer<'a> {
             }
         }
         for local in 0..self.captured_locals.len() {
-            let register = Self::r8(self.local_register(local as u16))?;
+            let register = self.local_register(local as u16);
             let lexical = self.function.local_definitions()[local].is_lexical;
             match (self.captured_locals[local], lexical) {
-                (true, true) => self.emit(|b| b.a(Opcode::NewCellEmpty, register)),
-                (true, false) => self.emit(|b| b.ab(Opcode::NewCell, register, register)),
-                (false, true) => self.emit(|b| b.a(Opcode::LoadEmpty, register)),
+                (true, true) => {
+                    self.on_local(register, false, true, |b, a| b.a(Opcode::NewCellEmpty, a))?
+                }
+                (true, false) => {
+                    self.on_local(register, true, true, |b, a| b.ab(Opcode::NewCell, a, a))?
+                }
+                (false, true) => {
+                    self.on_local(register, false, true, |b, a| b.a(Opcode::LoadEmpty, a))?
+                }
                 (false, false) => continue,
             };
         }
@@ -947,17 +1066,17 @@ impl<'a> Lowerer<'a> {
                 let register = self.local_register(local);
                 self.spill_aliases(register)?;
                 self.checked.remove(&register);
-                let a = Self::r8(register)?;
-                if self.captured_locals[local as usize] {
-                    self.emit(|b| b.a(Opcode::NewCellEmpty, a));
+                let op = if self.captured_locals[local as usize] {
+                    Opcode::NewCellEmpty
                 } else {
-                    self.emit(|b| b.a(Opcode::LoadEmpty, a));
-                }
+                    Opcode::LoadEmpty
+                };
+                self.on_local(register, false, true, |b, a| b.a(op, a))?;
             }
             I::CloseLocal(local) => {
                 if self.captured_locals[local as usize] {
-                    let a = Self::r8(self.local_register(local))?;
-                    self.emit(|b| b.a(Opcode::CloseCell, a));
+                    let register = self.local_register(local);
+                    self.on_local(register, true, true, |b, a| b.a(Opcode::CloseCell, a))?;
                 }
             }
             I::GetArg(argument) => {
@@ -1207,6 +1326,69 @@ impl<'a> Lowerer<'a> {
                 self.emit(|b| b.key(Opcode::ThrowConstAssign, key));
             }
 
+            // ---- the phase 3 surface ----
+            I::Arguments(kind) => {
+                let dst = self.result_register()?;
+                let mapped = i32::from(kind == ArgumentsKind::Mapped);
+                let at = self.emit(|b| b.a_int(Opcode::NewArguments, dst, mapped));
+                self.push_result(at);
+            }
+            I::Rest(start) => {
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.a_int(Opcode::Rest, dst, i32::from(start)));
+                self.push_result(at);
+            }
+            I::PushNewTarget => {
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.a(Opcode::LoadNewTarget, dst));
+                self.push_result(at);
+            }
+            I::RegExp(index) => {
+                let slot = self.regexp_constants(index)?;
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.a_const(Opcode::NewRegExp, dst, slot));
+                self.push_result(at);
+            }
+            I::ForInStart => {
+                let (_, [source]) = self.pop_operands::<1>()?;
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.ab(Opcode::ForInStart, dst, source));
+                self.push_result(at);
+            }
+            I::ForInNext => return self.for_in_next(pc),
+            I::Append => {
+                // `array index iterable -> array index`, in place.
+                let base = self.stack.len() - 3;
+                for depth in base..self.stack.len() {
+                    self.materialize(depth)?;
+                }
+                let (array, index, source) = (
+                    Self::r8(self.temp(base))?,
+                    Self::r8(self.temp(base + 1))?,
+                    Self::r8(self.temp(base + 2))?,
+                );
+                self.emit(|b| b.abc(Opcode::AppendSpread, array, index, source));
+                self.stack.truncate(base + 2);
+            }
+            I::Apply(kind) => {
+                let op = match kind {
+                    ApplyKind::Call => Opcode::CallSpread,
+                    ApplyKind::Construct => Opcode::NewSpread,
+                };
+                self.call(op, 0, 3, true)?;
+            }
+            I::Eval { argument_count, .. } => {
+                self.unsupported_eval(usize::from(argument_count) + 1)?
+            }
+            I::ApplyEval { .. } => self.unsupported_eval(2)?,
+            // A function with a direct `eval` has no dynamic binding: the
+            // eval throws before it could create one.
+            I::VariableEnvironment | I::GetDynamicBinding { .. } => {
+                self.stack.push(Entry::Undefined)
+            }
+            I::HasDynamicBinding { .. } => self.stack.push(Entry::Bool(false)),
+            I::DeleteDynamicBinding { .. } => self.stack.push(Entry::Bool(true)),
+
             // ---- calls ----
             I::Call(argc) => self.call(Opcode::Call, argc, 1, true)?,
             I::CallMethod(argc) => self.call(Opcode::CallMethod, argc, 2, true)?,
@@ -1311,14 +1493,75 @@ impl<'a> Lowerer<'a> {
         Ok(())
     }
 
+    /// The constant-pool slots of a regular-expression literal: its source,
+    /// then its flags, as atoms.
+    fn regexp_constants(&mut self, index: u32) -> Result<u32, LowerError> {
+        let (pattern, program) = self
+            .function
+            .constants()
+            .get(index as usize)
+            .and_then(|constant| constant.as_regexp())
+            .ok_or_else(|| LowerError::Internal(format!("constant {index} is not a RegExp")))?;
+        let flags: Vec<u16> = program.flags().canonical_string().encode_utf16().collect();
+        let source = self.atom_value(&string_units(pattern))?;
+        let flags = self.atom_value(&flags)?;
+        let slot = self.pool.len() as u32;
+        self.pool.push(source);
+        self.pool.push(flags);
+        Ok(slot)
+    }
+
+    /// `ForInNext` and the `IfFalse` that consumes its done flag: one
+    /// register instruction that stores the key and jumps to the loop body,
+    /// or falls through when the enumeration is exhausted.
+    fn for_in_next(&mut self, pc: usize) -> Result<usize, LowerError> {
+        let target = match self.code.get(pc + 1) {
+            Some(Instruction::IfFalse(target)) if self.fusible(pc + 1) => *target as usize,
+            _ => return Err(LowerError::Internal("ForInNext without its IfFalse".into())),
+        };
+        let iterator = self.operand(self.stack.len() - 1)?;
+        self.materialize_all()?;
+        let key = self.result_register()?;
+        self.emit_jump(|b| b.ab_jump(Opcode::ForInNext, key, iterator, 0), target);
+        self.stack.push(Entry::Canon);
+        Ok(2)
+    }
+
+    /// A direct `eval` call: throws `InternalError: unsupported: eval` when
+    /// reached. Its operands are dropped and its result is never read.
+    fn unsupported_eval(&mut self, operands: usize) -> Result<(), LowerError> {
+        let base = self
+            .stack
+            .len()
+            .checked_sub(operands)
+            .ok_or_else(|| LowerError::Internal("symbolic stack underflow".into()))?;
+        self.stack.truncate(base);
+        let message = self.key(&JsString::from_static("unsupported: eval"))?;
+        self.emit(|b| b.key(Opcode::ThrowInternal, message));
+        self.stack.push(Entry::Undefined);
+        Ok(())
+    }
+
     // ---- bindings ----
 
     fn load_cell(&mut self, cell: u32) -> Result<(), LowerError> {
-        let cell = Self::r8(cell)?;
+        let cell = self.cell_operand(cell)?;
         let dst = self.result_register()?;
         let at = self.emit(|b| b.ab(Opcode::LoadCell, dst, cell));
         self.push_result(at);
         Ok(())
+    }
+
+    /// A cell register as an operand: itself, or a scratch temporary holding
+    /// it when it is past the window.
+    fn cell_operand(&mut self, cell: u32) -> Result<u8, LowerError> {
+        if !Self::is_wide(cell) {
+            return Self::r8(cell);
+        }
+        let scratch = self.scratch()?;
+        let (spill, slot) = self.spill_slot(cell)?;
+        self.emit(|b| b.ab_int(Opcode::LoadSlot, scratch, spill, slot));
+        Ok(scratch)
     }
 
     fn get_local(&mut self, local: u16, check: bool) -> Result<(), LowerError> {
@@ -1334,7 +1577,14 @@ impl<'a> Lowerer<'a> {
                 let name = self.local_key(local)?;
                 self.check_init(register, name)?;
             }
-            self.stack.push(Entry::Reg(register));
+            if Self::is_wide(register) {
+                let dst = self.result_register()?;
+                let (spill, slot) = self.spill_slot(register)?;
+                let at = self.emit(|b| b.ab_int(Opcode::LoadSlot, dst, spill, slot));
+                self.push_result(at);
+            } else {
+                self.stack.push(Entry::Reg(register));
+            }
             Ok(())
         }
     }
@@ -1367,10 +1617,22 @@ impl<'a> Lowerer<'a> {
         if captured {
             let value = self.operand(self.stack.len() - 1)?;
             let (_, entry) = self.pop()?;
-            let cell = Self::r8(register)?;
+            // The scratch slot is the popped entry's: load the cell above it.
+            self.stack.push(entry);
+            let cell = self.cell_operand(register)?;
+            self.stack.pop();
             self.emit(|b| b.ab(Opcode::StoreCell, cell, value));
             if keep {
                 self.stack.push(entry);
+            }
+        } else if Self::is_wide(register) {
+            let depth = self.stack.len() - 1;
+            self.materialize(depth)?;
+            let value = Self::r8(self.temp(depth))?;
+            let (spill, slot) = self.spill_slot(register)?;
+            self.emit(|b| b.ab_int(Opcode::StoreSlot, value, spill, slot));
+            if !keep {
+                self.pop()?;
             }
         } else {
             let (depth, entry) = self.pop()?;
@@ -1497,7 +1759,7 @@ impl<'a> Lowerer<'a> {
 
     fn finish(
         mut self,
-        parent_arguments: Option<u16>,
+        parent: Option<Layout>,
         children: Vec<CodeUnitId>,
     ) -> Result<(CodeUnit, Vec<CoreValue>), LowerError> {
         for &(at, target) in &self.fixups {
@@ -1524,12 +1786,20 @@ impl<'a> Lowerer<'a> {
         if self.is_script {
             unit_flags |= flags::SCRIPT;
         }
+        if self.code.iter().any(|instruction| {
+            matches!(
+                instruction,
+                Instruction::Arguments(_) | Instruction::Rest(_)
+            )
+        }) {
+            unit_flags |= flags::ARGUMENTS;
+        }
         let this_slots = if metadata.constructor_kind == ConstructorKind::Base {
             self.this_keys.len() as u16
         } else {
             0
         };
-        let captures = self.captures(parent_arguments)?;
+        let captures = self.captures(parent)?;
         let name = self
             .function
             .func_name()
@@ -1542,6 +1812,8 @@ impl<'a> Lowerer<'a> {
             flags: unit_flags,
             this_slots,
             constant_count: self.pool.len() as u32,
+            spill_register: self.layout.spill.map(|(register, _)| register as u16),
+            spill_slots: self.layout.spill.map_or(0, |(_, slots)| slots as u16),
             children,
             captures,
             name,
@@ -1549,8 +1821,7 @@ impl<'a> Lowerer<'a> {
         Ok((unit, self.pool))
     }
 
-    fn captures(&self, parent_arguments: Option<u16>) -> Result<Vec<Capture>, LowerError> {
-        let parent_arguments = u32::from(parent_arguments.unwrap_or(0));
+    fn captures(&self, parent: Option<Layout>) -> Result<Vec<Capture>, LowerError> {
         self.function
             .closure_variables()
             .iter()
@@ -1562,7 +1833,15 @@ impl<'a> Lowerer<'a> {
                 };
                 Ok(match variable.source {
                     ClosureSource::ParentLocal(local) => {
-                        Capture::Register(register(1 + parent_arguments + u32::from(local))?)
+                        let parent = parent.ok_or_else(|| {
+                            LowerError::Internal("a script local captured".into())
+                        })?;
+                        let local = parent.local(local);
+                        if local >= SPILLED {
+                            Capture::Slot(register(local - SPILLED)?)
+                        } else {
+                            Capture::Register(register(local)?)
+                        }
                     }
                     ClosureSource::ParentArgument(argument) => {
                         Capture::Register(register(1 + u32::from(argument))?)
