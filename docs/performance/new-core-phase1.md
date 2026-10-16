@@ -2,7 +2,7 @@
 
 This page is the implementation plan for phase 1 of the new core tracked in issue #122 ("8-byte `Value`; typed arenas; value heap with range allocation; mark-sweep with allocation safepoints; `&mut Runtime` threading; shapes with transition tree, dictionary mode and validity guards"). It is written for whoever implements the phase: it fixes the decisions that are already made, lists the ones that are deliberately open, and gives each milestone an acceptance check that can be run without judgment calls. Day estimates order the work; they are not commitments.
 
-Read first: [#122](https://github.com/pocket-nexus/quickjs-oxide/issues/122) for the overall design and phase order, [Measurement method](measurement.md) for how numbers are produced, [Typed storage](typed-arenas.md) for what the current heap does, and `docs/deviations.md` for how feature drops are recorded.
+Read first: [#122](https://github.com/pocket-nexus/quickjs-oxide/issues/122) for the overall design and phase order, [phase 0](new-core-phase0.md) for the baseline, the dropped language features and the stress-mode specification, [Measurement method](measurement.md) for how numbers are produced, [Typed storage](typed-arenas.md) for what the current heap does, and `docs/deviations.md` for how feature drops are recorded.
 
 ## 0. Scope
 
@@ -31,7 +31,7 @@ Module layout, one file or directory each:
 | `heap::string`, `heap::atom`, `heap::symbol`, `heap::bigint` | leaf records and interning |
 | `heap::gc` | root set, mark stack, sweep, trigger policy, stress mode, heap cap |
 | `shape` | shape records, transition tree, dictionary mode, validity cells |
-| `runtime` | the `Runtime` struct, realm skeleton, handle table |
+| `runtime` | the `Runtime` struct, the realm (global object and intrinsics), handle table |
 | `benches/` or `examples/` | the Rust micro-workloads of M5 |
 
 Delivery: one pull request per milestone, stacked in milestone order, each with its acceptance check in the description. `cargo clippy -p oxide-core --all-targets -- -D warnings` and `cargo fmt --check` gate every one. Toolchain is the pinned mainline Rust from `rust-toolchain.toml`.
@@ -159,7 +159,7 @@ The current `ObjectKind` has about forty variants. Their payloads are added as s
 
 **Root set.**
 
-1. Fixed roots in `Runtime`: each realm's global object and intrinsic table, the atom table, the job queue, the module registry.
+1. Fixed roots in `Runtime`: the realm's global object and intrinsic table, the atom table, the job queue, the module registry.
 2. `RootStack: Vec<Value>` with scoped marks. This is the only legal way for Rust code in phase 1 to hold a value across an allocation. The register file of phase 2 becomes another root.
 3. `Handles: Vec<Value>` plus a free list, for values held by the embedder (`api::Value`, the CLI, the Test262 host), released explicitly.
 4. Pending native state machines (phase 4) implement a `Trace` trait and report their values to the marker.
@@ -174,7 +174,7 @@ impl RootStack {
 
 **Safepoints.** Only inside `Heap::alloc_*`, and only when `bytes_since_gc >= threshold`, with `threshold = max(min_heap, live_after_last_gc * growth_factor)`. Nothing else triggers a collection.
 
-**Stress mode.** `GcState.stress: bool`: when set, every allocation collects. CI runs the whole `oxide-core` test suite a second time with the stress feature enabled (`cargo test -p oxide-core --features gc-stress`). Its purpose is to turn stale-index bugs from intermittent into deterministic.
+**Stress mode.** `GcState.stress: bool`: when set, every allocation collects; the full specification (interval, poisoning, post-collection verification) is [phase 0 §3](new-core-phase0.md#3-collector-stress-mode). CI runs the whole `oxide-core` test suite a second time with the stress feature enabled (`cargo test -p oxide-core --features gc-stress`). Its purpose is to turn stale-index bugs from intermittent into deterministic.
 
 **Discipline rule** (also goes into `core/README.md`). Allocation takes `&mut Heap`, so a borrow of a record can never survive a safepoint. An index can, so any `ObjectId`, `StringId` or `Value` held in a Rust local across a call that may allocate is pushed on the `RootStack` first. Code that breaks the rule fails under stress mode.
 
@@ -217,7 +217,7 @@ impl Heap {
 ```rust
 pub struct Runtime {
     heap: Heap,
-    realms: Vec<Realm>,     // phase 1: global object and intrinsic slots only
+    realm: Realm,           // one per runtime (phase 0 §2); phase 1: global object and intrinsic slots only
     roots: RootStack,
     handles: Handles,
     limits: HeapLimits,
