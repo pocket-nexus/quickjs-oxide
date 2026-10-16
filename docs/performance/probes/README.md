@@ -63,3 +63,5 @@ python3 docs/performance/probes/new-core/phase2.py --binary "$TEST_BINARY" --cpu
 ```
 
 `target/release/oxide-run` (`cargo build --release -p quickjs-oxide-cli --bin oxide-run`) runs a probe file on the new core as `qjs` runs it on the current one, so `fixed.py` takes it as an engine.
+
+For M6, `phase2.py --engine NAME=PATH` measures any engine run as `PATH FILE` (QuickJS, the current `qjs`, `oxide-run`). [`new-core/relink.py`](new-core/relink.py) relinks one saved LTO build at several `.text` offsets with identical machine code, the layout method of #119. The root crate's ignored `lowering_census` test (`CENSUS_DIR=DIR cargo test --release --lib lowering_census -- --ignored --nocapture`) lowers every function of every program in a directory on its own and lists the constructs it declines and the functions past the 256-register window.

@@ -13,8 +13,10 @@ from the same release test binary, so they are built identically.
     python3 docs/performance/probes/new-core/phase2.py \\
         --binary target/release/deps/quickjs_oxide-HASH --cpu 2 --repeat 3
 
-Until the M5 driver exists this replaces the fixed runner for the new core;
-M6 repeats the measurement on the reference machine.
+or, from M5 on, with any engine run as `PATH FILE` (each named column):
+
+    python3 docs/performance/probes/new-core/phase2.py --engine quickjs=$QJS \\
+        --engine current=$OXIDE_QJS --engine new=target/release/oxide-run
 """
 import argparse
 import json
@@ -67,15 +69,15 @@ def sources() -> dict:
     return probes
 
 
-def instructions(binary: str, cpu: int, core: str, path: Path) -> int:
-    command = [
-        "perf", "stat", "-x,", "-e", "instructions:u",
-        "taskset", "-c", str(cpu), binary,
-        "--exact", "engine::compiler::register::run_tests::run_probe_file",
-        "--ignored", "--nocapture", "--test-threads=1",
-    ]
-    env = {"PROBE_FILE": str(path), "PROBE_CORE": core, "PATH": "/usr/bin:/bin"}
-    result = subprocess.run(command, env=env, capture_output=True, text=True, check=True)
+def instructions(command: list, env: dict, cpu: int, path: Path) -> int:
+    """`instructions:u` of one run of `command` on `path`, pinned to `cpu`."""
+    full = ["perf", "stat", "-x,", "-e", "instructions:u", "taskset", "-c", str(cpu),
+            *[str(path) if part == "{file}" else part for part in command]]
+    if "{file}" not in command:
+        full.append(str(path))
+    run_env = {"PATH": "/usr/bin:/bin", **{key: (str(path) if value == "{file}" else value)
+                                           for key, value in env.items()}}
+    result = subprocess.run(full, env=run_env, capture_output=True, text=True, check=True)
     for line in result.stderr.splitlines():
         fields = line.split(",")
         if len(fields) > 2 and fields[2].startswith("instructions"):
@@ -83,37 +85,55 @@ def instructions(binary: str, cpu: int, core: str, path: Path) -> int:
     raise RuntimeError(f"no instruction count: {result.stderr}")
 
 
-def slope(binary, cpu, repeat, core, source, n, directory):
+def hook(binary: str, core: str) -> tuple:
+    """The root crate's measurement hook running one core (M3/M4)."""
+    command = [binary, "--exact", "engine::compiler::register::run_tests::run_probe_file",
+               "--ignored", "--nocapture", "--test-threads=1"]
+    return command, {"PROBE_FILE": "{file}", "PROBE_CORE": core}
+
+
+def slope(engine, cpu, repeat, source, n, directory):
+    command, env = engine
     counts = {}
     for size in (n, 2 * n):
         path = Path(directory) / f"probe_{size}.js"
         path.write_text(source.replace("work(N", f"work({size}"))
         counts[size] = statistics.median(
-            instructions(binary, cpu, core, path) for _ in range(repeat))
+            instructions(command, env, cpu, path) for _ in range(repeat))
     return (counts[2 * n] - counts[n]) / n
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", required=True)
+    parser.add_argument("--binary", help="the root crate's release test binary (both cores)")
+    parser.add_argument("--engine", action="append", default=[],
+                        help="NAME=PATH of a binary run as `PATH FILE` (qjs, oxide-run)")
     parser.add_argument("--cpu", type=int, default=2)
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--only", nargs="*")
     parser.add_argument("--output")
     args = parser.parse_args()
+    engines = {}
+    if args.binary:
+        engines["current"] = hook(args.binary, "current")
+        engines["new"] = hook(args.binary, "new")
+    for spec in args.engine:
+        name, path = spec.split("=", 1)
+        engines[name] = ([path], {})
+    if not engines:
+        parser.error("give --binary or --engine")
     rows = {}
+    print("| Probe | " + " | ".join(engines) + " |", flush=True)
     with tempfile.TemporaryDirectory() as directory:
         for name, source in sources().items():
             if args.only and name not in args.only:
                 continue
             n = ITERATIONS.get(name, DEFAULT_N)
-            row = {}
-            for core in ("current", "new"):
-                row[core] = slope(args.binary, args.cpu, args.repeat, core, source, n, directory)
-            row["ratio"] = row["current"] / row["new"] if row["new"] else None
+            row = {engine: slope(engines[engine], args.cpu, args.repeat, source, n, directory)
+                   for engine in engines}
             rows[name] = row
-            print(f"| `{name}` | {row['current']:,.0f} | {row['new']:,.0f} | "
-                  f"{row['ratio']:.1f}x |", flush=True)
+            print(f"| `{name}` | " + " | ".join(f"{row[e]:,.0f}" for e in engines) + " |",
+                  flush=True)
     if args.output:
         Path(args.output).write_text(json.dumps(rows, indent=2) + "\n")
 
