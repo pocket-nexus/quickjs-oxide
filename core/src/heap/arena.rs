@@ -63,6 +63,7 @@ impl<T: Record> Arena<T> {
     }
 
     /// Stores `value`, reusing the free list first. Returns its index.
+    #[inline]
     pub fn alloc(&mut self, value: T) -> u32 {
         self.extra += value.extra_bytes();
         self.live_count += 1;
@@ -72,6 +73,11 @@ impl<T: Record> Arena<T> {
             self.live[word] |= mask;
             return index;
         }
+        self.push(value)
+    }
+
+    #[inline(never)]
+    fn push(&mut self, value: T) -> u32 {
         let index = u32::try_from(self.records.len()).expect("arena index overflow");
         if self.records.len() == self.records.capacity() {
             self.records.reserve_exact(self.records.capacity().max(4));

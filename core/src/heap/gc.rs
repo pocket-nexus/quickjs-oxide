@@ -194,6 +194,17 @@ impl GcState {
         }
     }
 
+    /// Whether every safepoint takes the slow path: under a cap (to check it)
+    /// or under stress.
+    #[inline]
+    fn always_slow(&self) -> bool {
+        #[cfg(feature = "gc-stress")]
+        if self.stress {
+            return true;
+        }
+        self.limits.max_bytes != usize::MAX
+    }
+
     #[cfg(feature = "gc-stress")]
     fn stress_tick(&mut self) -> bool {
         if !self.stress {
@@ -214,7 +225,19 @@ impl Heap {
     /// under stress), and enforces the heap cap: an allocation that would cross
     /// it collects first and fails with `OutOfMemory` if that does not free
     /// enough. `keep` are values rooted for the duration of the collection.
+    #[inline]
     pub(crate) fn safepoint(&mut self, need: &Need, keep: &[Value]) -> Result<(), HeapError> {
+        let nominal = need.nominal_bytes();
+        if self.gc.allocated + nominal < self.gc.threshold && !self.gc.always_slow() {
+            self.gc.allocated += nominal;
+            return Ok(());
+        }
+        self.safepoint_slow(need, keep)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn safepoint_slow(&mut self, need: &Need, keep: &[Value]) -> Result<(), HeapError> {
         let nominal = need.nominal_bytes();
         #[allow(unused_mut)]
         let mut collect = self.gc.allocated + nominal >= self.gc.threshold;
@@ -422,6 +445,7 @@ impl Heap {
                 .retain(|dependent| objects.is_marked(dependent.0));
             true
         });
+        self.last_root = None;
         let shapes = &mut self.shapes;
         self.shape_roots
             .retain(|_, shape| shapes.is_marked(shape.0));

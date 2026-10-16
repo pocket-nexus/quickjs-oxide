@@ -103,17 +103,18 @@ impl fmt::Debug for PropertyKey {
     }
 }
 
-enum Bucket {
-    One(StringId),
-    Many(Vec<StringId>),
-}
+/// A bucket value: an atom index, or with [`OVERFLOW`] set an index into the
+/// collision lists. Atom indices stay below [`KEY_INDEX_LIMIT`], so the tag bit
+/// is free.
+const OVERFLOW: u32 = 1 << 31;
 
 /// Content → atom. Buckets are keyed by the content hash and compared by
-/// content against the string arena, so the table stores no second copy of
-/// any string.
+/// content against the string arena, so the table stores no second copy of any
+/// string; an entry is 8 bytes.
 #[derive(Default)]
 pub struct AtomTable {
-    buckets: FxHashMap<u32, Bucket>,
+    buckets: FxHashMap<u32, u32>,
+    collisions: Vec<Vec<StringId>>,
     count: usize,
 }
 
@@ -125,22 +126,30 @@ impl AtomTable {
         hash: u32,
     ) -> Option<StringId> {
         let matches = |id: &StringId| strings.get(id.0).repr == *repr;
-        match self.buckets.get(&hash)? {
-            Bucket::One(id) => matches(id).then_some(*id),
-            Bucket::Many(ids) => ids.iter().copied().find(matches),
+        let bucket = *self.buckets.get(&hash)?;
+        if bucket & OVERFLOW == 0 {
+            let id = StringId(bucket);
+            matches(&id).then_some(id)
+        } else {
+            self.collisions[(bucket & !OVERFLOW) as usize]
+                .iter()
+                .copied()
+                .find(matches)
         }
     }
 
     pub fn insert(&mut self, hash: u32, id: StringId) {
+        debug_assert!(id.0 < KEY_INDEX_LIMIT);
         self.count += 1;
         match self.buckets.get_mut(&hash) {
             None => {
-                self.buckets.insert(hash, Bucket::One(id));
+                self.buckets.insert(hash, id.0);
             }
-            Some(bucket) => match bucket {
-                Bucket::One(first) => *bucket = Bucket::Many(vec![*first, id]),
-                Bucket::Many(ids) => ids.push(id),
-            },
+            Some(bucket) if *bucket & OVERFLOW == 0 => {
+                self.collisions.push(vec![StringId(*bucket), id]);
+                *bucket = (self.collisions.len() as u32 - 1) | OVERFLOW;
+            }
+            Some(bucket) => self.collisions[(*bucket & !OVERFLOW) as usize].push(id),
         }
     }
 
@@ -153,23 +162,24 @@ impl AtomTable {
     }
 
     pub fn ids(&self) -> impl Iterator<Item = StringId> + '_ {
-        self.buckets.values().flat_map(|bucket| match bucket {
-            Bucket::One(id) => std::slice::from_ref(id).iter().copied(),
-            Bucket::Many(ids) => ids.iter().copied(),
+        self.buckets.values().flat_map(move |&bucket| {
+            let ids: &[StringId] = if bucket & OVERFLOW == 0 {
+                &[]
+            } else {
+                &self.collisions[(bucket & !OVERFLOW) as usize]
+            };
+            let single = (bucket & OVERFLOW == 0).then_some(StringId(bucket));
+            single.into_iter().chain(ids.iter().copied())
         })
     }
 
     /// Approximate bytes of the table itself (not the string records).
     pub fn bytes(&self) -> usize {
-        let entry = size_of::<u32>() + size_of::<Bucket>() + 1;
-        self.buckets.capacity() * entry
+        self.buckets.capacity() * (size_of::<(u32, u32)>() + 1)
             + self
-                .buckets
-                .values()
-                .map(|bucket| match bucket {
-                    Bucket::One(_) => 0,
-                    Bucket::Many(ids) => ids.capacity() * 4,
-                })
+                .collisions
+                .iter()
+                .map(|ids| 24 + ids.capacity() * 4)
                 .sum::<usize>()
     }
 }

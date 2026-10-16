@@ -72,13 +72,15 @@ pub(crate) struct Need {
 }
 
 impl Need {
+    /// Bytes charged to the collection trigger. Shapes and validity cells are
+    /// reserved conservatively (an operation that might create one asks for
+    /// one), so they count toward the cap through [`Heap::growth_bytes`] but
+    /// not toward the trigger.
     pub fn nominal_bytes(&self) -> usize {
         self.objects * size_of::<ObjectHeader>()
-            + self.shapes * size_of::<Shape>()
             + self.strings * size_of::<StringRecord>()
             + self.symbols * size_of::<SymbolRecord>()
             + self.bigints * size_of::<BigIntRecord>()
-            + self.cells * size_of::<ValidityCell>()
             + self.functions * size_of::<FunctionRecord>()
             + (values::class_len(self.values[0]) + values::class_len(self.values[1])) as usize * 8
             + self.extra
@@ -97,6 +99,8 @@ pub struct Heap {
     pub(crate) atoms: AtomTable,
     /// Transition-tree roots by `(prototype index or NONE, kind)`. Weak.
     pub(crate) shape_roots: FxHashMap<(u32, ObjectKind), ShapeId>,
+    /// One-entry cache in front of `shape_roots`; cleared by every collection.
+    pub(crate) last_root: Option<((u32, ObjectKind), ShapeId)>,
     /// Weak in key and dependents.
     pub(crate) prototypes: FxHashMap<ObjectId, PrototypeInfo>,
     pub(crate) roots: Roots,
@@ -122,6 +126,7 @@ impl Heap {
             payloads: PayloadArenas::default(),
             atoms: AtomTable::default(),
             shape_roots: FxHashMap::default(),
+            last_root: None,
             prototypes: FxHashMap::default(),
             roots: Roots::default(),
             gc: GcState::new(limits),
@@ -244,9 +249,42 @@ impl Heap {
         prototype: Option<ObjectId>,
         slot_capacity: u32,
     ) -> Result<ObjectId, HeapError> {
-        self.alloc_object_with(kind, prototype, slot_capacity, 0, 0, Need::default())
+        match kind {
+            ObjectKind::Ordinary | ObjectKind::Array | ObjectKind::Native => {
+                self.alloc_plain(kind, prototype, slot_capacity, 0)
+            }
+            ObjectKind::Scope | ObjectKind::GlobalObject => {
+                self.alloc_object_with(kind, prototype, slot_capacity, 0, NONE, Need::default())
+            }
+            ObjectKind::Function => panic!("function objects are created by alloc_function"),
+            ObjectKind::Free => panic!("ObjectKind::Free is the poison value"),
+        }
     }
 
+    /// The common path: a transition-tree root shape, no payload.
+    #[inline]
+    fn alloc_plain(
+        &mut self,
+        kind: ObjectKind,
+        prototype: Option<ObjectId>,
+        slot_capacity: u32,
+        element_capacity: u32,
+    ) -> Result<ObjectId, HeapError> {
+        let need = Need {
+            objects: 1,
+            shapes: 1,
+            values: [slot_capacity, element_capacity],
+            ..Need::default()
+        };
+        self.safepoint(&need, &[prototype.map_or(Value::UNDEFINED, Value::object)])?;
+        let shape = self.root_shape(prototype, kind);
+        let slots = self.values.alloc(slot_capacity);
+        let elements = self.values.alloc(element_capacity);
+        let header = ObjectHeader::new(kind, shape, slots, elements, 0, flags::EXTENSIBLE);
+        Ok(ObjectId(self.objects.alloc(header)))
+    }
+
+    #[inline]
     fn alloc_object_with(
         &mut self,
         kind: ObjectKind,

@@ -315,9 +315,26 @@ pub struct PrototypeInfo {
 impl Heap {
     // ---- shape construction (raw: callers have passed a safepoint) ----
 
+    #[inline]
     pub(crate) fn root_shape(&mut self, prototype: Option<ObjectId>, kind: ObjectKind) -> ShapeId {
         let key = (prototype.map_or(NONE, |p| p.0), kind);
+        if let Some((cached, shape)) = self.last_root
+            && cached == key
+        {
+            return shape;
+        }
+        self.root_shape_slow(prototype, kind, key)
+    }
+
+    #[inline(never)]
+    fn root_shape_slow(
+        &mut self,
+        prototype: Option<ObjectId>,
+        kind: ObjectKind,
+        key: (u32, ObjectKind),
+    ) -> ShapeId {
         if let Some(&shape) = self.shape_roots.get(&key) {
+            self.last_root = Some((key, shape));
             return shape;
         }
         if let Some(prototype) = prototype {
@@ -325,6 +342,7 @@ impl Heap {
         }
         let shape = ShapeId(self.shapes.alloc(Shape::root(prototype, kind)));
         self.shape_roots.insert(key, shape);
+        self.last_root = Some((key, shape));
         shape
     }
 
@@ -447,16 +465,27 @@ impl Heap {
         self.shape_lookup(self.objects.get(object.0).shape, key)
     }
 
+    /// `values[start + slot]`: one header load, one value load.
     #[inline]
+    #[track_caller]
     pub fn get_slot(&self, object: ObjectId, slot: u32) -> Value {
-        let slots = self.objects.get(object.0).slots();
-        self.values.get(slots, slot)
+        let header = self.objects.get(object.0);
+        debug_assert!(
+            slot < header.slots().len,
+            "slot {slot} outside the object's range"
+        );
+        self.values.get_at(header.slots_start + slot)
     }
 
     #[inline]
+    #[track_caller]
     pub fn set_slot(&mut self, object: ObjectId, slot: u32, value: Value) {
-        let slots = self.objects.get(object.0).slots();
-        self.values.set(slots, slot, value);
+        let header = self.objects.get(object.0);
+        debug_assert!(
+            slot < header.slots().len,
+            "slot {slot} outside the object's range"
+        );
+        self.values.set_at(header.slots_start + slot, value);
     }
 
     /// The value of a named property, following the prototype chain.
@@ -471,7 +500,40 @@ impl Heap {
     }
 
     /// Adds a new own property. `DuplicateKey` if it already exists.
+    #[inline]
     pub fn add_property(
+        &mut self,
+        object: ObjectId,
+        key: PropertyKey,
+        flags: PropertyFlags,
+        value: Value,
+    ) -> Result<(), HeapError> {
+        // Fast path: a known transition and a free slot. A transition for
+        // `key` proves the current shape lacks it (shapes are immutable), so
+        // no duplicate check, and nothing is allocated.
+        let header = self.objects.get(object.0);
+        if !header.has(flags::DICTIONARY) {
+            let slots = header.slots();
+            let shape = self.shapes.get(header.shape.0);
+            let count = shape.count;
+            if count < slots.len
+                && let Some(next) = shape.transitions.find(key, flags)
+            {
+                let header = self.objects.get_mut(object.0);
+                header.shape = next;
+                let prototype = header.has(flags::USED_AS_PROTOTYPE);
+                self.values.set_at(slots.start + count, value);
+                if prototype {
+                    self.invalidate(object);
+                }
+                return Ok(());
+            }
+        }
+        self.add_property_slow(object, key, flags, value)
+    }
+
+    #[inline(never)]
+    fn add_property_slow(
         &mut self,
         object: ObjectId,
         key: PropertyKey,
@@ -482,19 +544,21 @@ impl Heap {
         if header.has(flags::DICTIONARY) {
             return self.dictionary_add(object, key, flags, value);
         }
-        if self.shape_lookup(header.shape, key).is_some() {
-            return Err(HeapError::DuplicateKey);
-        }
         let shape = self.shapes.get(header.shape.0);
         let count = shape.count;
-        let known = shape.transitions.find(key, flags).is_some();
+        let known = shape.transitions.find(key, flags);
+        // A known transition proves the key is absent; otherwise check.
+        if known.is_none() && self.shape_lookup(header.shape, key).is_some() {
+            return Err(HeapError::DuplicateKey);
+        }
         if count >= DICTIONARY_THRESHOLD {
             self.enter_dictionary(object, &[key.to_value(), value])?;
             return self.dictionary_add(object, key, flags, value);
         }
         let slots = header.slots();
         let grow = count >= slots.len;
-        if grow || !known {
+        let collections = self.gc.stats.collections;
+        if grow || known.is_none() {
             let new_len = if grow { (slots.len * 2).max(4) } else { 0 };
             let need = Need {
                 shapes: 1,
@@ -503,9 +567,13 @@ impl Heap {
             };
             self.safepoint(&need, &[Value::object(object), key.to_value(), value])?;
         }
-        // The object was rooted, so its shape and ranges are unchanged; the
-        // transition is looked up again because the child may have died.
-        let next = self.transition(header.shape, key, flags);
+        // The object was rooted, so its shape and ranges are unchanged. A
+        // known child is reused only if no collection ran: it is reachable
+        // only through the weak transition and may have died.
+        let next = match known {
+            Some(child) if self.gc.stats.collections == collections => child,
+            _ => self.transition(header.shape, key, flags),
+        };
         let mut slots = slots;
         if grow {
             slots = self.values.grow(slots, (slots.len * 2).max(4));

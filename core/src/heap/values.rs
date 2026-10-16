@@ -74,16 +74,21 @@ impl ValueHeap {
 
     /// Allocates a range of at least `len` slots, filled with `Value::EMPTY`.
     /// The returned length is rounded up to the class size.
+    #[inline]
     pub fn alloc(&mut self, len: u32) -> Range {
-        let len = class_len(len);
         if len == 0 {
             return Range::EMPTY;
         }
-        let class = len.trailing_zeros() as usize;
-        if let Some(start) = self.free[class].pop() {
+        let len = len.next_power_of_two();
+        if let Some(start) = self.free[len.trailing_zeros() as usize].pop() {
             self.free_slots -= len as usize;
             return Range { start, len };
         }
+        self.alloc_fresh(len)
+    }
+
+    #[inline(never)]
+    fn alloc_fresh(&mut self, len: u32) -> Range {
         let start = u32::try_from(self.values.len()).expect("value heap overflow");
         let end = self.values.len() + len as usize;
         assert!(end <= u32::MAX as usize, "value heap overflow");
@@ -155,6 +160,17 @@ impl ValueHeap {
             range.len
         );
         self.values[(range.start + slot) as usize] = value;
+    }
+
+    /// An absolute slot; callers check the range in debug builds.
+    #[inline]
+    pub fn get_at(&self, index: u32) -> Value {
+        self.values[index as usize]
+    }
+
+    #[inline]
+    pub fn set_at(&mut self, index: u32, value: Value) {
+        self.values[index as usize] = value;
     }
 
     #[inline]
