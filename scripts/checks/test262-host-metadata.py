@@ -66,7 +66,7 @@ for name, expected in {
         "spread_operand",
         "unsupported_diagnostics",
     },
-    "quickjs-oxide-cli": {"cli", "oracle", "profiling"},
+    "quickjs-oxide-cli": {"cli", "oracle", "oxide_run", "profiling"},
 }.items():
     targets = [t for t in packages[name]["targets"] if t.get("kind") == ["test"]]
     if {t["name"] for t in targets} != expected or any(t.get("required-features") for t in targets):
