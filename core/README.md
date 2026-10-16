@@ -9,7 +9,10 @@ exist; the only natives are `print` and the error constructors. The CLI
 crate's `oxide-run` binary runs a script file on it (`oxide-run --help` for
 the options). The plan is [`docs/performance/new-core-phase1.md`](../docs/performance/new-core-phase1.md);
 the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/performance/new-core-phase1-results.md);
-phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md).
+phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md)
+and measured in [`docs/performance/new-core-phase2-results.md`](../docs/performance/new-core-phase2-results.md);
+phase 3 (inline caches, the V8 v7 slice and the go/no-go) is planned in
+[`docs/performance/new-core-phase3.md`](../docs/performance/new-core-phase3.md).
 
 The crate has `#![forbid(unsafe_code)]` and no dependencies. From phase 2 the
 root crate depends on it (the register lowering lives there); never the
