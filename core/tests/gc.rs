@@ -150,9 +150,6 @@ fn scopes_and_functions_trace_their_captures() {
     // `inner` is unrooted for this one call; the allocation roots its argument.
     let function = heap.alloc_function(None, Some(inner)).unwrap();
     let handle = heap.handles().create(Value::object(function));
-    let constant = heap.alloc_string("constant").unwrap();
-    heap.attach_bytecode(function, &[Value::string(constant), Value::int32(3)])
-        .unwrap();
     heap.collect();
     assert_eq!(heap.function_scope(function), Some(inner));
     assert_eq!(heap.scope_parent(inner), Some(outer));
@@ -161,15 +158,10 @@ fn scopes_and_functions_trace_their_captures() {
         heap.scope_get(inner, 0, 0).is_empty(),
         "uninitialized binding"
     );
-    assert_eq!(
-        heap.function_constants(function),
-        &[Value::string(constant), Value::int32(3)]
-    );
     heap.handles().release(handle);
     heap.collect();
     assert_eq!(heap.live_objects(), 0);
     assert!(!heap.is_live(Value::string(text)));
-    assert!(!heap.is_live(Value::string(constant)));
     assert_eq!(heap.value_heap().used_slots(), 0);
 }
 

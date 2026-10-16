@@ -464,7 +464,7 @@ jobs:
             "--root", root,
             "--worktree",
             "--files", required(spec, "engine_semantics_files"),
-            "--trees", "adapters,apps,conformance,examples,src,tests",
+            "--trees", "adapters,apps,conformance,core,examples,src,tests",
           ], {
             encoding: "utf8",
             stdio: ["ignore", "pipe", "inherit"],

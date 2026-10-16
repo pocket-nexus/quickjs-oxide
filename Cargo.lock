@@ -83,6 +83,7 @@ version = "0.2.1"
 dependencies = [
  "num-bigint",
  "num-traits",
+ "oxide-core",
  "quickjs-oxide-host",
 ]
 

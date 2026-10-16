@@ -28,9 +28,10 @@ use self::object::{
 };
 use self::string::{StringRecord, StringRepr};
 use self::symbol::SymbolRecord;
-use self::values::ValueHeap;
+use self::values::{Range, ValueHeap};
+use crate::bytecode::CodeUnitId;
 use crate::shape::{Dictionary, PrototypeInfo, STATIC_CELL, Shape, ValidityCell};
-use crate::value::{BigIntId, ObjectId, ScopeId, ShapeId, StringId, SymbolId, Value};
+use crate::value::{BigIntId, BytecodeId, ObjectId, ScopeId, ShapeId, StringId, SymbolId, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeapError {
@@ -55,6 +56,15 @@ impl fmt::Display for HeapError {
 
 impl std::error::Error for HeapError {}
 
+/// One unit of the tree [`Heap::alloc_bytecode_function`] creates.
+#[derive(Clone, Copy, Debug)]
+pub struct BytecodeTemplate<'a> {
+    pub unit: CodeUnitId,
+    pub constants: &'a [Value],
+    /// Indices into the tree, in `MakeClosure` order.
+    pub children: &'a [u32],
+}
+
 /// What one operation will allocate, for the trigger and the cap.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Need {
@@ -65,6 +75,7 @@ pub(crate) struct Need {
     pub bigints: usize,
     pub cells: usize,
     pub functions: usize,
+    pub bytecodes: usize,
     /// Up to two value-heap ranges.
     pub values: [u32; 2],
     /// Bytes owned outside the arenas (string contents, limbs).
@@ -82,6 +93,7 @@ impl Need {
             + self.symbols * size_of::<SymbolRecord>()
             + self.bigints * size_of::<BigIntRecord>()
             + self.functions * size_of::<FunctionRecord>()
+            + self.bytecodes * size_of::<FunctionBytecode>()
             + (values::class_len(self.values[0]) + values::class_len(self.values[1])) as usize * 8
             + self.extra
     }
@@ -491,47 +503,141 @@ impl Heap {
         (scope != NONE).then_some(ScopeId(scope))
     }
 
-    /// Attaches a bytecode record whose constant table is a value-heap range
-    /// (the phase 2 seam).
-    pub fn attach_bytecode(
+    /// A function object over the root of a published code-unit tree, with
+    /// one bytecode record per unit (the constant tables and the child links
+    /// of section 2). `tree[0]` is the root; `children` index into `tree`.
+    /// The constants are rooted for the call.
+    pub fn alloc_bytecode_function(
         &mut self,
-        function: ObjectId,
-        constants: &[Value],
-    ) -> Result<(), HeapError> {
-        let len = u32::try_from(constants.len()).map_err(|_| HeapError::OutOfMemory)?;
-        let mut keep = vec![Value::object(function)];
-        keep.extend_from_slice(constants);
-        self.safepoint(
-            &Need {
-                values: [len, 0],
-                ..Need::default()
-            },
-            &keep,
-        )?;
-        let range = self.values.alloc(len);
-        self.values.slice_mut(range)[..constants.len()].copy_from_slice(constants);
-        let bytecode = self
-            .payloads
-            .bytecode
-            .alloc(FunctionBytecode { constants: range });
-        let payload = self.objects.get(function.0).payload;
-        let record = self.payloads.functions.get_mut(payload);
-        if record.bytecode != NONE {
-            let old = self.payloads.bytecode.free(record.bytecode);
-            self.values.free(old.constants);
+        prototype: Option<ObjectId>,
+        scope: Option<ScopeId>,
+        tree: &[BytecodeTemplate<'_>],
+    ) -> Result<ObjectId, HeapError> {
+        assert!(!tree.is_empty(), "a bytecode tree has a root");
+        let mark = self.roots.stack.mark();
+        for template in tree {
+            for &constant in template.constants {
+                self.roots.stack.push(constant);
+            }
         }
-        record.bytecode = bytecode;
-        Ok(())
+        let result = self.alloc_bytecode_function_rooted(prototype, scope, tree);
+        self.roots.stack.truncate(mark);
+        result
     }
 
-    pub fn function_constants(&self, function: ObjectId) -> &[Value] {
-        let payload = self.objects.get(function.0).payload;
-        let record = self.payloads.functions.get(payload);
-        if record.bytecode == NONE {
-            return &[];
+    fn alloc_bytecode_function_rooted(
+        &mut self,
+        prototype: Option<ObjectId>,
+        scope: Option<ScopeId>,
+        tree: &[BytecodeTemplate<'_>],
+    ) -> Result<ObjectId, HeapError> {
+        let function = self.alloc_function(prototype, scope)?;
+        let count = |len: usize| u32::try_from(len).map_err(|_| HeapError::OutOfMemory);
+        let mut constant_slots = 0u32;
+        let mut child_slots = 0u32;
+        for template in tree {
+            let constants = values::class_len(count(template.constants.len())?);
+            let children = values::class_len(count(template.children.len())?);
+            constant_slots = constant_slots
+                .checked_add(constants)
+                .ok_or(HeapError::OutOfMemory)?;
+            child_slots = child_slots
+                .checked_add(children)
+                .ok_or(HeapError::OutOfMemory)?;
         }
-        self.values
-            .slice(self.payloads.bytecode.get(record.bytecode).constants)
+        // One safepoint for the whole tree: the records are unreachable until
+        // the root is attached below, so nothing between may collect.
+        self.safepoint(
+            &Need {
+                bytecodes: tree.len(),
+                values: [constant_slots, child_slots],
+                ..Need::default()
+            },
+            &[Value::object(function)],
+        )?;
+        let mut ids = Vec::with_capacity(tree.len());
+        for template in tree {
+            let constant_count = template.constants.len() as u32;
+            let constants = self.values.alloc(constant_count);
+            self.values.slice_mut(constants)[..template.constants.len()]
+                .copy_from_slice(template.constants);
+            let record = FunctionBytecode {
+                unit: template.unit.0,
+                constants,
+                constant_count,
+                children: Range::EMPTY,
+                child_count: 0,
+            };
+            ids.push(self.payloads.bytecode.alloc(record));
+        }
+        for (template, &id) in tree.iter().zip(&ids) {
+            let child_count = template.children.len() as u32;
+            let children = self.values.alloc(child_count);
+            for (slot, &child) in template.children.iter().enumerate() {
+                let child = Value::int32(ids[child as usize] as i32);
+                self.values.set(children, slot as u32, child);
+            }
+            let record = self.payloads.bytecode.get_mut(id);
+            record.children = children;
+            record.child_count = child_count;
+        }
+        let payload = self.objects.get(function.0).payload;
+        self.payloads.functions.get_mut(payload).bytecode = ids[0];
+        Ok(function)
+    }
+
+    /// A closure over `bytecode`, for `MakeClosure`. The record must be
+    /// reachable through a rooted function (it is a child of the running
+    /// function's record), since a record is not a value the root stack can
+    /// hold.
+    pub fn alloc_closure(
+        &mut self,
+        prototype: Option<ObjectId>,
+        scope: Option<ScopeId>,
+        bytecode: BytecodeId,
+    ) -> Result<ObjectId, HeapError> {
+        let function = self.alloc_function(prototype, scope)?;
+        debug_assert!(self.payloads.bytecode.is_live(bytecode.0));
+        let payload = self.objects.get(function.0).payload;
+        self.payloads.functions.get_mut(payload).bytecode = bytecode.0;
+        Ok(function)
+    }
+
+    pub fn function_bytecode(&self, function: ObjectId) -> Option<BytecodeId> {
+        let header = self.objects.get(function.0);
+        debug_assert_eq!(header.kind, ObjectKind::Function);
+        let bytecode = self.payloads.functions.get(header.payload).bytecode;
+        (bytecode != NONE).then_some(BytecodeId(bytecode))
+    }
+
+    #[inline]
+    pub fn bytecode_unit(&self, bytecode: BytecodeId) -> CodeUnitId {
+        CodeUnitId(self.payloads.bytecode.get(bytecode.0).unit)
+    }
+
+    pub fn bytecode_constants(&self, bytecode: BytecodeId) -> &[Value] {
+        let record = self.payloads.bytecode.get(bytecode.0);
+        &self.values.slice(record.constants)[..record.constant_count as usize]
+    }
+
+    #[inline]
+    pub fn bytecode_constant(&self, bytecode: BytecodeId, index: u32) -> Value {
+        let record = self.payloads.bytecode.get(bytecode.0);
+        debug_assert!(index < record.constant_count);
+        self.values.get(record.constants, index)
+    }
+
+    /// The record of child `index` of `bytecode`'s unit.
+    #[inline]
+    pub fn bytecode_child(&self, bytecode: BytecodeId, index: u32) -> BytecodeId {
+        let record = self.payloads.bytecode.get(bytecode.0);
+        debug_assert!(index < record.child_count);
+        let child = self.values.get(record.children, index);
+        BytecodeId(child.as_int32().expect("child link") as u32)
+    }
+
+    pub fn live_bytecodes(&self) -> usize {
+        self.payloads.bytecode.live_count()
     }
 
     // ---- strings, atoms, symbols, BigInts ----
