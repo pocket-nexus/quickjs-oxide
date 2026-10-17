@@ -47,10 +47,14 @@ fn an_uncaught_exception_exits_one_with_its_string() {
 }
 
 #[test]
-fn an_unsupported_construct_is_reported() {
-    let output = oxide_run(&[], "class.js", "class C {}");
+fn a_dropped_feature_is_an_early_syntax_error() {
+    let output = oxide_run(&[], "with.js", "print('before'); with ({}) {}");
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(text(&output.stderr), "unsupported: classes\n");
+    assert_eq!(text(&output.stdout), "");
+    assert_eq!(
+        text(&output.stderr),
+        "SyntaxError: with statements are not supported\n"
+    );
 }
 
 #[test]
