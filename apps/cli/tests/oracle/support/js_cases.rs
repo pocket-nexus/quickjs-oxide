@@ -23,6 +23,10 @@
 //   line adds one run of every case with those options.
 //
 // Set `ORACLE_CASE=<substring>` to run only matching `dir/file/case` names.
+//
+// A case named in `dev-support/oracle-attributions.tsv` differs from QuickJS
+// by one of the deviation ledger's dropped features (new-core phase 6, M3):
+// it must still differ, so that a row outlives no difference.
 use crate::quickjs_array_completion_oracle::observe_array_completion;
 use crate::runtime_completion_oracle::ORACLE_NORMALIZER;
 use crate::runtime_observation::host_runtime_context;
@@ -46,6 +50,24 @@ struct Case {
     source: String,
     mode: Mode,
     flags: Vec<String>,
+}
+
+/// The attributed cases: name and ledger identifier.
+fn attributions() -> std::collections::HashMap<String, String> {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../dev-support/oracle-attributions.tsv");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    text.lines()
+        .skip(1)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let (case, deviation) = line
+                .split_once('\t')
+                .unwrap_or_else(|| panic!("malformed attribution row {line:?}"));
+            (case.to_owned(), deviation.to_owned())
+        })
+        .collect()
 }
 
 fn cases_root() -> PathBuf {
@@ -401,6 +423,7 @@ pub(crate) fn run_case_directory(directory: &str) {
                 .is_none_or(|filter| case.name.contains(filter))
         })
         .collect::<Vec<_>>();
+    let attributions = attributions();
     let workers = std::thread::available_parallelism().map_or(2, |count| count.get().min(2));
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut failures = std::thread::scope(|scope| {
@@ -416,6 +439,17 @@ pub(crate) fn run_case_directory(directory: &str) {
                         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             compare_case(&oracle, case)
                         }));
+                        let result = match attributions.get(&case.name) {
+                            Some(deviation) => result.map(|failure| match failure {
+                                Some(_) => None,
+                                None => Some(format!(
+                                    "{}\nattributed to {deviation} but matches pinned QuickJS: \
+                                     remove its row from dev-support/oracle-attributions.tsv",
+                                    case.name
+                                )),
+                            }),
+                            None => result,
+                        };
                         let failure = result.unwrap_or_else(|panic| {
                             let message = panic
                                 .downcast_ref::<String>()
@@ -451,4 +485,19 @@ pub(crate) fn run_case_directory(directory: &str) {
             .collect::<Vec<_>>()
             .join("\n\n"),
     );
+}
+
+/// Every row of `dev-support/oracle-attributions.tsv` names a case, once.
+pub(crate) fn assert_attributions_name_cases() {
+    let names = case_directories()
+        .iter()
+        .flat_map(|directory| load_directory(directory))
+        .map(|case| case.name)
+        .collect::<std::collections::HashSet<_>>();
+    let mut stale = attributions()
+        .into_keys()
+        .filter(|case| !names.contains(case))
+        .collect::<Vec<_>>();
+    stale.sort();
+    assert!(stale.is_empty(), "attributions name no case: {stale:#?}");
 }

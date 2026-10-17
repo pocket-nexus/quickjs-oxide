@@ -111,6 +111,7 @@ def compiled_inventory(features=False, test_filter=None):
 
 LEDGER = ROOT / 'docs/deviations.md'
 FIXTURE_GATES = ROOT / 'dev-support/quickjs-fixture-gates.tsv'
+ORACLE_ATTRIBUTIONS = ROOT / 'dev-support/oracle-attributions.tsv'
 LEDGER_ENTRY = re.compile(r'^### ([A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3})$', re.MULTILINE)
 # The fields every new-core entry carries (new-core phase 6, section 5).
 NEWCORE_FIELDS = ('Status', 'Surface', 'Authority', 'Required behavior',
@@ -119,7 +120,7 @@ NEWCORE_FIELDS = ('Status', 'Surface', 'Authority', 'Required behavior',
 
 def ledger_entries():
     """The deviation ledger's entry identifiers; checks the new-core entries'
-    form and that every fixture attribution names an entry."""
+    form and that every fixture and oracle-case attribution names an entry."""
     text = LEDGER.read_text()
     found = LEDGER_ENTRY.findall(text)
     if len(found) != len(set(found)):
@@ -146,6 +147,17 @@ def ledger_entries():
             value = row.split('\t')[column]
             if value != '-' and value not in entries:
                 fail(f'fixture gate {row.split(chr(9))[0]} names no ledger entry: {value}')
+    rows = ORACLE_ATTRIBUTIONS.read_text().splitlines()
+    if rows[0] != 'case\tdeviation':
+        fail('oracle attributions lack their case/deviation header')
+    seen = set()
+    for row in rows[1:]:
+        case, _, value = row.partition('\t')
+        if case in seen:
+            fail(f'oracle attributions repeat {case}')
+        seen.add(case)
+        if value not in newcore:
+            fail(f'oracle case {case} is attributed to no dropped feature: {value}')
     return entries
 
 

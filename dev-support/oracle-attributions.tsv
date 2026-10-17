@@ -1,0 +1,48 @@
+case	deviation
+array/assignment / nested target Reference is prepared after the outer step and before the inner step	NEWCORE-WITH-001
+array/assignment / with resolves a missing identifier before IteratorNext adds that property	NEWCORE-WITH-001
+array/assignment / with retains an existing property Reference across IteratorNext deletion	NEWCORE-WITH-001
+class_initialization/base / a computed key's eval runs sloppy code	NEWCORE-WITH-001
+control_flow/annex_b_statements / with containing an if would reopen Annex B once with is implemented	NEWCORE-WITH-001
+control_flow/for_of / nested var binding prepares its with reference after inner acquisition and before step	NEWCORE-WITH-001
+control_flow/for_of / var declaration prepares a with reference before iterator step	NEWCORE-WITH-001
+control_flow/for_of / var for-of binding prepares a with reference before inner step	NEWCORE-WITH-001
+control_flow/for_of / var rest keeps its prepared with reference while draining	NEWCORE-WITH-001
+control_flow/with / a missing strict global reference stays missing across RHS creation	NEWCORE-WITH-001
+control_flow/with / an eval-created closure imports with lookup but still calls with undefined receiver	NEWCORE-WITH-001
+control_flow/with / an eval var object selected under syntactic with becomes the call receiver	NEWCORE-WITH-001
+control_flow/with / a strict child reports a missing selected property after its RHS deletes it	NEWCORE-WITH-001
+control_flow/with / a var initializer inside with assigns the object and not the function var	NEWCORE-WITH-001
+control_flow/with / a var initializer selects its with reference before evaluating the RHS	NEWCORE-WITH-001
+control_flow/with / compound assignment keeps its selected base when the RHS deletes the property	NEWCORE-WITH-001
+control_flow/with / delete distinguishes selected fallback and missing bindings	NEWCORE-WITH-001
+control_flow/with / direct eval assignment resolves its imported with environment after the RHS	NEWCORE-WITH-001
+control_flow/with / direct eval imports with lookup without importing reference-call receiver rules	NEWCORE-WITH-001
+control_flow/with / eval variable objects use prototype-aware HasProperty under with	NEWCORE-WITH-001
+control_flow/with / failed selected writes are silent in sloppy code and throw in strict code	NEWCORE-WITH-001
+control_flow/with / for-in and for-of assignment targets resolve through with on every iteration	NEWCORE-WITH-001
+control_flow/with / Get rechecks HasProperty after an unscopables getter deletes the selection	NEWCORE-WITH-001
+control_flow/with / logical assignment keeps its selected base when the RHS deletes the property	NEWCORE-WITH-001
+control_flow/with / loop closures retain the with object from each closed scope	NEWCORE-WITH-001
+control_flow/with / postfix update rechecks HasProperty after coercion deletes the property	NEWCORE-WITH-001
+control_flow/with / readonly fallback rejects compound logical and update references eagerly	NEWCORE-WITH-001
+control_flow/with / readonly fallback throws before evaluating the assignment RHS	NEWCORE-WITH-001
+control_flow/with / simple assignment keeps its selected base when the RHS deletes the property	NEWCORE-WITH-001
+control_flow/with / simple compound logical prefix and postfix writes target the with object	NEWCORE-WITH-001
+control_flow/with / single-statement contextual let honors ASI after with	NEWCORE-WITH-001
+control_flow/with / TypedArray prototype numeric-index rejection composes with repeated with HasProperty	NEWCORE-WITH-001
+control_flow/with / unscopables skips the inner binding and preserves nested fallback order	NEWCORE-WITH-001
+control_flow/with / with applies ToObject and rejects nullish values	NEWCORE-WITH-001
+control_flow/with / with methods receive the object while lexical fallback receives undefined	NEWCORE-WITH-001
+function_semantics/arrow / direct-eval / an eval-created arrow and nested eval retain with and unscopables	NEWCORE-WITH-001
+function_semantics/arrow / with / an escaped arrow retains with lookup and honors unscopables	NEWCORE-WITH-001
+object/assignment / for-of prepares a with Reference independently for each yielded object	NEWCORE-WITH-001
+object/assignment / with resolves a missing identifier before the source getter adds it	NEWCORE-WITH-001
+object/assignment / with retains an existing identifier Reference across source deletion	NEWCORE-WITH-001
+object/bindings / binding Put fault closes the outer iterator and keeps the Put fault	NEWCORE-WITH-001
+object/bindings / computed sloppy var evaluates key then prepares with reference before get	NEWCORE-WITH-001
+object/bindings / fixed sloppy var prepares its with reference before the property getter	NEWCORE-WITH-001
+object/bindings / nested var prepares its leaf reference after the outer get and before the inner get	NEWCORE-WITH-001
+object/rest / rest target Put fault follows copy then closes the outer iterator	NEWCORE-WITH-001
+object/rest / sloppy with resolves a missing rest target before copy adds that name	NEWCORE-WITH-001
+object/rest / sloppy with retains an existing rest target reference after copy deletes it	NEWCORE-WITH-001

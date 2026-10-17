@@ -134,15 +134,12 @@
     var evalClassTdz;
     try { class EvalClass { [eval("EvalClass")]() {} } }
     catch (error) { evalClassTdz = error.name; }
-    class SloppyEvalKey {
-        [eval("with ({ value: 'eval' }) value")]() { return 42; }
-    }
     var recovered;
     try { (class { [(function () { throw 1; })()]() {} }); }
     catch (_) { recoveredAfterClass = 42; recovered = recoveredAfterClass; }
     add("scope", [declarationTdz, computedTdz, computedAssignment,
         typeof classBaseLeak, strictOuterError, typeof strictOuterClassLeak,
-        evalClassTdz, new SloppyEvalKey().eval(), recovered].join("|"));
+        evalClassTdz, recovered].join("|"));
     delete classBaseLeak;
     delete recoveredAfterClass;
 
@@ -152,4 +149,11 @@
         new ObjectReturn().answer].join("|"));
 
     return out.join("\n");
+})()
+// case: a computed key's eval runs sloppy code
+(function () {
+    class SloppyEvalKey {
+        [eval("with ({ value: 'eval' }) value")]() { return 42; }
+    }
+    return new SloppyEvalKey().eval();
 })()
