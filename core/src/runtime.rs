@@ -308,15 +308,53 @@ impl Realm {
 }
 
 pub struct Runtime {
-    heap: Heap,
+    pub(crate) heap: Heap,
     /// Beside the heap, not in it: the main loop borrows the running unit's
     /// code across heap calls (phase 2, section 2).
-    code: CodeStore,
-    realm: Realm,
+    pub(crate) code: CodeStore,
+    pub(crate) realm: Realm,
     pub(crate) host: Services,
     /// The regular-expression programs (phase 3, section 5.3): append-only,
     /// beside the heap like the code store.
-    regexps: RegExpStore,
+    pub(crate) regexps: RegExpStore,
+}
+
+/// How a runtime is configured (phase 6, section 2.4). `Default` is the
+/// behavior every runtime had before the options existed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RuntimeOptions {
+    /// The heap cap; `usize::MAX` bytes for none.
+    pub heap: HeapLimits,
+    /// The collection threshold's floor, in bytes.
+    pub min_heap: usize,
+    /// The threshold after a collection is the live bytes times this.
+    pub growth: f64,
+    /// Registers the register file may hold before a call fails with
+    /// `InternalError: stack overflow`.
+    pub stack_limit: u32,
+    /// Bytes of host stack nested re-entries into the loop may use.
+    pub native_stack_budget: usize,
+}
+
+impl Default for RuntimeOptions {
+    fn default() -> Self {
+        RuntimeOptions {
+            heap: HeapLimits::default(),
+            min_heap: crate::heap::gc::DEFAULT_MIN_HEAP,
+            growth: 2.0,
+            stack_limit: crate::vm::DEFAULT_STACK_LIMIT,
+            native_stack_budget: crate::vm::NATIVE_STACK_BUDGET,
+        }
+    }
+}
+
+impl From<HeapLimits> for RuntimeOptions {
+    fn from(heap: HeapLimits) -> Self {
+        RuntimeOptions {
+            heap,
+            ..RuntimeOptions::default()
+        }
+    }
 }
 
 /// [`Runtime::thrown_summary`]'s reading of a thrown object.
@@ -328,8 +366,14 @@ pub struct ThrownSummary {
 }
 
 impl Runtime {
-    pub fn new(limits: HeapLimits) -> Result<Runtime, HeapError> {
-        let mut heap = Heap::new(limits);
+    pub fn new(options: impl Into<RuntimeOptions>) -> Result<Runtime, HeapError> {
+        let options = options.into();
+        let mut heap = Heap::new(options.heap);
+        heap.gc.min_heap = options.min_heap;
+        heap.gc.threshold = options.min_heap;
+        heap.gc.growth_factor = options.growth;
+        heap.vm.limit = options.stack_limit;
+        heap.vm.native_budget = options.native_stack_budget;
         let root = |heap: &mut Heap, object: ObjectId| {
             heap.add_fixed_root(Value::object(object));
             object
@@ -458,9 +502,31 @@ impl Runtime {
         self.host.can_block = can_block;
     }
 
-    /// Installs the embedder's hooks (section 6.3).
-    pub fn set_host(&mut self, hooks: Box<dyn crate::host::Host>) {
+    /// Installs the embedder's hooks (section 6.3) and seeds `Math.random`
+    /// from [`Host::random_seed`](crate::host::Host::random_seed).
+    pub fn set_host(&mut self, mut hooks: Box<dyn crate::host::Host>) {
+        let seed = hooks.random_seed();
+        self.host.seed_random(seed);
         self.host.hooks = hooks;
+    }
+
+    /// Keeps every rejected promise without a handler alive until a handler
+    /// is attached or [`Runtime::clear_unhandled_rejections`] (QuickJS's
+    /// `js_std_promise_rejection_tracker`). Off by default.
+    pub fn set_track_rejections(&mut self, track: bool) {
+        self.host.track_rejections = track;
+        if !track {
+            self.heap.rejections.clear();
+        }
+    }
+
+    /// The tracked unhandled rejected promises, in rejection order.
+    pub fn unhandled_rejections(&self) -> &[Value] {
+        &self.heap.rejections
+    }
+
+    pub fn clear_unhandled_rejections(&mut self) {
+        self.heap.rejections.clear();
     }
 
     /// Sends `print` output to a buffer; [`Runtime::take_output`] returns it.
@@ -508,6 +574,17 @@ impl Runtime {
     /// calls it at its boundary. A job that throws stops the drain.
     pub fn run_jobs(&mut self) -> Result<(), Throw> {
         crate::vm::jobs::run_jobs(&mut self.cx())
+    }
+
+    /// Runs the oldest pending job (then clears the kept objects); `false`
+    /// when none was pending. A job that throws reports the throw.
+    pub fn run_pending_job(&mut self) -> Result<bool, Throw> {
+        crate::vm::jobs::run_one_job(&mut self.cx())
+    }
+
+    /// `ClearKeptObjects`: the end of a synchronous execution sequence.
+    pub fn clear_kept_objects(&mut self) {
+        self.heap.kept.clear();
     }
 
     /// Whether jobs are pending.
@@ -777,6 +854,22 @@ impl Runtime {
             message: own_string(object, message).flatten(),
             stack: own_string(object, self.realm.names.stack).flatten(),
         })
+    }
+
+    /// What every part of the runtime holds (phase 6, section 2.4), read
+    /// without a collection. Its reserved total equals [`Heap::bytes`].
+    pub fn memory_report(&self) -> crate::heap::report::MemoryReport {
+        let mut report = self.heap.report();
+        let code = &mut report.code;
+        for (_, unit) in self.code.units() {
+            code.units += 1;
+            code.instructions += unit.code.len();
+            code.instruction_bytes += std::mem::size_of_val(&*unit.code);
+            code.position_bytes += std::mem::size_of_val(&*unit.debug.positions);
+            code.source_bytes += unit.source.as_ref().map_or(0, |source| source.len());
+        }
+        code.regexp_programs = self.regexps.len();
+        report
     }
 
     /// Holds `value` for the embedder until [`Runtime::release`].

@@ -29,7 +29,7 @@ mod ic_tests;
 #[cfg(test)]
 mod radix_tests;
 #[cfg(test)]
-mod run_tests;
+pub(crate) mod run_tests;
 #[cfg(test)]
 mod tests;
 
@@ -245,6 +245,7 @@ pub(crate) fn lower_module_tree_into(
             initializers,
             has_top_level_await: module.has_top_level_await(),
         },
+        import_meta: Vec::new(),
     };
     Ok((source, lowered.root))
 }

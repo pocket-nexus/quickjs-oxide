@@ -103,6 +103,21 @@ if re.search(r"\bpub\s+use\b", root_code):
     errors.append("lib.rs must not reexport legacy module paths or API items")
 if set(re.findall(r"\bpub\s+mod\s+(\w+)", engine_code)) != {"api"}:
     errors.append("engine::api must be the only public engine module")
+# The embedding API over the new core (new-core phase 6, section 2) keeps its
+# implementation private and re-exports nothing of the old core: its items are
+# its own, the front end's (errors, strings, compile options, import
+# attributes) or `oxide-core`'s.
+core_api = rust_code_only((src / "engine/api/core/mod.rs").read_text())
+if re.search(r"\bpub\s+mod\b", core_api):
+    errors.append("engine::api::core must not expose its implementation modules")
+allowed_reexports = (
+    "crate::engine::api::error::", "crate::engine::code::debug::",
+    "crate::engine::code::module::", "crate::engine::compiler::",
+    "crate::engine::value::", "oxide_core::",
+)
+for path in re.findall(r"\bpub\s+use\s+((?:crate|oxide_core)::[\w:]*)", core_api):
+    if not path.startswith(allowed_reexports):
+        errors.append(f"engine::api::core re-exports {path} from outside its boundary")
 for source_file in src.rglob("*.rs"):
     if re.search(r"use\s+crate::engine::heap::runtime::\*", rust_code_only(source_file.read_text())):
         errors.append(f"{source_file.relative_to(root)} must import actual owners, not the runtime facade")

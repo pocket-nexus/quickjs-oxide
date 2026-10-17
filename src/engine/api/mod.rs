@@ -43,6 +43,7 @@ pub(crate) mod test262_agent;
 #[cfg(feature = "test262-host")]
 pub(crate) mod test262_host;
 
+pub mod core;
 pub mod error;
 pub mod new_core;
 

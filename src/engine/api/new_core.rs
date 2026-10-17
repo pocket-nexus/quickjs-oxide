@@ -9,16 +9,15 @@ use std::fmt;
 use oxide_core::Runtime;
 use oxide_core::heap::gc::HeapLimits;
 
+pub(crate) use crate::engine::api::core::compile::{
+    ModuleCompileError, compile_module, core_error_kind,
+};
+use crate::engine::api::core::compile::{compile_for_core, normalize_module_name};
 use crate::engine::api::error::Error;
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::compiler::compile_unlinked_script_bytes_with_filename;
-use crate::engine::compiler::register::{LowerError, lower_script, lower_script_into};
-use crate::engine::compiler::{
-    EvalCompileContext, compile_unlinked_eval_source_with_filename,
-    compile_unlinked_script_source_with_filename,
-};
-use crate::source::SourceText;
-use oxide_core::vm::compile::{CompileError, CompileKind, CompileRequest, Compiler};
+use crate::engine::compiler::register::{LowerError, lower_script};
+use oxide_core::vm::compile::{CompileError, Compiler};
 
 #[cfg(feature = "test262-host")]
 pub mod test262;
@@ -189,87 +188,19 @@ fn lower(
     Ok(lower_script(runtime, &script)?)
 }
 
-/// The core's compile host (phase 4, section 6.3): `eval` code, the
-/// `Function` constructors' source and `$262.evalScript`, compiled by the
-/// front end and lowered into the running runtime.
-fn compile_for_core(
-    compiler: &mut Compiler<'_>,
-    request: &CompileRequest<'_>,
-) -> Result<oxide_core::ObjectId, CompileError> {
-    let failure = |kind: oxide_core::ErrorKind, message: String| CompileError { kind, message };
-    let source = SourceText::try_from_utf16(request.source.iter().copied())
-        .map_err(|error| failure(oxide_core::ErrorKind::Range, error.to_string()))?;
-    let compiled = match request.kind {
-        CompileKind::Script => compile_unlinked_script_source_with_filename(
-            &source,
-            request.filename,
-            DebugInfoMode::Full,
-        ),
-        CompileKind::IndirectEval => compile_unlinked_eval_source_with_filename(
-            &source,
-            request.filename,
-            DebugInfoMode::Full,
-            EvalCompileContext::indirect(),
-        ),
-    };
-    let script = compiled.map_err(|error| {
-        let kind = match error.kind() {
-            crate::engine::api::error::ErrorKind::Syntax => oxide_core::ErrorKind::Syntax,
-            crate::engine::api::error::ErrorKind::Range => oxide_core::ErrorKind::Range,
-            crate::engine::api::error::ErrorKind::Reference => oxide_core::ErrorKind::Reference,
-            crate::engine::api::error::ErrorKind::Type => oxide_core::ErrorKind::Type,
-            _ => oxide_core::ErrorKind::Internal,
-        };
-        failure(kind, error.message().to_owned())
-    })?;
-    let lowered = lower_script_into(compiler, &script).map_err(lower_compile_error)?;
-    Ok(lowered.function)
-}
-
 thread_local! {
     /// The main file under `--test262`, for the loader's relative names.
     static MAIN_FILE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
-/// QuickJS's `js_module_normalize_name`: a specifier starting with `.`
-/// resolves against the referrer's directory; any other is a name as is.
+/// QuickJS's `js_module_normalize_name`.
 fn normalize_module(
+    _: &mut Compiler<'_>,
     referrer: &str,
     specifier: &str,
-    attributes: &[(String, String)],
+    _: &[(String, String)],
 ) -> Result<String, CompileError> {
-    let _ = attributes;
-    if !specifier.starts_with('.') {
-        return Ok(specifier.to_owned());
-    }
-    let mut directory = match referrer.rfind('/') {
-        Some(slash) => referrer[..slash].to_owned(),
-        None => String::new(),
-    };
-    let mut rest = specifier;
-    loop {
-        if let Some(next) = rest.strip_prefix("./") {
-            rest = next;
-        } else if let Some(next) = rest.strip_prefix("../") {
-            if directory.is_empty() {
-                break;
-            }
-            let last = directory.rfind('/').map_or(0, |slash| slash + 1);
-            let component = &directory[last..];
-            if component == "." || component == ".." {
-                break;
-            }
-            directory.truncate(last.saturating_sub(1));
-            rest = next;
-        } else {
-            break;
-        }
-    }
-    if directory.is_empty() {
-        Ok(rest.to_owned())
-    } else {
-        Ok(format!("{directory}/{rest}"))
-    }
+    Ok(normalize_module_name(referrer, specifier))
 }
 
 /// QuickJS's `js_module_loader`: the file named `name`, as JSON for a
@@ -279,7 +210,7 @@ fn load_module(
     name: &str,
     attributes: &[(String, String)],
 ) -> Result<oxide_core::vm::module::ModuleSource, CompileError> {
-    let failure = |kind: oxide_core::ErrorKind, message: String| CompileError { kind, message };
+    let failure = |kind: oxide_core::ErrorKind, message: String| CompileError::new(kind, message);
     // As QuickJS's `run-test262` loader does, a name without a directory is
     // relative to the main file's.
     let relative;
@@ -308,75 +239,12 @@ fn load_module(
             text.encode_utf16().collect(),
         ));
     }
-    match compile_module(compiler, name, &source) {
+    match compile_module(compiler, name, &source, DebugInfoMode::Full) {
         Ok((module, _)) => Ok(module),
         Err(ModuleCompileError::Front(error)) => {
             Err(failure(core_error_kind(&error), error.message().to_owned()))
         }
         Err(ModuleCompileError::Core(error)) => Err(error),
-    }
-}
-
-/// Why a module did not compile: the front end's error, with its position,
-/// or the lowering's.
-enum ModuleCompileError {
-    Front(Error),
-    Core(CompileError),
-}
-
-/// Compiles and lowers the module `name` from `source`; also returns its
-/// root unit.
-fn compile_module(
-    compiler: &mut Compiler<'_>,
-    name: &str,
-    source: &[u8],
-) -> Result<(oxide_core::vm::module::ModuleSource, oxide_core::CodeUnitId), ModuleCompileError> {
-    let failure = |kind: oxide_core::ErrorKind, message: String| {
-        ModuleCompileError::Core(CompileError { kind, message })
-    };
-    let module_name = crate::engine::value::JsString::try_from_utf8(name)
-        .map_err(|error| failure(oxide_core::ErrorKind::Internal, error.to_string()))?;
-    let module =
-        crate::engine::compiler::compile_unlinked_module_bytes_with_name_and_attribute_checker(
-            source,
-            module_name,
-            DebugInfoMode::Full,
-            None,
-        )
-        .map_err(|error| match error {
-            crate::engine::compiler::ModuleCompileFailure::Engine(error) => {
-                ModuleCompileError::Front(error)
-            }
-            crate::engine::compiler::ModuleCompileFailure::Host => failure(
-                oxide_core::ErrorKind::Type,
-                "import attribute rejected".into(),
-            ),
-        })?;
-    crate::engine::compiler::register::lower_module_tree_into(compiler, &module)
-        .map_err(|error| ModuleCompileError::Core(lower_compile_error(error)))
-}
-
-/// A lowering failure as the error the core throws.
-fn lower_compile_error(error: LowerError) -> CompileError {
-    match error {
-        LowerError::Syntax(message) => CompileError {
-            kind: oxide_core::ErrorKind::Syntax,
-            message,
-        },
-        other => CompileError {
-            kind: oxide_core::ErrorKind::Internal,
-            message: other.to_string(),
-        },
-    }
-}
-
-fn core_error_kind(error: &Error) -> oxide_core::ErrorKind {
-    match error.kind() {
-        crate::engine::api::error::ErrorKind::Syntax => oxide_core::ErrorKind::Syntax,
-        crate::engine::api::error::ErrorKind::Range => oxide_core::ErrorKind::Range,
-        crate::engine::api::error::ErrorKind::Reference => oxide_core::ErrorKind::Reference,
-        crate::engine::api::error::ErrorKind::Type => oxide_core::ErrorKind::Type,
-        _ => oxide_core::ErrorKind::Internal,
     }
 }
 

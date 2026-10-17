@@ -193,6 +193,14 @@ fn format(cx: &mut Cx<'_>, value: f64, method: DateStringMethod) -> Result<Value
     }
 }
 
+/// The ISO form of a time value for the value printer; `None` when it is
+/// invalid.
+pub(crate) fn iso_string(cx: &mut Cx<'_>, value: f64) -> Option<String> {
+    let method = DateStringMethod::IsoString;
+    let fields = fields_of(cx, value, method.uses_local_time(), false);
+    format_date_string(fields.as_ref(), method).ok()
+}
+
 /// `Date(...)`: a call returns the current time as a string; `new Date`
 /// makes a Date object.
 pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {

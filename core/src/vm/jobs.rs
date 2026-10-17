@@ -232,6 +232,9 @@ fn settle(cx: &mut Cx<'_>, promise: ObjectId, state: i32, value: Value) {
     internal.slots[STATE] = Value::int32(state);
     internal.slots[RESULT] = value;
     let rejected = state == REJECTED;
+    if rejected && internal.slots[HANDLED] != Value::TRUE {
+        track_rejection(cx, promise, crate::host::RejectionEvent::Rejected);
+    }
     for record in reactions {
         cx.heap.jobs.push_back(Job::Reaction {
             record: record.as_object().expect("a then record"),
@@ -239,6 +242,20 @@ fn settle(cx: &mut Cx<'_>, promise: ObjectId, state: i32, value: Value) {
             rejected,
         });
     }
+}
+
+/// `HostPromiseRejectionTracker`: tells the host and, while the embedder
+/// tracks rejections, keeps the unhandled ones.
+#[cold]
+fn track_rejection(cx: &mut Cx<'_>, promise: ObjectId, event: crate::host::RejectionEvent) {
+    let value = Value::object(promise);
+    if cx.host.track_rejections {
+        match event {
+            crate::host::RejectionEvent::Rejected => cx.heap.rejections.push(value),
+            crate::host::RejectionEvent::Handled => cx.heap.rejections.retain(|&p| p != value),
+        }
+    }
+    cx.host.hooks.promise_rejection(event, value);
 }
 
 /// `PerformPromiseThen(promise, onFulfilled, onRejected, capability)`; the
@@ -289,6 +306,9 @@ pub(crate) fn perform_then(
                 .map_err(|error| error::heap_error(cx, error))?;
         }
         state => {
+            if state == REJECTED && cx.heap.internal_slot(promise, HANDLED) != Value::TRUE {
+                track_rejection(cx, promise, crate::host::RejectionEvent::Handled);
+            }
             let argument = result(cx, promise);
             cx.heap.jobs.push_back(Job::Reaction {
                 record,
@@ -448,6 +468,17 @@ fn reaction_job(
         }
     }
     Ok(())
+}
+
+/// Runs the oldest pending job, then `ClearKeptObjects`; `false` when the
+/// queue was empty.
+pub(crate) fn run_one_job(cx: &mut Cx<'_>) -> Result<bool, Throw> {
+    let Some(job) = cx.heap.jobs.pop_front() else {
+        return Ok(false);
+    };
+    let result = run_job(cx, job);
+    cx.heap.kept.clear();
+    result.map(|()| true)
 }
 
 /// Drains the job queue. A job that throws stops the drain and reports the

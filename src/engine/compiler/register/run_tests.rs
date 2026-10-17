@@ -12,7 +12,7 @@ use crate::engine::compiler::compile_unlinked_script;
 
 /// Runs `source` on the new core with `print` captured; an uncaught
 /// exception appends `uncaught: <ToString>`.
-pub(super) fn run_new_core(source: &str) -> String {
+pub(crate) fn run_new_core(source: &str) -> String {
     run_with(source, |_| {}).0
 }
 
@@ -52,50 +52,71 @@ fn smoke() {
     );
 }
 
-/// Runs `source` on the current engine with a JavaScript `print` that
-/// collects its lines, reporting an uncaught exception the same way.
-fn run_current_core(source: &str) -> String {
-    use crate::engine::api::Value;
-    use crate::engine::test_support::test_context;
+/// The current engine's qjs output, captured.
+#[derive(Debug, Default)]
+struct Captured(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
 
-    let (runtime, mut context) = test_context();
-    let _ = context
-        .eval(
-            "var __out = []; function print() { var line = ''; \
-             for (var i = 0; i < arguments.length; i++) { \
-             if (i) line += ' '; line += String(arguments[i]); } __out.push(line); }",
-        )
-        .unwrap();
+impl crate::engine::host::HostServices for Captured {
+    fn write_output(&self, bytes: &[u8], _flush: bool) {
+        self.0.borrow_mut().extend_from_slice(bytes);
+    }
+
+    fn now_millis(&self) -> i64 {
+        0
+    }
+
+    fn timezone_offset_minutes(&self, _: i64) -> i32 {
+        0
+    }
+
+    fn random_seed(&self) -> u64 {
+        1
+    }
+}
+
+/// Runs `source` on the current engine with qjs's `print` (QuickJS's
+/// `JS_PrintValue`, as the new core's), reporting an uncaught exception the
+/// same way as [`run_new_core`].
+fn run_current_core(source: &str) -> String {
+    use crate::engine::api::{Runtime, Value};
+
+    let output = std::rc::Rc::default();
+    let runtime = Runtime::new_with_host_services(Captured(std::rc::Rc::clone(&output)));
+    let mut context = runtime.new_context().unwrap();
+    context.install_qjs_helpers_with_script_args(&[]).unwrap();
+    let mut uncaught = None;
     if context.eval(source).is_err() {
         let exception = context
             .take_exception()
             .unwrap()
             .unwrap_or(Value::Undefined);
         let Value::Object(report) = context
-            .eval("(function (e) { __out.push('uncaught: ' + String(e)); })")
+            .eval("(function (e) { return String(e); })")
             .unwrap()
         else {
             panic!("report is not a function");
         };
         let report = runtime.as_callable(&report).unwrap().unwrap();
-        let _ = context
+        if let Value::String(text) = context
             .call(&report, Value::Undefined, &[exception])
-            .unwrap();
+            .unwrap()
+        {
+            uncaught = Some(text.to_utf8_lossy());
+        }
     }
-    while runtime
-        .execute_pending_job()
-        .is_ok_and(|outcome| outcome.executed())
+    while uncaught.is_none()
+        && runtime
+            .execute_pending_job()
+            .is_ok_and(|outcome| outcome.executed())
     {}
-    let Value::String(output) = context
-        .eval("__out.length ? __out.join('\\n') + '\\n' : ''")
-        .unwrap()
-    else {
-        panic!("output is not a string");
-    };
-    output.to_utf8_lossy()
+    let mut text = String::from_utf8_lossy(&output.borrow()).into_owned();
+    if let Some(uncaught) = uncaught {
+        text.push_str(&format!("uncaught: {uncaught}\n"));
+    }
+    text
 }
 
-fn corpus() -> Vec<(String, String)> {
+pub(crate) fn corpus() -> Vec<(String, String)> {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("core/tests/corpus");
     let mut files: Vec<_> = std::fs::read_dir(&directory)
         .unwrap()

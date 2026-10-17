@@ -99,12 +99,18 @@ pub enum ModuleSource {
     Compiled {
         function: ObjectId,
         tables: ModuleTables,
+        /// Properties of the module's `import.meta`, in order (qjs's `url`
+        /// and `main`); the values must be rooted by the loader.
+        import_meta: Vec<(String, Value)>,
     },
     Json(Vec<u16>),
+    /// A JSON5 module (QuickJS's extended JSON, `type: "json5"`).
+    Json5(Vec<u16>),
 }
 
 /// Resolves `specifier` against the module or script named `referrer`.
-pub type NormalizeFn = fn(&str, &str, &[(String, String)]) -> Result<String, CompileError>;
+pub type NormalizeFn =
+    fn(&mut Compiler<'_>, &str, &str, &[(String, String)]) -> Result<String, CompileError>;
 
 /// Loads and compiles the module named `name`.
 pub type LoadModuleFn =
@@ -204,7 +210,7 @@ fn cell(cx: &Cx<'_>, module: ObjectId, binding: u16) -> Value {
 }
 
 fn compile_error(cx: &mut Cx<'_>, failure: CompileError) -> Throw {
-    error::throw(cx, failure.kind, &failure.message)
+    super::compile::throw_failure(cx, failure)
 }
 
 /// The record of the module named `name`, loading and compiling it (and,
@@ -228,11 +234,16 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
     .map_err(|failure| compile_error(cx, failure))?;
     let mark = cx.heap.roots().mark();
     let result = match source {
-        ModuleSource::Compiled { function, tables } => {
+        ModuleSource::Compiled {
+            function,
+            tables,
+            import_meta,
+        } => {
             cx.heap.roots().push(Value::object(function));
-            create(cx, name, Some(function), tables)
+            create(cx, name, Some(function), tables, &import_meta)
         }
-        ModuleSource::Json(text) => json_module(cx, name, &text),
+        ModuleSource::Json(text) => json_module(cx, name, &text, false),
+        ModuleSource::Json5(text) => json_module(cx, name, &text, true),
     };
     cx.heap.roots().truncate(mark);
     let module = result?;
@@ -240,8 +251,13 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
     let requests = data(cx, module).tables.requests.clone();
     let mut requested = Vec::with_capacity(requests.len());
     for request in &requests {
-        let normalized = (host.normalize)(name, &request.specifier, &request.attributes)
-            .map_err(|failure| compile_error(cx, failure))?;
+        let normalized = (host.normalize)(
+            &mut Compiler::new(cx.heap, cx.code, cx.realm),
+            name,
+            &request.specifier,
+            &request.attributes,
+        )
+        .map_err(|failure| compile_error(cx, failure))?;
         requested.push(load(cx, &normalized, &request.attributes)?);
     }
     data_mut(cx, module).requested = requested;
@@ -252,8 +268,17 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
 /// binding (an uninitialized lexical one empty, `import.meta` its object),
 /// imports filled while linking.
 /// A JSON module: its one binding, the default export, is the parsed text.
-fn json_module(cx: &mut Cx<'_>, name: &str, text: &[u16]) -> Result<ObjectId, Throw> {
-    let value = crate::builtins::json_parse_text(cx, text, name)?;
+fn json_module(
+    cx: &mut Cx<'_>,
+    name: &str,
+    text: &[u16],
+    extended: bool,
+) -> Result<ObjectId, Throw> {
+    let value = if extended {
+        crate::builtins::json5_parse_text(cx, text, name)?
+    } else {
+        crate::builtins::json_parse_text(cx, text, name)?
+    };
     cx.heap.roots().push(value);
     let tables = ModuleTables {
         bindings: vec![ModuleBinding::Declaration { lexical: false }],
@@ -263,7 +288,7 @@ fn json_module(cx: &mut Cx<'_>, name: &str, text: &[u16]) -> Result<ObjectId, Th
         }],
         ..ModuleTables::default()
     };
-    let module = create(cx, name, None, tables)?;
+    let module = create(cx, name, None, tables, &[])?;
     let holder = cell(cx, module, 0);
     cx.heap
         .scope_set(ScopeId(holder.as_object().unwrap().index()), 0, 0, value);
@@ -275,6 +300,7 @@ fn create(
     name: &str,
     function: Option<ObjectId>,
     tables: ModuleTables,
+    import_meta: &[(String, Value)],
 ) -> Result<ObjectId, Throw> {
     let source = ModuleParts { function, tables };
     let heap_error = |cx: &mut Cx<'_>, error| error::heap_error(cx, error);
@@ -296,6 +322,12 @@ fn create(
                     .alloc_object(ObjectKind::Ordinary, None, 2)
                     .map_err(|e| heap_error(cx, e))?;
                 cx.heap.roots().push(Value::object(meta));
+                for (key, value) in import_meta {
+                    let key = cx.heap.property_key(key).map_err(|e| heap_error(cx, e))?;
+                    cx.heap
+                        .add_property(meta, key, crate::PropertyFlags::DEFAULT, *value)
+                        .map_err(|e| heap_error(cx, e))?;
+                }
                 Value::object(meta)
             }
         };
@@ -1076,8 +1108,13 @@ pub(crate) fn module_import_job(cx: &mut Cx<'_>, site: CallSite) -> Result<Value
                 "unsupported: modules",
             ));
         };
-        let name = (host.normalize)(&referrer, &specifier, &attributes)
-            .map_err(|failure| compile_error(cx, failure))?;
+        let name = (host.normalize)(
+            &mut Compiler::new(cx.heap, cx.code, cx.realm),
+            &referrer,
+            &specifier,
+            &attributes,
+        )
+        .map_err(|failure| compile_error(cx, failure))?;
         let module = load(cx, &name, &attributes)?;
         link(cx, module)?;
         let evaluation = evaluate(cx, module)?;
@@ -1158,6 +1195,12 @@ impl crate::Runtime {
     /// Installs the embedder's module loader (section 6.3).
     pub fn set_module_host(&mut self, host: ModuleHost) {
         self.host.module_host = Some(host);
+    }
+
+    /// Drops the module named `name` from the name map: a later import of
+    /// the name loads it again. Modules that imported it keep the record.
+    pub fn forget_module(&mut self, name: &str) {
+        self.host.modules.remove(name);
     }
 
     /// Loads, links and evaluates the module named `name` (already

@@ -8,6 +8,7 @@
 
 pub mod builtins;
 pub mod bytecode;
+pub mod embed;
 pub mod heap;
 pub mod host;
 pub mod runtime;
@@ -17,11 +18,13 @@ pub mod vm;
 
 pub use builtins::agent::ScriptRunner;
 pub use bytecode::{CodeStore, CodeUnit, CodeUnitId, Insn, Opcode};
+pub use embed::{KeyName, PropertyDescriptor};
 pub use heap::atom::{KeyKind, PropertyKey};
 pub use heap::gc::{Handle, HeapLimits, RootMark};
 pub use heap::object::ObjectKind;
+pub use heap::report::MemoryReport;
 pub use heap::{BytecodeTemplate, Heap, HeapError};
-pub use runtime::{Intrinsic, Realm, Runtime, ThrownSummary};
+pub use runtime::{Intrinsic, Realm, Runtime, RuntimeOptions, ThrownSummary};
 pub use shape::PropertyFlags;
 pub use value::{
     BigIntId, BytecodeId, Kind, ObjectId, ScopeId, ShapeId, StringId, SymbolId, ValidityCellId,

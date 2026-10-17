@@ -65,6 +65,7 @@ for package in packages.values():
 for name, expected in {
     "quickjs-oxide": {
         "checked_string_construction",
+        "embedding_api",
         "json_stack_depth",
         "main_thread_stack_probe",
         "parser_stack_depth",

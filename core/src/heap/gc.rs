@@ -131,7 +131,7 @@ pub struct Roots {
     pub fixed: Vec<Value>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeapLimits {
     /// Reserved bytes the heap may not exceed; `usize::MAX` for no cap.
     pub max_bytes: usize,
@@ -145,7 +145,7 @@ impl Default for HeapLimits {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GcStats {
     pub collections: u64,
     pub total_pause: Duration,
@@ -162,6 +162,9 @@ pub struct GcState {
     pub min_heap: usize,
     pub growth_factor: f64,
     pub limits: HeapLimits,
+    /// No growth trigger: collections only at the cap and when the embedder
+    /// asks (`GcPolicy::Manual` of the API).
+    pub(crate) manual: bool,
     pub stats: GcStats,
     /// When set, every pause is appended to `pauses`.
     pub record_pauses: bool,
@@ -193,6 +196,7 @@ impl GcState {
             min_heap: DEFAULT_MIN_HEAP,
             growth_factor: 2.0,
             limits,
+            manual: false,
             stats: GcStats::default(),
             record_pauses: false,
             pauses: Vec::new(),
@@ -208,6 +212,21 @@ impl GcState {
             #[cfg(feature = "gc-stress")]
             stress_counter: 0,
         }
+    }
+
+    /// Turns the growth trigger off (`manual`) or back on.
+    pub fn set_manual(&mut self, manual: bool) {
+        self.manual = manual;
+        self.threshold = if manual {
+            usize::MAX
+        } else {
+            self.min_heap
+                .max((self.stats.live_bytes as f64 * self.growth_factor) as usize)
+        };
+    }
+
+    pub fn is_manual(&self) -> bool {
+        self.manual
     }
 
     /// Whether every safepoint takes the slow path: under a cap (to check it)
@@ -308,7 +327,11 @@ impl Heap {
         let live = self.used_bytes();
         let gc = &mut self.gc;
         gc.allocated = 0;
-        gc.threshold = gc.min_heap.max((live as f64 * gc.growth_factor) as usize);
+        gc.threshold = if gc.manual {
+            usize::MAX
+        } else {
+            gc.min_heap.max((live as f64 * gc.growth_factor) as usize)
+        };
         let pause = start.elapsed();
         let stats = &mut gc.stats;
         stats.collections += 1;
@@ -368,6 +391,7 @@ impl Heap {
         self.gc.shape_stack = shapes;
         self.cells.mark(STATIC_CELL.0);
         stack.extend_from_slice(&self.kept);
+        stack.extend_from_slice(&self.rejections);
         stack.extend_from_slice(&self.modules);
         self.drain::<false>(&mut stack);
         // Ephemerons: a weak map's value is live once its key is. Each weak
@@ -661,6 +685,7 @@ impl Heap {
         self.ropes
             .retain(|&index, _| strings.is_marked(index) && strings.get(index).flat().is_none());
         let objects = &self.objects;
+        self.holey.retain(|&index| objects.is_marked(index));
         self.prototypes.retain(|object, info| {
             if !objects.is_marked(object.0) {
                 return false;

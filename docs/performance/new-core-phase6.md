@@ -150,7 +150,7 @@ M0's import audit (the results page, M0) found that the consumers that survive t
 | `JsString` | kept as an owned UTF-16 string with the current constructors (`try_from_utf8`, `try_from_utf16`, `try_from_bytes`, `MAX_LEN`), `len`, `code_unit_at`, `utf16_units`, `to_utf8_lossy` and the WTF-8 and CESU-8 encoders; `try_concat` and the rope probes go with the old strings |
 | `JsBigInt` | kept as an owned arbitrary-precision integer with `Display`, the arithmetic the tests use and `to_f64`, over the core's `Big` |
 | `HeapCounts` | `MemoryReport` (2.4); `context_nodes` and `var_ref_nodes` have no counterpart (one realm; closures capture scopes, which are objects), and the tests that read them assert on `MemoryReport`'s live counts instead |
-| `DebugInfoMode::{StripDebug, StripSource}` | both become `Stripped` (`-s` and `--strip-source`) |
+| `DebugInfoMode::{Full, StripSource, StripDebug}` | kept as they are (2.4's two-mode form is not adopted): `qjs --strip-source` keeps positions and drops source text, as QuickJS's `JS_STRIP_SOURCE` does |
 | `Context::runtime()` | kept |
 | `quickjs_oxide::regexp` | removed; its five oracle files depend on `oxide-regexp` directly |
 | `install_test262_host`, `new_test262_gc_function`, `detach_array_buffer` on `Context` | kept behind `test262-host` |

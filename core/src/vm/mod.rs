@@ -23,6 +23,7 @@ pub mod native;
 pub(crate) mod number;
 pub(crate) mod object;
 pub(crate) mod ops;
+pub(crate) mod print;
 pub(crate) mod property;
 pub(crate) mod proxy;
 pub(crate) mod suspend;
@@ -112,6 +113,9 @@ pub struct VmStack {
     /// The native stack address at the outermost re-entry, for
     /// [`VmStack::enter_native`].
     pub(crate) native_base: usize,
+    /// The native stack bytes nested re-entries may use
+    /// ([`NATIVE_STACK_BUDGET`] unless the runtime's options say otherwise).
+    pub(crate) native_budget: usize,
     /// The frame count and instruction index of the call running the
     /// current native, for the backtrace of an error it creates.
     pub(crate) native_site: (u32, u32),
@@ -130,6 +134,7 @@ impl Default for VmStack {
             limit: DEFAULT_STACK_LIMIT,
             nesting: 0,
             native_base: 0,
+            native_budget: NATIVE_STACK_BUDGET,
             native_site: (u32::MAX, 0),
             active: Vec::new(),
         }
@@ -169,7 +174,7 @@ impl VmStack {
         let here = std::ptr::addr_of!(marker) as usize;
         if self.nesting == 0 {
             self.native_base = here;
-        } else if self.native_base.abs_diff(here) > NATIVE_STACK_BUDGET {
+        } else if self.native_base.abs_diff(here) > self.native_budget {
             return false;
         }
         self.nesting += 1;
@@ -224,6 +229,9 @@ pub struct Services {
     pub(crate) agent_hub: Option<std::sync::Arc<crate::builtins::agent::AgentHub>>,
     /// This runtime as an agent of another.
     pub(crate) agent: Option<crate::builtins::agent::AgentSelf>,
+    /// Whether unhandled rejected promises are kept in
+    /// `Heap::rejections` for the embedder.
+    pub(crate) track_rejections: bool,
 }
 
 impl std::fmt::Debug for Services {
@@ -253,6 +261,7 @@ impl Default for Services {
             script_runner: None,
             agent_hub: None,
             agent: None,
+            track_rejections: false,
         }
     }
 }
