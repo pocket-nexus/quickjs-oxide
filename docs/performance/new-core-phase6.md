@@ -127,6 +127,38 @@ pub struct RuntimeOptions {
 
 The API's test suite: every method of 2.1–2.4 exercised through the public surface, including a module loader that compiles through its `Scope`, a `Value` cloned and dropped inside a callback, a second `Context::new` returning `Unsupported`, `OutOfMemory` surfacing as `RuntimeError::OutOfMemory` under a cap, a promise rejection reaching the host, and a `MemoryReport` whose live counts and bytes match a known object graph exactly, with `Heap::bytes()` equal to its reserved total under `gc-stress`. The two-core corpus (44 programs) runs through `Context::eval` and prints what `oxide-run` prints. `cargo test -p quickjs-oxide --features test262-host --lib --bins` passes. The layout gate's public-API boundary check (`check-source-layout.py`) is updated to the new module and passes.
 
+### 2.7 Amendments from the M0 audit
+
+M0's import audit (the results page, M0) found that the consumers that survive this phase use a large part of the current API that 2.1–2.6 neither keep nor replace: about 1,335 sites match or build `Value`'s variants, about 240 depend on `RuntimeError::Exception` and `take_exception`, and the oracle tests use the object, property-key and descriptor types throughout. These amendments supersede 2.1–2.6 where they differ. Their rule: **the new API keeps the current API's shapes wherever the new core can give them their meaning**, so that M3 ports the consumers by changing what they link against, not how they are written; only what the new core cannot have (a second realm, the old heap's node counts, the profiling records) goes.
+
+| Current item | After phase 6 |
+| --- | --- |
+| `Value` (an opaque handle in 2.1) | **the current enum stays**: `Undefined`, `Null`, `Bool`, `Int`, `Float`, `BigInt(JsBigInt)`, `String(JsString)`, `Symbol(SymbolRef)`, `Object(ObjectRef)`. Primitives are plain Rust data copied out of the core; `ObjectRef` and `SymbolRef` own a handle in the core's handle table, released on drop (2.1's deferred release applies to them). `PartialEq` compares primitives by value and references by identity; `Debug`, `try_clone` (returning `Ok`), `as_number`, `number`, `to_boolean` stay |
+| `ObjectRef`, `CallableRef`, `SymbolRef` | kept; `CallableRef` is an `ObjectRef` checked callable, with `as_object` |
+| `RuntimeError::Exception`, `Context::{has_exception, take_exception}` | kept: a thrown value is the context's pending exception, as now. 2.1's `Thrown(Value)` is not added. `RuntimeError` is `{Exception, Reentered, Unsupported(&'static str), Compile(Error), OutOfMemory, Invariant(&'static str), Internal(String)}`, `Display` and `PartialEq` |
+| a second `new_context` on one runtime | `Runtime::new_context()` and `Context::new` return the runtime's one realm (2.1). Oracle tests that need two realms move to two runtimes when what they check is isolation, and are deleted under `NEWCORE-REALMS-001` when what they check is cross-realm behavior (M3 lists them). `Context::{id, realm_id}`, `ContextId` and `PendingJobOutcome::Executed { context }` go; `PendingJobOutcome` is `{Executed, Empty}` |
+| `PropertyKey`, `intern_property_key[_js_string]`, `property_key_to_js_string` | kept: `PropertyKey` is `String(JsString)`, `Symbol(SymbolRef)` or `Index(u32)`, made by the same `Runtime` methods |
+| `OrdinaryPropertyDescriptor`, `DescriptorField`, `AccessorValue`, `CompleteOrdinaryPropertyDescriptor` | kept, over `Value` |
+| `Runtime::{get_prototype_of, as_callable, define_own_property, get_own_property, delete_property, has_own_property, own_property_keys, is_constructor, is_array_object, is_error_object, new_symbol, symbol_description, well_known_symbol}`, `WellKnownSymbol` | kept on `Runtime` (each is one engine entry) |
+| `raw_string_property_for_diagnostics` (apps/web) | replaced by the value printer below |
+| `is_job_pending`, `promise_snapshot`, `PromiseSnapshot`, `PromiseState` | kept |
+| `set_host_promise_rejection_tracker` and the reason it reports | replaced by `Runtime::set_track_rejections(bool)` and `Runtime::take_unhandled_rejections() -> Vec<(ObjectRef, Value)>` (promise and reason, in rejection order, handled ones removed), over the core's tracking; `Host::promise_rejection` (2.2) is the notification hook beside it |
+| `qjs_print_value_bytes` | `Runtime::print_value(&Value) -> String`: QuickJS's `JS_PrintValue`, ported into the core (no accessor, trap or coercion runs), which the core's `print` and `console.log` also use, as QuickJS's do |
+| `install_qjs_helpers_with_script_args` | `Context::install_qjs_helpers(&QjsHelpers { std, script_args })`: `print`, `console.log`, `scriptArgs`, and `load`/`read` under `std` |
+| `get_module_import_meta`, `execute_module`, `ModuleLoadResult::*`, `ModuleImportMetaProperty` | `Context::compile_module*` and `Context::execute_module` stay; `import.meta` properties are given by the loader or by the module's compile options. The loader's `ModuleSource` is `{Source { text, import_meta }, Json(text), Json5(text), Compiled(ModuleRef)}` |
+| `quickjs_detect_module_bytes`, `number_to_string`, `declare_thread_stack` | kept at the API root (the front end's) |
+| `JsString` | kept as an owned UTF-16 string with the current constructors (`try_from_utf8`, `try_from_utf16`, `try_from_bytes`, `MAX_LEN`), `len`, `code_unit_at`, `utf16_units`, `to_utf8_lossy` and the WTF-8 and CESU-8 encoders; `try_concat` and the rope probes go with the old strings |
+| `JsBigInt` | kept as an owned arbitrary-precision integer with `Display`, the arithmetic the tests use and `to_f64`, over the core's `Big` |
+| `HeapCounts` | `MemoryReport` (2.4); `context_nodes` and `var_ref_nodes` have no counterpart (one realm; closures capture scopes, which are objects), and the tests that read them assert on `MemoryReport`'s live counts instead |
+| `DebugInfoMode::{StripDebug, StripSource}` | both become `Stripped` (`-s` and `--strip-source`) |
+| `Context::runtime()` | kept |
+| `quickjs_oxide::regexp` | removed; its five oracle files depend on `oxide-regexp` directly |
+| `install_test262_host`, `new_test262_gc_function`, `detach_array_buffer` on `Context` | kept behind `test262-host` |
+| `testing::{parse_int, parse_float}`, the lexer and the formatters | kept in `test-support`, from where the front end keeps them |
+| adapters/native's `engine-test-support` | kept, re-exporting `Host` |
+| `--disassemble`, `--gc-stats`, `--ic-stats`, `--std` | `Runtime::{disassemble(source, filename), gc_report(), ic_report(worst), memory_report()}` and `QjsHelpers::std` |
+| the `profiling` builds of `build.py` and `build_compile_probe.py` | removed with the feature (3.4) |
+
 ## 3. The consumers
 
 ### 3.1 `qjs`

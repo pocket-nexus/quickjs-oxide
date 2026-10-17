@@ -60,3 +60,52 @@ python3 scripts/checks/count-lines.py --rev c2d8345b
 | **workspace** | **360,936** |
 
 This table supersedes #122's "260k", whose method the issue does not state.
+
+### The consumer audit
+
+Every in-tree consumer of the root crate was read for the public items it
+uses (`grep` of `quickjs_oxide::` and of the methods called on what it
+imports), and each item was mapped to section 2. The consumers that this
+phase deletes (the current engine's Test262 backend, `oxide-run`, the
+profiling build) are listed but not counted as gaps.
+
+The check failed as section 2 was written: the surviving consumers use a
+large part of the current API that 2.1–2.6 neither kept nor replaced.
+
+| Gap | Sites in surviving consumers |
+| --- | ---: |
+| `Value` as an enum, matched and constructed | about 1,335 (1,263 in the oracle tests) |
+| `RuntimeError::Exception` with `take_exception` | about 240 |
+| the descriptor types | about 220 |
+| `JsString`'s checked constructors | about 215 |
+| `ObjectRef` and `CallableRef`, `as_object` | about 310 |
+| `Runtime::get_prototype_of` | 361 |
+| a second realm on one runtime (`new_context` pairs) | 124, in 90 oracle files |
+| `PropertyKey` and `intern_property_key` | about 160 |
+| `well_known_symbol`, `new_symbol` | 86 |
+| `HeapCounts::context_nodes`, `var_ref_nodes` | 50 |
+| `is_job_pending`, `promise_snapshot` | about 45 |
+| `number_to_string`, `JsBigInt` | 30 |
+| `qjs`'s own entries (the value printer, the helpers, `import.meta`, `execute_module`, the module-source variants) | about 20 |
+| `quickjs_oxide::regexp` | 5 files |
+
+Section 2.7 of the plan amends section 2 with a replacement for every one of
+them, by one rule: the new API keeps the current API's shapes wherever the
+new core can give them their meaning. With 2.7, no surviving consumer uses
+an item that is dropped without a replacement named, which is M0's
+acceptance. Two consequences for later milestones:
+
+- The new core has no JSON5 parser. `type: "json5"` modules (`qjs`'s
+  loader) need one before M3's fixtures can pass; it is added to the core
+  in M1 with the module-source variants.
+- `qjs` prints values with QuickJS's `JS_PrintValue` (`{ a: 1 }`, stack
+  traces of uncaught errors), which the new core's `print` does not do: it
+  prints `ToString`. The printer is ported into the core in M1, and the
+  core's `print` and `console.log` use it, as QuickJS's do.
+
+### The base's test suite
+
+`cargo test --locked --workspace --all-targets` on `c2d8345b` had one
+failure, `oxide_run::an_unsupported_construct_is_reported`: a phase 2 test
+that expected classes to be unsupported, stale since phase 4. M0 replaces it
+with a test that `with` is an early `SyntaxError`; the workspace then passes.
