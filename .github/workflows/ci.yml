@@ -180,8 +180,9 @@ jobs:
       - name: Replay the new core's frozen focused Test262 vector
         run: ./scripts/test262/test-test262.sh --spec dev-support/test262/new-core.conf --focused
 
-  # New core, phase 3 section 7: the V8 v7 programs at one run() per
-  # benchmark under the stress collector, against a one-run suite manifest.
+  # New core, phase 3 section 7 and phase 4 section 8: the 37 suite programs
+  # at one run() per benchmark under the stress collector, against a one-run
+  # suite manifest.
   # The suite build needs the pinned upstream checkouts, so it is nightly.
   new-core-suite:
     if: >-
@@ -217,7 +218,7 @@ jobs:
             --v8-source "$RUNNER_TEMP/v8" --octane-source "$RUNNER_TEMP/octane" \
             --awfy-source "$RUNNER_TEMP/awfy" --output "$RUNNER_TEMP/suite"
 
-      - name: Run the V8 v7 programs under the stress collector
+      - name: Run the suite programs under the stress collector
         run: |
           cargo build --locked --release -p quickjs-oxide-cli --features new-core-gc-stress --bin oxide-run
           python3 scripts/checks/check-new-core-suite.py \

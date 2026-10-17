@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""New core, phase 3 section 7: the V8 v7 programs at one run() per
-benchmark under the stress collector.
+"""New core, phase 3 section 7 and phase 4 section 8: the suite programs at
+one run() per benchmark under the stress collector.
 
-Runs every `v8-v7-*` workload of a suite built with
+Runs every workload (or those starting with `--prefix`) of a suite built with
 `scripts/benchmark/suite_matrix.py build --pilot 1` on `oxide-run
 --gc-stress=1` (an `oxide-run` built with the `new-core-gc-stress` feature)
 and compares its stdout with the manifest's expected line.
@@ -16,17 +16,28 @@ import sys
 import time
 from pathlib import Path
 
-# Programs whose live set makes a collection at every allocation take hours:
-# Splay's one run() under --gc-stress=1 did not finish in 55 minutes; at 100
-# it takes about 15 minutes (phase 3 M6).
-INTERVALS = {"v8-v7-splay": "100"}
+# Programs whose live set makes a collection at every allocation take hours.
+# Phase 3 M6: Splay's one run() under --gc-stress=1 did not finish in 55
+# minutes; at 100 it takes about 15. Phase 4 M8: every program that took
+# more than 20 minutes at interval 1 (or did not finish in 30) runs at 100.
+INTERVALS = {
+    "v8-v7-earley-boyer": "100",
+    "v8-v7-splay": "100",
+    "octane-splay": "100",
+    "octane-pdfjs": "100",
+    "octane-typescript": "100",
+    "awfy-DeltaBlue": "100",
+    "awfy-CD": "100",
+    "awfy-Havlak": "100",
+    "awfy-Storage": "100",
+}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--oxide-run", required=True, type=Path)
     parser.add_argument("--suite", required=True, type=Path, help="suite_matrix.py build --pilot 1 output")
-    parser.add_argument("--prefix", default="v8-v7-")
+    parser.add_argument("--prefix", default="")
     parser.add_argument("--gc-stress", default="1")
     parser.add_argument("--timeout", type=int, default=3600, help="seconds per program")
     args = parser.parse_args()
