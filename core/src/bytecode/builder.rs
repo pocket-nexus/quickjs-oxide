@@ -194,6 +194,7 @@ impl CodeBuilder {
                 name: layout.name.into(),
                 filename: layout.filename,
                 positions: Box::new([]),
+                definition: None,
             },
             name_atom: layout.name_atom,
             length: layout.length,

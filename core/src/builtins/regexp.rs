@@ -10,8 +10,8 @@ use oxide_regexp::{ExecError, RegExpFlags, RegExpMatch};
 
 use super::string::{substitution, substring_value};
 use super::{
-    Native, accessor, install_constructor, methods, plain_object, string_units, symbol_method,
-    this_string, to_string_id, to_string_tag,
+    Native, accessor, install_constructor, link_constructor, methods, plain_object, string_units,
+    symbol_method, this_string, to_string_id, to_string_tag,
 };
 use crate::heap::HeapError;
 use crate::heap::object::{InternalTag, ObjectKind};
@@ -38,7 +38,8 @@ const FLAG_GETTERS: [(Native, u8); 8] = [
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::RegExpPrototype);
-    let constructor = install_constructor(cx, Native::RegExpConstructor, prototype)?;
+    // QuickJS's `js_regexp_funcs` and `js_regexp_proto_funcs`, in order.
+    let constructor = install_constructor(cx, Native::RegExpConstructor)?;
     cx.set_intrinsic(Intrinsic::RegExp, constructor);
     methods(cx, constructor, &[Native::RegExpEscape])?;
     let species = WellKnown::key(cx.realm.symbols.species);
@@ -50,58 +51,34 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         Some(Native::SpeciesGetter),
         None,
     )?;
+    super::getter(cx, prototype, "flags", Native::RegExpFlags)?;
+    super::getter(cx, prototype, "source", Native::RegExpSource)?;
+    // `hasIndices` comes last there, though first in `flags`.
+    for &(native, _) in FLAG_GETTERS[1..].iter().chain(&FLAG_GETTERS[..1]) {
+        super::getter(cx, prototype, native.js_name(), native)?;
+    }
     methods(
         cx,
         prototype,
         &[
-            Native::RegExpCompile,
             Native::RegExpExec,
+            Native::RegExpCompile,
             Native::RegExpTest,
             Native::RegExpToString,
         ],
     )?;
-    super::getter(cx, prototype, "flags", Native::RegExpFlags)?;
-    super::getter(cx, prototype, "source", Native::RegExpSource)?;
-    for (native, _) in FLAG_GETTERS {
-        super::getter(cx, prototype, native.js_name(), native)?;
-    }
     let symbols = cx.realm.symbols;
     let flags = PropertyFlags::data(true, false, true);
-    symbol_method(
-        cx,
-        prototype,
-        symbols.match_,
-        Native::RegExpSymbolMatch,
-        flags,
-    )?;
-    symbol_method(
-        cx,
-        prototype,
-        symbols.match_all,
-        Native::RegExpSymbolMatchAll,
-        flags,
-    )?;
-    symbol_method(
-        cx,
-        prototype,
-        symbols.replace,
-        Native::RegExpSymbolReplace,
-        flags,
-    )?;
-    symbol_method(
-        cx,
-        prototype,
-        symbols.search,
-        Native::RegExpSymbolSearch,
-        flags,
-    )?;
-    symbol_method(
-        cx,
-        prototype,
-        symbols.split,
-        Native::RegExpSymbolSplit,
-        flags,
-    )?;
+    for (symbol, native) in [
+        (symbols.replace, Native::RegExpSymbolReplace),
+        (symbols.match_, Native::RegExpSymbolMatch),
+        (symbols.match_all, Native::RegExpSymbolMatchAll),
+        (symbols.search, Native::RegExpSymbolSearch),
+        (symbols.split, Native::RegExpSymbolSplit),
+    ] {
+        symbol_method(cx, prototype, symbol, native, flags)?;
+    }
+    link_constructor(cx, constructor, prototype)?;
     let iterator_prototype = cx.realm.intrinsic(Intrinsic::IteratorPrototype);
     let string_iterator = plain_object(cx, Some(iterator_prototype), 2)?;
     cx.set_intrinsic(Intrinsic::RegExpStringIteratorPrototype, string_iterator);

@@ -2,7 +2,7 @@
 //! constructible), `asIntN`, `asUintN`, and `BigInt.prototype`'s
 //! `toString(radix)`, `toLocaleString` and `valueOf`.
 
-use super::{Native, install_constructor, methods, string_text, to_string_tag};
+use super::{Native, install_constructor, link_constructor, methods, string_text, to_string_tag};
 use crate::heap::HeapError;
 use crate::heap::object::ObjectKind;
 use crate::runtime::Intrinsic;
@@ -16,19 +16,16 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let object_prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
     let prototype = super::plain_object(cx, Some(object_prototype), 4)?;
     cx.set_intrinsic(Intrinsic::BigIntPrototype, prototype);
-    let bigint = install_constructor(cx, Native::BigIntConstructor, prototype)?;
+    let bigint = install_constructor(cx, Native::BigIntConstructor)?;
     cx.set_intrinsic(Intrinsic::BigInt, bigint);
-    methods(cx, bigint, &[Native::BigIntAsIntN, Native::BigIntAsUintN])?;
+    methods(cx, bigint, &[Native::BigIntAsUintN, Native::BigIntAsIntN])?;
     methods(
         cx,
         prototype,
-        &[
-            Native::BigIntToLocaleString,
-            Native::BigIntToString,
-            Native::BigIntValueOf,
-        ],
+        &[Native::BigIntToString, Native::BigIntValueOf],
     )?;
-    to_string_tag(cx, prototype, "BigInt")
+    to_string_tag(cx, prototype, "BigInt")?;
+    link_constructor(cx, bigint, prototype)
 }
 
 fn alloc(cx: &mut Cx<'_>, value: Result<Big, BigError>) -> Result<Value, Throw> {
@@ -119,11 +116,6 @@ fn this_bigint(cx: &mut Cx<'_>, site: &CallSite) -> Result<Value, Throw> {
 
 pub(super) fn value_of(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     this_bigint(cx, &site)
-}
-
-pub(super) fn to_locale_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let value = this_bigint(cx, &site)?;
-    ops::to_string(cx, value)
 }
 
 pub(super) fn to_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {

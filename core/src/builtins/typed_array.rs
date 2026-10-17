@@ -74,21 +74,12 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let object_prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
     let prototype = super::plain_object(cx, Some(object_prototype), 48)?;
     cx.set_intrinsic(Intrinsic::TypedArrayPrototype, prototype);
+    // QuickJS's `js_typed_array_base_funcs` and
+    // `js_typed_array_base_proto_funcs`, in order; `toString` follows the
+    // constructor link.
     let constructor = super::native_function(cx, Native::TypedArrayConstructor)?;
     cx.set_intrinsic(Intrinsic::TypedArray, constructor);
     let names = cx.realm.names;
-    cx.heap.add_property(
-        constructor,
-        Names::key(names.prototype),
-        PropertyFlags::data(false, false, false),
-        Value::object(prototype),
-    )?;
-    cx.heap.add_property(
-        prototype,
-        Names::key(names.constructor),
-        super::hidden(),
-        Value::object(constructor),
-    )?;
     methods(
         cx,
         constructor,
@@ -103,10 +94,36 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         Some(Native::SpeciesGetter),
         None,
     )?;
+    getter(cx, prototype, "length", Native::TypedArrayLength)?;
+    methods(
+        cx,
+        prototype,
+        &[Native::TypedArrayAt, Native::TypedArrayWith],
+    )?;
     getter(cx, prototype, "buffer", Native::TypedArrayBuffer)?;
     getter(cx, prototype, "byteLength", Native::TypedArrayByteLength)?;
     getter(cx, prototype, "byteOffset", Native::TypedArrayByteOffset)?;
-    getter(cx, prototype, "length", Native::TypedArrayLength)?;
+    methods(
+        cx,
+        prototype,
+        &[Native::TypedArraySet, Native::TypedArrayValues],
+    )?;
+    // `@@iterator` is `values`.
+    let values = cx.heap.property_key("values")?;
+    let (slot, _) = cx.heap.lookup_own(prototype, values).expect("values");
+    let function = cx.heap.get_slot(prototype, slot);
+    super::define_key(
+        cx,
+        prototype,
+        WellKnown::key(cx.realm.symbols.iterator),
+        function,
+        super::hidden(),
+    )?;
+    methods(
+        cx,
+        prototype,
+        &[Native::TypedArrayKeys, Native::TypedArrayEntries],
+    )?;
     let tag = WellKnown::key(cx.realm.symbols.to_string_tag);
     accessor(
         cx,
@@ -120,39 +137,34 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         cx,
         prototype,
         &[
-            Native::TypedArrayAt,
             Native::TypedArrayCopyWithin,
-            Native::TypedArrayEntries,
             Native::TypedArrayEvery,
-            Native::TypedArrayFill,
+            Native::TypedArraySome,
+            Native::TypedArrayForEach,
+            Native::TypedArrayMap,
             Native::TypedArrayFilter,
+            Native::TypedArrayReduce,
+            Native::TypedArrayReduceRight,
+            Native::TypedArrayFill,
             Native::TypedArrayFind,
             Native::TypedArrayFindIndex,
             Native::TypedArrayFindLast,
             Native::TypedArrayFindLastIndex,
-            Native::TypedArrayForEach,
-            Native::TypedArrayIncludes,
-            Native::TypedArrayIndexOf,
-            Native::TypedArrayJoin,
-            Native::TypedArrayKeys,
-            Native::TypedArrayLastIndexOf,
-            Native::TypedArrayMap,
-            Native::TypedArrayReduce,
-            Native::TypedArrayReduceRight,
             Native::TypedArrayReverse,
-            Native::TypedArraySet,
-            Native::TypedArraySlice,
-            Native::TypedArraySome,
-            Native::TypedArraySort,
-            Native::TypedArraySubarray,
-            Native::TypedArrayToLocaleString,
             Native::TypedArrayToReversed,
+            Native::TypedArraySlice,
+            Native::TypedArraySubarray,
+            Native::TypedArraySort,
             Native::TypedArrayToSorted,
-            Native::TypedArrayValues,
-            Native::TypedArrayWith,
+            Native::TypedArrayJoin,
+            Native::TypedArrayToLocaleString,
+            Native::TypedArrayIndexOf,
+            Native::TypedArrayLastIndexOf,
+            Native::TypedArrayIncludes,
         ],
     )?;
-    // `toString` is `Array.prototype.toString`; `@@iterator` is `values`.
+    super::link_constructor(cx, constructor, prototype)?;
+    // `toString` is `Array.prototype.toString`.
     let array_prototype = cx.realm.intrinsic(Intrinsic::ArrayPrototype);
     let to_string = Names::key(names.to_string);
     let (slot, _) = cx
@@ -161,45 +173,37 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         .expect("Array.prototype.toString");
     let function = cx.heap.get_slot(array_prototype, slot);
     super::define_key(cx, prototype, to_string, function, super::hidden())?;
-    let values = cx.heap.property_key("values")?;
-    let (slot, _) = cx.heap.lookup_own(prototype, values).expect("values");
-    let function = cx.heap.get_slot(prototype, slot);
-    super::define_key(
-        cx,
-        prototype,
-        WellKnown::key(cx.realm.symbols.iterator),
-        function,
-        super::hidden(),
-    )?;
 
     let constant = PropertyFlags::data(false, false, false);
     for kind in ElementKind::ALL {
         let concrete = super::plain_object(cx, Some(prototype), 4)?;
         cx.set_intrinsic(prototype_intrinsic(kind), concrete);
-        let function = super::install_constructor(cx, constructor_native(kind), concrete)?;
+        let function = super::install_constructor(cx, constructor_native(kind))?;
         cx.set_intrinsic(constructor_intrinsic(kind), function);
         cx.heap.set_prototype(function, Some(constructor))?;
         let size = Value::int32(kind.size() as i32);
         super::define(cx, function, "BYTES_PER_ELEMENT", size, constant)?;
         super::define(cx, concrete, "BYTES_PER_ELEMENT", size, constant)?;
+        if kind == ElementKind::Uint8 {
+            methods(
+                cx,
+                function,
+                &[Native::Uint8ArrayFromBase64, Native::Uint8ArrayFromHex],
+            )?;
+            methods(
+                cx,
+                concrete,
+                &[
+                    Native::Uint8ArrayToBase64,
+                    Native::Uint8ArrayToHex,
+                    Native::Uint8ArraySetFromBase64,
+                    Native::Uint8ArraySetFromHex,
+                ],
+            )?;
+        }
+        super::link_constructor(cx, function, concrete)?;
     }
-    let uint8 = cx.realm.intrinsic(Intrinsic::Uint8Array);
-    methods(
-        cx,
-        uint8,
-        &[Native::Uint8ArrayFromBase64, Native::Uint8ArrayFromHex],
-    )?;
-    let uint8_prototype = cx.realm.intrinsic(Intrinsic::Uint8ArrayPrototype);
-    methods(
-        cx,
-        uint8_prototype,
-        &[
-            Native::Uint8ArrayToBase64,
-            Native::Uint8ArraySetFromBase64,
-            Native::Uint8ArrayToHex,
-            Native::Uint8ArraySetFromHex,
-        ],
-    )
+    Ok(())
 }
 
 fn root(cx: &mut Cx<'_>, value: Value) {

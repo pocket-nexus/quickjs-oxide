@@ -1,7 +1,7 @@
 //! The error constructors (`Error`, the native errors, `AggregateError`)
 //! with the `cause` option, `Error.prototype.toString` and `Error.isError`.
 
-use super::{Native, install_constructor, methods};
+use super::{Native, install_constructor, link_constructor, methods};
 use crate::heap::HeapError;
 use crate::heap::object::{ObjectKind, flags};
 use crate::runtime::Names;
@@ -18,12 +18,15 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let mut error_constructor = None;
     for kind in ErrorKind::ALL {
         let prototype = cx.realm.intrinsic(kind.prototype());
-        let constructor = install_constructor(cx, Native::error(kind), prototype)?;
+        let constructor = install_constructor(cx, Native::error(kind))?;
         if let Some(error) = error_constructor {
             cx.heap.set_prototype(constructor, Some(error))?;
         } else {
             error_constructor = Some(constructor);
             methods(cx, constructor, &[Native::ErrorIsError])?;
+            // QuickJS's `js_error_proto_funcs`: `toString`, `name`,
+            // `message`.
+            methods(cx, prototype, &[Native::ErrorToString])?;
         }
         // Atoms are strong roots: the name needs no rooting.
         let name = cx.heap.intern(kind.name())?;
@@ -36,9 +39,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         let empty = Value::string(names.empty);
         cx.heap
             .add_property(prototype, Names::key(names.message), hidden, empty)?;
-        if kind == ErrorKind::Error {
-            methods(cx, prototype, &[Native::ErrorToString])?;
-        }
+        link_constructor(cx, constructor, prototype)?;
     }
     Ok(())
 }
@@ -82,13 +83,20 @@ fn construct(
             .add_property(object, Names::key(names.cause), hidden, cause)
             .map_err(|error| vm_error::heap_error(cx, error))?;
     }
-    vm_error::add_stack(cx, object, true).map_err(|error| vm_error::heap_error(cx, error))?;
     Ok(object)
+}
+
+/// The error's `stack`, its last own property (QuickJS's `build_backtrace`
+/// at the end of `js_error_constructor`).
+fn add_stack(cx: &mut Cx<'_>, object: ObjectId) -> Result<Value, Throw> {
+    vm_error::add_stack(cx, object, true).map_err(|error| vm_error::heap_error(cx, error))?;
+    Ok(Value::object(object))
 }
 
 fn native_error(cx: &mut Cx<'_>, site: CallSite, kind: ErrorKind) -> Result<Value, Throw> {
     let (message, options) = (site.arg(cx, 0), site.arg(cx, 1));
-    construct(cx, &site, kind, message, options).map(Value::object)
+    let object = construct(cx, &site, kind, message, options)?;
+    add_stack(cx, object)
 }
 
 macro_rules! constructors {
@@ -127,7 +135,7 @@ pub(super) fn aggregate_error(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, 
             Value::object(array),
         )
         .map_err(|error| vm_error::heap_error(cx, error))?;
-    Ok(Value::object(object))
+    add_stack(cx, object)
 }
 
 /// `Error.prototype.toString`.

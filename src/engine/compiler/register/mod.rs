@@ -2770,6 +2770,11 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 .map(|debug| std::rc::Rc::from(debug.filename.to_utf8_lossy())),
         });
         unit.debug.positions = positions;
+        unit.debug.definition = self
+            .function
+            .debug()
+            .and_then(|debug| debug.pc2line.as_ref())
+            .and_then(|table| table.definition.one_based());
         unit.direct_eval_sites = self.direct_eval_sites.into();
         Ok((unit, self.pool))
     }

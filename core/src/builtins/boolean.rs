@@ -1,7 +1,7 @@
 //! `Boolean`: `Boolean(v)` and `Boolean.prototype.toString` and `valueOf`.
 //! `new Boolean` makes a wrapper object, which is phase 4's.
 
-use super::{Native, install_constructor, methods};
+use super::{Native, install_constructor, link_constructor, methods};
 use crate::heap::HeapError;
 use crate::heap::object::ObjectKind;
 use crate::runtime::Intrinsic;
@@ -12,13 +12,14 @@ use crate::vm::{Cx, Throw, error, ops};
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::BooleanPrototype);
-    let constructor = install_constructor(cx, Native::BooleanConstructor, prototype)?;
+    let constructor = install_constructor(cx, Native::BooleanConstructor)?;
     cx.set_intrinsic(Intrinsic::Boolean, constructor);
     methods(
         cx,
         prototype,
         &[Native::BooleanToString, Native::BooleanValueOf],
-    )
+    )?;
+    link_constructor(cx, constructor, prototype)
 }
 
 /// `Boolean(value)`; `new Boolean(value)` wraps it.

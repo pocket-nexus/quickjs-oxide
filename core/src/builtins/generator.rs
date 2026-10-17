@@ -51,6 +51,12 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         ],
     )?;
     to_string_tag(cx, generator_prototype, "Generator")?;
+    to_string_tag(cx, generator_function_prototype, "GeneratorFunction")?;
+    let generator_function = super::native_function(cx, Native::GeneratorFunctionConstructor)?;
+    let function = cx.realm.intrinsic(Intrinsic::Function);
+    cx.heap.set_prototype(generator_function, Some(function))?;
+    constructor_link(cx, generator_function, generator_function_prototype)?;
+    // QuickJS links `%GeneratorPrototype%` after the constructor.
     cx.heap.add_property(
         generator_function_prototype,
         Names::key(names.prototype),
@@ -63,11 +69,6 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         PropertyFlags::data(false, false, true),
         Value::object(generator_function_prototype),
     )?;
-    to_string_tag(cx, generator_function_prototype, "GeneratorFunction")?;
-    let generator_function = super::native_function(cx, Native::GeneratorFunctionConstructor)?;
-    let function = cx.realm.intrinsic(Intrinsic::Function);
-    cx.heap.set_prototype(generator_function, Some(function))?;
-    constructor_link(cx, generator_function, generator_function_prototype)?;
     cx.set_intrinsic(Intrinsic::GeneratorFunction, generator_function);
 
     // %AsyncFunction% and %AsyncFunction.prototype%.
@@ -112,18 +113,6 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         ],
     )?;
     to_string_tag(cx, async_generator_prototype, "AsyncGenerator")?;
-    cx.heap.add_property(
-        async_generator_function_prototype,
-        Names::key(names.prototype),
-        PropertyFlags::data(false, false, true),
-        Value::object(async_generator_prototype),
-    )?;
-    cx.heap.add_property(
-        async_generator_prototype,
-        Names::key(names.constructor),
-        PropertyFlags::data(false, false, true),
-        Value::object(async_generator_function_prototype),
-    )?;
     to_string_tag(
         cx,
         async_generator_function_prototype,
@@ -137,6 +126,18 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         cx,
         async_generator_function,
         async_generator_function_prototype,
+    )?;
+    cx.heap.add_property(
+        async_generator_function_prototype,
+        Names::key(names.prototype),
+        PropertyFlags::data(false, false, true),
+        Value::object(async_generator_prototype),
+    )?;
+    cx.heap.add_property(
+        async_generator_prototype,
+        Names::key(names.constructor),
+        PropertyFlags::data(false, false, true),
+        Value::object(async_generator_function_prototype),
     )?;
     cx.set_intrinsic(Intrinsic::AsyncGeneratorFunction, async_generator_function);
     Ok(())

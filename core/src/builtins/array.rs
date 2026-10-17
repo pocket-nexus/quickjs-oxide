@@ -9,7 +9,7 @@
 use std::cmp::Ordering;
 
 use super::{
-    Native, accessor, install_constructor, methods, plain_object, string_units, symbol_method,
+    Native, accessor, install_constructor, link_constructor, methods, plain_object, string_units,
     this_object,
 };
 use crate::heap::HeapError;
@@ -31,12 +31,13 @@ const MAX_LENGTH: u64 = 9_007_199_254_740_991;
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::ArrayPrototype);
-    let array = install_constructor(cx, Native::ArrayConstructor, prototype)?;
+    // QuickJS's `js_array_funcs` and `js_array_proto_funcs`, in order.
+    let array = install_constructor(cx, Native::ArrayConstructor)?;
     cx.set_intrinsic(Intrinsic::Array, array);
     methods(
         cx,
         array,
-        &[Native::ArrayFrom, Native::ArrayIsArray, Native::ArrayOf],
+        &[Native::ArrayIsArray, Native::ArrayFrom, Native::ArrayOf],
     )?;
     let species = WellKnown::key(cx.realm.symbols.species);
     accessor(
@@ -52,27 +53,8 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         prototype,
         &[
             Native::ArrayAt,
+            Native::ArrayWith,
             Native::ArrayConcat,
-            Native::ArrayCopyWithin,
-            Native::ArrayFill,
-            Native::ArrayFind,
-            Native::ArrayFindIndex,
-            Native::ArrayFindLast,
-            Native::ArrayFindLastIndex,
-            Native::ArrayLastIndexOf,
-            Native::ArrayPop,
-            Native::ArrayPush,
-            Native::ArrayReverse,
-            Native::ArrayShift,
-            Native::ArrayUnshift,
-            Native::ArraySlice,
-            Native::ArraySort,
-            Native::ArraySplice,
-            Native::ArrayIncludes,
-            Native::ArrayIndexOf,
-            Native::ArrayJoin,
-            Native::ArrayToString,
-            Native::ArrayToLocaleString,
             Native::ArrayEvery,
             Native::ArraySome,
             Native::ArrayForEach,
@@ -80,13 +62,50 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             Native::ArrayFilter,
             Native::ArrayReduce,
             Native::ArrayReduceRight,
-            Native::ArrayFlat,
-            Native::ArrayFlatMap,
+            Native::ArrayFill,
+            Native::ArrayFind,
+            Native::ArrayFindIndex,
+            Native::ArrayFindLast,
+            Native::ArrayFindLastIndex,
+            Native::ArrayIndexOf,
+            Native::ArrayLastIndexOf,
+            Native::ArrayIncludes,
+            Native::ArrayJoin,
+            Native::ArrayToString,
+            Native::ArrayToLocaleString,
+            Native::ArrayPop,
+            Native::ArrayPush,
+            Native::ArrayShift,
+            Native::ArrayUnshift,
+            Native::ArrayReverse,
             Native::ArrayToReversed,
+            Native::ArraySort,
             Native::ArrayToSorted,
+            Native::ArraySlice,
+            Native::ArraySplice,
             Native::ArrayToSpliced,
-            Native::ArrayWith,
+            Native::ArrayCopyWithin,
+            Native::ArrayFlatMap,
+            Native::ArrayFlat,
+            Native::ArrayValues,
+            Native::ArrayKeys,
+            Native::ArrayEntries,
         ],
+    )?;
+    let values_key = cx.heap.property_key("values")?;
+    let values = cx
+        .heap
+        .lookup_own(prototype, values_key)
+        .map(|(slot, _)| cx.heap.get_slot(prototype, slot))
+        .and_then(|value| value.as_object())
+        .expect("Array.prototype.values");
+    cx.set_intrinsic(Intrinsic::ArrayValues, values);
+    super::define_key(
+        cx,
+        prototype,
+        WellKnown::key(cx.realm.symbols.iterator),
+        Value::object(values),
+        PropertyFlags::data(true, false, true),
     )?;
     // `Array.prototype[Symbol.unscopables]`: unscopables are dropped
     // (phase 0), the object is still there.
@@ -118,8 +137,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         Value::object(unscopables),
         PropertyFlags::data(false, false, true),
     )?;
-    let _ = symbol_method;
-    Ok(())
+    link_constructor(cx, array, prototype)
 }
 
 fn root(cx: &mut Cx<'_>, value: Value) {

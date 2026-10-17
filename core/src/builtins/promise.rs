@@ -3,7 +3,8 @@
 //! is dropped (phase 0): `then` and `finally` use `%Promise%`.
 
 use super::{
-    Native, accessor, install_constructor, methods, native_closure, native_data, to_string_tag,
+    Native, accessor, install_constructor, link_constructor, methods, native_closure, native_data,
+    to_string_tag,
 };
 use crate::heap::HeapError;
 use crate::runtime::{Intrinsic, Names, WellKnown};
@@ -18,19 +19,19 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let object_prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
     let prototype = super::plain_object(cx, Some(object_prototype), 8)?;
     cx.set_intrinsic(Intrinsic::PromisePrototype, prototype);
-    let promise = install_constructor(cx, Native::PromiseConstructor, prototype)?;
+    let promise = install_constructor(cx, Native::PromiseConstructor)?;
     cx.set_intrinsic(Intrinsic::Promise, promise);
     methods(
         cx,
         promise,
         &[
+            Native::PromiseResolveStatic,
+            Native::PromiseRejectStatic,
             Native::PromiseAll,
             Native::PromiseAllSettled,
             Native::PromiseAny,
-            Native::PromiseRace,
-            Native::PromiseRejectStatic,
-            Native::PromiseResolveStatic,
             Native::PromiseTry,
+            Native::PromiseRace,
             Native::PromiseWithResolvers,
         ],
     )?;
@@ -52,7 +53,8 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             Native::PromiseFinally,
         ],
     )?;
-    to_string_tag(cx, prototype, "Promise")
+    to_string_tag(cx, prototype, "Promise")?;
+    link_constructor(cx, promise, prototype)
 }
 
 fn root(cx: &mut Cx<'_>, value: Value) {

@@ -12,7 +12,9 @@ use self::calendar::{DateFields, DateInputFields, get_date_fields, set_date_fiel
 use self::calendar::{set_date_fields_checked, time_clip};
 use self::format::format_date_string;
 use self::parse::{ParsedDateString, parse_date_string};
-use super::{Native, define, install_constructor, methods, string_text, symbol_method};
+use super::{
+    Native, define, install_constructor, link_constructor, methods, string_text, symbol_method,
+};
 use crate::heap::HeapError;
 use crate::heap::object::{InternalTag, ObjectKind};
 use crate::runtime::Intrinsic;
@@ -49,7 +51,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let object_prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
     let prototype = super::plain_object(cx, Some(object_prototype), 48)?;
     cx.set_intrinsic(Intrinsic::DatePrototype, prototype);
-    let date = install_constructor(cx, Native::DateConstructor, prototype)?;
+    let date = install_constructor(cx, Native::DateConstructor)?;
     cx.set_intrinsic(Intrinsic::Date, date);
     methods(
         cx,
@@ -128,7 +130,8 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             Native::DateSetUtcFullYear,
             Native::DateToJson,
         ],
-    )
+    )?;
+    link_constructor(cx, date, prototype)
 }
 
 // ---- the host clock and time zone ----

@@ -7,6 +7,11 @@ use crate::vm::native::CallSite;
 use crate::vm::number::number;
 use crate::vm::{Cx, Output, Throw, ops, radix};
 
+/// qjs's `performance.now()`: milliseconds on a monotonic clock.
+pub(super) fn performance_now(_: &mut Cx<'_>, _: CallSite) -> Result<Value, Throw> {
+    Ok(Value::number(super::agent::monotonic_ms()))
+}
+
 /// qjs's `print`: the arguments' strings joined by a space, then a newline.
 pub(super) fn print(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let mut line = Vec::new();

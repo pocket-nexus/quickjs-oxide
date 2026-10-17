@@ -1,7 +1,10 @@
 //! `Symbol`: the constructor (callable, not constructible), the registry
 //! (`for`, `keyFor`), the well-known symbols, and `Symbol.prototype`.
 
-use super::{Native, define, getter, install_constructor, methods, symbol_method, to_string_tag};
+use super::{
+    Native, define, getter, install_constructor, link_constructor, methods, symbol_method,
+    to_string_tag,
+};
 use crate::heap::HeapError;
 use crate::heap::object::ObjectKind;
 use crate::runtime::Intrinsic;
@@ -14,11 +17,32 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let object_prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
     let prototype = super::plain_object(cx, Some(object_prototype), 8)?;
     cx.set_intrinsic(Intrinsic::SymbolPrototype, prototype);
-    let symbol = install_constructor(cx, Native::SymbolConstructor, prototype)?;
+    // QuickJS's `js_symbol_funcs` and `js_symbol_proto_funcs`, in order.
+    let symbol = install_constructor(cx, Native::SymbolConstructor)?;
     cx.set_intrinsic(Intrinsic::Symbol, symbol);
     methods(cx, symbol, &[Native::SymbolFor, Native::SymbolKeyFor])?;
     let constant = PropertyFlags::data(false, false, false);
-    for (name, id) in cx.realm.symbols.all() {
+    let all = cx.realm.symbols.all();
+    for name in [
+        "toPrimitive",
+        "iterator",
+        "match",
+        "matchAll",
+        "replace",
+        "search",
+        "split",
+        "toStringTag",
+        "isConcatSpreadable",
+        "hasInstance",
+        "species",
+        "unscopables",
+        "asyncIterator",
+    ] {
+        let id = all
+            .iter()
+            .find(|(text, _)| *text == name)
+            .map(|&(_, id)| id)
+            .expect("a well-known symbol");
         define(cx, symbol, name, Value::symbol(id), constant)?;
     }
     methods(
@@ -35,7 +59,8 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         Native::SymbolToPrimitive,
         PropertyFlags::data(false, false, true),
     )?;
-    to_string_tag(cx, prototype, "Symbol")
+    to_string_tag(cx, prototype, "Symbol")?;
+    link_constructor(cx, symbol, prototype)
 }
 
 /// `Symbol(description)`; `new Symbol` throws.

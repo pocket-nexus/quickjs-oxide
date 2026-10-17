@@ -5,7 +5,9 @@
 //! consulted (phase 0): `slice` makes an intrinsic buffer.
 
 use super::bigint::to_index;
-use super::{Native, accessor, getter, install_constructor, methods, to_string_tag};
+use super::{
+    Native, accessor, getter, install_constructor, link_constructor, methods, to_string_tag,
+};
 use crate::heap::HeapError;
 use crate::heap::buffer::{Buffer, ElementKind, MAX_BUFFER_LENGTH, Store, View};
 use crate::heap::object::{InternalData, InternalTag, ObjectKind};
@@ -21,7 +23,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
 
     let prototype = super::plain_object(cx, Some(object_prototype), 12)?;
     cx.set_intrinsic(Intrinsic::ArrayBufferPrototype, prototype);
-    let constructor = install_constructor(cx, Native::ArrayBufferConstructor, prototype)?;
+    let constructor = install_constructor(cx, Native::ArrayBufferConstructor)?;
     cx.set_intrinsic(Intrinsic::ArrayBuffer, constructor);
     methods(cx, constructor, &[Native::ArrayBufferIsView])?;
     accessor(
@@ -52,10 +54,11 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         ],
     )?;
     to_string_tag(cx, prototype, "ArrayBuffer")?;
+    link_constructor(cx, constructor, prototype)?;
 
     let prototype = super::plain_object(cx, Some(object_prototype), 8)?;
     cx.set_intrinsic(Intrinsic::SharedArrayBufferPrototype, prototype);
-    let constructor = install_constructor(cx, Native::SharedArrayBufferConstructor, prototype)?;
+    let constructor = install_constructor(cx, Native::SharedArrayBufferConstructor)?;
     accessor(
         cx,
         constructor,
@@ -70,13 +73,13 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         "byteLength",
         Native::SharedArrayBufferByteLength,
     )?;
-    getter(cx, prototype, "growable", Native::SharedArrayBufferGrowable)?;
     getter(
         cx,
         prototype,
         "maxByteLength",
         Native::SharedArrayBufferMaxByteLength,
     )?;
+    getter(cx, prototype, "growable", Native::SharedArrayBufferGrowable)?;
     methods(
         cx,
         prototype,
@@ -86,10 +89,11 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         ],
     )?;
     to_string_tag(cx, prototype, "SharedArrayBuffer")?;
+    link_constructor(cx, constructor, prototype)?;
 
     let prototype = super::plain_object(cx, Some(object_prototype), 28)?;
     cx.set_intrinsic(Intrinsic::DataViewPrototype, prototype);
-    install_constructor(cx, Native::DataViewConstructor, prototype)?;
+    let constructor = install_constructor(cx, Native::DataViewConstructor)?;
     getter(cx, prototype, "buffer", Native::DataViewBuffer)?;
     getter(cx, prototype, "byteLength", Native::DataViewByteLength)?;
     getter(cx, prototype, "byteOffset", Native::DataViewByteOffset)?;
@@ -103,25 +107,26 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             Native::DataViewGetUint16,
             Native::DataViewGetInt32,
             Native::DataViewGetUint32,
+            Native::DataViewGetBigInt64,
+            Native::DataViewGetBigUint64,
             Native::DataViewGetFloat16,
             Native::DataViewGetFloat32,
             Native::DataViewGetFloat64,
-            Native::DataViewGetBigInt64,
-            Native::DataViewGetBigUint64,
             Native::DataViewSetInt8,
             Native::DataViewSetUint8,
             Native::DataViewSetInt16,
             Native::DataViewSetUint16,
             Native::DataViewSetInt32,
             Native::DataViewSetUint32,
+            Native::DataViewSetBigInt64,
+            Native::DataViewSetBigUint64,
             Native::DataViewSetFloat16,
             Native::DataViewSetFloat32,
             Native::DataViewSetFloat64,
-            Native::DataViewSetBigInt64,
-            Native::DataViewSetBigUint64,
         ],
     )?;
-    to_string_tag(cx, prototype, "DataView")
+    to_string_tag(cx, prototype, "DataView")?;
+    link_constructor(cx, constructor, prototype)
 }
 
 // ---- allocation ----

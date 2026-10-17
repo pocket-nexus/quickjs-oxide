@@ -7,14 +7,15 @@
 //! plain ones.
 
 use super::{
-    Native, install_constructor, methods, string_repr, string_units, this_string, to_string_id,
+    Native, install_constructor, link_constructor, methods, string_repr, string_units, this_string,
+    to_string_id,
 };
 use crate::heap::HeapError;
 use crate::heap::object::ObjectKind;
 use crate::heap::string::StringRepr;
 use crate::runtime::{Intrinsic, Names};
 use crate::shape::PropertyFlags;
-use crate::value::{Kind, StringId, Value};
+use crate::value::{Kind, ObjectId, StringId, Value};
 use crate::vm::native::CallSite;
 use crate::vm::object as internal;
 use crate::vm::{Cx, Throw, error, number, ops};
@@ -24,14 +25,10 @@ pub(crate) const MAX_STRING: usize = (1 << 30) - 1;
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::StringPrototype);
-    let string = install_constructor(cx, Native::StringConstructor, prototype)?;
-    let names = cx.realm.names;
-    cx.heap.add_property(
-        prototype,
-        Names::key(names.length),
-        PropertyFlags::data(false, false, false),
-        Value::int32(0),
-    )?;
+    // QuickJS's `js_string_funcs` and `js_string_proto_funcs`, in order;
+    // `normalize` and `localeCompare` follow the constructor link
+    // (`JS_AddIntrinsicStringNormalize`).
+    let string = install_constructor(cx, Native::StringConstructor)?;
     cx.set_intrinsic(Intrinsic::String, string);
     methods(
         cx,
@@ -42,45 +39,60 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             Native::StringRaw,
         ],
     )?;
+    let names = cx.realm.names;
+    cx.heap.add_property(
+        prototype,
+        Names::key(names.length),
+        PropertyFlags::data(false, false, true),
+        Value::int32(0),
+    )?;
     methods(
         cx,
         prototype,
         &[
             Native::StringAt,
-            Native::StringCharAt,
             Native::StringCharCodeAt,
-            Native::StringCodePointAt,
+            Native::StringCharAt,
             Native::StringConcat,
-            Native::StringEndsWith,
-            Native::StringIncludes,
-            Native::StringIndexOf,
+            Native::StringCodePointAt,
             Native::StringIsWellFormed,
+            Native::StringToWellFormed,
+            Native::StringIndexOf,
             Native::StringLastIndexOf,
-            Native::StringLocaleCompare,
+            Native::StringIncludes,
+            Native::StringEndsWith,
+            Native::StringStartsWith,
             Native::StringMatch,
             Native::StringMatchAll,
-            Native::StringNormalize,
-            Native::StringPadEnd,
-            Native::StringPadStart,
+            Native::StringSearch,
+            Native::StringSplit,
+            Native::StringSubstring,
+            Native::StringSubstr,
+            Native::StringSlice,
             Native::StringRepeat,
             Native::StringReplace,
             Native::StringReplaceAll,
-            Native::StringSearch,
-            Native::StringSlice,
-            Native::StringSplit,
-            Native::StringStartsWith,
-            Native::StringSubstr,
-            Native::StringSubstring,
-            Native::StringToLocaleLowerCase,
-            Native::StringToLocaleUpperCase,
-            Native::StringToLowerCase,
-            Native::StringToString,
-            Native::StringToUpperCase,
-            Native::StringToWellFormed,
+            Native::StringPadEnd,
+            Native::StringPadStart,
             Native::StringTrim,
             Native::StringTrimEnd,
-            Native::StringTrimStart,
+        ],
+    )?;
+    // `trimRight` and `trimLeft` are the same function objects as `trimEnd`
+    // and `trimStart` (`JS_ALIAS_DEF`).
+    alias(cx, prototype, "trimRight", "trimEnd")?;
+    methods(cx, prototype, &[Native::StringTrimStart])?;
+    alias(cx, prototype, "trimLeft", "trimStart")?;
+    methods(
+        cx,
+        prototype,
+        &[
+            Native::StringToString,
             Native::StringValueOf,
+            Native::StringToLowerCase,
+            Native::StringToUpperCase,
+            Native::StringToLocaleLowerCase,
+            Native::StringToLocaleUpperCase,
             Native::StringAnchor,
             Native::StringBig,
             Native::StringBlink,
@@ -96,15 +108,28 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             Native::StringSup,
         ],
     )?;
-    // `trimLeft` and `trimRight` are the same function objects as
-    // `trimStart` and `trimEnd`.
-    for (alias, name) in [("trimLeft", "trimStart"), ("trimRight", "trimEnd")] {
-        let key = cx.heap.property_key(name)?;
-        let (slot, _) = cx.heap.lookup_own(prototype, key).expect("the method");
-        let function = cx.heap.get_slot(prototype, slot);
-        super::define(cx, prototype, alias, function, super::hidden())?;
-    }
-    Ok(())
+    let iterator = cx.realm.symbols.iterator;
+    super::symbol_method(
+        cx,
+        prototype,
+        iterator,
+        Native::StringIterator,
+        PropertyFlags::data(true, false, true),
+    )?;
+    link_constructor(cx, string, prototype)?;
+    methods(
+        cx,
+        prototype,
+        &[Native::StringNormalize, Native::StringLocaleCompare],
+    )
+}
+
+/// Defines `alias` on `object` as the function already at `name`.
+fn alias(cx: &mut Cx<'_>, object: ObjectId, alias: &str, name: &str) -> Result<(), HeapError> {
+    let key = cx.heap.property_key(name)?;
+    let (slot, _) = cx.heap.lookup_own(object, key).expect("the method");
+    let function = cx.heap.get_slot(object, slot);
+    super::define(cx, object, alias, function, super::hidden())
 }
 
 fn root(cx: &mut Cx<'_>, value: Value) {

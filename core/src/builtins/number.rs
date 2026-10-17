@@ -4,7 +4,7 @@
 //! `Number.prototype`'s `toString(radix)`, `toFixed`, `toExponential`,
 //! `toPrecision`, `toLocaleString` and `valueOf` with QuickJS's digits.
 
-use super::{Native, define, install_constructor, methods, string_text};
+use super::{Native, define, install_constructor, link_constructor, methods, string_text};
 use crate::heap::HeapError;
 use crate::heap::object::ObjectKind;
 use crate::runtime::Intrinsic;
@@ -16,34 +16,12 @@ use crate::vm::{Cx, Throw, error, number, ops, radix};
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::NumberPrototype);
-    let constructor = install_constructor(cx, Native::NumberConstructor, prototype)?;
+    // QuickJS's `js_number_funcs` and `js_number_proto_funcs`, in order.
+    let constructor = install_constructor(cx, Native::NumberConstructor)?;
     cx.set_intrinsic(Intrinsic::Number, constructor);
-    let constant = PropertyFlags::data(false, false, false);
-    for (name, value) in [
-        ("EPSILON", f64::EPSILON),
-        ("MAX_SAFE_INTEGER", 9_007_199_254_740_991.0),
-        ("MAX_VALUE", f64::MAX),
-        ("MIN_SAFE_INTEGER", -9_007_199_254_740_991.0),
-        ("MIN_VALUE", f64::from_bits(1)),
-        ("NaN", f64::NAN),
-        ("NEGATIVE_INFINITY", f64::NEG_INFINITY),
-        ("POSITIVE_INFINITY", f64::INFINITY),
-    ] {
-        define(cx, constructor, name, Value::number(value), constant)?;
-    }
-    methods(
-        cx,
-        constructor,
-        &[
-            Native::NumberIsFinite,
-            Native::NumberIsInteger,
-            Native::NumberIsNaN,
-            Native::NumberIsSafeInteger,
-        ],
-    )?;
-    // `Number.parseFloat` and `Number.parseInt` are the global functions.
+    // `Number.parseInt` and `Number.parseFloat` are the global functions.
     let global = cx.realm.global();
-    for name in ["parseFloat", "parseInt"] {
+    for name in ["parseInt", "parseFloat"] {
         let key = cx.heap.property_key(name)?;
         let (slot, _) = cx.heap.lookup_own(global, key).expect("a global function");
         let function = cx.heap.get_slot(global, slot);
@@ -51,16 +29,40 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     }
     methods(
         cx,
+        constructor,
+        &[
+            Native::NumberIsNaN,
+            Native::NumberIsFinite,
+            Native::NumberIsInteger,
+            Native::NumberIsSafeInteger,
+        ],
+    )?;
+    let constant = PropertyFlags::data(false, false, false);
+    for (name, value) in [
+        ("MAX_VALUE", f64::MAX),
+        ("MIN_VALUE", f64::from_bits(1)),
+        ("NaN", f64::NAN),
+        ("NEGATIVE_INFINITY", f64::NEG_INFINITY),
+        ("POSITIVE_INFINITY", f64::INFINITY),
+        ("EPSILON", f64::EPSILON),
+        ("MAX_SAFE_INTEGER", 9_007_199_254_740_991.0),
+        ("MIN_SAFE_INTEGER", -9_007_199_254_740_991.0),
+    ] {
+        define(cx, constructor, name, Value::number(value), constant)?;
+    }
+    methods(
+        cx,
         prototype,
         &[
             Native::NumberToExponential,
             Native::NumberToFixed,
-            Native::NumberToLocaleString,
             Native::NumberToPrecision,
             Native::NumberToString,
+            Native::NumberToLocaleString,
             Native::NumberValueOf,
         ],
-    )
+    )?;
+    link_constructor(cx, constructor, prototype)
 }
 
 /// `Number(value)`; `new Number(value)` wraps it.

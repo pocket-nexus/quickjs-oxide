@@ -115,6 +115,9 @@ natives! {
     FunctionToString => function::to_string, "toString", 0;
     FunctionBind => function::bind, "bind", 1;
     FunctionHasInstance => function::has_instance, "[Symbol.hasInstance]", 1;
+    FunctionFileName => function::file_name, "fileName", 0;
+    FunctionLineNumber => function::line_number, "lineNumber", 0;
+    FunctionColumnNumber => function::column_number, "columnNumber", 0;
     ThrowTypeError => function::throw_type_error, "", 0;
 
     ParseInt => global::parse_int, "parseInt", 2;
@@ -305,7 +308,6 @@ natives! {
     BigIntConstructor => bigint::constructor, "BigInt", 1, constructor;
     BigIntAsIntN => bigint::as_int_n, "asIntN", 2;
     BigIntAsUintN => bigint::as_uint_n, "asUintN", 2;
-    BigIntToLocaleString => bigint::to_locale_string, "toLocaleString", 0;
     BigIntToString => bigint::to_string, "toString", 0;
     BigIntValueOf => bigint::value_of, "valueOf", 0;
 
@@ -695,6 +697,8 @@ natives! {
     ConsoleLog => global::print, "log", 1;
     Load => crate::vm::compile::load, "load", 1;
     Read => crate::vm::compile::read, "read", 1;
+    LoadScript => crate::vm::compile::load_script, "__loadScript", 1;
+    PerformanceNow => global::performance_now, "now", 0;
 }
 
 impl Native {
@@ -1002,14 +1006,31 @@ fn getter(cx: &mut Cx<'_>, object: ObjectId, name: &str, native: Native) -> Resu
     accessor(cx, object, key, name, Some(native), None)
 }
 
-/// A constructor with its `prototype` (non-writable) and the prototype's
-/// `constructor`, defined on the global object as its table name.
-fn install_constructor(
-    cx: &mut Cx<'_>,
-    native: Native,
-    prototype: ObjectId,
-) -> Result<ObjectId, HeapError> {
+/// A constructor function, defined on the global object as its table name.
+/// Its `prototype` link comes last ([`link_constructor`]), after its static
+/// members and the prototype's methods, as QuickJS's `JS_NewCConstructor`
+/// orders them.
+fn install_constructor(cx: &mut Cx<'_>, native: Native) -> Result<ObjectId, HeapError> {
     let function = native_function(cx, native)?;
+    let global = cx.realm.global();
+    define(
+        cx,
+        global,
+        native.js_name(),
+        Value::object(function),
+        hidden(),
+    )?;
+    Ok(function)
+}
+
+/// Defines `function.prototype` (non-writable) and then
+/// `prototype.constructor` (QuickJS's `JS_SetConstructor2`), each the last
+/// string-keyed property of its object.
+fn link_constructor(
+    cx: &mut Cx<'_>,
+    function: ObjectId,
+    prototype: ObjectId,
+) -> Result<(), HeapError> {
     let names = cx.realm.names;
     cx.heap.add_property(
         function,
@@ -1022,16 +1043,7 @@ fn install_constructor(
         Names::key(names.constructor),
         hidden(),
         Value::object(function),
-    )?;
-    let global = cx.realm.global();
-    define(
-        cx,
-        global,
-        native.js_name(),
-        Value::object(function),
-        hidden(),
-    )?;
-    Ok(function)
+    )
 }
 
 /// An ordinary object inheriting from `prototype`, rooted.
@@ -1121,9 +1133,95 @@ fn install_rooted(cx: &mut Cx<'_>) -> Result<ObjectId, HeapError> {
     atomics::install(cx)?;
     error::install(cx)?;
     regexp::record_flag_cache(cx)?;
+    to_string_tag(cx, global, "global")?;
+    order_globals(cx, global)?;
     let message = cx.heap.intern("out of memory")?;
     let error = vm_error::new_error(cx, ErrorKind::Internal, Value::string(message))?;
     Ok(error.as_object().unwrap())
+}
+
+/// The global object's properties in QuickJS's order: its
+/// `JS_AddIntrinsicBasicObjects`, `JS_AddIntrinsicBaseObjects` and the
+/// `JS_AddIntrinsic*` calls of `JS_NewContext`, which define them in an
+/// order the install's dependencies do not allow.
+const GLOBAL_ORDER: &[&str] = &[
+    "Error",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    "InternalError",
+    "AggregateError",
+    "Array",
+    "Object",
+    "Function",
+    "Iterator",
+    "parseInt",
+    "parseFloat",
+    "isNaN",
+    "isFinite",
+    "decodeURI",
+    "decodeURIComponent",
+    "encodeURI",
+    "encodeURIComponent",
+    "escape",
+    "unescape",
+    "Infinity",
+    "NaN",
+    "undefined",
+    "eval",
+    "Number",
+    "Boolean",
+    "String",
+    "Math",
+    "Reflect",
+    "Symbol",
+    "globalThis",
+    "BigInt",
+    "Date",
+    "RegExp",
+    "JSON",
+    "Proxy",
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "ArrayBuffer",
+    "SharedArrayBuffer",
+    "Uint8ClampedArray",
+    "Int8Array",
+    "Uint8Array",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "BigInt64Array",
+    "BigUint64Array",
+    "Float16Array",
+    "Float32Array",
+    "Float64Array",
+    "DataView",
+    "Atomics",
+    "Promise",
+    "WeakRef",
+    "FinalizationRegistry",
+];
+
+/// Puts the global object's properties in [`GLOBAL_ORDER`].
+fn order_globals(cx: &mut Cx<'_>, global: ObjectId) -> Result<(), HeapError> {
+    let mut keys = Vec::with_capacity(GLOBAL_ORDER.len());
+    for name in GLOBAL_ORDER {
+        keys.push(cx.heap.property_key(name)?);
+    }
+    debug_assert!(
+        keys.iter()
+            .all(|&key| cx.heap.lookup_own(global, key).is_some()),
+        "every global in GLOBAL_ORDER is installed"
+    );
+    cx.heap.reorder_dictionary(global, &keys);
+    Ok(())
 }
 
 /// Defines `print` on the global object.
@@ -1191,8 +1289,9 @@ fn script_args_array(cx: &mut Cx<'_>, args: &[String]) -> Result<ObjectId, HeapE
 }
 
 /// QuickJS's `js_std_add_helpers` as `qjs` runs it: `console` (with `log`),
-/// `scriptArgs` when given, then `print`, in that order, each writable,
-/// enumerable and configurable (`JS_SetPropertyStr`).
+/// `performance` (with `now`), `scriptArgs` when given, `print`, then
+/// `__loadScript`, in that order, each writable, enumerable and
+/// configurable (`JS_SetPropertyStr`).
 pub(crate) fn install_qjs_helpers(
     cx: &mut Cx<'_>,
     script_args: Option<&[String]>,
@@ -1206,12 +1305,18 @@ pub(crate) fn install_qjs_helpers(
         let log = native_function(cx, Native::ConsoleLog)?;
         define(cx, console, "log", Value::object(log), all)?;
         define(cx, global, "console", Value::object(console), all)?;
+        let performance = plain_object(cx, Some(prototype), 1)?;
+        let now = native_function(cx, Native::PerformanceNow)?;
+        define(cx, performance, "now", Value::object(now), all)?;
+        define(cx, global, "performance", Value::object(performance), all)?;
         if let Some(args) = script_args {
             let array = script_args_array(cx, args)?;
             define(cx, global, "scriptArgs", Value::object(array), all)?;
         }
         let print = native_function(cx, Native::Print)?;
-        define(cx, global, "print", Value::object(print), all)
+        define(cx, global, "print", Value::object(print), all)?;
+        let load_script = native_function(cx, Native::LoadScript)?;
+        define(cx, global, "__loadScript", Value::object(load_script), all)
     })();
     cx.heap.roots().truncate(mark);
     result

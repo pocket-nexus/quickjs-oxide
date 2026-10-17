@@ -73,7 +73,7 @@ pub struct AgentSelf {
 
 static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
-fn monotonic_ms() -> f64 {
+pub(super) fn monotonic_ms() -> f64 {
     START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
 }
 

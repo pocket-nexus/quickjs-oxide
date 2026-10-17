@@ -11,7 +11,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use super::{Native, accessor, getter, install_constructor, methods, to_string_tag};
+use super::{
+    Native, accessor, getter, install_constructor, link_constructor, methods, to_string_tag,
+};
 use crate::PropertyKey;
 use crate::heap::HeapError;
 use crate::heap::object::{InternalData, InternalTag, ObjectKind};
@@ -40,7 +42,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     // Map.
     let prototype = super::plain_object(cx, Some(object_prototype), 16)?;
     cx.set_intrinsic(Intrinsic::MapPrototype, prototype);
-    let map = install_constructor(cx, Native::MapConstructor, prototype)?;
+    let map = install_constructor(cx, Native::MapConstructor)?;
     methods(cx, map, &[Native::MapGroupBy])?;
     accessor(
         cx,
@@ -76,6 +78,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     )?;
     alias(cx, prototype, "entries", iterator)?;
     to_string_tag(cx, prototype, "Map")?;
+    link_constructor(cx, map, prototype)?;
     let map_iterator = super::plain_object(cx, Some(iterator_prototype), 2)?;
     cx.set_intrinsic(Intrinsic::MapIteratorPrototype, map_iterator);
     methods(cx, map_iterator, &[Native::MapIteratorNext])?;
@@ -84,7 +87,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     // Set.
     let prototype = super::plain_object(cx, Some(object_prototype), 24)?;
     cx.set_intrinsic(Intrinsic::SetPrototype, prototype);
-    let set = install_constructor(cx, Native::SetConstructor, prototype)?;
+    let set = install_constructor(cx, Native::SetConstructor)?;
     // QuickJS installs `Set.groupBy`, which groups into a Map.
     methods(cx, set, &[Native::MapGroupBy])?;
     accessor(
@@ -126,6 +129,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     alias(cx, prototype, "values", iterator)?;
     methods(cx, prototype, &[Native::SetEntries])?;
     to_string_tag(cx, prototype, "Set")?;
+    link_constructor(cx, set, prototype)?;
     let set_iterator = super::plain_object(cx, Some(iterator_prototype), 2)?;
     cx.set_intrinsic(Intrinsic::SetIteratorPrototype, set_iterator);
     methods(cx, set_iterator, &[Native::SetIteratorNext])?;
@@ -134,7 +138,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     // WeakMap and WeakSet.
     let prototype = super::plain_object(cx, Some(object_prototype), 8)?;
     cx.set_intrinsic(Intrinsic::WeakMapPrototype, prototype);
-    install_constructor(cx, Native::WeakMapConstructor, prototype)?;
+    let constructor = install_constructor(cx, Native::WeakMapConstructor)?;
     methods(
         cx,
         prototype,
@@ -148,9 +152,10 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         ],
     )?;
     to_string_tag(cx, prototype, "WeakMap")?;
+    link_constructor(cx, constructor, prototype)?;
     let prototype = super::plain_object(cx, Some(object_prototype), 4)?;
     cx.set_intrinsic(Intrinsic::WeakSetPrototype, prototype);
-    install_constructor(cx, Native::WeakSetConstructor, prototype)?;
+    let constructor = install_constructor(cx, Native::WeakSetConstructor)?;
     methods(
         cx,
         prototype,
@@ -161,16 +166,18 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         ],
     )?;
     to_string_tag(cx, prototype, "WeakSet")?;
+    link_constructor(cx, constructor, prototype)?;
 
     // WeakRef and FinalizationRegistry.
     let prototype = super::plain_object(cx, Some(object_prototype), 2)?;
     cx.set_intrinsic(Intrinsic::WeakRefPrototype, prototype);
-    install_constructor(cx, Native::WeakRefConstructor, prototype)?;
+    let constructor = install_constructor(cx, Native::WeakRefConstructor)?;
     methods(cx, prototype, &[Native::WeakRefDeref])?;
     to_string_tag(cx, prototype, "WeakRef")?;
+    link_constructor(cx, constructor, prototype)?;
     let prototype = super::plain_object(cx, Some(object_prototype), 3)?;
     cx.set_intrinsic(Intrinsic::FinalizationRegistryPrototype, prototype);
-    install_constructor(cx, Native::FinalizationRegistryConstructor, prototype)?;
+    let constructor = install_constructor(cx, Native::FinalizationRegistryConstructor)?;
     methods(
         cx,
         prototype,
@@ -179,7 +186,8 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             Native::FinalizationRegistryUnregister,
         ],
     )?;
-    to_string_tag(cx, prototype, "FinalizationRegistry")
+    to_string_tag(cx, prototype, "FinalizationRegistry")?;
+    link_constructor(cx, constructor, prototype)
 }
 
 /// Defines `key` of `object` as the function already at `name`.

@@ -198,6 +198,9 @@ pub struct DebugInfo {
     /// for its instruction and the ones after it up to the next. Empty when
     /// the producer recorded none.
     pub positions: Box<[SourcePosition]>,
+    /// The one-based line and column of the function's definition, for
+    /// `Function.prototype.lineNumber` and `columnNumber`.
+    pub definition: Option<(u32, u32)>,
 }
 
 /// A one-based source line and column, from instruction `pc` on.

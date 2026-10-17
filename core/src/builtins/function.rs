@@ -3,7 +3,10 @@
 //! `%ThrowTypeError%`. `new Function` compiles source through the compile
 //! host (section 5.5).
 
-use super::{Native, define_name_length, install_constructor, methods, string_text, symbol_method};
+use super::{
+    Native, define_name_length, getter, install_constructor, link_constructor, methods,
+    string_text, symbol_method,
+};
 use crate::heap::HeapError;
 use crate::heap::object::{InternalTag, ObjectKind, flags};
 use crate::runtime::{Intrinsic, Names};
@@ -17,27 +20,8 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::FunctionPrototype);
     let names = cx.realm.names;
     define_name_length(cx.heap, &names, prototype, Value::string(names.empty), 0)?;
-    let function = install_constructor(cx, Native::FunctionConstructor, prototype)?;
-    cx.set_intrinsic(Intrinsic::Function, function);
-    methods(
-        cx,
-        prototype,
-        &[
-            Native::FunctionApply,
-            Native::FunctionBind,
-            Native::FunctionCall,
-            Native::FunctionToString,
-        ],
-    )?;
-    let has_instance = cx.realm.symbols.has_instance;
-    symbol_method(
-        cx,
-        prototype,
-        has_instance,
-        Native::FunctionHasInstance,
-        PropertyFlags::data(false, false, false),
-    )?;
-    // `%ThrowTypeError%`: frozen, nameless, length 0.
+    // `%ThrowTypeError%`: frozen, nameless, length 0. QuickJS defines
+    // `caller` and `arguments` before the prototype's methods.
     let thrower = super::native_function(cx, Native::ThrowTypeError)?;
     for key in [names.length, names.name] {
         cx.heap.set_property_flags(
@@ -57,7 +41,66 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             Value::object(thrower),
         )?;
     }
-    Ok(())
+    methods(
+        cx,
+        prototype,
+        &[
+            Native::FunctionCall,
+            Native::FunctionApply,
+            Native::FunctionBind,
+            Native::FunctionToString,
+        ],
+    )?;
+    let has_instance = cx.realm.symbols.has_instance;
+    symbol_method(
+        cx,
+        prototype,
+        has_instance,
+        Native::FunctionHasInstance,
+        PropertyFlags::data(false, false, false),
+    )?;
+    getter(cx, prototype, "fileName", Native::FunctionFileName)?;
+    getter(cx, prototype, "lineNumber", Native::FunctionLineNumber)?;
+    getter(cx, prototype, "columnNumber", Native::FunctionColumnNumber)?;
+    let function = install_constructor(cx, Native::FunctionConstructor)?;
+    cx.set_intrinsic(Intrinsic::Function, function);
+    link_constructor(cx, function, prototype)
+}
+
+/// The unit of a bytecode function compiled with debug information, as
+/// QuickJS's `JS_GetFunctionBytecode` and `has_debug` gate its `fileName`,
+/// `lineNumber` and `columnNumber` getters.
+fn debug_unit(cx: &Cx<'_>, site: &CallSite) -> Option<crate::bytecode::CodeUnitId> {
+    let object = site.this(cx).as_object()?;
+    if cx.heap.object_kind(object) != crate::ObjectKind::Function {
+        return None;
+    }
+    let bytecode = cx.heap.function_bytecode(object)?;
+    let unit = cx.heap.bytecode_unit(bytecode);
+    cx.code.get(unit).debug.filename.is_some().then_some(unit)
+}
+
+/// `get Function.prototype.fileName`.
+pub(super) fn file_name(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    let Some(unit) = debug_unit(cx, &site) else {
+        return Ok(Value::UNDEFINED);
+    };
+    let file = cx.code.get(unit).debug.filename.clone().unwrap_or_default();
+    string_text(cx, &file)
+}
+
+/// `get Function.prototype.lineNumber`.
+pub(super) fn line_number(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    Ok(debug_unit(cx, &site)
+        .and_then(|unit| cx.code.get(unit).debug.definition)
+        .map_or(Value::UNDEFINED, |(line, _)| Value::int32(line as i32)))
+}
+
+/// `get Function.prototype.columnNumber`.
+pub(super) fn column_number(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    Ok(debug_unit(cx, &site)
+        .and_then(|unit| cx.code.get(unit).debug.definition)
+        .map_or(Value::UNDEFINED, |(_, column)| Value::int32(column as i32)))
 }
 
 pub(super) fn prototype(_: &mut Cx<'_>, _: CallSite) -> Result<Value, Throw> {
@@ -102,7 +145,28 @@ pub(super) fn to_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
     if let Some(text) = crate::vm::compile::function_source(cx, object) {
         return super::string_units(cx, &text);
     }
-    string_text(cx, "function () {\n    [native code]\n}")
+    // QuickJS's form without source: the kind's prefix, the `name`
+    // property, then a native body.
+    let prefix = match crate::vm::compile::function_kind_flags(cx, object) {
+        Some(flags) => {
+            use crate::bytecode::flags as unit;
+            match (flags & unit::ASYNC != 0, flags & unit::GENERATOR != 0) {
+                (false, false) => "function ",
+                (false, true) => "function *",
+                (true, false) => "async function ",
+                (true, true) => "async function *",
+            }
+        }
+        None => "function ",
+    };
+    let name = internal::get_property(cx, object, Names::key(cx.realm.names.name))?;
+    let mut text: Vec<u16> = prefix.encode_utf16().collect();
+    if !name.is_undefined() {
+        let name = super::to_string_id(cx, name)?;
+        text.extend(cx.heap.string(name).repr().units());
+    }
+    text.extend("() {\n    [native code]\n}".encode_utf16());
+    super::string_units(cx, &text)
 }
 
 /// `f.call(thisArg, …)` outside a rewritten call site.
@@ -147,14 +211,16 @@ pub(super) fn bind(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let target_object = target.as_object().unwrap();
     let mut slots = vec![target, site.arg(cx, 0)];
     slots.extend((1..site.argc).map(|index| site.arg(cx, index)));
-    let prototype = internal::get_prototype_of(cx, target_object)?;
+    // QuickJS's bound functions inherit from `%Function.prototype%`, not
+    // the target's prototype (which it never reads).
+    let prototype = cx.realm.intrinsic(Intrinsic::FunctionPrototype);
     let callable = cx.heap.header(target_object).flags & (flags::CALLABLE | flags::CONSTRUCTOR);
     let bound = cx
         .heap
         .alloc_internal(
             ObjectKind::BoundFunction,
             InternalTag::None,
-            prototype.as_object(),
+            Some(prototype),
             2,
             &slots,
             Default::default(),

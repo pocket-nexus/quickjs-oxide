@@ -476,6 +476,17 @@ pub(crate) fn function_constructor(
     Ok(function)
 }
 
+/// The unit flags of a bytecode function (its kind), or `None` for any
+/// other function.
+pub(crate) fn function_kind_flags(cx: &Cx<'_>, function: ObjectId) -> Option<u16> {
+    if cx.heap.object_kind(function) != crate::ObjectKind::Function {
+        return None;
+    }
+    let bytecode = cx.heap.function_bytecode(function)?;
+    let unit = cx.heap.bytecode_unit(bytecode);
+    Some(cx.code.get(unit).flags)
+}
+
 /// The source text of a bytecode function, if it was recorded.
 pub(crate) fn function_source(cx: &Cx<'_>, function: ObjectId) -> Option<Vec<u16>> {
     if cx.heap.object_kind(function) != crate::ObjectKind::Function {
@@ -490,6 +501,12 @@ pub(crate) fn function_source(cx: &Cx<'_>, function: ObjectId) -> Option<Vec<u16
 /// `$262.evalScript(source)`: the source as a separate script.
 /// qjs's `load(path)` (`oxide-run --std`): the file, run as a script.
 pub(crate) fn load(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    load_script(cx, site).map(|_| Value::UNDEFINED)
+}
+
+/// qjs's `__loadScript(path)`: the file, run as a script; its completion
+/// value.
+pub(crate) fn load_script(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let path = site.arg(cx, 0);
     let path = ops::to_string(cx, path)?;
     let path = cx.heap.string_text(path.as_string().unwrap());
@@ -504,7 +521,7 @@ pub(crate) fn load(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let global = Value::object(cx.realm.global());
     let result = super::call(cx, Value::object(function), global, &[]);
     cx.heap.roots().truncate(mark);
-    result.map(|_| Value::UNDEFINED)
+    result
 }
 
 /// qjs's `read(path)` (`oxide-run --std`): the file's text.

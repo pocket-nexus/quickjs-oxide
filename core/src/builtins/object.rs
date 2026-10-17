@@ -1,7 +1,9 @@
 //! `Object` (phase 4, section 6.1 row 1): the constructor and its static
 //! functions, and `Object.prototype` with the Annex B accessors.
 
-use super::{Native, accessor, install_constructor, methods, string_text, this_object};
+use super::{
+    Native, accessor, install_constructor, link_constructor, methods, string_text, this_object,
+};
 use crate::heap::HeapError;
 use crate::heap::atom::{KeyKind, PropertyKey};
 use crate::heap::object::{ObjectKind, flags};
@@ -13,51 +15,48 @@ use crate::vm::{Cx, Throw, error, iter, ops};
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
-    let object = install_constructor(cx, Native::ObjectConstructor, prototype)?;
+    // QuickJS's `js_object_funcs` and `js_object_proto_funcs`, in order.
+    let object = install_constructor(cx, Native::ObjectConstructor)?;
     cx.set_intrinsic(Intrinsic::Object, object);
     methods(
         cx,
         object,
         &[
-            Native::ObjectAssign,
             Native::ObjectCreate,
-            Native::ObjectDefineProperties,
+            Native::ObjectGetPrototypeOf,
+            Native::ObjectSetPrototypeOf,
             Native::ObjectDefineProperty,
-            Native::ObjectEntries,
-            Native::ObjectFreeze,
-            Native::ObjectFromEntries,
-            Native::ObjectGetOwnPropertyDescriptor,
-            Native::ObjectGetOwnPropertyDescriptors,
+            Native::ObjectDefineProperties,
             Native::ObjectGetOwnPropertyNames,
             Native::ObjectGetOwnPropertySymbols,
-            Native::ObjectGetPrototypeOf,
             Native::ObjectGroupBy,
-            Native::ObjectHasOwn,
-            Native::ObjectIs,
-            Native::ObjectIsExtensible,
-            Native::ObjectIsFrozen,
-            Native::ObjectIsSealed,
             Native::ObjectKeys,
-            Native::ObjectPreventExtensions,
-            Native::ObjectSeal,
-            Native::ObjectSetPrototypeOf,
             Native::ObjectValues,
+            Native::ObjectEntries,
+            Native::ObjectIsExtensible,
+            Native::ObjectPreventExtensions,
+            Native::ObjectGetOwnPropertyDescriptor,
+            Native::ObjectGetOwnPropertyDescriptors,
+            Native::ObjectIs,
+            Native::ObjectAssign,
+            Native::ObjectSeal,
+            Native::ObjectFreeze,
+            Native::ObjectIsSealed,
+            Native::ObjectIsFrozen,
+            Native::ObjectFromEntries,
+            Native::ObjectHasOwn,
         ],
     )?;
     methods(
         cx,
         prototype,
         &[
+            Native::ObjectToString,
+            Native::ObjectToLocaleString,
+            Native::ObjectValueOf,
             Native::ObjectHasOwnProperty,
             Native::ObjectIsPrototypeOf,
             Native::ObjectPropertyIsEnumerable,
-            Native::ObjectToLocaleString,
-            Native::ObjectToString,
-            Native::ObjectValueOf,
-            Native::ObjectDefineGetter,
-            Native::ObjectDefineSetter,
-            Native::ObjectLookupGetter,
-            Native::ObjectLookupSetter,
         ],
     )?;
     let proto = Names::key(cx.realm.names.proto);
@@ -68,7 +67,18 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         "__proto__",
         Some(Native::ObjectProtoGetter),
         Some(Native::ObjectProtoSetter),
-    )
+    )?;
+    methods(
+        cx,
+        prototype,
+        &[
+            Native::ObjectDefineGetter,
+            Native::ObjectDefineSetter,
+            Native::ObjectLookupGetter,
+            Native::ObjectLookupSetter,
+        ],
+    )?;
+    link_constructor(cx, object, prototype)
 }
 
 fn root(cx: &mut Cx<'_>, value: Value) {

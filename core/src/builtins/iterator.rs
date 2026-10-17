@@ -6,7 +6,7 @@
 use super::{Native, methods, plain_object, symbol_method, to_string_tag};
 use crate::heap::HeapError;
 use crate::heap::object::{InternalTag, ObjectKind};
-use crate::runtime::{Intrinsic, WellKnown};
+use crate::runtime::Intrinsic;
 use crate::shape::PropertyFlags;
 use crate::value::{ObjectId, Value};
 use crate::vm::native::CallSite;
@@ -45,35 +45,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     );
     methods(cx, string_iterator_prototype, &[Native::StringIteratorNext])?;
     to_string_tag(cx, string_iterator_prototype, "String Iterator")?;
-    let string_prototype = cx.realm.intrinsic(Intrinsic::StringPrototype);
-    symbol_method(
-        cx,
-        string_prototype,
-        iterator,
-        Native::StringIterator,
-        PropertyFlags::data(true, false, true),
-    )?;
-    let array_prototype = cx.realm.intrinsic(Intrinsic::ArrayPrototype);
-    methods(
-        cx,
-        array_prototype,
-        &[Native::ArrayEntries, Native::ArrayKeys, Native::ArrayValues],
-    )?;
-    let values_key = cx.heap.property_key("values")?;
-    let values = cx
-        .heap
-        .lookup_own(array_prototype, values_key)
-        .map(|(slot, _)| cx.heap.get_slot(array_prototype, slot))
-        .and_then(|value| value.as_object())
-        .expect("Array.prototype.values");
-    cx.set_intrinsic(Intrinsic::ArrayValues, values);
-    super::define_key(
-        cx,
-        array_prototype,
-        WellKnown::key(iterator),
-        Value::object(values),
-        PropertyFlags::data(true, false, true),
-    )
+    Ok(())
 }
 
 /// `%IteratorPrototype%[Symbol.iterator]`: `this`.
