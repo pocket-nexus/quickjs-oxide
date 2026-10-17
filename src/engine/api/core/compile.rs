@@ -184,3 +184,32 @@ pub(crate) fn compile_module(
     crate::engine::compiler::register::lower_module_tree_into(compiler, &module)
         .map_err(|error| ModuleCompileError::Core(lower_compile_error(error)))
 }
+
+/// `$262.agent.start`'s runner: an agent's script and then its jobs.
+pub(crate) fn run_agent_script(
+    runtime: &mut oxide_core::Runtime,
+    source: &str,
+) -> Result<(), String> {
+    let lowered = compile_script(
+        &mut runtime.compiler(),
+        source.as_bytes(),
+        "<agent>",
+        DebugInfoMode::Full,
+    )
+    .map_err(|error| match error {
+        ScriptCompileError::Front(error) => error.to_string(),
+        ScriptCompileError::Lower(error) => error.to_string(),
+    })?;
+    let function = oxide_core::Value::object(lowered.function);
+    let handle = runtime.hold(function);
+    let mut result = runtime.run_script(lowered.function);
+    runtime.release(handle);
+    if result.is_ok() {
+        result = runtime.run_jobs().map(|()| oxide_core::Value::UNDEFINED);
+    }
+    result.map(drop).map_err(|thrown| {
+        runtime
+            .display(thrown.0)
+            .unwrap_or_else(|_| "exception while printing the exception".into())
+    })
+}

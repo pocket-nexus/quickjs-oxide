@@ -33,6 +33,5 @@ Only for a pull request that changes code the new core runs
 
 ### Test262
 
-For a pull request that changes code the current engine runs or the runner:
-the current engine's `test-test262.sh --focused` and `--full`; for one that
-changes the new core: `--spec dev-support/test262/new-core.conf --focused`.
+For a pull request that changes the engine or the runner:
+`test-test262.sh --focused`, and `--full` when the change can move results.

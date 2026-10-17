@@ -43,6 +43,15 @@ pub(crate) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             crate::heap::object::flags::CALLABLE,
         )?;
         cx.heap.html_dda = true;
+        // QuickJS's `IsHTMLDDA` is a function named so, of length 0.
+        let name = cx.heap.intern("IsHTMLDDA")?;
+        let key = cx.heap.property_key("name")?;
+        cx.heap.add_property(
+            dda,
+            key,
+            crate::PropertyFlags::data(false, false, true),
+            Value::string(name),
+        )?;
         define(cx, host, "IsHTMLDDA", Value::object(dda), all)?;
         let function = super::native_function(cx, Native::Test262Gc)?;
         define(cx, host, "gc", Value::object(function), all)?;
@@ -57,8 +66,8 @@ pub(crate) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
 /// `start..end`, built natively (the harness's fallback is slow).
 pub(super) fn code_point_range(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let (start, end) = (site.arg(cx, 0), site.arg(cx, 1));
-    let start = crate::vm::ops::to_number(cx, start)? as u32;
-    let end = crate::vm::ops::to_number(cx, end)? as u32;
+    let start = crate::vm::number::to_uint32(crate::vm::ops::to_number(cx, start)?);
+    let end = crate::vm::number::to_uint32(crate::vm::ops::to_number(cx, end)?);
     let mut text = Vec::new();
     for code in start..end.min(0x110000) {
         if code < 0x10000 {

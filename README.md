@@ -5,9 +5,9 @@ reproduces the behavior of [QuickJS](https://bellard.org/quickjs/) 2026-06-04.
 
 <!-- current-test262-metrics:start -->
 Within the Test262 scope that QuickJS 2026-06-04 runs, quickjs-oxide passes
-**83,304 of 83,562 variants (99.691%)**. QuickJS's `test262.conf`
+**81,445 of 83,562 variants (97.467%)**. QuickJS's `test262.conf`
 skips the other 18,475 of the 102,037 variants; across the full corpus the
-pass rate is 81.641%.
+pass rate is 79.819%.
 <!-- current-test262-metrics:end -->
 
 - **Zero `unsafe`.** Every crate in the workspace sets

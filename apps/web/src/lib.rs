@@ -1,14 +1,22 @@
 use js_sys::{Object, Reflect};
-use quickjs_oxide::engine::api::{
-    Context, JsString, PropertyKey, Runtime, RuntimeError, Value, number_to_string,
+use quickjs_oxide::engine::api::core::{
+    CompleteOrdinaryPropertyDescriptor, Context, Runtime, RuntimeError, RuntimeOptions, Value,
 };
+use quickjs_oxide::engine::api::number_to_string;
 use quickjs_oxide::{QUICKJS_COMPAT_VERSION, QUICKJS_OXIDE_VERSION};
-use quickjs_oxide_web_host::WebHostServices;
+use quickjs_oxide_web_host::WebHost;
 
 use wasm_bindgen::prelude::*;
 
 const PLAYGROUND_FILENAME: &str = "<playground>";
 const WEB_CAN_BLOCK: bool = false;
+/// Nested re-entries the engine may make. A WebAssembly host's machine stack
+/// is the JavaScript engine's, which the core's byte measure (of the
+/// linear-memory stack) cannot see, so the playground bounds the depth.
+const WEB_NATIVE_DEPTH_LIMIT: u32 = 600;
+/// Half of the linear-memory stack `wasm-ld` reserves (1 MiB), so a native
+/// frame never runs past it before the check trips.
+const WEB_NATIVE_STACK_BUDGET: usize = 512 << 10;
 
 const BUILD_COMMIT: &str = match option_env!("QUICKJS_OXIDE_COMMIT") {
     Some(commit) => commit,
@@ -94,14 +102,18 @@ pub fn engine_metadata() -> JsValue {
 }
 
 fn evaluate_with_engine(source: &str) -> EvalResult {
-    let runtime = Runtime::new_with_host_services(WebHostServices);
+    let runtime = Runtime::with_host(
+        WebHost,
+        RuntimeOptions {
+            native_depth_limit: WEB_NATIVE_DEPTH_LIMIT,
+            native_stack_budget: WEB_NATIVE_STACK_BUDGET,
+            ..RuntimeOptions::default()
+        },
+    );
     if let Err(error) = runtime.set_can_block(WEB_CAN_BLOCK) {
         return EvalResult::engine_error(&error);
     }
-    let mut context = match runtime.new_context() {
-        Ok(context) => context,
-        Err(error) => return EvalResult::engine_error(&error),
-    };
+    let mut context = runtime.context();
     let value = match context.eval_with_filename(source, PLAYGROUND_FILENAME) {
         Ok(value) => value,
         Err(RuntimeError::Exception) => return EvalResult::exception(&runtime, &mut context),
@@ -109,10 +121,7 @@ fn evaluate_with_engine(source: &str) -> EvalResult {
     };
 
     loop {
-        match runtime
-            .execute_pending_job()
-            .map_err(quickjs_oxide::engine::api::PendingJobError::into_error)
-        {
+        match runtime.run_pending_job() {
             Ok(outcome) if outcome.executed() => {}
             Ok(_) => break,
             Err(RuntimeError::Exception) => {
@@ -136,47 +145,42 @@ fn value_text(runtime: &Runtime, value: &Value) -> (&'static str, String) {
         Value::String(value) => ("string", value.to_utf8_lossy()),
         Value::Object(_) => ("object", "[object Object]".to_owned()),
         Value::Symbol(symbol) => {
-            let description = PropertyKey::try_from(symbol)
-                .and_then(|key| runtime.property_key_to_js_string(&key))
-                .map_or_else(|_| String::new(), |value| value.to_utf8_lossy());
+            let description = runtime
+                .symbol_description(symbol)
+                .ok()
+                .flatten()
+                .map_or_else(String::new, |value| value.to_utf8_lossy());
             ("symbol", format!("Symbol({description})"))
         }
     }
 }
 
+/// An error as `name: message` (QuickJS's printer without the backtrace);
+/// any other thrown value as a completion.
 fn exception_text(runtime: &Runtime, value: &Value) -> String {
     if let Value::Object(object) = value
         && runtime.is_error_object(object).unwrap_or(false)
+        && let Ok(printed) = runtime.print_value(value)
     {
-        let name =
-            diagnostic_property(runtime, object, "name").unwrap_or_else(|| "Error".to_owned());
-        let message = diagnostic_property(runtime, object, "message");
-        return match message {
-            Some(message) if !message.is_empty() => format!("{name}: {message}"),
-            Some(_) | None => name,
-        };
+        let stack = runtime
+            .intern_property_key("stack")
+            .and_then(|key| runtime.get_own_property(object, &key))
+            .ok()
+            .flatten();
+        if let Some(CompleteOrdinaryPropertyDescriptor::Data {
+            value: Value::String(stack),
+            ..
+        }) = stack
+        {
+            let stack = stack.to_utf8_lossy();
+            let suffix = format!("\n{}", stack.strip_suffix('\n').unwrap_or(&stack));
+            if let Some(head) = printed.strip_suffix(&suffix) {
+                return head.to_owned();
+            }
+        }
+        return printed;
     }
-
     value_text(runtime, value).1
-}
-
-fn diagnostic_property(
-    runtime: &Runtime,
-    object: &quickjs_oxide::engine::api::ObjectRef,
-    name: &str,
-) -> Option<String> {
-    let key = runtime.intern_property_key(name).ok()?;
-    runtime
-        .raw_string_property_for_diagnostics(object, &key)
-        .ok()
-        .flatten()
-        .map(|value| diagnostic_c_string(&value))
-}
-
-fn diagnostic_c_string(value: &JsString) -> String {
-    char::decode_utf16(value.utf16_units().take_while(|unit| *unit != 0))
-        .map(|result| result.unwrap_or(char::REPLACEMENT_CHARACTER))
-        .collect()
 }
 
 fn set_result_field(object: &Object, key: &str, value: &JsValue) {

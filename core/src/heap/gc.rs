@@ -6,7 +6,7 @@
 //! ([`Heap::safepoint`]) or on an explicit [`Heap::collect`].
 
 use std::mem;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::hash::FxHashMap;
 use super::object::{InternalTag, NONE, ObjectKind};
@@ -318,7 +318,7 @@ impl Heap {
 
     /// A full collection.
     pub fn collect(&mut self) {
-        let start = Instant::now();
+        let start = crate::clock::Stopwatch::start();
         let before = self.used_bytes();
         self.mark_from_roots();
         self.process_weak();

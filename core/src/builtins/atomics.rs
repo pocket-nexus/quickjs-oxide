@@ -289,7 +289,7 @@ pub(super) fn wait(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         Some(Duration::from_secs_f64(timeout.max(0.0) / 1000.0))
     };
     if !cx.host.can_block {
-        return Err(error::type_error(cx, "cannot block in this agent"));
+        return Err(error::type_error(cx, "cannot block in this thread"));
     }
     let (view, store) = typed::view(cx.heap, object);
     let size = view.kind.size();

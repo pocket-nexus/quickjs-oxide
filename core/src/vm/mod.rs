@@ -116,6 +116,9 @@ pub struct VmStack {
     /// The native stack bytes nested re-entries may use
     /// ([`NATIVE_STACK_BUDGET`] unless the runtime's options say otherwise).
     pub(crate) native_budget: usize,
+    /// Nested re-entries allowed at most: the budget for a host whose stack
+    /// the byte measure cannot see (a WebAssembly engine's machine stack).
+    pub(crate) native_depth: u32,
     /// The frame count and instruction index of the call running the
     /// current native, for the backtrace of an error it creates.
     pub(crate) native_site: (u32, u32),
@@ -135,6 +138,7 @@ impl Default for VmStack {
             nesting: 0,
             native_base: 0,
             native_budget: NATIVE_STACK_BUDGET,
+            native_depth: u32::MAX,
             native_site: (u32::MAX, 0),
             active: Vec::new(),
         }
@@ -174,7 +178,9 @@ impl VmStack {
         let here = std::ptr::addr_of!(marker) as usize;
         if self.nesting == 0 {
             self.native_base = here;
-        } else if self.native_base.abs_diff(here) > self.native_budget {
+        } else if self.native_base.abs_diff(here) > self.native_budget
+            || self.nesting >= self.native_depth
+        {
             return false;
         }
         self.nesting += 1;
@@ -246,9 +252,7 @@ impl Default for Services {
     fn default() -> Self {
         // QuickJS seeds from the clock; programs that compare output replace
         // `Math.random`, as the benchmark harness does.
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(1, |elapsed| elapsed.as_nanos() as u64);
+        let seed = crate::clock::time_seed();
         Services {
             output: Output::default(),
             hooks: Box::new(crate::host::SystemHost),

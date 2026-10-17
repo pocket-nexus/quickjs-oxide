@@ -187,3 +187,115 @@ Two stack-trace gaps showed up and are left to M3, where the oracle corpus
 measures them: an error the loop itself throws has no line and column in
 its frame's `stack` line, and native frames (`at reduce (native)`) are not
 listed.
+
+## M2: the playground, the adapters and the Test262 runner
+
+### The adapters and the playground
+
+`adapters/native` gains `SystemHost` and `adapters/web` gains `WebHost`, the
+new core's `Host` over the same clock, time zone and seed as the current
+`SystemHostServices` and `WebHostServices` (which stay until `qjs` moves in
+M3). `apps/web` evaluates on `api::core`: a fresh runtime per call, the jobs
+drained, an error reported as `name: message`.
+
+Building the core for `wasm32-unknown-unknown` for the first time found
+three things, fixed here:
+
+- `Math.sumPrecise` compared a length with `1 << 53`, which overflows a
+  32-bit `usize`.
+- The collector timed its pauses with `Instant::now()` and the default seed
+  read `SystemTime::now()`; both panic on a target without a clock. A small
+  `clock` module reports zero-length pauses and a constant seed there (the
+  embedder's host seeds `Math.random` instead).
+- A delegated generator resumes by re-entering the loop, so a `yield*` chain
+  uses the host's stack. On WebAssembly that is the JavaScript engine's
+  machine stack, which the core's byte measure (of the linear-memory stack)
+  cannot see: under Node a chain overflowed V8 between 500 and 1,000 levels,
+  where the current engine went to 1,000. `RuntimeOptions` gains
+  `native_depth_limit` (unbounded by default), and the playground sets it to
+  600 re-entries with a 512 KiB byte budget, below the 1 MiB linear-memory
+  stack `wasm-ld` reserves. Under Node, with those limits, seven recursion
+  patterns (`yield*`, `Array.prototype.map`, a getter, `toString`, `sort`, a
+  `JSON.parse` reviver, a proxy trap) each end in a catchable
+  `InternalError: stack overflow` when unbounded and reach 300–600 levels
+  when bounded. The playground test's deep `yield*` chain is 400 levels
+  (1,000 before).
+
+The core's `Atomics.wait` refusal said `cannot block in this agent`; QuickJS
+says `cannot block in this thread`, which the playground's example checks.
+
+`scripts/web/test-web-playground.sh` passes. The package's WebAssembly
+module, as `build-web-playground.sh` writes it to `target/pages/pkg`:
+
+| Build | `quickjs_oxide_web_bg.wasm`, bytes |
+| --- | ---: |
+| `main` (`8e16f672`), the current engine | 4,978,281 |
+| M2, the new core | 2,119,640 |
+
+The stacked branches of phases 2–4 could not build the playground at all:
+the root crate depends on `oxide-core`, which did not compile for a 32-bit
+target until the fix above.
+
+### The Test262 runner
+
+`run-test262` has one backend. The new core's worker moved from
+`api::new_core::test262` to `api::core::test262` and takes a `Host`; the
+runner's `--engine`, `TEST262_ENGINE` and the current engine's worker (about
+1,600 lines with its tests) are gone. `test-test262.sh` makes the
+dropped-variant keys required and drops the `engine` key.
+
+`current.conf` takes `new-core.conf`'s keys unchanged except the `engine`
+line, and `new-core.conf` is deleted: the receipts were moved, not
+regenerated. Before anything else changed, phase 4's full report (kept in
+`target/`) hashed to the frozen `full_tsv_body_sha256`
+(`5f1b44cc…`) under the moved spec, and `--check` authenticated it. The
+previous engine's focused receipts are deleted with their spec.
+
+### Table E replayed
+
+| Vector | Frozen (phase 4) | Replayed (M2) |
+| --- | ---: | ---: |
+| focused, of 6,844 | 6,814 | 6,814, byte-identical body |
+| full, QuickJS scope, of 83,562 | 81,445 | 81,445 |
+| full summary | `fail-async=16 fail-async-done-count=53 fail-parse=324 fail-runtime=1516 pass=81445 …` | the same |
+
+The full body differs in 100 rows, all of them failing direct-`eval`
+variants of D (`new.target` and `super` in eval code): only the reported
+line and column changed. M1 gave an `eval` syntax error QuickJS's first
+`stack` line, `at <input>:line:column`, and the runner reads the location
+from the first frame, so these rows now report the error's position in the
+eval source (`1:6`) instead of the calling frame's (`21:21`). No outcome,
+type or message changed. The full receipt's body hashes are re-frozen
+(milestone `new-core-phase6-m2`) by the promotion procedure of
+`docs/test262.md`.
+
+Of the runner's 106 unit tests, 21 tested the current engine's own worker
+(its module loader, its dynamic-import bytecode authentication, its
+diagnostic extraction, its async module completion) and went with it. Of the
+tests that drive the worker, six failed on the new core:
+
+| Test | Finding | Change |
+| --- | --- | --- |
+| the `print` host surface | `print.length` was 0; QuickJS's is 1 (`console.log` too) | core fixed |
+| the `$262` hosts | `$262.IsHTMLDDA.name` was empty | core fixed |
+| the `$262` hosts | `$262.detachArrayBuffer` threw for a non-buffer and returned `null`; QuickJS ignores anything but an ArrayBuffer and returns `undefined` | core fixed |
+| the `$262` hosts | `$262.codePointRange` converted with a saturating cast; QuickJS uses `ToUint32` | core fixed |
+| the `$262` hosts | `createRealm` makes a child realm | now checks `NEWCORE-REALMS-001`'s `TypeError` |
+| the `$262` hosts | a detached resizable buffer's `maxByteLength` is 0 (ECMAScript) where QuickJS keeps 8 | engine semantics, out of the host test; left to M3's oracle run |
+| the async print log | the worker scanned every argument of `print` for the completion marker; the new core captures lines | one marker per call, as the harness prints it |
+| unaudited dynamic import | the refusal's wording | assertion follows it |
+| a parse-rejected dynamic-import root | the new core compiles `import('')`, so the root is refused as "unexpectedly compiled" | assertion follows it |
+| runtime-compiled `import()` | the current worker authenticated `eval`, `Function` and `$262.evalScript` code containing `import()`; the new core's worker never did (phase 4 froze its receipts without it) | test removed; recorded as a hardening gap of the runner |
+
+### The ledger and the metrics
+
+The five `NEWCORE-*` entries are approved (2026-10-17) and
+`TEST262-ANNEXB-EVAL-001` is marked superseded by `NEWCORE-WITH-001`.
+`check-oracle-registry.py` now checks the ledger: unique identifiers, the
+seven fields of every new-core entry, the five expected new-core entries,
+and that every fixture attribution (a `deviation` column, which M3 adds)
+names an entry. The README, `docs/status.md`, `docs/compatibility.md` and
+`docs/test262.md` regenerate to **81,445 of 83,562 (97.467%)**.
+
+CI: `test262-focused` runs the one spec; `new-core-test262-full` is gone
+(`test262-full` covers it); `new-core-suite` is `suite-stress`.

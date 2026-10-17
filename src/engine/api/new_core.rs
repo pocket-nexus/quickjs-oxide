@@ -12,15 +12,14 @@ use oxide_core::heap::gc::HeapLimits;
 pub(crate) use crate::engine::api::core::compile::{
     ModuleCompileError, compile_module, core_error_kind,
 };
-use crate::engine::api::core::compile::{compile_for_core, normalize_module_name};
+use crate::engine::api::core::compile::{
+    compile_for_core, normalize_module_name, run_agent_script,
+};
 use crate::engine::api::error::Error;
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::compiler::compile_unlinked_script_bytes_with_filename;
 use crate::engine::compiler::register::{LowerError, lower_script};
 use oxide_core::vm::compile::{CompileError, Compiler};
-
-#[cfg(feature = "test262-host")]
-pub mod test262;
 
 /// Whether this build has the new core's stress collector
 /// (`new-core-gc-stress`), which `--gc-stress` needs.
@@ -273,24 +272,6 @@ fn run_module_file(runtime: &mut Runtime, name: &str) -> Result<(), NewCoreError
         Some((2, reason)) => Err(uncaught(runtime, reason)),
         _ => Ok(()),
     }
-}
-
-/// `$262.agent.start`'s runner: an agent's script and then its jobs.
-fn run_agent_script(runtime: &mut Runtime, source: &str) -> Result<(), String> {
-    let lowered =
-        lower(runtime, source.as_bytes(), "<agent>").map_err(|error| error.to_string())?;
-    let function = oxide_core::Value::object(lowered.function);
-    let handle = runtime.hold(function);
-    let mut result = runtime.run_script(lowered.function);
-    runtime.release(handle);
-    if result.is_ok() {
-        result = runtime.run_jobs().map(|()| oxide_core::Value::UNDEFINED);
-    }
-    result.map(drop).map_err(|thrown| {
-        runtime
-            .display(thrown.0)
-            .unwrap_or_else(|_| "exception while printing the exception".into())
-    })
 }
 
 /// Compiles, lowers and runs `source`; `print` writes to stdout.

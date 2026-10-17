@@ -337,7 +337,7 @@ pub(super) fn sum_precise(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
             unreachable!("close rethrows");
         };
         values.push(value);
-        if values.len() > (1 << 53) {
+        if values.len() as u64 > (1u64 << 53) {
             let error = error::range_error(cx, "too many values");
             iter::close(cx, &record, Err(error))?;
         }

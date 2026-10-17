@@ -102,7 +102,7 @@ macro_rules! natives {
 natives! {
     /// qjs's `print`: the arguments' strings joined by a space, then a
     /// newline.
-    Print => global::print, "print", 0;
+    Print => global::print, "print", 1;
     /// `Function.prototype.call`. The loop rewrites a call of it into a call
     /// of its receiver (section 5.2); the native runs only where no call
     /// site is rewritten.
@@ -692,7 +692,7 @@ natives! {
     Test262DetachArrayBuffer => test262::detach_array_buffer, "detachArrayBuffer", 1;
     Test262CodePointRange => test262::code_point_range, "codePointRange", 2;
 
-    ConsoleLog => global::print, "log", 0;
+    ConsoleLog => global::print, "log", 1;
     Load => crate::vm::compile::load, "load", 1;
     Read => crate::vm::compile::read, "read", 1;
 }
@@ -1195,9 +1195,16 @@ pub(crate) fn typed_array_length_or_throw(cx: &mut Cx<'_>, object: ObjectId) -> 
 
 /// `$262.detachArrayBuffer(buffer)` (section 6.1 row 9).
 pub(crate) fn detach_array_buffer(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    // QuickJS's `JS_DetachArrayBuffer`: anything but an ArrayBuffer is
+    // ignored, and the result is `undefined`.
     let buffer = site.arg(cx, 0);
-    buffer::detach(cx, buffer)?;
-    Ok(Value::NULL)
+    let is_array_buffer = buffer.as_object().is_some_and(|object| {
+        cx.heap.internal_tag(object) == crate::heap::object::InternalTag::ArrayBuffer
+    });
+    if is_array_buffer {
+        buffer::detach(cx, buffer)?;
+    }
+    Ok(Value::UNDEFINED)
 }
 
 pub(crate) use bigint::to_bigint;
