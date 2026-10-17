@@ -136,6 +136,153 @@ cargo run --quiet --locked --bin qjs -- -e 'try{Function("for (x => 0 in 1;;) br
 
 Pinned QuickJS prints `accepted`; Rust prints `SyntaxError`.
 
+## Drafted deviations of the new core
+
+Drafted in new-core phase 6 M0 and approved when the new core replaces the
+current one (phase 6 M2). They record the five features of [new-core phase
+0](performance/new-core-phase0.md), section 2, which the maintainer decided on
+2026-10-16 not to carry into the new core. Until M2 the shipped `qjs` still runs
+the current engine and keeps them.
+
+### NEWCORE-WITH-001
+
+- Status: drafted (phase 6 M0); approved with the switch to the new core.
+- Surface: the `with` statement in sloppy code.
+- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
+  0, section 2.
+- Required behavior: `with` is an early `SyntaxError` (`with statements are not
+  supported`) in sloppy code, as it is in strict code. Every identifier resolves
+  at compile time to a register, a scope slot or a global; no object environment
+  enters the scope chain.
+- Baseline evidence: the frozen probe run of new-core phase 4 M0
+  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
+  reason `with`) lists the 311 variants that pass on the current engine with the
+  feature and fail without it. Phase 4 M9's reconciliation applies: of the 1,897
+  variants of D, 31 pass on the new core and are not deviations.
+- Acceptance: `with ({}) {}` throws `SyntaxError` before any statement of the
+  script runs. The variants of reason `with` fail by decision and are excluded
+  from the Test262 metric's difference list; any other variant that fails is a
+  defect.
+- Specification: [The with
+  statement](https://tc39.es/ecma262/multipage/ecmascript-language-statements-and-declarations.html#sec-with-statement).
+
+Minimal probe:
+
+```js
+with ({ x: 1 }) { print(x); }
+```
+
+### NEWCORE-UNSCOPABLES-001
+
+- Status: drafted (phase 6 M0); approved with the switch to the new core.
+- Surface: `Symbol.unscopables`.
+- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
+  0, section 2.
+- Required behavior: `Symbol.unscopables` and
+  `Array.prototype[Symbol.unscopables]` exist with their specified values;
+  nothing reads them, since no object environment exists to consult them
+  (`NEWCORE-WITH-001`).
+- Baseline evidence: the frozen probe run of new-core phase 4 M0
+  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
+  reason `unscopables`) lists the 53 variants that pass on the current engine
+  with the feature and fail without it. Phase 4 M9's reconciliation applies: of
+  the 1,897 variants of D, 31 pass on the new core and are not deviations.
+- Acceptance: `typeof Symbol.unscopables` is `"symbol"`; the variants that
+  observe a lookup through `with` fail with `NEWCORE-WITH-001`'s `SyntaxError`.
+  The variants of reason `unscopables` fail by decision and are excluded from
+  the Test262 metric's difference list; any other variant that fails is a
+  defect.
+- Specification:
+  [Symbol.unscopables](https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-symbol.unscopables).
+
+Minimal probe:
+
+```js
+print(typeof Symbol.unscopables, Array.prototype[Symbol.unscopables].flat);
+```
+
+### NEWCORE-DIRECT-EVAL-001
+
+- Status: drafted (phase 6 M0); approved with the switch to the new core.
+- Surface: direct `eval`.
+- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
+  0, section 2.
+- Required behavior: `eval(src)` at a direct-eval call site runs as indirect
+  eval: in the global scope, sloppy unless `src` is strict, with no access to
+  the caller's bindings, `this`, `arguments` or `new.target`, and no `var`
+  injection into the caller. `new Function` and indirect eval are unchanged.
+- Baseline evidence: the frozen probe run of new-core phase 4 M0
+  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
+  reason `direct-eval`) lists the 517 variants that pass on the current engine
+  with the feature and fail without it. Phase 4 M9's reconciliation applies: of
+  the 1,897 variants of D, 31 pass on the new core and are not deviations.
+- Acceptance: inside `function f() { var x = 2; return eval("x"); }` with a
+  global `var x = 1`, `f()` returns `1`. The variants of reason `direct-eval`
+  fail by decision and are excluded from the Test262 metric's difference list;
+  any other variant that fails is a defect.
+- Specification:
+  [PerformEval](https://tc39.es/ecma262/multipage/global-object.html#sec-performeval).
+
+Minimal probe:
+
+```js
+var x = 1; function f() { var x = 2; return eval('x'); } print(f());
+```
+
+### NEWCORE-REALMS-001
+
+- Status: drafted (phase 6 M0); approved with the switch to the new core.
+- Surface: realms.
+- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
+  0, section 2.
+- Required behavior: one realm per runtime. No API creates a second context on a
+  runtime (`Context::new` returns the runtime's one realm, and a request for
+  another is `RuntimeError::Unsupported`); `$262.createRealm` throws `TypeError:
+  realms are not supported`. Isolation uses separate runtimes.
+- Baseline evidence: the frozen probe run of new-core phase 4 M0
+  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
+  reason `realm`) lists the 488 variants that pass on the current engine with
+  the feature and fail without it. Phase 4 M9's reconciliation applies: of the
+  1,897 variants of D, 31 pass on the new core and are not deviations.
+- Acceptance: `$262.createRealm()` under the Test262 host throws a `TypeError`
+  with that message. The variants of reason `realm` fail by decision and are
+  excluded from the Test262 metric's difference list; any other variant that
+  fails is a defect.
+- Specification:
+  [Realms](https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-code-realms).
+
+### NEWCORE-SPECIES-001
+
+- Status: drafted (phase 6 M0); approved with the switch to the new core.
+- Surface: `Symbol.species`.
+- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
+  0, section 2.
+- Required behavior: methods of `Array`, `%TypedArray%`, `Promise`, `RegExp`,
+  `ArrayBuffer` and `SharedArrayBuffer` that the specification routes through
+  `ArraySpeciesCreate`, `SpeciesConstructor` or `TypedArraySpeciesCreate`
+  construct the intrinsic constructor without reading `constructor` or
+  `@@species`. `Symbol.species` and the `get [Symbol.species]` accessors exist;
+  nothing reads them. A subclass instance's `map`, `filter`, `slice`, `then` and
+  the like return a base-class instance.
+- Baseline evidence: the frozen probe run of new-core phase 4 M0
+  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
+  reason `species`) lists the 528 variants that pass on the current engine with
+  the feature and fail without it. Phase 4 M9's reconciliation applies: of the
+  1,897 variants of D, 31 pass on the new core and are not deviations.
+- Acceptance: `class A extends Array {}; new A(1, 2).map(x => x) instanceof A`
+  is `false`. The variants of reason `species` fail by decision and are excluded
+  from the Test262 metric's difference list; any other variant that fails is a
+  defect.
+- Specification:
+  [SpeciesConstructor](https://tc39.es/ecma262/multipage/abstract-operations.html#sec-speciesconstructor),
+  [ArraySpeciesCreate](https://tc39.es/ecma262/multipage/indexed-collections.html#sec-arrayspeciescreate).
+
+Minimal probe:
+
+```js
+class A extends Array {} print(new A(1, 2).map(x => x) instanceof A);
+```
+
 ## Open implementation frontiers
 
 - Deeply nested source throws a catchable `SyntaxError: stack overflow`, and
