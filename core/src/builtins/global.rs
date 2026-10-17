@@ -15,7 +15,12 @@ pub(super) fn print(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             line.push(' ');
         }
         let argument = site.arg(cx, index);
-        line.push_str(&ops::display(cx, argument)?);
+        // QuickJS's `js_print`: a string as is, anything else through
+        // `JS_PrintValue`.
+        match argument.as_string() {
+            Some(id) => line.push_str(&cx.heap.string_text(id)),
+            None => line.push_str(&crate::vm::print::print_value(cx, argument)),
+        }
     }
     line.push('\n');
     match &mut cx.host.output {

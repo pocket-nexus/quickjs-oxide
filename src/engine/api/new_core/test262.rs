@@ -338,6 +338,7 @@ fn lower_failure(error: NewCoreError, source: &[u8]) -> Failure {
 }
 
 fn normalize_module(
+    _: &mut Compiler<'_>,
     referrer: &str,
     specifier: &str,
     _attributes: &[(String, String)],
@@ -374,7 +375,7 @@ fn load_module(
         *state.load_error.borrow_mut() = diagnostic;
         error
     };
-    match super::compile_module(compiler, name, source.as_bytes()) {
+    match super::compile_module(compiler, name, source.as_bytes(), DebugInfoMode::Full) {
         Ok((module, root)) => {
             if tree_has_import_call(compiler.code(), root) {
                 state.dynamic_import.set(true);
@@ -387,10 +388,7 @@ fn load_module(
                 _ => None,
             };
             Err(failed(
-                CompileError {
-                    kind: core_error_kind(&error),
-                    message: error.message().to_owned(),
-                },
+                CompileError::new(core_error_kind(&error), error.message().to_owned()),
                 diagnostic,
             ))
         }
@@ -399,8 +397,5 @@ fn load_module(
 }
 
 fn reference_error(message: String) -> CompileError {
-    CompileError {
-        kind: oxide_core::ErrorKind::Reference,
-        message,
-    }
+    CompileError::new(oxide_core::ErrorKind::Reference, message)
 }

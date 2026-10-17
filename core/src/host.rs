@@ -10,6 +10,17 @@ pub enum Stream {
     Stderr,
 }
 
+/// What [`Host::promise_rejection`] reports (ECMAScript's
+/// `HostPromiseRejectionTracker` operations).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RejectionEvent {
+    /// A promise was rejected with no handler attached (`"reject"`).
+    Rejected,
+    /// A handler was attached to a promise already rejected without one
+    /// (`"handle"`).
+    Handled,
+}
+
 /// The embedder's services. Every method has a default suitable for a
 /// standalone runtime: the process's streams, the system clock and UTC.
 pub trait Host {
@@ -42,6 +53,24 @@ pub trait Host {
     /// (`Date.prototype.getTimezoneOffset`'s sign). The default is UTC.
     fn local_tz_offset_minutes(&mut self, _utc_ms: f64) -> i32 {
         0
+    }
+
+    /// The initial state of `Math.random`. The default derives it from the
+    /// system clock, as QuickJS seeds from host time.
+    fn random_seed(&mut self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |elapsed| elapsed.as_nanos() as u64)
+    }
+
+    /// `HostPromiseRejectionTracker(promise, operation)`. The promise is a
+    /// value of the runtime; while rejection tracking is on
+    /// ([`Runtime::set_track_rejections`](crate::Runtime::set_track_rejections))
+    /// the runtime also keeps every unhandled rejected promise alive in
+    /// [`Runtime::unhandled_rejections`](crate::Runtime::unhandled_rejections).
+    /// The default ignores the event.
+    fn promise_rejection(&mut self, event: RejectionEvent, promise: crate::Value) {
+        let _ = (event, promise);
     }
 
     /// The text of the file at `path`, for the CLI's `load` and `read`

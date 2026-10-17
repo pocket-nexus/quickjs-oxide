@@ -188,6 +188,43 @@ pub(crate) fn throw_at(
     Throw(error)
 }
 
+/// A new `kind` error whose `stack` starts with `file:line:column` (where a
+/// compile error is) before the running frames' backtrace.
+#[inline(never)]
+pub(crate) fn throw_located(
+    cx: &mut Cx<'_>,
+    kind: ErrorKind,
+    message: &str,
+    file: &str,
+    line: u32,
+    column: u32,
+) -> Throw {
+    let Throw(error) = throw(cx, kind, message);
+    let Some(object) = error.as_object() else {
+        return Throw(error);
+    };
+    let key = Names::key(cx.realm.names.stack);
+    let Some((slot, _)) = cx.heap.lookup_own(object, key) else {
+        return Throw(error);
+    };
+    let backtrace = cx
+        .heap
+        .get_slot(object, slot)
+        .as_string()
+        .map(|id| cx.heap.string_text(id))
+        .unwrap_or_default();
+    let mark = cx.heap.roots().mark();
+    cx.heap.roots().push(error);
+    let stack = cx
+        .heap
+        .alloc_string(&format!("    at {file}:{line}:{column}\n{backtrace}"));
+    cx.heap.roots().truncate(mark);
+    if let Ok(stack) = stack {
+        cx.heap.set_slot(object, slot, Value::string(stack));
+    }
+    Throw(error)
+}
+
 #[inline(never)]
 pub(crate) fn type_error(cx: &mut Cx<'_>, message: &str) -> Throw {
     throw(cx, ErrorKind::Type, message)

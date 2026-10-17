@@ -49,6 +49,49 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// The same parts for a shorter borrow (a host callback's view).
+    pub fn reborrow(&mut self) -> Compiler<'_> {
+        Compiler {
+            heap: self.heap,
+            code: match &mut self.code {
+                Store::Owned(code) => Store::Owned(code),
+                Store::Shared(code) => Store::Shared(code),
+            },
+            realm: self.realm,
+        }
+    }
+
+    /// Holds `value` for the embedder until released (the heap's handle
+    /// table).
+    pub fn hold(&mut self, value: Value) -> crate::Handle {
+        self.heap.handles().create(value)
+    }
+
+    /// A new error object of `kind` with `message` and no backtrace.
+    pub fn new_error(&mut self, kind: ErrorKind, message: &str) -> Result<Value, HeapError> {
+        let prototype = self.realm.intrinsic(kind.prototype());
+        let message = self.heap.alloc_string(message)?;
+        let mark = self.heap.roots().mark();
+        self.heap.roots().push(Value::string(message));
+        let result = (|| {
+            let object = self
+                .heap
+                .alloc_object(crate::ObjectKind::Ordinary, Some(prototype), 1)?;
+            self.heap
+                .set_object_flag(object, crate::heap::object::flags::ERROR);
+            let key = crate::runtime::Names::key(self.realm.names.message);
+            self.heap.add_property(
+                object,
+                key,
+                crate::PropertyFlags::data(true, false, true),
+                Value::string(message),
+            )?;
+            Ok(Value::object(object))
+        })();
+        self.heap.roots().truncate(mark);
+        result
+    }
+
     pub fn heap(&self) -> &Heap {
         self.heap
     }
@@ -201,6 +244,52 @@ pub struct CompileRequest<'s> {
 pub struct CompileError {
     pub kind: ErrorKind,
     pub message: String,
+    /// A value the embedder threw instead (a module loader's own error
+    /// object): thrown as is, `kind` and `message` unused. It must stay
+    /// rooted until the core throws it (a handle the embedder releases
+    /// after the entry).
+    pub thrown: Option<Value>,
+    /// Where in which source the error is (a syntax error's file, line and
+    /// column, one-based): the error's `stack` starts with it, as
+    /// QuickJS's does.
+    pub location: Option<(Box<str>, u32, u32)>,
+}
+
+impl CompileError {
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        CompileError {
+            kind,
+            message: message.into(),
+            thrown: None,
+            location: None,
+        }
+    }
+
+    /// The error located at `line` and `column` of `file`.
+    pub fn at(mut self, file: &str, line: u32, column: u32) -> Self {
+        self.location = Some((file.into(), line, column));
+        self
+    }
+
+    pub fn thrown(value: Value) -> Self {
+        CompileError {
+            kind: ErrorKind::Internal,
+            message: String::new(),
+            thrown: Some(value),
+            location: None,
+        }
+    }
+}
+
+/// Throws a compile failure.
+pub(crate) fn throw_failure(cx: &mut Cx<'_>, failure: CompileError) -> Throw {
+    match (failure.thrown, failure.location) {
+        (Some(value), _) => Throw(value),
+        (None, Some((file, line, column))) => {
+            error::throw_located(cx, failure.kind, &failure.message, &file, line, column)
+        }
+        (None, None) => error::throw(cx, failure.kind, &failure.message),
+    }
 }
 
 /// The embedder's compiler: the root function of the compiled code, to be
@@ -234,7 +323,7 @@ pub(crate) fn compile_named(
     let result = compile(&mut Compiler::new(cx.heap, cx.code, cx.realm), &request);
     match result {
         Ok(function) => Ok(function),
-        Err(failure) => Err(error::throw(cx, failure.kind, &failure.message)),
+        Err(failure) => Err(throw_failure(cx, failure)),
     }
 }
 

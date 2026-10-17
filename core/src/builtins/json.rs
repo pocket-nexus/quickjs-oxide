@@ -102,6 +102,10 @@ struct Parser<'a> {
     units: &'a [u16],
     cursor: usize,
     records: bool,
+    /// QuickJS's extended JSON (`type: "json5"` modules): comments, single
+    /// quotes, identifier keys, trailing commas, `+`, `.5`, hexadecimal,
+    /// octal and binary numbers, `NaN` and `Infinity`.
+    extended: bool,
 }
 
 fn heap_failure(cx: &mut Cx<'_>, error: HeapError) -> Failure {
@@ -122,10 +126,63 @@ impl Parser<'_> {
         }
     }
 
-    fn skip_whitespace(&mut self) {
-        while matches!(self.peek(), Some(0x09 | 0x0a | 0x0d | 0x20)) {
-            self.cursor += 1;
+    fn peek_at(&self, offset: usize) -> Option<u16> {
+        self.units.get(self.cursor + offset).copied()
+    }
+
+    /// Skips whitespace and, in extended mode, comments; an unterminated
+    /// block comment is an error.
+    fn skip_space(&mut self) -> Parsed<()> {
+        loop {
+            while self.peek().is_some_and(|unit| {
+                matches!(unit, 0x09 | 0x0a | 0x0d | 0x20)
+                    || (self.extended && matches!(unit, 0x0b | 0x0c))
+            }) {
+                self.cursor += 1;
+            }
+            if !self.extended || self.peek() != Some(0x2f) {
+                return Ok(());
+            }
+            match self.peek_at(1) {
+                Some(0x2f) => {
+                    self.cursor += 2;
+                    while self
+                        .peek()
+                        .is_some_and(|unit| !matches!(unit, 0x0a | 0x0d | 0x2028 | 0x2029))
+                    {
+                        self.cursor += 1;
+                    }
+                    if matches!(self.peek(), Some(0x2028 | 0x2029)) {
+                        self.cursor += 1;
+                    }
+                }
+                Some(0x2a) => {
+                    let start = self.cursor;
+                    self.cursor += 2;
+                    loop {
+                        let Some(unit) = self.peek() else {
+                            return Err(Failure::Syntax(
+                                "unexpected end of comment".to_owned(),
+                                start,
+                            ));
+                        };
+                        if unit == 0x2a && self.peek_at(1) == Some(0x2f) {
+                            self.cursor += 2;
+                            break;
+                        }
+                        self.cursor += 1;
+                    }
+                }
+                _ => return Ok(()),
+            }
         }
+    }
+
+    /// Whether `unit` starts a number here.
+    fn starts_number(&self, unit: u16) -> bool {
+        matches!(unit, 0x2d | 0x30..=0x39)
+            || (self.extended
+                && (unit == 0x2b || (unit == 0x2e && self.peek_at(1).is_some_and(is_digit))))
     }
 
     fn syntax<T>(&self, message: &str) -> Parsed<T> {
@@ -134,7 +191,7 @@ impl Parser<'_> {
 
     fn document(&mut self, cx: &mut Cx<'_>) -> Parsed<(Value, Option<Record>)> {
         let parsed = self.value(cx, 0)?;
-        self.skip_whitespace();
+        self.skip_space()?;
         if self.cursor != self.units.len() {
             return self.syntax("unexpected data at the end");
         }
@@ -142,7 +199,7 @@ impl Parser<'_> {
     }
 
     fn value(&mut self, cx: &mut Cx<'_>, depth: usize) -> Parsed<(Value, Option<Record>)> {
-        self.skip_whitespace();
+        self.skip_space()?;
         let Some(unit) = self.peek() else {
             return self.syntax("Unexpected end of JSON input");
         };
@@ -160,11 +217,11 @@ impl Parser<'_> {
                 cx.heap.vm.leave_native();
                 return result;
             }
-            0x22 => {
+            0x22 | 0x27 if unit == 0x22 || self.extended => {
                 let units = self.string()?;
                 ops::alloc_units(cx, &units)?
             }
-            0x2d | 0x30..=0x39 => self.number()?,
+            _ if self.starts_number(unit) => self.number()?,
             _ if is_identifier_start(unit) => {
                 while self.peek().is_some_and(is_identifier_continue) {
                     self.cursor += 1;
@@ -173,6 +230,10 @@ impl Parser<'_> {
                     word if ascii_eq(word, "true") => Value::TRUE,
                     word if ascii_eq(word, "false") => Value::FALSE,
                     word if ascii_eq(word, "null") => Value::NULL,
+                    word if self.extended && ascii_eq(word, "NaN") => Value::number(f64::NAN),
+                    word if self.extended && ascii_eq(word, "Infinity") => {
+                        Value::number(f64::INFINITY)
+                    }
                     word => {
                         let word = String::from_utf16_lossy(word);
                         return self.syntax(&format!("unexpected token: '{word}'"));
@@ -205,23 +266,29 @@ impl Parser<'_> {
         cx.heap.roots().push(Value::object(object));
         let mark = cx.heap.roots().mark();
         let mut entries = Vec::new();
-        self.skip_whitespace();
+        self.skip_space()?;
         if !self.eat(b'}') {
             loop {
-                self.skip_whitespace();
-                if self.peek() != Some(0x22) {
-                    return match self.peek() {
-                        Some(unit) if unit >= 0x80 => self.syntax("unexpected character"),
-                        None => self.syntax("Unexpected end of JSON input"),
-                        _ => self.syntax("expecting property name"),
-                    };
-                }
-                let name = self.string()?;
+                self.skip_space()?;
+                let name = match self.peek() {
+                    Some(0x22) => self.string()?,
+                    Some(0x27) if self.extended => self.string()?,
+                    Some(unit) if self.extended && is_identifier_start(unit) => {
+                        let start = self.cursor;
+                        while self.peek().is_some_and(is_identifier_continue) {
+                            self.cursor += 1;
+                        }
+                        self.units[start..self.cursor].to_vec()
+                    }
+                    Some(unit) if unit >= 0x80 => return self.syntax("unexpected character"),
+                    None => return self.syntax("Unexpected end of JSON input"),
+                    _ => return self.syntax("expecting property name"),
+                };
                 let key = cx
                     .heap
                     .property_key_units(&name)
                     .map_err(|error| heap_failure(cx, error))?;
-                self.skip_whitespace();
+                self.skip_space()?;
                 if !self.eat(b':') {
                     return self.syntax("expecting ':'");
                 }
@@ -231,8 +298,12 @@ impl Parser<'_> {
                     Some(record) => entries.push((key, record)),
                     None => cx.heap.roots().truncate(mark),
                 }
-                self.skip_whitespace();
+                self.skip_space()?;
                 if self.eat(b',') {
+                    self.skip_space()?;
+                    if self.extended && self.eat(b'}') {
+                        break;
+                    }
                     continue;
                 }
                 if !self.eat(b'}') {
@@ -252,7 +323,7 @@ impl Parser<'_> {
         cx.heap.roots().push(Value::object(array));
         let mark = cx.heap.roots().mark();
         let mut elements = Vec::new();
-        self.skip_whitespace();
+        self.skip_space()?;
         if !self.eat(b']') {
             loop {
                 let (value, record) = self.value(cx, depth + 1)?;
@@ -263,8 +334,12 @@ impl Parser<'_> {
                     Some(record) => elements.push(record),
                     None => cx.heap.roots().truncate(mark),
                 }
-                self.skip_whitespace();
+                self.skip_space()?;
                 if self.eat(b',') {
+                    self.skip_space()?;
+                    if self.extended && self.eat(b']') {
+                        break;
+                    }
                     continue;
                 }
                 if !self.eat(b']') {
@@ -279,6 +354,7 @@ impl Parser<'_> {
     }
 
     fn string(&mut self) -> Parsed<Vec<u16>> {
+        let separator = self.peek().unwrap_or(0x22);
         self.cursor += 1;
         let mut output = Vec::new();
         loop {
@@ -287,7 +363,7 @@ impl Parser<'_> {
             };
             self.cursor += 1;
             match unit {
-                0x22 => return Ok(output),
+                _ if unit == separator => return Ok(output),
                 0x00..=0x1f => return self.syntax("Bad control character in string literal"),
                 0x5c => {
                     let Some(escaped) = self.peek() else {
@@ -295,7 +371,10 @@ impl Parser<'_> {
                     };
                     self.cursor += 1;
                     output.push(match escaped {
-                        0x22 | 0x5c | 0x2f => escaped,
+                        0x5c | 0x2f => escaped,
+                        _ if escaped == separator => escaped,
+                        0x76 if self.extended => 0x0b,
+                        0x0a if self.extended => continue,
                         0x62 => 0x08,
                         0x66 => 0x0c,
                         0x6e => 0x0a,
@@ -328,7 +407,53 @@ impl Parser<'_> {
 
     fn number(&mut self) -> Parsed<Value> {
         let start = self.cursor;
-        self.eat(b'-');
+        let negative = self.eat(b'-');
+        if !negative && self.extended {
+            self.eat(b'+');
+        }
+        if self.extended {
+            let sign = if negative { -1.0 } else { 1.0 };
+            let rest = &self.units[self.cursor..];
+            if rest.starts_with(&ascii_units("Infinity")) {
+                self.cursor += "Infinity".len();
+                return Ok(Value::number(sign * f64::INFINITY));
+            }
+            if rest.starts_with(&ascii_units("NaN")) {
+                self.cursor += "NaN".len();
+                return Ok(Value::number(f64::NAN));
+            }
+            let radix = match (self.peek(), self.peek_at(1)) {
+                (Some(0x30), Some(0x78 | 0x58)) => Some(16),
+                (Some(0x30), Some(0x6f | 0x4f)) => Some(8),
+                (Some(0x30), Some(0x62 | 0x42)) => Some(2),
+                _ => None,
+            };
+            if let Some(radix) = radix {
+                self.cursor += 2;
+                let digit = |unit: u16| hex_value(unit).filter(|&d| u32::from(d) < radix);
+                if self.peek().and_then(digit).is_none() {
+                    return match self.peek() {
+                        None => self.syntax("Unexpected token '"),
+                        Some(unit) => {
+                            let unit = char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}');
+                            self.syntax(&format!("Unexpected token '{unit}'"))
+                        }
+                    };
+                }
+                let mut value = 0.0f64;
+                while let Some(d) = self.peek().and_then(digit) {
+                    value = value * f64::from(radix) + f64::from(d);
+                    self.cursor += 1;
+                }
+                return Ok(number::number(if negative { -value } else { value }));
+            }
+            if self.peek() == Some(0x2e) {
+                self.digits_after_point()?;
+                return Ok(number::number(number::parse(
+                    &self.units[start..self.cursor],
+                )));
+            }
+        }
         match self.peek() {
             None => return self.syntax("Unexpected end of JSON input"),
             Some(0x30) => {
@@ -343,12 +468,29 @@ impl Parser<'_> {
                 return self.syntax(&format!("Unexpected token '{unit}'"));
             }
         }
-        if self.eat(b'.') {
-            if !self.peek().is_some_and(is_digit) {
-                return self.syntax("Unterminated fractional number");
-            }
-            self.digits();
+        if self.peek() == Some(0x2e) {
+            self.digits_after_point()?;
+            return Ok(number::number(number::parse(
+                &self.units[start..self.cursor],
+            )));
         }
+        self.exponent()?;
+        Ok(number::number(number::parse(
+            &self.units[start..self.cursor],
+        )))
+    }
+
+    /// A fraction from its point, then an exponent.
+    fn digits_after_point(&mut self) -> Parsed<()> {
+        self.cursor += 1;
+        if !self.peek().is_some_and(is_digit) {
+            return self.syntax("Unterminated fractional number");
+        }
+        self.digits();
+        self.exponent()
+    }
+
+    fn exponent(&mut self) -> Parsed<()> {
         if matches!(self.peek(), Some(0x65 | 0x45)) {
             self.cursor += 1;
             if matches!(self.peek(), Some(0x2b | 0x2d)) {
@@ -359,10 +501,12 @@ impl Parser<'_> {
             }
             self.digits();
         }
-        Ok(number::number(number::parse(
-            &self.units[start..self.cursor],
-        )))
+        Ok(())
     }
+}
+
+fn ascii_units(text: &str) -> Vec<u16> {
+    text.bytes().map(u16::from).collect()
 }
 
 fn is_digit(unit: u16) -> bool {
@@ -399,11 +543,13 @@ fn parse_text(
     units: &[u16],
     records: bool,
     file: Option<&str>,
+    extended: bool,
 ) -> Result<(Value, Option<Record>), Throw> {
     let mut parser = Parser {
         units,
         cursor: 0,
         records,
+        extended,
     };
     match parser.document(cx) {
         Ok(parsed) => Ok(parsed),
@@ -431,7 +577,12 @@ fn position(units: &[u16], at: usize) -> (u32, u32) {
 
 /// The value of a JSON module `file` of UTF-16 text.
 pub(crate) fn json_parse_text(cx: &mut Cx<'_>, units: &[u16], file: &str) -> Result<Value, Throw> {
-    parse_text(cx, units, false, Some(file)).map(|(value, _)| value)
+    parse_text(cx, units, false, Some(file), false).map(|(value, _)| value)
+}
+
+/// The value of a JSON5 module `file` (QuickJS's extended JSON).
+pub(crate) fn json5_parse_text(cx: &mut Cx<'_>, units: &[u16], file: &str) -> Result<Value, Throw> {
+    parse_text(cx, units, false, Some(file), true).map(|(value, _)| value)
 }
 
 /// `JSON.parse(text, reviver)`.
@@ -441,7 +592,7 @@ pub(super) fn parse(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let units = ops::units(cx.heap, text.as_string().unwrap());
     let reviver = site.arg(cx, 1);
     let revive = ops::is_callable(cx.heap, reviver);
-    let (value, record) = parse_text(cx, &units, revive, None)?;
+    let (value, record) = parse_text(cx, &units, revive, None, false)?;
     if !revive {
         return Ok(value);
     }
@@ -574,7 +725,7 @@ pub(super) fn raw_json(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
     let boundary = |unit: u16| matches!(unit, 0x61..=0x7a | 0x30..=0x39 | 0x2d | 0x22);
     let valid = units.first().is_some_and(|&unit| boundary(unit))
         && units.last().is_some_and(|&unit| boundary(unit))
-        && parse_text(cx, &units, false, None).is_ok();
+        && parse_text(cx, &units, false, None, false).is_ok();
     if !valid {
         return Err(error::throw(
             cx,

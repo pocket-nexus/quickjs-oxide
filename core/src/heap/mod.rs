@@ -13,6 +13,7 @@ pub mod buffer;
 pub mod gc;
 pub(crate) mod hash;
 pub mod object;
+pub mod report;
 pub mod string;
 pub mod symbol;
 pub mod table;
@@ -112,6 +113,12 @@ pub struct Heap {
     pub(crate) strings: Arena<StringRecord>,
     /// `WeakRef` targets kept alive until the current job ends (section 3.4).
     pub(crate) kept: Vec<Value>,
+    /// The rejected promises without a handler, in rejection order, while
+    /// the embedder tracks rejections (phase 6, section 2.2). Roots.
+    pub(crate) rejections: Vec<Value>,
+    /// Arrays that have had a hole (phase 6): QuickJS prints them by their
+    /// index properties even after the hole is gone. Weak.
+    pub(crate) holey: crate::heap::hash::FxHashSet<u32>,
     /// Every module record (section 5.6): modules live as long as the
     /// runtime.
     pub(crate) modules: Vec<Value>,
@@ -181,6 +188,8 @@ impl Heap {
             shapes: Arena::new(),
             strings: Arena::new(),
             kept: Vec::new(),
+            rejections: Vec::new(),
+            holey: Default::default(),
             modules: Vec::new(),
             rope_bytes: std::cell::Cell::new(0),
             ropes: FxHashMap::default(),
@@ -635,6 +644,15 @@ impl Heap {
             )?;
             elements = self.values.grow(elements, new_len);
             self.objects.get_mut(object.0).set_elements(elements);
+        }
+        // An array that gets a hole stays a "slow" array for the value
+        // printer, as QuickJS's does once it leaves the fast form.
+        if header.kind == ObjectKind::Array
+            && (value.is_empty()
+                || index > header.payload
+                || (index > 0 && self.values.get(elements, index - 1).is_empty()))
+        {
+            self.holey.insert(object.0);
         }
         self.values.set(elements, index, value);
         let header = self.objects.get_mut(object.0);
