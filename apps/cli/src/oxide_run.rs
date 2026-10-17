@@ -1,7 +1,7 @@
 //! `oxide-run`: runs a script on the new core (#122, phase 2, section 5).
 //!
 //! ```text
-//! oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] [--test262] [--cannot-block] [--module] FILE...
+//! oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] [--test262] [--cannot-block] [--module] [--std] [-e EXPR] FILE... [-- ARG...]
 //! ```
 //!
 //! Each script is compiled with the engine's front end, lowered to register
@@ -13,22 +13,30 @@
 //! needs a build with the `new-core-gc-stress` feature; `--ic-stats`, which
 //! prints the inline-cache report to stderr at exit, `new-core-ic-stats`.
 //! `--gc-stats` prints the collector's statistics to stderr at exit.
+//!
+//! As qjs: `-e EXPR` runs `EXPR` after the files, `--std` defines `load`
+//! and `read`, `console.log` is `print`, and `scriptArgs` holds the last
+//! file (or `-e`) and the arguments after `--`.
 
 use std::process::ExitCode;
 
 use quickjs_oxide::engine::api::new_core::{self, NewCoreOptions};
 
-const USAGE: &str = "usage: oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] [--test262] [--cannot-block] [--module] FILE...";
+const USAGE: &str = "usage: oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] [--test262] [--cannot-block] [--module] [--std] [-e EXPR] FILE... [-- ARG...]";
 
 struct Arguments {
     /// The scripts, run in order as separate scripts of one realm.
     files: Vec<String>,
+    /// `-e`'s source, run after the files.
+    eval: Option<String>,
     disassemble: bool,
     options: NewCoreOptions,
 }
 
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Arguments, String> {
     let mut files = Vec::new();
+    let mut eval = None;
+    let mut script_args = Vec::new();
     let mut disassemble = false;
     let mut options = NewCoreOptions {
         services: Some(std::rc::Rc::new(
@@ -56,6 +64,12 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Arguments, String> {
             options.cannot_block = true;
         } else if arg == "--module" {
             options.module = true;
+        } else if arg == "--std" {
+            options.std = true;
+        } else if arg == "-e" || arg == "--eval" {
+            eval = Some(args.next().ok_or("-e needs an expression")?);
+        } else if arg == "--" {
+            script_args.extend(args.by_ref());
         } else if arg == "--heap-cap-mib" {
             let value = args.next().ok_or("--heap-cap-mib needs a value")?;
             let mib: usize = value
@@ -68,11 +82,19 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Arguments, String> {
             files.push(arg);
         }
     }
-    if files.is_empty() {
+    if files.is_empty() && eval.is_none() {
         return Err("no file".into());
     }
+    let script = if eval.is_some() {
+        "<cmdline>".to_owned()
+    } else {
+        files.last().cloned().unwrap_or_default()
+    };
+    script_args.insert(0, script);
+    options.script_args = Some(script_args);
     Ok(Arguments {
         files,
+        eval,
         disassemble,
         options,
     })
@@ -99,6 +121,9 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    }
+    if let Some(source) = &arguments.eval {
+        sources.push((source.clone().into_bytes(), "<cmdline>".to_owned()));
     }
     let result = if arguments.disassemble {
         let (source, file) = sources.last().expect("a file");

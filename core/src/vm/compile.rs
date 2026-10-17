@@ -213,13 +213,23 @@ pub(crate) fn compile(
     source: &[u16],
     kind: CompileKind,
 ) -> Result<ObjectId, Throw> {
+    compile_named(cx, source, kind, "<input>")
+}
+
+/// [`compile`] with the filename the code's positions name.
+pub(crate) fn compile_named(
+    cx: &mut Cx<'_>,
+    source: &[u16],
+    kind: CompileKind,
+    filename: &str,
+) -> Result<ObjectId, Throw> {
     let Some(compile) = cx.host.compile else {
         return Err(super::object::unsupported(cx, "eval"));
     };
     let request = CompileRequest {
         source,
         kind,
-        filename: "<input>",
+        filename,
     };
     let result = compile(&mut Compiler::new(cx.heap, cx.code, cx.realm), &request);
     match result {
@@ -327,6 +337,37 @@ pub(crate) fn function_source(cx: &Cx<'_>, function: ObjectId) -> Option<Vec<u16
 }
 
 /// `$262.evalScript(source)`: the source as a separate script.
+/// qjs's `load(path)` (`oxide-run --std`): the file, run as a script.
+pub(crate) fn load(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    let path = site.arg(cx, 0);
+    let path = ops::to_string(cx, path)?;
+    let path = cx.heap.string_text(path.as_string().unwrap());
+    let Some(text) = cx.host.hooks.read_file(&path) else {
+        let message = format!("could not load '{path}'");
+        return Err(error::throw(cx, ErrorKind::Reference, &message));
+    };
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let function = compile_named(cx, &units, CompileKind::Script, &path)?;
+    let mark = cx.heap.roots().mark();
+    cx.heap.roots().push(Value::object(function));
+    let global = Value::object(cx.realm.global());
+    let result = super::call(cx, Value::object(function), global, &[]);
+    cx.heap.roots().truncate(mark);
+    result.map(|_| Value::UNDEFINED)
+}
+
+/// qjs's `read(path)` (`oxide-run --std`): the file's text.
+pub(crate) fn read(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    let path = site.arg(cx, 0);
+    let path = ops::to_string(cx, path)?;
+    let path = cx.heap.string_text(path.as_string().unwrap());
+    let Some(text) = cx.host.hooks.read_file(&path) else {
+        let message = format!("could not read '{path}'");
+        return Err(error::throw(cx, ErrorKind::Error, &message));
+    };
+    crate::builtins::string_text(cx, &text)
+}
+
 pub(crate) fn eval_script(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let source = site.arg(cx, 0);
     let source = ops::to_string(cx, source)?;

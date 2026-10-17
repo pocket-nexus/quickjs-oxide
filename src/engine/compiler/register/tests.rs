@@ -73,7 +73,7 @@ fn locals_are_read_in_place_and_results_retarget_into_locals() {
             "JNgtI p0, 0, @5",
             "AddI l0, l0, 1",
             "SubI p0, p0, 1",
-            "Jmp @1",
+            "JGtI p0, 0, @2",
             "Return l0",
         ]
     );
@@ -85,8 +85,8 @@ fn a_counted_loop_is_a_compare_jump_and_an_increment() {
         "function work(n) { var sum = 0; for (var i = 0; i < n; i++) sum = sum + i; return sum; }",
         "work",
     );
-    // Two dispatches per iteration besides the body: the fused compare-jump
-    // and the backward jump; `i++` is one increment in place.
+    // One dispatch per iteration besides the body: the back edge repeats
+    // the fused compare-jump, negated; `i++` is one increment in place.
     assert_eq!(
         code,
         [
@@ -95,7 +95,7 @@ fn a_counted_loop_is_a_compare_jump_and_an_increment() {
             "JNlt l1, p0, @6",
             "Add l0, l0, l1",
             "Inc l1, l1",
-            "Jmp @2",
+            "JLt l1, p0, @3",
             "Return l0",
         ]
     );

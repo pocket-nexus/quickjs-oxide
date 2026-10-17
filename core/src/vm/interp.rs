@@ -61,6 +61,12 @@ fn callee(heap: &Heap, value: Value) -> Callee {
 /// them (section 5.1).
 #[inline]
 fn enter(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
+    enter_frame(cx, unit, frame)
+}
+
+/// [`enter`], inlined into the loop's call.
+#[inline(always)]
+fn enter_frame(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
     let base = frame.base as usize;
     let argc = frame.argc as usize;
     let parameters = unit.parameter_count as usize;
@@ -327,6 +333,18 @@ pub(crate) fn set_function_name(
 ) -> Result<(), Throw> {
     let names = cx.realm.names;
     let name_key = Names::key(names.name);
+    // The common case: an anonymous closure named by an atom. Its own
+    // `name` slot holds the empty atom with the attributes the definition
+    // gives, so the slot takes the atom as is.
+    if prefix.is_empty()
+        && let crate::heap::atom::KeyKind::String(id) = key.kind()
+        && let Some((slot, flags)) = cx.heap.lookup_own(function, name_key)
+        && flags == PropertyFlags::data(false, false, true)
+        && cx.heap.get_slot(function, slot) == Value::string(names.empty)
+    {
+        cx.heap.set_slot(function, slot, Value::string(id));
+        return Ok(());
+    }
     if !always {
         match super::object::ordinary_get_own(cx, function, name_key) {
             None => {}
@@ -2197,7 +2215,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                 argc: argc as u32,
                                 flags: frame_flags,
                             };
-                            if let Err(throw) = enter(cx, callee_unit, callee_frame) {
+                            if let Err(throw) = enter_frame(cx, callee_unit, callee_frame) {
                                 break 'op Err(throw);
                             }
                             if construct {
@@ -2242,6 +2260,24 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     } else {
                         Value::UNDEFINED
                     };
+                    // A plain call's frame (not an entry, a construction or
+                    // a tail call) returns to the frame below, loaded once.
+                    if frame.flags == 0 {
+                        cx.heap.vm.frames.pop();
+                        let caller = *cx.heap.vm.frames.last().expect("a caller");
+                        let caller_unit = store.get(caller.unit);
+                        raise_top(cx, frame_end(&caller, caller_unit));
+                        cx.heap.vm.registers[frame.return_dst as usize] = value;
+                        pc = frame.return_pc as usize;
+                        frame = caller;
+                        unit = caller_unit;
+                        code = &unit.code;
+                        base = frame.base as usize;
+                        strict = unit.has(flags::STRICT);
+                        ic_base = unit.ic_base as usize;
+                        regs = window!();
+                        continue 'dispatch;
+                    }
                     match finish_return(cx, value) {
                         Returned::Exit(value) => return Ok(value),
                         Returned::Resume(resume) => {

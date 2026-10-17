@@ -263,6 +263,40 @@ pub(crate) fn tree_has_import_call(
     })
 }
 
+/// The compare-jump taken exactly when `op` is not, if there is one.
+fn negated_jump(op: Opcode) -> Option<Opcode> {
+    use Opcode::*;
+    Some(match op {
+        JTrue => JFalse,
+        JFalse => JTrue,
+        JLt => JNlt,
+        JNlt => JLt,
+        JLte => JNlte,
+        JNlte => JLte,
+        JGt => JNgt,
+        JNgt => JGt,
+        JGte => JNgte,
+        JNgte => JGte,
+        JEq => JNeq,
+        JNeq => JEq,
+        JStrictEq => JStrictNeq,
+        JStrictNeq => JStrictEq,
+        JLtI => JNltI,
+        JNltI => JLtI,
+        JLteI => JNlteI,
+        JNlteI => JLteI,
+        JGtI => JNgtI,
+        JNgtI => JGtI,
+        JGteI => JNgteI,
+        JNgteI => JGteI,
+        JEqI => JNeqI,
+        JNeqI => JEqI,
+        JStrictEqI => JStrictNeqI,
+        JStrictNeqI => JStrictEqI,
+        _ => return None,
+    })
+}
+
 /// Lowers and publishes `function` after its children. `parent` is the
 /// parent's layout (`None` for the script), which places the parent's locals
 /// for this function's captures.
@@ -758,6 +792,39 @@ impl<'a, 'c> Lowerer<'a, 'c> {
     fn emit_jump(&mut self, build: impl FnOnce(&mut CodeBuilder) -> u32, target: usize) {
         let pc = self.emit(build);
         self.fixups.push((pc, target));
+    }
+
+    /// A back edge from `pc` to a loop whose first lowered instruction is
+    /// a compare-jump out of it repeats that test, negated, as a jump to the
+    /// loop's body: an iteration runs one branch instead of a jump and the
+    /// test. The test reads registers only and the back edge is in the
+    /// test's handler regions, so the copy behaves as the original;
+    /// leaving the loop jumps to the test's exit unless that is next.
+    fn invert_back_edge(&mut self, pc: usize, target: usize) -> bool {
+        let Some(head) = self.labels[target] else {
+            return false;
+        };
+        let Some(&test) = self.builder.code().get(head as usize) else {
+            return false;
+        };
+        let Some(negated) = negated_jump(test.op) else {
+            return false;
+        };
+        let Some(&(_, exit)) = self.fixups.iter().find(|&&(at, _)| at == head) else {
+            return false;
+        };
+        if self.analysis.regions[pc] != self.analysis.regions[target] {
+            return false;
+        }
+        let mut repeat = test;
+        repeat.op = negated;
+        repeat.imm = head + 1;
+        self.emit(|b| b.raw(repeat));
+        let next = (pc + 1..self.code.len()).find(|&at| self.analysis.depth[at].is_some());
+        if next != Some(exit) {
+            self.emit_jump(|b| b.jump(Opcode::Jmp, 0), exit);
+        }
+        true
     }
 
     fn mov(&mut self, dst: u32, src: u32) -> Result<(), LowerError> {
@@ -1490,6 +1557,19 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             I::Dup1 => self.permute(2, &[0, 0, 1])?,
             I::Dup3 => self.permute(3, &[0, 1, 2, 0, 1, 2])?,
             I::Insert2 => self.permute(2, &[1, 0, 1])?,
+            // `o[k] = v` as a statement: the copy of `v` kept as the
+            // assignment's value is dropped right after the store, so the
+            // store takes the three operands where they are.
+            I::Insert3
+                if self.fusible(pc + 1)
+                    && self.fusible(pc + 2)
+                    && matches!(self.code[pc + 1], I::PutArrayEl)
+                    && matches!(self.code[pc + 2], I::Drop) =>
+            {
+                self.pc = pc + 1;
+                self.instruction(pc + 1)?;
+                return Ok(3);
+            }
             I::Insert3 => self.permute(3, &[2, 0, 1, 2])?,
             I::Insert4 => self.permute(4, &[3, 0, 1, 2, 3])?,
             I::Perm3 => self.permute(3, &[1, 0, 2])?,
@@ -1503,7 +1583,11 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 // A jump over unreachable code only is a fallthrough.
                 let target = target as usize;
                 let skipped = pc + 1..target;
-                if target <= pc || skipped.clone().any(|at| self.analysis.depth[at].is_some()) {
+                if target <= pc && self.invert_back_edge(pc, target) {
+                    // The loop's test repeated at its back edge.
+                } else if target <= pc
+                    || skipped.clone().any(|at| self.analysis.depth[at].is_some())
+                {
                     self.emit_jump(|b| b.jump(Opcode::Jmp, 0), target);
                 }
             }
@@ -2692,7 +2776,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         };
         let mut positions: Vec<oxide_core::bytecode::SourcePosition> = Vec::new();
         for (pc, &origin) in self.origins.iter().take(len).enumerate() {
-            let Some((line, column)) = table.lookup(Some(origin as u32)).one_based() else {
+            // `Pc2LineTable::lookup` scans; the entries are sorted by pc.
+            let after = table
+                .entries
+                .partition_point(|entry| entry.pc <= origin as u32);
+            let position = after
+                .checked_sub(1)
+                .map_or(table.definition, |at| table.entries[at].position);
+            let Some((line, column)) = position.one_based() else {
                 continue;
             };
             if positions

@@ -228,6 +228,10 @@ pub struct IcStats {
     pub unfilled: [u64; 4],
     /// Misses per entry, both kinds.
     pub site_misses: Vec<u64>,
+    /// `IterStart`s that walked a pristine array by index, and the ones
+    /// that ran the protocol (phase 4, Table C).
+    pub iter_pristine: u64,
+    pub iter_generic: u64,
 }
 
 /// Every cache entry of every published unit. Append-only, like the code
@@ -405,6 +409,19 @@ impl IcStore {
             self.stats.mono_hits[kind as usize] += 1;
         }
         let _ = kind;
+    }
+
+    #[inline(always)]
+    pub(crate) fn count_iteration(&mut self, pristine: bool) {
+        #[cfg(any(feature = "ic-stats", debug_assertions))]
+        {
+            if pristine {
+                self.stats.iter_pristine += 1;
+            } else {
+                self.stats.iter_generic += 1;
+            }
+        }
+        let _ = pristine;
     }
 
     #[inline(always)]

@@ -481,9 +481,20 @@ impl Runtime {
         crate::builtins::test262::install(&mut self.cx())
     }
 
-    /// Defines the qjs `print` host function on the global object.
+    /// Defines qjs's `print` and `console.log` on the global object.
     pub fn install_print(&mut self) -> Result<(), HeapError> {
         crate::builtins::install_print(&mut self.cx())
+    }
+
+    /// Defines qjs's `--std` globals, `load` and `read`, over the host's
+    /// [`read_file`](crate::host::Host::read_file).
+    pub fn install_std(&mut self) -> Result<(), HeapError> {
+        crate::builtins::install_std(&mut self.cx())
+    }
+
+    /// Defines qjs's `scriptArgs`.
+    pub fn install_script_args(&mut self, args: &[String]) -> Result<(), HeapError> {
+        crate::builtins::install_script_args(&mut self.cx(), args)
     }
 
     /// Runs a script function (from [`Runtime::instantiate`]) with the
@@ -621,6 +632,11 @@ impl Runtime {
             out,
             "sites: {} entries, {mono} monomorphic, {poly} polymorphic, {mega} megamorphic",
             ics.len()
+        );
+        let _ = writeln!(
+            out,
+            "iteration: {} pristine arrays, {} through the protocol",
+            stats.iter_pristine, stats.iter_generic
         );
         let mut sites = Vec::new();
         for (id, unit) in self.code.units() {

@@ -43,6 +43,12 @@ pub trait Host {
     fn local_tz_offset_minutes(&mut self, _utc_ms: f64) -> i32 {
         0
     }
+
+    /// The text of the file at `path`, for the CLI's `load` and `read`
+    /// (`oxide-run --std`). The default reads the process's file system.
+    fn read_file(&mut self, path: &str) -> Option<String> {
+        std::fs::read_to_string(path).ok()
+    }
 }
 
 /// The default host: the process's streams, the system clock, UTC.

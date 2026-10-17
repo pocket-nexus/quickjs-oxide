@@ -286,10 +286,60 @@ fn run_probe_file() {
 /// `.js` file in `CENSUS_DIR` on its own and prints, per file, the
 /// functions lowered, every reason a function was declined, and the
 /// functions whose register count (`1 + params + locals + max depth`)
-/// exceeds the 256-register window. Ignored in ordinary runs.
+/// exceeds the 256-register window. With `CENSUS_TEST262` (a Test262
+/// checkout's `test` directory, phase 4 section 8) it walks the tree
+/// instead and prints the totals: files, functions, and each decline with
+/// its count. Ignored in ordinary runs.
 #[test]
 #[ignore = "measurement hook"]
 fn lowering_census() {
+    if let Ok(directory) = std::env::var("CENSUS_TEST262") {
+        return test262_census(Path::new(&directory));
+    }
+    let directory = std::env::var("CENSUS_DIR").expect("CENSUS_DIR or CENSUS_TEST262");
+    let mut files: Vec<_> = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "js"))
+        .collect();
+    files.sort();
+    for path in files {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let source = std::fs::read_to_string(&path).unwrap();
+        let script = match compile_unlinked_script(&source) {
+            Ok(script) => script,
+            Err(error) => {
+                println!("{name}\tcompile error: {error}");
+                continue;
+            }
+        };
+        let census = census(&script);
+        let reasons: Vec<String> = census
+            .reasons
+            .into_iter()
+            .map(|(reason, count)| format!("{reason} ×{count}"))
+            .collect();
+        println!(
+            "{name}\t{}/{}\t{}\t{}",
+            census.lowered,
+            census.functions,
+            reasons.join(", "),
+            census.wide.join(", ")
+        );
+    }
+}
+
+/// What the lowering declines in one compiled script or module.
+struct Census {
+    functions: usize,
+    lowered: usize,
+    reasons: std::collections::BTreeMap<String, usize>,
+    wide: Vec<String>,
+}
+
+/// Lowers every function of `script` on its own (children stand in as a
+/// placeholder unit).
+fn census(script: &crate::engine::code::function::UnlinkedFunction) -> Census {
     use oxide_core::bytecode::CodeBuilder;
     use oxide_core::bytecode::builder::UnitLayout;
 
@@ -312,77 +362,140 @@ fn lowering_census() {
         }
     }
 
-    let directory = std::env::var("CENSUS_DIR").expect("CENSUS_DIR");
-    let mut files: Vec<_> = std::fs::read_dir(directory)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "js"))
-        .collect();
-    files.sort();
-    for path in files {
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let source = std::fs::read_to_string(&path).unwrap();
-        let script = match compile_unlinked_script(&source) {
-            Ok(script) => script,
+    let mut runtime = Runtime::new(HeapLimits::default()).unwrap();
+    let mut builder = CodeBuilder::new();
+    builder.op(Opcode::ReturnUndefined);
+    let placeholder = runtime
+        .publish(builder.finish(UnitLayout {
+            register_count: 1,
+            ..UnitLayout::default()
+        }))
+        .unwrap();
+    let mut functions = Vec::new();
+    walk(script, None, &mut functions);
+    let mut census = Census {
+        functions: functions.len(),
+        lowered: 0,
+        reasons: std::collections::BTreeMap::new(),
+        wide: Vec::new(),
+    };
+    for (function, parent) in &functions {
+        let metadata = function.metadata();
+        let depth = crate::engine::code::bytecode::compute_stack_size(function.code(), u16::MAX)
+            .map_or(0, |size| u32::from(size.max_stack));
+        let registers =
+            1 + u32::from(metadata.argument_count) + u32::from(metadata.local_count) + depth;
+        if registers > 256 {
+            let label = function
+                .func_name()
+                .map(|name| name.to_utf8_lossy())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "<anonymous>".into());
+            census.wide.push(format!("{label} ({registers})"));
+        }
+        let children = function
+            .constants()
+            .iter()
+            .filter(|constant| constant.as_child().is_some())
+            .map(|_| placeholder)
+            .collect();
+        match lower_function(&mut runtime.compiler(), function, *parent, children) {
+            Ok(_) => census.lowered += 1,
+            Err(LowerError::Unsupported(construct) | LowerError::Syntax(construct)) => {
+                *census.reasons.entry(construct).or_insert(0) += 1;
+            }
             Err(error) => {
-                println!("{name}\tcompile error: {error}");
-                continue;
-            }
-        };
-        let mut runtime = Runtime::new(HeapLimits::default()).unwrap();
-        let mut builder = CodeBuilder::new();
-        builder.op(Opcode::ReturnUndefined);
-        let placeholder = runtime
-            .publish(builder.finish(UnitLayout {
-                register_count: 1,
-                ..UnitLayout::default()
-            }))
-            .unwrap();
-        let mut functions = Vec::new();
-        walk(&script, None, &mut functions);
-        let (mut lowered, mut reasons, mut wide) =
-            (0, std::collections::BTreeMap::new(), Vec::new());
-        for (function, parent) in &functions {
-            let metadata = function.metadata();
-            let depth =
-                crate::engine::code::bytecode::compute_stack_size(function.code(), u16::MAX)
-                    .map_or(0, |size| u32::from(size.max_stack));
-            let registers =
-                1 + u32::from(metadata.argument_count) + u32::from(metadata.local_count) + depth;
-            if registers > 256 {
-                let label = function
-                    .func_name()
-                    .map(|name| name.to_utf8_lossy())
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| "<anonymous>".into());
-                wide.push(format!("{label} ({registers})"));
-            }
-            let children = function
-                .constants()
-                .iter()
-                .filter(|constant| constant.as_child().is_some())
-                .map(|_| placeholder)
-                .collect();
-            match lower_function(&mut runtime.compiler(), function, *parent, children) {
-                Ok(_) => lowered += 1,
-                Err(LowerError::Unsupported(construct)) => {
-                    *reasons.entry(construct).or_insert(0) += 1;
-                }
-                Err(error) => {
-                    *reasons.entry(format!("error: {error}")).or_insert(0) += 1;
-                }
+                *census.reasons.entry(format!("error: {error}")).or_insert(0) += 1;
             }
         }
-        let reasons: Vec<String> = reasons
-            .into_iter()
-            .map(|(reason, count)| format!("{reason} ×{count}"))
+    }
+    census
+}
+
+/// [`lowering_census`] over a Test262 tree: every test file (not the
+/// fixtures), compiled as its metadata says (a module, strict-only), with
+/// the totals.
+fn test262_census(directory: &Path) {
+    fn collect(directory: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let mut entries: Vec<_> = std::fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
             .collect();
-        println!(
-            "{name}\t{lowered}/{}\t{}\t{}",
-            functions.len(),
-            reasons.join(", "),
-            wide.join(", ")
-        );
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                collect(&path, out);
+            } else if path.extension().is_some_and(|extension| extension == "js")
+                && !path.to_string_lossy().contains("_FIXTURE")
+            {
+                out.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(directory, &mut files);
+    let (mut compiled, mut rejected) = (0, 0);
+    let mut total = Census {
+        functions: 0,
+        lowered: 0,
+        reasons: std::collections::BTreeMap::new(),
+        wide: Vec::new(),
+    };
+    let mut declining_files = 0;
+    for path in &files {
+        let source = std::fs::read_to_string(path).unwrap_or_default();
+        let flags = source
+            .split("---*/")
+            .next()
+            .and_then(|metadata| metadata.split("flags:").nth(1))
+            .and_then(|flags| flags.lines().next())
+            .unwrap_or("");
+        let strict = flags.contains("onlyStrict");
+        let census = if flags.contains("module") {
+            let name =
+                crate::engine::value::JsString::try_from_utf8(&path.to_string_lossy()).unwrap();
+            crate::engine::compiler::compile_unlinked_module_bytes_with_name_and_attribute_checker(
+                source.as_bytes(),
+                name,
+                crate::engine::code::debug::DebugInfoMode::Full,
+                None,
+            )
+            .ok()
+            .map(|module| census(module.function()))
+        } else if strict {
+            compile_unlinked_script(&format!("\"use strict\";\n{source}"))
+                .ok()
+                .map(|script| census(&script))
+        } else {
+            compile_unlinked_script(&source)
+                .ok()
+                .map(|script| census(&script))
+        };
+        let Some(census) = census else {
+            rejected += 1;
+            continue;
+        };
+        compiled += 1;
+        total.functions += census.functions;
+        total.lowered += census.lowered;
+        if !census.reasons.is_empty() {
+            declining_files += 1;
+        }
+        for (reason, count) in census.reasons {
+            *total.reasons.entry(reason).or_insert(0) += count;
+        }
+        total.wide.extend(census.wide);
+    }
+    println!(
+        "test262: {} files, {compiled} compiled ({rejected} rejected by the front end), \
+         {} of {} functions lowered, {declining_files} files with a decline, {} past 256 registers",
+        files.len(),
+        total.lowered,
+        total.functions,
+        total.wide.len()
+    );
+    for (reason, count) in total.reasons {
+        println!("  {reason} ×{count}");
     }
 }
 

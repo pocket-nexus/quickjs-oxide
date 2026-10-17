@@ -45,3 +45,27 @@ var y = 6; y <<= 2; y >>= 1; y >>>= 1; y &= 7; y |= 8; y ^= 3;
 print(x, y);
 var z = null; z ??= 'set'; var t = 1; t ||= 2; var u = 1; u &&= 3;
 print(z, t, u);
+
+// A loop's test repeated at its back edge: a `continue` inside `try` takes
+// the original test, whose throw the inner handler must not catch.
+var loopLog = [];
+var bound = {
+  valueOf: function () {
+    loopLog.push("v");
+    if (loopLog.length > 6) throw new Error("stop");
+    return 3;
+  },
+};
+try {
+  for (var li = 0; li < bound; li++) {
+    try {
+      if (li == 1) continue;
+      loopLog.push(li);
+    } catch (e) {
+      loopLog.push("inner");
+    }
+  }
+} catch (e) {
+  loopLog.push("outer " + e.message);
+}
+print(loopLog.join(","));

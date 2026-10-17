@@ -52,6 +52,10 @@ pub struct NewCoreOptions {
     pub cannot_block: bool,
     /// Run the last file as a module (`--module`), the others as scripts.
     pub module: bool,
+    /// Define qjs's `load` and `read` (`--std`).
+    pub std: bool,
+    /// qjs's `scriptArgs`, when set: the script's path and arguments.
+    pub script_args: Option<Vec<String>>,
     /// The clock and the local time zone (section 6.3); `None` is the system
     /// clock in UTC.
     pub services: Option<std::rc::Rc<dyn crate::engine::host::HostServices>>,
@@ -134,6 +138,16 @@ fn runtime(options: &NewCoreOptions) -> Result<Runtime, NewCoreError> {
     runtime
         .install_print()
         .map_err(|error| NewCoreError::Internal(error.to_string()))?;
+    if options.std {
+        runtime
+            .install_std()
+            .map_err(|error| NewCoreError::Internal(error.to_string()))?;
+    }
+    if let Some(args) = &options.script_args {
+        runtime
+            .install_script_args(args)
+            .map_err(|error| NewCoreError::Internal(error.to_string()))?;
+    }
     if options.test262 {
         runtime
             .install_test262_host()

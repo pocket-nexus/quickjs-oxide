@@ -691,6 +691,10 @@ natives! {
     Test262EvalScript => test262::eval_script, "evalScript", 1;
     Test262DetachArrayBuffer => test262::detach_array_buffer, "detachArrayBuffer", 1;
     Test262CodePointRange => test262::code_point_range, "codePointRange", 2;
+
+    ConsoleLog => global::print, "log", 0;
+    Load => crate::vm::compile::load, "load", 1;
+    Read => crate::vm::compile::read, "read", 1;
 }
 
 impl Native {
@@ -1123,12 +1127,59 @@ fn install_rooted(cx: &mut Cx<'_>) -> Result<ObjectId, HeapError> {
 }
 
 /// Defines `print` on the global object.
+/// qjs's `print` and `console.log`.
 pub(crate) fn install_print(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let mark = cx.heap.roots().mark();
-    let result = native_function(cx, Native::Print).and_then(|print| {
+    let result = (|| {
         let global = cx.realm.global();
-        define(cx, global, "print", Value::object(print), hidden())
-    });
+        let print = native_function(cx, Native::Print)?;
+        define(cx, global, "print", Value::object(print), hidden())?;
+        let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
+        let console = plain_object(cx, Some(prototype), 1)?;
+        let log = native_function(cx, Native::ConsoleLog)?;
+        define(cx, console, "log", Value::object(log), hidden())?;
+        define(cx, global, "console", Value::object(console), hidden())
+    })();
+    cx.heap.roots().truncate(mark);
+    result
+}
+
+/// qjs's `--std` helpers the suites' shells use: `load` and `read`.
+pub(crate) fn install_std(cx: &mut Cx<'_>) -> Result<(), HeapError> {
+    let mark = cx.heap.roots().mark();
+    let result = (|| {
+        let global = cx.realm.global();
+        for native in [Native::Load, Native::Read] {
+            let function = native_function(cx, native)?;
+            define(
+                cx,
+                global,
+                native.js_name(),
+                Value::object(function),
+                hidden(),
+            )?;
+        }
+        Ok(())
+    })();
+    cx.heap.roots().truncate(mark);
+    result
+}
+
+/// qjs's `scriptArgs`: an array of the script's path and arguments.
+pub(crate) fn install_script_args(cx: &mut Cx<'_>, args: &[String]) -> Result<(), HeapError> {
+    let mark = cx.heap.roots().mark();
+    let result = (|| {
+        let prototype = cx.realm.intrinsic(Intrinsic::ArrayPrototype);
+        let array = cx.heap.alloc_array(Some(prototype), args.len() as u32)?;
+        cx.heap.roots().push(Value::object(array));
+        for (index, arg) in args.iter().enumerate() {
+            let text = cx.heap.alloc_string(arg)?;
+            cx.heap
+                .set_element(array, index as u32, Value::string(text))?;
+        }
+        let global = cx.realm.global();
+        define(cx, global, "scriptArgs", Value::object(array), hidden())
+    })();
     cx.heap.roots().truncate(mark);
     result
 }

@@ -256,7 +256,9 @@ fn iter_op_rooted(cx: &mut Cx<'_>, frame: &Frame, insn: Insn) -> Result<(), Thro
         Opcode::IterStart => {
             let iterable = cx.heap.vm.registers[at(insn.b)];
             let generic = insn.imm != 0;
-            let record = if !generic && is_pristine_array(cx, iterable) {
+            let pristine = !generic && is_pristine_array(cx, iterable);
+            cx.heap.ics_mut().count_iteration(pristine);
+            let record = if pristine {
                 [iterable, Value::EMPTY, Value::int32(0)]
             } else {
                 let key = WellKnown::key(cx.realm.symbols.iterator);
