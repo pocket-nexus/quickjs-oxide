@@ -18,6 +18,7 @@ The engine uses a single `ExecCode` word stream and a stack VM. The compiler pub
 - [New core, phase 2 results](new-core-phase2-results.md): probe slopes of both cores, the loop's size and cost per dispatch, the two-core corpus record.
 - [New core, phase 3](new-core-phase3.md): inline caches as a store beside the code store, accessor properties, `arguments`, `apply` and `call` in the loop, the builtins of the V8 v7 slice, the regular-expression crate, the go/no-go measurement, with milestones and exit tables.
 - [New core, phase 3 results](new-core-phase3-results.md): the cache slopes and hit paths milestone by milestone, the loop's size, and the exit tables.
+- [New core, phase 4](new-core-phase4.md): the native ABI, the exotic object kinds, ropes, iteration without allocation, generators and async, classes and the rest of the language surface, the builtins port in Test262 order, the Test262 runner on the new core, Octane and AWFY, with milestones and the 3.0 floor.
 
 ## Tools
 
