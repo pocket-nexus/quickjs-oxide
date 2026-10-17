@@ -255,6 +255,10 @@ fn regexp_split_resident_abandonment_releases_duplicate_request_and_state_owners
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn regexp_split_resident_preserves_selected_exec_proxy_and_capture_boundaries() {
     let (runtime, mut context) = test_context();
     assert_script_true(
@@ -301,6 +305,10 @@ fn regexp_split_resident_preserves_selected_exec_proxy_and_capture_boundaries() 
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn regexp_split_resident_keeps_empty_unicode_limit_and_abrupt_unwind_behavior() {
     let (runtime, mut context) = test_context();
     assert_script_true(
@@ -330,6 +338,10 @@ fn regexp_split_resident_keeps_empty_unicode_limit_and_abrupt_unwind_behavior() 
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn regexp_split_resident_results_and_late_set_errors_keep_the_defining_realm() {
     let runtime = Runtime::new();
     let mut defining = runtime.new_context().expect("create context");

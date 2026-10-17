@@ -1485,6 +1485,10 @@ fn discarded_binding_assignments_lower_to_a_single_put() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn discarded_binding_assignments_keep_their_semantics() {
     let (_, mut context) = test_context();
     let source = r#"

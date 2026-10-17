@@ -43,6 +43,10 @@ impl RegExpSpeciesStep {
             runtime.clone(),
             default_id,
         )?);
+        // phase 4, section 7.2: the new core drops Symbol.species.
+        if cfg!(feature = "dropped-features-probe") {
+            return Ok(Self::Complete(NativeConversion::Value(default)));
+        }
         Ok(Self::Read {
             object: regexp,
             key: runtime

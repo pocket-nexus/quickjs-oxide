@@ -3,6 +3,10 @@ use crate::engine::test_support::test_context;
 use crate::engine::test_support::{assert_script, eval_object, take_exception_object};
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn map_and_filter_match_quickjs_species_and_callback_contracts() {
     let (_, mut context) = test_context();
 
@@ -271,6 +275,10 @@ fn map_and_filter_match_quickjs_species_and_callback_contracts() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn map_and_filter_keep_snapshot_ranges_and_live_source_and_target_effects() {
     let (_, mut context) = test_context();
 
@@ -449,6 +457,10 @@ fn map_and_filter_keep_snapshot_ranges_and_live_source_and_target_effects() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn map_filter_species_and_hidden_arrays_keep_quickjs_realms() {
     let runtime = Runtime::new();
     let mut defining = runtime.new_context().expect("create context");

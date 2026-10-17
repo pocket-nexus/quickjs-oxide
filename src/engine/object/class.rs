@@ -488,6 +488,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        feature = "dropped-features-probe",
+        ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+    )]
     fn explicit_super_initializes_one_tdz_cell_across_lexical_execution_paths() {
         let (_, mut context) = test_context();
         assert_eq!(

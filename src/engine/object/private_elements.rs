@@ -1537,6 +1537,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        feature = "dropped-features-probe",
+        ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+    )]
     fn compiled_private_names_relay_through_nested_functions_eval_and_fresh_classes() {
         let (_, mut context) = test_context();
         let result = context
@@ -1710,6 +1714,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        feature = "dropped-features-probe",
+        ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+    )]
     fn private_accessor_cells_survive_direct_eval_and_closure_capture() {
         let (_, mut context) = test_context();
         let result = context

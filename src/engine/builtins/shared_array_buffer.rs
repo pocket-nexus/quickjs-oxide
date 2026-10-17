@@ -674,6 +674,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        feature = "dropped-features-probe",
+        ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+    )]
     fn slice_species_branding_and_detach_isolation_match_quickjs() {
         let (_, mut context) = test_context();
         let source = eval_object(

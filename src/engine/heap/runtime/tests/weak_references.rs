@@ -3,6 +3,10 @@ use crate::engine::test_support::assert_script_true;
 use crate::engine::test_support::test_context;
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn pending_promise_reaction_does_not_retain_the_species_result_object() {
     let (runtime, mut context) = test_context();
     let Value::Object(result) = context

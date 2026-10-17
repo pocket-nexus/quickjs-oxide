@@ -938,6 +938,10 @@ mod binding_value_tests {
     }
 
     #[test]
+    #[cfg_attr(
+        feature = "dropped-features-probe",
+        ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+    )]
     fn captured_reads_observe_callbacks_eval_arguments_and_tdz() {
         let (_, mut context) = test_context();
         assert_script_true(

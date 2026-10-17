@@ -510,6 +510,10 @@ Object.keys(right.groups).join(",") === "x"
     }
 
     #[test]
+    #[cfg_attr(
+        feature = "dropped-features-probe",
+        ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+    )]
     fn split_private_output_preserves_capture_identity_and_limit_order() {
         assert_eval_true(
             r#"

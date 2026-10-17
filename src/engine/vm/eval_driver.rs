@@ -96,104 +96,109 @@ fn prepare_and_enter(
             )
             .map_err(runtime_error_to_vm_error)?
     };
-    let string = matches!(invocation.input, JsValue::String(_));
-    invocation.this_value = if !string {
-        runtime
-            .dup_jsvalue(&frame.cold.input.this_value)
-            .map_err(runtime_error_to_vm_error)?
-    } else if let Some(value) = frame
-        .cold
-        .rare
-        .get()
-        .and_then(|rare| rare.normalized_this.as_ref())
-    {
-        runtime
-            .dup_jsvalue(value)
-            .map_err(runtime_error_to_vm_error)?
-    } else if frame.executable.metadata.strict
-        || matches!(frame.cold.input.this_value, JsValue::Object(_))
-    {
-        runtime
-            .dup_jsvalue(&frame.cold.input.this_value)
-            .map_err(runtime_error_to_vm_error)?
-    } else if matches!(
-        frame.cold.input.this_value,
-        JsValue::Null | JsValue::Undefined
-    ) {
-        let id = frame.cold.input.callee_global(runtime, realm)?;
-        runtime
-            .retain_object_handle(id)
-            .map_err(heap_error_to_vm_error)?;
-        JsValue::Object(id)
+    // phase 4, section 7.2: the new core runs direct eval as indirect eval.
+    let prepared = if cfg!(feature = "dropped-features-probe") {
+        prepare_as_indirect(runtime, realm, invocation)?
     } else {
-        match runtime
-            .native_to_object_jsvalue(
-                realm,
-                runtime
-                    .dup_jsvalue(&frame.cold.input.this_value)
-                    .map_err(runtime_error_to_vm_error)?,
-            )
-            .map_err(runtime_error_to_vm_error)?
+        let string = matches!(invocation.input, JsValue::String(_));
+        invocation.this_value = if !string {
+            runtime
+                .dup_jsvalue(&frame.cold.input.this_value)
+                .map_err(runtime_error_to_vm_error)?
+        } else if let Some(value) = frame
+            .cold
+            .rare
+            .get()
+            .and_then(|rare| rare.normalized_this.as_ref())
         {
-            NativeConversion::Value(object) => {
-                frame.cold.normalized_this =
-                    Some(JsValue::Object(object.try_clone()?.into_handle()));
-                JsValue::Object(object.into_handle())
+            runtime
+                .dup_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?
+        } else if frame.executable.metadata.strict
+            || matches!(frame.cold.input.this_value, JsValue::Object(_))
+        {
+            runtime
+                .dup_jsvalue(&frame.cold.input.this_value)
+                .map_err(runtime_error_to_vm_error)?
+        } else if matches!(
+            frame.cold.input.this_value,
+            JsValue::Null | JsValue::Undefined
+        ) {
+            let id = frame.cold.input.callee_global(runtime, realm)?;
+            runtime
+                .retain_object_handle(id)
+                .map_err(heap_error_to_vm_error)?;
+            JsValue::Object(id)
+        } else {
+            match runtime
+                .native_to_object_jsvalue(
+                    realm,
+                    runtime
+                        .dup_jsvalue(&frame.cold.input.this_value)
+                        .map_err(runtime_error_to_vm_error)?,
+                )
+                .map_err(runtime_error_to_vm_error)?
+            {
+                NativeConversion::Value(object) => {
+                    frame.cold.normalized_this =
+                        Some(JsValue::Object(object.try_clone()?.into_handle()));
+                    JsValue::Object(object.into_handle())
+                }
+                NativeConversion::Throw(value) => {
+                    return Ok(CallStep::Complete(Completion::Throw(value)));
+                }
             }
-            NativeConversion::Throw(value) => {
-                return Ok(CallStep::Complete(Completion::Throw(value)));
-            }
-        }
-    };
-    let prepared = if string {
-        frame
-            .executable
-            .ensure_root(runtime)
-            .map_err(runtime_error_to_vm_error)?;
-        let descriptor = frame
-            .executable
-            .eval_environment(environment)?
-            .ok_or_else(|| Error::internal("eval environment index is out of bounds"))?;
-        let (locals, parameters) = execution.slots.binding_counts(&frame.window)?;
-        eval_bindings::validate(
-            runtime,
-            &frame.executable,
-            &descriptor,
-            frame.executable.metadata.strict,
-            locals,
-            parameters,
-            frame.cold.function.closures(),
-        )?;
-        Some(PreparedEvalEnvironment {
-            index: environment,
-            descriptor,
-        })
-    } else {
-        None
-    };
-    let prepared = runtime
-        .prepare_direct_eval_original(realm, invocation, prepared, |prepared| {
-            eval_bindings::materialize(
+        };
+        let prepared = if string {
+            frame
+                .executable
+                .ensure_root(runtime)
+                .map_err(runtime_error_to_vm_error)?;
+            let descriptor = frame
+                .executable
+                .eval_environment(environment)?
+                .ok_or_else(|| Error::internal("eval environment index is out of bounds"))?;
+            let (locals, parameters) = execution.slots.binding_counts(&frame.window)?;
+            eval_bindings::validate(
                 runtime,
-                prepared,
+                &frame.executable,
+                &descriptor,
+                frame.executable.metadata.strict,
+                locals,
+                parameters,
                 frame.cold.function.closures(),
-                |source, descriptor| {
-                    let binding = match source {
-                        EvalBindingSource::Local(index) => {
-                            execution.slots.local_mut(&frame.window, index)?
-                        }
-                        EvalBindingSource::Argument(index) => {
-                            execution.slots.parameter_mut(&frame.window, index)?
-                        }
-                        EvalBindingSource::Closure(_) => {
-                            return Err(Error::internal("eval closure reached owned capture"));
-                        }
-                    };
-                    super::bindings::capture_frame_binding(runtime, binding, descriptor)
-                },
-            )
-        })
-        .map_err(runtime_error_to_vm_error)?;
+            )?;
+            Some(PreparedEvalEnvironment {
+                index: environment,
+                descriptor,
+            })
+        } else {
+            None
+        };
+        runtime
+            .prepare_direct_eval_original(realm, invocation, prepared, |prepared| {
+                eval_bindings::materialize(
+                    runtime,
+                    prepared,
+                    frame.cold.function.closures(),
+                    |source, descriptor| {
+                        let binding = match source {
+                            EvalBindingSource::Local(index) => {
+                                execution.slots.local_mut(&frame.window, index)?
+                            }
+                            EvalBindingSource::Argument(index) => {
+                                execution.slots.parameter_mut(&frame.window, index)?
+                            }
+                            EvalBindingSource::Closure(_) => {
+                                return Err(Error::internal("eval closure reached owned capture"));
+                            }
+                        };
+                        super::bindings::capture_frame_binding(runtime, binding, descriptor)
+                    },
+                )
+            })
+            .map_err(runtime_error_to_vm_error)?
+    };
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
     let request = match prepared {
@@ -413,6 +418,31 @@ pub(super) fn apply(
     Ok(CallStep::Entered)
 }
 
+/// Phase 4, section 7.2: a direct call of the original eval behaves as
+/// indirect eval (global scope, `this` = global, strictness from the source).
+fn prepare_as_indirect(
+    runtime: &Runtime,
+    realm: crate::engine::heap::ContextId,
+    mut invocation: DirectEvalInvocation,
+) -> Result<DirectEvalPreparation, Error> {
+    let JsValue::String(id) = &invocation.input else {
+        return Ok(DirectEvalPreparation::Complete(Completion::Return(
+            invocation.take_input(),
+        )));
+    };
+    let source = runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .string(*id)
+        .map_err(heap_error_to_vm_error)?
+        .clone();
+    runtime
+        .prepare_indirect_string_eval(realm, &source)
+        .map_err(runtime_error_to_vm_error)
+}
+
 // Own the speculative apply snapshot until it enters the frame or falls back.
 struct ApplyArgumentsOwner {
     runtime: Runtime,
@@ -446,6 +476,10 @@ mod capture_tests {
         stack::FrameStorage,
     };
     #[test]
+    #[cfg_attr(
+        feature = "dropped-features-probe",
+        ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+    )]
     fn direct_eval_preparation_captures_exact_cells_only_after_successful_string_compile() {
         let runtime = Runtime::new();
         let context = runtime.new_context().expect("create context");

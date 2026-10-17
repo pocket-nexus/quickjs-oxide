@@ -264,6 +264,10 @@ fn shared_async_dependency_rejects_evaluation_promises_in_forward_parent_order()
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn shared_tla_completion_executes_cross_linked_parents_in_callback_realm() {
     let runtime = Runtime::new();
     let mut first_context = runtime.new_context().expect("create context");

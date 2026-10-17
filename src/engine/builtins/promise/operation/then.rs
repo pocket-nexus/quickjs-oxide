@@ -46,6 +46,10 @@ impl PromiseStep {
             RuntimeError::Invariant("Promise.then reject argv was not padded"),
         )?)?;
         let handlers = ThenHandlers::Public(inputs);
+        // phase 4, section 7.2: the new core drops Symbol.species.
+        if cfg!(feature = "dropped-features-probe") {
+            return default_capability(runtime, realm, promise, handlers);
+        }
         Ok({
             let __pending_field_key = runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
@@ -66,6 +70,21 @@ impl PromiseStep {
             )
         })
     }
+}
+/// Phase 4, section 7.2: `then` without SpeciesConstructor, on `%Promise%`.
+fn default_capability(
+    runtime: &Runtime,
+    realm: ContextId,
+    promise: ObjectRef,
+    handlers: ThenHandlers,
+) -> Result<PromiseStep, RuntimeError> {
+    Box::new(PromiseResume {
+        runtime: runtime.clone(),
+        pending_effect: super::PromiseStepPending::default(),
+        realm,
+        phase: Phase::ThenCapability { promise, handlers },
+    })
+    .capability(runtime, None)
 }
 pub(super) fn constructor(
     runtime: &Runtime,
@@ -207,6 +226,10 @@ impl PromiseStep {
         promise: ObjectRef,
         handlers: ThenHandlers,
     ) -> Result<Self, RuntimeError> {
+        // phase 4, section 7.2: the new core drops Symbol.species.
+        if cfg!(feature = "dropped-features-probe") {
+            return default_capability(runtime, realm, promise, handlers);
+        }
         Ok({
             let __pending_field_key = runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
