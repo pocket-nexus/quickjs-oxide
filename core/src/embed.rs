@@ -285,7 +285,7 @@ impl Runtime {
             kind,
             Value::string(message),
             Some(location),
-            true,
+            0,
         )
     }
 

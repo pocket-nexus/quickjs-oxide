@@ -82,18 +82,18 @@ pub(crate) fn new_error(
     kind: ErrorKind,
     message: Value,
 ) -> Result<Value, HeapError> {
-    new_error_at(cx, kind, message, None, true)
+    new_error_at(cx, kind, message, None, 0)
 }
 
 /// [`new_error`] located at `location` (its `fileName`, `lineNumber` and
 /// `columnNumber`, and the first line of its `stack`), with the running
-/// frames' backtrace after it unless `!frames`.
+/// frames' backtrace after it but the `omit` innermost ([`add_stack_at`]).
 pub(crate) fn new_error_at(
     cx: &mut Cx<'_>,
     kind: ErrorKind,
     message: Value,
     location: Option<Location<'_>>,
-    frames: bool,
+    omit: usize,
 ) -> Result<Value, HeapError> {
     let prototype = cx.realm.intrinsic(kind.prototype());
     let heap = &mut *cx.heap;
@@ -110,7 +110,7 @@ pub(crate) fn new_error_at(
     })();
     let result = result.and_then(|object| {
         cx.heap.roots().push(Value::object(object));
-        add_stack_at(cx, object, false, location, frames).map(|()| Value::object(object))
+        add_stack_at(cx, object, false, location, omit).map(|()| Value::object(object))
     });
     cx.heap.roots().truncate(mark);
     result
@@ -147,19 +147,21 @@ pub(crate) fn add_stack(
     object: ObjectId,
     skip_native: bool,
 ) -> Result<(), HeapError> {
-    add_stack_at(cx, object, skip_native, None, true)
+    add_stack_at(cx, object, skip_native, None, 0)
 }
 
 /// [`add_stack`] after QuickJS's `build_backtrace` with a `filename`: the
 /// location's own `fileName`, `lineNumber` and `columnNumber` (writable,
 /// configurable), and the backtrace's first line; the running frames follow
-/// unless `!frames` (an error of a source no frame runs).
+/// but the `omit` innermost (`usize::MAX`: an error of a source no frame
+/// runs; one: an error of a script's declaration prologue, which QuickJS
+/// checks in `js_closure2` before the script's frame exists).
 pub(crate) fn add_stack_at(
     cx: &mut Cx<'_>,
     object: ObjectId,
     skip_native: bool,
     location: Option<Location<'_>>,
-    frames: bool,
+    omit: usize,
 ) -> Result<(), HeapError> {
     let mut text = String::new();
     if let Some(Location { file, line, column }) = location {
@@ -187,33 +189,45 @@ pub(crate) fn add_stack_at(
         )?;
     }
     let vm = &cx.heap.vm;
-    let top = if frames { vm.frames.len() } else { 0 };
+    let len = vm.frames.len();
+    let top = len.saturating_sub(omit);
     let mut line_index = u32::from(location.is_some());
     let eval = Value::object(cx.realm.intrinsic(crate::Intrinsic::Eval));
     let mut sites = vm.natives.iter().rev().peekable();
+    while sites.next_if(|site| site.depth as usize > top).is_some() {}
     let mut unpositioned = Vec::new();
     for index in (0..top).rev().take(BACKTRACE_FRAMES) {
         let frame = &vm.frames[index];
         let unit = cx.code.get(frame.unit);
-        // A native this frame called and which is still running: its line,
-        // then this frame at the call.
-        let pc = match sites.next_if(|site| site.depth as usize == index + 1) {
-            Some(site) => {
-                let direct_eval =
-                    site.callee == eval && unit.direct_eval_sites.binary_search(&site.pc).is_ok();
-                // A site with no callee only places the frame (an async
-                // function's body entered from its call).
-                if let Some(callee) = site.callee.as_object()
-                    && !(skip_native && index + 1 == top)
-                    && !direct_eval
-                {
-                    let name = native_name(cx, callee);
-                    let _ = writeln!(text, "    at {name} (native)");
-                    line_index += 1;
-                }
-                Some(site.pc)
+        // The natives this frame called and which are still running (one
+        // the loop called, then those it called from Rust): their lines,
+        // innermost first, then this frame at the loop's call.
+        let mut site_pc = None;
+        let mut matched = false;
+        while let Some(site) = sites.next_if(|site| site.depth as usize == index + 1) {
+            let direct_eval =
+                site.callee == eval && unit.direct_eval_sites.binary_search(&site.pc).is_ok();
+            // A site with no callee only places the frame (an async
+            // function's body entered from its call).
+            if let Some(callee) = site.callee.as_object()
+                && !(skip_native && index + 1 == len && !matched)
+                && !direct_eval
+            {
+                let name = native_name(cx, callee);
+                let name = if name.is_empty() {
+                    "<anonymous>"
+                } else {
+                    &name
+                };
+                let _ = writeln!(text, "    at {name} (native)");
+                line_index += 1;
             }
-            None if index + 1 == top => None,
+            matched = true;
+            site_pc = (site.pc != super::NO_PC).then_some(site.pc);
+        }
+        let pc = match site_pc {
+            Some(pc) => Some(pc),
+            None if index + 1 == len => None,
             None => {
                 let above = &vm.frames[index + 1];
                 (above.flags & frame_flags::ENTRY == 0 && above.return_pc > 0)
@@ -393,6 +407,22 @@ pub(crate) fn throw(cx: &mut Cx<'_>, kind: ErrorKind, message: &str) -> Throw {
     }
 }
 
+/// A new `kind` error with `message` thrown by a script's declaration
+/// prologue: its backtrace leaves the script's own frame out, as QuickJS
+/// checks the declarations before it runs the script.
+#[cold]
+#[inline(never)]
+pub(crate) fn throw_prologue(cx: &mut Cx<'_>, kind: ErrorKind, message: &str) -> Throw {
+    let result = cx
+        .heap
+        .alloc_string(message)
+        .and_then(|text| new_error_at(cx, kind, Value::string(text), None, 1));
+    match result {
+        Ok(error) => Throw(error),
+        Err(_) => out_of_memory(cx),
+    }
+}
+
 /// A new `kind` error with `message` located at `line` and `column` of
 /// `file` (a module's source that no frame runs): its `stack` is the
 /// location alone.
@@ -429,10 +459,10 @@ fn located(
     location: Location<'_>,
     frames: bool,
 ) -> Throw {
-    let result = cx
-        .heap
-        .alloc_string(message)
-        .and_then(|text| new_error_at(cx, kind, Value::string(text), Some(location), frames));
+    let result = cx.heap.alloc_string(message).and_then(|text| {
+        let omit = if frames { 0 } else { usize::MAX };
+        new_error_at(cx, kind, Value::string(text), Some(location), omit)
+    });
     match result {
         Ok(error) => Throw(error),
         Err(_) => out_of_memory(cx),

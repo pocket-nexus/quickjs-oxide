@@ -206,15 +206,22 @@ pub(crate) fn close(
     }
 }
 
-/// Collects every value of an iterable, rooted.
+/// Collects every value of an iterable, rooted. As QuickJS's
+/// `iterator_to_array`, a throw while stepping (from `next` too) closes the
+/// iterator, keeping the first throw.
 pub(crate) fn collect(cx: &mut Cx<'_>, value: Value) -> Result<Vec<Value>, Throw> {
     let mut iter = get_iterator(cx, value)?;
     let mut values = Vec::new();
-    while let Some(value) = step(cx, &mut iter)? {
-        cx.heap.roots().push(value);
-        values.push(value);
+    loop {
+        match step(cx, &mut iter) {
+            Ok(Some(value)) => {
+                cx.heap.roots().push(value);
+                values.push(value);
+            }
+            Ok(None) => return Ok(values),
+            Err(throw) => return close(cx, &iter, Err(throw)).map(|()| values),
+        }
     }
-    Ok(values)
 }
 
 /// `CreateIterResultObject(value, done)`.

@@ -94,7 +94,11 @@ pub const NATIVE_STACK_BUDGET: usize = 1 << 20;
 /// stack overflow`: 8 MiB of values.
 pub const DEFAULT_STACK_LIMIT: u32 = 1 << 20;
 
-/// A native call made by the loop.
+/// The `pc` of a [`NativeSite`] made by a call from Rust: the caller's
+/// instruction is not known there.
+pub(crate) const NO_PC: u32 = u32::MAX;
+
+/// A native call made by the loop, or from Rust (`pc` [`NO_PC`]).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct NativeSite {
     /// The frame count when it was made: the caller is `frames[depth - 1]`.

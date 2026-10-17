@@ -396,13 +396,22 @@ fn rewrite_call(
         let Callee::Native(native @ (Native::FunctionCall | Native::FunctionApply)) = target else {
             return Ok((target, function, window, this, argc));
         };
+        let apply = function;
         function = this;
         window += 1;
         let at = base + window;
         argc = if native == Native::FunctionCall {
             arguments::call_window(cx, at, argc)?
         } else {
-            arguments::apply_window(cx, at, argc)?
+            // A throw reading the list lists `apply` in the backtrace.
+            cx.heap.vm.natives.push(super::NativeSite {
+                depth: cx.heap.vm.frames.len() as u32,
+                pc: super::NO_PC,
+                callee: apply,
+            });
+            let result = arguments::apply_window(cx, at, argc);
+            cx.heap.vm.natives.pop();
+            result?
         };
         this = cx.heap.vm.registers[at];
     }
@@ -467,15 +476,12 @@ fn construct_this(
 }
 
 /// `ToPropertyKeyOf`'s conversion of an object key: a `null` or
-/// `undefined` base throws first.
+/// `undefined` base throws first, with QuickJS's `OP_get_array_el3`
+/// message.
 #[inline(never)]
 fn to_property_key_of(cx: &mut Cx<'_>, key: Value, base: Value) -> Result<PropertyKey, Throw> {
     if base.is_null() || base.is_undefined() {
-        let base = if base.is_null() { "null" } else { "undefined" };
-        return Err(error::type_error(
-            cx,
-            &format!("cannot read property of {base}"),
-        ));
+        return Err(error::type_error(cx, "value has no property"));
     }
     ops::to_property_key(cx, key)
 }
@@ -614,7 +620,7 @@ pub(super) fn call_from_rust(
             cx.heap.vm.leave_native();
             result
         }
-        Callee::Native(native) => native::call(
+        Callee::Native(native) => native_from_rust(
             cx,
             native,
             CallSite {
@@ -628,6 +634,20 @@ pub(super) fn call_from_rust(
         ),
         Callee::NotCallable => call_exotic_from_rust(cx, function, base, argc),
     }
+}
+
+/// A native called from Rust: running, it is listed in a backtrace (QuickJS
+/// gives every C function call a stack frame).
+#[inline(never)]
+fn native_from_rust(cx: &mut Cx<'_>, native: Native, site: CallSite) -> Result<Value, Throw> {
+    cx.heap.vm.natives.push(super::NativeSite {
+        depth: cx.heap.vm.frames.len() as u32,
+        pc: super::NO_PC,
+        callee: site.function,
+    });
+    let result = native::call(cx, native, site);
+    cx.heap.vm.natives.pop();
+    result
 }
 
 /// [`call_from_rust`] for a bound function or a callable proxy.
@@ -721,7 +741,7 @@ pub(super) fn construct_from_rust(
             cx.heap.vm.leave_native();
             result
         }
-        Callee::Native(native) if native.is_constructor() => native::call(
+        Callee::Native(native) if native.is_constructor() => native_from_rust(
             cx,
             native,
             CallSite {
@@ -782,11 +802,32 @@ fn construct_exotic(
 #[cold]
 #[inline(never)]
 fn key_error(cx: &mut Cx<'_>, kind: ErrorKind, insn: Insn, before: &str, after: &str) -> Throw {
+    let mut name = property::atom_text(cx.heap, insn.key());
+    // A binding whose name was stripped (`-s`, no direct eval) is QuickJS's
+    // `JS_ATOM_NULL` in `JS_ThrowReferenceErrorUninitialized`.
+    if name.is_empty() && after == " is not initialized" {
+        name = "lexical variable".into();
+    }
+    let message = format!("{before}{name}{after}");
+    error::throw(cx, kind, &message)
+}
+
+/// [`key_error`] of a script's declaration prologue: QuickJS checks the
+/// declarations before the script's frame exists.
+#[cold]
+#[inline(never)]
+fn prologue_error(
+    cx: &mut Cx<'_>,
+    kind: ErrorKind,
+    insn: Insn,
+    before: &str,
+    after: &str,
+) -> Throw {
     let message = format!(
         "{before}{}{after}",
         property::atom_text(cx.heap, insn.key())
     );
-    error::throw(cx, kind, &message)
+    error::throw_prologue(cx, kind, &message)
 }
 
 /// A new cell (a one-slot scope object) holding `value`, which must be
@@ -1367,7 +1408,7 @@ fn declare_global(cx: &mut Cx<'_>, insn: Insn) -> Result<(), Throw> {
         }
         Opcode::CheckGlobalVar => {
             if cx.heap.lookup_own(lexical, key).is_some() {
-                return Err(key_error(
+                return Err(prologue_error(
                     cx,
                     ErrorKind::Syntax,
                     insn,
@@ -1389,7 +1430,7 @@ fn declare_global(cx: &mut Cx<'_>, insn: Insn) -> Result<(), Throw> {
                 }
             };
             if !declarable {
-                return Err(key_error(
+                return Err(prologue_error(
                     cx,
                     ErrorKind::Type,
                     insn,
@@ -1406,7 +1447,7 @@ fn declare_global(cx: &mut Cx<'_>, insn: Insn) -> Result<(), Throw> {
                     .lookup_own(global, key)
                     .is_some_and(|(_, property)| !property.has(PropertyFlags::CONFIGURABLE));
             if restricted {
-                return Err(key_error(
+                return Err(prologue_error(
                     cx,
                     ErrorKind::Syntax,
                     insn,

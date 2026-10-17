@@ -289,9 +289,14 @@ pub(super) fn lower_unlinked_tree(
     // imported environment, while the module linker uses names for its own
     // declarations and unresolved globals. Those names are semantic linker
     // metadata, not optional debug labels, so StripDebug must retain them the
-    // way QuickJS retains vardef names on these chains.
+    // way QuickJS retains vardef names on these chains. Indirect eval code
+    // (and so the `Function` constructors' source) imports no environment
+    // and strips like a script.
     let synthetic_semantic_tree = tree_functions.first().is_some_and(|function| {
-        matches!(function.kind, FunctionKind::Eval(_) | FunctionKind::Module)
+        matches!(
+            function.kind,
+            FunctionKind::Eval(EvalKind::Direct) | FunctionKind::Module
+        )
     });
     let mut retains_semantic_names = tree_functions
         .iter()

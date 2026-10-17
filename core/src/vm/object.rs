@@ -1562,7 +1562,7 @@ pub(crate) fn list_from_array_like(cx: &mut Cx<'_>, value: Value) -> Result<Vec<
         return Err(error::type_error(cx, "not a object"));
     };
     let length = length_of_array_like(cx, object)?;
-    if length > 65_535 * 16 {
+    if length > 65_534 {
         return Err(error::range_error(
             cx,
             "too many arguments in function call (only 65534 allowed)",

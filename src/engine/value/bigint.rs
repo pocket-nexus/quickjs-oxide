@@ -136,6 +136,13 @@ impl JsBigInt {
         Ok(Self::normalize(value))
     }
 
+    /// Parse plain decimal text (an optional `-` and digits) with no size
+    /// limit: a value another engine already holds, which may be one limb
+    /// past the allocation guard as `js_bigint_extend` leaves it.
+    pub(crate) fn from_decimal_unchecked(text: &str) -> Option<Self> {
+        BigInt::parse_bytes(text.as_bytes(), 10).map(Self::normalize)
+    }
+
     /// Convert an exactly integral finite binary64 value to a BigInt.
     ///
     /// This is the Number-only branch of QuickJS's BigInt constructor. The

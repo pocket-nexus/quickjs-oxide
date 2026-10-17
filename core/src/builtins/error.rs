@@ -45,7 +45,9 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
 }
 
 /// `OrdinaryCreateFromConstructor(newTarget, %NativeError.prototype%)` with
-/// the error flag, then the message and the cause.
+/// the error flag, then the message and the cause; the caller adds the
+/// `stack` last ([`add_stack`]), as QuickJS builds the backtrace after
+/// AggregateError's `errors`.
 fn construct(
     cx: &mut Cx<'_>,
     site: &CallSite,
@@ -86,8 +88,7 @@ fn construct(
     Ok(object)
 }
 
-/// The error's `stack`, its last own property (QuickJS's `build_backtrace`
-/// at the end of `js_error_constructor`).
+/// The backtrace of a constructed error, leaving out the constructor.
 fn add_stack(cx: &mut Cx<'_>, object: ObjectId) -> Result<Value, Throw> {
     vm_error::add_stack(cx, object, true).map_err(|error| vm_error::heap_error(cx, error))?;
     Ok(Value::object(object))

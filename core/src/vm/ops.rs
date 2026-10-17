@@ -816,9 +816,47 @@ pub(crate) fn instance_of(cx: &mut Cx<'_>, x: Value, f: Value) -> Result<bool, T
         let result = super::call(cx, handler, f, &[x])?;
         return Ok(to_boolean(cx.heap, result));
     }
-    if !is_callable(cx.heap, f) {
-        return Err(error::type_error(cx, "invalid 'instanceof' right operand"));
+    if !intrinsic {
+        // QuickJS's legacy case: no `@@hasInstance` at all.
+        if !is_callable(cx.heap, f) {
+            return Err(error::type_error(cx, "invalid 'instanceof' right operand"));
+        }
+        return ordinary_instance_of(cx, x, f, function);
     }
+    // The intrinsic `@@hasInstance` runs as a native in QuickJS: a throw
+    // inside lists it in the backtrace.
+    let handler = match handler.as_object() {
+        Some(_) => handler,
+        None => {
+            let key = crate::runtime::WellKnown::key(cx.realm.symbols.has_instance);
+            cx.heap
+                .lookup_own(function_prototype, key)
+                .map_or(Value::UNDEFINED, |(slot, _)| {
+                    cx.heap.get_slot(function_prototype, slot)
+                })
+        }
+    };
+    cx.heap.vm.natives.push(super::NativeSite {
+        depth: cx.heap.vm.frames.len() as u32,
+        pc: super::NO_PC,
+        callee: handler,
+    });
+    let result = if is_callable(cx.heap, f) {
+        ordinary_instance_of(cx, x, f, function)
+    } else {
+        Ok(false)
+    };
+    cx.heap.vm.natives.pop();
+    result
+}
+
+/// `OrdinaryHasInstance(f, x)` for a callable `f` (the object `function`).
+fn ordinary_instance_of(
+    cx: &mut Cx<'_>,
+    x: Value,
+    f: Value,
+    function: ObjectId,
+) -> Result<bool, Throw> {
     let Some(object) = x.as_object() else {
         return Ok(false);
     };

@@ -1092,127 +1092,167 @@ fn units_atom_text(units: &[u16]) -> String {
 
 // ---- for-in (phase 3, section 5.4) ----
 
-/// `ForInStart`: an enumeration of `value`'s enumerable string keys in the
-/// order of `EnumerateObjectProperties`: each object's own index keys
-/// ascending, then its own named keys in insertion order, then its
-/// prototype's, skipping keys seen at an earlier level (enumerable or not)
-/// and symbols. A string's indices come first; `undefined` and `null`
-/// enumerate nothing. Index keys are kept as `Int32` and named keys as their
-/// atoms; `ForInNext` turns an index into a string as it yields it.
+/// `ForInStart`: QuickJS's `build_for_in_iterator`. The enumeration keeps
+/// the object of the level it walks (slot 0), its key count (slot 1), the
+/// set of keys seen once it reaches the prototype chain (slot 2, an object
+/// with a null prototype) and its mode (slot 3, [`FOR_IN_KEYS`],
+/// [`FOR_IN_ARRAY`] or [`FOR_IN_CHAIN`]); the cursor is the payload. The
+/// keys of the level are elements in pairs: the key (an `Int32` index or an
+/// atom) and whether it is enumerable.
+///
+/// A fast array without enumerable named properties records only its
+/// element count. Any other object snapshots its own string keys, the
+/// non-enumerable ones too. The prototypes are read when the own keys run
+/// out ([`for_in_next`]); `undefined` and `null` enumerate nothing, and a
+/// primitive enumerates its wrapper.
 #[inline(never)]
 pub(crate) fn for_in_start(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw> {
-    let mut keys: Vec<Value> = Vec::new();
-    let mut seen = crate::heap::hash::FxHashSet::default();
-    let start = match value.kind() {
+    let object = match value.kind() {
         Kind::Undefined | Kind::Null => None,
         Kind::Object => value.as_object(),
-        Kind::String => {
-            let length = cx.heap.string_len(value.as_string().unwrap());
-            for index in 0..length.min(i32::MAX as usize) {
-                keys.push(Value::int32(index as i32));
-                if let Some(key) = PropertyKey::index(index as u32) {
-                    seen.insert(key);
-                }
-            }
-            Some(cx.realm.intrinsic(Intrinsic::StringPrototype))
-        }
-        Kind::Number | Kind::Int32 => Some(cx.realm.intrinsic(Intrinsic::NumberPrototype)),
-        Kind::Bool => Some(cx.realm.intrinsic(Intrinsic::BooleanPrototype)),
-        _ => Some(cx.realm.intrinsic(Intrinsic::ObjectPrototype)),
+        _ => Some(super::object::to_object(cx, value)?),
     };
     let mark = cx.heap.roots().mark();
-    cx.heap.roots().push(value);
-    let mut current = start;
-    while let Some(object) = current {
-        if cx.heap.object_kind(object).is_exotic() {
-            // Proxies, typed arrays, string wrappers and namespaces: the
-            // internal methods, which may run JavaScript.
-            cx.heap.roots().push(Value::object(object));
-            let result = for_in_exotic(cx, object, &mut keys, &mut seen);
-            match result {
-                Ok(next) => current = next,
-                Err(throw) => {
-                    cx.heap.roots().truncate(mark);
-                    return Err(throw);
+    let result = (|| {
+        let (mode, count, keys) = match object {
+            None => (FOR_IN_KEYS, 0, Vec::new()),
+            Some(object) => {
+                cx.heap.roots().push(Value::object(object));
+                match fast_array_count(cx, object) {
+                    Some(count) => (FOR_IN_ARRAY, count, Vec::new()),
+                    None => {
+                        let keys = level_keys(cx, object)?;
+                        (FOR_IN_KEYS, keys.len() as u32, keys)
+                    }
                 }
             }
-            continue;
+        };
+        let iterator = cx
+            .heap
+            .alloc_object_with_elements(ObjectKind::ForInIterator, None, 4, 2 * keys.len() as u32)
+            .map_err(|error| error::heap_error(cx, error))?;
+        // Keys are Int32 or atoms, and the object is rooted: nothing to root.
+        let heap = &mut *cx.heap;
+        let elements = heap.header(iterator).elements();
+        for (index, &(key, enumerable)) in keys.iter().enumerate() {
+            heap.values.set(elements, 2 * index as u32, key.to_value());
+            heap.values
+                .set(elements, 2 * index as u32 + 1, Value::bool(enumerable));
         }
-        let heap = &*cx.heap;
-        for key in own_keys_with_arguments(heap, object) {
-            if !seen.insert(key) {
-                continue;
-            }
-            let enumerable = match heap.lookup_own(object, key) {
-                Some((_, property)) => property.has(PropertyFlags::ENUMERABLE),
-                // Elements and mapped arguments are enumerable data.
-                None => true,
-            };
-            if !enumerable {
-                continue;
-            }
-            match key.kind() {
-                KeyKind::Index(index) => keys.push(Value::int32(index as i32)),
-                KeyKind::String(id) => keys.push(Value::string(id)),
-                KeyKind::Symbol(_) => {}
-            }
-        }
-        current = heap.prototype_of(object);
-    }
+        let level = object.map_or(Value::UNDEFINED, Value::object);
+        heap.set_raw_slot(iterator, 0, level);
+        heap.set_raw_slot(iterator, 1, Value::int32(count as i32));
+        heap.set_raw_slot(iterator, 2, Value::UNDEFINED);
+        heap.set_raw_slot(iterator, 3, Value::int32(mode));
+        heap.set_payload(iterator, 0);
+        Ok(Value::object(iterator))
+    })();
     cx.heap.roots().truncate(mark);
-    let count = keys.len() as u32;
-    let iterator = cx
-        .heap
-        .alloc_object_with_elements(ObjectKind::ForInIterator, None, 2, count)
-        .map_err(|error| error::heap_error(cx, error))?;
-    // Keys are Int32 or atoms, and `value` is in a register: nothing to root.
-    let heap = &mut *cx.heap;
-    let elements = heap.header(iterator).elements();
-    for (index, &key) in keys.iter().enumerate() {
-        heap.values.set(elements, index as u32, key);
-    }
-    heap.set_raw_slot(iterator, 0, value);
-    heap.set_raw_slot(iterator, 1, Value::int32(count as i32));
-    heap.set_payload(iterator, 0);
-    Ok(Value::object(iterator))
+    result
 }
 
-/// The for-in keys of an exotic object (`EnumerateObjectProperties`):
-/// `[[OwnPropertyKeys]]`, then `[[GetOwnProperty]]` of each string key; the
-/// next object is its `[[GetPrototypeOf]]`.
-fn for_in_exotic(
-    cx: &mut Cx<'_>,
-    object: ObjectId,
-    keys: &mut Vec<Value>,
-    seen: &mut crate::heap::hash::FxHashSet<PropertyKey>,
-) -> Result<Option<ObjectId>, Throw> {
-    for key in super::object::own_property_keys(cx, object)? {
-        if matches!(key.kind(), KeyKind::Symbol(_)) {
-            continue;
-        }
-        let Some(descriptor) = super::object::get_own_property(cx, object, key)? else {
-            continue;
-        };
-        if !seen.insert(key) || descriptor.enumerable != Some(true) {
-            continue;
-        }
-        match key.kind() {
-            KeyKind::Index(index) if index <= i32::MAX as u32 => {
-                keys.push(Value::int32(index as i32))
-            }
-            KeyKind::Index(index) => {
-                let text = index.to_string();
-                let id = cx
-                    .heap
-                    .intern(&text)
-                    .map_err(|error| error::heap_error(cx, error))?;
-                keys.push(Value::string(id));
-            }
-            KeyKind::String(id) => keys.push(Value::string(id)),
-            KeyKind::Symbol(_) => {}
+/// A for-in enumeration of an own key snapshot.
+const FOR_IN_KEYS: i32 = 0;
+/// A for-in enumeration of a fast array's element indices.
+const FOR_IN_ARRAY: i32 = 1;
+/// A for-in enumeration in the prototype chain.
+const FOR_IN_CHAIN: i32 = 2;
+
+/// The element count of `object` when QuickJS enumerates it as a fast array
+/// (an `Array` or `arguments` object in its dense form, with no enumerable
+/// named property).
+fn fast_array_count(cx: &Cx<'_>, object: ObjectId) -> Option<u32> {
+    let heap = &*cx.heap;
+    let kind = heap.object_kind(object);
+    if !matches!(kind, ObjectKind::Array | ObjectKind::Arguments)
+        || heap.header(object).has(crate::heap::object::flags::SPARSE)
+        || heap.holey.contains(&object.0)
+    {
+        return None;
+    }
+    for key in heap.own_keys(object) {
+        if let Some((_, flags)) = heap.lookup_own(object, key)
+            && flags.has(PropertyFlags::ENUMERABLE)
+            && !matches!(key.kind(), KeyKind::Symbol(_))
+        {
+            return None;
         }
     }
-    super::object::get_prototype_of(cx, object).map(|prototype| prototype.as_object())
+    let elements = heap.header(object).elements().len;
+    let length = if kind == ObjectKind::Array {
+        heap.array_length(object).min(elements)
+    } else {
+        elements
+    };
+    let mut count = 0;
+    while count < length
+        && (!heap.get_element(object, count).is_empty()
+            || super::arguments::mapped_cell(heap, object, count).is_some())
+    {
+        count += 1;
+    }
+    Some(count)
+}
+
+/// QuickJS's `JS_GetOwnPropertyNamesInternal` with `JS_GPN_SET_ENUM`: the
+/// own string keys of `object` (index keys ascending, then the others in
+/// order) and whether each is enumerable. An exotic object answers through
+/// its internal methods, which may run JavaScript.
+fn level_keys(cx: &mut Cx<'_>, object: ObjectId) -> Result<Vec<(PropertyKey, bool)>, Throw> {
+    let mut keys = Vec::new();
+    if cx.heap.object_kind(object).is_exotic() {
+        for key in super::object::own_property_keys(cx, object)? {
+            if matches!(key.kind(), KeyKind::Symbol(_)) {
+                continue;
+            }
+            let descriptor = super::object::get_own_property(cx, object, key)?;
+            let enumerable =
+                descriptor.is_some_and(|descriptor| descriptor.enumerable == Some(true));
+            keys.push((key, enumerable));
+        }
+        return Ok(keys);
+    }
+    let heap = &*cx.heap;
+    let is_array = heap.object_kind(object) == ObjectKind::Array;
+    for key in own_keys_with_arguments(heap, object) {
+        let enumerable = match key.kind() {
+            KeyKind::Symbol(_) => continue,
+            KeyKind::Index(_) => heap
+                .lookup_own(object, key)
+                .is_none_or(|(_, property)| property.has(PropertyFlags::ENUMERABLE)),
+            KeyKind::String(_) => {
+                // An array's `length` leads its named keys, as the first
+                // property of QuickJS's array shape.
+                if is_array
+                    && keys.last().is_none_or(|&(key, _): &(PropertyKey, bool)| {
+                        matches!(key.kind(), KeyKind::Index(_))
+                    })
+                {
+                    keys.push((Names::key(cx.realm.names.length), false));
+                }
+                heap.lookup_own(object, key)
+                    .is_some_and(|(_, property)| property.has(PropertyFlags::ENUMERABLE))
+            }
+        };
+        keys.push((key, enumerable));
+    }
+    if is_array
+        && !keys
+            .iter()
+            .any(|&(key, _)| key == Names::key(cx.realm.names.length))
+    {
+        keys.push((Names::key(cx.realm.names.length), false));
+    }
+    Ok(keys)
+}
+
+/// Whether `object` still has the own property `key` (QuickJS's
+/// `JS_GetOwnPropertyInternal`, through an exotic object's methods).
+fn has_own(cx: &mut Cx<'_>, object: ObjectId, key: PropertyKey) -> Result<bool, Throw> {
+    if cx.heap.object_kind(object).is_exotic() {
+        return Ok(super::object::get_own_property(cx, object, key)?.is_some());
+    }
+    Ok(super::object::ordinary_get_own(cx, object, key).is_some())
 }
 
 /// Own keys in `[[OwnPropertyKeys]]` order, with the mapped indices of an
@@ -1236,9 +1276,14 @@ fn own_keys_with_arguments(heap: &Heap, object: ObjectId) -> Vec<PropertyKey> {
     keys
 }
 
-/// `ForInNext`: the next key of `iterator` whose property still exists (a
-/// key deleted during the loop is skipped, as QuickJS does), as a string;
-/// `None` when the enumeration is exhausted.
+/// `ForInNext`: QuickJS's `js_for_in_next`. The next key of the level whose
+/// property is still an own property of that level's object, as a string;
+/// `None` when the enumeration is exhausted. When the level's keys run out,
+/// the first time the prototype chain is checked for an enumerable key (none
+/// ends the enumeration), and the own keys become the seen set: a fast
+/// array's as they are now, any other object's from its snapshot. Each
+/// prototype's keys are then read as it is reached, skipping and recording
+/// the keys seen.
 #[inline(never)]
 pub(crate) fn for_in_next(cx: &mut Cx<'_>, iterator: Value) -> Result<Option<Value>, Throw> {
     let iterator = iterator.as_object().expect("a for-in enumeration");
@@ -1246,24 +1291,124 @@ pub(crate) fn for_in_next(cx: &mut Cx<'_>, iterator: Value) -> Result<Option<Val
         let heap = &mut *cx.heap;
         let cursor = heap.header(iterator).payload;
         let count = heap.raw_slot(iterator, 1).as_int32().unwrap_or(0) as u32;
-        if cursor >= count {
+        let mode = heap.raw_slot(iterator, 3).as_int32().unwrap_or(FOR_IN_KEYS);
+        let Some(object) = heap.raw_slot(iterator, 0).as_object() else {
             return Ok(None);
-        }
-        heap.set_payload(iterator, cursor + 1);
-        let key = heap.get_element(iterator, cursor);
-        let object = heap.raw_slot(iterator, 0);
-        let property_key = match key.as_int32() {
-            Some(index) => PropertyKey::index(index as u32).expect("an index key"),
-            None => PropertyKey::atom(key.as_string().expect("a key atom")),
         };
-        if let Some(object) = object.as_object()
-            && !has(cx, object, property_key)?
-        {
+        if cursor >= count {
+            if !for_in_next_level(cx, iterator, object, mode)? {
+                cx.heap.set_raw_slot(iterator, 0, Value::UNDEFINED);
+                return Ok(None);
+            }
             continue;
         }
-        return match key.as_int32() {
-            Some(_) => super::ops::to_string(cx, key).map(Some),
-            None => Ok(Some(key)),
+        heap.set_payload(iterator, cursor + 1);
+        let key = if mode == FOR_IN_ARRAY {
+            PropertyKey::index(cursor).expect("an index key")
+        } else {
+            let key = heap.get_element(iterator, 2 * cursor);
+            let enumerable = heap.get_element(iterator, 2 * cursor + 1) == Value::TRUE;
+            let key = match key.as_int32() {
+                Some(index) => PropertyKey::index(index as u32).expect("an index key"),
+                None => PropertyKey::atom(key.as_string().expect("a key atom")),
+            };
+            if mode == FOR_IN_CHAIN {
+                let visited = heap.raw_slot(iterator, 2).as_object().expect("a seen set");
+                if super::object::ordinary_get_own(cx, visited, key).is_some() {
+                    continue;
+                }
+                super::object::create_data_property(cx, visited, key, Value::NULL)?;
+            }
+            if !enumerable {
+                continue;
+            }
+            key
+        };
+        if !has_own(cx, object, key)? {
+            continue;
+        }
+        return match key.kind() {
+            KeyKind::Index(index) => {
+                super::ops::to_string(cx, Value::int32(index as i32)).map(Some)
+            }
+            _ => Ok(Some(key.to_value())),
         };
     }
+}
+
+/// Moves a for-in enumeration whose level is exhausted to the next
+/// prototype; `false` when there is none (or, the first time, when no
+/// prototype has an enumerable key).
+#[cold]
+#[inline(never)]
+fn for_in_next_level(
+    cx: &mut Cx<'_>,
+    iterator: ObjectId,
+    object: ObjectId,
+    mode: i32,
+) -> Result<bool, Throw> {
+    if mode != FOR_IN_CHAIN {
+        // QuickJS's `js_for_in_prepare_prototype_chain_enum`.
+        let mut current = object;
+        loop {
+            let prototype = super::object::get_prototype_of(cx, current)?;
+            let Some(prototype) = prototype.as_object() else {
+                return Ok(false);
+            };
+            let mark = cx.heap.roots().mark();
+            cx.heap.roots().push(Value::object(prototype));
+            let keys = level_keys(cx, prototype);
+            cx.heap.roots().truncate(mark);
+            if keys?.iter().any(|&(_, enumerable)| enumerable) {
+                break;
+            }
+            current = prototype;
+        }
+        let seen = if mode == FOR_IN_ARRAY {
+            level_keys(cx, object)?
+        } else {
+            let heap = &*cx.heap;
+            let count = heap.raw_slot(iterator, 1).as_int32().unwrap_or(0) as u32;
+            (0..count)
+                .map(|index| {
+                    let key = heap.get_element(iterator, 2 * index);
+                    let key = match key.as_int32() {
+                        Some(index) => PropertyKey::index(index as u32).expect("an index key"),
+                        None => PropertyKey::atom(key.as_string().expect("a key atom")),
+                    };
+                    (key, false)
+                })
+                .collect()
+        };
+        let visited = cx
+            .heap
+            .alloc_object(ObjectKind::Ordinary, None, seen.len() as u32)
+            .map_err(|error| error::heap_error(cx, error))?;
+        cx.heap.set_raw_slot(iterator, 2, Value::object(visited));
+        for (key, _) in seen {
+            super::object::create_data_property(cx, visited, key, Value::NULL)?;
+        }
+        cx.heap
+            .set_raw_slot(iterator, 3, Value::int32(FOR_IN_CHAIN));
+    }
+    let prototype = super::object::get_prototype_of(cx, object)?;
+    let Some(prototype) = prototype.as_object() else {
+        return Ok(false);
+    };
+    cx.heap.set_raw_slot(iterator, 0, Value::object(prototype));
+    let keys = level_keys(cx, prototype)?;
+    for (index, &(key, enumerable)) in keys.iter().enumerate() {
+        let index = 2 * index as u32;
+        cx.heap
+            .set_element(iterator, index, key.to_value())
+            .and_then(|()| {
+                cx.heap
+                    .set_element(iterator, index + 1, Value::bool(enumerable))
+            })
+            .map_err(|error| error::heap_error(cx, error))?;
+    }
+    cx.heap
+        .set_raw_slot(iterator, 1, Value::int32(keys.len() as i32));
+    cx.heap.set_payload(iterator, 0);
+    Ok(true)
 }

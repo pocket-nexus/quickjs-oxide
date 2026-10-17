@@ -149,8 +149,8 @@ impl Entry<'_> {
             Kind::BigInt => {
                 let decimal = self.core.bigint_decimal(value).unwrap_or_default();
                 Value::BigInt(
-                    JsBigInt::parse_js_string(&decimal)
-                        .map_err(|error| RuntimeError::Internal(format!("{error:?}")))?,
+                    JsBigInt::from_decimal_unchecked(&decimal)
+                        .ok_or(RuntimeError::Invariant("a BigInt's decimal text"))?,
                 )
             }
             Kind::Symbol => Value::Symbol(SymbolRef {

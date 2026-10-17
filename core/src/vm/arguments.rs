@@ -17,7 +17,7 @@ use crate::shape::PropertyFlags;
 use crate::value::{ObjectId, ScopeId, Value};
 
 /// The most arguments a list expands to, QuickJS's `JS_MAX_LOCAL_VARS`.
-const MAX_ARGUMENTS: usize = 65_535;
+const MAX_ARGUMENTS: usize = 65_534;
 
 /// Actual argument `index` of a frame: a parameter register (read through
 /// its cell when the parameter is captured) or a kept extra argument.
@@ -368,8 +368,12 @@ pub(crate) fn list_from_array_like(cx: &mut Cx<'_>, list: Value) -> Result<usize
 }
 
 /// `AppendSpread`: appends the values `source` iterates to `array` from
-/// `index`; returns the next index. A pristine array or an `arguments`
-/// object whose iteration is unmodified is copied directly.
+/// `index`; returns the next index. A pristine array is walked directly.
+/// Anything else follows QuickJS's `js_append_enumerate`: `@@iterator` is
+/// read once to see whether it is `%Array.prototype.values%`, then again
+/// by `GetIterator`; a fast array with that method and the intrinsic
+/// `next` is copied as it stands, and any throw while stepping closes the
+/// iterator (a throw from `next` included), keeping the first throw.
 #[inline(never)]
 pub(crate) fn append_spread(
     cx: &mut Cx<'_>,
@@ -382,15 +386,73 @@ pub(crate) fn append_spread(
     let mark = cx.heap.roots().mark();
     cx.heap.roots().push(source);
     let result = (|| {
-        let mut iter = super::iter::get_iterator(cx, source)?;
-        while let Some(value) = super::iter::step(cx, &mut iter)? {
-            cx.heap
+        let mut push = |cx: &mut Cx<'_>, value: Value| {
+            let result = cx
+                .heap
                 .set_element(array, next, value)
-                .map_err(|_| error::oom(cx.realm))?;
+                .map_err(|_| error::oom(cx.realm));
             next += 1;
+            result
+        };
+        if super::iter::is_pristine_array(cx, source) {
+            let mut iter = super::iter::get_iterator(cx, source)?;
+            while let Some(value) = super::iter::step(cx, &mut iter)? {
+                push(cx, value)?;
+            }
+            return Ok(());
         }
-        Ok(Value::int32(next as i32))
+        let key = crate::runtime::WellKnown::key(cx.realm.symbols.iterator);
+        let first = property::get(cx, source, key)?;
+        let array_values = first == Value::object(cx.realm.intrinsic(Intrinsic::ArrayValues));
+        let Some(method) = super::object::get_method(cx, source, key)? else {
+            return Err(error::type_error(cx, "value is not iterable"));
+        };
+        cx.heap.roots().push(method);
+        let mut iter = super::iter::from_method(cx, source, method)?;
+        if array_values
+            && let super::iter::Iter::Protocol { next: step, .. } = iter
+            && step.as_object().is_some_and(|step| {
+                cx.heap.object_kind(step) == ObjectKind::Function
+                    && cx.heap.function_record(step).native
+                        == crate::builtins::Native::ArrayIteratorNext.index()
+            })
+            && let Some(length) = fast_array_length(cx, source)
+        {
+            let source = source.as_object().unwrap();
+            for index in 0..length {
+                let value = cx.heap.get_element(source, index);
+                push(cx, value)?;
+            }
+            return Ok(());
+        }
+        loop {
+            let value = match super::iter::step(cx, &mut iter) {
+                Ok(Some(value)) => value,
+                Ok(None) => return Ok(()),
+                Err(throw) => return super::iter::close(cx, &iter, Err(throw)),
+            };
+            if let Err(throw) = push(cx, value) {
+                return super::iter::close(cx, &iter, Err(throw));
+            }
+        }
     })();
     cx.heap.roots().truncate(mark);
-    result
+    result.map(|()| Value::int32(next as i32))
+}
+
+/// The length of `value` when it is a fast array in QuickJS's sense (dense,
+/// with an element at every index below its length).
+fn fast_array_length(cx: &Cx<'_>, value: Value) -> Option<u32> {
+    let array = value.as_object()?;
+    let heap = &*cx.heap;
+    if heap.object_kind(array) != ObjectKind::Array
+        || heap.header(array).has(crate::heap::object::flags::SPARSE)
+        || heap.holey.contains(&array.0)
+    {
+        return None;
+    }
+    let length = heap.array_length(array);
+    (0..length)
+        .all(|index| !heap.get_element(array, index).is_empty())
+        .then_some(length)
 }
