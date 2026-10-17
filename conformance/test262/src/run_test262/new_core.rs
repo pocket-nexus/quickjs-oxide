@@ -1,12 +1,12 @@
-//! The `--engine new-core` worker (phase 4 of the new core, section 7.1):
-//! the same harness order, admissions, phases and classification as the
-//! current engine's worker, over `api::new_core::test262`.
+//! The worker (new-core phase 4, section 7.1; the runner's one backend since
+//! phase 6 M2): the harness order, admissions, phases and classification
+//! over `api::core::test262`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use quickjs_oxide::engine::api::new_core::test262::{
+use quickjs_oxide::engine::api::core::test262::{
     Diagnostic, Failure, ModuleResolver, ModuleStep, Settled, Worker,
 };
 
@@ -108,7 +108,7 @@ pub(super) fn run_worker(test: NewCoreTest<'_>) -> Result<WorkerResult, String> 
     let async_test = metadata.is_async();
     let mut worker = Worker::new(
         !metadata.flags.contains("CanBlockIsFalse"),
-        Rc::new(quickjs_oxide_host::SystemHostServices::default()),
+        Box::new(quickjs_oxide_host::SystemHost::default()),
     )
     .map_err(|error| format!("create new-core worker runtime: {error}"))?;
     let goal = if exact_module.is_some_and(ExactModuleTest::is_fixture_graph) {

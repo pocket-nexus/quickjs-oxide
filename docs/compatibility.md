@@ -21,8 +21,8 @@ test oracle.
 ## Language conformance
 
 <!-- current-test262-metrics:start -->
-- 83,304 of the 83,562 Test262 variants in QuickJS 2026-06-04's scope pass (99.691%).
-- 50 executed variants fail, and 208 variants in that scope are not yet run.
+- 81,445 of the 83,562 Test262 variants in QuickJS 2026-06-04's scope pass (97.467%).
+- 1,909 executed variants fail, and 208 variants in that scope are not yet run.
 <!-- current-test262-metrics:end -->
 
 Each failing variant is one that QuickJS 2026-06-04 also fails with the same

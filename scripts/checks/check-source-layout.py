@@ -108,7 +108,7 @@ if set(re.findall(r"\bpub\s+mod\s+(\w+)", engine_code)) != {"api"}:
 # its own, the front end's (errors, strings, compile options, import
 # attributes) or `oxide-core`'s.
 core_api = rust_code_only((src / "engine/api/core/mod.rs").read_text())
-if re.search(r"\bpub\s+mod\b", core_api):
+if set(re.findall(r"\bpub\s+mod\s+(\w+)", core_api)) - {"test262"}:
     errors.append("engine::api::core must not expose its implementation modules")
 allowed_reexports = (
     "crate::engine::api::error::", "crate::engine::code::debug::",

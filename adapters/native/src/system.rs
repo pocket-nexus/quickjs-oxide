@@ -83,6 +83,31 @@ impl HostServices for SystemHostServices {
     }
 }
 
+/// The new core's host over the same system clock and time-zone rules
+/// (new-core phase 6, section 2.2); output and files are the process's.
+#[derive(Debug, Default)]
+pub struct SystemHost {
+    services: SystemHostServices,
+}
+
+impl quickjs_oxide::engine::api::core::Host for SystemHost {
+    fn now_ms(&mut self) -> f64 {
+        self.services.now_millis() as f64
+    }
+
+    fn local_tz_offset_minutes(&mut self, utc_ms: f64) -> i32 {
+        if utc_ms.is_finite() {
+            self.services.timezone_offset_minutes(utc_ms as i64)
+        } else {
+            0
+        }
+    }
+
+    fn random_seed(&mut self) -> u64 {
+        self.services.random_seed()
+    }
+}
+
 fn timezone_offset_at(time_zone: &TimeZone, unix_seconds: i64) -> i32 {
     time_zone
         .find_local_time_type(unix_seconds)

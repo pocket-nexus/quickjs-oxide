@@ -4,7 +4,10 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const stackVm = true;
+// The new core resumes a delegated generator by re-entering its loop, so a
+// yield* chain uses the host's stack; the playground bounds re-entries at 600
+// (apps/web/src/lib.rs), which a 400-deep chain stays within.
+const deepYieldStarDepth = 400;
 assert.deepEqual(process.argv.slice(2), []);
 
 const require = createRequire(import.meta.url);
@@ -147,7 +150,7 @@ const deepYieldStar = evaluate(`
     function* chain(depth) {
       return yield* (depth ? chain(depth - 1) : [42]);
     }
-    return chain(${stackVm ? 1000 : 20}).next().value;
+    return chain(${deepYieldStarDepth}).next().value;
   })()
 `);
 assert.deepEqual(
@@ -162,7 +165,7 @@ const caughtYieldStarOverflow = evaluate(`
     }
     var observed;
     try {
-      chain(${stackVm ? "Infinity" : 1000}).next();
+      chain(Infinity).next();
       observed = "missing";
     } catch (error) {
       observed = error.name + ":" + error.message;

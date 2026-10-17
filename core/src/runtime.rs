@@ -334,6 +334,10 @@ pub struct RuntimeOptions {
     pub stack_limit: u32,
     /// Bytes of host stack nested re-entries into the loop may use.
     pub native_stack_budget: usize,
+    /// Nested re-entries into the loop allowed at most (unbounded by
+    /// default): for a host whose stack the byte measure cannot see, such as
+    /// a WebAssembly engine's.
+    pub native_depth_limit: u32,
 }
 
 impl Default for RuntimeOptions {
@@ -344,6 +348,7 @@ impl Default for RuntimeOptions {
             growth: 2.0,
             stack_limit: crate::vm::DEFAULT_STACK_LIMIT,
             native_stack_budget: crate::vm::NATIVE_STACK_BUDGET,
+            native_depth_limit: u32::MAX,
         }
     }
 }
@@ -374,6 +379,7 @@ impl Runtime {
         heap.gc.growth_factor = options.growth;
         heap.vm.limit = options.stack_limit;
         heap.vm.native_budget = options.native_stack_budget;
+        heap.vm.native_depth = options.native_depth_limit;
         let root = |heap: &mut Heap, object: ObjectId| {
             heap.add_fixed_root(Value::object(object));
             object

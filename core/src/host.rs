@@ -58,9 +58,7 @@ pub trait Host {
     /// The initial state of `Math.random`. The default derives it from the
     /// system clock, as QuickJS seeds from host time.
     fn random_seed(&mut self) -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(1, |elapsed| elapsed.as_nanos() as u64)
+        crate::clock::time_seed()
     }
 
     /// `HostPromiseRejectionTracker(promise, operation)`. The promise is a

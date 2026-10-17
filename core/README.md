@@ -18,8 +18,9 @@ phase 4 (the builtins, strings and the full language surface) is planned in
 [`docs/performance/new-core-phase4.md`](../docs/performance/new-core-phase4.md)
 and measured in [`docs/performance/new-core-phase4-results.md`](../docs/performance/new-core-phase4-results.md).
 As of phase 4 the core runs every construct the current compiler accepts
-except the five phase 0 dropped, all 37 suite programs, and Test262 on
-`run-test262 --engine new-core`.
+except the five phase 0 dropped, all 37 suite programs, and Test262. Since
+phase 6 M2 it is the engine `run-test262` and the web playground run, through
+the embedding API `api::core` ([phase 6](../docs/performance/new-core-phase6.md)).
 
 The crate has `#![forbid(unsafe_code)]` and one dependency, the
 regular-expression crate `oxide-regexp` (`regexp/`, phase 3 section 6.1),

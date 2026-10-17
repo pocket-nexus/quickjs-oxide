@@ -109,11 +109,52 @@ def compiled_inventory(features=False, test_filter=None):
     return {line.removesuffix(': test') for line in result.splitlines() if line.endswith(': test')}
 
 
+LEDGER = ROOT / 'docs/deviations.md'
+FIXTURE_GATES = ROOT / 'dev-support/quickjs-fixture-gates.tsv'
+LEDGER_ENTRY = re.compile(r'^### ([A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3})$', re.MULTILINE)
+# The fields every new-core entry carries (new-core phase 6, section 5).
+NEWCORE_FIELDS = ('Status', 'Surface', 'Authority', 'Required behavior',
+                  'Baseline evidence', 'Acceptance', 'Specification')
+
+
+def ledger_entries():
+    """The deviation ledger's entry identifiers; checks the new-core entries'
+    form and that every fixture attribution names an entry."""
+    text = LEDGER.read_text()
+    found = LEDGER_ENTRY.findall(text)
+    if len(found) != len(set(found)):
+        fail('deviation ledger repeats an entry identifier')
+    entries = set(found)
+    bodies = re.split(r'^### ', text, flags=re.MULTILINE)[1:]
+    for body in bodies:
+        name = body.split('\n', 1)[0].strip()
+        if not name.startswith('NEWCORE-'):
+            continue
+        for field in NEWCORE_FIELDS:
+            if not re.search(rf'^- {re.escape(field)}:\s', body, re.MULTILINE):
+                fail(f'deviation ledger entry {name} lacks its {field} field')
+    newcore = {entry for entry in entries if entry.startswith('NEWCORE-')}
+    expected = {'NEWCORE-WITH-001', 'NEWCORE-UNSCOPABLES-001', 'NEWCORE-DIRECT-EVAL-001',
+                'NEWCORE-REALMS-001', 'NEWCORE-SPECIES-001'}
+    if newcore != expected:
+        fail(f'deviation ledger new-core entries differ: {sorted(newcore ^ expected)}')
+    rows = FIXTURE_GATES.read_text().splitlines()
+    header = rows[0].split('\t')
+    if 'deviation' in header:
+        column = header.index('deviation')
+        for row in rows[1:]:
+            value = row.split('\t')[column]
+            if value != '-' and value not in entries:
+                fail(f'fixture gate {row.split(chr(9))[0]} names no ledger entry: {value}')
+    return entries
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--compiled', action='store_true')
     args = parser.parse_args()
     counts = inventory()
+    entries = ledger_entries()
     subprocess.run(['node', 'scripts/checks/check-oracle-helper-duplication.mjs'], cwd=ROOT, check=True)
     if args.compiled:
         default = compiled_inventory()
@@ -123,6 +164,7 @@ def main():
             fail('compiled test counts do not match registered source tests')
         if not default <= host or host - default != filtered or len(filtered) != counts[True]:
             fail('host feature/filter changes tests outside the registered host modules')
+        print(f'Deviation ledger: {len(entries)} entries.')
         print(f'Compiled oracle inventory matches: {len(default)} default / {len(host)} host / {len(filtered)} host-filtered tests.')
 
 

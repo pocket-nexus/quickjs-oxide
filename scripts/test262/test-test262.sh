@@ -57,11 +57,11 @@ case $spec_arg in
 esac
 [[ -f "$spec" && ! -L "$spec" ]] || die "spec is not a regular file: $spec_arg"
 
-required_keys='schema milestone quickjs test262 test262_patch_sha256 test262_config_sha256 test262_metadata_records test262_metadata_sha256 engine_fingerprint_tool engine_fingerprint_tool_lines engine_fingerprint_tool_sha256 engine_semantics_files engine_semantics_trees engine_semantics_sha256 upstream upstream_lines upstream_sha256 admissions admissions_lines admissions_sha256 profile profile_lines profile_sha256 negative_diagnostics negative_diagnostics_lines negative_diagnostics_sha256 negative_diagnostic_rules negative_diagnostic_rules_lines negative_diagnostic_rules_sha256 negative_diagnostic_audit_tool negative_diagnostic_audit_tool_lines negative_diagnostic_audit_tool_sha256 negative_diagnostic_exemptions negative_diagnostic_exemptions_lines negative_diagnostic_exemptions_sha256 manifest manifest_lines manifest_sha256 focused_tsv focused_tsv_lines focused_tsv_sha256 focused_jsonl focused_jsonl_lines focused_jsonl_sha256 mode timeout_ms focused_variants focused_eligible focused_runnable focused_passes focused_summary full_variants full_eligible full_runnable full_passes full_tsv_lines full_tsv_body_sha256 full_jsonl_lines full_jsonl_body_sha256 full_summary'
+required_keys='schema milestone quickjs test262 test262_patch_sha256 test262_config_sha256 test262_metadata_records test262_metadata_sha256 engine_fingerprint_tool engine_fingerprint_tool_lines engine_fingerprint_tool_sha256 engine_semantics_files engine_semantics_trees engine_semantics_sha256 upstream upstream_lines upstream_sha256 admissions admissions_lines admissions_sha256 profile profile_lines profile_sha256 negative_diagnostics negative_diagnostics_lines negative_diagnostics_sha256 negative_diagnostic_rules negative_diagnostic_rules_lines negative_diagnostic_rules_sha256 negative_diagnostic_audit_tool negative_diagnostic_audit_tool_lines negative_diagnostic_audit_tool_sha256 negative_diagnostic_exemptions negative_diagnostic_exemptions_lines negative_diagnostic_exemptions_sha256 manifest manifest_lines manifest_sha256 focused_tsv focused_tsv_lines focused_tsv_sha256 focused_jsonl focused_jsonl_lines focused_jsonl_sha256 mode timeout_ms focused_variants focused_eligible focused_runnable focused_passes focused_summary full_variants full_eligible full_runnable full_passes full_tsv_lines full_tsv_body_sha256 full_jsonl_lines full_jsonl_body_sha256 full_summary dropped_variants dropped_variants_lines dropped_variants_sha256 dropped_variants_count'
 
-# The new core's spec (phase 4, section 7.1) names its engine and the frozen
-# list of variants the dropped features cost; the current engine's has neither.
-optional_keys='engine dropped_variants dropped_variants_lines dropped_variants_sha256 dropped_variants_count'
+# The spec names the frozen list of variants the dropped features cost (new-core
+# phase 4, section 7.1); nothing is optional since the runner has one backend.
+optional_keys=''
 
 # Parse as inert data. In particular, this gate never sources or evaluates a spec.
 awk -v required="$required_keys" -v optional="$optional_keys" '
@@ -403,23 +403,6 @@ validate_summary_contract() {
 validate_summary_contract focused
 validate_summary_contract full
 
-engine=current
-if grep -q '^engine=' "$spec"; then
-    engine=$(spec_value engine)
-fi
-case $engine in
-    current)
-        ! grep -q '^dropped_variants' "$spec" \
-            || die 'the current engine has no dropped-variant list'
-        ;;
-    new-core)
-        for key in dropped_variants dropped_variants_lines dropped_variants_sha256 \
-            dropped_variants_count; do
-            grep -q "^$key=" "$spec" || die "missing Test262 spec key: $key"
-        done
-        ;;
-    *) die "unknown Test262 engine in spec: $engine" ;;
-esac
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/quickjs-oxide-test262.XXXXXX")
 trap 'rm -rf -- "$tmp"' EXIT
@@ -441,13 +424,8 @@ engine_fingerprint_tool=$(repo_path engine_fingerprint_tool)
 output_dir=$root/target
 [[ ! -e "$output_dir" || (-d "$output_dir" && ! -L "$output_dir") ]] \
     || die 'target output directory must not be a symbolic link'
-if [[ "$engine" == current ]]; then
-    full_report=$output_dir/test262-full.tsv
-    full_json=$output_dir/test262-full.jsonl
-else
-    full_report=$output_dir/test262-$engine-full.tsv
-    full_json=$output_dir/test262-$engine-full.jsonl
-fi
+full_report=$output_dir/test262-full.tsv
+full_json=$output_dir/test262-full.jsonl
 
 
 check_file "$engine_fingerprint_tool" "$(spec_value engine_fingerprint_tool_lines)" \
@@ -474,14 +452,12 @@ node "$negative_diagnostic_audit_tool" --check \
     --contracts "$negative_diagnostics" --rules "$negative_diagnostic_rules"
 check_file "$manifest" "$(spec_value manifest_lines)" \
     "$(spec_value manifest_sha256)" 'focused manifest'
-if [[ "$engine" == new-core ]]; then
-    dropped_variants=$(repo_path dropped_variants)
-    check_file "$dropped_variants" "$(spec_value dropped_variants_lines)" \
-        "$(spec_value dropped_variants_sha256)" 'dropped-variant list'
-    [[ "$(spec_value dropped_variants_count)" =~ ^(0|[1-9][0-9]*)$ \
-        && $(( $(line_count "$dropped_variants") - 1 )) == "$(spec_value dropped_variants_count)" ]] \
-        || die 'dropped-variant count does not match its list'
-fi
+dropped_variants=$(repo_path dropped_variants)
+check_file "$dropped_variants" "$(spec_value dropped_variants_lines)" \
+    "$(spec_value dropped_variants_sha256)" 'dropped-variant list'
+[[ "$(spec_value dropped_variants_count)" =~ ^(0|[1-9][0-9]*)$ \
+    && $(( $(line_count "$dropped_variants") - 1 )) == "$(spec_value dropped_variants_count)" ]] \
+    || die 'dropped-variant count does not match its list'
 [[ "$(toml_value quickjs version "$upstream")" == "$(spec_value quickjs)" \
     && "$(toml_value test262 commit "$upstream")" == "$(spec_value test262)" \
     && "$(toml_value test262 patch_sha256 "$upstream")" \
@@ -623,7 +599,7 @@ if [[ "$mode" == focused ]]; then
         "$(spec_value negative_diagnostic_exemptions_sha256)" \
         --manifest "$manifest" --report "$replay" \
         --engine-semantics-sha256 "$workspace_engine_semantics_sha256" \
-        --mode "$(spec_value mode)" --workers "$workers" --engine "$engine" \
+        --mode "$(spec_value mode)" --workers "$workers" \
         --timeout-ms "$(spec_value timeout_ms)" --allow-failures)
     printf '%s\n' "$run_output"
     assert_workspace_engine_unchanged 'focused execution'
@@ -658,7 +634,7 @@ run_output=$("$runner" --suite "$suite" --config "$source_dir/test262.conf" \
     "$(spec_value negative_diagnostic_exemptions_sha256)" \
     --all --report "$full_report" \
     --engine-semantics-sha256 "$workspace_engine_semantics_sha256" \
-    --mode "$(spec_value mode)" --workers "$workers" --engine "$engine" \
+    --mode "$(spec_value mode)" --workers "$workers" \
     --timeout-ms "$(spec_value timeout_ms)" --allow-failures)
 printf '%s\n' "$run_output"
 assert_workspace_engine_unchanged 'full execution'

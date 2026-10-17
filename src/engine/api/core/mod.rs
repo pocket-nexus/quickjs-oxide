@@ -9,6 +9,8 @@ mod error;
 mod module;
 mod property;
 mod runtime;
+#[cfg(feature = "test262-host")]
+pub mod test262;
 mod value;
 
 pub use context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};

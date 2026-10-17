@@ -2,20 +2,24 @@
 //! worker runtime with `$262`, `print` captured instead of written, the
 //! harness and the test as separate scripts, an exact module resolver
 //! supplied by the runner, and diagnostics read without running
-//! JavaScript. The runner's `--engine new-core` backend is its only user.
+//! JavaScript. The Test262 runner is its only user (new-core phase 6,
+//! section 2.5).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use oxide_core::Runtime;
 use oxide_core::heap::gc::Handle;
 use oxide_core::vm::compile::{CompileError, Compiler};
 use oxide_core::vm::module::{ModuleHost, ModulePhase, ModuleSource};
+use oxide_core::{Runtime, RuntimeOptions};
 
-use super::{NewCoreError, NewCoreOptions, core_error_kind};
+use super::compile::{
+    ModuleCompileError, compile_for_core, compile_module, core_error_kind, run_agent_script,
+};
 use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::compiler::compile_unlinked_script_bytes_with_filename;
+use crate::engine::compiler::register::LowerError;
 use crate::engine::compiler::register::{lower_script, tree_has_import_call};
 use crate::source::coordinates::QuickJsSourceLocator;
 
@@ -107,18 +111,16 @@ pub struct Worker {
 
 impl Worker {
     /// A runtime with `$262` and the agent host, `print` captured, the
-    /// clock and time zone of `services`.
-    pub fn new(
-        can_block: bool,
-        services: Rc<dyn crate::engine::host::HostServices>,
-    ) -> Result<Worker, String> {
-        let options = NewCoreOptions {
-            test262: true,
-            cannot_block: !can_block,
-            services: Some(services),
-            ..NewCoreOptions::default()
-        };
-        let mut runtime = super::runtime(&options).map_err(|error| error.to_string())?;
+    /// clock and time zone of `host`.
+    pub fn new(can_block: bool, host: Box<dyn oxide_core::host::Host>) -> Result<Worker, String> {
+        let failed = |error: oxide_core::HeapError| error.to_string();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).map_err(failed)?;
+        runtime.set_host(host);
+        runtime.set_can_block(can_block);
+        runtime.set_compiler(compile_for_core);
+        runtime.install_print().map_err(failed)?;
+        runtime.install_test262_host().map_err(failed)?;
+        runtime.set_script_runner(run_agent_script);
         runtime.capture_output();
         runtime.set_module_host(ModuleHost {
             normalize: normalize_module,
@@ -149,7 +151,7 @@ impl Worker {
         )
         .map_err(|error| compile_failure(&error, source.as_bytes()))?;
         let lowered = lower_script(&mut self.runtime, &script)
-            .map_err(|error| lower_failure(error.into(), source.as_bytes()))?;
+            .map_err(|error| lower_failure(error, source.as_bytes()))?;
         let function = self
             .runtime
             .hold(oxide_core::Value::object(lowered.function));
@@ -329,10 +331,12 @@ fn compile_failure(error: &Error, source: &[u8]) -> Failure {
     })
 }
 
-fn lower_failure(error: NewCoreError, source: &[u8]) -> Failure {
+fn lower_failure(error: LowerError, source: &[u8]) -> Failure {
     match error {
-        NewCoreError::Unsupported(construct) => Failure::Unsupported(construct),
-        NewCoreError::Compile(error) => compile_failure(&error, source),
+        LowerError::Unsupported(construct) => Failure::Unsupported(construct),
+        LowerError::Syntax(message) => {
+            compile_failure(&Error::new(ErrorKind::Syntax, message), source)
+        }
         other => Failure::Internal(other.to_string()),
     }
 }
@@ -375,14 +379,14 @@ fn load_module(
         *state.load_error.borrow_mut() = diagnostic;
         error
     };
-    match super::compile_module(compiler, name, source.as_bytes(), DebugInfoMode::Full) {
+    match compile_module(compiler, name, source.as_bytes(), DebugInfoMode::Full) {
         Ok((module, root)) => {
             if tree_has_import_call(compiler.code(), root) {
                 state.dynamic_import.set(true);
             }
             Ok(module)
         }
-        Err(super::ModuleCompileError::Front(error)) => {
+        Err(ModuleCompileError::Front(error)) => {
             let diagnostic = match compile_failure(&error, source.as_bytes()) {
                 Failure::Thrown(diagnostic) => Some(diagnostic),
                 _ => None,
@@ -392,7 +396,7 @@ fn load_module(
                 diagnostic,
             ))
         }
-        Err(super::ModuleCompileError::Core(error)) => Err(failed(error, None)),
+        Err(ModuleCompileError::Core(error)) => Err(failed(error, None)),
     }
 }
 
