@@ -20,6 +20,8 @@ The engine uses a single `ExecCode` word stream and a stack VM. The compiler pub
 - [New core, phase 3 results](new-core-phase3-results.md): the cache slopes and hit paths milestone by milestone, the loop's size, and the exit tables.
 - [New core, phase 4](new-core-phase4.md): the native ABI, the exotic object kinds, ropes, iteration without allocation, generators and async, classes and the rest of the language surface, the builtins port in Test262 order, the Test262 runner on the new core, Octane and AWFY, with milestones and the 3.0 floor.
 - [New core, phase 4 results](new-core-phase4-results.md): Test262 on the new core with the frozen dropped-variant list, the convergence fixes, and the exit tables over the 37 suite programs with the floor read.
+- [New core, phase 5](new-core-phase5.md): taken after phase 6, item by item: the heap cap as a policy, reclaiming dynamic code, code images and heap snapshots, the 32-bit gate target and `oxide-core` without the standard library, the optional generational collector, each with its acceptance and tables.
+- [New core, phase 6](new-core-phase6.md), which runs before phase 5: the embedding API over the new core with `RuntimeOptions` and `MemoryReport`, every consumer switched, the deletion of the old core, the five deviation-ledger entries, the documentation rewrite, the line-count record and release 0.3.0, with milestones and the exit condition.
 
 ## Tools
 
