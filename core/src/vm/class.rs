@@ -110,7 +110,7 @@ fn class_op_rooted(
                 return Err(super_base_error(cx, base, key));
             };
             // QuickJS's call form reads with `base` as the receiver.
-            let receiver = if insn.c != 0 {
+            let receiver = if insn.imm != 0 {
                 Value::object(base)
             } else {
                 receiver

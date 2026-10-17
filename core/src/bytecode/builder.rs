@@ -12,8 +12,6 @@ use crate::vm::ic::{FIELD_NO_SITE, GLOBAL_NO_SITE, IcKind};
 pub struct CodeBuilder {
     code: Vec<Insn>,
     handlers: Vec<Handler>,
-    lines: Vec<u32>,
-    line: u32,
 }
 
 impl CodeBuilder {
@@ -27,11 +25,6 @@ impl CodeBuilder {
         self.code.len() as u32
     }
 
-    /// The source line recorded for instructions emitted from now on.
-    pub fn set_line(&mut self, line: u32) {
-        self.line = line;
-    }
-
     #[track_caller]
     fn push(&mut self, format: Format, insn: Insn) -> u32 {
         debug_assert_eq!(
@@ -42,7 +35,6 @@ impl CodeBuilder {
         );
         let pc = self.pc();
         self.code.push(insn);
-        self.lines.push(self.line);
         pc
     }
 
@@ -201,7 +193,7 @@ impl CodeBuilder {
             debug: DebugInfo {
                 name: layout.name.into(),
                 filename: layout.filename,
-                lines: self.lines.into(),
+                positions: Box::new([]),
             },
             name_atom: layout.name_atom,
             length: layout.length,

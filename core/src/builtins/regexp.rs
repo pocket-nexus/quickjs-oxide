@@ -168,14 +168,15 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
         }
         new_target
     };
+    // `P` and `F`, converted by `RegExpInitialize` after the allocation.
     let (source, flags) = if let Some(object) = regexp_object(cx, pattern) {
         let record = cx.regexps.get(cx.heap.header(object).payload);
         let flags = if flags.is_undefined() {
-            record.flags
+            Value::string(record.flags)
         } else {
-            atom(cx, flags)?
+            flags
         };
-        (record.source, flags)
+        (Value::string(record.source), flags)
     } else if pattern_is_regexp {
         let object = pattern.as_object().unwrap();
         let names = cx.realm.names;
@@ -187,32 +188,23 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
             flags
         };
         root(cx, flags);
-        let source = if source.is_undefined() {
-            cx.realm.names.empty
-        } else {
-            atom(cx, source)?
-        };
-        let flags = if flags.is_undefined() {
-            cx.realm.names.empty
-        } else {
-            atom(cx, flags)?
-        };
         (source, flags)
     } else {
-        let source = if pattern.is_undefined() {
-            cx.realm.names.empty
-        } else {
-            atom(cx, pattern)?
-        };
-        let flags = if flags.is_undefined() {
-            cx.realm.names.empty
-        } else {
-            atom(cx, flags)?
-        };
-        (source, flags)
+        (pattern, flags)
     };
     let prototype =
         internal::prototype_from_constructor(cx, new_target, Intrinsic::RegExpPrototype)?;
+    root(cx, Value::object(prototype));
+    let source = if source.is_undefined() {
+        cx.realm.names.empty
+    } else {
+        atom(cx, source)?
+    };
+    let flags = if flags.is_undefined() {
+        cx.realm.names.empty
+    } else {
+        atom(cx, flags)?
+    };
     crate::vm::regexp::regexp_object_with(cx, source, flags, prototype)
 }
 
@@ -634,9 +626,11 @@ fn builtin_match(
     object: ObjectId,
     string: StringId,
 ) -> Result<Option<RegExpMatch>, Throw> {
+    // `ToLength(lastIndex)` may recompile the expression (`compile`): the
+    // flags and the program are read after it.
+    let start = last_index(cx, object)?;
     let flags = flags_of(cx, object);
     let moves = flags.contains(RegExpFlags::GLOBAL) || flags.contains(RegExpFlags::STICKY);
-    let start = last_index(cx, object)?;
     let start = if moves { start } else { 0 };
     let length = cx.heap.string_len(string) as u64;
     if start > length {
@@ -1286,6 +1280,9 @@ fn replace_pristine(
             accumulated.extend(replaced);
             next_position = range.end;
         }
+        if accumulated.len() > super::string::MAX_STRING {
+            return Err(error::range_error(cx, "invalid string length"));
+        }
     }
     if next_position < text.len() {
         accumulated.extend_from_slice(&text[next_position..]);
@@ -1344,14 +1341,8 @@ fn substitute_with_groups(
                 .and_then(|(_, value)| value.clone()),
         )
     };
-    Ok(substitution(
-        text,
-        position,
-        matched,
-        captures,
-        &lookup,
-        replacement,
-    ))
+    substitution(text, position, matched, captures, &lookup, replacement)
+        .ok_or_else(|| error::range_error(cx, "invalid string length"))
 }
 
 /// `RegExp.prototype[Symbol.search](string)`.

@@ -110,11 +110,11 @@ macro_rules! unary {
 unary! {
     abs => f64::abs;
     acos => f64::acos;
-    acosh => f64::acosh;
+    acosh => fdlibm_acosh;
     asin => f64::asin;
     asinh => f64::asinh;
     atan => f64::atan;
-    atanh => f64::atanh;
+    atanh => fdlibm_atanh;
     cbrt => f64::cbrt;
     ceil => f64::ceil;
     cos => f64::cos;
@@ -136,6 +136,51 @@ unary! {
     tan => f64::tan;
     tanh => f64::tanh;
     trunc => f64::trunc;
+}
+
+/// fdlibm's `atanh`, as the current engine computes it: `f64::atanh`'s
+/// single expression loses thousands of ULPs next to -1.
+fn fdlibm_atanh(value: f64) -> f64 {
+    let magnitude = value.abs();
+    // Tiny inputs are their own correctly rounded result (and keep -0).
+    if magnitude < f64::from_bits(0x3e30_0000_0000_0000) {
+        return value;
+    }
+    if magnitude > 1.0 || value.is_nan() {
+        return f64::NAN;
+    }
+    if magnitude == 1.0 {
+        return f64::INFINITY.copysign(value);
+    }
+    let result = if magnitude < 0.5 {
+        let twice = magnitude + magnitude;
+        0.5 * (twice + twice * magnitude / (1.0 - magnitude)).ln_1p()
+    } else {
+        0.5 * ((magnitude + magnitude) / (1.0 - magnitude)).ln_1p()
+    };
+    result.copysign(value)
+}
+
+/// fdlibm's `acosh`: `ln(x + sqrt(x² - 1))` loses dozens of ULPs just above
+/// one.
+fn fdlibm_acosh(value: f64) -> f64 {
+    if value.is_nan() || value < 1.0 {
+        return f64::NAN;
+    }
+    if value == 1.0 {
+        return 0.0;
+    }
+    if value.is_infinite() {
+        return value;
+    }
+    if value < 2.0 {
+        let delta = value - 1.0;
+        return (delta + (delta * delta + 2.0 * delta).sqrt()).ln_1p();
+    }
+    if value < 268_435_456.0 {
+        return (2.0 * value - 1.0 / (value + (value * value - 1.0).sqrt())).ln();
+    }
+    value.ln() + std::f64::consts::LN_2
 }
 
 fn sign_of(value: f64) -> f64 {

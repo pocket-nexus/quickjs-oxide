@@ -87,6 +87,33 @@ impl Variant {
     }
 }
 
+/// The engine a worker runs the test on (phase 4 of the new core,
+/// section 7.1).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Engine {
+    Current,
+    NewCore,
+}
+
+impl Engine {
+    const ENVIRONMENT: &str = "TEST262_ENGINE";
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::NewCore => "new-core",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "current" => Ok(Self::Current),
+            "new-core" => Ok(Self::NewCore),
+            _ => Err(format!("unknown Test262 engine: {value}")),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TestMode {
     DefaultSloppy,
@@ -139,6 +166,7 @@ struct CoordinatorOptions {
     timeout: Duration,
     workers: usize,
     allow_failures: bool,
+    engine: Engine,
 }
 
 #[derive(Clone, Debug)]
@@ -150,6 +178,7 @@ struct WorkerOptions {
     variant: Variant,
     allow_async_host: bool,
     allow_agent_host: bool,
+    engine: Engine,
 }
 
 #[derive(Clone, Debug)]
@@ -322,6 +351,7 @@ fn parse_args(arguments: impl Iterator<Item = OsString>) -> Result<Invocation, S
     let mut metadata_records = None;
     let mut allow_async_host = false;
     let mut allow_agent_host = false;
+    let mut engine = None;
     let mut index = 0;
     while index < arguments.len() {
         let argument = &arguments[index];
@@ -338,6 +368,7 @@ fn parse_args(arguments: impl Iterator<Item = OsString>) -> Result<Invocation, S
             "--worker-one" => {}
             "--allow-async-host" => allow_async_host = true,
             "--allow-agent-host" => allow_agent_host = true,
+            "--engine" => engine = Some(Engine::parse(&take_value("--engine")?)?),
             "--suite" => suite = Some(PathBuf::from(take_value("--suite")?)),
             "--config" => config = Some(PathBuf::from(take_value("--config")?)),
             "--admissions" => {
@@ -439,6 +470,14 @@ fn parse_args(arguments: impl Iterator<Item = OsString>) -> Result<Invocation, S
     }
 
     let suite = suite.ok_or_else(|| "--suite is required".to_owned())?;
+    let engine_explicit = engine.is_some();
+    let engine = match engine {
+        Some(engine) => engine,
+        None => match env::var(Engine::ENVIRONMENT) {
+            Ok(value) if !value.is_empty() => Engine::parse(&value)?,
+            _ => Engine::Current,
+        },
+    };
     if let Some(records) = metadata_records {
         if worker
             || all
@@ -461,6 +500,7 @@ fn parse_args(arguments: impl Iterator<Item = OsString>) -> Result<Invocation, S
             || workers.is_some()
             || allow_async_host
             || allow_agent_host
+            || engine_explicit
         {
             return Err("--validate-metadata cannot be combined with execution options".to_owned());
         }
@@ -500,6 +540,7 @@ fn parse_args(arguments: impl Iterator<Item = OsString>) -> Result<Invocation, S
             variant: variant.ok_or_else(|| "--worker-one requires --variant".to_owned())?,
             allow_async_host,
             allow_agent_host,
+            engine,
         }));
     }
     if allow_async_host {
@@ -556,6 +597,7 @@ fn parse_args(arguments: impl Iterator<Item = OsString>) -> Result<Invocation, S
         timeout: Duration::from_millis(timeout_ms),
         workers: workers.unwrap_or_else(default_worker_count),
         allow_failures,
+        engine,
     })))
 }
 
@@ -573,6 +615,7 @@ usage: run-test262 --suite DIR --config FILE --admissions FILE --admissions-sha2
   --mode MODE          both, strict, sloppy, default-strict, or default-sloppy\n\
   --timeout-ms N       hard per-variant worker timeout (default: {DEFAULT_TIMEOUT_MS})\n\
   --workers N          maximum concurrent subprocesses (default: {default_workers})\n\
+  --engine ENGINE      current (default) or new-core; also TEST262_ENGINE\n\
   --allow-failures     record a baseline without returning a failing status\n\
   --validate-metadata FILE\n\
                        serialize the complete pinned metadata inventory\n\
@@ -818,6 +861,7 @@ fn run_coordinator(options: &CoordinatorOptions) -> Result<bool, String> {
             timeout: options.timeout,
             allow_async_host: oxide_profile.allows_async_execution(),
             allow_agent_host: test.allow_agent_host,
+            engine: options.engine,
         })
     })?;
     for (job, mut result) in runnable_jobs.iter().zip(worker_results) {

@@ -724,23 +724,16 @@ fn copy_set(cx: &mut Cx<'_>, set: ObjectId) -> Result<ObjectId, Throw> {
     Ok(result)
 }
 
-/// Visits the entries of `set` present when called, in order, also while
-/// `visit` adds or deletes entries: the bound is a cursor too.
+/// Visits the entries of `set` in order while `visit` adds or deletes
+/// entries, up to its current end: the specification's index loops, which
+/// re-read the size after each call.
 fn each_original(
     cx: &mut Cx<'_>,
     set: ObjectId,
     mut visit: impl FnMut(&mut Cx<'_>, Value) -> Result<bool, Throw>,
 ) -> Result<bool, Throw> {
     let cursor = cx.heap.table_cursor(set);
-    let end = cx.heap.table_cursor(set);
-    end.set(cx.heap.table(set).entries() as u32);
-    while cursor.get() < end.get() {
-        let Some((key, _)) = cx.heap.table_next(set, &cursor) else {
-            break;
-        };
-        if cursor.get() > end.get() {
-            break;
-        }
+    while let Some((key, _)) = cx.heap.table_next(set, &cursor) {
         let mark = cx.heap.roots().mark();
         root(cx, key);
         let result = visit(cx, key);
@@ -757,9 +750,18 @@ fn each_original(
 fn each_key(
     cx: &mut Cx<'_>,
     record: &SetRecord,
+    visit: impl FnMut(&mut Cx<'_>, Value) -> Result<bool, Throw>,
+) -> Result<bool, Throw> {
+    let iterator = record.keys(cx)?;
+    each_of(cx, iterator, visit)
+}
+
+/// [`each_key`] over an iterator already opened.
+fn each_of(
+    cx: &mut Cx<'_>,
+    mut iterator: iter::Iter,
     mut visit: impl FnMut(&mut Cx<'_>, Value) -> Result<bool, Throw>,
 ) -> Result<bool, Throw> {
-    let mut iterator = record.keys(cx)?;
     while let Some(value) = iter::step(cx, &mut iterator)? {
         let value = canonical(value);
         let mark = cx.heap.roots().mark();
@@ -782,8 +784,10 @@ pub(super) fn set_union(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
     let set = this_collection(cx, &site, InternalTag::Set, "Set")?;
     let other = site.arg(cx, 0);
     let record = set_record(cx, other)?;
+    // The copy follows the read of the keys iterator's `next`.
+    let iterator = record.keys(cx)?;
     let result = copy_set(cx, set)?;
-    each_key(cx, &record, |cx, value| {
+    each_of(cx, iterator, |cx, value| {
         set_entry(cx, result, value, Value::EMPTY).map(|()| true)
     })?;
     Ok(Value::object(result))
@@ -819,12 +823,18 @@ pub(super) fn set_difference(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
     let record = set_record(cx, other)?;
     let result = copy_set(cx, set)?;
     if set_size_of(cx, set) <= record.size {
-        each_original(cx, set, |cx, value| {
-            if record.has(cx, value)? {
+        // The loop reads the copy, which `has` cannot change but by the
+        // deletions here.
+        let cursor = cx.heap.table_cursor(result);
+        while let Some((value, _)) = cx.heap.table_next(result, &cursor) {
+            let mark = cx.heap.roots().mark();
+            root(cx, value);
+            let found = record.has(cx, value);
+            cx.heap.roots().truncate(mark);
+            if found? {
                 cx.heap.table_delete(result, value);
             }
-            Ok(true)
-        })?;
+        }
     } else {
         each_key(cx, &record, |cx, value| {
             cx.heap.table_delete(result, value);
@@ -838,8 +848,9 @@ pub(super) fn set_symmetric_difference(cx: &mut Cx<'_>, site: CallSite) -> Resul
     let set = this_collection(cx, &site, InternalTag::Set, "Set")?;
     let other = site.arg(cx, 0);
     let record = set_record(cx, other)?;
+    let iterator = record.keys(cx)?;
     let result = copy_set(cx, set)?;
-    each_key(cx, &record, |cx, value| {
+    each_of(cx, iterator, |cx, value| {
         if cx.heap.table_find(set, value).is_some() {
             cx.heap.table_delete(result, value);
         } else {

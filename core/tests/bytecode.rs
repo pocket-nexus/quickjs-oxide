@@ -206,7 +206,7 @@ fn builder_patches_forward_jumps_and_decodes_operands() {
     unit.captures = vec![Capture::None].into();
     assert_eq!(validate(&unit), Ok(()));
     assert_eq!(unit.temp_base(), 5);
-    assert_eq!(unit.debug.lines.len(), unit.code.len());
+    assert!(unit.debug.positions.is_empty());
 }
 
 #[test]
@@ -395,9 +395,18 @@ fn validator_rejects_each_malformation() {
         "the parent has no captures"
     );
 
+    let position = |pc| oxide_core::bytecode::SourcePosition {
+        pc,
+        line: 1,
+        column: 1,
+    };
     let mut lines = unit_returning();
-    lines.debug.lines = vec![1, 2].into();
+    lines.debug.positions = vec![position(0), position(9)].into();
     assert_eq!(validate(&lines), Err(E::LineTable));
+    lines.debug.positions = vec![position(0), position(0)].into();
+    assert_eq!(validate(&lines), Err(E::LineTable));
+    lines.debug.positions = vec![position(0)].into();
+    assert_eq!(validate(&lines), Ok(()));
 
     let mut arrow = unit_returning();
     arrow.flags = flags::ARROW | flags::CONSTRUCTOR;

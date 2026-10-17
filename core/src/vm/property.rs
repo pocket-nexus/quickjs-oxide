@@ -144,6 +144,25 @@ pub(crate) fn length_value(length: u32) -> Value {
     }
 }
 
+/// `receiver[key]` for a key not yet converted: a `null` or `undefined`
+/// receiver throws before the key's conversion runs any JavaScript.
+#[inline(never)]
+pub(crate) fn get_computed(cx: &mut Cx<'_>, receiver: Value, key: Value) -> Result<Value, Throw> {
+    if (receiver.is_null() || receiver.is_undefined()) && key.as_object().is_some() {
+        let base = if receiver.is_null() {
+            "null"
+        } else {
+            "undefined"
+        };
+        return Err(error::type_error(
+            cx,
+            &format!("cannot read property of {base}"),
+        ));
+    }
+    let key = super::ops::to_property_key(cx, key)?;
+    get(cx, receiver, key)
+}
+
 /// `receiver[key]` for any value.
 #[inline(never)]
 pub(crate) fn get(cx: &mut Cx<'_>, receiver: Value, key: PropertyKey) -> Result<Value, Throw> {
@@ -746,8 +765,9 @@ fn add(
     Ok(())
 }
 
-/// Defines an own data property (object and array literals): overwrites an
-/// existing data property in place and replaces an accessor.
+/// `CreateDataPropertyOrThrow` for object and array literals and class
+/// fields: an ordinary extensible object's own writable, enumerable,
+/// configurable data property is overwritten in place.
 #[inline(never)]
 pub(crate) fn define(
     cx: &mut Cx<'_>,
@@ -756,18 +776,16 @@ pub(crate) fn define(
     value: Value,
 ) -> Result<(), Throw> {
     let heap = &mut *cx.heap;
+    let header = heap.header(object);
+    if header.kind.is_exotic() || !header.has(flags::EXTENSIBLE) {
+        return define_slow(cx, object, key, value);
+    }
     if let Some((slot, property)) = heap.lookup_own(object, key) {
-        if !property.has(PropertyFlags::ACCESSOR) {
+        if property == PropertyFlags::DEFAULT {
             heap.set_slot(object, slot, value);
             return Ok(());
         }
-        let mark = heap.roots().mark();
-        heap.roots().push(value);
-        let result = heap
-            .delete_property(object, key)
-            .and_then(|_| heap.add_property(object, key, PropertyFlags::DEFAULT, value));
-        heap.roots().truncate(mark);
-        return result.map_err(|_| error::oom(cx.realm));
+        return define_slow(cx, object, key, value);
     }
     if let KeyKind::Index(index) = key.kind()
         && dense(heap, object, index)
@@ -776,7 +794,20 @@ pub(crate) fn define(
             .set_element(object, index, value)
             .map_err(|_| error::oom(cx.realm));
     }
-    add(cx, object, key, value, false)
+    add(cx, object, key, value, true)
+}
+
+/// [`define`] on an exotic or non-extensible object, or over a property it
+/// cannot simply overwrite: a class field on a proxy, a frozen object or a
+/// constructor's `prototype`.
+#[inline(never)]
+fn define_slow(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: PropertyKey,
+    value: Value,
+) -> Result<(), Throw> {
+    super::object::create_data_property_or_throw(cx, object, key, value)
 }
 
 /// Defines one half of an own accessor property (`get x() {}` and

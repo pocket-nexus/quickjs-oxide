@@ -381,7 +381,8 @@ fn corpus_lowers_or_is_reported_unsupported() {
                     );
                 }
             }
-            Err(LowerError::Unsupported(construct)) => {
+            // `with` is the early `SyntaxError` of phase 0.
+            Err(LowerError::Unsupported(construct) | LowerError::Syntax(construct)) => {
                 unsupported += 1;
                 *reasons.entry(construct).or_insert(0) += 1;
             }

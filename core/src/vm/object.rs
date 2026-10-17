@@ -1439,8 +1439,28 @@ pub(crate) fn prototype_from_constructor(
         if let Some(prototype) = prototype.as_object() {
             return Ok(prototype);
         }
+        function_realm(cx, constructor)?;
     }
     Ok(cx.realm.intrinsic(default))
+}
+
+/// `GetFunctionRealm`: one realm, so only its revoked-proxy `TypeError`
+/// is observable.
+fn function_realm(cx: &mut Cx<'_>, mut function: ObjectId) -> Result<(), Throw> {
+    loop {
+        match cx.heap.object_kind(function) {
+            ObjectKind::Proxy => {
+                if cx.heap.internal_slot(function, 1).is_null() {
+                    return Err(error::type_error(cx, "revoked proxy"));
+                }
+                function = cx.heap.internal_slot(function, 0).as_object().unwrap();
+            }
+            ObjectKind::BoundFunction => {
+                function = cx.heap.internal_slot(function, 0).as_object().unwrap();
+            }
+            _ => return Ok(()),
+        }
+    }
 }
 
 /// `OrdinaryHasInstance(C, O)`.

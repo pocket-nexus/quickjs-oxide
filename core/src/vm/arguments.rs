@@ -10,7 +10,7 @@
 use super::error;
 use super::property;
 use super::{Cx, Frame, Throw};
-use crate::bytecode::{CodeUnit, flags};
+use crate::bytecode::CodeUnit;
 use crate::heap::object::{NONE, ObjectKind};
 use crate::runtime::{Intrinsic, Names};
 use crate::shape::PropertyFlags;
@@ -91,7 +91,9 @@ fn new_arguments_rooted(
         let value = actual(cx, frame, unit, index);
         cx.heap.values.set(elements, index as u32, value);
     }
-    let strict = unit.has(flags::STRICT);
+    // An unmapped object (strict code or non-simple parameters) has the
+    // throwing `callee`.
+    let strict = !mapped;
     let length = Value::int32(argc as i32);
     let values = Value::object(cx.realm.intrinsic(Intrinsic::ArrayValues));
     let cache = usize::from(strict);

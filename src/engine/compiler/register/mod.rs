@@ -58,6 +58,8 @@ use crate::engine::value::{JsString, PrimitiveValue};
 pub(crate) enum LowerError {
     /// A construct outside the phase 2 surface (section 3.4).
     Unsupported(String),
+    /// A construct phase 0 made an early `SyntaxError` (`with`).
+    Syntax(String),
     /// The input broke an invariant the stack code guarantees.
     Internal(String),
     Heap(HeapError),
@@ -75,6 +77,7 @@ impl fmt::Display for LowerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LowerError::Unsupported(construct) => write!(f, "unsupported: {construct}"),
+            LowerError::Syntax(message) => write!(f, "SyntaxError: {message}"),
             LowerError::Internal(message) => write!(f, "internal lowering error: {message}"),
             LowerError::Heap(error) => write!(f, "{error}"),
             LowerError::Invalid(error) => write!(f, "{error}"),
@@ -134,11 +137,11 @@ pub(crate) fn lower_script_into(
 
 /// Lowers a compiled module's function tree into `runtime` and describes
 /// its bindings, requests, imports and exports for the core's module
-/// records (phase 4, section 5.6).
-pub(crate) fn lower_module_into(
+/// records (phase 4, section 5.6); also returns the root unit.
+pub(crate) fn lower_module_tree_into(
     runtime: &mut Compiler<'_>,
     module: &crate::engine::code::module::UnlinkedModule,
-) -> Result<oxide_core::vm::module::ModuleSource, LowerError> {
+) -> Result<(oxide_core::vm::module::ModuleSource, CodeUnitId), LowerError> {
     use crate::engine::code::module::{
         ModuleExportTarget, ModuleImportName, ModuleLinkInitializerValue,
     };
@@ -231,7 +234,7 @@ pub(crate) fn lower_module_into(
             },
         })
         .collect();
-    Ok(core::ModuleSource::Compiled {
+    let source = core::ModuleSource::Compiled {
         function: lowered.function,
         tables: core::ModuleTables {
             bindings,
@@ -242,6 +245,21 @@ pub(crate) fn lower_module_into(
             initializers,
             has_top_level_await: module.has_top_level_await(),
         },
+    };
+    Ok((source, lowered.root))
+}
+
+/// Whether a unit of the tree under `root` has an `import()` call.
+#[cfg(feature = "test262-host")]
+pub(crate) fn tree_has_import_call(
+    code: &oxide_core::bytecode::CodeStore,
+    root: CodeUnitId,
+) -> bool {
+    code.tree(root).into_iter().any(|unit| {
+        code.get(unit)
+            .code
+            .iter()
+            .any(|insn| insn.op == oxide_core::bytecode::Opcode::ImportCall)
     })
 }
 
@@ -359,6 +377,16 @@ impl Layout {
 
 /// Rejects whole-function features outside the surface.
 fn check_surface(function: &UnlinkedFunction) -> Result<(), LowerError> {
+    // Phase 0 dropped `with`: an early `SyntaxError`, as in strict code.
+    if function
+        .local_definitions()
+        .iter()
+        .any(|local| local.kind == ClosureVariableKind::WithObject)
+    {
+        return Err(LowerError::Syntax(
+            "with statements are not supported".into(),
+        ));
+    }
     let metadata = function.metadata();
     let unsupported = if metadata.eval_kind == EvalKind::Direct {
         // Direct eval code: a direct `eval` runs as indirect eval (phase 0,
@@ -1042,6 +1070,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         if self.is_script {
             // Section 5.7: every name is checked before any binding is made.
             let mut declarations = Vec::new();
+            let eval = self.global_flags();
             for index in 0..self.function.closure_variables().len() {
                 let variable = self.function.closure_variables()[index];
                 match variable.source {
@@ -1054,15 +1083,20 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                                 (Opcode::CheckGlobalLexical, Opcode::DeclareGlobalConst)
                             }
                         };
-                        self.emit(|b| b.key(check, key));
-                        declarations.push((declare, key));
+                        let flags = if variable.kind == ClosureVariableKind::GlobalFunction {
+                            eval | oxide_core::bytecode::opcode::global::FUNCTION
+                        } else {
+                            eval
+                        };
+                        self.emit(|b| b.raw(oxide_core::Insn::new(check, 0, flags, 0, key.raw())));
+                        declarations.push((declare, flags, key));
                     }
                     ClosureSource::Global => {}
                     _ => return Err(LowerError::unsupported("script closure source")),
                 }
             }
-            for (declare, key) in declarations {
-                self.emit(|b| b.key(declare, key));
+            for (declare, flags, key) in declarations {
+                self.emit(|b| b.raw(oxide_core::Insn::new(declare, 0, flags, 0, key.raw())));
             }
         }
         let metadata = self.function.metadata();
@@ -1236,12 +1270,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 let register = self.local_register(local);
                 self.spill_aliases(register)?;
                 self.checked.remove(&register);
-                let op = if self.captured_locals[local as usize] {
-                    Opcode::NewCellEmpty
+                // QuickJS's `set_loc_uninitialized` resets the slot a closure
+                // may already hold (a hoisted function's capture); a fresh
+                // binding comes from `close_loc`.
+                if self.captured_locals[local as usize] {
+                    self.on_local(register, true, false, |b, a| b.a(Opcode::ClearCell, a))?;
                 } else {
-                    Opcode::LoadEmpty
-                };
-                self.on_local(register, false, true, |b, a| b.a(op, a))?;
+                    self.on_local(register, false, true, |b, a| b.a(Opcode::LoadEmpty, a))?;
+                }
             }
             I::CloseLocal(local) => {
                 if self.captured_locals[local as usize] {
@@ -1322,7 +1358,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 let (_, [raw]) = self.pop_operands::<1>()?;
                 let object = self.operand(self.stack.len() - 1)?;
                 let converted = self.result_register()?;
-                let at = self.emit(|b| b.ab(Opcode::ToPropertyKey, converted, raw));
+                let at = self.emit(|b| b.abc(Opcode::ToPropertyKeyOf, converted, raw, object));
                 self.push_result(at);
                 let dst = self.result_register()?;
                 let at = self.emit(|b| b.abc(Opcode::GetElem, dst, object, converted));
@@ -1661,13 +1697,13 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             I::ForOfStart => {
                 let (depth, [iterable]) = self.pop_operands::<1>()?;
                 let record = Self::r8(self.temp(depth))?;
-                self.emit(|b| b.ab(Opcode::IterStart, record, iterable));
+                self.emit(|b| b.ab_int(Opcode::IterStart, record, iterable, 0));
                 self.push_canon(3);
             }
             I::IteratorStart => {
                 let (depth, [iterable]) = self.pop_operands::<1>()?;
                 let record = Self::r8(self.temp(depth))?;
-                self.emit(|b| b.abc(Opcode::IterStart, record, iterable, 1));
+                self.emit(|b| b.ab_int(Opcode::IterStart, record, iterable, 1));
                 self.push_canon(3);
             }
             I::ForOfNext(offset) => {
@@ -1855,7 +1891,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 } else {
                     (first, base)
                 };
-                self.emit(|b| b.abc(Opcode::GetSuperValue, dst, first, u8::from(for_call)));
+                self.emit(|b| b.ab_int(Opcode::GetSuperValue, dst, first, i32::from(for_call)));
                 self.stack.truncate(keep);
                 self.stack.push(Entry::Canon);
             }
@@ -2407,8 +2443,23 @@ impl<'a, 'c> Lowerer<'a, 'c> {
     fn global_write(&mut self, op: Opcode, closure: u16) -> Result<(), LowerError> {
         let key = self.closure_key(closure)?;
         let (_, [value]) = self.pop_operands::<1>()?;
-        self.emit(|b| b.a_key(op, value, key));
+        if op == Opcode::DefineGlobal {
+            let flags = self.global_flags();
+            self.emit(|b| b.raw(oxide_core::Insn::new(op, value, flags, 0, key.raw())));
+        } else {
+            self.emit(|b| b.a_key(op, value, key));
+        }
         Ok(())
+    }
+
+    /// The `global` flags of this code's declarations: `eval` code's
+    /// bindings are configurable.
+    fn global_flags(&self) -> u8 {
+        if self.function.metadata().eval_kind == EvalKind::None {
+            0
+        } else {
+            oxide_core::bytecode::opcode::global::EVAL
+        }
     }
 
     // ---- shuffles ----
@@ -2565,6 +2616,9 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         if metadata.is_module {
             unit_flags |= flags::MODULE;
         }
+        if self.is_script && metadata.eval_kind != EvalKind::None {
+            unit_flags |= flags::EVAL;
+        }
         if self.code.iter().any(|instruction| {
             matches!(
                 instruction,
@@ -2601,7 +2655,8 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             .func_name()
             .map(|name| String::from_utf16_lossy(&string_units(name)))
             .unwrap_or_default();
-        let unit = self.builder.finish(UnitLayout {
+        let positions = self.positions(self.builder.pc() as usize);
+        let mut unit = self.builder.finish(UnitLayout {
             register_count,
             parameter_count: metadata.argument_count,
             local_count: metadata.local_count + u16::from(self.layout.new_target.is_some()),
@@ -2621,7 +2676,38 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 .debug()
                 .map(|debug| std::rc::Rc::from(debug.filename.to_utf8_lossy())),
         });
+        unit.debug.positions = positions;
         Ok((unit, self.pool))
+    }
+
+    /// The source position of each emitted instruction, from the front
+    /// end's table for the instruction it lowers, one entry per change.
+    fn positions(&self, len: usize) -> Box<[oxide_core::bytecode::SourcePosition]> {
+        let Some(table) = self
+            .function
+            .debug()
+            .and_then(|debug| debug.pc2line.as_ref())
+        else {
+            return Box::new([]);
+        };
+        let mut positions: Vec<oxide_core::bytecode::SourcePosition> = Vec::new();
+        for (pc, &origin) in self.origins.iter().take(len).enumerate() {
+            let Some((line, column)) = table.lookup(Some(origin as u32)).one_based() else {
+                continue;
+            };
+            if positions
+                .last()
+                .is_some_and(|last| (last.line, last.column) == (line, column))
+            {
+                continue;
+            }
+            positions.push(oxide_core::bytecode::SourcePosition {
+                pc: pc as u32,
+                line,
+                column,
+            });
+        }
+        positions.into()
     }
 
     fn captures(&self, parent: Option<Layout>) -> Result<Vec<Capture>, LowerError> {

@@ -455,7 +455,8 @@ fn from_buffer(
         return Err(error::type_error(cx, "array buffer is detached"));
     }
     let buffer_length = record.len();
-    let fixed = record.max.is_none() || record.is_shared();
+    // `IsFixedLengthArrayBuffer`: a growable shared buffer is not.
+    let fixed = record.max.is_none();
     let length = match new_length {
         None if !fixed => {
             if offset > buffer_length {
@@ -1241,12 +1242,19 @@ pub(super) fn to_locale_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value,
 
 // ---- Uint8Array base64 and hex ----
 
-fn this_uint8(cx: &mut Cx<'_>, site: &CallSite) -> Result<(ObjectId, usize), Throw> {
-    let (object, length) = this_typed(cx, site)?;
-    if kind_of(cx, object) != ElementKind::Uint8 {
-        return Err(error::type_error(cx, "not a Uint8Array"));
+/// `ValidateUint8Array`: the type only; each method checks the bounds
+/// where its specification does, after reading its options.
+fn this_uint8(cx: &mut Cx<'_>, site: &CallSite) -> Result<ObjectId, Throw> {
+    let this = site.this(cx);
+    match this.as_object() {
+        Some(object)
+            if cx.heap.object_kind(object) == crate::ObjectKind::TypedArray
+                && kind_of(cx, object) == ElementKind::Uint8 =>
+        {
+            Ok(object)
+        }
+        _ => Err(error::type_error(cx, "not a Uint8Array")),
     }
-    Ok((object, length))
 }
 
 fn bytes_of(cx: &Cx<'_>, object: ObjectId, length: usize) -> Vec<u8> {
@@ -1356,7 +1364,7 @@ fn write_decoded(cx: &mut Cx<'_>, object: ObjectId, bytes: &[u8]) {
 }
 
 pub(super) fn set_from_base64(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let (object, _) = this_uint8(cx, &site)?;
+    let object = this_uint8(cx, &site)?;
     let input = site.arg(cx, 0);
     let input = string_argument(cx, input)?;
     let options = site.arg(cx, 1);
@@ -1375,7 +1383,7 @@ pub(super) fn set_from_base64(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, 
 }
 
 pub(super) fn set_from_hex(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let (object, _) = this_uint8(cx, &site)?;
+    let object = this_uint8(cx, &site)?;
     let input = site.arg(cx, 0);
     let input = string_argument(cx, input)?;
     let Some(length) = typed::length(cx.heap, object) else {
@@ -1390,7 +1398,7 @@ pub(super) fn set_from_hex(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
 }
 
 pub(super) fn to_base64(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let (object, _) = this_uint8(cx, &site)?;
+    let object = this_uint8(cx, &site)?;
     let options = site.arg(cx, 0);
     let options = options_object(cx, options)?;
     let url = alphabet(cx, options)?;
@@ -1414,7 +1422,10 @@ pub(super) fn to_base64(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
 }
 
 pub(super) fn to_hex(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let (object, length) = this_uint8(cx, &site)?;
+    let object = this_uint8(cx, &site)?;
+    let Some(length) = typed::length(cx.heap, object) else {
+        return Err(error::type_error(cx, "TypedArray is out of bounds"));
+    };
     let bytes = bytes_of(cx, object, length);
     let mut text = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

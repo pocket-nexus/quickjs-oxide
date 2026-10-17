@@ -20,7 +20,7 @@ use crate::vm::object as internal;
 use crate::vm::{Cx, Throw, error, number, ops};
 
 /// QuickJS's string length limit.
-const MAX_STRING: usize = (1 << 30) - 1;
+pub(crate) const MAX_STRING: usize = (1 << 30) - 1;
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::StringPrototype);
@@ -751,7 +751,8 @@ pub(crate) type NamedCapture<'a> = &'a dyn Fn(&[u16]) -> Option<Option<Vec<u16>>
 
 /// `GetSubstitution`: the replacement text for a match of `matched` at
 /// `position` in `string`, with the captures of a regular expression
-/// (`None` for one that did not participate) and its named groups.
+/// (`None` for one that did not participate) and its named groups; `None`
+/// when it would be longer than a string can be.
 pub(crate) fn substitution(
     string: &[u16],
     position: usize,
@@ -759,7 +760,11 @@ pub(crate) fn substitution(
     captures: &[Option<Vec<u16>>],
     named: NamedCapture<'_>,
     replacement: &[u16],
-) -> Vec<u16> {
+) -> Option<Vec<u16>> {
+    // The parts are added only while the result fits.
+    fn append(out: &mut Vec<u16>, part: &[u16]) -> Option<()> {
+        (out.len() + part.len() <= MAX_STRING).then(|| out.extend_from_slice(part))
+    }
     let dollar = u16::from(b'$');
     let mut out = Vec::with_capacity(replacement.len());
     let mut at = 0;
@@ -778,16 +783,16 @@ pub(crate) fn substitution(
                 at += 2;
             }
             _ if next == u16::from(b'&') => {
-                out.extend_from_slice(matched);
+                append(&mut out, matched)?;
                 at += 2;
             }
             _ if next == u16::from(b'`') => {
-                out.extend_from_slice(&string[..position.min(string.len())]);
+                append(&mut out, &string[..position.min(string.len())])?;
                 at += 2;
             }
             _ if next == u16::from(b'\'') => {
                 let end = (position + matched.len()).min(string.len());
-                out.extend_from_slice(&string[end..]);
+                append(&mut out, &string[end..])?;
                 at += 2;
             }
             _ if digit(next) => {
@@ -802,7 +807,7 @@ pub(crate) fn substitution(
                 };
                 if index >= 1 && index <= captures.len() {
                     if let Some(capture) = &captures[index - 1] {
-                        out.extend_from_slice(capture);
+                        append(&mut out, capture)?;
                     }
                     at += width;
                 } else {
@@ -819,7 +824,7 @@ pub(crate) fn substitution(
                 }) {
                     Some((close, value)) => {
                         if let Some(value) = value {
-                            out.extend_from_slice(&value);
+                            append(&mut out, &value)?;
                         }
                         at += close + 3;
                     }
@@ -835,7 +840,7 @@ pub(crate) fn substitution(
             }
         }
     }
-    out
+    (out.len() <= MAX_STRING).then_some(out)
 }
 
 /// `replace(searchValue, replaceValue)` and `replaceAll`: the argument's
@@ -906,6 +911,7 @@ fn replace_impl(cx: &mut Cx<'_>, site: CallSite, all: bool) -> Result<Value, Thr
         let replaced = match &replacement {
             Some(replacement) => {
                 substitution(&haystack, position, &needle, &[], &|_| None, replacement)
+                    .ok_or_else(|| error::range_error(cx, "invalid string length"))?
             }
             None => {
                 let value = crate::vm::call(

@@ -3,11 +3,13 @@
 //! object with the kind's prototype and an own `message`; `name` lives on the
 //! prototype.
 
-use super::{Cx, Throw};
+use std::fmt::Write;
+
+use super::{Cx, Throw, frame_flags};
 use crate::heap::HeapError;
 use crate::runtime::{Intrinsic, Names, Realm};
 use crate::shape::PropertyFlags;
-use crate::value::Value;
+use crate::value::{ObjectId, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
@@ -82,10 +84,51 @@ pub(crate) fn new_error(
             let key = Names::key(cx.realm.names.message);
             heap.add_property(object, key, PropertyFlags::data(true, false, true), message)?;
         }
-        Ok(Value::object(object))
+        Ok(object)
     })();
-    heap.roots().truncate(mark);
+    let result = result.and_then(|object| {
+        cx.heap.roots().push(Value::object(object));
+        add_stack(cx, object).map(|()| Value::object(object))
+    });
+    cx.heap.roots().truncate(mark);
     result
+}
+
+/// Most frames a backtrace lists.
+const BACKTRACE_FRAMES: usize = 64;
+
+/// QuickJS's `build_backtrace`: the bytecode frames, innermost first, as
+/// `    at name (file:line:column)` lines in the own `stack` property of
+/// `object`, which the caller roots. A frame whose current instruction is
+/// unknown (below a re-entry from Rust) has no position.
+pub(crate) fn add_stack(cx: &mut Cx<'_>, object: ObjectId) -> Result<(), HeapError> {
+    let vm = &cx.heap.vm;
+    let mut text = String::new();
+    let (depth, site) = vm.native_site;
+    let mut pc = (depth as usize == vm.frames.len()).then_some(site);
+    for frame in vm.frames.iter().rev().take(BACKTRACE_FRAMES) {
+        let debug = &cx.code.get(frame.unit).debug;
+        let name = if debug.name.is_empty() {
+            "<anonymous>"
+        } else {
+            &debug.name
+        };
+        let file = debug.filename.as_deref().unwrap_or("");
+        let _ = match pc.and_then(|pc| debug.position(pc)) {
+            Some((line, column)) => writeln!(text, "    at {name} ({file}:{line}:{column})"),
+            None => writeln!(text, "    at {name} ({file})"),
+        };
+        pc = (frame.flags & frame_flags::ENTRY == 0 && frame.return_pc > 0)
+            .then(|| frame.return_pc - 1);
+    }
+    let text = cx.heap.alloc_string(&text)?;
+    let key = Names::key(cx.realm.names.stack);
+    cx.heap.add_property(
+        object,
+        key,
+        PropertyFlags::data(true, false, true),
+        Value::string(text),
+    )
 }
 
 /// The thrown value for an allocation failure.
@@ -115,6 +158,34 @@ pub(crate) fn throw(cx: &mut Cx<'_>, kind: ErrorKind, message: &str) -> Throw {
         Ok(error) => Throw(error),
         Err(_) => out_of_memory(cx),
     }
+}
+
+/// A new `kind` error with `message` located at `line` and `column` of
+/// `file` (a module's source that no frame runs), its `stack` naming them.
+#[inline(never)]
+pub(crate) fn throw_at(
+    cx: &mut Cx<'_>,
+    kind: ErrorKind,
+    message: &str,
+    file: &str,
+    line: u32,
+    column: u32,
+) -> Throw {
+    let Throw(error) = throw(cx, kind, message);
+    let Some(object) = error.as_object() else {
+        return Throw(error);
+    };
+    let mark = cx.heap.roots().mark();
+    cx.heap.roots().push(error);
+    let stack = cx
+        .heap
+        .alloc_string(&format!("    at {file}:{line}:{column}\n"));
+    cx.heap.roots().truncate(mark);
+    let key = Names::key(cx.realm.names.stack);
+    if let (Ok(stack), Some((slot, _))) = (stack, cx.heap.lookup_own(object, key)) {
+        cx.heap.set_slot(object, slot, Value::string(stack));
+    }
+    Throw(error)
 }
 
 #[inline(never)]

@@ -165,6 +165,9 @@ pub mod flags {
     /// A class field or static initializer that brands its receiver with its
     /// home object's private-method brand before it runs.
     pub const BRAND: u16 = 1 << 12;
+    /// The root of `eval` code: `import()` in it resolves against the code
+    /// that called `eval`.
+    pub const EVAL: u16 = 1 << 13;
 }
 
 /// Where a closure created by `MakeClosure` gets one captured cell, read in
@@ -191,8 +194,28 @@ pub struct DebugInfo {
     pub name: Box<str>,
     /// The script or module the function belongs to, for `import()`.
     pub filename: Option<std::rc::Rc<str>>,
-    /// The source line of each instruction, or empty.
-    pub lines: Box<[u32]>,
+    /// Where the instructions came from, sorted by `pc`: each entry holds
+    /// for its instruction and the ones after it up to the next. Empty when
+    /// the producer recorded none.
+    pub positions: Box<[SourcePosition]>,
+}
+
+/// A one-based source line and column, from instruction `pc` on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourcePosition {
+    pub pc: u32,
+    pub line: u32,
+    pub column: u32,
+}
+
+impl DebugInfo {
+    /// The line and column of the instruction at `pc`, as QuickJS's
+    /// `find_line_num` reads its table: the last entry at or before it.
+    pub fn position(&self, pc: u32) -> Option<(u32, u32)> {
+        let after = self.positions.partition_point(|entry| entry.pc <= pc);
+        let entry = self.positions[..after].last()?;
+        Some((entry.line, entry.column))
+    }
 }
 
 /// The compiled form of one function.

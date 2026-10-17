@@ -8,6 +8,7 @@
 use std::mem;
 use std::time::{Duration, Instant};
 
+use super::hash::FxHashMap;
 use super::object::{InternalTag, NONE, ObjectKind};
 use super::{Heap, HeapError, Need};
 use crate::shape::STATIC_CELL;
@@ -169,6 +170,9 @@ pub struct GcState {
     shape_stack: Vec<ShapeId>,
     /// Internal records with weak references reached by this collection.
     weak: Vec<u32>,
+    /// The values of weak map entries whose key is not yet marked, by key:
+    /// marking the key pushes them (the ephemeron fixpoint in one pass).
+    ephemerons: FxHashMap<Value, Vec<Value>>,
     bytecode_stack: Vec<u32>,
     #[cfg(feature = "gc-stress")]
     pub stress: bool,
@@ -194,6 +198,7 @@ impl GcState {
             pauses: Vec::new(),
             mark_stack: Vec::new(),
             weak: Vec::new(),
+            ephemerons: FxHashMap::default(),
             shape_stack: Vec::new(),
             bytecode_stack: Vec::new(),
             #[cfg(feature = "gc-stress")]
@@ -364,29 +369,38 @@ impl Heap {
         self.cells.mark(STATIC_CELL.0);
         stack.extend_from_slice(&self.kept);
         stack.extend_from_slice(&self.modules);
-        self.drain(&mut stack);
-        // Ephemerons: a weak map's value is live once its key is, which may
-        // make further keys live; iterate to the fixpoint.
+        self.drain::<false>(&mut stack);
+        // Ephemerons: a weak map's value is live once its key is. Each weak
+        // map is scanned once: a live key's value is pushed, an unmarked
+        // key's waits in `ephemerons` until `drain` marks the key. Draining
+        // may reach further weak maps, scanned in the next round.
+        let mut scanned = 0;
         loop {
-            for position in 0..self.gc.weak.len() {
+            let mut ephemerons = mem::take(&mut self.gc.ephemerons);
+            for position in scanned..self.gc.weak.len() {
                 let internal = self.payloads.internals.get(self.gc.weak[position]);
                 if internal.tag != InternalTag::WeakMap {
                     continue;
                 }
                 for entry in internal.slots.chunks(2) {
-                    if !entry[0].is_empty()
-                        && self.value_marked(entry[0])
-                        && !self.value_marked(entry[1])
-                    {
+                    if entry[0].is_empty() || self.value_marked(entry[1]) {
+                        continue;
+                    }
+                    if self.value_marked(entry[0]) {
                         stack.push(entry[1]);
+                    } else {
+                        ephemerons.entry(entry[0]).or_default().push(entry[1]);
                     }
                 }
             }
+            scanned = self.gc.weak.len();
+            self.gc.ephemerons = ephemerons;
             if stack.is_empty() {
                 break;
             }
-            self.drain(&mut stack);
+            self.drain::<true>(&mut stack);
         }
+        self.gc.ephemerons.clear();
         // Cells owned by live prototypes; the table itself is weak.
         for (object, info) in &self.prototypes {
             if self.objects.is_marked(object.0)
@@ -399,7 +413,10 @@ impl Heap {
         self.gc.mark_stack = stack;
     }
 
-    fn drain(&mut self, stack: &mut Vec<Value>) {
+    /// Marks everything reachable from `stack`. With `EPHEMERONS`, marking
+    /// a key with waiting weak map values pushes them; the first pass has
+    /// none waiting and skips the check.
+    fn drain<const EPHEMERONS: bool>(&mut self, stack: &mut Vec<Value>) {
         let mut shapes = mem::take(&mut self.gc.shape_stack);
         while let Some(value) = stack.pop() {
             match value.kind() {
@@ -407,6 +424,12 @@ impl Heap {
                     let index = value.as_object().unwrap().0;
                     if !self.objects.mark(index) {
                         continue;
+                    }
+                    if EPHEMERONS
+                        && !self.gc.ephemerons.is_empty()
+                        && let Some(values) = self.gc.ephemerons.remove(&value)
+                    {
+                        stack.extend(values);
                     }
                     let header = *self.objects.get(index);
                     // Most objects share a shape already marked.
@@ -473,6 +496,12 @@ impl Heap {
                 Kind::Symbol => {
                     let index = value.as_symbol().unwrap().0;
                     if self.symbols.mark(index) {
+                        if EPHEMERONS
+                            && !self.gc.ephemerons.is_empty()
+                            && let Some(values) = self.gc.ephemerons.remove(&value)
+                        {
+                            stack.extend(values);
+                        }
                         let description = self.symbols.get(index).description;
                         if description != NONE {
                             self.strings.mark(description);

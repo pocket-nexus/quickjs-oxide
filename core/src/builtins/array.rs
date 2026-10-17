@@ -1360,10 +1360,10 @@ pub(super) fn sort(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     for (index, &value) in values.iter().enumerate() {
         set_at(cx, object, index as u64, value)?;
     }
+    // `DeletePropertyOrThrow` of every index past the sorted items, present
+    // or not.
     for index in count..length {
-        if has_at(cx, object, index)? {
-            delete_at(cx, object, index)?;
-        }
+        delete_at(cx, object, index)?;
     }
     Ok(Value::object(object))
 }

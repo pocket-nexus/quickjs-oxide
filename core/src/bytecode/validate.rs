@@ -33,7 +33,8 @@ pub enum ValidateErrorKind {
     /// Two handler ranges overlap without nesting, or an enclosing handler
     /// precedes one nested in it.
     HandlerNesting,
-    /// The line table is neither empty nor one entry per instruction.
+    /// The position table is out of `pc` order or names a `pc` past the
+    /// code.
     LineTable,
     /// An arrow function marked as a constructor.
     Flags,
@@ -88,7 +89,12 @@ pub fn validate<'a>(
     if unit.has(flags::ARROW) && unit.has(flags::CONSTRUCTOR) {
         return fail(None, E::Flags);
     }
-    if !unit.debug.lines.is_empty() && unit.debug.lines.len() != unit.code.len() {
+    let positions = &unit.debug.positions;
+    if positions.windows(2).any(|pair| pair[0].pc >= pair[1].pc)
+        || positions
+            .last()
+            .is_some_and(|last| last.pc as usize >= unit.code.len())
+    {
         return fail(None, E::LineTable);
     }
     for (index, &child) in unit.children.iter().enumerate() {

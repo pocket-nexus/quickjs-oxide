@@ -226,11 +226,12 @@ opcodes! {
     /// `typeof name` on a name that may be undeclared.
     GetGlobalOrUndefined: AKey,
     SetGlobal: AKey,
-    /// A `var` or function declaration at script level.
+    /// A `var` or function declaration at script level; `b` holds the
+    /// [`global`] flags.
     DefineGlobal: AKey,
     DeleteGlobal: AKey,
     /// A script-level declaration: defines global `imm` as `undefined` unless
-    /// it exists.
+    /// it exists; `b` holds the [`global`] flags.
     DeclareGlobal: Key,
     /// A script-level `let` or `class` (section 5.7): a binding of the global
     /// lexical environment, in the TDZ.
@@ -238,7 +239,9 @@ opcodes! {
     /// A script-level `const`.
     DeclareGlobalConst: Key,
     /// `GlobalDeclarationInstantiation`'s check for a `var` or function
-    /// name: a `SyntaxError` if a lexical binding has it.
+    /// name: a `SyntaxError` if a lexical binding has it, then
+    /// `CanDeclareGlobalVar` or, with [`global::FUNCTION`] in `b`,
+    /// `CanDeclareGlobalFunction`, a `TypeError` when false.
     CheckGlobalVar: Key,
     /// The check for a lexical name: a `SyntaxError` if a lexical binding or
     /// a non-configurable global property has it.
@@ -330,8 +333,9 @@ opcodes! {
 
     // ---- iteration (section 4.2): a record is three registers ----
     /// The record at `a` (iterator, `next`, done flag; or array, the
-    /// `Value::EMPTY` mark, index) for the iterable in `b`.
-    IterStart: AB,
+    /// `Value::EMPTY` mark, index) for the iterable in `b`; with `imm` set
+    /// always the generic protocol.
+    IterStart: ABInt,
     /// The next value of record `b` to `a` and whether it is done to `c`.
     IterNext: ABC,
     /// Closes record `a` unless it is done (a normal completion).
@@ -373,8 +377,9 @@ opcodes! {
     /// `a` = the prototype of home object `b` (`null` allowed).
     GetSuper: AB,
     /// `a` = `base[key]` with `receiver` as `this`: receiver, base, key in
-    /// `b`, `b + 1`, `b + 2`.
-    GetSuperValue: AB,
+    /// `b`, `b + 1`, `b + 2`; with `imm` set (the call form), `base` is the
+    /// receiver.
+    GetSuperValue: ABInt,
     /// `base[key] = value` with `receiver`: receiver, base, key, value in
     /// `a` .. `a + 3`.
     PutSuperValue: A,
@@ -483,6 +488,21 @@ opcodes! {
     Return: A,
     ReturnUndefined: None,
     Throw: A,
+    /// `a = ToPropertyKey(b)` for the base `c` of a compound assignment: a
+    /// `null` or `undefined` base throws first.
+    ToPropertyKeyOf: ABC,
+    /// Puts the cell in `a` back in the TDZ (a lexical scope entered again):
+    /// closures already holding it see the new binding state.
+    ClearCell: A,
+}
+
+/// The flags of `CheckGlobalVar`, `DeclareGlobal` and `DefineGlobal`, in
+/// `b`.
+pub mod global {
+    /// The name is a function declaration's.
+    pub const FUNCTION: u8 = 1 << 0;
+    /// The code is `eval` code: its bindings are configurable.
+    pub const EVAL: u8 = 1 << 1;
 }
 
 /// The flags of `DefineMethod` and `DefineMethodComputed`.
@@ -505,6 +525,7 @@ impl Opcode {
                 | Opcode::ReturnUndefined
                 | Opcode::Throw
                 | Opcode::ThrowConstAssign
+                | Opcode::ThrowReference
                 | Opcode::ThrowInternal
         )
     }

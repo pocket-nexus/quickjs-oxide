@@ -82,7 +82,8 @@ impl Record {
 }
 
 enum Failure {
-    Syntax(String),
+    /// A syntax error at a unit index.
+    Syntax(String, usize),
     Throw(Throw),
 }
 
@@ -128,7 +129,7 @@ impl Parser<'_> {
     }
 
     fn syntax<T>(&self, message: &str) -> Parsed<T> {
-        Err(Failure::Syntax(message.to_owned()))
+        Err(Failure::Syntax(message.to_owned(), self.cursor))
     }
 
     fn document(&mut self, cx: &mut Cx<'_>) -> Parsed<(Value, Option<Record>)> {
@@ -391,10 +392,13 @@ fn ascii_eq(units: &[u16], text: &str) -> bool {
 }
 
 /// Parses `units` as strict JSON; the value is left on the root stack.
+/// Parses `units`; a syntax error of the text of `file` (a JSON module)
+/// carries its position there.
 fn parse_text(
     cx: &mut Cx<'_>,
     units: &[u16],
     records: bool,
+    file: Option<&str>,
 ) -> Result<(Value, Option<Record>), Throw> {
     let mut parser = Parser {
         units,
@@ -403,14 +407,31 @@ fn parse_text(
     };
     match parser.document(cx) {
         Ok(parsed) => Ok(parsed),
-        Err(Failure::Syntax(message)) => Err(error::throw(cx, ErrorKind::Syntax, &message)),
+        Err(Failure::Syntax(message, at)) => Err(match file {
+            Some(file) => {
+                let (line, column) = position(units, at);
+                error::throw_at(cx, ErrorKind::Syntax, &message, file, line, column)
+            }
+            None => error::throw(cx, ErrorKind::Syntax, &message),
+        }),
         Err(Failure::Throw(throw)) => Err(throw),
     }
 }
 
-/// `JSON.parse(text)` of UTF-16 text (a JSON module's source).
-pub(crate) fn json_parse_text(cx: &mut Cx<'_>, units: &[u16]) -> Result<Value, Throw> {
-    parse_text(cx, units, false).map(|(value, _)| value)
+/// The one-based line and column of unit `at`: LF ends a line.
+fn position(units: &[u16], at: usize) -> (u32, u32) {
+    let before = &units[..at.min(units.len())];
+    let line = before.iter().filter(|&&unit| unit == 0x0a).count() + 1;
+    let start = before
+        .iter()
+        .rposition(|&unit| unit == 0x0a)
+        .map_or(0, |newline| newline + 1);
+    (line as u32, (before.len() - start) as u32 + 1)
+}
+
+/// The value of a JSON module `file` of UTF-16 text.
+pub(crate) fn json_parse_text(cx: &mut Cx<'_>, units: &[u16], file: &str) -> Result<Value, Throw> {
+    parse_text(cx, units, false, Some(file)).map(|(value, _)| value)
 }
 
 /// `JSON.parse(text, reviver)`.
@@ -420,7 +441,7 @@ pub(super) fn parse(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let units = ops::units(cx.heap, text.as_string().unwrap());
     let reviver = site.arg(cx, 1);
     let revive = ops::is_callable(cx.heap, reviver);
-    let (value, record) = parse_text(cx, &units, revive)?;
+    let (value, record) = parse_text(cx, &units, revive, None)?;
     if !revive {
         return Ok(value);
     }
@@ -553,7 +574,7 @@ pub(super) fn raw_json(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
     let boundary = |unit: u16| matches!(unit, 0x61..=0x7a | 0x30..=0x39 | 0x2d | 0x22);
     let valid = units.first().is_some_and(|&unit| boundary(unit))
         && units.last().is_some_and(|&unit| boundary(unit))
-        && parse_text(cx, &units, false).is_ok();
+        && parse_text(cx, &units, false, None).is_ok();
     if !valid {
         return Err(error::throw(
             cx,

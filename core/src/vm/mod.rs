@@ -112,6 +112,9 @@ pub struct VmStack {
     /// The native stack address at the outermost re-entry, for
     /// [`VmStack::enter_native`].
     pub(crate) native_base: usize,
+    /// The frame count and instruction index of the call running the
+    /// current native, for the backtrace of an error it creates.
+    pub(crate) native_site: (u32, u32),
     /// The suspendable activations running, innermost last (phase 4,
     /// section 4.3): where `Yield` and `Await` save their frame.
     pub(crate) active: Vec<ObjectId>,
@@ -127,6 +130,7 @@ impl Default for VmStack {
             limit: DEFAULT_STACK_LIMIT,
             nesting: 0,
             native_base: 0,
+            native_site: (u32::MAX, 0),
             active: Vec::new(),
         }
     }

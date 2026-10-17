@@ -110,6 +110,14 @@ pub type NormalizeFn = fn(&str, &str, &[(String, String)]) -> Result<String, Com
 pub type LoadModuleFn =
     fn(&mut Compiler<'_>, &str, &[(String, String)]) -> Result<ModuleSource, CompileError>;
 
+/// The step of running a module that threw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModulePhase {
+    Load,
+    Link,
+    Evaluate,
+}
+
 /// The embedder's module loader.
 #[derive(Clone, Copy)]
 pub struct ModuleHost {
@@ -245,7 +253,7 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
 /// imports filled while linking.
 /// A JSON module: its one binding, the default export, is the parsed text.
 fn json_module(cx: &mut Cx<'_>, name: &str, text: &[u16]) -> Result<ObjectId, Throw> {
-    let value = crate::builtins::json_parse_text(cx, text)?;
+    let value = crate::builtins::json_parse_text(cx, text, name)?;
     cx.heap.roots().push(value);
     let tables = ModuleTables {
         bindings: vec![ModuleBinding::Declaration { lexical: false }],
@@ -967,18 +975,39 @@ pub(crate) fn run(cx: &mut Cx<'_>, name: &str) -> Result<ObjectId, Throw> {
 
 /// The name of the module or script running `function`'s code, for
 /// `import()`.
+///
+/// As QuickJS's `JS_GetScriptOrModuleName`, the root of `eval` code takes the
+/// name of the first frame below it that is not `eval` code.
 fn referrer(cx: &Cx<'_>, function: ObjectId) -> String {
-    cx.heap
-        .function_bytecode(function)
-        .and_then(|bytecode| {
-            let unit = cx.heap.bytecode_unit(bytecode);
-            cx.code
-                .get(unit)
-                .debug
-                .filename
-                .as_deref()
-                .map(str::to_owned)
-        })
+    let unit_of = |function: ObjectId| {
+        cx.heap
+            .function_bytecode(function)
+            .map(|bytecode| cx.code.get(cx.heap.bytecode_unit(bytecode)))
+    };
+    let name = |unit: &crate::bytecode::CodeUnit| {
+        unit.debug
+            .filename
+            .as_deref()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let Some(unit) = unit_of(function) else {
+        return String::new();
+    };
+    if !unit.has(crate::bytecode::flags::EVAL) {
+        return name(unit);
+    }
+    let frames = &cx.heap.vm.frames;
+    let below = frames
+        .iter()
+        .rposition(|frame| frame.function == function)
+        .map_or(&frames[..0], |at| &frames[..at]);
+    below
+        .iter()
+        .rev()
+        .map(|frame| cx.code.get(frame.unit))
+        .find(|unit| !unit.has(crate::bytecode::flags::EVAL))
+        .map(name)
         .unwrap_or_default()
 }
 
@@ -1135,6 +1164,17 @@ impl crate::Runtime {
     /// normalized); returns the promise of its evaluation, unrooted.
     pub fn run_module(&mut self, name: &str) -> Result<Value, Throw> {
         run(&mut self.cx(), name).map(Value::object)
+    }
+
+    /// [`Runtime::run_module`](crate::Runtime::run_module) with the step
+    /// that threw: loading (compiling the graph), linking or evaluating.
+    pub fn run_module_phased(&mut self, name: &str) -> Result<Value, (ModulePhase, Throw)> {
+        let mut cx = self.cx();
+        let module = load(&mut cx, name, &[]).map_err(|throw| (ModulePhase::Load, throw))?;
+        link(&mut cx, module).map_err(|throw| (ModulePhase::Link, throw))?;
+        evaluate(&mut cx, module)
+            .map(Value::object)
+            .map_err(|throw| (ModulePhase::Evaluate, throw))
     }
 
     /// The state of a promise (0 pending, 1 fulfilled, 2 rejected) and its

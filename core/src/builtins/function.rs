@@ -65,8 +65,8 @@ pub(super) fn prototype(_: &mut Cx<'_>, _: CallSite) -> Result<Value, Throw> {
 }
 
 /// `%ThrowTypeError%`. As in QuickJS, reading `caller` or `arguments` of a
-/// sloppy function that has a `prototype` gives `undefined` (ES5
-/// compatibility); everything else throws.
+/// sloppy ordinary function that has a `prototype` gives `undefined` (ES5
+/// compatibility); everything else, generators included, throws.
 pub(super) fn throw_type_error(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     use crate::bytecode::flags as unit;
     let this = site.this(cx);
@@ -75,7 +75,10 @@ pub(super) fn throw_type_error(cx: &mut Cx<'_>, site: CallSite) -> Result<Value,
             && cx.heap.function_bytecode(object).is_some_and(|bytecode| {
                 let unit_id = cx.heap.bytecode_unit(bytecode);
                 let code = cx.code.get(unit_id);
-                !code.has(unit::STRICT) && code.has(unit::PROTOTYPE)
+                !code.has(unit::STRICT)
+                    && code.has(unit::PROTOTYPE)
+                    && !code.has(unit::GENERATOR)
+                    && !code.has(unit::ASYNC)
             })
     });
     if sloppy && site.argc == 0 {

@@ -21,7 +21,7 @@ pub use heap::atom::{KeyKind, PropertyKey};
 pub use heap::gc::{Handle, HeapLimits, RootMark};
 pub use heap::object::ObjectKind;
 pub use heap::{BytecodeTemplate, Heap, HeapError};
-pub use runtime::{Intrinsic, Realm, Runtime};
+pub use runtime::{Intrinsic, Realm, Runtime, ThrownSummary};
 pub use shape::PropertyFlags;
 pub use value::{
     BigIntId, BytecodeId, Kind, ObjectId, ScopeId, ShapeId, StringId, SymbolId, ValidityCellId,

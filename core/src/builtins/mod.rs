@@ -737,6 +737,9 @@ pub(crate) fn relative(index: f64, length: usize) -> usize {
 /// A string value from UTF-16 units. A single unit is an atom, so `charAt`
 /// and one-character slices do not allocate.
 pub(crate) fn string_units(cx: &mut Cx<'_>, units: &[u16]) -> Result<Value, Throw> {
+    if units.len() > string::MAX_STRING {
+        return Err(vm_error::range_error(cx, "invalid string length"));
+    }
     let result = if units.len() == 1 {
         cx.heap.intern_units(units)
     } else if units.is_empty() {

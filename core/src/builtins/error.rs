@@ -82,6 +82,7 @@ fn construct(
             .add_property(object, Names::key(names.cause), hidden, cause)
             .map_err(|error| vm_error::heap_error(cx, error))?;
     }
+    vm_error::add_stack(cx, object).map_err(|error| vm_error::heap_error(cx, error))?;
     Ok(object)
 }
 

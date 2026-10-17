@@ -255,7 +255,7 @@ fn iter_op_rooted(cx: &mut Cx<'_>, frame: &Frame, insn: Insn) -> Result<(), Thro
     match insn.op {
         Opcode::IterStart => {
             let iterable = cx.heap.vm.registers[at(insn.b)];
-            let generic = insn.c != 0;
+            let generic = insn.imm != 0;
             let record = if !generic && is_pristine_array(cx, iterable) {
                 [iterable, Value::EMPTY, Value::int32(0)]
             } else {
@@ -315,15 +315,18 @@ fn iter_op_rooted(cx: &mut Cx<'_>, frame: &Frame, insn: Insn) -> Result<(), Thro
             let record = at(insn.b);
             let iterator = cx.heap.vm.registers[record];
             let value = cx.heap.vm.registers[at(insn.c)];
+            // The lowering's kinds: 0 `return(value)`, 1 `throw(value)`,
+            // 2 `return()`.
             let names = cx.realm.names;
-            let name = if insn.imm == 0 {
-                names.return_
-            } else {
+            let name = if insn.imm == 1 {
                 names.throw
+            } else {
+                names.return_
             };
             let method = object::get_method(cx, iterator, Names::key(name))?;
+            let args: &[Value] = if insn.imm == 2 { &[] } else { &[value] };
             let (result, missing) = match method {
-                Some(method) => (super::call(cx, method, iterator, &[value])?, false),
+                Some(method) => (super::call(cx, method, iterator, args)?, false),
                 None => (value, true),
             };
             let dst = at(insn.a);

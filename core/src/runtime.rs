@@ -166,6 +166,7 @@ names! {
     message: "message",
     name: "name",
     cause: "cause",
+    stack: "stack",
     errors: "errors",
     value_of: "valueOf",
     to_string: "toString",
@@ -316,6 +317,14 @@ pub struct Runtime {
     /// The regular-expression programs (phase 3, section 5.3): append-only,
     /// beside the heap like the code store.
     regexps: RegExpStore,
+}
+
+/// [`Runtime::thrown_summary`]'s reading of a thrown object.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThrownSummary {
+    pub name: Option<String>,
+    pub message: Option<String>,
+    pub stack: Option<String>,
 }
 
 impl Runtime {
@@ -693,6 +702,65 @@ impl Runtime {
 
     pub fn new_scope(&mut self, parent: Option<ScopeId>, slots: u32) -> Result<ScopeId, HeapError> {
         self.heap.alloc_scope(parent, slots)
+    }
+
+    /// What a test host reports of a thrown object without running
+    /// JavaScript: the error name (an own `name` string, else the
+    /// prototype's, else the prototype's `constructor`'s own `name` other
+    /// than `Object`), the own `message` string and the own `stack` string.
+    /// Accessors and non-string values count as absent; `None` for a
+    /// primitive.
+    pub fn thrown_summary(&mut self, value: Value) -> Option<ThrownSummary> {
+        let object = value.as_object()?;
+        let heap = &mut self.heap;
+        let (Ok(name), Ok(message), Ok(constructor)) = (
+            heap.intern("name"),
+            heap.intern("message"),
+            heap.intern("constructor"),
+        ) else {
+            return Some(ThrownSummary::default());
+        };
+        let heap = &self.heap;
+        let names = &self.realm.names;
+        let own = |object: ObjectId, key: StringId| {
+            crate::vm::property::own(heap, names, object, Names::key(key))
+        };
+        let own_string = |object: ObjectId, key: StringId| match own(object, key) {
+            Some(crate::vm::property::Found::Data(value)) => {
+                Some(value.as_string().map(|id| heap.string_text(id)))
+            }
+            Some(_) => Some(None),
+            None => None,
+        };
+        // `Some(Some(name))` names it, `Some(None)` stops the walk.
+        let named = |found: Option<Option<String>>| match found {
+            Some(Some(name)) if !name.is_empty() => Some(Some(name)),
+            Some(_) => Some(None),
+            None => None,
+        };
+        let error_name = named(own_string(object, name))
+            .or_else(|| {
+                let prototype = heap.prototype_of(object)?;
+                named(own_string(prototype, name)).or_else(|| {
+                    let Some(crate::vm::property::Found::Data(function)) =
+                        own(prototype, constructor)
+                    else {
+                        return Some(None);
+                    };
+                    let function = function.as_object()?;
+                    Some(
+                        own_string(function, name)
+                            .flatten()
+                            .filter(|name| !name.is_empty() && name != "Object"),
+                    )
+                })
+            })
+            .flatten();
+        Some(ThrownSummary {
+            name: error_name,
+            message: own_string(object, message).flatten(),
+            stack: own_string(object, self.realm.names.stack).flatten(),
+        })
     }
 
     /// Holds `value` for the embedder until [`Runtime::release`].

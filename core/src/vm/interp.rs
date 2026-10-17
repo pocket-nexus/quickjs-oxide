@@ -17,6 +17,7 @@ use super::regexp;
 use super::typed;
 use super::{Cx, Frame, SPAN, Throw, frame_flags};
 use crate::builtins::Native;
+use crate::bytecode::opcode::global as global_flags;
 use crate::bytecode::{Capture, CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, flags};
 use crate::heap::Heap;
 use crate::heap::atom::PropertyKey;
@@ -158,6 +159,11 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
             return property::define_accessor(cx, object, insn.key(), function, setter, flags);
         }
         Opcode::NewSpill => (insn.a, new_spill(cx, insn.imm)?),
+        Opcode::ClearCell => {
+            let cell = cell(reg(cx, insn.a));
+            cx.heap.scope_set(cell, 0, 0, Value::EMPTY);
+            return Ok(());
+        }
         Opcode::LoadSlot => {
             let spill = cell(reg(cx, insn.b));
             (insn.a, cx.heap.scope_get(spill, 0, insn.imm))
@@ -209,7 +215,7 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
         }
         Opcode::SetProto => {
             let (object, prototype) = (reg(cx, insn.a), reg(cx, insn.b));
-            let object = object.as_object().expect("a literal object");
+            let object = object.as_object().expect("an object");
             if prototype.as_object().is_some() || prototype.is_null() {
                 super::object::ordinary_set_prototype_of(cx, object, prototype)?;
             }
@@ -217,12 +223,12 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
         }
         Opcode::DefineMethod => {
             let (object, function) = (reg(cx, insn.a), reg(cx, insn.b));
-            let object = object.as_object().expect("a literal object");
+            let object = object.as_object().expect("an object");
             return define_method(cx, object, insn.key(), function, u32::from(insn.c));
         }
         Opcode::DefineMethodComputed => {
             let (object, key, function) = (reg(cx, insn.a), reg(cx, insn.b), reg(cx, insn.c));
-            let object = object.as_object().expect("a literal object");
+            let object = object.as_object().expect("an object");
             let key = ops::to_property_key(cx, key)?;
             return define_method(cx, object, key, function, insn.imm);
         }
@@ -442,9 +448,24 @@ fn construct_this(
     Ok((receiver, new_target))
 }
 
+/// `ToPropertyKeyOf`'s conversion of an object key: a `null` or
+/// `undefined` base throws first.
+#[inline(never)]
+fn to_property_key_of(cx: &mut Cx<'_>, key: Value, base: Value) -> Result<PropertyKey, Throw> {
+    if base.is_null() || base.is_undefined() {
+        let base = if base.is_null() { "null" } else { "undefined" };
+        return Err(error::type_error(
+            cx,
+            &format!("cannot read property of {base}"),
+        ));
+    }
+    ops::to_property_key(cx, key)
+}
+
 /// A call or construction from the loop of a callee that is not bytecode:
 /// a native, an exotic callable, or neither.
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
 fn call_other(
     cx: &mut Cx<'_>,
     target: Callee,
@@ -453,6 +474,7 @@ fn call_other(
     this: Value,
     argc: usize,
     construct: bool,
+    pc: usize,
 ) -> Result<Value, Throw> {
     let new_target = if construct {
         cx.heap.vm.registers[at]
@@ -461,7 +483,11 @@ fn call_other(
     };
     match target {
         Callee::Native(native) if !construct || native.is_constructor() => {
-            call_native(cx, native, at, this, argc, construct, function, new_target)
+            let site = (cx.heap.vm.frames.len() as u32, pc as u32);
+            let saved = std::mem::replace(&mut cx.heap.vm.native_site, site);
+            let result = call_native(cx, native, at, this, argc, construct, function, new_target);
+            cx.heap.vm.native_site = saved;
+            result
         }
         Callee::Native(_) => Err(error::type_error(cx, "not a constructor")),
         _ => {
@@ -1227,6 +1253,7 @@ fn define_global(
     key: PropertyKey,
     value: Value,
     overwrite: bool,
+    configurable: bool,
 ) -> Result<(), Throw> {
     let lexical = cx.realm.intrinsic(Intrinsic::GlobalLexical);
     if let Some((slot, _)) = cx.heap.lookup_own(lexical, key) {
@@ -1239,7 +1266,7 @@ fn define_global(
         if overwrite {
             if property.has(PropertyFlags::ACCESSOR) || property.has(PropertyFlags::CONFIGURABLE) {
                 // `CreateGlobalFunctionBinding` over a configurable property.
-                let descriptor = super::object::Descriptor::data(value, true, true, false);
+                let descriptor = super::object::Descriptor::data(value, true, true, configurable);
                 super::object::define_property_or_throw(cx, global, key, &descriptor)?;
             } else {
                 heap.set_slot(global, slot, value);
@@ -1254,8 +1281,13 @@ fn define_global(
         let message = format!("cannot define variable '{}'", property::key_text(heap, key));
         return Err(error::type_error(cx, &message));
     }
-    heap.add_property(global, key, PropertyFlags::data(true, true, false), value)
-        .map_err(|error| error::heap_error(cx, error))
+    heap.add_property(
+        global,
+        key,
+        PropertyFlags::data(true, true, configurable),
+        value,
+    )
+    .map_err(|error| error::heap_error(cx, error))
 }
 
 /// `delete name` of a global: a lexical binding is not deletable.
@@ -1276,7 +1308,10 @@ fn declare_global(cx: &mut Cx<'_>, insn: Insn) -> Result<(), Throw> {
     let lexical = cx.realm.intrinsic(Intrinsic::GlobalLexical);
     let global = cx.realm.global();
     match insn.op {
-        Opcode::DeclareGlobal => define_global(cx, key, Value::UNDEFINED, false),
+        Opcode::DeclareGlobal => {
+            let configurable = insn.b & global_flags::EVAL != 0;
+            define_global(cx, key, Value::UNDEFINED, false, configurable)
+        }
         Opcode::DeclareGlobalLet | Opcode::DeclareGlobalConst => {
             let writable = insn.op == Opcode::DeclareGlobalLet;
             cx.heap
@@ -1295,6 +1330,28 @@ fn declare_global(cx: &mut Cx<'_>, insn: Insn) -> Result<(), Throw> {
                     ErrorKind::Syntax,
                     insn,
                     "redeclaration of '",
+                    "'",
+                ));
+            }
+            let declarable = match cx.heap.lookup_own(global, key) {
+                None => cx
+                    .heap
+                    .header(global)
+                    .has(crate::heap::object::flags::EXTENSIBLE),
+                Some(_) if insn.b & global_flags::FUNCTION == 0 => true,
+                Some((_, property)) => {
+                    property.has(PropertyFlags::CONFIGURABLE)
+                        || (!property.has(PropertyFlags::ACCESSOR)
+                            && property.has(PropertyFlags::WRITABLE)
+                            && property.has(PropertyFlags::ENUMERABLE))
+                }
+            };
+            if !declarable {
+                return Err(key_error(
+                    cx,
+                    ErrorKind::Type,
+                    insn,
+                    "cannot define variable '",
                     "'",
                 ));
             }
@@ -1537,13 +1594,21 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     let x = reg!(insn.b);
                     set!('dispatch, insn.a, ops::type_of(cx, x))
                 }
-                Opcode::ToPropertyKey => {
+                // A primitive key converts without side effects: the base
+                // check of `ToPropertyKeyOf` is left to the read.
+                Opcode::ToPropertyKey | Opcode::ToPropertyKeyOf => {
                     let x = reg!(insn.b);
                     if x.is_int32() || x.as_string().is_some() || x.as_symbol().is_some() {
                         reg!(insn.a) = x;
                         continue 'dispatch;
                     }
-                    write!('dispatch, insn.a, ops::to_property_key(cx, x).map(PropertyKey::to_value))
+                    let result = if insn.op == Opcode::ToPropertyKey {
+                        ops::to_property_key(cx, x)
+                    } else {
+                        let base = reg!(insn.c);
+                        to_property_key_of(cx, x, base)
+                    };
+                    write!('dispatch, insn.a, result.map(PropertyKey::to_value))
                 }
                 Opcode::IsUndefinedOrNull => {
                     let x = reg!(insn.b);
@@ -1792,7 +1857,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 }
                 Opcode::DefineField => {
                     let (object, value) = (reg!(insn.a), reg!(insn.b));
-                    let object = object.as_object().expect("a literal object");
+                    let object = object.as_object().expect("an object");
                     property::define(cx, object, insn.key(), value)
                 }
                 Opcode::DeleteField => {
@@ -1817,8 +1882,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             set!('dispatch, insn.a, element)
                         }
                     }
-                    let result = ops::to_property_key(cx, key)
-                        .and_then(|key| property::get(cx, object, key));
+                    let result = property::get_computed(cx, object, key);
                     write!('dispatch, insn.a, result)
                 }
                 Opcode::SetElem => {
@@ -1859,7 +1923,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 }
                 Opcode::DefineElem => {
                     let (object, key, value) = (reg!(insn.a), reg!(insn.b), reg!(insn.c));
-                    let object = object.as_object().expect("a literal object");
+                    let object = object.as_object().expect("an object");
                     ops::to_property_key(cx, key)
                         .and_then(|key| property::define(cx, object, key, value))
                 }
@@ -1899,7 +1963,8 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 }
                 Opcode::DefineGlobal => {
                     let value = reg!(insn.a);
-                    define_global(cx, insn.key(), value, true)
+                    let configurable = insn.b & global_flags::EVAL != 0;
+                    define_global(cx, insn.key(), value, true, configurable)
                 }
                 Opcode::DeclareGlobal
                 | Opcode::DeclareGlobalLet
@@ -1959,6 +2024,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 Opcode::DefineGetter
                 | Opcode::DefineSetter
                 | Opcode::NewSpill
+                | Opcode::ClearCell
                 | Opcode::LoadSlot
                 | Opcode::StoreSlot
                 | Opcode::NewArguments
@@ -2151,6 +2217,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                 this,
                                 argc,
                                 construct,
+                                pc - 1,
                             );
                             cx.heap.vm.top = frame_end(&frame, unit);
                             match result {

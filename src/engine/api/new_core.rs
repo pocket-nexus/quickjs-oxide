@@ -20,6 +20,9 @@ use crate::engine::compiler::{
 use crate::source::SourceText;
 use oxide_core::vm::compile::{CompileError, CompileKind, CompileRequest, Compiler};
 
+#[cfg(feature = "test262-host")]
+pub mod test262;
+
 /// Whether this build has the new core's stress collector
 /// (`new-core-gc-stress`), which `--gc-stress` needs.
 pub const GC_STRESS_AVAILABLE: bool = cfg!(feature = "new-core-gc-stress");
@@ -106,6 +109,10 @@ impl From<LowerError> for NewCoreError {
     fn from(error: LowerError) -> Self {
         match error {
             LowerError::Unsupported(construct) => NewCoreError::Unsupported(construct),
+            LowerError::Syntax(message) => NewCoreError::Compile(Error::new(
+                crate::engine::api::error::ErrorKind::Syntax,
+                message,
+            )),
             other => NewCoreError::Internal(other.to_string()),
         }
     }
@@ -201,8 +208,7 @@ fn compile_for_core(
         };
         failure(kind, error.message().to_owned())
     })?;
-    let lowered = lower_script_into(compiler, &script)
-        .map_err(|error| failure(oxide_core::ErrorKind::Internal, error.to_string()))?;
+    let lowered = lower_script_into(compiler, &script).map_err(lower_compile_error)?;
     Ok(lowered.function)
 }
 
@@ -288,26 +294,66 @@ fn load_module(
             text.encode_utf16().collect(),
         ));
     }
+    match compile_module(compiler, name, &source) {
+        Ok((module, _)) => Ok(module),
+        Err(ModuleCompileError::Front(error)) => {
+            Err(failure(core_error_kind(&error), error.message().to_owned()))
+        }
+        Err(ModuleCompileError::Core(error)) => Err(error),
+    }
+}
+
+/// Why a module did not compile: the front end's error, with its position,
+/// or the lowering's.
+enum ModuleCompileError {
+    Front(Error),
+    Core(CompileError),
+}
+
+/// Compiles and lowers the module `name` from `source`; also returns its
+/// root unit.
+fn compile_module(
+    compiler: &mut Compiler<'_>,
+    name: &str,
+    source: &[u8],
+) -> Result<(oxide_core::vm::module::ModuleSource, oxide_core::CodeUnitId), ModuleCompileError> {
+    let failure = |kind: oxide_core::ErrorKind, message: String| {
+        ModuleCompileError::Core(CompileError { kind, message })
+    };
     let module_name = crate::engine::value::JsString::try_from_utf8(name)
         .map_err(|error| failure(oxide_core::ErrorKind::Internal, error.to_string()))?;
     let module =
         crate::engine::compiler::compile_unlinked_module_bytes_with_name_and_attribute_checker(
-            &source,
+            source,
             module_name,
             DebugInfoMode::Full,
             None,
         )
         .map_err(|error| match error {
             crate::engine::compiler::ModuleCompileFailure::Engine(error) => {
-                failure(core_error_kind(&error), error.message().to_owned())
+                ModuleCompileError::Front(error)
             }
             crate::engine::compiler::ModuleCompileFailure::Host => failure(
                 oxide_core::ErrorKind::Type,
                 "import attribute rejected".into(),
             ),
         })?;
-    crate::engine::compiler::register::lower_module_into(compiler, &module)
-        .map_err(|error| failure(oxide_core::ErrorKind::Internal, error.to_string()))
+    crate::engine::compiler::register::lower_module_tree_into(compiler, &module)
+        .map_err(|error| ModuleCompileError::Core(lower_compile_error(error)))
+}
+
+/// A lowering failure as the error the core throws.
+fn lower_compile_error(error: LowerError) -> CompileError {
+    match error {
+        LowerError::Syntax(message) => CompileError {
+            kind: oxide_core::ErrorKind::Syntax,
+            message,
+        },
+        other => CompileError {
+            kind: oxide_core::ErrorKind::Internal,
+            message: other.to_string(),
+        },
+    }
 }
 
 fn core_error_kind(error: &Error) -> oxide_core::ErrorKind {
@@ -474,9 +520,11 @@ mod tests {
     #[test]
     fn errors_are_classified() {
         let options = NewCoreOptions::default();
+        // Phase 0 dropped `with`: an early `SyntaxError`.
         assert!(matches!(
-            run(b"class C {}", "t.js", &options),
-            Err(NewCoreError::Unsupported(construct)) if construct == "classes"
+            run(b"with ({}) {}", "t.js", &options),
+            Err(NewCoreError::Compile(error))
+                if error.kind() == crate::engine::api::error::ErrorKind::Syntax
         ));
         assert!(matches!(
             run(b"var x = ;", "t.js", &options),

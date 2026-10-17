@@ -296,7 +296,7 @@ fn combinator(cx: &mut Cx<'_>, site: CallSite, kind: Combinator) -> Result<Value
 }
 
 /// The loop of a combinator. An error carries whether it came from the
-/// iterator itself (which then is not closed).
+/// iterator itself or after it finished (it then is not closed).
 fn perform(
     cx: &mut Cx<'_>,
     kind: Combinator,
@@ -404,7 +404,8 @@ fn perform(
             }
             Ok(())
         })();
-        finish.map_err(|throw| (throw, false))?;
+        // The iterator is done: it is not closed.
+        finish.map_err(|throw| (throw, true))?;
     }
     Ok(capability[0])
 }
