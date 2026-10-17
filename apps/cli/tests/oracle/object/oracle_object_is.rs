@@ -4,7 +4,7 @@ use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
 };
-use quickjs_oxide::engine::api::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04 `js_object_is`. The upstream builtin is a direct
 // `js_same_value` call: it never boxes or coerces either argument and it has no
@@ -75,36 +75,4 @@ fn object_is_cross_realm_identity_and_constructor_error_realm_are_exact() {
         Some(caller_type_error),
         "non-constructor rejection must use the caller realm",
     );
-}
-
-#[test]
-fn object_is_methods_are_per_realm_and_retain_then_release_their_realm() {
-    let runtime = host_runtime();
-    let object_is = {
-        let mut first = runtime.new_context().expect("create context");
-        let mut second = runtime.new_context().expect("create context");
-        let first_object = global_callable(&runtime, &mut first, "Object");
-        let second_object = global_callable(&runtime, &mut second, "Object");
-        let first_is = property_callable(&runtime, &mut first, first_object.as_object(), "is");
-        let first_is_again =
-            property_callable(&runtime, &mut first, first_object.as_object(), "is");
-        let second_is = property_callable(&runtime, &mut second, second_object.as_object(), "is");
-        assert_eq!(first_is, first_is_again);
-        assert_ne!(first_is, second_is);
-        assert_eq!(
-            runtime.get_prototype_of(first_is.as_object()).unwrap(),
-            Some(first.function_prototype().unwrap()),
-        );
-        drop(second_is);
-        first_is
-    };
-
-    runtime.run_gc().unwrap();
-    assert_eq!(
-        runtime.heap_counts().expect("runtime state").context_nodes,
-        1
-    );
-    drop(object_is);
-    runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }

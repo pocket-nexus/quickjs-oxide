@@ -2,7 +2,7 @@ use crate::oracle_cases::{CompileCase, ExpectedMatchCase as MatchCase};
 use crate::runtime_completion_oracle::observe_rust_result;
 use crate::runtime_observation::utf16;
 use crate::support::regexp_probe_oracle::{MatchProbe, run_compile_probes, run_match_probes};
-use quickjs_oxide::engine::api::JsString;
+use quickjs_oxide::engine::api::core::JsString;
 use quickjs_oxide::regexp::{CompileErrorKind, compile, execute};
 use std::ffi::OsStr;
 

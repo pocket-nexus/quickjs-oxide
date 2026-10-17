@@ -220,7 +220,7 @@ check nothing.
 - The `ic-stats` counters exist with the feature and in debug builds, so
   tests see hits; release builds without the feature carry none.
   `Runtime::ic_report` prints them, and `oxide-run --ic-stats` (CLI feature
-  `new-core-ic-stats`) prints the report to stderr at exit.
+  `ic-stats`) prints the report to stderr at exit.
 
 ### The language surface (M3)
 

@@ -1,6 +1,6 @@
 use crate::common::compile_syntax_error;
 use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::Value;
+use quickjs_oxide::engine::api::core::Value;
 
 #[test]
 fn public_async_generator_class_method_smoke_is_admitted() {

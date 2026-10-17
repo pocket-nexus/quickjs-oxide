@@ -1,9 +1,9 @@
 use crate::runtime_observation::host_runtime;
-use quickjs_oxide::engine::api::{
-    Context, ContextId, JsString, ModuleImportAttributes, ModuleLoadResult, ModuleLoader,
-    ModuleLoaderError, PromiseState, Value,
+use quickjs_oxide::engine::api::core::{
+    JsString, ModuleImportAttributes, ModuleLoader, ModuleSource, NativeErrorKind, PromiseState,
+    Scope, Value,
 };
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -15,102 +15,78 @@ const MODULE_GLOBAL_SHADOW_TRANSCRIPT: &str =
 #[derive(Debug, PartialEq, Eq)]
 struct CallbackEvent {
     phase: &'static str,
-    depth: usize,
     subject: String,
-    context_id: u64,
-    realm_id: ContextId,
 }
 
+/// A loader that compiles every module through its `Scope` (new-core
+/// phase 6, section 2.3), for `import()` of a two-module graph.
 #[derive(Debug)]
 struct DynamicReentryLoader {
-    depth: Rc<Cell<usize>>,
     events: Rc<RefCell<Vec<CallbackEvent>>>,
-}
-
-impl DynamicReentryLoader {
-    fn record(&self, phase: &'static str, subject: String, context: &Context) {
-        self.events.borrow_mut().push(CallbackEvent {
-            phase,
-            depth: self.depth.get(),
-            subject,
-            context_id: context.id(),
-            realm_id: context.realm_id(),
-        });
-    }
-
-    fn compile_loaded_module(
-        &self,
-        context: &mut Context,
-        source: &str,
-        filename: &str,
-    ) -> Result<ModuleLoadResult, ModuleLoaderError> {
-        let previous_depth = self.depth.get();
-        self.depth.set(previous_depth + 1);
-        let result = context.compile_module_with_filename(source, filename);
-        self.depth.set(previous_depth);
-        result.map(ModuleLoadResult::Compiled).map_err(|error| {
-            ModuleLoaderError::new(format!("nested module compilation failed: {error}"))
-        })
-    }
 }
 
 impl ModuleLoader for DynamicReentryLoader {
     fn normalize(
-        &self,
-        context: &mut Context,
-        base_name: &JsString,
-        specifier: &JsString,
-    ) -> Result<JsString, ModuleLoaderError> {
-        let base_name = base_name.to_utf8_lossy();
-        let specifier = specifier.to_utf8_lossy();
-        self.record("normalize", format!("{base_name}|{specifier}"), context);
-        match (base_name.as_str(), specifier.as_str()) {
-            ("dynamic-reentry-entry.js", "./outer.js") => {
-                Ok(JsString::try_from_utf8("outer.js").unwrap())
-            }
-            ("outer.js", "./inner.js") => Ok(JsString::try_from_utf8("inner.js").unwrap()),
-            _ => Err(ModuleLoaderError::new("unexpected module normalization")),
+        &mut self,
+        scope: &mut Scope<'_>,
+        base_name: &str,
+        specifier: &str,
+        _attributes: &ModuleImportAttributes,
+    ) -> Result<String, Value> {
+        self.events.borrow_mut().push(CallbackEvent {
+            phase: "normalize",
+            subject: format!("{base_name}|{specifier}"),
+        });
+        match (base_name, specifier) {
+            ("dynamic-reentry-entry.js", "./outer.js") => Ok("outer.js".to_owned()),
+            ("outer.js", "./inner.js") => Ok("inner.js".to_owned()),
+            _ => Err(scope
+                .new_native_error(NativeErrorKind::Internal, "unexpected module normalization")
+                .unwrap_or(Value::Undefined)),
         }
     }
 
     fn load(
-        &self,
-        context: &mut Context,
-        normalized_name: &JsString,
+        &mut self,
+        scope: &mut Scope<'_>,
+        name: &str,
         _attributes: &ModuleImportAttributes,
-    ) -> Result<ModuleLoadResult, ModuleLoaderError> {
-        let normalized_name = normalized_name.to_utf8_lossy();
-        self.record("load", normalized_name.clone(), context);
-        match normalized_name.as_str() {
-            "outer.js" => self.compile_loaded_module(
-                context,
-                "import { value } from './inner.js'; \
+    ) -> Result<ModuleSource, Value> {
+        self.events.borrow_mut().push(CallbackEvent {
+            phase: "load",
+            subject: name.to_owned(),
+        });
+        let source: &[u8] = match name {
+            "outer.js" => {
+                b"import { value } from './inner.js'; \
                  globalThis.__dynamicReentryOrder.push('outer'); \
-                 export const answer = value + 1;",
-                "outer.js",
-            ),
-            "inner.js" => self.compile_loaded_module(
-                context,
-                "globalThis.__dynamicReentryOrder.push('inner'); export const value = 41;",
-                "inner.js",
-            ),
-            _ => Err(ModuleLoaderError::new("unexpected module load")),
-        }
+                 export const answer = value + 1;"
+            }
+            "inner.js" => {
+                b"globalThis.__dynamicReentryOrder.push('inner'); export const value = 41;"
+            }
+            _ => {
+                return Err(scope
+                    .new_native_error(NativeErrorKind::Internal, "unexpected module load")
+                    .unwrap_or(Value::Undefined));
+            }
+        };
+        scope
+            .compile_module(name, source, Vec::new())
+            .map(ModuleSource::Compiled)
     }
 }
 
 #[test]
-fn dynamic_import_accepts_reentrant_compiled_modules_from_the_initiating_context() {
+fn dynamic_import_accepts_modules_compiled_through_the_loader_scope() {
     let runtime = host_runtime();
-    let depth = Rc::new(Cell::new(0));
     let events = Rc::new(RefCell::new(Vec::new()));
-    let _registration = runtime.set_module_loader(DynamicReentryLoader {
-        depth: depth.clone(),
-        events: events.clone(),
-    });
+    runtime
+        .set_module_loader(DynamicReentryLoader {
+            events: events.clone(),
+        })
+        .unwrap();
     let mut context = runtime.new_context().expect("create context");
-    let expected_context_id = context.id();
-    let expected_realm_id = context.realm_id();
 
     let Value::Object(promise) = context
         .eval_with_filename(
@@ -135,38 +111,17 @@ fn dynamic_import_accepts_reentrant_compiled_modules_from_the_initiating_context
         assert!(executed_jobs <= 8, "dynamic import jobs did not quiesce");
     }
 
-    assert_eq!(depth.get(), 0);
+    let event = |phase, subject: &str| CallbackEvent {
+        phase,
+        subject: subject.to_owned(),
+    };
     assert_eq!(
         events.borrow().as_slice(),
         [
-            CallbackEvent {
-                phase: "normalize",
-                depth: 0,
-                subject: "dynamic-reentry-entry.js|./outer.js".to_owned(),
-                context_id: expected_context_id,
-                realm_id: expected_realm_id,
-            },
-            CallbackEvent {
-                phase: "load",
-                depth: 0,
-                subject: "outer.js".to_owned(),
-                context_id: expected_context_id,
-                realm_id: expected_realm_id,
-            },
-            CallbackEvent {
-                phase: "normalize",
-                depth: 1,
-                subject: "outer.js|./inner.js".to_owned(),
-                context_id: expected_context_id,
-                realm_id: expected_realm_id,
-            },
-            CallbackEvent {
-                phase: "load",
-                depth: 1,
-                subject: "inner.js".to_owned(),
-                context_id: expected_context_id,
-                realm_id: expected_realm_id,
-            },
+            event("normalize", "dynamic-reentry-entry.js|./outer.js"),
+            event("load", "outer.js"),
+            event("normalize", "outer.js|./inner.js"),
+            event("load", "inner.js"),
         ]
     );
     assert_eq!(

@@ -2,7 +2,7 @@ use super::support::*;
 use crate::runtime_observation::host_runtime;
 
 use crate::object_graph_observation::int_property;
-use quickjs_oxide::engine::api::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{RuntimeError, Value};
 
 // This target pins QuickJS 2026-06-04 `Array.prototype.copyWithin`, including
 // overlap direction and the hole-to-throwing-Delete path in `JS_CopySubArray`.

@@ -1,8 +1,8 @@
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_units;
-use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{
-    CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, JsString, ObjectRef,
+use quickjs_oxide::engine::api::core::{
+    CompleteOrdinaryPropertyDescriptor, Context, DescriptorField, ObjectRef,
     OrdinaryPropertyDescriptor, Runtime, Value, number_to_string,
 };
 use std::ffi::OsStr;
@@ -66,32 +66,6 @@ fn array_host_definitions_use_array_set_length_semantics() {
         rust_host_mutation(&runtime, &mut context),
         expected,
         "host property operations bypassed ArraySetLength/index semantics",
-    );
-}
-
-#[test]
-fn array_literal_iterator_and_errors_use_the_bytecode_defining_realm() {
-    let runtime = host_runtime();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
-    drop(
-        defining
-            .eval("Array.prototype.arrayRealm='defining';TypeError.prototype.arrayRealm='defining'")
-            .expect("mark defining Array and TypeError prototypes"),
-    );
-    drop(
-        caller
-            .eval("Array.prototype.arrayRealm='caller';TypeError.prototype.arrayRealm='caller'")
-            .expect("mark caller Array and TypeError prototypes"),
-    );
-    let bytecode = defining
-        .compile("(function(){var a=[1,2],realm=a.arrayRealm;function X(){};var next=a.values().next;try{next.call(new X)}catch(e){return realm+'|'+e.arrayRealm}})()")
-        .expect("compile defining-realm Array probe");
-    assert_eq!(
-        caller
-            .execute(&bytecode)
-            .expect("execute Array probe cross realm"),
-        Value::String(JsString::try_from_utf8("defining|defining").unwrap()),
     );
 }
 

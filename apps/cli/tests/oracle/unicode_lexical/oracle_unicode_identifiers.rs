@@ -1,7 +1,7 @@
 use super::quickjs_syntax_diagnostic_oracle::observe_cmdline_syntax_error as oracle_diagnostic_observation;
 use crate::runtime_observation::host_runtime_context;
+use quickjs_oxide::engine::api::core::{RuntimeError, Value};
 use quickjs_oxide::engine::api::testing::{Lexer, TokenKind};
-use quickjs_oxide::engine::api::{RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -405,7 +405,7 @@ fn rust_diagnostic_observation(source: &str) -> String {
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust parser did not materialize an Error object for {source:?}");
     };
-    let read = |context: &mut quickjs_oxide::engine::api::Context, name: &str| {
+    let read = |context: &mut quickjs_oxide::engine::api::core::Context, name: &str| {
         let key = runtime.intern_property_key(name).unwrap();
         context.get_property(&error, &key).unwrap()
     };

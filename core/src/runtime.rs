@@ -167,6 +167,9 @@ names! {
     name: "name",
     cause: "cause",
     stack: "stack",
+    file_name: "fileName",
+    line_number: "lineNumber",
+    column_number: "columnNumber",
     errors: "errors",
     value_of: "valueOf",
     to_string: "toString",
@@ -562,6 +565,12 @@ impl Runtime {
     /// [`read_file`](crate::host::Host::read_file).
     pub fn install_std(&mut self) -> Result<(), HeapError> {
         crate::builtins::install_std(&mut self.cx())
+    }
+
+    /// Defines `qjs`'s helpers as QuickJS's `js_std_add_helpers` does:
+    /// `console`, `scriptArgs` when given, `print`.
+    pub fn install_qjs_helpers(&mut self, script_args: Option<&[String]>) -> Result<(), HeapError> {
+        crate::builtins::install_qjs_helpers(&mut self.cx(), script_args)
     }
 
     /// Defines qjs's `scriptArgs`.

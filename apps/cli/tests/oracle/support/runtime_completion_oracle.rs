@@ -9,8 +9,8 @@ use crate::runtime_observation::{
     primitive_value_text_with_rust_float, string_property, string_property_with_read_context,
 };
 use crate::runtime_oracle::{error_string_property as runtime_error_string_property, value_type};
-use quickjs_oxide::engine::api::JsString;
-use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::JsString;
+use quickjs_oxide::engine::api::core::{Context, ObjectRef, Runtime, RuntimeError, Value};
 use quickjs_oxide::regexp::CompileErrorKind;
 use quickjs_oxide::regexp::compile;
 use quickjs_oxide::regexp::execute;

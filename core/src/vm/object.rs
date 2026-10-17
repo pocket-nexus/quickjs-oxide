@@ -27,7 +27,7 @@ use super::proxy;
 use super::{Cx, Throw, module, typed};
 use crate::heap::atom::{KeyKind, PropertyKey};
 use crate::heap::object::{InternalTag, NONE, ObjectKind, flags};
-use crate::runtime::{Intrinsic, Names};
+use crate::runtime::{Intrinsic, Names, WellKnown};
 use crate::shape::PropertyFlags;
 use crate::value::{Kind, ObjectId, ScopeId, Value};
 
@@ -1180,7 +1180,7 @@ pub(crate) fn create_data_property_or_throw(
     if create_data_property(cx, object, key, value)? {
         Ok(())
     } else {
-        Err(cannot_define(cx, key))
+        Err(cannot_define(cx, object, key))
     }
 }
 
@@ -1193,17 +1193,53 @@ pub(crate) fn define_property_or_throw(
     if define_own_property(cx, object, key, descriptor)? {
         Ok(())
     } else {
-        Err(cannot_define(cx, key))
+        Err(cannot_define(cx, object, key))
     }
 }
 
+/// A rejected `[[DefineOwnProperty]]` of `key` on `object`, with the reason
+/// QuickJS's `JS_DefineProperty` gives.
 #[cold]
-pub(crate) fn cannot_define(cx: &mut Cx<'_>, key: PropertyKey) -> Throw {
-    let message = format!(
-        "cannot define property '{}'",
-        property::key_text(cx.heap, key)
-    );
-    error::type_error(cx, &message)
+#[inline(never)]
+pub(crate) fn cannot_define(cx: &mut Cx<'_>, object: ObjectId, key: PropertyKey) -> Throw {
+    let heap = &*cx.heap;
+    let header = *heap.header(object);
+    let message = match header.kind {
+        ObjectKind::Proxy => "proxy: defineProperty exception",
+        ObjectKind::TypedArray => match super::typed::numeric_index(heap, key) {
+            Some(index) if index.fract() != 0.0 || !index.is_finite() => {
+                "non integer index in typed array"
+            }
+            Some(index) if index.is_sign_negative() => "negative index in typed array",
+            Some(index) if index >= super::typed::length(heap, object).unwrap_or(0) as f64 => {
+                "out-of-bound index in typed array"
+            }
+            Some(_) => "invalid descriptor flags",
+            None => cannot_define_ordinary(cx, object, key),
+        },
+        _ => cannot_define_ordinary(cx, object, key),
+    };
+    error::type_error(cx, message)
+}
+
+/// [`cannot_define`]'s reason on an object that is neither a proxy nor a
+/// typed array index.
+fn cannot_define_ordinary(cx: &Cx<'_>, object: ObjectId, key: PropertyKey) -> &'static str {
+    let heap = &*cx.heap;
+    let header = *heap.header(object);
+    if property::own(heap, &cx.realm.names, object, key).is_some() {
+        return "property is not configurable";
+    }
+    if !header.has(crate::heap::object::flags::EXTENSIBLE) {
+        return "object is not extensible";
+    }
+    if header.kind == ObjectKind::Array
+        && header.has(crate::heap::object::flags::LENGTH_READONLY)
+        && array_index(heap, key).is_some_and(|index| index >= header.payload)
+    {
+        return "'length' is read-only";
+    }
+    "property is not configurable"
 }
 
 /// `Set(O, P, V, Throw)` on an object.
@@ -1217,17 +1253,11 @@ pub(crate) fn put(
     if cx.heap.object_kind(object).is_exotic() {
         let done = set(cx, object, key, value, Value::object(object))?;
         if !done && throw {
-            return Err(read_only(cx, key));
+            return Err(property::set_failed(cx, object, key));
         }
         return Ok(());
     }
     property::set_on(cx, object, key, value, throw)
-}
-
-#[cold]
-pub(crate) fn read_only(cx: &mut Cx<'_>, key: PropertyKey) -> Throw {
-    let message = format!("'{}' is read-only", property::key_text(cx.heap, key));
-    error::type_error(cx, &message)
 }
 
 /// `DeletePropertyOrThrow`.
@@ -1239,11 +1269,7 @@ pub(crate) fn delete_or_throw(
     if delete(cx, object, key)? {
         Ok(())
     } else {
-        let message = format!(
-            "could not delete property '{}'",
-            property::key_text(cx.heap, key)
-        );
-        Err(error::type_error(cx, &message))
+        Err(error::type_error(cx, "could not delete property"))
     }
 }
 
@@ -1309,10 +1335,7 @@ pub(crate) fn to_object(cx: &mut Cx<'_>, value: Value) -> Result<ObjectId, Throw
     }
     let (kind, prototype) = match value.kind() {
         Kind::Undefined | Kind::Null | Kind::Empty => {
-            return Err(error::type_error(
-                cx,
-                "cannot convert undefined or null to object",
-            ));
+            return Err(error::type_error(cx, "cannot convert to object"));
         }
         Kind::String => (ObjectKind::StringWrapper, Intrinsic::StringPrototype),
         Kind::Number | Kind::Int32 => (ObjectKind::NumberWrapper, Intrinsic::NumberPrototype),
@@ -1366,13 +1389,31 @@ pub(crate) fn get_method(
     value: Value,
     key: PropertyKey,
 ) -> Result<Option<Value>, Throw> {
+    let symbols = &cx.realm.symbols;
+    let iteration =
+        key == WellKnown::key(symbols.iterator) || key == WellKnown::key(symbols.async_iterator);
+    let message = if iteration {
+        "value is not iterable"
+    } else {
+        "not a function"
+    };
+    get_method_or(cx, value, key, message)
+}
+
+/// [`get_method`] throwing `message` (a TypeError) for a method that is
+/// not callable.
+pub(crate) fn get_method_or(
+    cx: &mut Cx<'_>,
+    value: Value,
+    key: PropertyKey,
+    message: &str,
+) -> Result<Option<Value>, Throw> {
     let method = property::get(cx, value, key)?;
     if method.is_undefined() || method.is_null() {
         return Ok(None);
     }
     if !ops::is_callable(cx.heap, method) {
-        let message = format!("{} is not a function", property::key_text(cx.heap, key));
-        return Err(error::type_error(cx, &message));
+        return Err(error::type_error(cx, message));
     }
     Ok(Some(method))
 }
@@ -1482,7 +1523,10 @@ pub(crate) fn ordinary_has_instance(
     };
     let prototype = get_property(cx, constructor, Names::key(cx.realm.names.prototype))?;
     let Some(prototype) = prototype.as_object() else {
-        return Err(error::type_error(cx, "invalid 'instanceof' right operand"));
+        return Err(error::type_error(
+            cx,
+            "operand 'prototype' property is not an object",
+        ));
     };
     loop {
         let next = get_prototype_of(cx, object)?;
@@ -1497,11 +1541,14 @@ pub(crate) fn ordinary_has_instance(
 /// `CreateListFromArrayLike`: the values, rooted on the root stack.
 pub(crate) fn list_from_array_like(cx: &mut Cx<'_>, value: Value) -> Result<Vec<Value>, Throw> {
     let Some(object) = value.as_object() else {
-        return Err(error::type_error(cx, "not an object"));
+        return Err(error::type_error(cx, "not a object"));
     };
     let length = length_of_array_like(cx, object)?;
     if length > 65_535 * 16 {
-        return Err(error::range_error(cx, "too many arguments"));
+        return Err(error::range_error(
+            cx,
+            "too many arguments in function call (only 65534 allowed)",
+        ));
     }
     let mut list = Vec::with_capacity(length as usize);
     for index in 0..length as u32 {
@@ -1552,10 +1599,7 @@ pub(crate) fn array_create(cx: &mut Cx<'_>, length: u64) -> Result<ObjectId, Thr
 /// `ToPropertyDescriptor`. The descriptor's values are rooted.
 pub(crate) fn to_property_descriptor(cx: &mut Cx<'_>, value: Value) -> Result<Descriptor, Throw> {
     let Some(object) = value.as_object() else {
-        return Err(error::type_error(
-            cx,
-            "property descriptor must be an object",
-        ));
+        return Err(error::type_error(cx, "not an object"));
     };
     let names = cx.realm.names;
     let mut descriptor = Descriptor::default();
@@ -1593,7 +1637,7 @@ pub(crate) fn to_property_descriptor(cx: &mut Cx<'_>, value: Value) -> Result<De
     if descriptor.is_accessor() && descriptor.is_data() {
         return Err(error::type_error(
             cx,
-            "cannot have both accessors and value or writable",
+            "cannot have setter/getter and value or writable",
         ));
     }
     Ok(descriptor)

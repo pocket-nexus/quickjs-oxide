@@ -261,7 +261,7 @@ fn expand(cx: &mut Cx<'_>, first: usize, list: Value) -> Result<usize, Throw> {
         return Ok(0);
     }
     let Some(object) = list.as_object() else {
-        return Err(error::type_error(cx, "not an object"));
+        return Err(error::type_error(cx, "not a object"));
     };
     let mark = cx.heap.roots().mark();
     cx.heap.roots().push(list);
@@ -273,7 +273,10 @@ fn expand(cx: &mut Cx<'_>, first: usize, list: Value) -> Result<usize, Throw> {
 fn expand_rooted(cx: &mut Cx<'_>, first: usize, object: ObjectId) -> Result<usize, Throw> {
     let length = array_like_length(cx, object)?;
     if length > MAX_ARGUMENTS {
-        return Err(error::range_error(cx, "too many arguments"));
+        return Err(error::range_error(
+            cx,
+            "too many arguments in function call (only 65534 allowed)",
+        ));
     }
     let end = first + length;
     if !cx.heap.vm.reserve(end) {
@@ -333,13 +336,16 @@ pub(crate) fn list_from_array_like(cx: &mut Cx<'_>, list: Value) -> Result<usize
         return Ok(start);
     }
     let Some(object) = list.as_object() else {
-        return Err(error::type_error(cx, "not an object"));
+        return Err(error::type_error(cx, "not a object"));
     };
     cx.heap.roots().push(list);
     let start = cx.heap.roots().len();
     let length = array_like_length(cx, object)?;
     if length > MAX_ARGUMENTS {
-        return Err(error::range_error(cx, "too many arguments"));
+        return Err(error::range_error(
+            cx,
+            "too many arguments in function call (only 65534 allowed)",
+        ));
     }
     for index in 0..length {
         let value = element(cx, object, index as u32)?;

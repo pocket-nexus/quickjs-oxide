@@ -27,7 +27,7 @@ use crate::quickjs_array_completion_oracle::observe_array_completion;
 use crate::runtime_completion_oracle::ORACLE_NORMALIZER;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::normalize_rust_value_units;
-use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{JsString, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;

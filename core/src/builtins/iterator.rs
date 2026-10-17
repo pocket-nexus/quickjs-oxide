@@ -123,9 +123,13 @@ fn this_iterator(cx: &mut Cx<'_>, site: &CallSite, tag: InternalTag) -> Result<O
     let this = site.this(cx);
     match this.as_object() {
         Some(object) if cx.heap.internal_tag(object) == tag => Ok(object),
-        _ => Err(error::type_error(
+        _ => Err(error::object_expected(
             cx,
-            "not an iterator of the expected kind",
+            if tag == InternalTag::ArrayIterator {
+                "Array Iterator"
+            } else {
+                "String Iterator"
+            },
         )),
     }
 }

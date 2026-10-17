@@ -1,16 +1,16 @@
-mod profiling;
+//! `qjs`: the command-line interpreter on the new core (new-core phase 6,
+//! section 3.1). Its options are QuickJS's `qjs`'s, plus the new core's
+//! measurement and test options taken over from the former `oxide-run`.
 
 use quickjs_oxide::QUICKJS_COMPAT_VERSION;
-use quickjs_oxide::engine::api::{
-    Context, DebugInfoMode, DescriptorField, JsString, ModuleImportAttributes,
-    ModuleImportMetaProperty, ModuleLoadResult, ModuleLoader, ModuleLoaderError, ObjectRef,
-    OrdinaryPropertyDescriptor, PromiseRejectionEvent, PromiseState, Runtime, RuntimeError, Value,
-    number_to_string, quickjs_detect_module_bytes,
+use quickjs_oxide::engine::api::core::{
+    Context, DebugInfoMode, HeapLimits, JsString, ModuleImportAttributes, ModuleLoader,
+    ModuleSource, NativeErrorKind, PromiseState, QjsHelpers, Runtime, RuntimeError, RuntimeOptions,
+    Scope, Value, declare_thread_stack, number_to_string, quickjs_detect_module_bytes,
 };
-use std::cell::RefCell;
+use quickjs_oxide_host::SystemHost;
 use std::io::Write as _;
 use std::process::ExitCode;
-use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum SourceGoal {
@@ -24,17 +24,42 @@ enum SourceGoal {
 ///
 /// QuickJS bounds its parser with a one-MiB C stack budget, where recursive
 /// descent frames are small. The Rust parser approximates the same nesting
-/// depths with a weighted budget, but some productions (concise arrows,
-/// conditional expressions, nested function bodies) have larger Rust frames.
-/// An explicitly sized thread lets them reach those depths instead of
-/// stopping early at the parser's physical backstop. The reservation is
-/// virtual address space, not resident memory. Debug frames are roughly an
-/// order of magnitude larger than release frames, so the debug binary
-/// reserves proportionally more.
+/// depths with a weighted budget, but some productions have larger Rust
+/// frames, and the new core re-enters its loop for calls from natives and
+/// for generators. An explicitly sized thread lets them reach QuickJS's
+/// depths. The reservation is virtual address space, not resident memory.
+/// Debug frames are roughly an order of magnitude larger than release
+/// frames, so the debug binary reserves proportionally more.
 #[cfg(debug_assertions)]
 const EVALUATION_STACK_SIZE: usize = 256 * 1024 * 1024;
 #[cfg(not(debug_assertions))]
 const EVALUATION_STACK_SIZE: usize = 32 * 1024 * 1024;
+
+const USAGE: &str = "\
+usage: qjs [options] [file [args]]
+  -e, --eval EXPR       evaluate EXPR
+  -m, --module          load as an ES module
+      --script          load as a script
+  -s                    strip all debug information
+      --strip-source    strip only function source text
+      --no-unhandled-rejection ignore unhandled promise rejections
+      --print-result    print the script completion value
+  -q, --quit            create the runtime and exit
+      --std             define load and read
+  -v, --version         show version and compatibility target
+memory and measurement:
+      --heap-cap-mib N  cap the heap at N MiB
+      --min-heap-mib N  collection threshold floor (default 4)
+      --gc-growth F     threshold growth after a collection (default 2)
+      --stack-limit N   registers the register file may hold
+      --gc-stats        print the collector's statistics at exit
+      --memory-report   print the memory report at exit
+      --ic-stats        print the inline-cache report at exit (ic-stats build)
+      --gc-stress=N     collect before every N-th allocation (gc-stress build)
+      --disassemble     print the register code of FILE and exit
+Test262:
+      --test262         define $262 (test262-host build)
+      --cannot-block    forbid Atomics.wait from blocking";
 
 /// Run `task` on a thread with [`EVALUATION_STACK_SIZE`] of host stack. The
 /// runtime and all of its `Rc` state are created inside the closure and stay
@@ -44,7 +69,7 @@ fn run_on_evaluation_stack(task: impl FnOnce() -> ExitCode + Send + 'static) -> 
         .name("qjs-evaluation".to_owned())
         .stack_size(EVALUATION_STACK_SIZE)
         .spawn(|| {
-            quickjs_oxide::engine::api::declare_thread_stack(EVALUATION_STACK_SIZE);
+            declare_thread_stack(EVALUATION_STACK_SIZE);
             task()
         }) {
         Ok(handle) => handle,
@@ -59,84 +84,292 @@ fn run_on_evaluation_stack(task: impl FnOnce() -> ExitCode + Send + 'static) -> 
     }
 }
 
-enum EvaluationError {
-    Host(String),
-    Runtime(RuntimeError),
-    Rejected(Value),
+/// What the options select, moved onto the evaluation thread.
+#[derive(Clone, Debug, Default)]
+struct Options {
+    debug_info: DebugInfoMode,
+    print_result: bool,
+    dump_unhandled_rejection: bool,
+    std: bool,
+    heap_cap: Option<usize>,
+    min_heap: Option<usize>,
+    growth: Option<f64>,
+    stack_limit: Option<u32>,
+    gc_stats: bool,
+    memory_report: bool,
+    ic_stats: bool,
+    gc_stress: Option<u32>,
+    disassemble: bool,
+    test262: bool,
+    cannot_block: bool,
 }
 
-impl From<RuntimeError> for EvaluationError {
-    fn from(error: RuntimeError) -> Self {
-        Self::Runtime(error)
+impl Options {
+    fn runtime_options(&self) -> RuntimeOptions {
+        let defaults = RuntimeOptions::default();
+        RuntimeOptions {
+            heap: HeapLimits {
+                max_bytes: self.heap_cap.unwrap_or(defaults.heap.max_bytes),
+            },
+            min_heap: self.min_heap.unwrap_or(defaults.min_heap),
+            growth: self.growth.unwrap_or(defaults.growth),
+            stack_limit: self.stack_limit.unwrap_or(defaults.stack_limit),
+            ..defaults
+        }
     }
+}
+
+fn version() -> ExitCode {
+    println!(
+        "quickjs-oxide {} (QuickJS {} compatibility target)",
+        env!("CARGO_PKG_VERSION"),
+        QUICKJS_COMPAT_VERSION
+    );
+    ExitCode::SUCCESS
+}
+
+fn parse_count<T: std::str::FromStr>(option: &str, value: Option<&String>) -> Result<T, String> {
+    let value = value.ok_or_else(|| format!("{option} requires a value"))?;
+    value
+        .parse()
+        .map_err(|_| format!("invalid value for {option}: {value}"))
+}
+
+fn main() -> ExitCode {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    match parse_and_run(&args) {
+        Ok(code) => code,
+        Err(message) => {
+            eprintln!("qjs: {message}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn parse_and_run(args: &[String]) -> Result<ExitCode, String> {
+    let mut options = Options {
+        dump_unhandled_rejection: true,
+        ..Options::default()
+    };
+    let mut expression = None;
+    let mut quit = false;
+    let mut source_goal = SourceGoal::Auto;
+    let mut index = 0;
+    while index < args.len() && args[index].starts_with('-') && args[index] != "-" {
+        let option = args[index].clone();
+        index += 1;
+        match option.as_str() {
+            "--" => break,
+            "--strip-source" => options.debug_info = DebugInfoMode::StripSource,
+            "--no-unhandled-rejection" => options.dump_unhandled_rejection = false,
+            "--print-result" => options.print_result = true,
+            "--module" => source_goal = SourceGoal::Module,
+            "--script" => source_goal = SourceGoal::Script,
+            "--version" => return Ok(version()),
+            "--help" => {
+                println!("{USAGE}");
+                return Ok(ExitCode::SUCCESS);
+            }
+            "--quit" => quit = true,
+            "--std" => options.std = true,
+            "--gc-stats" => options.gc_stats = true,
+            "--memory-report" => options.memory_report = true,
+            "--ic-stats" => {
+                if !Runtime::IC_STATS_AVAILABLE {
+                    return Err("--ic-stats needs a build with the ic-stats feature".into());
+                }
+                options.ic_stats = true;
+            }
+            "--disassemble" => options.disassemble = true,
+            "--test262" => {
+                if !cfg!(feature = "test262-host") {
+                    return Err("--test262 needs a build with the test262-host feature".into());
+                }
+                options.test262 = true;
+            }
+            "--cannot-block" => options.cannot_block = true,
+            "--heap-cap-mib" => {
+                let mib: usize = parse_count(&option, args.get(index))?;
+                options.heap_cap = Some(mib << 20);
+                index += 1;
+            }
+            "--min-heap-mib" => {
+                let mib: usize = parse_count(&option, args.get(index))?;
+                options.min_heap = Some(mib << 20);
+                index += 1;
+            }
+            "--gc-growth" => {
+                let growth: f64 = parse_count(&option, args.get(index))?;
+                if growth.is_nan() || growth <= 1.0 {
+                    return Err(format!("invalid value for {option}: {growth}"));
+                }
+                options.growth = Some(growth);
+                index += 1;
+            }
+            "--stack-limit" => {
+                options.stack_limit = Some(parse_count(&option, args.get(index))?);
+                index += 1;
+            }
+            "--gc-stress" => options.gc_stress = Some(1),
+            "--eval" => {
+                let source = args.get(index).ok_or("-e requires an expression")?;
+                expression = Some(source.clone());
+                index += 1;
+            }
+            stress if stress.starts_with("--gc-stress=") => {
+                let value = &stress["--gc-stress=".len()..];
+                let interval = value
+                    .parse()
+                    .map_err(|_| format!("--gc-stress: not a count: {value}"))?;
+                options.gc_stress = Some(interval);
+            }
+            short if short.starts_with('-') && !short.starts_with("--") => {
+                for (offset, short_option) in short[1..].char_indices() {
+                    match short_option {
+                        's' => options.debug_info = DebugInfoMode::StripDebug,
+                        'm' => source_goal = SourceGoal::Module,
+                        'q' => quit = true,
+                        'v' => return Ok(version()),
+                        'h' => {
+                            println!("{USAGE}");
+                            return Ok(ExitCode::SUCCESS);
+                        }
+                        'e' => {
+                            let source_offset = 1 + offset + short_option.len_utf8();
+                            if source_offset < short.len() {
+                                expression = Some(short[source_offset..].to_owned());
+                            } else {
+                                let source = args.get(index).ok_or("-e requires an expression")?;
+                                expression = Some(source.clone());
+                                index += 1;
+                            }
+                            break;
+                        }
+                        _ => return Err(format!("unknown option: -{short_option}")),
+                    }
+                }
+            }
+            _ => return Err(format!("unknown option: {option}")),
+        }
+    }
+    if options.gc_stress.is_some() && !Runtime::GC_STRESS_AVAILABLE {
+        return Err("--gc-stress needs a build with the gc-stress feature".into());
+    }
+
+    if quit {
+        let runtime = Runtime::with_host(SystemHost::default(), options.runtime_options());
+        drop(runtime.context());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let request = if let Some(source) = expression {
+        let source_goal = match source_goal {
+            SourceGoal::Module => SourceGoal::Module,
+            SourceGoal::Auto | SourceGoal::Script => SourceGoal::Script,
+        };
+        // On Unix, pinned qjs ignores js_module_set_import_meta's failed
+        // realpath("<cmdline>") and leaves import.meta empty. Its Windows path
+        // has no realpath call and initializes file://<cmdline> normally.
+        #[cfg(windows)]
+        let main_module_path =
+            (source_goal == SourceGoal::Module).then_some("<cmdline>".to_owned());
+        #[cfg(not(windows))]
+        let main_module_path = None;
+        EvaluationRequest {
+            source: source.into_bytes(),
+            filename: "<cmdline>".to_owned(),
+            source_goal,
+            main_module_path,
+            script_args: args[index..].to_vec(),
+            options,
+        }
+    } else {
+        let Some(file) = args.get(index) else {
+            println!("{USAGE}");
+            return Ok(ExitCode::SUCCESS);
+        };
+        let source = match std::fs::read(file) {
+            Ok(source) => source,
+            Err(error) => {
+                eprintln!("{file}: {error}");
+                return Ok(ExitCode::from(1));
+            }
+        };
+        let source_goal = match source_goal {
+            SourceGoal::Auto if is_module_file(file, &source) => SourceGoal::Module,
+            SourceGoal::Auto => SourceGoal::Script,
+            source_goal => source_goal,
+        };
+        EvaluationRequest {
+            source,
+            filename: file.clone(),
+            source_goal,
+            main_module_path: Some(file.clone()),
+            script_args: args[index..].to_vec(),
+            options,
+        }
+    };
+    Ok(run_on_evaluation_stack(move || evaluate(&request)))
+}
+
+/// Owned evaluation inputs, safe to move onto the evaluation thread.
+struct EvaluationRequest {
+    source: Vec<u8>,
+    filename: String,
+    source_goal: SourceGoal,
+    main_module_path: Option<String>,
+    script_args: Vec<String>,
+    options: Options,
 }
 
 #[derive(Debug)]
 struct FileModuleLoader;
 
 impl ModuleLoader for FileModuleLoader {
-    fn check_attributes(
-        &self,
-        _context: &mut quickjs_oxide::engine::api::Context,
-        attributes: &[quickjs_oxide::engine::api::ModuleImportAttribute],
-    ) -> Result<(), ModuleLoaderError> {
-        for attribute in attributes {
-            if !attribute.key.utf16_units().eq("type".encode_utf16()) {
-                return Err(ModuleLoaderError::new(format!(
-                    "import attribute '{}' is not supported",
-                    attribute.key.to_utf8_lossy()
-                )));
+    fn load(
+        &mut self,
+        scope: &mut Scope<'_>,
+        name: &str,
+        attributes: &ModuleImportAttributes,
+    ) -> Result<ModuleSource, Value> {
+        let throw = |scope: &mut Scope<'_>, kind: NativeErrorKind, message: String| {
+            scope
+                .new_native_error(kind, &message)
+                .unwrap_or(Value::Undefined)
+        };
+        if let Some(attributes) = attributes.effective() {
+            for attribute in attributes {
+                if !attribute.key.utf16_units().eq("type".encode_utf16()) {
+                    let key = attribute.key.to_utf8_lossy();
+                    return Err(throw(
+                        scope,
+                        NativeErrorKind::Type,
+                        format!("import attribute '{key}' is not supported"),
+                    ));
+                }
             }
         }
-        Ok(())
-    }
-
-    fn load(
-        &self,
-        context: &mut quickjs_oxide::engine::api::Context,
-        normalized_name: &JsString,
-        attributes: &ModuleImportAttributes,
-    ) -> Result<ModuleLoadResult, ModuleLoaderError> {
-        let units = normalized_name.utf16_units().collect::<Vec<_>>();
-        let filename = String::from_utf16(&units)
-            .map_err(|_| ModuleLoaderError::new("module filename is not valid Unicode"))?;
-        let source = std::fs::read(&filename).map_err(|_| {
-            module_load_failure(context, &filename).unwrap_or_else(|error| {
-                ModuleLoaderError::new(format!(
-                    "module filename '{filename}': host error construction failed: {error}"
-                ))
-            })
+        // QuickJS's `js_module_loader` (`quickjs-libc.c`): "could not load
+        // module filename '%s'".
+        let source = std::fs::read(name).map_err(|_| {
+            throw(
+                scope,
+                NativeErrorKind::Reference,
+                format!("could not load module filename '{name}'"),
+            )
         })?;
         if import_type_is(attributes, "json5") {
-            return Ok(ModuleLoadResult::Json5Bytes(source));
+            return Ok(ModuleSource::Json5(source));
         }
-        if filename.ends_with(".json") || import_type_is(attributes, "json") {
-            return Ok(ModuleLoadResult::JsonBytes(source));
+        if name.ends_with(".json") || import_type_is(attributes, "json") {
+            return Ok(ModuleSource::Json(source));
         }
-        let url = canonical_file_url(&filename).map_err(ModuleLoaderError::new)?;
-        Ok(ModuleLoadResult::SourceBytesWithImportMeta {
-            source,
-            properties: module_import_meta_properties(&url, false)
-                .map_err(|error| ModuleLoaderError::new(error.to_string()))?,
+        let url = canonical_file_url(name)
+            .map_err(|message| throw(scope, NativeErrorKind::Type, message))?;
+        Ok(ModuleSource::Source {
+            text: source,
+            import_meta: import_meta(&url, false),
         })
     }
-}
-
-/// Build the exact JavaScript `ReferenceError` that upstream's
-/// `js_module_loader` throws when `js_load_file` fails
-/// (`quickjs-libc.c:699`: "could not load module filename '%s'"). The host
-/// loader raises the final text itself, so the engine-side dynamic-import
-/// wrapper is never reached and the message is not doubled. Returning it as
-/// [`ModuleLoaderError::exception`] preserves object identity through rejection.
-fn module_load_failure(
-    context: &mut quickjs_oxide::engine::api::Context,
-    filename: &str,
-) -> Result<ModuleLoaderError, RuntimeError> {
-    let error = context.new_native_error(
-        quickjs_oxide::engine::api::error::NativeErrorKind::Reference,
-        &format!("could not load module filename '{filename}'"),
-    )?;
-    Ok(ModuleLoaderError::exception(error))
 }
 
 fn import_type_is(attributes: &ModuleImportAttributes, expected: &str) -> bool {
@@ -166,541 +399,195 @@ fn canonical_file_url(filename: &str) -> Result<String, String> {
     Ok(format!("file://{canonical}"))
 }
 
-fn module_import_meta_properties(
-    url: &str,
-    is_main: bool,
-) -> Result<Vec<ModuleImportMetaProperty>, quickjs_oxide::engine::api::JsStringError> {
-    Ok(vec![
-        ModuleImportMetaProperty::new(
-            JsString::try_from_utf8("url")?,
-            Value::String(JsString::try_from_utf8(url)?),
-        ),
-        ModuleImportMetaProperty::new(JsString::try_from_utf8("main")?, Value::Bool(is_main)),
-    ])
-}
-
-fn main() -> ExitCode {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let mut profile = profiling::Options::default();
-    let mut debug_info = DebugInfoMode::Full;
-    let mut dump_unhandled_promise_rejection = true;
-    let mut expression = None;
-    let mut print_result = false;
-    let mut quit = false;
-    let mut source_goal = SourceGoal::Auto;
-    let mut index = 0;
-    while index < args.len() && args[index].starts_with('-') && args[index] != "-" {
-        let option = args[index].clone();
-        index += 1;
-        match option.as_str() {
-            "--" => break,
-            "--strip-source" => debug_info = DebugInfoMode::StripSource,
-            "--no-unhandled-rejection" => dump_unhandled_promise_rejection = false,
-            "--print-result" => print_result = true,
-            "--module" => source_goal = SourceGoal::Module,
-            "--script" => source_goal = SourceGoal::Script,
-            "--version" => {
-                println!(
-                    "quickjs-oxide {} (QuickJS {} compatibility target)",
-                    env!("CARGO_PKG_VERSION"),
-                    QUICKJS_COMPAT_VERSION
-                );
-                return ExitCode::SUCCESS;
-            }
-            "--help" => {
-                println!("usage: qjs [options] [file [args]]");
-                println!("  -e, --eval EXPR   evaluate EXPR");
-                println!("  -m, --module      load as an ES module");
-                println!("      --script      load as a script");
-                println!("  -s                strip all debug information");
-                println!("      --strip-source strip only function source text");
-                println!("      --no-unhandled-rejection ignore unhandled promise rejections");
-                println!("      --print-result print the script completion value");
-                println!("  -v, --version     show version and compatibility target");
-                profiling::help();
-                return ExitCode::SUCCESS;
-            }
-            "--quit" => quit = true,
-            "--dump" => profile.dump = true,
-            "--trace" => profile.trace = true,
-            "--profile-json" => profile.json = true,
-            "--profile-output" | "--profile-events" | "--profile-iterations" => {
-                let Some(value) = args.get(index) else {
-                    eprintln!("qjs: {option} requires a value");
-                    return ExitCode::from(2);
-                };
-                index += 1;
-                if option == "--profile-output" {
-                    profile.output = Some(value.clone());
-                } else {
-                    let number = value.parse::<usize>().ok().filter(|n| {
-                        if option == "--profile-events" {
-                            *n <= 1_000_000
-                        } else {
-                            (1..=10_000).contains(n)
-                        }
-                    });
-                    let Some(number) = number else {
-                        eprintln!("qjs: invalid value for {option}: {value}");
-                        return ExitCode::from(2);
-                    };
-                    if option == "--profile-events" {
-                        profile.events = Some(number);
-                    } else {
-                        profile.iterations = Some(number);
-                    }
-                }
-            }
-            "--eval" => {
-                let Some(source) = args.get(index) else {
-                    eprintln!("qjs: -e requires an expression");
-                    return ExitCode::from(2);
-                };
-                expression = Some(source.clone());
-                index += 1;
-            }
-            short if short.starts_with('-') && !short.starts_with("--") => {
-                for (offset, short_option) in short[1..].char_indices() {
-                    match short_option {
-                        's' => debug_info = DebugInfoMode::StripDebug,
-                        'm' => source_goal = SourceGoal::Module,
-                        'q' => quit = true,
-                        'd' => profile.dump = true,
-                        'T' => profile.trace = true,
-                        'v' => {
-                            println!(
-                                "quickjs-oxide {} (QuickJS {} compatibility target)",
-                                env!("CARGO_PKG_VERSION"),
-                                QUICKJS_COMPAT_VERSION
-                            );
-                            return ExitCode::SUCCESS;
-                        }
-                        'h' => {
-                            println!("usage: qjs [options] [file [args]]");
-                            println!("  -e, --eval EXPR   evaluate EXPR");
-                            println!("  -m, --module      load as an ES module");
-                            println!("      --script      load as a script");
-                            println!("  -s                strip all debug information");
-                            println!("      --strip-source strip only function source text");
-                            println!(
-                                "      --no-unhandled-rejection ignore unhandled promise rejections"
-                            );
-                            println!("  -v, --version     show version and compatibility target");
-                            profiling::help();
-                            return ExitCode::SUCCESS;
-                        }
-                        'e' => {
-                            let source_offset = 1 + offset + short_option.len_utf8();
-                            if source_offset < short.len() {
-                                expression = Some(short[source_offset..].to_owned());
-                            } else {
-                                let Some(source) = args.get(index) else {
-                                    eprintln!("qjs: -e requires an expression");
-                                    return ExitCode::from(2);
-                                };
-                                expression = Some(source.clone());
-                                index += 1;
-                            }
-                            break;
-                        }
-                        _ => {
-                            eprintln!("qjs: unknown option: -{short_option}");
-                            return ExitCode::from(2);
-                        }
-                    }
-                }
-            }
-            _ => {
-                eprintln!("qjs: unknown option: {option}");
-                return ExitCode::from(2);
-            }
-        }
-    }
-
-    if let Err(error) = profile.validate(quit) {
-        eprintln!("qjs: {error}");
-        return ExitCode::from(2);
-    }
-    if quit {
-        let mut session = match profiling::Session::new(&profile) {
-            Ok(session) => session,
-            Err(error) => {
-                eprintln!("qjs: cannot open profiling output: {error}");
-                return ExitCode::from(2);
-            }
-        };
-        let runtime = session.runtime();
-        if let Err(error) = runtime.set_debug_info_mode(debug_info) {
-            eprintln!("qjs: {error}");
-            return ExitCode::FAILURE;
-        }
-        {
-            let _context = match runtime.new_context() {
-                Ok(context) => context,
-                Err(error) => {
-                    eprintln!("qjs: {error}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            let snapshot = session.snapshot_guard(&runtime);
-            snapshot.phase("initialized-before-context-drop");
-        }
-        drop(runtime);
-        session.lifecycle();
-        return ExitCode::SUCCESS;
-    }
-    if let Some(source) = expression {
-        let source_goal = match source_goal {
-            SourceGoal::Module => SourceGoal::Module,
-            SourceGoal::Auto | SourceGoal::Script => SourceGoal::Script,
-        };
-        // On Unix, pinned qjs ignores js_module_set_import_meta's failed
-        // realpath("<cmdline>") and leaves import.meta empty. Its Windows path
-        // has no realpath call and initializes file://<cmdline> normally.
-        #[cfg(windows)]
-        let main_module_path =
-            (source_goal == SourceGoal::Module).then_some("<cmdline>".to_owned());
-        #[cfg(not(windows))]
-        let main_module_path = None;
-        let request = EvaluationRequest {
-            source: EvaluationInput::Utf8(source),
-            filename: "<cmdline>".to_owned(),
-            source_goal,
-            main_module_path,
-            script_args: args[index..].to_vec(),
-            options: HostOptions {
-                debug_info,
-                print_result,
-                dump_unhandled_promise_rejection,
-            },
-            profile,
-        };
-        return run_on_evaluation_stack(move || evaluate_request(&request));
-    }
-    let Some(file) = args.get(index) else {
-        println!("usage: qjs [options] [file [args]]");
-        println!("  -e, --eval EXPR   evaluate EXPR");
-        println!("  -v, --version     show version and compatibility target");
-        profiling::help();
-        return ExitCode::SUCCESS;
-    };
-    match std::fs::read(file) {
-        Ok(source) => {
-            let source_goal = match source_goal {
-                SourceGoal::Auto if is_module_file(file, &source) => SourceGoal::Module,
-                SourceGoal::Auto => SourceGoal::Script,
-                source_goal => source_goal,
-            };
-            let filename = file.clone();
-            let request = EvaluationRequest {
-                source: EvaluationInput::Bytes(source),
-                filename: filename.clone(),
-                source_goal,
-                main_module_path: Some(filename),
-                script_args: args[index..].to_vec(),
-                options: HostOptions {
-                    debug_info,
-                    print_result,
-                    dump_unhandled_promise_rejection,
-                },
-                profile,
-            };
-            run_on_evaluation_stack(move || evaluate_request(&request))
-        }
-        Err(error) => {
-            eprintln!("{file}: {error}");
-            ExitCode::from(1)
-        }
-    }
-}
-
-/// Owned evaluation inputs, safe to move onto the evaluation worker thread.
-enum EvaluationInput {
-    Utf8(String),
-    Bytes(Vec<u8>),
-}
-
-struct EvaluationRequest {
-    source: EvaluationInput,
-    filename: String,
-    source_goal: SourceGoal,
-    main_module_path: Option<String>,
-    script_args: Vec<String>,
-    options: HostOptions,
-    profile: profiling::Options,
-}
-
-fn evaluate_request(request: &EvaluationRequest) -> ExitCode {
-    let source = match &request.source {
-        EvaluationInput::Utf8(source) => EvaluationSource::Utf8(source),
-        EvaluationInput::Bytes(source) => EvaluationSource::Bytes(source),
-    };
-    evaluate(
-        source,
-        &request.filename,
-        request.source_goal,
-        request.main_module_path.as_deref(),
-        &request.script_args,
-        request.options,
-        &request.profile,
-    )
-}
-
-#[derive(Clone, Copy)]
-enum EvaluationSource<'a> {
-    Utf8(&'a str),
-    Bytes(&'a [u8]),
-}
-
-/// Process-wide host policies `evaluate` installs on the runtime, mirroring the
-/// qjs.c flags of the same names.
-#[derive(Clone, Copy)]
-struct HostOptions {
-    debug_info: DebugInfoMode,
-    print_result: bool,
-    dump_unhandled_promise_rejection: bool,
-}
-
-fn evaluate(
-    source: EvaluationSource<'_>,
-    filename: &str,
-    source_goal: SourceGoal,
-    main_module_path: Option<&str>,
-    script_args: &[String],
-    options: HostOptions,
-    profile: &profiling::Options,
-) -> ExitCode {
-    // Declared before runtime so trace serialization happens after teardown.
-    let mut session = match profiling::Session::new(profile) {
-        Ok(session) => session,
-        Err(error) => {
-            eprintln!("qjs: cannot open profiling output: {error}");
-            return ExitCode::from(2);
-        }
-    };
-    let runtime = session.runtime();
-    if let Err(error) = runtime.set_debug_info_mode(options.debug_info) {
-        eprintln!("qjs: {error}");
-        return ExitCode::FAILURE;
-    }
-    // Upstream qjs installs its filesystem loader for every process, including
-    // Script-goal `-e`, so dynamic import has the same host boundary everywhere.
-    let _module_loader = match runtime.set_module_loader(FileModuleLoader) {
-        Ok(registration) => registration,
-        Err(error) => {
-            eprintln!("qjs: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    // Host promise rejection tracking, mirroring
-    // `js_std_promise_rejection_tracker` in quickjs-libc.c: a rejection is
-    // rooted in publication order and its entry is dropped as soon as the
-    // host observes a handler being attached. Entries that survive the job
-    // drain are reported after the queue settles.
-    let pending_rejections: Rc<RefCell<Vec<(ObjectRef, Value)>>> = Rc::default();
-    if options.dump_unhandled_promise_rejection {
-        let pending_rejections = Rc::clone(&pending_rejections);
-        if let Err(error) =
-            runtime.set_host_promise_rejection_tracker(move |event: PromiseRejectionEvent| {
-                let mut pending = pending_rejections.borrow_mut();
-                let (_, promise, reason, handled) = event.into_parts();
-                if handled {
-                    pending.retain(|(candidate, _)| candidate != &promise);
-                } else if !pending.iter().any(|(candidate, _)| candidate == &promise) {
-                    pending.push((promise, reason));
-                }
-            })
-        {
-            eprintln!("qjs: {error}");
-            return ExitCode::FAILURE;
-        }
-    }
-    let mut context = match runtime.new_context() {
-        Ok(context) => context,
-        Err(error) => {
-            eprintln!("qjs: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let snapshot = session.snapshot_guard(&runtime);
-    let script_args = match script_args
-        .iter()
-        .map(|argument| JsString::try_from_utf8(argument).map_err(RuntimeError::from))
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(script_args) => script_args,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::from(1);
-        }
-    };
-    if let Err(error) = context.install_qjs_helpers_with_script_args(&script_args) {
-        eprintln!("{error}");
-        return ExitCode::from(1);
-    }
-    let evaluation = match source_goal {
-        SourceGoal::Script => match source {
-            EvaluationSource::Utf8(source) => context.eval_with_filename(source, filename),
-            EvaluationSource::Bytes(source) => context.eval_bytes_with_filename(source, filename),
-        }
-        .map_err(EvaluationError::Runtime),
-        SourceGoal::Module => {
-            evaluate_module(&runtime, &mut context, source, filename, main_module_path)
-        }
-        SourceGoal::Auto => unreachable!("the source goal is resolved before evaluation"),
-    };
-    match evaluation {
-        Ok(value) => {
-            if !drain_pending_jobs(&runtime, &mut context) {
-                return ExitCode::from(1);
-            }
-            snapshot.phase("after-jobs-before-context-drop");
-            // `js_std_promise_rejection_check`: report every rejection that
-            // remained unhandled once the job queue drained, then exit 1.
-            let pending = std::mem::take(&mut *pending_rejections.borrow_mut());
-            if !pending.is_empty() {
-                let stderr = std::io::stderr();
-                let mut stderr = stderr.lock();
-                for (_, reason) in &pending {
-                    let _ = stderr.write_all(b"Possibly unhandled promise rejection: ");
-                    match runtime.qjs_print_value_bytes(reason) {
-                        Ok(diagnostic) => {
-                            let _ = stderr.write_all(&diagnostic);
-                        }
-                        Err(_) => {
-                            let _ = stderr.write_all(b"[unknown]");
-                        }
-                    }
-                    let _ = stderr.write_all(b"\n");
-                }
-                return ExitCode::from(1);
-            }
-            if options.print_result {
-                println!("{}", completion_text(value));
-            }
-            ExitCode::SUCCESS
-        }
-        Err(EvaluationError::Rejected(exception)) => {
-            report_exception(format_exception(&runtime, &exception));
-            ExitCode::from(1)
-        }
-        Err(EvaluationError::Host(error)) => {
-            eprintln!("{error}");
-            ExitCode::from(1)
-        }
-        Err(EvaluationError::Runtime(RuntimeError::Exception)) => {
-            report_exception(format_pending_exception(&runtime, &mut context));
-            ExitCode::from(1)
-        }
-        Err(EvaluationError::Runtime(error)) => {
-            eprintln!("{error}");
-            ExitCode::from(1)
-        }
-    }
+/// QuickJS's `js_module_set_import_meta`: `url` and `main`.
+fn import_meta(url: &str, is_main: bool) -> Vec<(String, Value)> {
+    let url = JsString::try_from_utf8(url).map_or(Value::Undefined, Value::String);
+    vec![
+        ("url".to_owned(), url),
+        ("main".to_owned(), Value::Bool(is_main)),
+    ]
 }
 
 fn is_module_file(filename: &str, source: &[u8]) -> bool {
     filename.ends_with(".mjs") || quickjs_detect_module_bytes(source)
 }
 
-/// Drain the runtime job queue the way `js_std_loop` does. A job that leaves a
-/// pending exception is reported with the ordinary uncaught-exception dump and
-/// the queue keeps draining: the rejection of a derived Promise is routed into
-/// its own reject capability by the reaction job, so such an exception is not a
-/// fatal process error. Returns `false` when an internal host error (not a
-/// JavaScript exception) aborted draining.
-fn drain_pending_jobs(runtime: &Runtime, context: &mut Context) -> bool {
-    loop {
-        match runtime
-            .execute_pending_job()
-            .map_err(quickjs_oxide::engine::api::PendingJobError::into_error)
-        {
-            Ok(outcome) if outcome.executed() => {}
-            Ok(_) => return true,
-            Err(RuntimeError::Exception) => {
-                report_exception(format_pending_exception(runtime, context));
+fn evaluate(request: &EvaluationRequest) -> ExitCode {
+    let options = &request.options;
+    let runtime = Runtime::with_host(SystemHost::default(), options.runtime_options());
+    let mut context = runtime.context();
+    let setup = (|| -> Result<(), RuntimeError> {
+        runtime.set_debug_info_mode(options.debug_info)?;
+        runtime.set_gc_stress(options.gc_stress)?;
+        runtime.set_record_gc_pauses(options.gc_stats)?;
+        // QuickJS's `qjs` main thread may not block (`Atomics.wait` throws);
+        // `--cannot-block` keeps that explicit for the Test262 shells.
+        let _ = options.cannot_block;
+        runtime.set_can_block(false)?;
+        // Upstream qjs installs its filesystem loader for every process,
+        // including Script-goal `-e`, so dynamic import has the same host
+        // boundary everywhere.
+        runtime.set_module_loader(FileModuleLoader)?;
+        // `js_std_promise_rejection_tracker`.
+        runtime.set_track_rejections(options.dump_unhandled_rejection)?;
+        context.install_qjs_helpers(&QjsHelpers {
+            std: options.std,
+            script_args: Some(request.script_args.clone()),
+        })?;
+        #[cfg(feature = "test262-host")]
+        if options.test262 {
+            context.install_test262_host()?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = setup {
+        eprintln!("qjs: {error}");
+        return ExitCode::FAILURE;
+    }
+    if options.disassemble {
+        return match runtime.disassemble(&request.source, &request.filename) {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
             }
             Err(error) => {
                 eprintln!("{error}");
+                ExitCode::from(1)
+            }
+        };
+    }
+    let evaluation = match request.source_goal {
+        SourceGoal::Module => evaluate_module(&runtime, &mut context, request),
+        _ => context
+            .eval_bytes_with_filename(&request.source, &request.filename)
+            .map_err(Failure::Runtime),
+    };
+    let code = match evaluation {
+        Ok(value) => {
+            if !drain_pending_jobs(&runtime, &mut context) || report_unhandled_rejections(&runtime)
+            {
+                ExitCode::from(1)
+            } else {
+                if options.print_result {
+                    println!("{}", completion_text(&value));
+                }
+                ExitCode::SUCCESS
+            }
+        }
+        Err(Failure::Rejected(exception)) => {
+            report_exception(&runtime, &exception);
+            ExitCode::from(1)
+        }
+        Err(Failure::Runtime(RuntimeError::Exception)) => {
+            report_pending_exception(&runtime, &mut context);
+            ExitCode::from(1)
+        }
+        Err(Failure::Runtime(error)) => {
+            report_runtime_error(&error);
+            ExitCode::from(1)
+        }
+    };
+    report_statistics(&runtime, options);
+    code
+}
+
+/// Why an evaluation failed.
+enum Failure {
+    Runtime(RuntimeError),
+    /// The main module's evaluation was rejected with this reason.
+    Rejected(Value),
+}
+
+/// Drain the job queue the way `js_std_loop` does: a job that leaves a
+/// pending exception is reported and the queue keeps draining. Returns
+/// `false` when an internal error (not a JavaScript exception) stopped it.
+fn drain_pending_jobs(runtime: &Runtime, context: &mut Context) -> bool {
+    loop {
+        match runtime.run_pending_job() {
+            Ok(outcome) if outcome.executed() => {}
+            Ok(_) => return true,
+            Err(RuntimeError::Exception) => report_pending_exception(runtime, context),
+            Err(error) => {
+                report_runtime_error(&error);
                 return false;
             }
         }
     }
 }
 
+/// `js_std_promise_rejection_check`: report every rejection that remained
+/// unhandled once the job queue drained; whether there was one.
+fn report_unhandled_rejections(runtime: &Runtime) -> bool {
+    let rejections = runtime.take_unhandled_rejections().unwrap_or_default();
+    let stderr = std::io::stderr();
+    let mut stderr = stderr.lock();
+    for (_, reason) in &rejections {
+        let _ = stderr.write_all(b"Possibly unhandled promise rejection: ");
+        match runtime.print_value(reason) {
+            Ok(text) => {
+                let _ = stderr.write_all(text.as_bytes());
+            }
+            Err(_) => {
+                let _ = stderr.write_all(b"[unknown]");
+            }
+        }
+        let _ = stderr.write_all(b"\n");
+    }
+    !rejections.is_empty()
+}
+
 fn evaluate_module(
     runtime: &Runtime,
     context: &mut Context,
-    source: EvaluationSource<'_>,
-    filename: &str,
-    main_module_path: Option<&str>,
-) -> Result<Value, EvaluationError> {
-    let module = match source {
-        EvaluationSource::Utf8(source) => context.compile_module_with_filename(source, filename),
-        EvaluationSource::Bytes(source) => {
-            context.compile_module_bytes_with_filename(source, filename)
-        }
-    }?;
-    if let Some(main_module_path) = main_module_path {
-        let url = canonical_file_url(main_module_path).map_err(EvaluationError::Host)?;
-        let import_meta = context.get_module_import_meta(&module)?;
-        for property in module_import_meta_properties(&url, true).map_err(RuntimeError::from)? {
-            let key = runtime.intern_property_key_js_string(property.key())?;
-            let defined = context.define_own_property(
-                &import_meta,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(property.value().try_clone()?),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )?;
-            if !defined {
-                return Err(EvaluationError::Runtime(RuntimeError::Invariant(
-                    "fresh import.meta property definition was rejected",
+    request: &EvaluationRequest,
+) -> Result<Value, Failure> {
+    let import_meta = match &request.main_module_path {
+        Some(path) => match canonical_file_url(path) {
+            Ok(url) => import_meta(&url, true),
+            Err(message) => {
+                eprintln!("{message}");
+                return Err(Failure::Runtime(RuntimeError::Invariant(
+                    "the main module's path has no URL",
                 )));
             }
-        }
-    }
-    let Value::Object(promise) = context.execute_module(&module)? else {
-        return Err(EvaluationError::Runtime(RuntimeError::Invariant(
+        },
+        None => Vec::new(),
+    };
+    let module = context
+        .compile_module_bytes_with_import_meta(&request.source, &request.filename, import_meta)
+        .map_err(Failure::Runtime)?;
+    let Value::Object(promise) = context.execute_module(&module).map_err(Failure::Runtime)? else {
+        return Err(Failure::Runtime(RuntimeError::Invariant(
             "module evaluation did not return a Promise",
         )));
     };
-
     loop {
         let snapshot = runtime
-            .promise_snapshot(&promise)?
-            .ok_or(RuntimeError::Invariant(
+            .promise_snapshot(&promise)
+            .map_err(Failure::Runtime)?
+            .ok_or(Failure::Runtime(RuntimeError::Invariant(
                 "module evaluation returned a non-Promise object",
-            ))?;
+            )))?;
         match snapshot.state() {
-            PromiseState::Fulfilled => return Ok(snapshot.result().try_clone()?),
-            PromiseState::Rejected => {
-                return Err(EvaluationError::Rejected(snapshot.result().try_clone()?));
-            }
-            PromiseState::Pending => {
-                if !runtime
-                    .execute_pending_job()
-                    .map_err(quickjs_oxide::engine::api::PendingJobError::into_error)?
-                    .executed()
-                {
-                    std::thread::yield_now();
-                }
-            }
+            PromiseState::Fulfilled => return Ok(snapshot.result().clone()),
+            PromiseState::Rejected => return Err(Failure::Rejected(snapshot.result().clone())),
+            PromiseState::Pending => match runtime.run_pending_job() {
+                Ok(outcome) if outcome.executed() => {}
+                Ok(_) => std::thread::yield_now(),
+                Err(RuntimeError::Exception) => report_pending_exception(runtime, context),
+                Err(error) => return Err(Failure::Runtime(error)),
+            },
         }
     }
 }
 
-fn completion_text(value: Value) -> String {
+fn completion_text(value: &Value) -> String {
     match value {
         Value::Undefined => "undefined".to_owned(),
         Value::Null => "null".to_owned(),
         Value::Bool(value) => value.to_string(),
         Value::Int(value) => value.to_string(),
-        Value::Float(value) => number_to_string(value),
+        Value::Float(value) => number_to_string(*value),
         Value::BigInt(value) => value.to_string(),
         Value::String(value) => value.to_utf8_lossy(),
         Value::Object(_) => "[object Object]".to_owned(),
@@ -708,31 +595,66 @@ fn completion_text(value: Value) -> String {
     }
 }
 
-fn format_pending_exception(runtime: &Runtime, context: &mut Context) -> Option<Vec<u8>> {
-    let exception = context.take_exception().ok().flatten()?;
-    format_exception(runtime, &exception)
+/// An engine failure that is not a JavaScript exception. The heap cap is
+/// reported as QuickJS reports its uncaught out-of-memory error.
+fn report_runtime_error(error: &RuntimeError) {
+    match error {
+        RuntimeError::OutOfMemory => eprintln!("InternalError: out of memory"),
+        other => eprintln!("{other}"),
+    }
 }
 
-fn format_exception(runtime: &Runtime, exception: &Value) -> Option<Vec<u8>> {
-    runtime.qjs_print_value_bytes(exception).ok()
+fn report_pending_exception(runtime: &Runtime, context: &mut Context) {
+    match context.take_exception().ok().flatten() {
+        Some(exception) => report_exception(runtime, &exception),
+        None => eprintln!("JavaScript exception"),
+    }
 }
 
-fn report_exception(exception: Option<Vec<u8>>) {
-    let Some(exception) = exception else {
-        eprintln!("JavaScript exception");
-        return;
-    };
+/// An uncaught exception as QuickJS dumps it: `JS_PrintValue`.
+fn report_exception(runtime: &Runtime, exception: &Value) {
     let stderr = std::io::stderr();
     let mut stderr = stderr.lock();
-    let _ = stderr.write_all(&exception);
-    let _ = stderr.write_all(b"\n");
+    match format_exception(runtime, exception) {
+        Some(text) => {
+            let _ = stderr.write_all(text.as_bytes());
+            let _ = stderr.write_all(b"\n");
+        }
+        None => {
+            let _ = stderr.write_all(b"JavaScript exception\n");
+        }
+    }
+}
+
+fn format_exception(runtime: &Runtime, exception: &Value) -> Option<String> {
+    runtime.print_value(exception).ok()
+}
+
+/// `--gc-stats`, `--ic-stats` and `--memory-report`, to stderr at exit.
+fn report_statistics(runtime: &Runtime, options: &Options) {
+    if options.ic_stats
+        && let Ok(Some(report)) = runtime.ic_report(10)
+    {
+        eprint!("{report}");
+    }
+    if options.gc_stats
+        && let Ok(report) = runtime.gc_report()
+    {
+        eprint!("{report}");
+    }
+    if options.memory_report
+        && let Ok(report) = runtime.memory_report()
+    {
+        eprint!("{report}");
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::format_exception;
-    use quickjs_oxide::engine::api::{
-        AccessorValue, DescriptorField, JsString, OrdinaryPropertyDescriptor, Runtime, Value,
+    use quickjs_oxide::engine::api::core::{
+        AccessorValue, CallableRef, DescriptorField, JsString, OrdinaryPropertyDescriptor, Runtime,
+        Value,
     };
 
     fn data_descriptor(value: Value) -> OrdinaryPropertyDescriptor {
@@ -745,9 +667,7 @@ mod tests {
         }
     }
 
-    fn accessor_descriptor(
-        getter: quickjs_oxide::engine::api::CallableRef,
-    ) -> OrdinaryPropertyDescriptor {
+    fn accessor_descriptor(getter: CallableRef) -> OrdinaryPropertyDescriptor {
         OrdinaryPropertyDescriptor {
             get: DescriptorField::Present(AccessorValue::Callable(getter)),
             set: DescriptorField::Present(AccessorValue::Undefined),
@@ -759,9 +679,8 @@ mod tests {
 
     #[test]
     fn error_dump_uses_raw_shadowing_and_never_executes_getters() {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
+        let mut context = runtime.context();
         let Value::Object(error) = context.eval("new Error(\"boom\")").unwrap() else {
             panic!("Error constructor did not return an object");
         };
@@ -786,7 +705,6 @@ mod tests {
             ("stack", "prototype stack\n"),
         ] {
             let key = runtime.intern_property_key(name).unwrap();
-            let _ = context.get_property(&prototype, &key).unwrap();
             assert!(
                 runtime
                     .define_own_property(
@@ -800,11 +718,7 @@ mod tests {
             );
             assert!(
                 runtime
-                    .define_own_property(
-                        &error,
-                        &key,
-                        &accessor_descriptor(getter.try_clone().expect("duplicate root"))
-                    )
+                    .define_own_property(&error, &key, &accessor_descriptor(getter.clone()))
                     .unwrap()
             );
         }
@@ -812,7 +726,7 @@ mod tests {
         assert!(!context.has_exception().expect("runtime state"));
         assert_eq!(
             format_exception(&runtime, &Value::Object(error)),
-            Some(b"Error".to_vec())
+            Some("Error".to_owned())
         );
         assert!(
             !context.has_exception().expect("runtime state"),
@@ -822,9 +736,8 @@ mod tests {
 
     #[test]
     fn error_dump_reads_exactly_one_raw_prototype_level() {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context().expect("create context");
+        let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
+        let mut context = runtime.context();
         let Value::Object(error) = context.eval("new Error()").unwrap() else {
             panic!("Error constructor did not return an object");
         };
@@ -839,7 +752,6 @@ mod tests {
             ("stack", "prototype stack\n"),
         ] {
             let key = runtime.intern_property_key(name).unwrap();
-            let _ = context.get_property(&prototype, &key).unwrap();
             assert!(
                 runtime
                     .define_own_property(
@@ -855,7 +767,7 @@ mod tests {
 
         assert_eq!(
             format_exception(&runtime, &Value::Object(error)),
-            Some(b"PrototypeName: PrototypeMessage\nprototype stack".to_vec())
+            Some("PrototypeName: PrototypeMessage\nprototype stack".to_owned())
         );
     }
 }

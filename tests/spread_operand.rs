@@ -5,8 +5,8 @@
 //! Every case here is additionally compared byte-for-byte against
 //! `$QJS_ORACLE` when that variable points at the pinned `qjs` binary.
 
-use quickjs_oxide::engine::api::{Runtime, Value};
-use quickjs_oxide_host::SystemHostServices;
+use quickjs_oxide::engine::api::core::{Runtime, Value};
+use quickjs_oxide_host::SystemHost;
 
 mod common;
 
@@ -99,7 +99,7 @@ const THROW_CASES: &[SpreadCase] = &[
 ];
 
 fn eval_json(operand: &str) -> String {
-    let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(SystemHost::default());
     let mut context = runtime.new_context().expect("create context");
     match context.eval(&format!("JSON.stringify([...{operand}])")) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),
@@ -109,7 +109,7 @@ fn eval_json(operand: &str) -> String {
 }
 
 fn eval_throw_label(operand: &str) -> String {
-    let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(SystemHost::default());
     let mut context = runtime.new_context().expect("create context");
     let program = format!("try{{[...{operand}];\"OK\"}}catch(e){{e.name+\":\"+e.message}}");
     match context.eval(&program) {

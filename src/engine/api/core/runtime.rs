@@ -673,6 +673,37 @@ impl Runtime {
         })
     }
 
+    /// Collects before every `interval`-th allocating operation (`qjs
+    /// --gc-stress=N`), or stops (`None`); only in a build with the stress
+    /// collector ([`Runtime::GC_STRESS_AVAILABLE`]).
+    pub fn set_gc_stress(&self, interval: Option<u32>) -> Result<(), RuntimeError> {
+        let mut entry = self.enter()?;
+        #[cfg(feature = "gc-stress")]
+        {
+            let gc = entry.core.heap_mut().gc_mut();
+            gc.stress = interval.is_some_and(|interval| interval > 0);
+            gc.stress_interval = interval.unwrap_or(1).max(1);
+            Ok(())
+        }
+        #[cfg(not(feature = "gc-stress"))]
+        {
+            let _ = &mut entry;
+            match interval {
+                Some(_) => Err(RuntimeError::Unsupported(
+                    "stress collections in this build",
+                )),
+                None => Ok(()),
+            }
+        }
+    }
+
+    /// Whether this build has the stress collector.
+    pub const GC_STRESS_AVAILABLE: bool = cfg!(feature = "gc-stress");
+
+    /// Whether this build counts inline-cache hits (`ic_report` returns
+    /// `Some`).
+    pub const IC_STATS_AVAILABLE: bool = cfg!(feature = "ic-stats");
+
     /// Records every collection's pause (for [`Runtime::gc_report`]).
     pub fn set_record_gc_pauses(&self, record: bool) -> Result<(), RuntimeError> {
         self.enter()?.core.heap_mut().gc_mut().record_pauses = record;

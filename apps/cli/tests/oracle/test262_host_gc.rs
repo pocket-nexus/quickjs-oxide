@@ -1,7 +1,7 @@
 use crate::object_graph_observation::data_property;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_text as text;
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{Context, Runtime, RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("host_gc_execution_turn.js");
 const QUICKJS_2026_06_04: &str =

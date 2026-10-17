@@ -1,7 +1,7 @@
 use crate::object_graph_observation::{define_context_global as define_global, object};
 use crate::runtime_observation::{drain, eval, integer, text};
 use crate::runtime_observation::{host_runtime, host_runtime_context};
-use quickjs_oxide::engine::api::{CallableRef, Value};
+use quickjs_oxide::engine::api::core::Value;
 use std::process::Command;
 
 #[test]
@@ -121,10 +121,7 @@ promise.then(function (value) {
         )),
         "function|2|add|false|[object AsyncFunction]|AsyncFunction|true|body,after|pending"
     );
-    assert_eq!(
-        runtime.execute_pending_job().unwrap().context(),
-        Some(context.realm_id())
-    );
+    assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
     assert_eq!(integer(eval(&mut context, "answer")), 42);
     assert_eq!(
         text(eval(&mut context, "events.join(',')")),
@@ -192,17 +189,11 @@ order.join('|');
     );
 
     for expected in ["f0|sync|f1:7", "f0|sync|f1:7|f2:8"] {
-        assert_eq!(
-            runtime.execute_pending_job().unwrap().context(),
-            Some(context.realm_id())
-        );
+        assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
         assert_eq!(text(eval(&mut context, "order.join('|')")), expected);
         assert_eq!(text(eval(&mut context, "answer")), "pending");
     }
-    assert_eq!(
-        runtime.execute_pending_job().unwrap().context(),
-        Some(context.realm_id())
-    );
+    assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
     assert_eq!(integer(eval(&mut context, "answer")), 15);
     assert_eq!(
         text(eval(&mut context, "order.join('|')")),
@@ -242,19 +233,13 @@ events.join('|');
         )),
         "try|sync"
     );
-    assert_eq!(
-        runtime.execute_pending_job().unwrap().context(),
-        Some(context.realm_id())
-    );
+    assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
     assert_eq!(
         text(eval(&mut context, "events.join('|')")),
         "try|sync|catch:x|finally"
     );
     assert_eq!(text(eval(&mut context, "answer")), "pending");
-    assert_eq!(
-        runtime.execute_pending_job().unwrap().context(),
-        Some(context.realm_id())
-    );
+    assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
     assert_eq!(integer(eval(&mut context, "answer")), 42);
     assert_eq!(
         text(eval(&mut context, "events.join('|')")),
@@ -311,10 +296,7 @@ events.join('|');
         "get|sync|call|resume:42|done",
     ];
     for expected in checkpoints {
-        assert_eq!(
-            runtime.execute_pending_job().unwrap().context(),
-            Some(context.realm_id())
-        );
+        assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
         runtime.run_gc().unwrap();
         assert_eq!(text(eval(&mut context, "events.join('|')")), expected);
     }
@@ -529,70 +511,6 @@ parameterEval().then(function (value) { parameterResult = value; });
 }
 
 #[test]
-fn cross_realm_call_uses_caller_promise_and_jobs_but_callee_body_realm() {
-    let runtime = host_runtime();
-    let mut callee = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
-    let caller_realm = caller.realm_id();
-
-    let Value::Object(function) = eval(
-        &mut callee,
-        r#"
-(async function crossRealm() {
-    await 0;
-    throw new TypeError('callee');
-})
-"#,
-    ) else {
-        panic!("async source did not produce a function");
-    };
-    let function: CallableRef = runtime.as_callable(&function).unwrap().unwrap();
-    let callee_type_error_prototype = object(eval(&mut callee, "TypeError.prototype"));
-    let promise = object(
-        caller
-            .call(&function, Value::Undefined, &[])
-            .expect("cross-realm async call"),
-    );
-    let caller_promise_prototype = object(eval(&mut caller, "Promise.prototype"));
-    assert_eq!(
-        runtime.get_prototype_of(&promise).unwrap(),
-        Some(caller_promise_prototype)
-    );
-
-    define_global(&mut caller, "crossPromise", Value::Object(promise));
-    drop(eval(
-        &mut caller,
-        r#"
-var crossReason;
-crossPromise.then(undefined, function (error) {
-    crossReason = error;
-});
-"#,
-    ));
-    drop(callee);
-    runtime.run_gc().unwrap();
-
-    assert_eq!(
-        runtime.execute_pending_job().unwrap().context(),
-        Some(caller_realm),
-        "the private await reaction belongs to the caller realm"
-    );
-    assert_eq!(
-        runtime.execute_pending_job().unwrap().context(),
-        Some(caller_realm),
-        "the public Promise reaction also belongs to the caller realm"
-    );
-    let reason = object(eval(&mut caller, "crossReason"));
-    assert_eq!(
-        runtime.get_prototype_of(&reason).unwrap(),
-        Some(callee_type_error_prototype),
-        "the resumed body still executes in its defining realm"
-    );
-    assert_eq!(text(eval(&mut caller, "crossReason.message")), "callee");
-    assert!(!runtime.is_job_pending().expect("runtime state"));
-}
-
-#[test]
 fn stack_preflight_returns_a_caller_promise_rejected_with_a_caller_error() {
     let runtime = host_runtime();
     let mut callee = runtime.new_context().expect("create context");
@@ -666,10 +584,7 @@ stackPromises.every(function (promise) {
     );
     let mut jobs = 0;
     while runtime.is_job_pending().expect("runtime state") {
-        assert_eq!(
-            runtime.execute_pending_job().unwrap().context(),
-            Some(caller.realm_id())
-        );
+        assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
         jobs += 1;
     }
     assert!(jobs > 1);

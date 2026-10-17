@@ -8,7 +8,7 @@ usage: relink.py BUILD_LOG OUT_PREFIX DELTA... [--binary NAME]
 BUILD_LOG holds rustc's `--print link-args` output from a `-C save-temps` build:
 
     RUSTFLAGS="-C save-temps --print link-args" cargo build --release \
-        -p quickjs-oxide-cli --bin oxide-run --target-dir T > build.log 2>&1
+        -p quickjs-oxide-cli --bin qjs --target-dir T > build.log 2>&1
 
 Writes OUT_PREFIX-d<delta> binaries and OUT_PREFIX-relinks.json with the .text
 address and SHA-256 of each, and warns about any variant whose .text bytes

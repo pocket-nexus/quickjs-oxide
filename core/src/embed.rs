@@ -267,10 +267,44 @@ impl Runtime {
         crate::vm::error::new_error(&mut self.cx(), kind, Value::string(message))
     }
 
+    /// A new error object located at `file:line:column` (a compile error):
+    /// `fileName`, `lineNumber` and `columnNumber`, and a `stack` that
+    /// starts there, the running frames after it.
+    pub fn new_located_error(
+        &mut self,
+        kind: ErrorKind,
+        message: &str,
+        file: &str,
+        line: u32,
+        column: u32,
+    ) -> Result<Value, HeapError> {
+        let message = self.heap.alloc_string(message)?;
+        let location = crate::vm::error::Location { file, line, column };
+        crate::vm::error::new_error_at(
+            &mut self.cx(),
+            kind,
+            Value::string(message),
+            Some(location),
+            true,
+        )
+    }
+
     /// A pending promise of `%Promise.prototype%`.
     pub fn new_promise(&mut self) -> Result<ObjectId, Throw> {
         let prototype = self.realm.intrinsic(crate::Intrinsic::PromisePrototype);
         crate::vm::jobs::new_promise(&mut self.cx(), prototype)
+    }
+
+    /// QuickJS's `JS_DetachArrayBuffer`: detaches an ArrayBuffer; anything
+    /// else is ignored.
+    pub fn detach_array_buffer(&mut self, value: Value) -> Result<(), Throw> {
+        let is_buffer = value.as_object().is_some_and(|object| {
+            self.heap.internal_tag(object) == crate::heap::object::InternalTag::ArrayBuffer
+        });
+        if is_buffer {
+            crate::builtins::detach_buffer(&mut self.cx(), value)?;
+        }
+        Ok(())
     }
 
     // ---- primitives ----

@@ -67,11 +67,11 @@ pub(super) fn species_getter(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
 /// `new Promise(executor)`.
 pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     if !site.construct {
-        return Err(error::type_error(cx, "Promise constructor requires 'new'"));
+        return Err(error::type_error(cx, "must be called with new"));
     }
     let executor = site.arg(cx, 0);
     if !ops::is_callable(cx.heap, executor) {
-        return Err(error::type_error(cx, "Promise executor is not a function"));
+        return Err(error::type_error(cx, "not a function"));
     }
     let prototype =
         internal::prototype_from_constructor(cx, site.new_target, Intrinsic::PromisePrototype)?;
@@ -107,7 +107,7 @@ fn this_promise(cx: &mut Cx<'_>, site: &CallSite) -> Result<ObjectId, Throw> {
     if jobs::is_promise(cx, this) {
         return Ok(this.as_object().unwrap());
     }
-    Err(error::type_error(cx, "not a promise"))
+    Err(error::object_expected(cx, "Promise"))
 }
 
 /// `Promise.prototype.then(onFulfilled, onRejected)`.
@@ -271,7 +271,7 @@ fn combinator(cx: &mut Cx<'_>, site: CallSite, kind: Combinator) -> Result<Value
     let iterable = site.arg(cx, 0);
     let outcome = (|| {
         let resolve = internal::get_method(cx, constructor, Names::key(cx.realm.names.resolve))?
-            .ok_or_else(|| error::type_error(cx, "Promise.resolve is not a function"))?;
+            .ok_or_else(|| error::type_error(cx, "not a function"))?;
         root(cx, resolve);
         let mut record = iter::get_iterator(cx, iterable)?;
         let result = perform(cx, kind, constructor, resolve, capability, &mut record);

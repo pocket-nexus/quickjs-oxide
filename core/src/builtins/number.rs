@@ -138,10 +138,7 @@ pub(super) fn to_fixed(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
     let fraction = site.arg(cx, 0);
     let fraction = digits(cx, fraction)?;
     if !(0.0..=f64::from(radix::MAX_DIGITS)).contains(&fraction) {
-        return Err(error::range_error(
-            cx,
-            "toFixed() digits argument must be between 0 and 100",
-        ));
+        return Err(error::range_error(cx, "invalid number of digits"));
     }
     string_text(cx, &radix::to_fixed(value, fraction as i32))
 }
@@ -154,10 +151,7 @@ pub(super) fn to_exponential(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
         return string_text(cx, &radix::to_exponential(value, None));
     }
     if !(0.0..=f64::from(radix::MAX_DIGITS)).contains(&fraction) {
-        return Err(error::range_error(
-            cx,
-            "toExponential() argument must be between 0 and 100",
-        ));
+        return Err(error::range_error(cx, "invalid number of digits"));
     }
     let fraction = if argument.is_undefined() {
         None
@@ -178,10 +172,7 @@ pub(super) fn to_precision(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
         return ops::to_string(cx, number::number(value));
     }
     if !(1.0..=f64::from(radix::MAX_DIGITS)).contains(&precision) {
-        return Err(error::range_error(
-            cx,
-            "toPrecision() argument must be between 1 and 100",
-        ));
+        return Err(error::range_error(cx, "invalid number of digits"));
     }
     string_text(cx, &radix::to_precision(value, precision as i32))
 }

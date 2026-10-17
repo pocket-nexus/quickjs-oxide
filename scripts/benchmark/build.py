@@ -145,9 +145,11 @@ def main():
     cargo = command_output(["cargo", "-V"], repo_path)
     if rustc["exit_code"] or cargo["exit_code"]:
         parser.error("rustc and cargo must be available on the build host")
-    selected_builds = [("plain", args.plain_target, [])] if args.plain_only else \
-        [("profiling", args.profile_target, ["profiling"])] if args.profile_only else \
-        [("plain", args.plain_target, []), ("profiling", args.profile_target, ["profiling"])]
+    # The profiling build went with the profiling API (new-core phase 6,
+    # section 2.4): every build is the plain CLI.
+    if args.profile_only:
+        parser.error("the profiling build was removed; use qjs --gc-stats, --ic-stats or --memory-report")
+    selected_builds = [("plain", args.plain_target, [])]
     if repo_path != ROOT and any(target.resolve() in ((ROOT / "target").resolve(),
                                                   (ROOT / "target/profile-feature").resolve())
                                  for _, target, _ in selected_builds):

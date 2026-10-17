@@ -742,7 +742,7 @@ pub(crate) fn relative(index: f64, length: usize) -> usize {
 /// and one-character slices do not allocate.
 pub(crate) fn string_units(cx: &mut Cx<'_>, units: &[u16]) -> Result<Value, Throw> {
     if units.len() > string::MAX_STRING {
-        return Err(vm_error::range_error(cx, "invalid string length"));
+        return Err(vm_error::string_too_long(cx));
     }
     let result = if units.len() == 1 {
         cx.heap.intern_units(units)
@@ -796,7 +796,7 @@ pub(crate) fn this_string(cx: &mut Cx<'_>, site: &CallSite) -> Result<StringId, 
         return Ok(id);
     }
     if this.is_undefined() || this.is_null() {
-        return Err(vm_error::type_error(cx, "not an object"));
+        return Err(vm_error::type_error(cx, "null or undefined are forbidden"));
     }
     to_string_id(cx, this)
 }
@@ -1169,16 +1169,49 @@ pub(crate) fn install_std(cx: &mut Cx<'_>) -> Result<(), HeapError> {
 pub(crate) fn install_script_args(cx: &mut Cx<'_>, args: &[String]) -> Result<(), HeapError> {
     let mark = cx.heap.roots().mark();
     let result = (|| {
-        let prototype = cx.realm.intrinsic(Intrinsic::ArrayPrototype);
-        let array = cx.heap.alloc_array(Some(prototype), args.len() as u32)?;
-        cx.heap.roots().push(Value::object(array));
-        for (index, arg) in args.iter().enumerate() {
-            let text = cx.heap.alloc_string(arg)?;
-            cx.heap
-                .set_element(array, index as u32, Value::string(text))?;
-        }
+        let array = script_args_array(cx, args)?;
         let global = cx.realm.global();
         define(cx, global, "scriptArgs", Value::object(array), hidden())
+    })();
+    cx.heap.roots().truncate(mark);
+    result
+}
+
+/// An array of `args` as strings, rooted.
+fn script_args_array(cx: &mut Cx<'_>, args: &[String]) -> Result<ObjectId, HeapError> {
+    let prototype = cx.realm.intrinsic(Intrinsic::ArrayPrototype);
+    let array = cx.heap.alloc_array(Some(prototype), args.len() as u32)?;
+    cx.heap.roots().push(Value::object(array));
+    for (index, arg) in args.iter().enumerate() {
+        let text = cx.heap.alloc_string(arg)?;
+        cx.heap
+            .set_element(array, index as u32, Value::string(text))?;
+    }
+    Ok(array)
+}
+
+/// QuickJS's `js_std_add_helpers` as `qjs` runs it: `console` (with `log`),
+/// `scriptArgs` when given, then `print`, in that order, each writable,
+/// enumerable and configurable (`JS_SetPropertyStr`).
+pub(crate) fn install_qjs_helpers(
+    cx: &mut Cx<'_>,
+    script_args: Option<&[String]>,
+) -> Result<(), HeapError> {
+    let mark = cx.heap.roots().mark();
+    let result = (|| {
+        let global = cx.realm.global();
+        let all = PropertyFlags::data(true, true, true);
+        let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
+        let console = plain_object(cx, Some(prototype), 1)?;
+        let log = native_function(cx, Native::ConsoleLog)?;
+        define(cx, console, "log", Value::object(log), all)?;
+        define(cx, global, "console", Value::object(console), all)?;
+        if let Some(args) = script_args {
+            let array = script_args_array(cx, args)?;
+            define(cx, global, "scriptArgs", Value::object(array), all)?;
+        }
+        let print = native_function(cx, Native::Print)?;
+        define(cx, global, "print", Value::object(print), all)
     })();
     cx.heap.roots().truncate(mark);
     result
@@ -1189,7 +1222,10 @@ pub(crate) fn install_script_args(cx: &mut Cx<'_>, args: &[String]) -> Result<()
 pub(crate) fn typed_array_length_or_throw(cx: &mut Cx<'_>, object: ObjectId) -> Result<u64, Throw> {
     match crate::vm::typed::length(cx.heap, object) {
         Some(length) => Ok(length as u64),
-        None => Err(vm_error::type_error(cx, "TypedArray is out of bounds")),
+        None => Err(vm_error::type_error(
+            cx,
+            "ArrayBuffer is detached or resized",
+        )),
     }
 }
 
@@ -1208,9 +1244,10 @@ pub(crate) fn detach_array_buffer(cx: &mut Cx<'_>, site: CallSite) -> Result<Val
 }
 
 pub(crate) use bigint::to_bigint;
+pub(crate) use buffer::detach as detach_buffer;
 pub(crate) use date::iso_string as date_iso_string;
 pub(crate) use generator::async_from_sync_iterator;
-pub(crate) use json::{json_parse_text, json5_parse_text};
+pub(crate) use json::json_module_text;
 pub(crate) use regexp::RegExpFlagCache;
 
 /// An ordinary object inheriting from `%Object.prototype%`, rooted.

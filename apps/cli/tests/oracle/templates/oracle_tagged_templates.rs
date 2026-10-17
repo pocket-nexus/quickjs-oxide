@@ -1,5 +1,5 @@
 use crate::runtime_observation::host_runtime;
-use quickjs_oxide::engine::api::{DebugInfoMode, Value};
+use quickjs_oxide::engine::api::core::{DebugInfoMode, Value};
 
 #[test]
 fn tagged_template_site_identity_survives_gc_in_strip_debug_mode() {

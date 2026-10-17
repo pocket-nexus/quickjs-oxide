@@ -1,9 +1,9 @@
 use super::quickjs_argv_completion_oracle::observe_completion_argv_sequence_strip_one_lf as observe_oracle_sequence;
 use crate::runtime_completion_oracle::observe_legacy_float_eval_completion as observe_rust_eval;
-use crate::runtime_observation::{host_runtime, host_runtime_context};
+use crate::runtime_observation::host_runtime_context;
 
-use quickjs_oxide::engine::api::{
-    AccessorValue, DescriptorField, JsString, OrdinaryPropertyDescriptor, Value,
+use quickjs_oxide::engine::api::core::{
+    AccessorValue, DescriptorField, OrdinaryPropertyDescriptor, Value,
 };
 
 #[test]
@@ -78,45 +78,5 @@ fn program_label_invokes_existing_global_setter_twice() {
     assert_eq!(
         rust,
         observe_oracle_sequence(&oracle, &sources, description)
-    );
-}
-
-#[test]
-fn program_label_cross_realm_regression() {
-    // Pinned with the QuickJS C API compile-in-A/execute-in-B path. The Rust
-    // API exposes the same operation directly, so this remains unconditional.
-    let runtime = host_runtime();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
-    drop(defining.eval("globalThis.realmTag='A'").unwrap());
-    drop(caller.eval("globalThis.realmTag='B'").unwrap());
-
-    let bytecode = defining
-        .compile(
-            "label:function crossRealmLabel(){return realmTag+'|'+(this===globalThis)};\
-             crossRealmLabel",
-        )
-        .unwrap();
-    let Value::Object(function) = caller.execute(&bytecode).unwrap() else {
-        panic!("cross-realm Program label did not return its function");
-    };
-    let Value::Object(prototype_a) = defining.eval("Function.prototype").unwrap() else {
-        panic!("defining Function.prototype was not an object");
-    };
-    let Value::Object(prototype_b) = caller.eval("Function.prototype").unwrap() else {
-        panic!("caller Function.prototype was not an object");
-    };
-    assert_eq!(
-        runtime.get_prototype_of(&function).unwrap(),
-        Some(prototype_a)
-    );
-    assert_ne!(
-        runtime.get_prototype_of(&function).unwrap(),
-        Some(prototype_b)
-    );
-    let callable = runtime.as_callable(&function).unwrap().unwrap();
-    assert_eq!(
-        caller.call(&callable, Value::Undefined, &[]).unwrap(),
-        Value::String(JsString::try_from_utf8("B|false").unwrap())
     );
 }

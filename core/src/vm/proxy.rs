@@ -90,7 +90,7 @@ pub(crate) fn get_prototype_of(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Value
         };
         let result = super::call(cx, trap, Value::object(handler), &[Value::object(target)])?;
         if result.as_object().is_none() && !result.is_null() {
-            return Err(invariant(cx, "getPrototypeOf"));
+            return Err(invariant(cx, "prototype"));
         }
         root(cx, result);
         if object::is_extensible(cx, target)? {
@@ -98,7 +98,7 @@ pub(crate) fn get_prototype_of(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Value
         }
         let actual = object::get_prototype_of(cx, target)?;
         if actual != result {
-            return Err(invariant(cx, "getPrototypeOf"));
+            return Err(invariant(cx, "prototype"));
         }
         Ok(result)
     })
@@ -128,7 +128,7 @@ pub(crate) fn set_prototype_of(
         }
         let actual = object::get_prototype_of(cx, target)?;
         if actual != prototype {
-            return Err(invariant(cx, "setPrototypeOf"));
+            return Err(invariant(cx, "prototype"));
         }
         Ok(true)
     })
@@ -454,12 +454,15 @@ pub(crate) fn own_keys(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Vec<PropertyK
             let element_key = object::index_key(cx, index as u32)?;
             let element = object::get_property(cx, list, element_key)?;
             if element.as_string().is_none() && element.as_symbol().is_none() {
-                return Err(invariant(cx, "ownKeys"));
+                return Err(error::type_error(
+                    cx,
+                    "proxy: properties must be strings or symbols",
+                ));
             }
             root(cx, element);
             let key = ops::to_property_key(cx, element)?;
             if keys.contains(&key) {
-                return Err(invariant(cx, "ownKeys"));
+                return Err(error::type_error(cx, "proxy: duplicate property"));
             }
             keys.push(key);
         }
@@ -481,7 +484,10 @@ pub(crate) fn own_keys(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Vec<PropertyK
         let mut unchecked = keys.clone();
         for key in non_configurable {
             let Some(position) = unchecked.iter().position(|&k| k == key) else {
-                return Err(invariant(cx, "ownKeys"));
+                return Err(error::type_error(
+                    cx,
+                    "proxy: target property must be present in proxy ownKeys",
+                ));
             };
             unchecked.remove(position);
         }
@@ -490,12 +496,18 @@ pub(crate) fn own_keys(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Vec<PropertyK
         }
         for key in configurable {
             let Some(position) = unchecked.iter().position(|&k| k == key) else {
-                return Err(invariant(cx, "ownKeys"));
+                return Err(error::type_error(
+                    cx,
+                    "proxy: target property must be present in proxy ownKeys",
+                ));
             };
             unchecked.remove(position);
         }
         if !unchecked.is_empty() {
-            return Err(invariant(cx, "ownKeys"));
+            return Err(error::type_error(
+                cx,
+                "proxy: property not present in target were returned by non extensible proxy",
+            ));
         }
         Ok(keys)
     });
@@ -563,7 +575,7 @@ pub(crate) fn construct(
             &[Value::object(target), Value::object(array), new_target],
         )?;
         if result.as_object().is_none() {
-            return Err(invariant(cx, "construct"));
+            return Err(error::type_error(cx, "not an object"));
         }
         Ok(result)
     })
@@ -572,10 +584,7 @@ pub(crate) fn construct(
 /// `ProxyCreate(target, handler)`.
 pub(crate) fn create(cx: &mut Cx<'_>, target: Value, handler: Value) -> Result<ObjectId, Throw> {
     let (Some(target_object), Some(_)) = (target.as_object(), handler.as_object()) else {
-        return Err(error::type_error(
-            cx,
-            "cannot create proxy with a non-object as target or handler",
-        ));
+        return Err(error::type_error(cx, "not an object"));
     };
     let header = *cx.heap.header(target_object);
     use crate::heap::object::flags;

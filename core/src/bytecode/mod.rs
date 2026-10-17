@@ -259,6 +259,10 @@ pub struct CodeUnit {
     pub length: u16,
     /// The function's source text, for `Function.prototype.toString`.
     pub source: Option<Box<str>>,
+    /// Sorted indices of the calls written as a direct `eval`, which runs as
+    /// indirect eval (phase 0): a backtrace lists no native frame for them,
+    /// as QuickJS's direct eval has none.
+    pub direct_eval_sites: Box<[u32]>,
 }
 
 impl CodeUnit {

@@ -30,17 +30,15 @@ def require_new_directory(path):
     path.mkdir(parents=True)
 
 
-def build_oxide(repo, output, profiling):
+def build_oxide(repo, output):
     target = output / "oxide"
     command = [sys.executable, str(ROOT / "scripts/benchmark/build_compile_probe.py"),
                "--repo", str(repo), "--output", str(target)]
-    if profiling:
-        command.append("--profiling")
     result = subprocess.run(command, check=True, capture_output=True, text=True)
     binary = Path(result.stdout.strip().splitlines()[-1])
     if not binary.is_file():
         raise ValueError(f"oxide probe build did not produce a binary: {binary}")
-    return {"binary": str(binary), "profiling": profiling, "build_log": str(target / "build.log")}
+    return {"binary": str(binary), "build_log": str(target / "build.log")}
 
 
 QUICKJS_PROBE_SOURCE = r"""/*
@@ -184,7 +182,6 @@ def main():
     parser.add_argument("--repo", type=Path, default=ROOT)
     parser.add_argument("--quickjs-source", type=Path, required=True,
                         help="pinned oracle source directory containing libquickjs.a")
-    parser.add_argument("--profiling", action="store_true", help="build the Oxide probe with profiling")
     parser.add_argument("--skip-oxide", action="store_true")
     parser.add_argument("--cc", default="cc")
     args = parser.parse_args()
@@ -193,7 +190,7 @@ def main():
         require_new_directory(output)
         probes = {}
         if not args.skip_oxide:
-            probes["oxide"] = build_oxide(args.repo.resolve(), output, args.profiling)
+            probes["oxide"] = build_oxide(args.repo.resolve(), output)
         probes["quickjs"] = build_quickjs(args.quickjs_source, output, args.cc)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.error(str(error))

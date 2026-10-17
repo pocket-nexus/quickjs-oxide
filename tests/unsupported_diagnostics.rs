@@ -1,4 +1,4 @@
-use quickjs_oxide::engine::api::{
+use quickjs_oxide::engine::api::core::{
     JsString, ModuleLoader, ModuleLoaderError, PromiseState, Runtime, Value,
 };
 use std::cell::RefCell;
@@ -18,16 +18,18 @@ struct RecordingModuleLoader {
 impl ModuleLoader for RecordingModuleLoader {
     fn load(
         &self,
-        _context: &mut quickjs_oxide::engine::api::Context,
+        _context: &mut quickjs_oxide::engine::api::core::Context,
         normalized_name: &JsString,
-        _attributes: &quickjs_oxide::engine::api::ModuleImportAttributes,
-    ) -> Result<quickjs_oxide::engine::api::ModuleLoadResult, ModuleLoaderError> {
+        _attributes: &quickjs_oxide::engine::api::core::ModuleImportAttributes,
+    ) -> Result<quickjs_oxide::engine::api::core::ModuleLoadResult, ModuleLoaderError> {
         let normalized_name = normalized_name.to_utf8_lossy();
         self.loads.borrow_mut().push(normalized_name.clone());
         if normalized_name == "dependency" {
-            Ok(quickjs_oxide::engine::api::ModuleLoadResult::SourceText(
-                "globalThis.__dynamicImportBodyRuns += 1; export const answer = 42;".to_owned(),
-            ))
+            Ok(
+                quickjs_oxide::engine::api::core::ModuleLoadResult::SourceText(
+                    "globalThis.__dynamicImportBodyRuns += 1; export const answer = 42;".to_owned(),
+                ),
+            )
         } else {
             Err(ModuleLoaderError::new(format!(
                 "unexpected test module: {normalized_name}"
@@ -37,8 +39,7 @@ impl ModuleLoader for RecordingModuleLoader {
 }
 
 fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
     let loads = Rc::new(RefCell::new(Vec::new()));
     let _registration = runtime.set_module_loader(RecordingModuleLoader {
         loads: loads.clone(),
@@ -112,8 +113,7 @@ fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
 
 #[test]
 fn public_entrypoints_execute_dynamic_import_promise_jobs() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
     let mut context = runtime.new_context().expect("create context");
 
     context
@@ -150,8 +150,7 @@ fn public_module_entrypoint_executes_top_level_await_jobs() {
         "globalThis.__tlaPublic = await 42;",
         "for await (const value of [42]) { globalThis.__tlaPublic = value; }",
     ] {
-        let runtime =
-            Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+        let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
         let mut context = runtime.new_context().expect("create context");
         let module = context
             .compile_module(source)
@@ -193,8 +192,7 @@ fn conformance_eval_script_executes_dynamic_import_promise_jobs() {
 
 #[test]
 fn context_compiles_and_executes_catch_destructuring_bindings() {
-    let runtime =
-        Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
     let mut context = runtime.new_context().expect("create context");
     let bytecode = context
         .compile("try { throw {value: 42}; } catch ({value}) { value }")

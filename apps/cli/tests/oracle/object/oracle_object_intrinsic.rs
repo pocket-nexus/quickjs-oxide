@@ -2,7 +2,7 @@ use crate::object_graph_observation::global_callable;
 use crate::runtime_completion_oracle::observe_array_aware_eval as observe_rust_eval;
 use crate::runtime_observation::property_callable_with_read_context as property_callable;
 use crate::runtime_observation::{host_runtime, host_runtime_context};
-use quickjs_oxide::engine::api::{CallableRef, Context, Runtime, Value};
+use quickjs_oxide::engine::api::core::{CallableRef, Context, Runtime, Value};
 
 // This differential pins the first coherent `%Object%` vertical slice to
 // QuickJS 2026-06-04. Source cases deliberately use only the selected static

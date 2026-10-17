@@ -213,7 +213,7 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
 pub(super) fn compile(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let this = site.this(cx);
     let Some(object) = regexp_object(cx, this) else {
-        return Err(error::type_error(cx, "not a RegExp"));
+        return Err(error::object_expected(cx, "RegExp"));
     };
     let (pattern, flags) = (site.arg(cx, 0), site.arg(cx, 1));
     let (source, flags) = if let Some(other) = regexp_object(cx, pattern) {
@@ -318,7 +318,10 @@ fn this_record(cx: &mut Cx<'_>, site: &CallSite) -> Result<Option<u32>, Throw> {
             return Ok(None);
         }
     }
-    Err(error::type_error(cx, "not a RegExp"))
+    if this.as_object().is_none() {
+        return Err(error::type_error(cx, "not an object"));
+    }
+    Err(error::object_expected(cx, "RegExp"))
 }
 
 /// `EscapeRegExpPattern`: `/` outside a class and line terminators escaped,
@@ -837,13 +840,13 @@ fn regexp_exec(cx: &mut Cx<'_>, object: ObjectId, string: StringId) -> Result<Va
         if result.as_object().is_none() && !result.is_null() {
             return Err(error::type_error(
                 cx,
-                "exec result must be an object or null",
+                "RegExp exec method must return an object or null",
             ));
         }
         return Ok(result);
     }
     if cx.heap.object_kind(object) != ObjectKind::RegExp {
-        return Err(error::type_error(cx, "not a RegExp"));
+        return Err(error::object_expected(cx, "RegExp"));
     }
     builtin_exec(cx, object, string)
 }
@@ -851,7 +854,7 @@ fn regexp_exec(cx: &mut Cx<'_>, object: ObjectId, string: StringId) -> Result<Va
 pub(super) fn exec(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let this = site.this(cx);
     let Some(object) = regexp_object(cx, this) else {
-        return Err(error::type_error(cx, "not a RegExp"));
+        return Err(error::object_expected(cx, "RegExp"));
     };
     let string = site.arg(cx, 0);
     let string = to_string_id(cx, string)?;
@@ -861,7 +864,7 @@ pub(super) fn exec(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 pub(super) fn test(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let this = site.this(cx);
     let Some(object) = this.as_object() else {
-        return Err(error::type_error(cx, "not an object"));
+        return Err(error::object_expected(cx, "RegExp"));
     };
     let string = site.arg(cx, 0);
     let string = to_string_id(cx, string)?;
@@ -1037,7 +1040,7 @@ pub(super) fn string_iterator_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Va
         .as_object()
         .filter(|&object| cx.heap.internal_tag(object) == InternalTag::RegExpStringIterator)
     else {
-        return Err(error::type_error(cx, "not a RegExp string iterator"));
+        return Err(error::object_expected(cx, "RegExp String Iterator"));
     };
     let slots = cx.heap.internal(iterator).slots.clone();
     if slots[4] == Value::TRUE {
@@ -1281,7 +1284,7 @@ fn replace_pristine(
             next_position = range.end;
         }
         if accumulated.len() > super::string::MAX_STRING {
-            return Err(error::range_error(cx, "invalid string length"));
+            return Err(error::string_too_long(cx));
         }
     }
     if next_position < text.len() {
@@ -1342,7 +1345,7 @@ fn substitute_with_groups(
         )
     };
     substitution(text, position, matched, captures, &lookup, replacement)
-        .ok_or_else(|| error::range_error(cx, "invalid string length"))
+        .ok_or_else(|| error::string_too_long(cx))
 }
 
 /// `RegExp.prototype[Symbol.search](string)`.
@@ -1521,7 +1524,7 @@ pub(crate) fn delegate(
 ) -> Result<Option<Value>, Throw> {
     let this = site.this(cx);
     if this.is_undefined() || this.is_null() {
-        return Err(error::type_error(cx, "not an object"));
+        return Err(error::type_error(cx, "cannot convert to object"));
     }
     // Only an object's method is consulted (a primitive's prototype is
     // not, as of ES2025).

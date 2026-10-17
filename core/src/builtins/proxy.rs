@@ -26,7 +26,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
 /// `new Proxy(target, handler)`; calling it without `new` throws.
 pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     if !site.construct {
-        return Err(error::type_error(cx, "Proxy constructor requires 'new'"));
+        return Err(error::type_error(cx, "must be called with new"));
     }
     let (target, handler) = (site.arg(cx, 0), site.arg(cx, 1));
     proxy::create(cx, target, handler).map(Value::object)

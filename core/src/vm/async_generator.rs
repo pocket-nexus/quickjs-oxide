@@ -203,7 +203,7 @@ fn request(cx: &mut Cx<'_>, site: CallSite, kind: i32) -> Result<Value, Throw> {
         .as_object()
         .filter(|&object| cx.heap.internal_tag(object) == InternalTag::AsyncGenerator)
     else {
-        let error = error::type_error(cx, "not an async generator");
+        let error = error::type_error(cx, "not an AsyncGenerator object");
         root(cx, error.0);
         super::call(cx, capability[2], Value::UNDEFINED, &[error.0])?;
         return Ok(capability[0]);

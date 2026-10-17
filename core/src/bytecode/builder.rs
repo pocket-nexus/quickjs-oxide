@@ -198,6 +198,7 @@ impl CodeBuilder {
             name_atom: layout.name_atom,
             length: layout.length,
             source: layout.source,
+            direct_eval_sites: Box::new([]),
         }
     }
 }

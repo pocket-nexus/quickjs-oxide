@@ -1,7 +1,7 @@
 use crate::runtime_completion_oracle::observe_rust_result as observe_rust;
 use crate::runtime_observation::from_char_code_source as js_utf16;
 use crate::runtime_observation::utf16;
-use quickjs_oxide::engine::api::JsString;
+use quickjs_oxide::engine::api::core::JsString;
 use quickjs_oxide::regexp::{compile, execute};
 use std::ffi::OsStr;
 use std::fmt::Write as _;

@@ -355,10 +355,7 @@ fn plain_search(cx: &mut Cx<'_>, value: Value) -> Result<StringId, Throw> {
             ops::to_boolean(cx.heap, matcher)
         };
         if is_regexp {
-            return Err(error::type_error(
-                cx,
-                "first argument must not be a regular expression",
-            ));
+            return Err(error::type_error(cx, "regexp not supported"));
         }
     }
     to_string_id(cx, value)
@@ -475,7 +472,7 @@ pub(super) fn concat(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         let part = to_string_id(cx, part)?;
         text.extend(cx.heap.string(part).repr().units());
         if text.len() > MAX_STRING {
-            return Err(error::range_error(cx, "invalid string length"));
+            return Err(error::string_too_long(cx));
         }
     }
     string_units(cx, &text)
@@ -671,7 +668,7 @@ pub(super) fn normalize(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
             "NFD" => NormalizationForm::Nfd,
             "NFKC" => NormalizationForm::Nfkc,
             "NFKD" => NormalizationForm::Nfkd,
-            _ => return Err(error::range_error(cx, "invalid normalization form")),
+            _ => return Err(error::range_error(cx, "bad normalization form")),
         }
     };
     let text = units(cx, string);
@@ -862,14 +859,11 @@ fn replace_impl(cx: &mut Cx<'_>, site: CallSite, all: bool) -> Result<Value, Thr
             if is_regexp {
                 let flags = internal::get_property(cx, object, Names::key(cx.realm.names.flags))?;
                 if flags.is_undefined() || flags.is_null() {
-                    return Err(error::type_error(cx, "flags is not an object"));
+                    return Err(error::type_error(cx, "cannot convert to object"));
                 }
                 let flags = to_string_id(cx, flags)?;
                 if !units(cx, flags).contains(&u16::from(b'g')) {
-                    return Err(error::type_error(
-                        cx,
-                        "replaceAll must be called with a global RegExp",
-                    ));
+                    return Err(error::type_error(cx, "regexp must have the 'g' flag"));
                 }
             }
         }
@@ -911,7 +905,7 @@ fn replace_impl(cx: &mut Cx<'_>, site: CallSite, all: bool) -> Result<Value, Thr
         let replaced = match &replacement {
             Some(replacement) => {
                 substitution(&haystack, position, &needle, &[], &|_| None, replacement)
-                    .ok_or_else(|| error::range_error(cx, "invalid string length"))?
+                    .ok_or_else(|| error::string_too_long(cx))?
             }
             None => {
                 let value = crate::vm::call(
@@ -966,14 +960,11 @@ pub(super) fn match_all(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
         if is_regexp {
             let flags = internal::get_property(cx, object, Names::key(cx.realm.names.flags))?;
             if flags.is_undefined() || flags.is_null() {
-                return Err(error::type_error(cx, "flags is not an object"));
+                return Err(error::type_error(cx, "cannot convert to object"));
             }
             let flags = to_string_id(cx, flags)?;
             if !units(cx, flags).contains(&u16::from(b'g')) {
-                return Err(error::type_error(
-                    cx,
-                    "matchAll must be called with a global RegExp",
-                ));
+                return Err(error::type_error(cx, "regexp must have the 'g' flag"));
             }
         }
     }
@@ -1032,7 +1023,7 @@ fn map_case(cx: &mut Cx<'_>, site: CallSite, upper: bool) -> Result<Value, Throw
     };
     match mapped {
         Some(mapped) => string_units(cx, &mapped),
-        None => Err(error::range_error(cx, "invalid string length")),
+        None => Err(error::string_too_long(cx)),
     }
 }
 

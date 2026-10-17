@@ -477,5 +477,10 @@ pub(super) fn to_json(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         .heap
         .property_key("toISOString")
         .map_err(|error| error::heap_error(cx, error))?;
-    internal::invoke(cx, Value::object(object), key, &[])
+    let method = internal::get_property(cx, object, key)?;
+    if !ops::is_callable(cx.heap, method) {
+        return Err(error::type_error(cx, "object needs toISOString method"));
+    }
+    cx.heap.roots().push(method);
+    crate::vm::call(cx, method, Value::object(object), &[])
 }

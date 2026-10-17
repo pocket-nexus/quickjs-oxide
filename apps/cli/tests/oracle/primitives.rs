@@ -4,7 +4,7 @@ use std::io::Write;
 
 use std::process::{Command, Stdio};
 
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{Runtime, RuntimeError, Value};
 
 #[test]
 fn compiler_call_capacity_matches_quickjs_error_classes() {
@@ -86,7 +86,7 @@ fn run_oracle_error(oracle: &OsStr, source: &str, description: &str) -> String {
 
 fn take_rust_error_observation(
     runtime: &Runtime,
-    context: &mut quickjs_oxide::engine::api::Context,
+    context: &mut quickjs_oxide::engine::api::core::Context,
 ) -> String {
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("Rust did not materialize a native Error object");

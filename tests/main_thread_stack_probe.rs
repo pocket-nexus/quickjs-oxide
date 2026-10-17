@@ -34,8 +34,8 @@
 //!   target/debug/deps/main_thread_stack_probe-<hash> native 1 6000
 //! ```
 
-use quickjs_oxide::engine::api::{Runtime, RuntimeError, Value};
-use quickjs_oxide_host::SystemHostServices;
+use quickjs_oxide::engine::api::core::{Runtime, RuntimeError, Value};
+use quickjs_oxide_host::SystemHost;
 use std::hint::black_box;
 use std::process::{Command, ExitCode, ExitStatus};
 use std::time::{Duration, Instant};
@@ -81,7 +81,7 @@ fn run_child(mut arguments: impl Iterator<Item = String>) -> ExitCode {
         .and_then(|value| value.parse().ok())
         .unwrap_or(PARSE_DEPTH);
 
-    let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(SystemHost::default());
     let mut context = runtime.new_context().expect("create context");
 
     match mode.as_str() {

@@ -1,6 +1,6 @@
 use crate::runtime_observation::host_runtime_context;
 
-use quickjs_oxide::engine::api::Value;
+use quickjs_oxide::engine::api::core::Value;
 
 #[test]
 fn for_in_rust_smoke_runs_without_an_oracle() {

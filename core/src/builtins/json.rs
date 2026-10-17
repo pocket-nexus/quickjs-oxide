@@ -106,6 +106,8 @@ struct Parser<'a> {
     /// quotes, identifier keys, trailing commas, `+`, `.5`, hexadecimal,
     /// octal and binary numbers, `NaN` and `Infinity`.
     extended: bool,
+    /// Units standing for invalid UTF-8 of a module's bytes, sorted.
+    invalid: &'a [u32],
 }
 
 fn heap_failure(cx: &mut Cx<'_>, error: HeapError) -> Failure {
@@ -185,6 +187,15 @@ impl Parser<'_> {
                 && (unit == 0x2b || (unit == 0x2e && self.peek_at(1).is_some_and(is_digit))))
     }
 
+    fn is_invalid(&self, at: usize) -> bool {
+        !self.invalid.is_empty() && self.invalid.binary_search(&(at as u32)).is_ok()
+    }
+
+    /// QuickJS's byte-level parser meets invalid UTF-8 here.
+    fn bad_utf8<T>(&self, at: usize) -> Parsed<T> {
+        Err(Failure::Syntax("Bad UTF-8 sequence".to_owned(), at))
+    }
+
     fn syntax<T>(&self, message: &str) -> Parsed<T> {
         Err(Failure::Syntax(message.to_owned(), self.cursor))
     }
@@ -204,6 +215,9 @@ impl Parser<'_> {
             return self.syntax("Unexpected end of JSON input");
         };
         let start = self.cursor;
+        if self.is_invalid(start) {
+            return self.bad_utf8(start);
+        }
         let value = match unit {
             0x7b | 0x5b => {
                 if depth > MAX_DEPTH || !cx.heap.vm.enter_native() {
@@ -270,6 +284,9 @@ impl Parser<'_> {
         if !self.eat(b'}') {
             loop {
                 self.skip_space()?;
+                if self.is_invalid(self.cursor) {
+                    return self.bad_utf8(self.cursor);
+                }
                 let name = match self.peek() {
                     Some(0x22) => self.string()?,
                     Some(0x27) if self.extended => self.string()?,
@@ -281,7 +298,7 @@ impl Parser<'_> {
                         self.units[start..self.cursor].to_vec()
                     }
                     Some(unit) if unit >= 0x80 => return self.syntax("unexpected character"),
-                    None => return self.syntax("Unexpected end of JSON input"),
+                    None => return self.syntax("expecting property name"),
                     _ => return self.syntax("expecting property name"),
                 };
                 let key = cx
@@ -361,6 +378,9 @@ impl Parser<'_> {
             let Some(unit) = self.peek() else {
                 return self.syntax("Unexpected end of JSON input");
             };
+            if self.is_invalid(self.cursor) {
+                return self.bad_utf8(self.cursor);
+            }
             self.cursor += 1;
             match unit {
                 _ if unit == separator => return Ok(output),
@@ -435,7 +455,12 @@ impl Parser<'_> {
                     return match self.peek() {
                         None => self.syntax("Unexpected token '"),
                         Some(unit) => {
-                            let unit = char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}');
+                            // QuickJS prints the first UTF-8 byte with `%c`.
+                            let unit = if unit < 0x80 {
+                                unit as u8 as char
+                            } else {
+                                '\u{fffd}'
+                            };
                             self.syntax(&format!("Unexpected token '{unit}'"))
                         }
                     };
@@ -455,7 +480,7 @@ impl Parser<'_> {
             }
         }
         match self.peek() {
-            None => return self.syntax("Unexpected end of JSON input"),
+            None => return self.syntax("Unexpected token '"),
             Some(0x30) => {
                 self.cursor += 1;
                 if self.peek().is_some_and(is_digit) {
@@ -464,7 +489,12 @@ impl Parser<'_> {
             }
             Some(0x31..=0x39) => self.digits(),
             Some(unit) => {
-                let unit = char::from_u32(u32::from(unit)).unwrap_or('\u{fffd}');
+                // QuickJS prints the first UTF-8 byte with `%c`.
+                let unit = if unit < 0x80 {
+                    unit as u8 as char
+                } else {
+                    '\u{fffd}'
+                };
                 return self.syntax(&format!("Unexpected token '{unit}'"));
             }
         }
@@ -544,12 +574,14 @@ fn parse_text(
     records: bool,
     file: Option<&str>,
     extended: bool,
+    invalid: &[u32],
 ) -> Result<(Value, Option<Record>), Throw> {
     let mut parser = Parser {
         units,
         cursor: 0,
         records,
         extended,
+        invalid,
     };
     match parser.document(cx) {
         Ok(parsed) => Ok(parsed),
@@ -558,7 +590,12 @@ fn parse_text(
                 let (line, column) = position(units, at);
                 error::throw_at(cx, ErrorKind::Syntax, &message, file, line, column)
             }
-            None => error::throw(cx, ErrorKind::Syntax, &message),
+            // `JSON.parse` locates its error in `<input>`, the running
+            // frames after it, as QuickJS's does.
+            None => {
+                let (line, column) = position(units, at);
+                error::throw_located(cx, ErrorKind::Syntax, &message, "<input>", line, column)
+            }
         }),
         Err(Failure::Throw(throw)) => Err(throw),
     }
@@ -575,14 +612,47 @@ fn position(units: &[u16], at: usize) -> (u32, u32) {
     (line as u32, (before.len() - start) as u32 + 1)
 }
 
-/// The value of a JSON module `file` of UTF-16 text.
-pub(crate) fn json_parse_text(cx: &mut Cx<'_>, units: &[u16], file: &str) -> Result<Value, Throw> {
-    parse_text(cx, units, false, Some(file), false).map(|(value, _)| value)
+/// The value of a JSON module `file` (`extended`: a JSON5 module, QuickJS's
+/// extended JSON); `invalid` marks the units of invalid UTF-8.
+pub(crate) fn json_module_text(
+    cx: &mut Cx<'_>,
+    text: &crate::vm::module::JsonText,
+    file: &str,
+    extended: bool,
+) -> Result<Value, Throw> {
+    let mut parser = Parser {
+        units: &text.units,
+        cursor: 0,
+        records: false,
+        extended,
+        invalid: &text.invalid,
+    };
+    match parser.document(cx) {
+        Ok((value, _)) => Ok(value),
+        Err(Failure::Syntax(message, at)) => {
+            let (line, column) = position_skipping(&text.units, at, &text.no_column);
+            Err(error::throw_at(
+                cx,
+                ErrorKind::Syntax,
+                &message,
+                file,
+                line,
+                column,
+            ))
+        }
+        Err(Failure::Throw(throw)) => Err(throw),
+    }
 }
 
-/// The value of a JSON5 module `file` (QuickJS's extended JSON).
-pub(crate) fn json5_parse_text(cx: &mut Cx<'_>, units: &[u16], file: &str) -> Result<Value, Throw> {
-    parse_text(cx, units, false, Some(file), true).map(|(value, _)| value)
+/// [`position`] where the units of `no_column` add no column.
+fn position_skipping(units: &[u16], at: usize, no_column: &[u32]) -> (u32, u32) {
+    let (line, column) = position(units, at);
+    let line_start = at + 1 - column as usize;
+    let skipped = no_column
+        .iter()
+        .filter(|&&index| (line_start..at).contains(&(index as usize)))
+        .count();
+    (line, column - skipped as u32)
 }
 
 /// `JSON.parse(text, reviver)`.
@@ -592,7 +662,7 @@ pub(super) fn parse(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let units = ops::units(cx.heap, text.as_string().unwrap());
     let reviver = site.arg(cx, 1);
     let revive = ops::is_callable(cx.heap, reviver);
-    let (value, record) = parse_text(cx, &units, revive, None, false)?;
+    let (value, record) = parse_text(cx, &units, revive, None, false, &[])?;
     if !revive {
         return Ok(value);
     }
@@ -725,7 +795,7 @@ pub(super) fn raw_json(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
     let boundary = |unit: u16| matches!(unit, 0x61..=0x7a | 0x30..=0x39 | 0x2d | 0x22);
     let valid = units.first().is_some_and(|&unit| boundary(unit))
         && units.last().is_some_and(|&unit| boundary(unit))
-        && parse_text(cx, &units, false, None, false).is_ok();
+        && parse_text(cx, &units, false, None, false, &[]).is_ok();
     if !valid {
         return Err(error::throw(
             cx,

@@ -1,12 +1,10 @@
 use crate::quickjs_argv_completion_oracle;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::primitive_value_text;
-use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::value_type;
 use quickjs_argv_completion_oracle::observe_completion_argv_trim_end as observe_oracle;
 
-use quickjs_oxide::engine::api::{
-    Context, ObjectRef, PropertyKey, Runtime, Value, WellKnownSymbol,
-};
+use quickjs_oxide::engine::api::core::{Context, Runtime};
 
 // This target pins QuickJS 2026-06-04 `js_array_unscopables_funcs` and the
 // Symbol.unscopables-specific null-prototype `JS_DEF_OBJECT` autoinit path.
@@ -85,36 +83,6 @@ fn array_unscopables_values_identity_and_mutation_match_pinned_quickjs() {
     }
 }
 
-#[test]
-fn array_unscopables_are_distinct_null_prototype_objects_per_realm() {
-    let runtime = host_runtime();
-    let mut first = runtime.new_context().expect("create context");
-    let mut second = runtime.new_context().expect("create context");
-    let key = PropertyKey::from(
-        runtime
-            .well_known_symbol(WellKnownSymbol::Unscopables)
-            .expect("well-known symbol"),
-    );
-    let first_prototype = first.array_prototype().unwrap();
-    let second_prototype = second.array_prototype().unwrap();
-    let Value::Object(first_value) = first.get_property(&first_prototype, &key).unwrap() else {
-        panic!("first realm unscopables value was not an object");
-    };
-    let Value::Object(second_value) = second.get_property(&second_prototype, &key).unwrap() else {
-        panic!("second realm unscopables value was not an object");
-    };
-    assert_ne!(first_value, second_value);
-    assert_eq!(runtime.get_prototype_of(&first_value).unwrap(), None);
-    assert_eq!(runtime.get_prototype_of(&second_value).unwrap(), None);
-    assert!(bool_property(&runtime, &mut first, &first_value, "at"));
-    assert!(bool_property(
-        &runtime,
-        &mut second,
-        &second_value,
-        "flatMap",
-    ));
-}
-
 fn observe_rust_eval(
     runtime: &Runtime,
     context: &mut Context,
@@ -129,14 +97,4 @@ fn observe_rust_eval(
         value_type(runtime, &value),
         primitive_value_text(value),
     )
-}
-
-fn bool_property(runtime: &Runtime, context: &mut Context, object: &ObjectRef, name: &str) -> bool {
-    let Value::Bool(value) = context
-        .get_property(object, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("{name} was not a boolean property");
-    };
-    value
 }

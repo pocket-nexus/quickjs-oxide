@@ -125,18 +125,18 @@ fn class_op_rooted(
             let value = reg(cx, frame, insn.a + 3);
             let key = ops::to_property_key(cx, key)?;
             let Some(base) = base.as_object() else {
-                return Err(super_base_error(cx, base, key));
+                return Err(error::type_error(cx, "not an object"));
             };
             let done = object::set(cx, base, key, value, receiver)?;
             if !done && unit.has(flags::STRICT) {
-                return Err(object::read_only(cx, key));
+                return Err(property::set_failed(cx, base, key));
             }
         }
         Opcode::InitDerived => {
             let new_target = reg(cx, frame, insn.b);
             let parent = object::get_prototype_of(cx, frame.function)?;
             if !object::is_constructor(cx, parent) {
-                return Err(error::type_error(cx, "parent class must be a constructor"));
+                return Err(error::construct_error(cx, parent));
             }
             cx.heap.roots().push(parent);
             let args: Vec<Value> = (0..frame.argc as usize)
@@ -257,7 +257,7 @@ fn class_op_rooted(
                     cx,
                     &format!(
                         "private class field '{}' already exists",
-                        property::key_text(cx.heap, key)
+                        property::atom_text(cx.heap, key)
                     ),
                 ));
             }
@@ -425,7 +425,7 @@ fn private_target(cx: &mut Cx<'_>, target: Value) -> Result<ObjectId, Throw> {
 fn missing_private(cx: &mut Cx<'_>, key: PropertyKey) -> Throw {
     let message = format!(
         "private class field '{}' does not exist",
-        property::key_text(cx.heap, key)
+        property::atom_text(cx.heap, key)
     );
     error::type_error(cx, &message)
 }
@@ -443,7 +443,7 @@ fn this_bound(cx: &mut Cx<'_>) -> Throw {
 fn super_base_error(cx: &mut Cx<'_>, base: Value, key: PropertyKey) -> Throw {
     let message = format!(
         "cannot read property '{}' of {}",
-        property::key_text(cx.heap, key),
+        property::atom_text(cx.heap, key),
         if base.is_null() { "null" } else { "undefined" }
     );
     error::type_error(cx, &message)
@@ -451,7 +451,13 @@ fn super_base_error(cx: &mut Cx<'_>, base: Value, key: PropertyKey) -> Throw {
 
 #[cold]
 fn binding_error(cx: &mut Cx<'_>, kind: ErrorKind, key: PropertyKey, after: &str) -> Throw {
-    let message = format!("'{}'{after}", property::key_text(cx.heap, key));
+    // QuickJS quotes the name except in `{name} is not initialized`.
+    let name = property::atom_text(cx.heap, key);
+    let message = if after == " is not initialized" {
+        format!("{name}{after}")
+    } else {
+        format!("'{name}'{after}")
+    };
     error::throw(cx, kind, &message)
 }
 
@@ -468,7 +474,7 @@ fn make_class(
         if parent.is_null() {
             (None, cx.realm.intrinsic(Intrinsic::FunctionPrototype))
         } else if !object::is_constructor(cx, parent) {
-            return Err(error::type_error(cx, "parent class must be a constructor"));
+            return Err(error::type_error(cx, "parent class must be constructor"));
         } else {
             let parent_object = parent.as_object().unwrap();
             let names = cx.realm.names;
@@ -562,7 +568,7 @@ fn add_brand(cx: &mut Cx<'_>, home: ObjectId, target: ObjectId) -> Result<(), Th
     let brand = ensure_brand(cx, home)?;
     let key = private_key(brand);
     if cx.heap.lookup_own(target, key).is_some() {
-        return Err(error::type_error(cx, "private method already exists"));
+        return Err(error::type_error(cx, "private method is already present"));
     }
     cx.heap
         .add_property(

@@ -686,6 +686,11 @@ impl Heap {
             .retain(|&index, _| strings.is_marked(index) && strings.get(index).flat().is_none());
         let objects = &self.objects;
         self.holey.retain(|&index| objects.is_marked(index));
+        if let Some((error, _)) = &self.vm.unpositioned
+            && !objects.is_marked(error.0)
+        {
+            self.vm.unpositioned = None;
+        }
         self.prototypes.retain(|object, info| {
             if !objects.is_marked(object.0) {
                 return false;

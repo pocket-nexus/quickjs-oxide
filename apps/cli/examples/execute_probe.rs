@@ -1,6 +1,6 @@
 //! Compile once, then time fixed guest work without CLI startup or compilation.
-use quickjs_oxide::engine::api::{Runtime, Value};
-use quickjs_oxide_host::SystemHostServices;
+use quickjs_oxide::engine::api::core::{Runtime, Value};
+use quickjs_oxide_host::SystemHost;
 use std::{env, hint::black_box, time::Instant};
 
 fn main() {
@@ -64,7 +64,7 @@ fn main() {
         ),
         _ => panic!("unknown case: {case}"),
     };
-    let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(SystemHost::default());
     let mut context = runtime.new_context().expect("create context");
     let compiled = context.compile(source).expect("compile fixed workload");
     for _ in 0..3 {

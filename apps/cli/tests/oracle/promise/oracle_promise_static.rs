@@ -1,6 +1,6 @@
 use crate::runtime_observation::eval;
 use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::Value;
+use quickjs_oxide::engine::api::core::Value;
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3n_promise_static.js");
 const EXPECTED: &str =

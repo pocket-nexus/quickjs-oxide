@@ -67,7 +67,8 @@ impl<'a> Compiler<'a> {
         self.heap.handles().create(value)
     }
 
-    /// A new error object of `kind` with `message` and no backtrace.
+    /// A new error object of `kind` with `message` and an empty `stack`: an
+    /// error a host callback raises, with no JavaScript frame, as QuickJS's.
     pub fn new_error(&mut self, kind: ErrorKind, message: &str) -> Result<Value, HeapError> {
         let prototype = self.realm.intrinsic(kind.prototype());
         let message = self.heap.alloc_string(message)?;
@@ -86,7 +87,68 @@ impl<'a> Compiler<'a> {
                 crate::PropertyFlags::data(true, false, true),
                 Value::string(message),
             )?;
+            let empty = self.heap.intern("")?;
+            let stack = crate::runtime::Names::key(self.realm.names.stack);
+            self.heap.add_property(
+                object,
+                stack,
+                crate::PropertyFlags::data(true, false, true),
+                Value::string(empty),
+            )?;
             Ok(Value::object(object))
+        })();
+        self.heap.roots().truncate(mark);
+        result
+    }
+
+    /// [`Compiler::new_error`] located at `file:line:column` (a module's
+    /// compile error): `fileName`, `lineNumber`, `columnNumber`, and a
+    /// `stack` of the location alone.
+    pub fn new_located_error(
+        &mut self,
+        kind: ErrorKind,
+        message: &str,
+        file: &str,
+        line: u32,
+        column: u32,
+    ) -> Result<Value, HeapError> {
+        let error = self.new_error(kind, message)?;
+        let object = error.as_object().expect("an error object");
+        let names = self.realm.names;
+        let mark = self.heap.roots().mark();
+        self.heap.roots().push(error);
+        let result = (|| {
+            let flags = crate::PropertyFlags::data(true, false, true);
+            let stack_key = crate::runtime::Names::key(names.stack);
+            // `fileName`, `lineNumber` and `columnNumber` precede `stack`,
+            // as QuickJS's `build_backtrace` defines them: the stack is
+            // re-added after them.
+            self.heap.delete_property(object, stack_key)?;
+            let file_text = self.heap.alloc_string(file)?;
+            self.heap.add_property(
+                object,
+                crate::runtime::Names::key(names.file_name),
+                flags,
+                Value::string(file_text),
+            )?;
+            self.heap.add_property(
+                object,
+                crate::runtime::Names::key(names.line_number),
+                flags,
+                Value::int32(line as i32),
+            )?;
+            self.heap.add_property(
+                object,
+                crate::runtime::Names::key(names.column_number),
+                flags,
+                Value::int32(column as i32),
+            )?;
+            let stack = self
+                .heap
+                .alloc_string(&format!("    at {file}:{line}:{column}\n"))?;
+            self.heap
+                .add_property(object, stack_key, flags, Value::string(stack))?;
+            Ok(error)
         })();
         self.heap.roots().truncate(mark);
         result

@@ -1,7 +1,7 @@
 //! Public compile API timing: source I/O, Runtime/Context creation, execution,
 //! and teardown are outside the measured interval.
-use quickjs_oxide::engine::api::Runtime;
-use quickjs_oxide_host::SystemHostServices;
+use quickjs_oxide::engine::api::core::Runtime;
+use quickjs_oxide_host::SystemHost;
 use std::{env, fs, time::Instant};
 
 fn main() {
@@ -11,9 +11,7 @@ fn main() {
         return;
     }
     let source = fs::read_to_string(&path).expect("UTF-8 benchmark source");
-    #[cfg(feature = "profiling")]
-    let costs = quickjs_oxide::engine::api::profiling::CostProfile::start();
-    let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(SystemHost::default());
     let mut context = runtime.new_context().expect("create context");
     let started = Instant::now();
     let function = context
@@ -22,29 +20,4 @@ fn main() {
     let elapsed = started.elapsed().as_nanos();
     std::hint::black_box(&function);
     println!("compile_ns:{elapsed}");
-    // An instrumented probe is deliberately inadmissible as formal timing:
-    // replay.py requires empty stderr. Use this only for phase attribution.
-    #[cfg(feature = "profiling")]
-    {
-        let snapshot = costs.snapshot();
-        for (name, phase) in [
-            ("parse", snapshot.parse),
-            ("resolution", snapshot.resolution),
-            ("lowering", snapshot.lowering),
-            ("blocks", snapshot.blocks),
-            ("encode", snapshot.encode),
-            ("relocation", snapshot.relocation),
-            ("publish", snapshot.publish),
-        ] {
-            eprintln!(
-                "{{\"phase\":\"{name}\",\"attempts\":{},\"inclusive_ns\":{},\"exclusive_ns\":{}}}",
-                phase.attempts, phase.inclusive_ns, phase.exclusive_ns
-            );
-        }
-        let (probe_hits, probe_misses, commit_hits, max_entries) =
-            quickjs_oxide::engine::api::profiling::lookahead_probe_counters();
-        eprintln!(
-            "{{\"lookahead_cache\":{{\"probe_hits\":{probe_hits},\"probe_misses\":{probe_misses},\"commit_hits\":{commit_hits},\"max_entries\":{max_entries}}}}}"
-        );
-    }
 }

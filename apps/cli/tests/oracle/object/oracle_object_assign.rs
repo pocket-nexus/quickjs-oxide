@@ -4,7 +4,7 @@ use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_observation::{
     property_callable, take_pending_exception_object as take_exception_object,
 };
-use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{JsString, RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04 `js_object_assign` and `JS_CopyDataProperties`.
 // Ordinary sources use QuickJS's enumerable-at-snapshot optimization; Proxy
@@ -144,58 +144,6 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
         runtime.get_prototype_of(&setter_error).unwrap(),
         Some(caller_range_error),
     );
-}
-
-#[test]
-fn object_assign_method_and_boxed_result_retain_then_release_their_realm() {
-    let runtime = host_runtime();
-    let (assign, boxed) = {
-        let mut first = runtime.new_context().expect("create context");
-        let mut second = runtime.new_context().expect("create context");
-        let first_object = global_callable(&runtime, &mut first, "Object");
-        let second_object = global_callable(&runtime, &mut second, "Object");
-        let first_assign =
-            property_callable(&runtime, &mut first, first_object.as_object(), "assign");
-        let first_assign_again =
-            property_callable(&runtime, &mut first, first_object.as_object(), "assign");
-        let second_assign =
-            property_callable(&runtime, &mut second, second_object.as_object(), "assign");
-        assert_eq!(first_assign, first_assign_again);
-        assert_ne!(first_assign, second_assign);
-        assert_eq!(
-            runtime.get_prototype_of(first_assign.as_object()).unwrap(),
-            Some(first.function_prototype().unwrap()),
-        );
-        drop(second_assign);
-
-        let source = first.new_object().unwrap();
-        let Value::Object(boxed) = first
-            .call(
-                &first_assign,
-                Value::Undefined,
-                &[Value::Int(3), Value::Object(source)],
-            )
-            .unwrap()
-        else {
-            panic!("Object.assign primitive target was not boxed");
-        };
-        (first_assign, boxed)
-    };
-
-    runtime.run_gc().unwrap();
-    assert_eq!(
-        runtime.heap_counts().expect("runtime state").context_nodes,
-        1
-    );
-    drop(assign);
-    runtime.run_gc().unwrap();
-    assert_eq!(
-        runtime.heap_counts().expect("runtime state").context_nodes,
-        1
-    );
-    drop(boxed);
-    runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]

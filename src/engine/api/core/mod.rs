@@ -26,6 +26,7 @@ pub use runtime::{
 pub use value::{CallableRef, ObjectRef, SymbolRef, Value};
 
 pub use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
+pub use crate::engine::api::{declare_thread_stack, number_to_string, quickjs_detect_module_bytes};
 pub use crate::engine::code::debug::DebugInfoMode;
 pub use crate::engine::code::module::{ModuleImportAttribute, ModuleImportAttributes};
 pub use crate::engine::compiler::CompileOptions;

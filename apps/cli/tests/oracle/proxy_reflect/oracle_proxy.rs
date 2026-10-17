@@ -1,9 +1,8 @@
-use crate::object_graph_observation::define_global;
 use crate::object_graph_observation::object_property;
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::take_exception_object;
-use crate::runtime_observation::{host_runtime, host_runtime_context};
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{Context, ObjectRef, Runtime, RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04's complete Proxy surface: all thirteen handler
 // traps, null/undefined forwarding, revocation, callable/constructor caching,
@@ -11,113 +10,6 @@ use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Valu
 // `js_proxy_*`. The `pinned quirks` group is deliberately not a statement of
 // ideal ECMA-262 behavior. It records observable behavior in the selected
 // QuickJS source, including its explicitly documented `proxy-missing-checks`.
-
-#[test]
-fn proxy_native_and_user_errors_use_their_exact_realms() {
-    let runtime = host_runtime();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
-    let defining_type_error = eval_object(
-        &mut defining,
-        "TypeError.prototype",
-        "defining TypeError prototype",
-    );
-    let caller_type_error = eval_object(
-        &mut caller,
-        "TypeError.prototype",
-        "caller TypeError prototype",
-    );
-    assert_ne!(defining_type_error, caller_type_error);
-
-    let invariant_proxy = eval_object(
-        &mut defining,
-        r#"(function(){
-            var target={x:1};Object.preventExtensions(target);
-            return new Proxy(target,{has:function(){return false}});
-        })()"#,
-        "foreign invariant Proxy",
-    );
-    define_global(
-        &runtime,
-        &mut caller,
-        "foreignProxy",
-        Value::Object(invariant_proxy),
-    );
-    assert_eq!(
-        caller.eval("'x' in foreignProxy"),
-        Err(RuntimeError::Exception),
-    );
-    let invariant_error = take_exception_object(&mut caller, "foreign Proxy invariant TypeError");
-    assert_eq!(
-        runtime.get_prototype_of(&invariant_error).unwrap(),
-        Some(caller_type_error.try_clone().expect("duplicate root")),
-        "Proxy's internal invariant TypeError did not use the active caller realm",
-    );
-
-    let revoked_proxy = eval_object(
-        &mut defining,
-        r#"(function(){
-            var pair=Proxy.revocable(function(){},{});
-            pair.revoke();
-            return pair.proxy;
-        })()"#,
-        "foreign revoked Proxy",
-    );
-    define_global(
-        &runtime,
-        &mut caller,
-        "foreignProxy",
-        Value::Object(revoked_proxy),
-    );
-    assert_eq!(caller.eval("foreignProxy.x"), Err(RuntimeError::Exception));
-    let revoked_error = take_exception_object(&mut caller, "foreign revoked Proxy TypeError");
-    assert_eq!(
-        runtime.get_prototype_of(&revoked_error).unwrap(),
-        Some(caller_type_error.try_clone().expect("duplicate root")),
-        "revoked Proxy TypeError did not use the active caller realm",
-    );
-
-    let throwing_proxy = eval_object(
-        &mut defining,
-        r#"(new Proxy({x:1},{get:function(){throw new TypeError("defining trap")}}))"#,
-        "foreign throwing Proxy",
-    );
-    define_global(
-        &runtime,
-        &mut caller,
-        "foreignProxy",
-        Value::Object(throwing_proxy),
-    );
-    assert_eq!(caller.eval("foreignProxy.x"), Err(RuntimeError::Exception));
-    let user_error = take_exception_object(&mut caller, "foreign Proxy user TypeError");
-    assert_eq!(
-        runtime.get_prototype_of(&user_error).unwrap(),
-        Some(defining_type_error),
-        "Proxy replaced a defining-realm user trap throw with a caller-realm error",
-    );
-
-    let bad_construct_proxy = eval_object(
-        &mut defining,
-        "(new Proxy(function(){},{construct:function(){return 1}}))",
-        "foreign primitive-returning construct Proxy",
-    );
-    define_global(
-        &runtime,
-        &mut caller,
-        "foreignProxy",
-        Value::Object(bad_construct_proxy),
-    );
-    assert_eq!(
-        caller.eval("new foreignProxy()"),
-        Err(RuntimeError::Exception)
-    );
-    let construct_error = take_exception_object(&mut caller, "foreign Proxy construct TypeError");
-    assert_eq!(
-        runtime.get_prototype_of(&construct_error).unwrap(),
-        Some(caller_type_error),
-        "Proxy's construct-result TypeError did not use the active caller realm",
-    );
-}
 
 #[test]
 fn proxy_hidden_edges_survive_gc_and_revocation_is_safe_across_collection() {

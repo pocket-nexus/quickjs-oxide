@@ -1,7 +1,7 @@
 use crate::runtime_completion_oracle::ORACLE_NORMALIZER;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::normalize_rust_value_units as normalize_rust_value;
-use quickjs_oxide::engine::api::{
+use quickjs_oxide::engine::api::core::{
     AccessorValue, Context, DescriptorField, JsString, OrdinaryPropertyDescriptor, Runtime,
     RuntimeError, Value,
 };
@@ -94,7 +94,7 @@ fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
     let oracle = require_qjs_oracle!("template stack differential");
 
     let accepted_boundary = format!("`{}`", "${0}".repeat(65_532));
-    Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default())
+    Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default())
         .new_context()
         .expect("create context")
         .compile(&accepted_boundary)

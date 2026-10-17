@@ -303,7 +303,7 @@ pub(super) fn from(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let constructor = site.this(cx);
     let (items, map, this_arg) = (site.arg(cx, 0), site.arg(cx, 1), site.arg(cx, 2));
     if !map.is_undefined() && !ops::is_callable(cx.heap, map) {
-        return Err(error::type_error(cx, "Array.from: not a function"));
+        return Err(error::type_error(cx, "not a function"));
     }
     let key = WellKnown::key(cx.realm.symbols.iterator);
     let using_iterator = internal::get_method(cx, items, key)?;
@@ -419,7 +419,7 @@ pub(super) fn push(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     }
     let length = length_of(cx, object)?;
     if length + site.argc as u64 > MAX_LENGTH {
-        return Err(error::type_error(cx, "array too long"));
+        return Err(error::type_error(cx, "Array loo long"));
     }
     for index in 0..site.argc {
         let value = site.arg(cx, index);
@@ -499,7 +499,7 @@ pub(super) fn unshift(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let count = site.argc as u64;
     if count > 0 {
         if length + count > MAX_LENGTH {
-            return Err(error::type_error(cx, "array too long"));
+            return Err(error::type_error(cx, "Array loo long"));
         }
         let mut index = length;
         while index > 0 {
@@ -588,7 +588,7 @@ pub(super) fn splice(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         count.clamp(0.0, (length - start) as f64) as u64
     };
     if length + insert - delete > MAX_LENGTH {
-        return Err(error::type_error(cx, "array too long"));
+        return Err(error::type_error(cx, "Array loo long"));
     }
     let removed = array_create(cx, delete)?;
     for offset in 0..delete {
@@ -851,7 +851,7 @@ pub(super) fn concat(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             let source = item.as_object().unwrap();
             let length = length_of(cx, source)?;
             if next + length > MAX_LENGTH {
-                return Err(error::type_error(cx, "array too long"));
+                return Err(error::type_error(cx, "Array loo long"));
             }
             for at in 0..length {
                 if has_at(cx, source, at)? {
@@ -862,7 +862,7 @@ pub(super) fn concat(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             }
         } else {
             if next >= MAX_LENGTH {
-                return Err(error::type_error(cx, "array too long"));
+                return Err(error::type_error(cx, "Array loo long"));
             }
             create_at(cx, result, next, item)?;
             next += 1;
@@ -1087,10 +1087,7 @@ fn reduce_impl(cx: &mut Cx<'_>, site: CallSite, right: bool) -> Result<Value, Th
     } else {
         loop {
             if step >= length {
-                return Err(error::type_error(
-                    cx,
-                    "reduce of empty array with no initial value",
-                ));
+                return Err(error::type_error(cx, "empty array"));
             }
             let index = order(step);
             step += 1;
@@ -1170,7 +1167,7 @@ fn flatten(
                 next = flatten(cx, target, inner, inner_length, next, depth - 1.0, None)?;
             } else {
                 if next >= MAX_LENGTH {
-                    return Err(error::type_error(cx, "array too long"));
+                    return Err(error::type_error(cx, "Array too long"));
                 }
                 create_at(cx, target, next, element)?;
                 next += 1;
@@ -1343,10 +1340,7 @@ fn sorted_values(
 fn comparator(cx: &mut Cx<'_>, site: &CallSite) -> Result<Value, Throw> {
     let comparator = site.arg(cx, 0);
     if !comparator.is_undefined() && !ops::is_callable(cx.heap, comparator) {
-        return Err(error::type_error(
-            cx,
-            "the comparison function must be a function",
-        ));
+        return Err(error::type_error(cx, "not a function"));
     }
     Ok(comparator)
 }
@@ -1408,7 +1402,7 @@ pub(super) fn to_spliced(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw
     };
     let new_length = length + insert - skip;
     if new_length > MAX_LENGTH {
-        return Err(error::type_error(cx, "array too long"));
+        return Err(error::type_error(cx, "invalid array length"));
     }
     let target = array_create(cx, new_length)?;
     let mut to = 0u64;
@@ -1430,6 +1424,19 @@ pub(super) fn to_spliced(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw
     Ok(Value::object(target))
 }
 
+/// QuickJS's `invalid array index: {idx}`, `idx` the saturated `int64`
+/// index made relative to `length`.
+#[cold]
+#[inline(never)]
+fn invalid_index(cx: &mut Cx<'_>, length: u64, relative: f64) -> Throw {
+    // `as` saturates as `JS_ToInt64Sat` does.
+    let mut index = relative as i64;
+    if index < 0 {
+        index = index.saturating_add(length as i64);
+    }
+    error::range_error(cx, &format!("invalid array index: {index}"))
+}
+
 pub(super) fn with(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_object(cx, &site)?;
     let length = length_of(cx, object)?;
@@ -1441,7 +1448,7 @@ pub(super) fn with(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         length as f64 + relative
     };
     if actual >= length as f64 || actual < 0.0 {
-        return Err(error::range_error(cx, "invalid array index"));
+        return Err(invalid_index(cx, length, relative));
     }
     let replacement = site.arg(cx, 1);
     let target = array_create(cx, length)?;

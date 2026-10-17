@@ -94,6 +94,15 @@ pub const NATIVE_STACK_BUDGET: usize = 1 << 20;
 /// stack overflow`: 8 MiB of values.
 pub const DEFAULT_STACK_LIMIT: u32 = 1 << 20;
 
+/// A native call made by the loop.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativeSite {
+    /// The frame count when it was made: the caller is `frames[depth - 1]`.
+    pub depth: u32,
+    pub pc: u32,
+    pub callee: Value,
+}
+
 /// The register file and the frame table.
 pub struct VmStack {
     pub(crate) registers: Vec<Value>,
@@ -121,7 +130,16 @@ pub struct VmStack {
     pub(crate) native_depth: u32,
     /// The frame count and instruction index of the call running the
     /// current native, for the backtrace of an error it creates.
-    pub(crate) native_site: (u32, u32),
+    /// The native calls in progress, innermost last: the frame count and
+    /// instruction index of each call and the native it runs, for the
+    /// backtrace's `at name (native)` lines and the positions of the frames
+    /// that called them.
+    pub(crate) natives: Vec<NativeSite>,
+    /// The last error whose backtrace has frames it could not place (the
+    /// innermost frame when the loop itself threw; a frame that called into
+    /// Rust, which re-entered the loop): per frame, its depth and its line
+    /// of the backtrace. Each loop the throw unwinds through places its own.
+    pub(crate) unpositioned: Option<(ObjectId, Vec<(u32, u32)>)>,
     /// The suspendable activations running, innermost last (phase 4,
     /// section 4.3): where `Yield` and `Await` save their frame.
     pub(crate) active: Vec<ObjectId>,
@@ -139,7 +157,8 @@ impl Default for VmStack {
             native_base: 0,
             native_budget: NATIVE_STACK_BUDGET,
             native_depth: u32::MAX,
-            native_site: (u32::MAX, 0),
+            natives: Vec::new(),
+            unpositioned: None,
             active: Vec::new(),
         }
     }

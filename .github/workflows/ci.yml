@@ -113,10 +113,10 @@ jobs:
           # New core: the whole suite again with a collection at every allocation.
           cargo test --locked -p oxide-core --features gc-stress
           # The lowering and the two-core corpus on the new core under stress.
-          cargo test --locked -p quickjs-oxide --features new-core-gc-stress --lib compiler::register
+          cargo test --locked -p quickjs-oxide --features gc-stress --lib compiler::register
           # The driver under stress: the fixed probes at smoke size and the corpus.
-          cargo build --locked -p quickjs-oxide-cli --features new-core-gc-stress --bin oxide-run
-          python3 scripts/checks/check-new-core-stress.py --oxide-run target/debug/oxide-run
+          cargo build --locked -p quickjs-oxide-cli --features gc-stress --bin qjs
+          python3 scripts/checks/check-new-core-stress.py --qjs target/debug/qjs
 
       - name: Lint targets
         run: |
@@ -213,9 +213,9 @@ jobs:
 
       - name: Run the suite programs under the stress collector
         run: |
-          cargo build --locked --release -p quickjs-oxide-cli --features new-core-gc-stress --bin oxide-run
+          cargo build --locked --release -p quickjs-oxide-cli --features gc-stress --bin qjs
           python3 scripts/checks/check-new-core-suite.py \
-            --oxide-run target/release/oxide-run --suite "$RUNNER_TEMP/suite"
+            --qjs target/release/qjs --suite "$RUNNER_TEMP/suite"
 
   quickjs-differential:
     if: >-

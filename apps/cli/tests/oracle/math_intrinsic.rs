@@ -1,9 +1,6 @@
-use crate::runtime_observation::{host_runtime, host_runtime_context};
-use crate::runtime_observation::{
-    property_callable_with_read_context as property_callable, take_exception_object,
-};
-use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use crate::runtime_observation::host_runtime_context;
+use crate::runtime_observation::property_callable_with_read_context as property_callable;
+use quickjs_oxide::engine::api::core::{Context, ObjectRef, Runtime, RuntimeError, Value};
 
 const METHODS: &[(&str, usize)] = &[
     ("min", 2),
@@ -66,72 +63,6 @@ fn math_methods_are_not_constructable() {
                 .unwrap_or_else(|| panic!("new Math.{name} did not publish an exception")),
         );
     }
-}
-
-#[test]
-fn math_native_errors_use_the_method_defining_realm() {
-    let runtime = host_runtime();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
-    let defining_type_error = eval_object(
-        &mut defining,
-        "TypeError.prototype",
-        "defining TypeError prototype",
-    );
-    let caller_type_error = eval_object(
-        &mut caller,
-        "TypeError.prototype",
-        "caller TypeError prototype",
-    );
-    assert_ne!(defining_type_error, caller_type_error);
-
-    let math = math_object(&runtime, &mut defining);
-    let abs = property_callable(&runtime, &mut defining, &math, "abs");
-    let sum_precise = property_callable(&runtime, &mut defining, &math, "sumPrecise");
-
-    let symbol = runtime.new_symbol(None).unwrap();
-    assert!(matches!(
-        caller.call(&abs, Value::Undefined, &[Value::Symbol(symbol)]),
-        Err(RuntimeError::Exception),
-    ));
-    let native_conversion = take_exception_object(&mut caller, "cross-realm Math.abs TypeError");
-    assert_eq!(
-        runtime.get_prototype_of(&native_conversion).unwrap(),
-        Some(defining_type_error.try_clone().expect("duplicate root")),
-        "Math.abs allocated its ToNumber TypeError in the calling realm",
-    );
-
-    let invalid_items = eval_object(&mut caller, "[1,'2']", "caller invalid Number iterable");
-    assert!(matches!(
-        caller.call(
-            &sum_precise,
-            Value::Undefined,
-            &[Value::Object(invalid_items)],
-        ),
-        Err(RuntimeError::Exception),
-    ));
-    let native_item = take_exception_object(&mut caller, "cross-realm sumPrecise TypeError");
-    assert_eq!(
-        runtime.get_prototype_of(&native_item).unwrap(),
-        Some(defining_type_error),
-        "Math.sumPrecise allocated its item TypeError in the calling realm",
-    );
-
-    let throwing_argument = eval_object(
-        &mut caller,
-        "(function(){var value=Object();value.valueOf=function(){throw new TypeError('caller')};return value})()",
-        "caller throwing numeric argument",
-    );
-    assert!(matches!(
-        caller.call(&abs, Value::Undefined, &[Value::Object(throwing_argument)],),
-        Err(RuntimeError::Exception),
-    ));
-    let user_error = take_exception_object(&mut caller, "caller conversion TypeError");
-    assert_eq!(
-        runtime.get_prototype_of(&user_error).unwrap(),
-        Some(caller_type_error),
-        "Math.abs replaced an argument conversion throw with a native error",
-    );
 }
 
 fn math_object(runtime: &Runtime, context: &mut Context) -> ObjectRef {

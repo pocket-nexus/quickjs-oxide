@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Profile pinned V8-v7 bodies with a fixed diagnostic driver, never a Score."""
-import argparse
+"""The pinned V8-v7 bodies with a fixed diagnostic driver, never a Score: the
+shared workload generator of `iterate_v8.py` and the Callgrind probes. Its
+profiling-build front end went with the profiling API (new-core phase 6).
+"""
 import hashlib
 import json
-import math
-import os
 from pathlib import Path
 import re
 
-from run import (LOAD, ROOT, V8_V7_SOURCE_COMMIT, binary_metadata, command_output,
-                 digest, git_metadata, machine_metadata, run_sample)
+from run import LOAD, ROOT, V8_V7_SOURCE_COMMIT, command_output, digest, git_metadata  # noqa: F401 (re-exported)
 
 
 # Names and counts are checked against the pinned source before running JS.
@@ -26,8 +25,6 @@ BENCHMARKS = {
 SUITE_DECL = re.compile(r"\bnew\s+BenchmarkSuite\s*\(\s*(['\"])([^'\"]+)\1")
 BENCH_DECL = re.compile(r"\bnew\s+Benchmark\s*\(\s*(['\"])([^'\"]+)\1")
 MARKER = "__oxide_v8_fixed_profile_complete__"
-COST_SCHEMA = "oxide-compile-vm-cost-v2"
-LEGACY_COST_SCHEMA = "oxide-compile-vm-cost-v1"
 
 
 def validate_source(source, expected_commit):
@@ -114,136 +111,3 @@ def prepare_case(source_metadata, case, iterations, generated_dir):
             "driver_sha256": hashlib.sha256(driver).hexdigest(),
             "suite": suite, "benchmarks": list(benchmarks), "iterations": iterations,
             "expected_marker": f"{MARKER}:{suite}:{len(benchmarks)}:{iterations}:{len(benchmarks) * iterations}\n"}
-
-
-def parse_cost_json(path, expected_commit=None):
-    records = []
-    for line_number, line in enumerate(path.read_text().splitlines(), 1):
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise ValueError(f"invalid profile JSON line {line_number}: {error}") from error
-        if not isinstance(record, dict) or not isinstance(record.get("schema"), str):
-            raise ValueError(f"invalid profile record at line {line_number}")
-        records.append(record)
-    costs = [record for record in records if record["schema"] in (COST_SCHEMA, LEGACY_COST_SCHEMA)]
-    if len(costs) != 1:
-        raise ValueError("profile must contain exactly one compile/VM cost record")
-    cost = costs[0]
-    metadata = cost.get("metadata")
-    if not isinstance(metadata, dict):
-        raise ValueError("profile lacks cost metadata")
-    if metadata.get("profiling_feature") is not True:
-        raise ValueError("cost record did not come from a profiling build")
-    if expected_commit and metadata.get("commit") != expected_commit:
-        raise ValueError("profile embedded commit differs from build receipt")
-    diagnostics = cost.get("execution_diagnostics" if cost["schema"] == COST_SCHEMA else "fusion_diagnostics")
-    if not isinstance(diagnostics, dict) or not isinstance(diagnostics.get("omitted"), dict):
-        raise ValueError("profile lacks execution coverage and omission fields")
-    omission_fields = ("static_functions", "dispatch_events", "outcome_events", "callsite_events")
-    if any(type(diagnostics["omitted"].get(name)) is not int or diagnostics["omitted"][name] < 0
-           for name in omission_fields):
-        raise ValueError("invalid execution omission counters")
-    for name in ("functions", "dispatch", "sites", "callsites"):
-        if not isinstance(diagnostics.get(name), list):
-            raise ValueError(f"profile lacks execution {name} list")
-    if not isinstance(diagnostics.get("callsite_scope"), str):
-        raise ValueError("profile lacks callsite coverage scope")
-    if not diagnostics["functions"] and not diagnostics["omitted"]["static_functions"]:
-        raise ValueError("profile lacks function coverage")
-    vm_phases = cost.get("vm_phases")
-    if not isinstance(vm_phases, dict):
-        raise ValueError("invalid VM phases")
-    for name, phase in vm_phases.items():
-        if (not isinstance(name, str) or not isinstance(phase, dict)
-                or type(phase.get("omitted_samples")) is not int
-                or phase["omitted_samples"] < 0):
-            raise ValueError("invalid VM phase omissions")
-    return {"schemas": [record["schema"] for record in records],
-            "embedded_commit": metadata.get("commit"),
-            "execution_callsite_scope": diagnostics.get("callsite_scope"),
-            "execution_omitted": diagnostics["omitted"],
-            "execution_counts": {name: len(diagnostics[name]) for name in ("functions", "dispatch", "sites", "callsites")},
-            "vm_phase_omitted_samples": {name: phase.get("omitted_samples") for name, phase in vm_phases.items()},
-            "unavailable": cost.get("unavailable")}
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True, help="external pinned js-engine-benchmark checkout")
-    parser.add_argument("--engine", type=Path, required=True, help="profiling-feature qjs executable")
-    parser.add_argument("--case", action="append", choices=list(BENCHMARKS))
-    parser.add_argument("--iterations", type=int, default=1, help="fixed Setup/run/TearDown cycles per benchmark")
-    parser.add_argument("--timeout", type=float, default=3600)
-    parser.add_argument("--v8-source-commit", default=V8_V7_SOURCE_COMMIT)
-    parser.add_argument("--output", type=Path, required=True, help="new output directory outside both repositories")
-    args = parser.parse_args()
-    if args.iterations < 1 or not math.isfinite(args.timeout) or args.timeout <= 0:
-        parser.error("iterations and timeout must be positive and finite")
-    if not re.fullmatch(r"[0-9a-f]{40}", args.v8_source_commit):
-        parser.error("--v8-source-commit must be a full lowercase SHA")
-    cases = args.case or list(BENCHMARKS)
-    if len(set(cases)) != len(cases):
-        parser.error("cases must be unique")
-    binary = args.engine.resolve()
-    if not binary.is_file() or not os.access(binary, os.X_OK):
-        parser.error("--engine must be an executable file")
-    try:
-        source = validate_source(args.source, args.v8_source_commit)
-        engine = binary_metadata(binary)
-    except (ValueError, OSError) as error:
-        parser.error(str(error))
-    output = args.output.resolve()
-    if output.is_relative_to(ROOT) or output.is_relative_to(args.source.resolve()):
-        parser.error("output must be outside both source repositories")
-    output.mkdir(parents=True, exist_ok=False)
-    generated_dir = output / "generated"
-    generated_dir.mkdir()
-    raw_dir = output / "raw"
-    raw_dir.mkdir()
-    workloads = [prepare_case(source, case, args.iterations, generated_dir) for case in cases]
-    metadata = {"schema": "oxide-v8-fixed-profile-v1", "metric": "diagnostic fixed coverage; not V8 Score or adaptive timing",
-                "source": source, "engine": engine, "machine": machine_metadata(),
-                "runner_sha256": digest(__file__), "workloads": workloads,
-                "iterations_per_benchmark": args.iterations, "timeout_seconds": args.timeout}
-    (output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    samples = []
-    with (output / "samples.jsonl").open("w") as journal:
-        for workload in workloads:
-            case = workload["case"]
-            if digest(workload["path"]) != workload["sha256"] or digest(binary) != engine["sha256"]:
-                raise ValueError("generated workload or engine changed during profile run")
-            if any(digest(source["files"][name]["path"]) != source["files"][name]["sha256"]
-                   for name in ("base.js", case + ".js", "run.js")):
-                raise ValueError("upstream V8 source changed during profile run")
-            cost_path = raw_dir / (case + ".cost.jsonl")
-            command = [str(binary), "-d", "--profile-json", "--profile-output", str(cost_path), workload["path"]]
-            sample = run_sample(command, output, raw_dir / case, args.timeout)
-            sample["case"] = case
-            sample["generated_sha256"] = workload["sha256"]
-            sample["status"] = "timeout" if sample["timed_out"] else "failed" if sample["exit_code"] else "ok"
-            if sample["status"] == "ok" and Path(sample["stdout"]).read_text() != workload["expected_marker"]:
-                sample["status"] = "invalid-completion-marker"
-            if sample["status"] == "ok" and Path(sample["stderr"]).read_bytes():
-                sample["status"] = "unexpected-stderr"
-            if cost_path.is_file():
-                sample["cost_json"] = {"path": str(cost_path), "sha256": digest(cost_path)}
-                try:
-                    build = engine.get("build") or {}
-                    sample["cost_json"].update(parse_cost_json(cost_path, build.get("commit")))
-                except (ValueError, OSError) as error:
-                    sample["cost_json"]["error"] = str(error)
-                    if sample["status"] == "ok":
-                        sample["status"] = "invalid-cost-json"
-            elif sample["status"] == "ok":
-                sample["status"] = "missing-cost-json"
-            samples.append(sample)
-            journal.write(json.dumps(sample) + "\n")
-            journal.flush()
-            print(f"{case}: {sample['status']}", flush=True)
-    (output / "results.json").write_text(json.dumps({"metadata": metadata, "samples": samples}, indent=2) + "\n")
-    return 0 if all(sample["status"] == "ok" for sample in samples) else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

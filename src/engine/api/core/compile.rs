@@ -186,6 +186,7 @@ pub(crate) fn compile_module(
 }
 
 /// `$262.agent.start`'s runner: an agent's script and then its jobs.
+#[cfg(feature = "test262-host")]
 pub(crate) fn run_agent_script(
     runtime: &mut oxide_core::Runtime,
     source: &str,

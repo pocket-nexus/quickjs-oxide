@@ -1,7 +1,7 @@
 use crate::runtime_observation::{host_runtime, host_runtime_context};
 
 use crate::runtime_oracle::error_string_property;
-use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{JsString, RuntimeError, Value};
 
 #[test]
 fn top_level_for_await_uses_pinned_quickjs_syntax_diagnostic() {

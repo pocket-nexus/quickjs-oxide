@@ -218,26 +218,13 @@ fn core_error_kind(kind: NativeErrorKind) -> oxide_core::ErrorKind {
 /// The error a failed module compilation throws, as a value (no backtrace:
 /// no frame runs the module yet).
 fn throw_value(compiler: &mut Compiler<'_>, failure: &CompileError) -> oxide_core::Value {
-    let Ok(error) = compiler.new_error(failure.kind, &failure.message) else {
-        return oxide_core::Value::UNDEFINED;
-    };
-    if let (Some((file, line, column)), Some(object)) = (&failure.location, error.as_object()) {
-        let stack = format!("    at {file}:{line}:{column}\n");
-        let handle = compiler.hold(error);
-        if let (Ok(key), Ok(stack)) = (
-            compiler.heap_mut().property_key("stack"),
-            compiler.heap_mut().alloc_string(&stack),
-        ) {
-            let _ = compiler.heap_mut().add_property(
-                object,
-                key,
-                oxide_core::PropertyFlags::data(true, false, true),
-                oxide_core::Value::string(stack),
-            );
+    let created = match &failure.location {
+        Some((file, line, column)) => {
+            compiler.new_located_error(failure.kind, &failure.message, file, *line, *column)
         }
-        compiler.heap_mut().handles().release(handle);
-    }
-    error
+        None => compiler.new_error(failure.kind, &failure.message),
+    };
+    created.unwrap_or(oxide_core::Value::UNDEFINED)
 }
 
 /// The attributes the core passes, in the front end's form.
@@ -348,13 +335,18 @@ pub(crate) fn load_shim(
             module.tables,
             &module.import_meta,
         )),
-        ModuleSource::Json(text) => Ok(oxide_core::vm::module::ModuleSource::Json(
-            String::from_utf8_lossy(&text).encode_utf16().collect(),
-        )),
-        ModuleSource::Json5(text) => Ok(oxide_core::vm::module::ModuleSource::Json5(
-            String::from_utf8_lossy(&text).encode_utf16().collect(),
-        )),
+        ModuleSource::Json(text) => {
+            Ok(oxide_core::vm::module::ModuleSource::Json(json_text(&text)))
+        }
+        ModuleSource::Json5(text) => Ok(oxide_core::vm::module::ModuleSource::Json5(json_text(
+            &text,
+        ))),
     }
+}
+
+/// A JSON module's bytes as QuickJS's byte-level parser reads them.
+fn json_text(bytes: &[u8]) -> oxide_core::vm::module::JsonText {
+    oxide_core::vm::module::JsonText::from_bytes(bytes, crate::engine::value::decode_quickjs_utf8)
 }
 
 fn compiled_source(

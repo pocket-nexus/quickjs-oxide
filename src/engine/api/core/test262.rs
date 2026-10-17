@@ -373,7 +373,9 @@ fn load_module(
         .iter()
         .any(|(key, value)| key == "type" && value == "json");
     if json {
-        return Ok(ModuleSource::Json(source.encode_utf16().collect()));
+        return Ok(ModuleSource::Json(
+            source.encode_utf16().collect::<Vec<u16>>().into(),
+        ));
     }
     let failed = |error: CompileError, diagnostic: Option<Diagnostic>| {
         *state.load_error.borrow_mut() = diagnostic;

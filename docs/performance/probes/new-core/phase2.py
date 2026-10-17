@@ -16,7 +16,7 @@ from the same release test binary, so they are built identically.
 or, from M5 on, with any engine run as `PATH FILE` (each named column):
 
     python3 docs/performance/probes/new-core/phase2.py --engine quickjs=$QJS \\
-        --engine current=$OXIDE_QJS --engine new=target/release/oxide-run
+        --engine new=target/release/qjs
 """
 import argparse
 import json
@@ -135,7 +135,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", help="the root crate's release test binary (both cores)")
     parser.add_argument("--engine", action="append", default=[],
-                        help="NAME=PATH of a binary run as `PATH FILE` (qjs, oxide-run)")
+                        help="NAME=PATH of a binary run as `PATH FILE` (QuickJS, qjs)")
     parser.add_argument("--cpu", type=int, default=2)
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--only", nargs="*")

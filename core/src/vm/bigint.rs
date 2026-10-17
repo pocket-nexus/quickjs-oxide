@@ -16,6 +16,9 @@ pub(crate) enum BigError {
     DivisionByZero,
     NegativeExponent,
     TooLarge,
+    /// `**`'s own exponent limit, QuickJS's `BigInt is too large` (every
+    /// other overflow is `BigInt is too large to allocate`).
+    PowTooLarge,
 }
 
 /// Limbs a result may reach before `RangeError: BigInt is too large`.
@@ -155,7 +158,16 @@ impl Big {
             let negative = self.negative && exponent.limbs[0] & 1 == 1;
             return Ok(Big::new(negative, self.limbs.clone()));
         }
-        if exponent.limbs.len() > 1 || exponent.limbs[0] > (MAX_LIMBS as u64) * 64 {
+        if exponent.limbs.len() > 1 || exponent.limbs[0] > i32::MAX as u64 {
+            return Err(BigError::PowTooLarge);
+        }
+        if let [limb] = self.limbs[..]
+            && limb.is_power_of_two()
+            && exponent.limbs[0] * u64::from(limb.trailing_zeros()) > 1 << 20
+        {
+            return Err(BigError::PowTooLarge);
+        }
+        if exponent.limbs[0] > (MAX_LIMBS as u64) * 64 {
             return Err(BigError::TooLarge);
         }
         let mut power = exponent.limbs[0];

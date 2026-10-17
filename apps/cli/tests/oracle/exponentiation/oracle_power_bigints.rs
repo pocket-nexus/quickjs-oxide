@@ -1,5 +1,5 @@
 use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::Value;
+use quickjs_oxide::engine::api::core::Value;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fmt::Write as _;

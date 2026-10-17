@@ -1,4 +1,4 @@
-use quickjs_oxide::engine::api::{Error, ErrorKind, JsString, JsStringError};
+use quickjs_oxide::engine::api::core::{Error, ErrorKind, JsString, JsStringError};
 
 struct OversizedLowerBound;
 

@@ -197,7 +197,7 @@ pub(super) fn broadcast(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
                 Store::Owned(_) => unreachable!("a shared buffer"),
             }
         }
-        _ => return Err(error::type_error(cx, "not a SharedArrayBuffer")),
+        _ => return Err(error::object_expected(cx, "ArrayBuffer")),
     };
     let value = site.arg(cx, 1);
     let value = ops::to_number(cx, value)?;
@@ -249,7 +249,7 @@ pub(super) fn monotonic_now(_cx: &mut Cx<'_>, _site: CallSite) -> Result<Value, 
 pub(super) fn receive_broadcast(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let callback = site.arg(cx, 0);
     if !ops::is_callable(cx.heap, callback) {
-        return Err(error::type_error(cx, "not a function"));
+        return Err(error::type_error(cx, "expecting function"));
     }
     cx.heap.add_fixed_root(callback);
     if let Some(agent) = &mut cx.host.agent {

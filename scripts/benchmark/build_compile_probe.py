@@ -60,7 +60,6 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-manifest", type=Path,
                         help="complete frozen export identity; mandatory when --repo is not an exact Git checkout root")
-    parser.add_argument("--profiling", action="store_true")
     parser.add_argument("--probe", type=Path, default=Path(__file__).resolve().parents[2] / "apps/cli/examples/compile_probe.rs",
                         help="probe source copied in as src/main.rs")
     parser.add_argument("--name", default="oxide-compile-probe", help="generated crate and binary name")
@@ -84,18 +83,15 @@ def main():
     (output / "src").mkdir()
     (output / "src/main.rs").write_bytes(source.read_bytes())
     probe_source_sha256 = digest(output / "src/main.rs")
-    features = [name for enabled, name in [(args.profiling, "profiling")] if enabled]
     manifest = '\n'.join([
         '[package]', f'name={json.dumps(args.name)}', 'version="0.0.0"', 'edition="2024"',
-        '[workspace]', '[features]', 'profiling=[]', '[dependencies]',
-        f'quickjs-oxide={{path={json.dumps(str(repo))},default-features=false,features={json.dumps(features)}}}',
+        '[workspace]', '[dependencies]',
+        f'quickjs-oxide={{path={json.dumps(str(repo))},default-features=false}}',
         f'quickjs-oxide-host={{path={json.dumps(str(repo / "adapters/native"))}}}', '',
     ])
     (output / "Cargo.toml").write_text(manifest)
     (output / "Cargo.lock").write_bytes((repo / "Cargo.lock").read_bytes())
     command = ["cargo", "build", "--release", "--manifest-path", str(output / "Cargo.toml"), "--target-dir", str(output / "target")]
-    if args.profiling:
-        command += ["--features", "profiling"]
     with (output / "build.log").open("w") as log:
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
     if digest(output / "src/main.rs") != probe_source_sha256:

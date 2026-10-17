@@ -30,11 +30,11 @@ test-support = []
 profiling = []
 # Restores identity checks on trusted handle fast paths in release builds.
 checked-handles = []
-# The new core's stress mode (collect before every allocation), for the
-# register lowering's tests and the new-core driver.
-new-core-gc-stress = ["oxide-core/gc-stress"]
-# `oxide-run --ic-stats`: the new core's inline-cache counters.
-new-core-ic-stats = ["oxide-core/ic-stats"]
+# The core's stress mode (collect before every allocation), for the register
+# lowering's tests and `qjs --gc-stress`.
+gc-stress = ["oxide-core/gc-stress"]
+# `qjs --ic-stats`: the core's inline-cache counters.
+ic-stats = ["oxide-core/ic-stats"]
 # Phase 4, section 7.2: the current engine with the five behaviors the new
 # core drops switched off, for the one Test262 run that freezes the dropped
 # variants. Never in a release, never in the default gates.

@@ -103,9 +103,74 @@ pub enum ModuleSource {
         /// and `main`); the values must be rooted by the loader.
         import_meta: Vec<(String, Value)>,
     },
-    Json(Vec<u16>),
+    Json(JsonText),
     /// A JSON5 module (QuickJS's extended JSON, `type: "json5"`).
-    Json5(Vec<u16>),
+    Json5(JsonText),
+}
+
+/// A JSON module's text: UTF-16 units, and the units that stand for bytes
+/// of invalid UTF-8 in the file, which QuickJS's byte-level parser rejects
+/// with `Bad UTF-8 sequence` where a token reads them (not in a comment).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct JsonText {
+    pub units: Vec<u16>,
+    /// Sorted indices into `units`.
+    pub invalid: Vec<u32>,
+    /// Sorted indices of the low halves of four-byte sequences, which
+    /// QuickJS's byte columns do not count (a CESU-8 pair counts twice).
+    pub no_column: Vec<u32>,
+}
+
+impl From<Vec<u16>> for JsonText {
+    fn from(units: Vec<u16>) -> Self {
+        JsonText {
+            units,
+            invalid: Vec::new(),
+            no_column: Vec::new(),
+        }
+    }
+}
+
+impl JsonText {
+    /// The text of `bytes` decoded as QuickJS decodes UTF-8 (lone and
+    /// paired surrogates as is); each byte of an invalid sequence becomes
+    /// one inert unit marked invalid. `decode` is QuickJS's code-point
+    /// decoder: the code point and the bytes it used, or `None`.
+    pub fn from_bytes(bytes: &[u8], decode: impl Fn(&[u8]) -> Option<(u32, usize)>) -> Self {
+        let mut text = JsonText {
+            units: Vec::with_capacity(bytes.len()),
+            invalid: Vec::new(),
+            no_column: Vec::new(),
+        };
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let byte = bytes[offset];
+            if byte < 0x80 {
+                text.units.push(u16::from(byte));
+                offset += 1;
+                continue;
+            }
+            match decode(&bytes[offset..]) {
+                Some((code, used)) if code <= 0x10_ffff => {
+                    if code <= 0xffff {
+                        text.units.push(code as u16);
+                    } else {
+                        let scalar = code - 0x1_0000;
+                        text.units.push(0xd800 | (scalar >> 10) as u16);
+                        text.no_column.push(text.units.len() as u32);
+                        text.units.push(0xdc00 | (scalar & 0x3ff) as u16);
+                    }
+                    offset += used;
+                }
+                _ => {
+                    text.invalid.push(text.units.len() as u32);
+                    text.units.push(0x7f);
+                    offset += 1;
+                }
+            }
+        }
+        text
+    }
 }
 
 /// Resolves `specifier` against the module or script named `referrer`.
@@ -271,14 +336,10 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
 fn json_module(
     cx: &mut Cx<'_>,
     name: &str,
-    text: &[u16],
+    text: &JsonText,
     extended: bool,
 ) -> Result<ObjectId, Throw> {
-    let value = if extended {
-        crate::builtins::json5_parse_text(cx, text, name)?
-    } else {
-        crate::builtins::json_parse_text(cx, text, name)?
-    };
+    let value = crate::builtins::json_module_text(cx, text, name, extended)?;
     cx.heap.roots().push(value);
     let tables = ModuleTables {
         bindings: vec![ModuleBinding::Declaration { lexical: false }],
@@ -395,6 +456,8 @@ enum Resolution {
 enum Resolved {
     Found(Resolution),
     NotFound,
+    /// The walk met a `(module, name)` pair it is resolving already.
+    Circular,
     Ambiguous,
 }
 
@@ -406,7 +469,7 @@ fn resolve_export(
     set: &mut Vec<(ObjectId, String)>,
 ) -> Resolved {
     if set.iter().any(|(m, n)| *m == module && n == name) {
-        return Resolved::NotFound;
+        return Resolved::Circular;
     }
     set.push((module, name.to_owned()));
     let record = data(cx, module);
@@ -454,7 +517,7 @@ fn resolve_export(
         let imported = record.requested[request as usize];
         match resolve_export(cx, imported, name, set) {
             Resolved::Ambiguous => return Resolved::Ambiguous,
-            Resolved::NotFound => {}
+            Resolved::NotFound | Resolved::Circular => {}
             Resolved::Found(resolution) => match star {
                 None => star = Some(resolution),
                 Some(existing) if existing != resolution => return Resolved::Ambiguous,
@@ -494,6 +557,22 @@ fn exported_names(cx: &Cx<'_>, module: ObjectId, set: &mut Vec<ObjectId>) -> Vec
 
 fn syntax(cx: &mut Cx<'_>, message: String) -> Throw {
     error::throw(cx, ErrorKind::Syntax, &message)
+}
+
+/// QuickJS's `js_resolve_export_throw_error` for `name` in `module`.
+#[cold]
+#[inline(never)]
+fn resolve_error(cx: &mut Cx<'_>, resolved: &Resolved, module: ObjectId, name: &str) -> Throw {
+    let name = super::property::str_atom_text(name);
+    let module = super::property::str_atom_text(&data(cx, module).name);
+    let message = match resolved {
+        Resolved::Circular => {
+            format!("circular reference when looking for export '{name}' in module '{module}'")
+        }
+        Resolved::Ambiguous => format!("export '{name}' in module '{module}' is ambiguous"),
+        _ => format!("Could not find export '{name}' in module '{module}'"),
+    };
+    syntax(cx, message)
 }
 
 /// `GetModuleNamespace(module)`.
@@ -568,8 +647,8 @@ pub(crate) fn namespace_value(
     if value.is_empty() {
         let key = namespace_keys(cx, object)[position];
         let message = format!(
-            "'{}' is not initialized",
-            super::property::key_text(cx.heap, key)
+            "{} is not initialized",
+            super::property::atom_text(cx.heap, key)
         );
         return Err(error::throw(cx, ErrorKind::Reference, &message));
     }
@@ -660,15 +739,7 @@ fn initialize_environment(cx: &mut Cx<'_>, module: ObjectId) -> Result<(), Throw
         if let ExportTarget::Indirect { name: Some(_), .. } = export.target {
             match resolve_export(cx, module, &export.name, &mut Vec::new()) {
                 Resolved::Found(_) => {}
-                Resolved::NotFound => {
-                    return Err(syntax(
-                        cx,
-                        format!("export '{}' could not be resolved", export.name),
-                    ));
-                }
-                Resolved::Ambiguous => {
-                    return Err(syntax(cx, format!("export '{}' is ambiguous", export.name)));
-                }
+                failure => return Err(resolve_error(cx, &failure, module, &export.name)),
             }
         }
     }
@@ -696,16 +767,7 @@ fn initialize_environment(cx: &mut Cx<'_>, module: ObjectId) -> Result<(), Throw
                     cx.heap.scope_set(cell, 0, 0, Value::object(namespace));
                     Value::object(cell.object())
                 }
-                Resolved::NotFound => {
-                    let referrer = data(cx, imported).name.clone();
-                    return Err(syntax(
-                        cx,
-                        format!("Could not find export '{name}' in module '{referrer}'"),
-                    ));
-                }
-                Resolved::Ambiguous => {
-                    return Err(syntax(cx, format!("export '{name}' is ambiguous")));
-                }
+                failure => return Err(resolve_error(cx, &failure, imported, name)),
             },
         };
         cx.heap
@@ -1157,7 +1219,7 @@ fn import_attributes(cx: &mut Cx<'_>, options: Value) -> Result<Vec<(String, Str
         return Ok(Vec::new());
     }
     let Some(with) = with.as_object() else {
-        return Err(error::type_error(cx, "the 'with' option must be an object"));
+        return Err(error::type_error(cx, "options.with must be an object"));
     };
     let mut attributes = Vec::new();
     for key in super::object::enumerable_own_keys(cx, with)? {
@@ -1165,7 +1227,7 @@ fn import_attributes(cx: &mut Cx<'_>, options: Value) -> Result<Vec<(String, Str
         let Some(value) = value.as_string() else {
             return Err(error::type_error(
                 cx,
-                "import attribute value must be a string",
+                "module attribute values must be strings",
             ));
         };
         let value = cx.heap.string_text(value);

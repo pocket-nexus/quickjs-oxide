@@ -5,7 +5,7 @@ use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::string_value;
 use crate::runtime_observation::take_exception_object;
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{RuntimeError, Value};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_match`'s
 // Symbol.matchAll path and `check_regexp_g_flag` (`quickjs.c` 45583-45657).

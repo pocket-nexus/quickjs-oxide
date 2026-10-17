@@ -247,7 +247,7 @@ fn allocate(
 ) -> Result<ObjectId, Throw> {
     let bytes = length.saturating_mul(kind.size() as u64);
     if bytes > crate::heap::buffer::MAX_BUFFER_LENGTH as u64 {
-        return Err(error::range_error(cx, "invalid typed array length"));
+        return Err(error::range_error(cx, "invalid array buffer length"));
     }
     root(cx, Value::object(prototype));
     let buffer = new_array_buffer(cx, bytes as usize)?;
@@ -274,8 +274,25 @@ fn validate(cx: &mut Cx<'_>, value: Value) -> Result<(ObjectId, usize), Throw> {
     };
     match typed::length(cx.heap, object) {
         Some(length) => Ok((object, length)),
-        None => Err(error::type_error(cx, "TypedArray is out of bounds")),
+        None => Err(error::type_error(cx, OUT_OF_BOUNDS)),
     }
+}
+
+/// QuickJS's `JS_ThrowTypeErrorArrayBufferOOB`.
+const OUT_OF_BOUNDS: &str = "ArrayBuffer is detached or resized";
+
+/// [`this_typed`] for `at` and `with`, which QuickJS reports as detached
+/// even when the array is only out of bounds.
+fn this_typed_detached(cx: &mut Cx<'_>, site: &CallSite) -> Result<(ObjectId, usize), Throw> {
+    let this = site.this(cx);
+    if let Some(object) = this
+        .as_object()
+        .filter(|&object| cx.heap.object_kind(object) == ObjectKind::TypedArray)
+        && typed::length(cx.heap, object).is_none()
+    {
+        return Err(error::type_error(cx, "ArrayBuffer is detached"));
+    }
+    validate(cx, this)
 }
 
 fn this_typed(cx: &mut Cx<'_>, site: &CallSite) -> Result<(ObjectId, usize), Throw> {
@@ -298,7 +315,7 @@ fn create_from_constructor(
     root(cx, result);
     let (object, actual) = validate(cx, result)?;
     if (actual as u64) < length {
-        return Err(error::type_error(cx, "TypedArray is too small"));
+        return Err(error::type_error(cx, "TypedArray length is too small"));
     }
     Ok(object)
 }
@@ -321,12 +338,12 @@ fn set(cx: &mut Cx<'_>, object: ObjectId, index: usize, value: Value) -> Result<
 // ---- the constructors ----
 
 pub(super) fn abstract_constructor(cx: &mut Cx<'_>, _site: CallSite) -> Result<Value, Throw> {
-    Err(error::type_error(cx, "cannot be called or constructed"))
+    Err(error::type_error(cx, "cannot be called"))
 }
 
 fn construct(cx: &mut Cx<'_>, site: CallSite, kind: ElementKind) -> Result<Value, Throw> {
     if !site.construct {
-        return Err(error::type_error(cx, "constructor requires 'new'"));
+        return Err(error::type_error(cx, "must be called with new"));
     }
     let first = site.arg(cx, 0);
     let default = prototype_intrinsic(kind);
@@ -345,7 +362,7 @@ fn construct(cx: &mut Cx<'_>, site: CallSite, kind: ElementKind) -> Result<Value
         return from_buffer(cx, kind, prototype, source, offset, length).map(Value::object);
     }
     let key = WellKnown::key(cx.realm.symbols.iterator);
-    let values = match internal::get_method(cx, first, key)? {
+    let values = match internal::get_method_or(cx, first, key, "not a function")? {
         Some(method) => {
             root(cx, method);
             let mut record = if method == Value::object(cx.realm.intrinsic(Intrinsic::ArrayValues))
@@ -380,6 +397,18 @@ fn construct(cx: &mut Cx<'_>, site: CallSite, kind: ElementKind) -> Result<Value
     Ok(Value::object(object))
 }
 
+/// A copy between BigInt and number content: QuickJS's element store into
+/// a `target` of that kind fails.
+#[cold]
+#[inline(never)]
+fn content_type_error(cx: &mut Cx<'_>, target: ElementKind) -> Throw {
+    if target.is_bigint() {
+        error::type_error(cx, "cannot convert to bigint")
+    } else {
+        error::type_error(cx, "cannot convert bigint to number")
+    }
+}
+
 /// `InitializeTypedArrayFromTypedArray`.
 fn from_typed_array(
     cx: &mut Cx<'_>,
@@ -388,11 +417,11 @@ fn from_typed_array(
     source: ObjectId,
 ) -> Result<ObjectId, Throw> {
     let Some(length) = typed::length(cx.heap, source) else {
-        return Err(error::type_error(cx, "TypedArray is out of bounds"));
+        return Err(error::type_error(cx, OUT_OF_BOUNDS));
     };
     let source_kind = kind_of(cx, source);
     if source_kind.is_bigint() != kind.is_bigint() {
-        return Err(error::type_error(cx, "content types differ"));
+        return Err(content_type_error(cx, kind));
     }
     let object = allocate(cx, kind, prototype, length as u64)?;
     copy_elements(cx, source, 0, object, 0, length)?;
@@ -452,7 +481,7 @@ fn from_buffer(
     };
     let record = typed::buffer(cx.heap, buffer);
     if record.detached {
-        return Err(error::type_error(cx, "array buffer is detached"));
+        return Err(error::type_error(cx, "ArrayBuffer is detached"));
     }
     let buffer_length = record.len();
     // `IsFixedLengthArrayBuffer`: a growable shared buffer is not.
@@ -465,7 +494,10 @@ fn from_buffer(
             None
         }
         None => {
-            if !buffer_length.is_multiple_of(size) || offset > buffer_length {
+            if offset > buffer_length {
+                return Err(error::range_error(cx, "invalid offset"));
+            }
+            if !buffer_length.is_multiple_of(size) {
                 return Err(error::range_error(cx, "invalid length"));
             }
             Some((buffer_length - offset) / size)
@@ -510,12 +542,13 @@ constructors! {
 /// `%TypedArray%.from(source, mapfn, thisArg)`.
 pub(super) fn from(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let constructor = site.this(cx);
-    if !internal::is_constructor(cx, constructor) {
-        return Err(error::type_error(cx, "not a constructor"));
-    }
     let (source, mapper, this_arg) = (site.arg(cx, 0), site.arg(cx, 1), site.arg(cx, 2));
+    // QuickJS checks the mapper first.
     if !mapper.is_undefined() && !ops::is_callable(cx.heap, mapper) {
         return Err(error::type_error(cx, "not a function"));
+    }
+    if !internal::is_constructor(cx, constructor) {
+        return Err(error::construct_error(cx, constructor));
     }
     let key = WellKnown::key(cx.realm.symbols.iterator);
     let values = match internal::get_method(cx, source, key)? {
@@ -566,7 +599,7 @@ pub(super) fn from(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 pub(super) fn of(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let constructor = site.this(cx);
     if !internal::is_constructor(cx, constructor) {
-        return Err(error::type_error(cx, "not a constructor"));
+        return Err(error::construct_error(cx, constructor));
     }
     let target = create_from_constructor(cx, constructor, site.argc as u64)?;
     for index in 0..site.argc {
@@ -647,7 +680,7 @@ fn relative(cx: &mut Cx<'_>, value: Value, length: usize, default: usize) -> Res
 }
 
 pub(super) fn at(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let (object, length) = this_typed(cx, &site)?;
+    let (object, length) = this_typed_detached(cx, &site)?;
     let index = site.arg(cx, 0);
     let index = internal::to_integer_or_infinity(cx, index)?;
     let index = if index < 0.0 {
@@ -670,7 +703,7 @@ pub(super) fn copy_within(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     let count = last.saturating_sub(from).min(length - to);
     if count > 0 {
         let Some(length) = typed::length(cx.heap, object) else {
-            return Err(error::type_error(cx, "TypedArray is out of bounds"));
+            return Err(error::type_error(cx, OUT_OF_BOUNDS));
         };
         let (view, buffer) = typed::view(cx.heap, object);
         let size = view.kind.size();
@@ -802,7 +835,7 @@ pub(super) fn fill(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let first = relative(cx, start, length, 0)?;
     let last = relative(cx, end, length, length)?;
     let Some(length) = typed::length(cx.heap, object) else {
-        return Err(error::type_error(cx, "TypedArray is out of bounds"));
+        return Err(error::type_error(cx, OUT_OF_BOUNDS));
     };
     let last = last.min(length);
     let (view, buffer) = typed::view(cx.heap, object);
@@ -1025,23 +1058,24 @@ pub(super) fn set_method(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw
     let offset = site.arg(cx, 1);
     let offset = internal::to_integer_or_infinity(cx, offset)?;
     if offset < 0.0 {
-        return Err(error::range_error(cx, "invalid offset"));
+        return Err(error::range_error(cx, "invalid array length"));
     }
     let Some(target_length) = typed::length(cx.heap, target) else {
-        return Err(error::type_error(cx, "TypedArray is out of bounds"));
+        return Err(error::type_error(cx, OUT_OF_BOUNDS));
     };
     if let Some(source) = source
         .as_object()
         .filter(|&object| cx.heap.object_kind(object) == ObjectKind::TypedArray)
     {
         let Some(source_length) = typed::length(cx.heap, source) else {
-            return Err(error::type_error(cx, "TypedArray is out of bounds"));
+            return Err(error::type_error(cx, OUT_OF_BOUNDS));
         };
         if kind_of(cx, source).is_bigint() != kind_of(cx, target).is_bigint() {
-            return Err(error::type_error(cx, "content types differ"));
+            let kind = kind_of(cx, target);
+            return Err(content_type_error(cx, kind));
         }
         if offset == f64::INFINITY || source_length as f64 + offset > target_length as f64 {
-            return Err(error::range_error(cx, "invalid offset"));
+            return Err(error::range_error(cx, "invalid array length"));
         }
         copy_elements(cx, source, 0, target, offset as usize, source_length)?;
         return Ok(Value::UNDEFINED);
@@ -1050,7 +1084,7 @@ pub(super) fn set_method(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw
     root(cx, Value::object(source));
     let source_length = internal::length_of_array_like(cx, source)?;
     if offset == f64::INFINITY || source_length as f64 + offset > target_length as f64 {
-        return Err(error::range_error(cx, "invalid offset"));
+        return Err(error::range_error(cx, "invalid array length"));
     }
     for index in 0..source_length {
         let key = internal::number_key(cx, index as f64)?;
@@ -1069,7 +1103,7 @@ pub(super) fn slice(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let result = same_type(cx, object, count as u64)?;
     if count > 0 {
         let Some(length) = typed::length(cx.heap, object) else {
-            return Err(error::type_error(cx, "TypedArray is out of bounds"));
+            return Err(error::type_error(cx, OUT_OF_BOUNDS));
         };
         let last = last.min(length);
         let count = last.saturating_sub(first);
@@ -1129,7 +1163,7 @@ fn sorted(
 fn comparator(cx: &mut Cx<'_>, site: &CallSite) -> Result<Value, Throw> {
     let comparator = site.arg(cx, 0);
     if !comparator.is_undefined() && !ops::is_callable(cx.heap, comparator) {
-        return Err(error::type_error(cx, "comparator is not a function"));
+        return Err(error::type_error(cx, "not a function"));
     }
     Ok(comparator)
 }
@@ -1145,8 +1179,9 @@ pub(super) fn sort(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 }
 
 pub(super) fn to_sorted(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let comparator = comparator(cx, &site)?;
+    // QuickJS validates the receiver first.
     let (object, length) = this_typed(cx, &site)?;
+    let comparator = comparator(cx, &site)?;
     let result = same_type(cx, object, length as u64)?;
     let values = sorted(cx, object, length, comparator)?;
     for (index, value) in values.into_iter().enumerate() {
@@ -1166,7 +1201,7 @@ pub(super) fn to_reversed(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
 }
 
 pub(super) fn with(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let (object, length) = this_typed(cx, &site)?;
+    let (object, length) = this_typed_detached(cx, &site)?;
     let index = site.arg(cx, 0);
     let relative = internal::to_integer_or_infinity(cx, index)?;
     let actual = if relative >= 0.0 {
@@ -1183,7 +1218,7 @@ pub(super) fn with(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     };
     root(cx, value);
     if typed::valid_index(cx.heap, object, actual).is_none() {
-        return Err(error::range_error(cx, "invalid index"));
+        return Err(error::range_error(cx, "invalid array index"));
     }
     let result = same_type(cx, object, length as u64)?;
     for index in 0..length {
@@ -1277,7 +1312,10 @@ fn string_option(cx: &mut Cx<'_>, options: Value, name: &str) -> Result<Option<S
     }
     match value.as_string() {
         Some(string) => Ok(Some(cx.heap.string_text(string))),
-        None => Err(error::type_error(cx, &format!("{name} is not a string"))),
+        None => Err(error::type_error(
+            cx,
+            &format!("expected string for {name}"),
+        )),
     }
 }
 
@@ -1285,7 +1323,7 @@ fn options_object(cx: &mut Cx<'_>, options: Value) -> Result<Value, Throw> {
     if options.is_undefined() || options.as_object().is_some() {
         Ok(options)
     } else {
-        Err(error::type_error(cx, "options is not an object"))
+        Err(error::type_error(cx, "options must be an object"))
     }
 }
 
@@ -1303,14 +1341,14 @@ fn last_chunk(cx: &mut Cx<'_>, options: Value) -> Result<super::base64::LastChun
         None | Some("loose") => Ok(LastChunk::Loose),
         Some("strict") => Ok(LastChunk::Strict),
         Some("stop-before-partial") => Ok(LastChunk::StopBeforePartial),
-        Some(_) => Err(error::type_error(cx, "invalid lastChunkHandling")),
+        Some(_) => Err(error::type_error(cx, "invalid lastChunkHandling option")),
     }
 }
 
 fn string_argument(cx: &mut Cx<'_>, value: Value) -> Result<Vec<u16>, Throw> {
     match value.as_string() {
         Some(string) => Ok(ops::units(cx.heap, string)),
-        None => Err(error::type_error(cx, "not a string")),
+        None => Err(error::type_error(cx, "expected string")),
     }
 }
 
@@ -1372,7 +1410,7 @@ pub(super) fn set_from_base64(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, 
     let url = alphabet(cx, options)?;
     let last = last_chunk(cx, options)?;
     let Some(length) = typed::length(cx.heap, object) else {
-        return Err(error::type_error(cx, "TypedArray is out of bounds"));
+        return Err(error::type_error(cx, OUT_OF_BOUNDS));
     };
     let decoded = super::base64::decode_base64(&input, url, last, length);
     write_decoded(cx, object, &decoded.bytes);
@@ -1387,7 +1425,7 @@ pub(super) fn set_from_hex(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
     let input = site.arg(cx, 0);
     let input = string_argument(cx, input)?;
     let Some(length) = typed::length(cx.heap, object) else {
-        return Err(error::type_error(cx, "TypedArray is out of bounds"));
+        return Err(error::type_error(cx, OUT_OF_BOUNDS));
     };
     let decoded = super::base64::decode_hex(&input, length);
     write_decoded(cx, object, &decoded.bytes);
@@ -1414,7 +1452,7 @@ pub(super) fn to_base64(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
         None => false,
     };
     let Some(length) = typed::length(cx.heap, object) else {
-        return Err(error::type_error(cx, "TypedArray is out of bounds"));
+        return Err(error::type_error(cx, OUT_OF_BOUNDS));
     };
     let bytes = bytes_of(cx, object, length);
     let text = super::base64::encode_base64(&bytes, url, omit);
@@ -1424,7 +1462,7 @@ pub(super) fn to_base64(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
 pub(super) fn to_hex(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_uint8(cx, &site)?;
     let Some(length) = typed::length(cx.heap, object) else {
-        return Err(error::type_error(cx, "TypedArray is out of bounds"));
+        return Err(error::type_error(cx, OUT_OF_BOUNDS));
     };
     let bytes = bytes_of(cx, object, length);
     let mut text = String::with_capacity(bytes.len() * 2);

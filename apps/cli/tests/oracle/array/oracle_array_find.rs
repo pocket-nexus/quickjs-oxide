@@ -1,7 +1,7 @@
 use super::support::*;
 use crate::runtime_observation::host_runtime;
 
-use quickjs_oxide::engine::api::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{RuntimeError, Value};
 
 // This target pins QuickJS 2026-06-04's shared `js_array_find` kernel. Unlike
 // indexOf, every index is read and passed to the predicate, including holes.

@@ -1,6 +1,6 @@
 use crate::runtime_observation::eval;
 use crate::runtime_observation::{host_runtime, host_runtime_context};
-use quickjs_oxide::engine::api::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{RuntimeError, Value};
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3o_promise_finally.js");
 const EXPECTED: &str =

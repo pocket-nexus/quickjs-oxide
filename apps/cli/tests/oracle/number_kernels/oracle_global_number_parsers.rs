@@ -1,5 +1,5 @@
 use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::{EvalOptions, Value};
+use quickjs_oxide::engine::api::core::{EvalOptions, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 

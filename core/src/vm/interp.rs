@@ -455,7 +455,7 @@ fn construct_this(
     site: Option<usize>,
 ) -> Result<(Value, Value), Throw> {
     if !unit.has(flags::CONSTRUCTOR) {
-        return Err(error::type_error(cx, "not a constructor"));
+        return Err(error::not_a_constructor(cx, function));
     }
     let new_target = cx.heap.vm.registers[at];
     if unit.has(flags::DERIVED) {
@@ -501,13 +501,17 @@ fn call_other(
     };
     match target {
         Callee::Native(native) if !construct || native.is_constructor() => {
-            let site = (cx.heap.vm.frames.len() as u32, pc as u32);
-            let saved = std::mem::replace(&mut cx.heap.vm.native_site, site);
+            let site = super::NativeSite {
+                depth: cx.heap.vm.frames.len() as u32,
+                pc: pc as u32,
+                callee: function,
+            };
+            cx.heap.vm.natives.push(site);
             let result = call_native(cx, native, at, this, argc, construct, function, new_target);
-            cx.heap.vm.native_site = saved;
+            cx.heap.vm.natives.pop();
             result
         }
-        Callee::Native(_) => Err(error::type_error(cx, "not a constructor")),
+        Callee::Native(_) => Err(error::not_a_constructor(cx, function)),
         _ => {
             let callable = function.as_object().is_some_and(|object| {
                 let flag = if construct {
@@ -518,18 +522,29 @@ fn call_other(
                 cx.heap.header(object).has(flag)
             });
             if !callable {
-                return Err(error::type_error(
-                    cx,
-                    if construct {
-                        "not a constructor"
-                    } else {
-                        "not a function"
-                    },
-                ));
+                if construct {
+                    return Err(construct_failure(cx, function, pc));
+                }
+                return Err(error::type_error(cx, "not a function"));
             }
             call_exotic(cx, function, at, this, argc, construct, new_target)
         }
     }
+}
+
+/// `new function(…)` from the loop at `pc` on a value that is not a
+/// constructor: QuickJS's `JS_CallConstructor` message, except that a
+/// spread `new` of a non-function goes through `apply`'s `not a function`.
+#[cold]
+#[inline(never)]
+fn construct_failure(cx: &mut Cx<'_>, function: Value, pc: usize) -> Throw {
+    let frame = *cx.heap.vm.frames.last().expect("a frame");
+    let spread =
+        cx.code.get(frame.unit).code.get(pc).map(|insn| insn.op) == Some(Opcode::NewSpread);
+    if spread && !ops::is_callable(cx.heap, function) {
+        return error::type_error(cx, "not a function");
+    }
+    error::construct_error(cx, function)
 }
 
 /// A call or construction of a callable that is neither bytecode nor a
@@ -675,7 +690,7 @@ pub(super) fn construct_from_rust(
             let unit_id = cx.heap.bytecode_unit(bytecode);
             let unit = store.get(unit_id);
             if !unit.has(flags::CONSTRUCTOR) {
-                return Err(error::type_error(cx, "not a constructor"));
+                return Err(error::not_a_constructor(cx, function));
             }
             let receiver = if unit.has(flags::DERIVED) {
                 Value::UNDEFINED
@@ -720,7 +735,7 @@ pub(super) fn construct_from_rust(
                 new_target,
             },
         ),
-        Callee::Native(_) => Err(error::type_error(cx, "not a constructor")),
+        Callee::Native(_) => Err(error::not_a_constructor(cx, function)),
         Callee::NotCallable => construct_exotic(cx, function, base, argc, new_target),
     }
 }
@@ -739,7 +754,7 @@ fn construct_exotic(
             .header(object)
             .has(crate::heap::object::flags::CONSTRUCTOR)
     }) else {
-        return Err(error::type_error(cx, "not a constructor"));
+        return Err(error::construct_error(cx, function));
     };
     let args = cx.heap.vm.registers[base + 1..base + 1 + argc].to_vec();
     match cx.heap.object_kind(object) {
@@ -761,7 +776,7 @@ fn construct_exotic(
             result
         }
         ObjectKind::Proxy => super::proxy::construct(cx, object, &args, new_target),
-        _ => Err(error::type_error(cx, "not a constructor")),
+        _ => Err(error::construct_error(cx, function)),
     }
 }
 
@@ -769,7 +784,10 @@ fn construct_exotic(
 #[cold]
 #[inline(never)]
 fn key_error(cx: &mut Cx<'_>, kind: ErrorKind, insn: Insn, before: &str, after: &str) -> Throw {
-    let message = format!("{before}{}{after}", property::key_text(cx.heap, insn.key()));
+    let message = format!(
+        "{before}{}{after}",
+        property::atom_text(cx.heap, insn.key())
+    );
     error::throw(cx, kind, &message)
 }
 
@@ -1296,7 +1314,10 @@ fn define_global(
         .header(global)
         .has(crate::heap::object::flags::EXTENSIBLE)
     {
-        let message = format!("cannot define variable '{}'", property::key_text(heap, key));
+        let message = format!(
+            "cannot define variable '{}'",
+            property::atom_text(heap, key)
+        );
         return Err(error::type_error(cx, &message));
     }
     heap.add_property(
@@ -1331,6 +1352,11 @@ fn declare_global(cx: &mut Cx<'_>, insn: Insn) -> Result<(), Throw> {
             define_global(cx, key, Value::UNDEFINED, false, configurable)
         }
         Opcode::DeclareGlobalLet | Opcode::DeclareGlobalConst => {
+            // A name an Annex B function masked may be declared twice: the
+            // first declaration's binding and kind stay, as in QuickJS.
+            if cx.heap.lookup_own(lexical, key).is_some() {
+                return Ok(());
+            }
             let writable = insn.op == Opcode::DeclareGlobalLet;
             cx.heap
                 .add_property(
@@ -2314,6 +2340,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
             continue 'dispatch;
         };
         let mut at = pc - 1;
+        if cx.heap.vm.unpositioned.is_some() {
+            error::place_frame(cx, thrown, unit, at as u32);
+        }
         loop {
             if let Some(handler) = unit
                 .handlers
@@ -2662,7 +2691,21 @@ fn suspend_op(
             suspend::save_frame(cx, frame, unit, pc as u32, record, suspend::START);
             let done = cx.heap.vm.frames.pop().expect("the async frame");
             cx.heap.vm.top = done.base;
-            let promise = suspend::start_async(cx, record)?;
+            // The body runs on a frame entered from here: the backtrace
+            // places the caller at its call.
+            let entered = done.flags & frame_flags::ENTRY == 0 && done.return_pc > 0;
+            if entered {
+                cx.heap.vm.natives.push(super::NativeSite {
+                    depth: cx.heap.vm.frames.len() as u32,
+                    pc: done.return_pc - 1,
+                    callee: Value::UNDEFINED,
+                });
+            }
+            let promise = suspend::start_async(cx, record);
+            if entered {
+                cx.heap.vm.natives.pop();
+            }
+            let promise = promise?;
             if done.flags & frame_flags::ENTRY != 0 {
                 return Ok(Returned::Exit(promise));
             }

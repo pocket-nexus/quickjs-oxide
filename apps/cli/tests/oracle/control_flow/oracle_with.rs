@@ -2,7 +2,7 @@
 
 use crate::runtime_observation::host_runtime_context;
 
-use quickjs_oxide::engine::api::{JsString, Value};
+use quickjs_oxide::engine::api::core::{JsString, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 

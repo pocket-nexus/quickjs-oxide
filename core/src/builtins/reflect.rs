@@ -45,7 +45,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
 fn target(cx: &mut Cx<'_>, site: &CallSite) -> Result<ObjectId, Throw> {
     match site.arg(cx, 0).as_object() {
         Some(object) => Ok(object),
-        None => Err(error::type_error(cx, "Reflect: target is not an object")),
+        None => Err(error::type_error(cx, "not an object")),
     }
 }
 
@@ -59,7 +59,7 @@ fn key(cx: &mut Cx<'_>, site: &CallSite, index: usize) -> Result<crate::Property
 pub(super) fn apply(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let function = site.arg(cx, 0);
     if !ops::is_callable(cx.heap, function) {
-        return Err(error::type_error(cx, "Reflect.apply: not a function"));
+        return Err(error::type_error(cx, "not a function"));
     }
     let this = site.arg(cx, 1);
     let list = site.arg(cx, 2);
@@ -69,26 +69,35 @@ pub(super) fn apply(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 
 pub(super) fn construct(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let function = site.arg(cx, 0);
-    if !internal::is_constructor(cx, function) {
-        return Err(error::type_error(
-            cx,
-            "Reflect.construct: not a constructor",
-        ));
-    }
     let new_target = if site.argc > 2 {
         site.arg(cx, 2)
     } else {
         function
     };
+    if !internal::is_constructor(cx, function) {
+        return Err(construct_refused(cx, &site, function, new_target));
+    }
     if !internal::is_constructor(cx, new_target) {
-        return Err(error::type_error(
-            cx,
-            "Reflect.construct: not a constructor",
-        ));
+        return Err(error::not_a_constructor(cx, new_target));
     }
     let list = site.arg(cx, 1);
     let args = internal::list_from_array_like(cx, list)?;
     crate::vm::construct(cx, function, &args, new_target)
+}
+
+/// `Reflect.construct` on a `target` that is not a constructor, with the
+/// error QuickJS reaches first: its `newTarget` check, then the arguments
+/// list's `not a object`, then the construction itself.
+#[cold]
+#[inline(never)]
+fn construct_refused(cx: &mut Cx<'_>, site: &CallSite, target: Value, new_target: Value) -> Throw {
+    if site.argc > 2 && !internal::is_constructor(cx, new_target) {
+        return error::not_a_constructor(cx, new_target);
+    }
+    if site.arg(cx, 1).as_object().is_none() {
+        return error::type_error(cx, "not a object");
+    }
+    error::construct_error(cx, target)
 }
 
 pub(super) fn define_property(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
@@ -174,10 +183,7 @@ pub(super) fn set_prototype_of(cx: &mut Cx<'_>, site: CallSite) -> Result<Value,
     let object = target(cx, &site)?;
     let prototype = site.arg(cx, 1);
     if prototype.as_object().is_none() && !prototype.is_null() {
-        return Err(error::type_error(
-            cx,
-            "object prototype may only be an Object or null",
-        ));
+        return Err(error::type_error(cx, "not an object"));
     }
     internal::set_prototype_of(cx, object, prototype).map(Value::bool)
 }

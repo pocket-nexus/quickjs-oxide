@@ -155,7 +155,7 @@ fn corpus_matches_the_current_core() {
 #[test]
 fn collection_under_200_frames_preserves_registers() {
     // Under the stress collector every allocation collects already.
-    let iterations = if cfg!(feature = "new-core-gc-stress") {
+    let iterations = if cfg!(feature = "gc-stress") {
         3
     } else {
         80000
@@ -195,7 +195,7 @@ fn runtime_depth_after_run_is_zero() -> bool {
     runtime.vm_stack().depth() == 0
 }
 
-#[cfg(feature = "new-core-gc-stress")]
+#[cfg(feature = "gc-stress")]
 #[test]
 fn stress_mode_collects_at_every_allocation() {
     let (output, collections) = run_with("var o = {}; o.a = [1, 2]; print('x' + o.a);", |_| {});

@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use quickjs_oxide::engine::api::JsString;
+use quickjs_oxide::engine::api::core::JsString;
 use quickjs_oxide::engine::api::testing::{parse_float, parse_int};
 
 #[test]

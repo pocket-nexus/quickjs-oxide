@@ -4,9 +4,9 @@ use crate::quickjs_raw_source_oracle::{
 };
 use crate::runtime_observation::hex_bytes;
 use crate::runtime_observation::host_runtime;
-use quickjs_oxide::engine::api::{
-    Context, JsString, ModuleImportAttributes, ModuleLoadResult, ModuleLoader, ModuleLoaderError,
-    Runtime, RuntimeError, Value,
+use quickjs_oxide::engine::api::core::{
+    Context, ModuleImportAttributes, ModuleLoader, ModuleSource, NativeErrorKind, Runtime,
+    RuntimeError, Scope, Value,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -286,21 +286,22 @@ struct RawJsonModuleLoader {
 
 impl ModuleLoader for RawJsonModuleLoader {
     fn load(
-        &self,
-        _context: &mut quickjs_oxide::engine::api::Context,
-        normalized_name: &JsString,
+        &mut self,
+        scope: &mut Scope<'_>,
+        normalized_name: &str,
         _attributes: &ModuleImportAttributes,
-    ) -> Result<ModuleLoadResult, ModuleLoaderError> {
-        let expected_name = JsString::try_from_utf8(self.grammar.payload_filename()).unwrap();
-        if normalized_name != &expected_name {
-            return Err(ModuleLoaderError::new(format!(
-                "unexpected raw JSON module name: {}",
-                normalized_name.to_utf8_lossy(),
-            )));
+    ) -> Result<ModuleSource, Value> {
+        if normalized_name != self.grammar.payload_filename() {
+            return Err(scope
+                .new_native_error(
+                    NativeErrorKind::Internal,
+                    &format!("unexpected raw JSON module name: {normalized_name}"),
+                )
+                .unwrap_or(Value::Undefined));
         }
         Ok(match self.grammar {
-            Grammar::Strict => ModuleLoadResult::JsonBytes(self.source.clone()),
-            Grammar::Extended => ModuleLoadResult::Json5Bytes(self.source.clone()),
+            Grammar::Strict => ModuleSource::Json(self.source.clone()),
+            Grammar::Extended => ModuleSource::Json5(self.source.clone()),
         })
     }
 }

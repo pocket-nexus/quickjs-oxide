@@ -142,7 +142,7 @@ pub(super) fn apply(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 pub(super) fn bind(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let target = site.this(cx);
     if !ops::is_callable(cx.heap, target) {
-        return Err(error::type_error(cx, "bind: not a function"));
+        return Err(error::type_error(cx, "not a function"));
     }
     let target_object = target.as_object().unwrap();
     let mut slots = vec![target, site.arg(cx, 0)];

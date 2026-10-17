@@ -3,7 +3,7 @@ use std::io::Write;
 
 use std::process::{Command, Stdio};
 
-use quickjs_oxide::engine::api::JsString;
+use quickjs_oxide::engine::api::core::JsString;
 
 #[test]
 fn quickjs_byte_constructor_and_wtf8_export_match_pinned_quickjs() {

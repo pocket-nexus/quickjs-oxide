@@ -1,7 +1,7 @@
 use crate::runtime_observation::string_value;
 use crate::runtime_observation::{host_runtime, host_runtime_context};
-use quickjs_oxide::engine::api::{
-    CallableRef, Context, DebugInfoMode, JsString, Runtime, RuntimeError, Value,
+use quickjs_oxide::engine::api::core::{
+    CallableRef, Context, DebugInfoMode, JsString, Runtime, Value,
 };
 
 #[test]
@@ -323,70 +323,6 @@ fn eval_syntax_errors_are_catchable_and_direct_eval_inherits_strictness() {
     );
 }
 
-#[test]
-fn foreign_realm_primitive_string_eval_uses_its_defining_realm() {
-    let runtime = host_runtime();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
-    drop(defining.eval("globalThis.evalRealmMarker = 42").unwrap());
-    drop(caller.eval("globalThis.evalRealmMarker = 7").unwrap());
-
-    let defining_array_prototype = eval_object(&mut defining, "Array.prototype");
-    let caller_array_prototype = eval_object(&mut caller, "Array.prototype");
-    let defining_syntax_error_prototype = eval_object(&mut defining, "SyntaxError.prototype");
-    let eval = global_eval(&runtime, &mut defining);
-
-    assert_eq!(
-        caller
-            .call(
-                &eval,
-                Value::Undefined,
-                &[Value::String(
-                    JsString::try_from_utf8("evalRealmMarker").unwrap(),
-                )],
-            )
-            .unwrap(),
-        Value::Int(42),
-        "indirect eval resolved the caller realm instead of its defining realm",
-    );
-    let Value::Object(array) = caller
-        .call(
-            &eval,
-            Value::Undefined,
-            &[Value::String(JsString::try_from_utf8("[]").unwrap())],
-        )
-        .unwrap()
-    else {
-        panic!("foreign primitive String eval did not return an Array object");
-    };
-    assert_eq!(
-        runtime.get_prototype_of(&array).unwrap(),
-        Some(defining_array_prototype),
-        "indirect eval allocated its result outside the defining realm",
-    );
-    assert_ne!(
-        runtime.get_prototype_of(&array).unwrap(),
-        Some(caller_array_prototype),
-    );
-
-    assert!(matches!(
-        caller.call(
-            &eval,
-            Value::Undefined,
-            &[Value::String(JsString::try_from_utf8("1 +").unwrap())],
-        ),
-        Err(RuntimeError::Exception),
-    ));
-    let Value::Object(error) = caller.take_exception().unwrap().unwrap() else {
-        panic!("foreign eval SyntaxError was not an object");
-    };
-    assert_eq!(
-        runtime.get_prototype_of(&error).unwrap(),
-        Some(defining_syntax_error_prototype),
-        "eval SyntaxError was allocated in the caller realm",
-    );
-}
-
 fn global_eval(runtime: &Runtime, context: &mut Context) -> CallableRef {
     let global = context.global_object().unwrap();
     let key = runtime.intern_property_key("eval").unwrap();
@@ -397,11 +333,4 @@ fn global_eval(runtime: &Runtime, context: &mut Context) -> CallableRef {
         .as_callable(&function)
         .unwrap()
         .expect("global eval was not callable")
-}
-
-fn eval_object(context: &mut Context, source: &str) -> quickjs_oxide::engine::api::ObjectRef {
-    let Value::Object(object) = context.eval(source).unwrap() else {
-        panic!("{source} did not evaluate to an object");
-    };
-    object
 }

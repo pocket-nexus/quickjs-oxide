@@ -326,13 +326,13 @@ pub(super) fn random(cx: &mut Cx<'_>, _: CallSite) -> Result<Value, Throw> {
 pub(super) fn sum_precise(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let items = site.arg(cx, 0);
     if items.is_undefined() || items.is_null() {
-        return Err(error::type_error(cx, "not an object"));
+        return Err(error::not_iterable_nullish(cx, items));
     }
     let mut record = iter::get_iterator(cx, items)?;
     let mut values = Vec::new();
     while let Some(value) = iter::step(cx, &mut record)? {
         let Some(value) = value.as_f64() else {
-            let error = error::type_error(cx, "Math.sumPrecise: not a number");
+            let error = error::type_error(cx, "not a number");
             iter::close(cx, &record, Err(error))?;
             unreachable!("close rethrows");
         };

@@ -1,7 +1,7 @@
 use crate::object_graph_observation::function;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::show_exception;
-use quickjs_oxide::engine::api::{
+use quickjs_oxide::engine::api::core::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, Context, ObjectRef, PropertyKey, Runtime,
     RuntimeError, Value,
 };

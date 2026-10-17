@@ -114,7 +114,10 @@ fn root(cx: &mut Cx<'_>, value: Value) {
 /// `Iterator()`: abstract; only a subclass constructs.
 pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let iterator = cx.realm.intrinsic(Intrinsic::Iterator);
-    if !site.construct || site.new_target == Value::object(iterator) {
+    if !site.construct {
+        return Err(error::type_error(cx, "constructor requires 'new'"));
+    }
+    if site.new_target == Value::object(iterator) {
         return Err(error::type_error(cx, "abstract class not constructable"));
     }
     let prototype =
@@ -173,7 +176,12 @@ fn setter_ignoring_prototype(
 /// `GetIteratorFlattenable(value, primitives)`: an iterator record, rooted.
 fn flattenable(cx: &mut Cx<'_>, value: Value, strings: bool) -> Result<iter::Iter, Throw> {
     if value.as_object().is_none() && !(strings && value.as_string().is_some()) {
-        return Err(error::type_error(cx, "not an object"));
+        let message = if strings {
+            "Iterator.from called on non-object"
+        } else {
+            "not an object"
+        };
+        return Err(error::type_error(cx, message));
     }
     let key = WellKnown::key(cx.realm.symbols.iterator);
     let method = property::get(cx, value, key)?;
@@ -184,7 +192,7 @@ fn flattenable(cx: &mut Cx<'_>, value: Value, strings: bool) -> Result<iter::Ite
         crate::vm::call(cx, method, value, &[])?
     };
     if iterator.as_object().is_none() {
-        return Err(error::type_error(cx, "iterator is not an object"));
+        return Err(error::type_error(cx, "not an object"));
     }
     iter::direct(cx, iterator)
 }
@@ -218,9 +226,13 @@ fn this_tagged(cx: &mut Cx<'_>, site: &CallSite, tag: InternalTag) -> Result<Obj
     let this = site.this(cx);
     match this.as_object() {
         Some(object) if cx.heap.internal_tag(object) == tag => Ok(object),
-        _ => Err(error::type_error(
+        _ => Err(error::object_expected(
             cx,
-            "not an iterator of the expected kind",
+            match tag {
+                InternalTag::WrapForValidIterator => "Iterator Wrap",
+                InternalTag::IteratorHelper => "Iterator Helper",
+                _ => "Iterator Concat",
+            },
         )),
     }
 }
@@ -489,7 +501,7 @@ fn helper_step(cx: &mut Cx<'_>, helper: ObjectId) -> Result<Option<Value>, Throw
 pub(super) fn helper_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let helper = this_tagged(cx, &site, InternalTag::IteratorHelper)?;
     match slot(cx, helper, STATE).as_int32().unwrap() {
-        EXECUTING => return Err(error::type_error(cx, "generator is already running")),
+        EXECUTING => return Err(error::type_error(cx, "cannot invoke a running iterator")),
         COMPLETED => return iter::result_object(cx, Value::UNDEFINED, true),
         _ => {}
     }
@@ -515,7 +527,7 @@ pub(super) fn helper_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
 pub(super) fn helper_return(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let helper = this_tagged(cx, &site, InternalTag::IteratorHelper)?;
     match slot(cx, helper, STATE).as_int32().unwrap() {
-        EXECUTING => return Err(error::type_error(cx, "generator is already running")),
+        EXECUTING => return Err(error::type_error(cx, "cannot invoke a running iterator")),
         COMPLETED => return iter::result_object(cx, Value::UNDEFINED, true),
         _ => {}
     }
@@ -689,8 +701,8 @@ pub(super) fn concat(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         if item.as_object().is_none() {
             return Err(error::type_error(cx, "not an object"));
         }
-        let Some(method) = internal::get_method(cx, item, key)? else {
-            return Err(error::type_error(cx, "not iterable"));
+        let Some(method) = internal::get_method_or(cx, item, key, "not a function")? else {
+            return Err(error::type_error(cx, "not a function"));
         };
         root(cx, method);
         slots.push(method);
@@ -718,7 +730,7 @@ fn concat_step(cx: &mut Cx<'_>, concat: ObjectId) -> Result<Option<Value>, Throw
             let next = slot(cx, concat, CONCAT_INNER + 1);
             let result = crate::vm::call(cx, next, iterator, &[])?;
             let Some(result) = result.as_object() else {
-                return Err(error::type_error(cx, "iterator result is not an object"));
+                return Err(error::type_error(cx, "iterator must return an object"));
             };
             root(cx, Value::object(result));
             let names = cx.realm.names;
@@ -740,7 +752,7 @@ fn concat_step(cx: &mut Cx<'_>, concat: ObjectId) -> Result<Option<Value>, Throw
         let iterable = slot(cx, concat, at + 1);
         let iterator = crate::vm::call(cx, method, iterable, &[])?;
         if iterator.as_object().is_none() {
-            return Err(error::type_error(cx, "iterator is not an object"));
+            return Err(error::type_error(cx, "not an object"));
         }
         let iter::Iter::Protocol { iterator, next } = iter::direct(cx, iterator)? else {
             unreachable!("a direct record");
@@ -753,7 +765,7 @@ fn concat_step(cx: &mut Cx<'_>, concat: ObjectId) -> Result<Option<Value>, Throw
 pub(super) fn concat_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let concat = this_tagged(cx, &site, InternalTag::IteratorConcat)?;
     match slot(cx, concat, CONCAT_STATE).as_int32().unwrap() {
-        EXECUTING => return Err(error::type_error(cx, "generator is already running")),
+        EXECUTING => return Err(error::type_error(cx, "already running")),
         COMPLETED => return iter::result_object(cx, Value::UNDEFINED, true),
         _ => {}
     }
@@ -777,7 +789,7 @@ pub(super) fn concat_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
 pub(super) fn concat_return(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let concat = this_tagged(cx, &site, InternalTag::IteratorConcat)?;
     match slot(cx, concat, CONCAT_STATE).as_int32().unwrap() {
-        EXECUTING => return Err(error::type_error(cx, "generator is already running")),
+        EXECUTING => return Err(error::type_error(cx, "already running")),
         COMPLETED => return iter::result_object(cx, Value::UNDEFINED, true),
         _ => {}
     }

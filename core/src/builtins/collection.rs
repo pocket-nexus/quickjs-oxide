@@ -296,7 +296,7 @@ fn construct_collection(
     intrinsic_adder: Native,
 ) -> Result<Value, Throw> {
     if !site.construct {
-        return Err(error::type_error(cx, "constructor requires 'new'"));
+        return Err(error::type_error(cx, "must be called with new"));
     }
     let prototype = internal::prototype_from_constructor(cx, site.new_target, default)?;
     let object = new_collection(cx, tag, prototype)?;
@@ -322,7 +322,7 @@ fn construct_collection(
         let result = (|| {
             if pairs {
                 let Some(entry) = item.as_object() else {
-                    return Err(error::type_error(cx, "iterator value is not an object"));
+                    return Err(error::type_error(cx, "not an object"));
                 };
                 let key = internal::get_property(cx, entry, PropertyKey::index(0).unwrap())?;
                 root(cx, key);
@@ -555,10 +555,12 @@ fn iterator_next(cx: &mut Cx<'_>, site: &CallSite, tag: InternalTag) -> Result<V
     let iterator = match this.as_object() {
         Some(object) if cx.heap.internal_tag(object) == tag => object,
         _ => {
-            return Err(error::type_error(
-                cx,
-                "not an iterator of the expected kind",
-            ));
+            let class = if tag == InternalTag::MapIterator {
+                "Map Iterator"
+            } else {
+                "Set Iterator"
+            };
+            return Err(error::object_expected(cx, class));
         }
     };
     let Some(object) = cx.heap.internal_slot(iterator, 0).as_object() else {
@@ -658,17 +660,23 @@ struct SetRecord {
 
 fn set_record(cx: &mut Cx<'_>, other: Value) -> Result<SetRecord, Throw> {
     let Some(set) = other.as_object() else {
-        return Err(error::type_error(cx, "set-like object expected"));
+        // QuickJS reads `size` off the primitive.
+        if other.is_null() || other.is_undefined() {
+            let base = if other.is_null() { "null" } else { "undefined" };
+            let message = format!("cannot read property 'size' of {base}");
+            return Err(error::type_error(cx, &message));
+        }
+        return Err(error::type_error(cx, ".size is not a number"));
     };
     let names = cx.realm.names;
     let size = internal::get_property(cx, set, Names::key(names.size))?;
     let size = ops::to_number(cx, size)?;
     if size.is_nan() {
-        return Err(error::type_error(cx, "size is not a number"));
+        return Err(error::type_error(cx, ".size is not a number"));
     }
     let size = internal::to_integer_or_infinity(cx, Value::number(size))?;
     if size < 0.0 {
-        return Err(error::range_error(cx, "invalid size"));
+        return Err(error::range_error(cx, ".size must be positive"));
     }
     let key = cx
         .heap
@@ -676,7 +684,14 @@ fn set_record(cx: &mut Cx<'_>, other: Value) -> Result<SetRecord, Throw> {
         .map_err(|error| error::heap_error(cx, error))?;
     let has = internal::get_property(cx, set, key)?;
     if !ops::is_callable(cx.heap, has) {
-        return Err(error::type_error(cx, "has is not a function"));
+        return Err(error::type_error(
+            cx,
+            if has.is_undefined() {
+                ".has is undefined"
+            } else {
+                ".has is not a function"
+            },
+        ));
     }
     root(cx, has);
     let key = cx
@@ -685,7 +700,14 @@ fn set_record(cx: &mut Cx<'_>, other: Value) -> Result<SetRecord, Throw> {
         .map_err(|error| error::heap_error(cx, error))?;
     let keys = internal::get_property(cx, set, key)?;
     if !ops::is_callable(cx.heap, keys) {
-        return Err(error::type_error(cx, "keys is not a function"));
+        return Err(error::type_error(
+            cx,
+            if keys.is_undefined() {
+                ".keys is undefined"
+            } else {
+                ".keys is not a function"
+            },
+        ));
     }
     root(cx, keys);
     Ok(SetRecord {
@@ -706,7 +728,17 @@ impl SetRecord {
     fn keys(&self, cx: &mut Cx<'_>) -> Result<iter::Iter, Throw> {
         let iterator = crate::vm::call(cx, self.keys, Value::object(self.set), &[])?;
         if iterator.as_object().is_none() {
-            return Err(error::type_error(cx, "keys() result is not an object"));
+            // QuickJS reads `next` off the value and calls it.
+            if iterator.is_null() || iterator.is_undefined() {
+                let base = if iterator.is_null() {
+                    "null"
+                } else {
+                    "undefined"
+                };
+                let message = format!("cannot read property 'next' of {base}");
+                return Err(error::type_error(cx, &message));
+            }
+            return Err(error::type_error(cx, "not a function"));
         }
         root(cx, iterator);
         iter::direct(cx, iterator)
@@ -900,11 +932,13 @@ pub(super) fn set_is_disjoint_from(cx: &mut Cx<'_>, site: CallSite) -> Result<Va
 
 // ---- WeakMap and WeakSet ----
 
-fn weak_key(cx: &mut Cx<'_>, key: Value) -> Result<Value, Throw> {
+fn weak_key(cx: &mut Cx<'_>, key: Value, set: bool) -> Result<Value, Throw> {
     if can_be_held_weakly(cx, key) {
         Ok(key)
     } else {
-        Err(error::type_error(cx, "invalid value used as weak key"))
+        let class = if set { "WeakSet" } else { "WeakMap" };
+        let message = format!("invalid value used as {class} key");
+        Err(error::type_error(cx, &message))
     }
 }
 
@@ -917,7 +951,7 @@ pub(super) fn weak_map_get(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
 pub(super) fn weak_map_set(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let map = this_collection(cx, &site, InternalTag::WeakMap, "WeakMap")?;
     let key = site.arg(cx, 0);
-    let key = weak_key(cx, key)?;
+    let key = weak_key(cx, key, false)?;
     let value = site.arg(cx, 1);
     set_entry(cx, map, key, value)?;
     Ok(Value::object(map))
@@ -938,7 +972,7 @@ pub(super) fn weak_map_delete(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, 
 pub(super) fn weak_map_get_or_insert(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let map = this_collection(cx, &site, InternalTag::WeakMap, "WeakMap")?;
     let key = site.arg(cx, 0);
-    weak_key(cx, key)?;
+    weak_key(cx, key, false)?;
     get_or_insert(cx, &site, map)
 }
 
@@ -948,14 +982,14 @@ pub(super) fn weak_map_get_or_insert_computed(
 ) -> Result<Value, Throw> {
     let map = this_collection(cx, &site, InternalTag::WeakMap, "WeakMap")?;
     let key = site.arg(cx, 0);
-    weak_key(cx, key)?;
+    weak_key(cx, key, false)?;
     get_or_insert_computed(cx, &site, map)
 }
 
 pub(super) fn weak_set_add(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let set = this_collection(cx, &site, InternalTag::WeakSet, "WeakSet")?;
     let value = site.arg(cx, 0);
-    let value = weak_key(cx, value)?;
+    let value = weak_key(cx, value, true)?;
     set_entry(cx, set, value, Value::EMPTY)?;
     Ok(Value::object(set))
 }
@@ -1017,7 +1051,7 @@ pub(super) fn finalization_registry_constructor(
     }
     let callback = site.arg(cx, 0);
     if !ops::is_callable(cx.heap, callback) {
-        return Err(error::type_error(cx, "cleanup callback is not a function"));
+        return Err(error::type_error(cx, "argument must be a function"));
     }
     let prototype = internal::prototype_from_constructor(
         cx,
@@ -1053,7 +1087,7 @@ pub(super) fn finalization_registry_register(
         return Err(error::type_error(cx, "invalid target"));
     }
     if ops::same_value_zero_heap(cx.heap, target, held) {
-        return Err(error::type_error(cx, "target and held value must differ"));
+        return Err(error::type_error(cx, "held value cannot be the target"));
     }
     let token = if token.is_undefined() {
         Value::EMPTY

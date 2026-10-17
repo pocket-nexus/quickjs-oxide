@@ -76,11 +76,31 @@ fn root(cx: &mut Cx<'_>, value: Value) {
 }
 
 /// The argument as an object, or a `TypeError`.
-fn object_arg(cx: &mut Cx<'_>, value: Value, what: &str) -> Result<ObjectId, Throw> {
+fn object_arg(cx: &mut Cx<'_>, value: Value, _what: &str) -> Result<ObjectId, Throw> {
     match value.as_object() {
         Some(object) => Ok(object),
-        None => Err(error::type_error(cx, &format!("{what}: not an object"))),
+        None => Err(error::type_error(cx, "not an object")),
     }
+}
+
+/// A refused `[[SetPrototypeOf]]` on `object`, with QuickJS's reason.
+#[cold]
+#[inline(never)]
+fn prototype_refused(cx: &mut Cx<'_>, object: ObjectId) -> Throw {
+    let message = if cx.heap.object_kind(object) == ObjectKind::Proxy {
+        "proxy: bad prototype"
+    } else if object == cx.realm.intrinsic(Intrinsic::ObjectPrototype) {
+        "prototype is immutable"
+    } else if !cx
+        .heap
+        .header(object)
+        .has(crate::heap::object::flags::EXTENSIBLE)
+    {
+        "object is not extensible"
+    } else {
+        "circular prototype chain"
+    };
+    error::type_error(cx, message)
 }
 
 /// `Object(value)` and `new Object(value)`: a new object for `undefined`
@@ -213,7 +233,7 @@ pub(super) fn proto_setter(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
         return Ok(Value::UNDEFINED);
     };
     if !internal::set_prototype_of(cx, object, prototype)? {
-        return Err(error::type_error(cx, "cannot set prototype"));
+        return Err(prototype_refused(cx, object));
     }
     Ok(Value::UNDEFINED)
 }
@@ -308,10 +328,7 @@ pub(super) fn assign(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 pub(super) fn create(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let prototype = site.arg(cx, 0);
     if prototype.as_object().is_none() && !prototype.is_null() {
-        return Err(error::type_error(
-            cx,
-            "object prototype may only be an Object or null",
-        ));
+        return Err(error::type_error(cx, "not a prototype"));
     }
     let object = cx
         .heap
@@ -449,7 +466,10 @@ fn integrity(cx: &mut Cx<'_>, site: CallSite, frozen: bool) -> Result<Value, Thr
         return Ok(value);
     };
     if !internal::set_integrity_level(cx, object, frozen)? {
-        return Err(error::type_error(cx, "cannot prevent extensions"));
+        return Err(error::type_error(
+            cx,
+            "proxy preventExtensions handler returned false",
+        ));
     }
     Ok(value)
 }
@@ -483,7 +503,10 @@ pub(super) fn prevent_extensions(cx: &mut Cx<'_>, site: CallSite) -> Result<Valu
     if let Some(object) = value.as_object()
         && !internal::prevent_extensions(cx, object)?
     {
-        return Err(error::type_error(cx, "cannot prevent extensions"));
+        return Err(error::type_error(
+            cx,
+            "proxy preventExtensions handler returned false",
+        ));
     }
     Ok(value)
 }
@@ -492,7 +515,7 @@ pub(super) fn prevent_extensions(cx: &mut Cx<'_>, site: CallSite) -> Result<Valu
 pub(super) fn from_entries(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let iterable = site.arg(cx, 0);
     if iterable.is_undefined() || iterable.is_null() {
-        return Err(error::type_error(cx, "not an object"));
+        return Err(error::not_iterable_nullish(cx, iterable));
     }
     let object = super::new_plain(cx, 4)?;
     root(cx, Value::object(object));
@@ -502,10 +525,7 @@ pub(super) fn from_entries(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
         root(cx, entry);
         let result = (|| {
             let Some(entry) = entry.as_object() else {
-                return Err(error::type_error(
-                    cx,
-                    "iterator value is not an entry object",
-                ));
+                return Err(error::type_error(cx, "not an object"));
             };
             let key = internal::get_property(cx, entry, PropertyKey::index(0).unwrap())?;
             root(cx, key);
@@ -583,6 +603,9 @@ pub(super) fn get_own_property_symbols(cx: &mut Cx<'_>, site: CallSite) -> Resul
 
 pub(super) fn get_prototype_of(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let value = site.arg(cx, 0);
+    if value.is_undefined() || value.is_null() {
+        return Err(error::type_error(cx, "not an object"));
+    }
     let object = internal::to_object(cx, value)?;
     root(cx, Value::object(object));
     internal::get_prototype_of(cx, object)
@@ -596,16 +619,13 @@ pub(super) fn set_prototype_of(cx: &mut Cx<'_>, site: CallSite) -> Result<Value,
     }
     let prototype = site.arg(cx, 1);
     if prototype.as_object().is_none() && !prototype.is_null() {
-        return Err(error::type_error(
-            cx,
-            "object prototype may only be an Object or null",
-        ));
+        return Err(error::type_error(cx, "not an object"));
     }
     let Some(object) = value.as_object() else {
         return Ok(value);
     };
     if !internal::set_prototype_of(cx, object, prototype)? {
-        return Err(error::type_error(cx, "cannot set prototype"));
+        return Err(prototype_refused(cx, object));
     }
     Ok(value)
 }
@@ -654,11 +674,12 @@ pub(crate) fn group(
     callback: Value,
     property: bool,
 ) -> Result<Vec<(Value, Vec<Value>)>, Throw> {
-    if items.is_undefined() || items.is_null() {
-        return Err(error::type_error(cx, "not an object"));
-    }
+    // QuickJS checks the callback first.
     if !ops::is_callable(cx.heap, callback) {
         return Err(error::type_error(cx, "not a function"));
+    }
+    if items.is_undefined() || items.is_null() {
+        return Err(error::not_iterable_nullish(cx, items));
     }
     let mut groups: Vec<(Value, Vec<Value>)> = Vec::new();
     let mut iterator = iter::get_iterator(cx, items)?;

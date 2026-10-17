@@ -337,7 +337,11 @@ pub(crate) fn new_capability(cx: &mut Cx<'_>, constructor: Value) -> Result<[Val
         ]);
     }
     if !object::is_constructor(cx, constructor) {
-        return Err(error::type_error(cx, "not a constructor"));
+        // QuickJS's callers require an object first.
+        if constructor.as_object().is_none() {
+            return Err(error::type_error(cx, "not an object"));
+        }
+        return Err(error::not_a_constructor(cx, constructor));
     }
     let data = native_data(cx, &[Value::UNDEFINED, Value::UNDEFINED])?;
     root(cx, Value::object(data));
@@ -348,10 +352,7 @@ pub(crate) fn new_capability(cx: &mut Cx<'_>, constructor: Value) -> Result<[Val
     let resolve = cx.heap.internal_slot(data, 0);
     let reject = cx.heap.internal_slot(data, 1);
     if !ops::is_callable(cx.heap, resolve) || !ops::is_callable(cx.heap, reject) {
-        return Err(error::type_error(
-            cx,
-            "promise capability functions are not callable",
-        ));
+        return Err(error::type_error(cx, "not a function"));
     }
     Ok([promise, resolve, reject])
 }
@@ -362,7 +363,7 @@ pub(crate) fn capability_executor(
     site: super::native::CallSite,
 ) -> Result<Value, Throw> {
     if !site.data(cx, 0).is_undefined() || !site.data(cx, 1).is_undefined() {
-        return Err(error::type_error(cx, "promise capability already resolved"));
+        return Err(error::type_error(cx, "resolving function already set"));
     }
     let (resolve, reject) = (site.arg(cx, 0), site.arg(cx, 1));
     site.set_data(cx, 0, resolve);

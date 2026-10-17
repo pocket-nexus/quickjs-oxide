@@ -96,7 +96,7 @@ pub(crate) fn get_iterator(cx: &mut Cx<'_>, value: Value) -> Result<Iter, Throw>
 pub(crate) fn from_method(cx: &mut Cx<'_>, value: Value, method: Value) -> Result<Iter, Throw> {
     let iterator = super::call(cx, method, value, &[])?;
     if iterator.as_object().is_none() {
-        return Err(error::type_error(cx, "iterator is not an object"));
+        return Err(error::type_error(cx, "not an object"));
     }
     cx.heap.roots().push(iterator);
     let next = property::get(cx, iterator, Names::key(cx.realm.names.next))?;
@@ -138,7 +138,7 @@ pub(crate) fn step(cx: &mut Cx<'_>, iter: &mut Iter) -> Result<Option<Value>, Th
         Iter::Protocol { iterator, next } => {
             let result = super::call(cx, *next, *iterator, &[])?;
             let Some(result) = result.as_object() else {
-                return Err(error::type_error(cx, "iterator result is not an object"));
+                return Err(error::type_error(cx, "iterator must return an object"));
             };
             let mark = cx.heap.roots().mark();
             cx.heap.roots().push(Value::object(result));
@@ -185,10 +185,7 @@ pub(crate) fn close(
     cx.heap.roots().truncate(mark);
     completion?;
     match result? {
-        Some(value) if value.as_object().is_none() => Err(error::type_error(
-            cx,
-            "iterator return result is not an object",
-        )),
+        Some(value) if value.as_object().is_none() => Err(error::type_error(cx, "not an object")),
         _ => Ok(()),
     }
 }
@@ -337,7 +334,7 @@ fn iter_op_rooted(cx: &mut Cx<'_>, frame: &Frame, insn: Insn) -> Result<(), Thro
         }
         Opcode::IterCheckObject => {
             if cx.heap.vm.registers[at(insn.a)].as_object().is_none() {
-                return Err(error::type_error(cx, "iterator result is not an object"));
+                return Err(error::type_error(cx, "iterator must return an object"));
             }
         }
         Opcode::IterStartAsync => {
@@ -360,7 +357,7 @@ fn iter_op_rooted(cx: &mut Cx<'_>, frame: &Frame, insn: Insn) -> Result<(), Thro
             let record = at(insn.b);
             let result = cx.heap.vm.registers[at(insn.a)];
             let Some(result) = result.as_object() else {
-                return Err(error::type_error(cx, "iterator result is not an object"));
+                return Err(error::type_error(cx, "iterator must return an object"));
             };
             let names = cx.realm.names;
             let done = object::get_property(cx, result, Names::key(names.done))?;
@@ -431,7 +428,14 @@ pub(crate) fn get_async_iterator(cx: &mut Cx<'_>, value: Value) -> Result<(Value
     let key = WellKnown::key(cx.realm.symbols.async_iterator);
     let method = object::get_method(cx, value, key)?;
     let Some(method) = method else {
-        let sync = get_iterator_generic(cx, value)?;
+        // QuickJS calls the `@@iterator` value unchecked here.
+        let key = WellKnown::key(cx.realm.symbols.iterator);
+        let method = property::get(cx, value, key)?;
+        if !ops::is_callable(cx.heap, method) {
+            return Err(error::type_error(cx, "not a function"));
+        }
+        cx.heap.roots().push(method);
+        let sync = from_method(cx, value, method)?;
         let Iter::Protocol { iterator, next } = sync else {
             unreachable!()
         };
@@ -446,14 +450,4 @@ pub(crate) fn get_async_iterator(cx: &mut Cx<'_>, value: Value) -> Result<(Value
         Iter::Protocol { iterator, next } => Ok((iterator, next)),
         Iter::Array { .. } => unreachable!(),
     }
-}
-
-/// `GetIterator(value, sync)` without the pristine-array walk.
-pub(crate) fn get_iterator_generic(cx: &mut Cx<'_>, value: Value) -> Result<Iter, Throw> {
-    let key = WellKnown::key(cx.realm.symbols.iterator);
-    let Some(method) = object::get_method(cx, value, key)? else {
-        return Err(error::type_error(cx, "value is not iterable"));
-    };
-    cx.heap.roots().push(method);
-    from_method(cx, value, method)
 }

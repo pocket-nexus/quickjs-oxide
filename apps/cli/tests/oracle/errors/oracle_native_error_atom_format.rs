@@ -1,6 +1,6 @@
 use crate::oracle_cases::NativeErrorObservation as Observation;
 use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::{
+use quickjs_oxide::engine::api::core::{
     DescriptorField, JsString, OrdinaryPropertyDescriptor, RuntimeError, Value,
 };
 use std::ffi::OsStr;

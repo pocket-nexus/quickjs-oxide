@@ -118,14 +118,42 @@ impl Printer<'_, '_> {
         self.cx.heap.string(id).repr().units().collect()
     }
 
+    /// The leaves of `id` left to right without flattening it: QuickJS
+    /// prints a rope leaf by leaf, so a surrogate pair split across two
+    /// leaves prints as two escapes.
+    fn leaves(&self, id: StringId) -> Vec<Vec<u16>> {
+        let heap = &*self.cx.heap;
+        let mut leaves = Vec::new();
+        let mut stack = vec![id];
+        while let Some(id) = stack.pop() {
+            let record = heap.strings.get(id.0);
+            match (record.flat(), heap.ropes.get(&id.0)) {
+                (Some(flat), _) => leaves.push(flat.units().collect()),
+                (None, Some(&(left, right))) => {
+                    stack.push(right);
+                    stack.push(left);
+                }
+                (None, None) => {}
+            }
+        }
+        leaves
+    }
+
     fn string(&mut self, id: StringId) {
-        let units = self.units(id);
+        let leaves = self.leaves(id);
+        let total: usize = leaves.iter().map(Vec::len).sum();
         self.out.push('"');
-        let shown = units.len().min(MAX_STRING_LENGTH);
-        self.escaped(&units[..shown], '"');
+        let mut position = 0;
+        for leaf in &leaves {
+            if position < MAX_STRING_LENGTH {
+                let shown = leaf.len().min(MAX_STRING_LENGTH - position);
+                self.escaped(&leaf[..shown], '"');
+            }
+            position += leaf.len();
+        }
         self.out.push('"');
-        if units.len() > MAX_STRING_LENGTH {
-            let remaining = units.len() - MAX_STRING_LENGTH;
+        if total > MAX_STRING_LENGTH {
+            let remaining = total - MAX_STRING_LENGTH;
             self.out
                 .push_str(&format!("... {remaining} more character"));
             if remaining > 1 {
@@ -629,12 +657,7 @@ impl Printer<'_, '_> {
             self.out.push_str(": ");
             self.c_string(&message);
         }
-        let key = Names::key(stack);
-        if let Some((slot, flags)) = self.cx.heap.lookup_own(object, key)
-            && !flags.has(PropertyFlags::ACCESSOR)
-            && let Some(id) = self.cx.heap.get_slot(object, slot).as_string()
-        {
-            let mut units = self.units(id);
+        if let Some(mut units) = self.raw_string(object, stack) {
             if let Some(nul) = units.iter().position(|&unit| unit == 0) {
                 units.truncate(nul);
             }

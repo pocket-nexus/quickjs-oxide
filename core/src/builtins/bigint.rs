@@ -44,7 +44,18 @@ fn alloc(cx: &mut Cx<'_>, value: Result<Big, BigError>) -> Result<Value, Throw> 
 
 /// `ToBigInt(value)`.
 pub(crate) fn to_bigint(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw> {
+    convert(cx, value, false)
+}
+
+/// `ToBigInt(value)`; `constructor` selects the `BigInt(value)` messages
+/// (QuickJS's `JS_ToBigIntCtorFree`) over `ToBigInt`'s.
+fn convert(cx: &mut Cx<'_>, value: Value, constructor: bool) -> Result<Value, Throw> {
     let primitive = ops::to_primitive(cx, value, ops::Hint::Number)?;
+    let failure = if constructor {
+        "cannot convert to BigInt"
+    } else {
+        "cannot convert to bigint"
+    };
     match primitive.kind() {
         Kind::BigInt => Ok(primitive),
         Kind::Bool => alloc(cx, Ok(Big::from_u64(u64::from(primitive == Value::TRUE)))),
@@ -55,15 +66,13 @@ pub(crate) fn to_bigint(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw> {
                 None => Err(error::throw(
                     cx,
                     crate::ErrorKind::Syntax,
-                    "invalid BigInt syntax",
+                    "invalid bigint literal",
                 )),
             }
         }
-        Kind::Undefined | Kind::Null | Kind::Empty => {
-            Err(error::type_error(cx, "cannot convert to BigInt"))
+        Kind::Undefined | Kind::Null | Kind::Empty | Kind::Number | Kind::Int32 | Kind::Symbol => {
+            Err(error::type_error(cx, failure))
         }
-        Kind::Number | Kind::Int32 => Err(error::type_error(cx, "cannot convert number to BigInt")),
-        Kind::Symbol => Err(error::type_error(cx, "cannot convert symbol to BigInt")),
         Kind::Object => unreachable!("ToPrimitive returned an object"),
     }
 }
@@ -76,16 +85,22 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     let value = site.arg(cx, 0);
     let primitive = ops::to_primitive(cx, value, ops::Hint::Number)?;
     if let Some(number) = primitive.as_f64() {
-        if !number.is_finite() || number.trunc() != number {
+        if !number.is_finite() {
             return Err(error::range_error(
                 cx,
-                "cannot convert a non-integer number to BigInt",
+                "cannot convert NaN or Infinity to BigInt",
+            ));
+        }
+        if number.trunc() != number {
+            return Err(error::range_error(
+                cx,
+                "cannot convert to BigInt: not an integer",
             ));
         }
         let big = Big::from_f64(number).expect("an integer");
         return alloc(cx, Ok(big));
     }
-    to_bigint(cx, primitive)
+    convert(cx, primitive, true)
 }
 
 /// `thisBigIntValue`.

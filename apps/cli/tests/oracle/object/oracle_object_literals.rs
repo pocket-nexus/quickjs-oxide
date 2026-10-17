@@ -1,5 +1,5 @@
 use crate::runtime_observation::host_runtime;
-use quickjs_oxide::engine::api::Value;
+use quickjs_oxide::engine::api::core::Value;
 
 #[test]
 fn object_literal_result_uses_the_defining_realm() {

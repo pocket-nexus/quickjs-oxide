@@ -3,7 +3,7 @@ use crate::quickjs_raw_source_oracle::{
 };
 use crate::runtime_observation::hex_bytes;
 use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::{CompileOptions, Context, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{CompileOptions, Context, Runtime, RuntimeError, Value};
 
 #[derive(Clone, Copy, Debug)]
 enum Api {

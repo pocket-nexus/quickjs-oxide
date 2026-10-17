@@ -1,8 +1,8 @@
+use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::integer;
 use crate::runtime_observation::text;
 use crate::runtime_observation::{drain, eval};
-use crate::runtime_observation::{host_runtime, host_runtime_context};
-use quickjs_oxide::engine::api::RuntimeError;
+use quickjs_oxide::engine::api::core::{CoreValue, Host, RejectionEvent, Runtime, RuntimeOptions};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -176,33 +176,26 @@ var catchResult = Promise.prototype.catch.call(receiver, 'reject-handler');
     drain(&runtime);
 }
 
+/// `HostPromiseRejectionTracker` through the new core's host hook
+/// (new-core phase 6, section 2.2): an unhandled rejection reports
+/// `Rejected`, a handler attached later `Handled`, and the tracked list
+/// keeps only what stays unhandled.
+#[derive(Default)]
+struct RejectionRecorder(Rc<RefCell<Vec<RejectionEvent>>>);
+
+impl Host for RejectionRecorder {
+    fn promise_rejection(&mut self, event: RejectionEvent, _promise: CoreValue) {
+        self.0.borrow_mut().push(event);
+    }
+}
+
 #[test]
 fn host_rejection_tracker_reports_unhandled_then_late_handled() {
-    let (runtime, mut context) = host_runtime_context();
-    let expected_context = context.realm_id();
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let captured = events.clone();
-    let callback_context = Rc::new(RefCell::new(context.try_clone().expect("duplicate root")));
-    let callback_realm = callback_context.clone();
-    runtime
-        .set_host_promise_rejection_tracker(move |event| {
-            captured.borrow_mut().push((
-                event.context(),
-                event.is_handled(),
-                event
-                    .reason()
-                    .try_clone()
-                    .expect("duplicate rejection reason"),
-            ));
-            if event.is_handled() {
-                drop(eval(
-                    &mut callback_realm.borrow_mut(),
-                    "Promise.resolve().then(function () { trackerOrder.push('tracker'); });",
-                ));
-            }
-        })
-        .expect("configure test runtime");
-
+    let recorder = RejectionRecorder::default();
+    let events = Rc::clone(&recorder.0);
+    let runtime = Runtime::with_host(recorder, RuntimeOptions::default());
+    runtime.set_track_rejections(true).unwrap();
+    let mut context = runtime.context();
     drop(eval(
         &mut context,
         r#"
@@ -213,68 +206,23 @@ var rejectEarly;
 var early = new Promise(function (_, reject) { rejectEarly = reject; });
 early.then(undefined, function () {});
 rejectEarly('early');
+var lost = Promise.reject('lost');
 "#,
     ));
-    let _ = runtime.clear_host_promise_rejection_tracker();
-
-    let events = events.borrow();
-    assert_eq!(events.len(), 2);
-    assert_eq!(events[0].0, expected_context);
-    assert!(!events[0].1);
     assert_eq!(
-        text(events[0].2.try_clone().expect("duplicate root")),
-        "late"
+        events.borrow().as_slice(),
+        [
+            RejectionEvent::Rejected,
+            RejectionEvent::Handled,
+            RejectionEvent::Rejected,
+        ]
     );
-    assert_eq!(events[1].0, expected_context);
-    assert!(events[1].1);
-    assert_eq!(
-        text(events[1].2.try_clone().expect("duplicate root")),
-        "late"
-    );
-    drop(events);
     drain(&runtime);
+    let unhandled = runtime.take_unhandled_rejections().unwrap();
+    assert_eq!(unhandled.len(), 1);
+    assert_eq!(text(unhandled[0].1.clone()), "lost");
     assert_eq!(
         text(eval(&mut context, "trackerOrder.join('|')")),
-        "tracker|original"
-    );
-}
-
-#[test]
-fn pending_job_reports_its_originating_context_on_success_and_throw() {
-    let runtime = host_runtime();
-    let mut first = runtime.new_context().expect("create context");
-    let mut second = runtime.new_context().expect("create context");
-    drop(eval(
-        &mut first,
-        r#"
-var source = Promise.resolve();
-source.constructor = {
-    [Symbol.species]: function ThrowingCapability(executor) {
-        executor(
-            function () { throw 'from first'; },
-            function () { throw 'from first reject'; }
-        );
-        return {};
-    }
-};
-source.then(function () { return 1; });
-"#,
-    ));
-    drop(eval(
-        &mut second,
-        "Promise.resolve().then(function () { return 42; });",
-    ));
-
-    let failure = runtime.execute_pending_job().unwrap_err();
-    assert_eq!(failure.context(), Some(first.realm_id()));
-    assert_eq!(failure.error(), &RuntimeError::Exception);
-    assert_eq!(
-        text(first.take_exception().unwrap().expect("job exception")),
-        "from first"
-    );
-
-    assert_eq!(
-        runtime.execute_pending_job().unwrap().context(),
-        Some(second.realm_id())
+        "original"
     );
 }

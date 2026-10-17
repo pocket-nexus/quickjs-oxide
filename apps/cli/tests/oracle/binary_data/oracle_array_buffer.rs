@@ -1,5 +1,5 @@
 use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::Value;
+use quickjs_oxide::engine::api::core::Value;
 
 #[test]
 fn context_detach_array_buffer_uses_the_same_idempotent_core() {

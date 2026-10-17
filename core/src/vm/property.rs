@@ -145,10 +145,11 @@ pub(crate) fn length_value(length: u32) -> Value {
 }
 
 /// `receiver[key]` for a key not yet converted: a `null` or `undefined`
-/// receiver throws before the key's conversion runs any JavaScript.
+/// receiver throws before the key's conversion runs any JavaScript, without
+/// naming the key (QuickJS's computed-read message).
 #[inline(never)]
 pub(crate) fn get_computed(cx: &mut Cx<'_>, receiver: Value, key: Value) -> Result<Value, Throw> {
-    if (receiver.is_null() || receiver.is_undefined()) && key.as_object().is_some() {
+    if receiver.is_null() || receiver.is_undefined() {
         let base = if receiver.is_null() {
             "null"
         } else {
@@ -193,7 +194,7 @@ pub(crate) fn get(cx: &mut Cx<'_>, receiver: Value, key: PropertyKey) -> Result<
         Kind::Undefined | Kind::Null => {
             let message = format!(
                 "cannot read property '{}' of {}",
-                key_text(cx.heap, key),
+                atom_text(cx.heap, key),
                 if receiver.is_null() {
                     "null"
                 } else {
@@ -520,7 +521,7 @@ pub(crate) fn set(
         Kind::Undefined | Kind::Null => {
             let message = format!(
                 "cannot set property '{}' of {}",
-                key_text(cx.heap, key),
+                atom_text(cx.heap, key),
                 if receiver.is_null() {
                     "null"
                 } else {
@@ -541,6 +542,9 @@ pub(crate) fn set(
                         KeyKind::Symbol(_) => false,
                     };
                     if own {
+                        if strict && matches!(key.kind(), KeyKind::Index(_)) {
+                            return Err(error::type_error(cx, "not an object"));
+                        }
                         return read_only(cx, key, strict);
                     }
                     cx.realm.intrinsic(Intrinsic::StringPrototype)
@@ -553,7 +557,7 @@ pub(crate) fn set(
             };
             match lookup(cx.heap, &cx.realm.names, prototype, key) {
                 Lookup::Hit(Found::Accessor(_, setter)) => {
-                    return call_setter(cx, setter, receiver, value, key, strict);
+                    return call_setter(cx, setter, receiver, value, strict);
                 }
                 Lookup::Exotic(holder) => {
                     let done = super::object::set(cx, holder, key, value, receiver)?;
@@ -564,8 +568,7 @@ pub(crate) fn set(
                 _ => {}
             }
             if strict {
-                let message = format!("cannot create property '{}'", key_text(cx.heap, key));
-                return Err(error::type_error(cx, &message));
+                return Err(primitive_set_error(cx, prototype, key));
             }
             Ok(())
         }
@@ -641,7 +644,7 @@ pub(crate) fn set_on(
     if let Some((slot, property)) = heap.lookup_own(object, key) {
         if property.has(PropertyFlags::ACCESSOR) {
             let setter = heap.get_slot(object, slot + 1);
-            return call_setter(cx, setter, Value::object(object), value, key, strict);
+            return call_setter(cx, setter, Value::object(object), value, strict);
         }
         if property.has(PropertyFlags::WRITABLE) {
             heap.set_slot(object, slot, value);
@@ -673,7 +676,7 @@ pub(crate) fn set_on(
             _ => match heap.lookup_own(prototype, key) {
                 Some((slot, property)) if property.has(PropertyFlags::ACCESSOR) => {
                     let setter = heap.get_slot(prototype, slot + 1);
-                    return call_setter(cx, setter, Value::object(object), value, key, strict);
+                    return call_setter(cx, setter, Value::object(object), value, strict);
                 }
                 found => found.map(|(_, property)| property),
             },
@@ -701,10 +704,53 @@ fn generic_set(
 ) -> Result<(), Throw> {
     let done = super::object::set(cx, object, key, value, Value::object(object))?;
     if !done && strict {
-        let message = format!("'{}' is read-only", key_text(cx.heap, key));
-        return Err(error::type_error(cx, &message));
+        return Err(set_failed(cx, object, key));
     }
     Ok(())
+}
+
+/// A strict `[[Set]]` on `object` that returned false: QuickJS's
+/// `proxy: cannot set property` when the first exotic object on the chain
+/// is a proxy (its `set` trap said no), else `'{key}' is read-only`.
+#[cold]
+#[inline(never)]
+pub(crate) fn set_failed(cx: &mut Cx<'_>, object: ObjectId, key: PropertyKey) -> Throw {
+    let mut current = Some(object);
+    while let Some(holder) = current {
+        let kind = cx.heap.object_kind(holder);
+        if kind == ObjectKind::Proxy {
+            return error::type_error(cx, "proxy: cannot set property");
+        }
+        if kind.is_exotic() {
+            break;
+        }
+        current = cx.heap.prototype_of(holder);
+    }
+    let message = format!("'{}' is read-only", atom_text(cx.heap, key));
+    error::type_error(cx, &message)
+}
+
+/// A strict write of a property a primitive's prototype chain (from
+/// `prototype`) neither sets nor holds read-only: QuickJS's `not an
+/// object`, or `'{key}' is read-only` for an inherited read-only property.
+#[cold]
+#[inline(never)]
+fn primitive_set_error(cx: &mut Cx<'_>, prototype: ObjectId, key: PropertyKey) -> Throw {
+    let mut current = Some(prototype);
+    while let Some(holder) = current {
+        if cx.heap.object_kind(holder).is_exotic() {
+            break;
+        }
+        if let Some((_, property)) = cx.heap.lookup_own(holder, key) {
+            if !property.has(PropertyFlags::ACCESSOR) && !property.has(PropertyFlags::WRITABLE) {
+                let message = format!("'{}' is read-only", atom_text(cx.heap, key));
+                return error::type_error(cx, &message);
+            }
+            break;
+        }
+        current = cx.heap.prototype_of(holder);
+    }
+    error::type_error(cx, "not an object")
 }
 
 /// Calls a setter with `receiver` as `this`; an absent setter is a
@@ -715,13 +761,11 @@ fn call_setter(
     setter: Value,
     receiver: Value,
     value: Value,
-    key: PropertyKey,
     strict: bool,
 ) -> Result<(), Throw> {
     if setter.is_undefined() {
         if strict {
-            let message = format!("no setter for property '{}'", key_text(cx.heap, key));
-            return Err(error::type_error(cx, &message));
+            return Err(error::type_error(cx, "no setter for property"));
         }
         return Ok(());
     }
@@ -730,7 +774,7 @@ fn call_setter(
 
 fn read_only(cx: &mut Cx<'_>, key: PropertyKey, strict: bool) -> Result<(), Throw> {
     if strict {
-        let message = format!("'{}' is read-only", key_text(cx.heap, key));
+        let message = format!("'{}' is read-only", atom_text(cx.heap, key));
         Err(error::type_error(cx, &message))
     } else {
         Ok(())
@@ -755,8 +799,7 @@ fn add(
     if super::object::array_index(heap, key).is_some() {
         let done = super::object::create_data_property(cx, object, key, value)?;
         if !done && strict {
-            let message = format!("cannot define property '{}'", key_text(cx.heap, key));
-            return Err(error::type_error(cx, &message));
+            return Err(error::type_error(cx, "'length' is read-only"));
         }
         return Ok(());
     }
@@ -857,16 +900,7 @@ pub(crate) fn delete(
     let object = match receiver.kind() {
         Kind::Object => receiver.as_object().unwrap(),
         Kind::Undefined | Kind::Null => {
-            let message = format!(
-                "cannot delete property '{}' of {}",
-                key_text(cx.heap, key),
-                if receiver.is_null() {
-                    "null"
-                } else {
-                    "undefined"
-                }
-            );
-            return Err(error::type_error(cx, &message));
+            return Err(error::type_error(cx, "cannot convert to object"));
         }
         Kind::String => {
             let length = cx.heap.string_len(receiver.as_string().unwrap());
@@ -918,7 +952,7 @@ pub(crate) fn delete(
 
 fn non_configurable(
     cx: &mut Cx<'_>,
-    key: PropertyKey,
+    _key: PropertyKey,
     present: bool,
     strict: bool,
 ) -> Result<bool, Throw> {
@@ -926,8 +960,7 @@ fn non_configurable(
         return Ok(true);
     }
     if strict {
-        let message = format!("could not delete property '{}'", key_text(cx.heap, key));
-        return Err(error::type_error(cx, &message));
+        return Err(error::type_error(cx, "could not delete property"));
     }
     Ok(false)
 }
@@ -951,6 +984,59 @@ pub(crate) fn key_text(heap: &Heap, key: PropertyKey) -> String {
             None => "Symbol()".into(),
         },
     }
+}
+
+/// `key` as QuickJS's `JS_AtomGetStr` renders it in an error message: a
+/// symbol is its bare description (a private name `#x`), an index decimal,
+/// and a string with a non-ASCII unit is cut once 58 bytes of UTF-8 are
+/// written (a 64-byte buffer less one 6-byte character).
+#[cold]
+#[inline(never)]
+pub(crate) fn atom_text(heap: &Heap, key: PropertyKey) -> String {
+    match key.kind() {
+        KeyKind::Index(index) => index.to_string(),
+        KeyKind::String(id) => string_atom_text(heap, id),
+        KeyKind::Symbol(id) => match heap.symbol_description(id) {
+            Some(description) => string_atom_text(heap, description),
+            None => String::new(),
+        },
+    }
+}
+
+/// A string as [`atom_text`] renders it.
+#[cold]
+#[inline(never)]
+pub(crate) fn string_atom_text(heap: &Heap, id: crate::value::StringId) -> String {
+    let units: Vec<u16> = heap.string(id).repr().units().collect();
+    units_atom_text(&units)
+}
+
+/// Text as [`atom_text`] renders it.
+#[cold]
+#[inline(never)]
+pub(crate) fn str_atom_text(text: &str) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    units_atom_text(&units)
+}
+
+fn units_atom_text(units: &[u16]) -> String {
+    if units.iter().all(|&unit| unit < 0x80) {
+        return String::from_utf16_lossy(units);
+    }
+    let mut written = 0;
+    let mut end = units.len();
+    for (index, &unit) in units.iter().enumerate() {
+        if written >= 64 - 6 {
+            end = index;
+            break;
+        }
+        written += match unit {
+            0..0x80 => 1,
+            0x80..0x800 => 2,
+            _ => 3,
+        };
+    }
+    String::from_utf16_lossy(&units[..end])
 }
 
 // ---- for-in (phase 3, section 5.4) ----

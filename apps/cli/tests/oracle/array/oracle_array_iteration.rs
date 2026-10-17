@@ -1,7 +1,7 @@
 use super::support::*;
 use crate::runtime_observation::host_runtime;
 
-use quickjs_oxide::engine::api::{JsString, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{JsString, RuntimeError, Value};
 
 // This target pins the non-allocating modes of QuickJS 2026-06-04's shared
 // `js_array_every` kernel: every, some, and forEach.

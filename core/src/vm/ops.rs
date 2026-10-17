@@ -155,7 +155,7 @@ pub(crate) fn concat(cx: &mut Cx<'_>, a: StringId, b: StringId) -> Result<Value,
     }
     if left_len + right_len >= ROPE_MIN {
         if left_len + right_len > MAX_STRING_LEN {
-            return Err(error::range_error(cx, "invalid string length"));
+            return Err(error::string_too_long(cx));
         }
         return cx
             .heap
@@ -211,10 +211,7 @@ fn to_primitive_object(cx: &mut Cx<'_>, object: ObjectId, hint: Hint) -> Result<
     };
     if !exotic.is_undefined() && !exotic.is_null() {
         if !is_callable(cx.heap, exotic) {
-            return Err(error::type_error(
-                cx,
-                "Symbol.toPrimitive is not a function",
-            ));
+            return Err(error::type_error(cx, "not a function"));
         }
         let hint = match hint {
             Hint::Default => names.default,
@@ -397,17 +394,28 @@ fn big_value(cx: &mut Cx<'_>, value: Result<Big, BigError>) -> Result<Value, Thr
             .alloc_bigint(value.negative, &value.limbs)
             .map(Value::bigint)
             .map_err(|error| heap_error(cx, error)),
-        Err(BigError::DivisionByZero) => Err(error::range_error(cx, "Division by zero")),
-        Err(BigError::NegativeExponent) => Err(error::range_error(cx, "Negative exponent")),
-        Err(BigError::TooLarge) => Err(error::range_error(cx, "BigInt is too large")),
+        Err(BigError::DivisionByZero) => Err(error::range_error(cx, "BigInt division by zero")),
+        Err(BigError::NegativeExponent) => Err(error::range_error(cx, "BigInt negative exponent")),
+        Err(BigError::TooLarge) => Err(error::range_error(cx, "BigInt is too large to allocate")),
+        Err(BigError::PowTooLarge) => Err(error::range_error(cx, "BigInt is too large")),
     }
 }
 
-fn mixed(cx: &mut Cx<'_>) -> Throw {
-    error::type_error(
-        cx,
-        "cannot mix BigInt and other types, use explicit conversions",
-    )
+/// A BigInt and a number in one operator: QuickJS converts the BigInt to a
+/// number and fails (`>>>` refuses any BigInt operand first).
+#[cold]
+#[inline(never)]
+fn mixed(cx: &mut Cx<'_>, op: Arith) -> Throw {
+    if op == Arith::Shr {
+        return shr_bigint(cx);
+    }
+    error::type_error(cx, "cannot convert bigint to number")
+}
+
+#[cold]
+#[inline(never)]
+fn shr_bigint(cx: &mut Cx<'_>) -> Throw {
+    error::type_error(cx, "bigint operands are forbidden for >>>")
 }
 
 // ---- arithmetic ----
@@ -482,19 +490,14 @@ fn numeric(cx: &mut Cx<'_>, op: Arith, x: Value, y: Value) -> Result<Value, Thro
                 Arith::Pow => a.pow(&b),
                 Arith::Shl => a.shl(&b),
                 Arith::Sar => a.shl(&b.neg()),
-                Arith::Shr => {
-                    return Err(error::type_error(
-                        cx,
-                        "bigints have no unsigned right shift, use >> instead",
-                    ));
-                }
+                Arith::Shr => return Err(shr_bigint(cx)),
                 Arith::BitAnd => Ok(a.bit_and(&b)),
                 Arith::BitOr => Ok(a.bit_or(&b)),
                 Arith::BitXor => Ok(a.bit_xor(&b)),
             };
             big_value(cx, result)
         }
-        _ => Err(mixed(cx)),
+        _ => Err(mixed(cx, op)),
     }
 }
 
@@ -532,7 +535,11 @@ pub(crate) enum Unary {
 #[inline(never)]
 pub(crate) fn unary(cx: &mut Cx<'_>, op: Unary, x: Value) -> Result<Value, Throw> {
     if op == Unary::Plus {
-        return Ok(number::number(to_number(cx, x)?));
+        let value = to_numeric(cx, x)?;
+        let Some(number) = value.as_f64() else {
+            return Err(error::type_error(cx, "bigint argument with unary +"));
+        };
+        return Ok(number::number(number));
     }
     let value = to_numeric(cx, x)?;
     if value.as_bigint().is_some() {
@@ -801,10 +808,7 @@ pub(crate) fn instance_of(cx: &mut Cx<'_>, x: Value, f: Value) -> Result<bool, T
         });
     if !intrinsic && !handler.is_undefined() && !handler.is_null() {
         if !is_callable(cx.heap, handler) {
-            return Err(error::type_error(
-                cx,
-                "Symbol.hasInstance is not a function",
-            ));
+            return Err(error::type_error(cx, "not a function"));
         }
         let result = super::call(cx, handler, f, &[x])?;
         return Ok(to_boolean(cx.heap, result));

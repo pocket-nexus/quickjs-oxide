@@ -3,7 +3,7 @@
 //! Build with build_compile_probe.py --probe. This instrumented binary must
 //! never supply a formal benchmark Score. Run base/candidate builds with the
 //! same iteration count and compare stdout. Linux VmHWM reports process RSS.
-use quickjs_oxide::engine::api::{Error, ErrorKind, RuntimeError};
+use quickjs_oxide::engine::api::core::{Error, ErrorKind, RuntimeError};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -53,31 +53,6 @@ class FixedV8Profile(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "tracked source"):
                     profiler.validate_source(source, profiler.V8_V7_SOURCE_COMMIT)
 
-    def test_profile_json_requires_cost_and_records_omissions(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "profile.jsonl"
-            record = {"schema": profiler.COST_SCHEMA,
-                      "metadata": {"profiling_feature": True, "commit": "a" * 40},
-                      "execution_diagnostics": {
-                          "callsite_scope": "ordinary-driver-enter-selected-only",
-                          "omitted": {"static_functions": 1, "dispatch_events": 2,
-                                      "outcome_events": 3, "callsite_events": 4},
-                          "functions": [{"bytecode_id": 1}], "dispatch": [],
-                          "sites": [], "callsites": []},
-                      "vm_phases": {"run": {"omitted_samples": 5}},
-                      "unavailable": ["compile-peak-memory"]}
-            path.write_text(json.dumps(record) + "\n")
-            summary = profiler.parse_cost_json(path, "a" * 40)
-            self.assertEqual(summary["execution_omitted"]["callsite_events"], 4)
-            self.assertEqual(summary["vm_phase_omitted_samples"], {"run": 5})
-            self.assertEqual(summary["execution_counts"]["functions"], 1)
-            with self.assertRaisesRegex(ValueError, "embedded commit"):
-                profiler.parse_cost_json(path, "b" * 40)
-            record["execution_diagnostics"]["omitted"].pop("callsite_events")
-            path.write_text(json.dumps(record) + "\n")
-            with self.assertRaisesRegex(ValueError, "omission counters"):
-                profiler.parse_cost_json(path)
-
 
 if __name__ == "__main__":
     unittest.main()

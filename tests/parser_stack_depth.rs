@@ -10,8 +10,8 @@
 //! so the differential test against `QJS_ORACLE` checks agreement within a
 //! tolerance band rather than at one exact depth.
 
-use quickjs_oxide::engine::api::{Context, Runtime, RuntimeError, Value};
-use quickjs_oxide_host::SystemHostServices;
+use quickjs_oxide::engine::api::core::{Context, Runtime, RuntimeError, Value};
+use quickjs_oxide_host::SystemHost;
 
 /// Host stack for the evaluation thread. Rust parser frames are larger than
 /// the C engine's, so reaching the reference nesting depths for the heaviest
@@ -263,7 +263,7 @@ fn run_on_parser_stack<T: Send + 'static>(task: impl FnOnce() -> T + Send + 'sta
         .name("parser-stack-depth".to_owned())
         .stack_size(TEST_STACK_SIZE)
         .spawn(|| {
-            quickjs_oxide::engine::api::declare_thread_stack(TEST_STACK_SIZE);
+            quickjs_oxide::engine::api::core::declare_thread_stack(TEST_STACK_SIZE);
             task()
         })
         .unwrap()
@@ -282,7 +282,7 @@ fn eval_string(context: &mut Context, source: &str) -> String {
 #[test]
 fn depth_boundaries_throw_a_catchable_syntax_error() {
     run_on_parser_stack(|| {
-        let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+        let runtime = Runtime::new_with_host_services(SystemHost::default());
         let mut context = runtime.new_context().expect("create context");
         for form in FORMS {
             // One below the reference depth still parses.
@@ -309,7 +309,7 @@ fn depth_boundaries_throw_a_catchable_syntax_error() {
 #[test]
 fn right_recursive_forms_throw_at_their_reference_depths() {
     run_on_parser_stack(|| {
-        let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+        let runtime = Runtime::new_with_host_services(SystemHost::default());
         let mut context = runtime.new_context().expect("create context");
         assert_eval_source_boundary(&mut context, "assignment", 8_164, |depth| {
             format!("var a;{}", repeated("a=", "1", "", depth))
@@ -349,7 +349,7 @@ fn right_recursive_forms_throw_at_their_reference_depths() {
 #[test]
 fn direct_sources_share_the_eval_boundaries() {
     run_on_parser_stack(|| {
-        let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+        let runtime = Runtime::new_with_host_services(SystemHost::default());
         let mut context = runtime.new_context().expect("create context");
         assert_direct_source_boundary(&mut context, "parenthesized", 718, |depth| {
             repeated("(", "1", ")", depth)
@@ -379,7 +379,7 @@ fn direct_sources_share_the_eval_boundaries() {
 #[test]
 fn the_runtime_recovers_after_a_caught_parser_stack_overflow() {
     run_on_parser_stack(|| {
-        let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+        let runtime = Runtime::new_with_host_services(SystemHost::default());
         let mut context = runtime.new_context().expect("create context");
         for form in FORMS {
             let thrown = eval_string(&mut context, &guarded_program(form, form.depth));
@@ -393,7 +393,7 @@ fn the_runtime_recovers_after_a_caught_parser_stack_overflow() {
 #[test]
 fn deep_nesting_never_aborts_far_beyond_the_logical_boundary() {
     run_on_parser_stack(|| {
-        let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+        let runtime = Runtime::new_with_host_services(SystemHost::default());
         let mut context = runtime.new_context().expect("create context");
         // Even absurdly deep input must throw the catchable error rather than
         // abort the process; the physical backstop is the last line of
@@ -422,7 +422,7 @@ fn pinned_oracle_agrees_outside_the_tolerance_band() {
         return;
     };
     run_on_parser_stack(move || {
-        let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+        let runtime = Runtime::new_with_host_services(SystemHost::default());
         let mut context = runtime.new_context().expect("create context");
         for form in FORMS {
             let margin = form.depth * ORACLE_TOLERANCE_PERCENT / 100;
@@ -483,7 +483,7 @@ fn oracle_program(form: &Form, depth: usize) -> String {
 fn unlimited_stack_limit_accepts_shallow_source() {
     const CHILD_ENV: &str = "QJS_OXIDE_UNLIMITED_STACK_CHILD";
     if std::env::var_os(CHILD_ENV).is_some() {
-        let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+        let runtime = Runtime::new_with_host_services(SystemHost::default());
         let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             eval_string(&mut context, "String((((((((((((((1))))))))))))))"),

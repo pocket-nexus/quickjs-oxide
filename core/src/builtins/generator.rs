@@ -178,7 +178,7 @@ fn this_generator(cx: &mut Cx<'_>, site: &CallSite) -> Result<ObjectId, Throw> {
     match this.as_object() {
         Some(object) if cx.heap.internal_tag(object) == InternalTag::Generator => {
             if suspend::state(cx, object) == suspend::EXECUTING {
-                return Err(error::type_error(cx, "generator is already running"));
+                return Err(error::type_error(cx, "cannot invoke a running generator"));
             }
             Ok(object)
         }
@@ -331,7 +331,7 @@ fn continuation(
     close_on_rejection: bool,
 ) -> Result<Value, Throw> {
     let Some(result_object) = result.as_object() else {
-        let error = error::type_error(cx, "iterator result is not an object");
+        let error = error::type_error(cx, "iterator must return an object");
         return reject_with(cx, capability, error);
     };
     root(cx, result);
@@ -432,7 +432,7 @@ pub(super) fn async_from_sync_throw(cx: &mut Cx<'_>, site: CallSite) -> Result<V
         if let Err(throw) = iter::close(cx, &record, Ok(())) {
             return reject_with(cx, capability, throw);
         }
-        let error = error::type_error(cx, "iterator does not have a throw method");
+        let error = error::type_error(cx, "throw is not a method");
         return reject_with(cx, capability, error);
     };
     let args: Vec<Value> = site.arg_list(cx);

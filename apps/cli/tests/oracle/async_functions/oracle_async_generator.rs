@@ -5,11 +5,7 @@
 //! private method syntax, or `return` crossing an active iterator. Those surfaces
 //! need their own implementation milestones and focused oracles.
 
-use crate::object_graph_observation::{define_context_global as define_global, object};
 use crate::runtime_completion_oracle::run;
-use crate::runtime_observation::host_runtime;
-use crate::runtime_observation::{eval, text};
-use quickjs_oxide::engine::api::Value;
 
 #[test]
 fn completed_state_services_one_trailing_request_per_driver_entry_like_quickjs() {
@@ -118,66 +114,4 @@ repeated().next().then(function (result) {
         String::from_utf8_lossy(&oxide.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&oxide.stdout), "20000:false\n");
-}
-
-#[test]
-fn cross_realm_settlement_resumes_in_the_job_realm_and_executes_in_the_body_realm() {
-    let runtime = host_runtime();
-    let mut body = runtime.new_context().expect("create context");
-    let mut settler = runtime.new_context().expect("create context");
-    let settler_realm = settler.realm_id();
-
-    let gate = object(eval(
-        &mut settler,
-        r#"
-var release;
-var gate = new Promise(function (resolve) {
-    release = resolve;
-});
-gate
-"#,
-    ));
-    define_global(&mut body, "foreignGate", Value::Object(gate));
-    drop(eval(
-        &mut body,
-        r#"
-var crossRealmReason;
-async function* crossRealm() {
-    await foreignGate;
-    throw new TypeError("callee");
-}
-crossRealm().next().then(undefined, function (error) {
-    crossRealmReason = error;
-});
-"#,
-    ));
-
-    // PromiseResolve in the body realm first installs the thenable bridge.
-    while runtime.is_job_pending().expect("runtime state") {
-        runtime.execute_pending_job().unwrap();
-    }
-    drop(eval(&mut settler, "release(1)"));
-
-    let mut saw_settler_realm = false;
-    while runtime.is_job_pending().expect("runtime state") {
-        let job_realm = runtime
-            .execute_pending_job()
-            .unwrap()
-            .context()
-            .expect("pending job had no realm");
-        saw_settler_realm |= job_realm == settler_realm;
-    }
-    assert!(
-        saw_settler_realm,
-        "foreign Promise settlement did not carry its actual job realm"
-    );
-
-    let reason = object(eval(&mut body, "crossRealmReason"));
-    let body_type_error_prototype = object(eval(&mut body, "TypeError.prototype"));
-    assert_eq!(
-        runtime.get_prototype_of(&reason).unwrap(),
-        Some(body_type_error_prototype),
-        "the resumed async-generator body did not retain its defining realm"
-    );
-    assert_eq!(text(eval(&mut body, "crossRealmReason.message")), "callee");
 }

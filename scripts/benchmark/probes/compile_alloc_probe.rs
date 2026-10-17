@@ -7,8 +7,8 @@
 //! rejects it. Output is `compile_ns:<ns>` followed by one line per counter;
 //! byte counters are requested sizes, `peak_live_bytes` is the high-water mark
 //! of outstanding allocations observed during the compile call.
-use quickjs_oxide::engine::api::Runtime;
-use quickjs_oxide_host::SystemHostServices;
+use quickjs_oxide::engine::api::core::Runtime;
+use quickjs_oxide_host::SystemHost;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{env, fs, time::Instant};
@@ -96,7 +96,7 @@ fn main() {
         return;
     }
     let source = fs::read_to_string(&path).expect("UTF-8 benchmark source");
-    let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(SystemHost::default());
     let mut context = runtime.new_context().expect("create context");
     CountingAllocator::reset();
     let started = Instant::now();

@@ -7,8 +7,8 @@
 //! heap under its own budget. The boundary tests run on an explicitly sized
 //! thread, as the `qjs` CLI does.
 
-use quickjs_oxide::engine::api::{Context, Runtime, Value};
-use quickjs_oxide_host::SystemHostServices;
+use quickjs_oxide::engine::api::core::{Context, Runtime, Value};
+use quickjs_oxide_host::SystemHost;
 
 /// Host stack for the boundary thread. Debug frames are larger than release
 /// frames. The reservation is virtual address space, not RSS.
@@ -30,7 +30,7 @@ fn run_on_stack<T: Send + 'static>(
         .stack_size(size)
         .spawn(move || {
             if declare {
-                quickjs_oxide::engine::api::declare_thread_stack(size);
+                quickjs_oxide::engine::api::core::declare_thread_stack(size);
             }
             task()
         })
@@ -40,7 +40,7 @@ fn run_on_stack<T: Send + 'static>(
 }
 
 fn new_context() -> (Runtime, Context) {
-    let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(SystemHost::default());
     let context = runtime.new_context().expect("create context");
     (runtime, context)
 }

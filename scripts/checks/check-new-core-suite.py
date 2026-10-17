@@ -3,11 +3,11 @@
 one run() per benchmark under the stress collector.
 
 Runs every workload (or those starting with `--prefix`) of a suite built with
-`scripts/benchmark/suite_matrix.py build --pilot 1` on `oxide-run
---gc-stress=1` (an `oxide-run` built with the `new-core-gc-stress` feature)
+`scripts/benchmark/suite_matrix.py build --pilot 1` on `qjs
+--gc-stress=1` (an `qjs` built with the `gc-stress` feature)
 and compares its stdout with the manifest's expected line.
 
-    python3 scripts/checks/check-new-core-suite.py --oxide-run PATH --suite DIR
+    python3 scripts/checks/check-new-core-suite.py --qjs PATH --suite DIR
 """
 import argparse
 import json
@@ -35,7 +35,7 @@ INTERVALS = {
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--oxide-run", required=True, type=Path)
+    parser.add_argument("--qjs", required=True, type=Path)
     parser.add_argument("--suite", required=True, type=Path, help="suite_matrix.py build --pilot 1 output")
     parser.add_argument("--prefix", default="")
     parser.add_argument("--gc-stress", default="1")
@@ -54,7 +54,7 @@ def main():
         start = time.monotonic()
         try:
             result = subprocess.run(
-                [str(args.oxide_run), f"--gc-stress={interval}", str(path)],
+                [str(args.qjs), f"--gc-stress={interval}", str(path)],
                 capture_output=True, text=True, timeout=args.timeout)
             stdout, detail = result.stdout, result.stderr.strip()[-400:]
         except subprocess.TimeoutExpired:

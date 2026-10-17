@@ -1,7 +1,7 @@
-use quickjs_oxide::engine::api::JsString;
-use quickjs_oxide::engine::api::RuntimeError;
-use quickjs_oxide::engine::api::number_to_string;
-use quickjs_oxide::engine::api::{CallableRef, Context, ObjectRef, Runtime, Value};
+use quickjs_oxide::engine::api::core::JsString;
+use quickjs_oxide::engine::api::core::RuntimeError;
+use quickjs_oxide::engine::api::core::number_to_string;
+use quickjs_oxide::engine::api::core::{CallableRef, Context, ObjectRef, Runtime, Value};
 use std::fmt::Write as _;
 
 /// Create a runtime with the system host services and one fresh context.
@@ -15,7 +15,7 @@ pub(crate) fn host_runtime_context() -> (Runtime, Context) {
 
 /// Create a runtime with the system host services.
 pub(crate) fn host_runtime() -> Runtime {
-    Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default())
+    Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default())
 }
 
 /// Classify a value for completion-vector output while retaining the explicit
@@ -50,7 +50,7 @@ pub(crate) fn primitive_value_text(value: Value) -> String {
         Value::Null => "null".to_owned(),
         Value::Bool(value) => value.to_string(),
         Value::Int(value) => value.to_string(),
-        Value::Float(value) => quickjs_oxide::engine::api::number_to_string(value),
+        Value::Float(value) => quickjs_oxide::engine::api::core::number_to_string(value),
         Value::BigInt(value) => value.to_string(),
         Value::String(value) => value.to_utf8_lossy(),
         Value::Object(_) => "<object>".to_owned(),
@@ -196,16 +196,6 @@ pub(crate) fn take_error_object(context: &mut Context) -> ObjectRef {
     error
 }
 
-/// Take a pending exception expected to be an arbitrary object.
-pub(crate) fn take_thrown_object(context: &mut Context) -> ObjectRef {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("operation did not throw an object");
-    };
-    error
-}
-
-// Helpers shared verbatim by several oracle modules.
-
 pub(crate) fn string_units(value: &JsString) -> String {
     value
         .utf16_units()
@@ -320,21 +310,6 @@ pub(crate) fn show_exception(runtime: &Runtime, context: &mut Context, exception
     }
 }
 
-pub(crate) fn error_text(
-    runtime: &Runtime,
-    context: &mut Context,
-    error: &ObjectRef,
-    name: &str,
-) -> String {
-    let Value::String(value) = context
-        .get_property(error, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("Error.{name} was not a string");
-    };
-    value.to_utf8_lossy()
-}
-
 pub(crate) fn array_value_text(
     runtime: &Runtime,
     context: &mut Context,
@@ -384,42 +359,6 @@ pub(crate) fn js_utf16(units: &[u16]) -> String {
     }
     source.push('"');
     source
-}
-
-pub(crate) fn assert_native_error(
-    runtime: &Runtime,
-    context: &mut Context,
-    method: &CallableRef,
-    this_value: Value,
-    arguments: &[Value],
-    expected_prototype: &ObjectRef,
-) {
-    assert_eq!(
-        context.call(method, this_value, arguments),
-        Err(RuntimeError::Exception),
-    );
-    assert_eq!(
-        runtime
-            .get_prototype_of(&take_pending_exception_object(context))
-            .unwrap()
-            .as_ref(),
-        Some(expected_prototype),
-    );
-}
-
-pub(crate) fn error_string(
-    runtime: &Runtime,
-    context: &mut Context,
-    error: &ObjectRef,
-    name: &str,
-) -> JsString {
-    let Value::String(value) = context
-        .get_property(error, &runtime.intern_property_key(name).unwrap())
-        .unwrap()
-    else {
-        panic!("Error.{name} was not a String");
-    };
-    value
 }
 
 #[cfg(feature = "test262-host")]

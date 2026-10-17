@@ -646,6 +646,9 @@ struct Lowerer<'a, 'c> {
     decimal_index: HashMap<u32, u32>,
     child_ordinal: HashMap<u32, u32>,
     this_keys: HashSet<u32>,
+    /// Register PCs of the calls written as a direct `eval` (for the
+    /// backtrace, which QuickJS gives no native frame there).
+    direct_eval_sites: Vec<u32>,
 }
 
 impl<'a, 'c> Lowerer<'a, 'c> {
@@ -701,6 +704,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             labels: vec![None; code.len()],
             fixups: Vec::new(),
             origins: Vec::new(),
+            direct_eval_sites: Vec::new(),
             pc: 0,
             last_dest: None,
             checked: HashSet::new(),
@@ -1749,7 +1753,11 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             }
             // A direct `eval` is a call of whatever `eval` resolves to, which
             // runs as indirect eval (phase 0, section 5.5).
-            I::Eval { argument_count, .. } => self.call(Opcode::Call, argument_count, 1, true)?,
+            I::Eval { argument_count, .. } => {
+                self.call(Opcode::Call, argument_count, 1, true)?;
+                self.direct_eval_sites
+                    .push(self.builder.code().len() as u32 - 1);
+            }
             I::ApplyEval { .. } => {
                 // `CallSpread` takes the callee, `this` and the argument array.
                 let base = self.stack.len() - 2;
@@ -2762,6 +2770,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 .map(|debug| std::rc::Rc::from(debug.filename.to_utf8_lossy())),
         });
         unit.debug.positions = positions;
+        unit.direct_eval_sites = self.direct_eval_sites.into();
         Ok((unit, self.pool))
     }
 

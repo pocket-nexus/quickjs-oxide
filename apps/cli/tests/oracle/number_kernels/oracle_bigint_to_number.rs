@@ -1,4 +1,4 @@
-use quickjs_oxide::engine::api::{JsBigInt, number_to_string};
+use quickjs_oxide::engine::api::core::{JsBigInt, number_to_string};
 use std::ffi::OsStr;
 use std::process::Command;
 

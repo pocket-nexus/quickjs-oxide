@@ -45,7 +45,6 @@ pub(crate) mod test262_host;
 
 pub mod core;
 pub mod error;
-pub mod new_core;
 
 pub use crate::engine::compiler::lexer::quickjs_detect_module_bytes;
 
